@@ -35,7 +35,7 @@ import {
 } from "@/lib/transcriptExport";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { urlHost } from "@/lib/urlSource";
-import { exportStem, isVideoSourcePath, withTrackSites } from "@/lib/mediaExport";
+import { derivePickedStem, exportStem, isVideoSourcePath, withTrackSites } from "@/lib/mediaExport";
 import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/exportTracks";
 import { cueOptionsOf } from "@/lib/cueSplit";
 import { displayToggles } from "@/lib/useDisplayToggles";
@@ -485,15 +485,8 @@ export default function History() {
       if (files.length === 1) {
         await saveTextFile(path, files[0].content);
       } else {
-        const sep = path.includes("\\") ? "\\" : "/";
-        const dir = path.slice(0, path.lastIndexOf(sep) + 1);
-        // Strip the seeded first-file suffix from what the user confirmed
-        // (mirrors the viewer's doExport — never double-suffix siblings).
-        const firstSuffix = files[0].name("");
-        const base = path.slice(dir.length);
-        const pickedStem = base.endsWith(firstSuffix)
-          ? base.slice(0, -firstSuffix.length)
-          : base.replace(/\.lrc$/i, "");
+        // The picked path names the first file — never double-suffix its siblings.
+        const { dir, stem: pickedStem } = derivePickedStem(path, files[0].name(""), ext);
         for (const f of files) await saveTextFile(dir + f.name(pickedStem), f.content);
       }
     } catch (e) {
