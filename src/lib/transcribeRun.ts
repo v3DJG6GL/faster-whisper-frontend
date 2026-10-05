@@ -1415,6 +1415,7 @@ async function translateParsed(
       model: options.translationModel ?? null,
       mode: options.translationMode ?? null,
       glossary: options.translationGlossary ?? null,
+      contextSegments: options.translationContextSegments ?? null,
       progressId: progressId ?? null,
       fileEpochCancel: true,
     });

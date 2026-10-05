@@ -100,6 +100,8 @@ export interface UrlPreview {
   video_ladder?: VideoRung[] | null;
   /** The server's one media ceiling, for labelling over-cap rungs. */
   media_max_bytes?: number | null;
+  /** URL_MAX_DURATION_S — the longest link the server downloads (newer backends). */
+  url_max_duration_s?: number | null;
   /** The spoken language the site names (YouTube does, most sites don't). */
   language?: string | null;
   /** The site's own subtitle tracks (ids only; the server keeps the URLs). */

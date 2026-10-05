@@ -605,6 +605,8 @@ export interface ServerModel {
   loaded: boolean;
   /** Translation models only: the target codes the model supports; null/absent = unknown. */
   languages?: string[] | null;
+  /** Where the model runs ("cuda", "cpu", …), from GET /v1/models (newer backends). */
+  device?: string;
 }
 
 export interface ConnectionInfo {
@@ -684,6 +686,33 @@ export interface Capabilities {
   /** Diarization pipelines / MSS models the caller may pick per run. */
   diarization_models?: ServerModel[];
   separation_models?: ServerModel[];
+  /** What the server limits and keeps (newer backends; absent on older ones). Numbers are
+   *  non-negative and finite (bounded in Rust); a leaf the server did not send is absent. */
+  server_info?: ServerInfo;
+}
+
+/** `capabilities.server_info` (GET /v1/me): the Backends ⓘ panel's "Limits" and "What this
+ *  server keeps", and the translation picker's cap (`maxTranslationTargets`). */
+export interface ServerInfo {
+  limits?: {
+    /** TRANSLATION_MAX_TARGETS for this caller. */
+    translation_max_targets?: number;
+    /** The URL keys ride only while URL download is on. */
+    url_max_duration_s?: number;
+    /** [] = every dedicated extractor. */
+    url_allowed_extractors?: string[];
+    url_allow_direct_media?: boolean;
+  };
+  keeps?: {
+    captures?: { enabled?: boolean; retention_days?: number; sample_fraction?: number; max?: number };
+    server_log?: { max_bytes?: number; backup_count?: number };
+    recent_transcriptions?: { retention_days?: number; max?: number };
+    usage_app_retention_days?: number;
+    /** 0 = forever. */
+    usage_retention_days?: number;
+    usage_jobs_retention_days?: number;
+    url_media_ttl_s?: number;
+  };
 }
 
 /** A baseline shown (ghosted) under the decode editor: the server's decode defaults
@@ -1086,6 +1115,9 @@ export interface TranscribeOptions {
   translationMode?: "fluent" | "faithful";
   /** Glossary — "source = target" lines injected into the MT prompt. */
   translationGlossary?: string;
+  /** Previous segments the translator sees (0–10, wire `context_segments`); absent = the
+   *  server's TRANSLATION_CONTEXT_SEGMENTS. */
+  translationContextSegments?: number;
   /** Per-run diarization pipeline override (server allowlist). */
   diarizationModel?: string;
   /** Per-run MSS/UVR model override (server allowlist). */

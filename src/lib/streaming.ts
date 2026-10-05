@@ -28,7 +28,7 @@ import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHi
 import { enqueueOutcome } from "./usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "./backends";
 import { effectiveServerKind } from "./serverKind";
-import { refreshCaps, translationWarm } from "./capabilities";
+import { maxTranslationTargets, refreshCaps, translationWarm } from "./capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "./preload";
 import { ownProp } from "./own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
@@ -1482,6 +1482,13 @@ export function setRouteHint(hint: "original" | null): void {
  *  translate-to picker. Read by settleIdle to stamp `sessionNote`; reset per session. */
 let sessionInsertSkipped = false;
 
+/** A dictation's targets, at most the server's per-request cap: the text route answers a
+ *  request over TRANSLATION_MAX_TARGETS with a 422, which would fail every phrase of the
+ *  session. Keeps the first ones, in the order the user put them. */
+function capTargets(targets: string[], backendId: string): string[] {
+  return targets.slice(0, maxTranslationTargets(ownProp(useApp.getState().caps, backendId)));
+}
+
 /** Replace this session's translation targets with the user's pick.
  *
  *  Mutates the frozen `sessionTranslation` in place rather than rebuilding it, so the
@@ -1489,7 +1496,9 @@ let sessionInsertSkipped = false;
  *  the targets change. An EMPTY list is a real answer ("insert the original only") and
  *  clears translation for the session, which is why it isn't treated as "no opinion". */
 function applySessionTargets(targets: string[]): void {
-  const clean = targets.map((t) => t.trim()).filter(Boolean);
+  const raw = targets.map((t) => t.trim()).filter(Boolean);
+  const backendId = sessionTranslation?.backendId ?? sessionTranslationBase?.backendId;
+  const clean = backendId ? capTargets(raw, backendId) : raw;
   if (clean.length === 0) {
     sessionTranslation = null;
   } else if (sessionTranslation) {
@@ -3076,7 +3085,7 @@ async function startLiveInner(
   // blank-line separated, original first when includeOriginal).
   {
     const trOv = { ...backend.translationOverrides, ...pov?.translationOverrides };
-    const trTargets = (trOv.translateTo ?? []).map((t) => t.trim()).filter(Boolean);
+    const trTargets = capTargets((trOv.translateTo ?? []).map((t) => t.trim()).filter(Boolean), backend.id);
     sessionTranslationBase = {
       // The resolved source language, so the per-phrase request does not leave the server
       // to auto-detect a few words (every other T2T caller passes it); "auto"/"" → null.

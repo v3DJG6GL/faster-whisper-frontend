@@ -1150,6 +1150,8 @@ export default function Transcribe() {
       mode: translationMode,
       model: translationModel || backend.translationOverrides?.model,
       glossary: backend.translationOverrides?.glossary,
+      // Transcribe has no profile: the backend default (the per-run pick lands with FU5).
+      contextSegments: backend.translationOverrides?.contextSegments,
     });
     // Always present for a standard server (it carries the wire-shaping `standard` flag
     // even when no stage is on), else only when a stage asked for something.

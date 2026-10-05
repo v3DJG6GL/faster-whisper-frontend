@@ -233,9 +233,11 @@ export function translationRunOptions(args: {
   model?: string;
   /** Tri-state: undefined = inherit, "" = explicit clear, value = use it. */
   glossary?: string;
+  /** Context depth (0–10); undefined = the server's TRANSLATION_CONTEXT_SEGMENTS. */
+  contextSegments?: number;
 }): Pick<
   TranscribeOptions,
-  "translateTo" | "translationMode" | "translationModel" | "translationGlossary"
+  "translateTo" | "translationMode" | "translationModel" | "translationGlossary" | "translationContextSegments"
 > {
   if (!args.available) return {};
   if (!args.targets.length) return { translateTo: [] };
@@ -244,6 +246,7 @@ export function translationRunOptions(args: {
     translationMode: args.mode,
     ...(args.model ? { translationModel: args.model } : {}),
     ...(args.glossary !== undefined ? { translationGlossary: args.glossary } : {}),
+    ...(args.contextSegments !== undefined ? { translationContextSegments: args.contextSegments } : {}),
   };
 }
 

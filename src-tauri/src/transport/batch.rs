@@ -63,6 +63,9 @@ pub struct Word {
     pub end: f64,
 }
 
+/// TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server (it clamps too).
+const MAX_CONTEXT_SEGMENTS: u32 = 10;
+
 /// Per-run stage options for the Transcribe screen (dictation passes None).
 #[derive(Debug, Default, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,6 +85,9 @@ pub struct BatchOptions {
     pub translation_model: Option<String>,
     pub translation_mode: Option<String>,
     pub translation_glossary: Option<String>,
+    /// Previous segments the translator sees as context (form `context_segments`, 0–10);
+    /// None = inherit the server's TRANSLATION_CONTEXT_SEGMENTS.
+    pub translation_context_segments: Option<u32>,
     /// Per-run diarization pipeline / MSS model overrides.
     pub diarization_model: Option<String>,
     pub separation_model: Option<String>,
@@ -278,6 +284,23 @@ mod wire_field_tests {
         bound_tracks, is_format_id, is_track_id, to_batch_result, translate_to_field,
         BatchProgress, UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
     };
+
+    /// The webview's `translationContextSegments` reaches the run options (serde drops a
+    /// misspelled key silently), and the URL preview keeps its duration limit.
+    #[test]
+    fn context_segments_and_the_link_duration_limit_cross_the_ipc() {
+        let o: super::BatchOptions = serde_json::from_value(
+            serde_json::json!({"translateTo": ["de"], "translationContextSegments": 4}),
+        )
+        .unwrap();
+        assert_eq!(o.translation_context_segments, Some(4));
+        let p: super::UrlPreview =
+            serde_json::from_value(serde_json::json!({"url_max_duration_s": 14400})).unwrap();
+        assert_eq!(
+            serde_json::to_value(p).unwrap()["url_max_duration_s"],
+            14400.0
+        );
+    }
 
     /// Live dictation's keys never ride a batch request; everything else does, verbatim.
     #[test]
@@ -1088,6 +1111,9 @@ async fn post(
             if let Some(g) = opts.translation_glossary.as_deref() {
                 form = form.text("translation_glossary", g.to_string());
             }
+            if let Some(n) = opts.translation_context_segments {
+                form = form.text("context_segments", n.min(MAX_CONTEXT_SEGMENTS).to_string());
+            }
         }
     }
     if let Some(m) = opts.diarization_model.as_deref().filter(|m| !m.is_empty()) {
@@ -1306,6 +1332,10 @@ pub struct UrlPreview {
     /// The server's one media ceiling, for labelling over-cap rungs.
     #[serde(default)]
     pub media_max_bytes: Option<u64>,
+    /// URL_MAX_DURATION_S: the longest link the server downloads, so the card can refuse one
+    /// before "Add link" (newer backends). `f64` so an int or a float both read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_max_duration_s: Option<f64>,
     /// The spoken language the site names (YouTube does, most sites don't).
     #[serde(default)]
     pub language: Option<String>,
@@ -1500,6 +1530,9 @@ pub async fn url_preview(
             .collect(),
         language: parsed.language.filter(|l| super::is_lang_code(l)),
         subtitle_tracks: bound_tracks(parsed.subtitle_tracks),
+        url_max_duration_s: parsed
+            .url_max_duration_s
+            .filter(|s| s.is_finite() && *s >= 0.0),
         ..parsed
     })
 }

@@ -34,6 +34,10 @@ pub struct ServerModel {
     /// discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub languages: Option<Vec<String>>,
+    /// Where the model runs ("cuda", "cpu", …) — `/v1/models` entries on newer backends.
+    /// Bounded in discovery (a short lowercase token, else dropped).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device: Option<String>,
 }
 
 /// Result of a connection test — mirrors the TS `ConnectionInfo`.
@@ -139,6 +143,85 @@ pub struct Capabilities {
     pub jobs_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jobs: Option<JobsCaps>,
+    /// What the server limits and keeps (the Backends ⓘ panel, the translation target cap).
+    /// Absent on an older server. Bounded in discovery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_info: Option<ServerInfo>,
+}
+
+/// `capabilities.server_info` from `GET /v1/me`. Every leaf is optional and kept absent when the
+/// server sends none (the URL limits ride only when URL download is on), so the client can tell
+/// "not said" from a value. Numbers are `f64` so an integer or a float both read; discovery keeps
+/// only non-negative finite ones.
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ServerInfo {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ServerLimits>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keeps: Option<ServerKeeps>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ServerLimits {
+    /// TRANSLATION_MAX_TARGETS for this caller (identity-resolved).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation_max_targets: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_max_duration_s: Option<f64>,
+    /// `[]` = every dedicated extractor.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_allowed_extractors: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_allow_direct_media: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ServerKeeps {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub captures: Option<CapturesKeep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server_log: Option<ServerLogKeep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recent_transcriptions: Option<RecentKeep>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_app_retention_days: Option<f64>,
+    /// 0 = forever.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_retention_days: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_jobs_retention_days: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url_media_ttl_s: Option<f64>,
+}
+
+/// Debug recordings the server keeps of requests (only while word timestamps are on).
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct CapturesKeep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<f64>,
+    /// CAPTURES_RECORDING_SAMPLE_RATE: the fraction (0–1) of requests recorded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sample_fraction: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ServerLogKeep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup_count: Option<f64>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct RecentKeep {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retention_days: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<f64>,
 }
 
 /// `capabilities.jobs` from `GET /v1/me` — how long a finished job's result

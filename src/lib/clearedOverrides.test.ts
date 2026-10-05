@@ -111,6 +111,14 @@ describe("translationRunOptions — what a batch run puts on the wire", () => {
     expect(translationRunOptions({ ...base, available: false, targets: [] })).toEqual({});
   });
 
+  it("forwards the context depth (0 included) and omits an unset one", () => {
+    expect(translationRunOptions({ ...base, targets: ["de"], contextSegments: 0 }).translationContextSegments).toBe(0);
+    expect(translationRunOptions({ ...base, targets: ["de"], contextSegments: 5 }).translationContextSegments).toBe(5);
+    expect(translationRunOptions({ ...base, targets: ["de"] })).not.toHaveProperty("translationContextSegments");
+    // No targets = no translating stage: nothing about it rides along.
+    expect(translationRunOptions({ ...base, targets: [], contextSegments: 5 })).toEqual({ translateTo: [] });
+  });
+
   it("forwards an explicitly cleared glossary and omits an unset one", () => {
     expect(
       translationRunOptions({ ...base, targets: ["de"], glossary: "" }).translationGlossary,

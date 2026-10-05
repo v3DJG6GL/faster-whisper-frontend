@@ -34,6 +34,9 @@ struct ModelObj {
     id: String,
     #[serde(default)]
     loaded: bool,
+    /// Where the model runs (newer backends) — see [`bound_device`].
+    #[serde(default)]
+    device: Option<String>,
 }
 
 /// Probe a server: list its models and resolve auth state. Never errors — failures
@@ -129,6 +132,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                             id: bounded_name(&m.id),
                             loaded: m.loaded,
                             languages: None,
+                            device: bound_device(m.device),
                         })
                         .collect(),
                     boot_id: parsed.boot_id.map(|s| bounded_name(&s)),
@@ -222,7 +226,71 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     caps.translate_to_default = caps
         .translate_to_default
         .map(|v| bound_codes(v, super::MAX_TARGETS));
+    caps.server_info = caps.server_info.map(bound_server_info);
     Some(caps)
+}
+
+/// A server count, size or duration: kept only when it is a non-negative finite number.
+fn bound_num(n: Option<f64>) -> Option<f64> {
+    n.filter(|n| n.is_finite() && *n >= 0.0)
+}
+
+/// An extractor name as yt-dlp spells them ("youtube", "Vimeo:album", "generic").
+fn is_extractor_name(s: &str) -> bool {
+    (1..=64).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b':' | b'.' | b'-'))
+}
+
+/// `server_info` is shown as-is in the Backends ⓘ panel and caps the translation picker: every
+/// number non-negative and finite, the extractor list at most 64 well-formed names — a value
+/// outside that is dropped (absent), never clamped into a different claim.
+fn bound_server_info(i: super::ServerInfo) -> super::ServerInfo {
+    use super::{CapturesKeep, RecentKeep, ServerKeeps, ServerLimits, ServerLogKeep};
+    super::ServerInfo {
+        limits: i.limits.map(|l| ServerLimits {
+            translation_max_targets: bound_num(l.translation_max_targets),
+            url_max_duration_s: bound_num(l.url_max_duration_s),
+            url_allowed_extractors: l.url_allowed_extractors.map(|v| {
+                v.into_iter()
+                    .filter(|e| is_extractor_name(e))
+                    .take(64)
+                    .collect()
+            }),
+            url_allow_direct_media: l.url_allow_direct_media,
+        }),
+        keeps: i.keeps.map(|k| ServerKeeps {
+            captures: k.captures.map(|c| CapturesKeep {
+                enabled: c.enabled,
+                retention_days: bound_num(c.retention_days),
+                sample_fraction: bound_num(c.sample_fraction),
+                max: bound_num(c.max),
+            }),
+            server_log: k.server_log.map(|s| ServerLogKeep {
+                max_bytes: bound_num(s.max_bytes),
+                backup_count: bound_num(s.backup_count),
+            }),
+            recent_transcriptions: k.recent_transcriptions.map(|r| RecentKeep {
+                retention_days: bound_num(r.retention_days),
+                max: bound_num(r.max),
+            }),
+            usage_app_retention_days: bound_num(k.usage_app_retention_days),
+            usage_retention_days: bound_num(k.usage_retention_days),
+            usage_jobs_retention_days: bound_num(k.usage_jobs_retention_days),
+            url_media_ttl_s: bound_num(k.url_media_ttl_s),
+        }),
+    }
+}
+
+/// A model's device as a short token ("cuda", "cpu", "cuda:1") — anything else (too long,
+/// upper case, spaces, bidi) is not one and is dropped rather than shown.
+fn bound_device(d: Option<String>) -> Option<String> {
+    d.filter(|s| {
+        (1..=16).contains(&s.len())
+            && s.bytes().all(|b| {
+                b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b':' | b'_' | b'-')
+            })
+    })
 }
 
 /// Per-stage model lists feed pickers — same treatment as `models`; a translation model's
@@ -235,6 +303,7 @@ fn bound_models(list: Option<Vec<ServerModel>>) -> Option<Vec<ServerModel>> {
                 id: bounded_name(&m.id),
                 loaded: m.loaded,
                 languages: m.languages.map(|v| bound_codes(v, MAX_MODELS)),
+                device: bound_device(m.device),
             })
             .collect()
     })
@@ -792,6 +861,98 @@ mod tests {
             out["media_package"]["containers"],
             serde_json::json!(["mkv", "mp4"])
         );
+    }
+
+    /// The typed mirror drops what it does not name: every `server_info` leaf must survive the
+    /// round trip, bounded — and an older server's absent block stays absent.
+    #[test]
+    fn capabilities_keep_the_bounded_server_info() {
+        let raw = serde_json::json!({
+            "media_max_bytes": 2_000_000_000u64,
+            "server_info": {
+                "limits": {
+                    "translation_max_targets": 8,
+                    "url_max_duration_s": 14400.0,
+                    "url_allowed_extractors": ["youtube", "Vimeo:album", "bad name", "x".repeat(65)],
+                    "url_allow_direct_media": true
+                },
+                "keeps": {
+                    "captures": {"enabled": true, "retention_days": 365, "sample_fraction": 0.25, "max": 1000},
+                    "server_log": {"max_bytes": 10485760, "backup_count": 10},
+                    "recent_transcriptions": {"retention_days": 30, "max": 500},
+                    "usage_app_retention_days": 90,
+                    "usage_retention_days": 0,
+                    "usage_jobs_retention_days": -5,
+                    "url_media_ttl_s": 3600
+                }
+            }
+        });
+        let mut caps: super::super::Capabilities = serde_json::from_value(raw).unwrap();
+        caps.server_info = caps.server_info.map(super::bound_server_info);
+        let out = serde_json::to_value(caps).unwrap();
+        let si = &out["server_info"];
+        assert_eq!(out["media_max_bytes"], 2_000_000_000u64);
+        assert_eq!(si["limits"]["translation_max_targets"], 8.0);
+        assert_eq!(si["limits"]["url_max_duration_s"], 14400.0);
+        assert_eq!(
+            si["limits"]["url_allowed_extractors"],
+            serde_json::json!(["youtube", "Vimeo:album"])
+        );
+        assert_eq!(si["limits"]["url_allow_direct_media"], true);
+        assert_eq!(si["keeps"]["captures"]["enabled"], true);
+        assert_eq!(si["keeps"]["captures"]["sample_fraction"], 0.25);
+        assert_eq!(si["keeps"]["captures"]["max"], 1000.0);
+        assert_eq!(si["keeps"]["server_log"]["backup_count"], 10.0);
+        assert_eq!(si["keeps"]["recent_transcriptions"]["max"], 500.0);
+        assert_eq!(si["keeps"]["usage_app_retention_days"], 90.0);
+        assert_eq!(si["keeps"]["usage_retention_days"], 0.0);
+        assert!(si["keeps"].get("usage_jobs_retention_days").is_none()); // negative → dropped
+        assert_eq!(si["keeps"]["url_media_ttl_s"], 3600.0);
+
+        let old: super::super::Capabilities =
+            serde_json::from_value(serde_json::json!({})).unwrap();
+        assert!(serde_json::to_value(old)
+            .unwrap()
+            .get("server_info")
+            .is_none());
+    }
+
+    /// A model's device survives the typed mirror as a short token; anything else is dropped,
+    /// and an older server's entry (no device) stays without one.
+    #[test]
+    fn models_keep_a_bounded_device() {
+        let raw = serde_json::json!({"data": [
+            {"id": "large-v3", "loaded": true, "device": "cuda"},
+            {"id": "tiny", "device": "cuda:1"},
+            {"id": "base", "device": "CUDA"},
+            {"id": "small", "device": "x\u{202e}"},
+            {"id": "medium", "device": "averyveryverylongdevice"},
+            {"id": "old"},
+        ]});
+        let parsed: super::ModelsResp = serde_json::from_value(raw).unwrap();
+        let devices: Vec<Option<String>> = parsed
+            .data
+            .into_iter()
+            .map(|m| super::bound_device(m.device))
+            .collect();
+        assert_eq!(
+            devices,
+            [
+                Some("cuda".into()),
+                Some("cuda:1".into()),
+                None,
+                None,
+                None,
+                None
+            ]
+        );
+        let caps: super::super::Capabilities = serde_json::from_value(serde_json::json!({
+            "translation_models": [{"id": "hy-mt", "loaded": true, "device": "cpu"}, {"id": "x"}]
+        }))
+        .unwrap();
+        let out = serde_json::to_value(super::bound_models(caps.translation_models)).unwrap();
+        assert_eq!(out[0]["device"], "cpu");
+        assert!(out[1].get("device").is_none());
     }
 
     /// Per-model translation languages survive the typed mirror, bounded; an unknown model

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { translationLanguages, translationTargetInfo, translationWarm } from "./capabilities";
+import { maxTranslationTargets, translationLanguages, translationTargetInfo, translationWarm } from "./capabilities";
 import type { Capabilities } from "./types";
 
 function caps(patch: Partial<Capabilities>): Capabilities {
@@ -94,5 +94,21 @@ describe("translationTargetInfo", () => {
     expect(translationTargetInfo(caps({ translation_models: models }), "custom")).toEqual({ supported: null, modelName: "custom" });
     expect(translationTargetInfo(caps({ translation_models: models }))).toEqual({ supported: ["de", "fr"], modelName: "hy-mt" });
     expect(translationTargetInfo(null, "")).toEqual({ supported: null, modelName: undefined });
+  });
+});
+
+describe("maxTranslationTargets", () => {
+  it("is the app ceiling when the server says nothing usable", () => {
+    expect(maxTranslationTargets(null)).toBe(8);
+    expect(maxTranslationTargets(caps({}))).toBe(8);
+    expect(maxTranslationTargets(caps({ server_info: { limits: {} } }))).toBe(8);
+    expect(maxTranslationTargets(caps({ server_info: { limits: { translation_max_targets: 0 } } }))).toBe(8);
+  });
+
+  it("takes the lower of the server cap and the app ceiling", () => {
+    const at = (n: number) => maxTranslationTargets(caps({ server_info: { limits: { translation_max_targets: n } } }));
+    expect(at(3)).toBe(3);
+    expect(at(10)).toBe(8);
+    expect(at(3.7)).toBe(3);
   });
 });
