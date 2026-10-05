@@ -1969,6 +1969,8 @@ pub async fn start_stream(
     save: bool,
     recordings_dir: Option<String>,
     trim_silence: bool,
+    // One .wav per utterance (live hands-free sessions keep one History record per utterance).
+    per_utterance_clips: bool,
     mute_system: bool,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -2000,6 +2002,7 @@ pub async fn start_stream(
                 device_id,
                 save_dir,
                 trim_silence,
+                per_utterance_clips,
                 mute_system,
             },
         )?;

@@ -368,6 +368,9 @@ function reportSessionOutcome(delivery: "typed" | "clipboard" | "none"): void {
     ...(appId ? { app_id: appId } : {}),
   });
 }
+/** Rust `stream://recording`: a saved .wav. `utterance` names the utterance of a
+ *  per-utterance clip (null = the whole session); `durationMs` is null when unmeasured. */
+type RecordingFrame = { path: string; utterance: number | null; durationMs: number | null };
 // The saved .wav's path (Rust `stream://recording`, epoch-gated). Usually lands
 // BEFORE settle (both save sites run before the terminal closed/final) — but a
 // slow disk can invert that, so a late arrival patches the already-saved record.
@@ -2023,11 +2026,13 @@ async function ensureListeners(): Promise<void> {
     }
   });
 
-  await reg<string>("stream://recording", (e) => {
+  await reg<RecordingFrame>("stream://recording", (e) => {
+    const path = e.payload?.path;
+    if (!path) return;
     // The saved .wav's path. Stash for the capture at settle; if the session
     // already settled (slow disk), patch the record it produced.
-    sessionRecordingPath = e.payload;
-    if (capturedRecordId) attachRecordingPath(capturedRecordId, e.payload);
+    sessionRecordingPath = path;
+    if (capturedRecordId) attachRecordingPath(capturedRecordId, path);
   });
 
   await reg<{ id: string; utterance: number | null }>("stream://captured", (e) => {

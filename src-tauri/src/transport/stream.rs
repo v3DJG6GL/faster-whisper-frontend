@@ -55,8 +55,14 @@ pub enum StreamEvent {
     /// The session's audio was saved to this path ("Keep audio recordings" on).
     /// Emitted before `Closed` so the client can link its history record to the
     /// file. Epoch-gated like every other event — a cancelled session's save
-    /// never reaches the UI.
-    RecordingSaved(String),
+    /// never reaches the UI. `utterance` is set for a per-utterance clip (see
+    /// [`ClipCutter`]), emitted right after that utterance's `Final`; None for
+    /// the whole-session file.
+    RecordingSaved {
+        path: String,
+        utterance: Option<u32>,
+        duration_ms: u64,
+    },
     /// Keepalive while the server cold-loads its model (sent every few seconds
     /// until `ready`/the finals). Proof of life — resets the drain's idle
     /// window and the UI's stuck-finalize watchdog.
@@ -128,6 +134,9 @@ pub struct StreamParams {
     pub in_rate: u32,
     pub save_dir: Option<PathBuf>, // Some → save the streamed 16 kHz audio as .wav
     pub trim_silence: bool,        // when saving: keep only spoken spans (drop silence) in the .wav
+    /// When saving: one `.wav` per finished utterance instead of one per session (live
+    /// hands-free sessions, which keep one History record per utterance). See [`ClipCutter`].
+    pub per_utterance_clips: bool,
 }
 
 /// Case-insensitive `strip_prefix` for an ASCII prefix. `s.get(..len)` returns None on a
@@ -395,6 +404,8 @@ pub async fn run<F>(
     // per-hard-break join: `current_doc` is the running document; a Boundary banks it into `docs`.
     let mut transcript_docs: Vec<String> = Vec::new();
     let mut transcript_cur = String::new();
+    let save_dir = params.save_dir.as_deref();
+    let mut clips = (saving && params.per_utterance_clips).then(ClipCutter::new);
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long hands-free session doesn't store hours
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
@@ -541,8 +552,7 @@ pub async fn run<F>(
                 match from {
                     Some(FromReader::Event(e)) => {
                         if matches!(e, StreamEvent::Partial { .. }) { partials_seen += 1; }
-                        if saving { accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur); }
-                        on_event(e);
+                        forward_saved(e, save_dir, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
                     }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
@@ -663,10 +673,15 @@ pub async fn run<F>(
                 Ok(None) | Ok(Some(FromReader::Closed)) => break false,
                 Ok(Some(FromReader::Event(e))) => {
                     saw_frame = true;
-                    if saving {
-                        accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur);
-                    }
-                    on_event(e);
+                    forward_saved(
+                        e,
+                        save_dir,
+                        &mut saved,
+                        &mut clips,
+                        &mut transcript_docs,
+                        &mut transcript_cur,
+                        &on_event,
+                    );
                 }
             }
         };
@@ -686,17 +701,32 @@ pub async fn run<F>(
     // channel). Without this, a mid-session socket death silently drops the
     // last phrase the server finished.
     while let Ok(FromReader::Event(e)) = evt_rx.try_recv() {
-        if saving {
-            accumulate_transcript(&e, &mut transcript_docs, &mut transcript_cur);
-        }
-        on_event(e);
+        forward_saved(
+            e,
+            save_dir,
+            &mut saved,
+            &mut clips,
+            &mut transcript_docs,
+            &mut transcript_cur,
+            &on_event,
+        );
     }
 
     // We own the write half; the reader owns the read half. Once draining is done,
     // drop (= abort) the reader so it can't linger after we return.
     drop(reader);
 
-    if let Some(dir) = &params.save_dir {
+    if let Some(c) = clips.as_mut().filter(|c| c.cut_any) {
+        // Per-utterance clips: the last one's text is complete now, and what is still
+        // buffered belongs to no `final` (see ClipCutter's leftover rule).
+        c.flush_txt(&transcript_cur);
+        if !saved.is_empty() {
+            tracing::info!(
+                "[stream] dropped {} ms of audio after the last utterance's clip",
+                pcm_duration_ms(saved.len())
+            );
+        }
+    } else if let Some(dir) = save_dir {
         // Skip empties (a quick tap that drained without audio, or a session the silence-trim
         // reduced to nothing). Emit the saved path so the client can label it with the transcript.
         if !saved.is_empty() {
@@ -716,9 +746,11 @@ pub async fn run<F>(
                 if !transcript.is_empty() {
                     crate::audio::save_transcript_sidecar(&path, &transcript);
                 }
-                on_event(StreamEvent::RecordingSaved(
-                    path.to_string_lossy().into_owned(),
-                ));
+                on_event(StreamEvent::RecordingSaved {
+                    path: path.to_string_lossy().into_owned(),
+                    utterance: None,
+                    duration_ms: pcm_duration_ms(saved.len()),
+                });
             }
         }
     }
@@ -744,6 +776,154 @@ fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
             "[stream] saved recording reached the {} MB cap (4 h) — the rest of this session is transcribed but not kept",
             crate::audio::MAX_RECORD_PCM_BYTES / 1_000_000
         );
+    }
+}
+
+/// Fold one server event into the saved recording (when saving), then forward it — followed by
+/// the per-utterance clip it cut, so the client already holds the utterance's record when the
+/// clip's path arrives. The clip cutter sees the transcript BEFORE the event is folded in.
+fn forward_saved<F: Fn(StreamEvent)>(
+    e: StreamEvent,
+    save_dir: Option<&std::path::Path>,
+    saved: &mut Vec<u8>,
+    clips: &mut Option<ClipCutter>,
+    docs: &mut Vec<String>,
+    current: &mut String,
+    on_event: &F,
+) {
+    let mut clip = None;
+    if let Some(dir) = save_dir {
+        if let Some(c) = clips {
+            clip = c.observe(&e, saved, current, dir);
+        }
+        accumulate_transcript(&e, docs, current);
+    }
+    on_event(e);
+    if let Some(c) = clip {
+        on_event(c);
+    }
+}
+
+/// Playback length of 16 kHz mono s16le PCM (32 bytes per ms).
+fn pcm_duration_ms(bytes: usize) -> u64 {
+    (bytes / 32) as u64
+}
+
+/// Take the first `cut` bytes off `saved` (clamped, and rounded down to a whole sample) and
+/// return them; the rest stays buffered.
+fn split_at_cut(saved: &mut Vec<u8>, cut: usize) -> Vec<u8> {
+    let rest = saved.split_off(cut.min(saved.len()) & !1);
+    std::mem::replace(saved, rest)
+}
+
+/// File stem of one utterance's clip: `dictation-<session stamp>-u<ordinal>`. Keeps the
+/// `dictation-` prefix, so retention and delete-all own it like the session file.
+fn clip_stem(stamp: &str, utterance: u32) -> String {
+    format!("dictation-{stamp}-u{utterance}")
+}
+
+/// Per-utterance recording clips (`StreamParams::per_utterance_clips`). The saved buffer is
+/// cut where the server began decoding an utterance (`utterance: decoding`), and that head is
+/// written at the utterance's `final` (all of the buffer when no decoding mark came), then
+/// drained — memory holds at most the utterance in flight, and a crash loses at most that one.
+/// A `dropped` utterance's audio is discarded up to its mark (the server found no words in it).
+///
+/// Leftover rule: audio still buffered at close belongs to no `final` — the speech gate's tail
+/// after the last decode mark (the server finalizes the utterance in flight on close, so it is
+/// silence in practice) — and is dropped with a logged length. A session whose server sent no
+/// ordinal `final` at all (a backend that predates the ordinal) cut nothing and falls back to
+/// the single session file.
+///
+/// A clip's `.txt` is written once its text is complete — at the next ordinal `final`, a hard
+/// break, or close — because a release `final` (no ordinal) can still append held-back words.
+struct ClipCutter {
+    stamp: String,
+    /// Session offset of `saved[0]`: the bytes already written out or dropped.
+    taken: usize,
+    /// Decode marks: (utterance, session offset where its audio ends).
+    marks: Vec<(u32, usize)>,
+    /// An ordinal `final` cut a clip this session (decides the close-time fallback).
+    cut_any: bool,
+    /// The last clip and the document offset its text starts at, awaiting its `.txt`.
+    pending_txt: Option<(PathBuf, usize)>,
+}
+
+impl ClipCutter {
+    fn new() -> Self {
+        Self {
+            stamp: crate::audio::recording_stamp(),
+            taken: 0,
+            marks: Vec::new(),
+            cut_any: false,
+            pending_txt: None,
+        }
+    }
+
+    /// Act on one event; `doc` is the transcript BEFORE the event is folded in. Returns the
+    /// clip event an ordinal `final` produced.
+    fn observe(
+        &mut self,
+        e: &StreamEvent,
+        saved: &mut Vec<u8>,
+        doc: &str,
+        dir: &std::path::Path,
+    ) -> Option<StreamEvent> {
+        match e {
+            StreamEvent::Utterance {
+                state: UtteranceState::Decoding,
+                utterance: Some(n),
+            } => self.marks.push((*n, self.taken + saved.len())),
+            StreamEvent::Utterance {
+                state: UtteranceState::Dropped,
+                utterance: Some(n),
+            } => {
+                if let Some(end) = self.take_mark(*n) {
+                    let gone = split_at_cut(saved, end.saturating_sub(self.taken)).len();
+                    self.taken += gone;
+                    tracing::info!(
+                        "[stream] utterance {n} dropped — discarded {} ms of its audio",
+                        pcm_duration_ms(gone)
+                    );
+                }
+            }
+            StreamEvent::Final {
+                utterance: Some(n), ..
+            } => {
+                // The previous clip's text ends here: this final opens the next utterance's.
+                self.flush_txt(doc);
+                self.cut_any = true;
+                let cut = self
+                    .take_mark(*n)
+                    .map_or(saved.len(), |end| end.saturating_sub(self.taken));
+                let pcm = split_at_cut(saved, cut);
+                self.taken += pcm.len();
+                let stem = clip_stem(&self.stamp, *n);
+                let path = crate::audio::save_recording_as(dir, &stem, &pcm, 16_000)?;
+                self.pending_txt = Some((path.clone(), doc.len()));
+                return Some(StreamEvent::RecordingSaved {
+                    path: path.to_string_lossy().into_owned(),
+                    utterance: Some(*n),
+                    duration_ms: pcm_duration_ms(pcm.len()),
+                });
+            }
+            StreamEvent::Boundary { .. } => self.flush_txt(doc),
+            _ => {}
+        }
+        None
+    }
+
+    /// The decode mark of utterance `n`, retiring it and any older ones.
+    fn take_mark(&mut self, n: u32) -> Option<usize> {
+        let end = self.marks.iter().find(|(u, _)| *u == n).map(|&(_, e)| e);
+        self.marks.retain(|(u, _)| *u > n);
+        end
+    }
+
+    /// Write the pending clip's `.txt`: everything the document gained since its `final` began.
+    fn flush_txt(&mut self, doc: &str) {
+        if let Some((path, start)) = self.pending_txt.take() {
+            crate::audio::save_transcript_sidecar(&path, doc.get(start..).unwrap_or(""));
+        }
     }
 }
 
@@ -1029,5 +1209,101 @@ mod emit_message_tests {
         assert_eq!(seen, vec![(UtteranceState::Open, None)]);
         let (seen, _) = utterances(r#"{"type":"utterance","state":"open","utterance":-3}"#);
         assert_eq!(seen, vec![(UtteranceState::Open, None)]);
+    }
+}
+
+#[cfg(test)]
+mod clip_tests {
+    use super::{clip_stem, forward_saved, split_at_cut, ClipCutter, StreamEvent, UtteranceState};
+    use std::cell::RefCell;
+
+    #[test]
+    fn a_cut_is_clamped_and_sample_aligned() {
+        let mut saved = vec![1, 2, 3, 4, 5, 6];
+        assert_eq!(split_at_cut(&mut saved, 3), [1, 2]);
+        assert_eq!(saved, [3, 4, 5, 6]);
+        assert_eq!(split_at_cut(&mut saved, 99), [3, 4, 5, 6]);
+        assert!(saved.is_empty());
+    }
+
+    #[test]
+    fn clip_names_stay_inside_retention() {
+        let stem = clip_stem("2026-10-05_09-15-00", 7);
+        assert_eq!(stem, "dictation-2026-10-05_09-15-00-u7");
+        assert!(crate::audio::is_dictation_file(&format!("{stem}.wav")));
+        assert!(crate::audio::is_dictation_file(&format!("{stem}-2.txt")));
+    }
+
+    fn fin(doc: &str, utterance: Option<u32>) -> StreamEvent {
+        StreamEvent::Final {
+            committed: doc.into(),
+            tail: String::new(),
+            last: false,
+            utterance,
+        }
+    }
+
+    fn state(state: UtteranceState, n: u32) -> StreamEvent {
+        StreamEvent::Utterance {
+            state,
+            utterance: Some(n),
+        }
+    }
+
+    /// One clip per ordinal final, cut at the decode mark; a release final's words reach the
+    /// previous clip's `.txt`; a dropped utterance's audio goes nowhere.
+    #[test]
+    fn each_utterance_gets_its_own_clip_and_text() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let seen: RefCell<Vec<(String, Option<u32>, u64)>> = RefCell::new(Vec::new());
+        let on_event = |e: StreamEvent| {
+            if let StreamEvent::RecordingSaved {
+                path,
+                utterance,
+                duration_ms,
+            } = e
+            {
+                seen.borrow_mut().push((path, utterance, duration_ms));
+            }
+        };
+        let mut saved = vec![0u8; 64_000]; // 2 s
+        let mut clips = Some(ClipCutter::new());
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
+            forward_saved(e, Some(&dir), saved, clips, &mut docs, &mut cur, &on_event);
+        };
+        feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
+        saved.extend(vec![0u8; 32_000]); // 1 s after the mark: the next utterance's
+        feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
+        assert_eq!(saved.len(), 32_000);
+        // A release final: no clip of its own, its words belong to utterance 1.
+        feed(fin(" Hallo Welt Komma", None), &mut saved, &mut clips);
+        // No decode mark: the clip takes everything buffered.
+        feed(
+            fin(" Hallo Welt Komma und weiter", Some(2)),
+            &mut saved,
+            &mut clips,
+        );
+        assert!(saved.is_empty());
+        saved.extend(vec![0u8; 3_200]);
+        feed(state(UtteranceState::Decoding, 3), &mut saved, &mut clips);
+        feed(state(UtteranceState::Dropped, 3), &mut saved, &mut clips);
+        assert!(saved.is_empty());
+        clips.unwrap().flush_txt(&cur);
+
+        let seen = seen.into_inner();
+        assert_eq!(seen.len(), 2);
+        assert_eq!((seen[0].1, seen[0].2), (Some(1), 2_000));
+        assert_eq!((seen[1].1, seen[1].2), (Some(2), 1_000));
+        let txt = |i: usize| {
+            let wav = std::path::Path::new(&seen[i].0);
+            let name = wav.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(name.ends_with(&format!("-u{}.wav", i + 1)), "{name}");
+            std::fs::read_to_string(wav.with_extension("txt")).unwrap()
+        };
+        assert_eq!(txt(0), "Hallo Welt Komma\n");
+        assert_eq!(txt(1), "und weiter\n");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

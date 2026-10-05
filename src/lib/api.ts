@@ -1039,6 +1039,9 @@ export async function startStream(args: {
   save?: boolean;
   recordingsDir?: string | null;
   trimSilence?: boolean;
+  /** When saving: one `.wav` per finished utterance (`dictation-<stamp>-u<n>.wav`) instead of
+   *  one per session — live hands-free sessions keep one History record per utterance. */
+  perUtteranceClips?: boolean;
   muteSystem?: boolean;
 }): Promise<void> {
   if (!isTauri) return;
@@ -1058,6 +1061,7 @@ export async function startStream(args: {
     save: args.save ?? false,
     recordingsDir: args.recordingsDir ?? null,
     trimSilence: args.trimSilence ?? true,
+    perUtteranceClips: args.perUtteranceClips ?? false,
     muteSystem: args.muteSystem ?? false,
   });
 }

@@ -136,6 +136,8 @@ pub struct StartParams {
     pub device_id: Option<String>,
     pub save_dir: Option<PathBuf>,
     pub trim_silence: bool,
+    /// One `.wav` per utterance instead of per session (see `stream::ClipCutter`).
+    pub per_utterance_clips: bool,
     pub mute_system: bool,
 }
 
@@ -199,6 +201,16 @@ struct FinalPayload {
     /// phrase with the `stream://captured` frame that follows it. `null` when the
     /// server sent none (older backends) — then the client pairs nothing.
     utterance: Option<u32>,
+}
+
+/// `stream://recording`: a saved `.wav`. `utterance` names the utterance a per-utterance
+/// clip belongs to (None = the whole session); `durationMs` is None when unmeasured (batch).
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RecordingPayload {
+    path: String,
+    utterance: Option<u32>,
+    duration_ms: Option<u64>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -266,6 +278,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         in_rate,
         save_dir: p.save_dir,
         trim_silence: p.trim_silence,
+        per_utterance_clips: p.per_utterance_clips,
     };
 
     let appc = app.clone();
@@ -316,8 +329,21 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
                 },
             );
         }
-        StreamEvent::RecordingSaved(path) => {
-            emit_if_active(&appc, epoch, "stream://recording", path);
+        StreamEvent::RecordingSaved {
+            path,
+            utterance,
+            duration_ms,
+        } => {
+            emit_if_active(
+                &appc,
+                epoch,
+                "stream://recording",
+                RecordingPayload {
+                    path,
+                    utterance,
+                    duration_ms: Some(duration_ms),
+                },
+            );
         }
         StreamEvent::Captured { id, utterance } => {
             // Epoch-gated like every other event: a cancelled session's
@@ -1019,7 +1045,11 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
                     &app,
                     epoch,
                     "stream://recording",
-                    p.to_string_lossy().to_string(),
+                    RecordingPayload {
+                        path: p.to_string_lossy().to_string(),
+                        utterance: None,
+                        duration_ms: None,
+                    },
                 );
             }
             // Surface server-locked decode overrides the same way the streaming path's

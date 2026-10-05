@@ -389,6 +389,22 @@ pub(crate) fn windows_owner_only_dacl(dir: &Path) -> std::io::Result<()> {
 ///
 /// See [`create_dir_private`] for why the directory itself is owner-only.
 pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBuf> {
+    save_recording_as(
+        dir,
+        &format!("dictation-{}", recording_stamp()),
+        pcm,
+        sample_rate,
+    )
+}
+
+/// Human-readable, sortable local timestamp for recording names (e.g. `2026-06-16_22-47-35`).
+pub fn recording_stamp() -> String {
+    chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string()
+}
+
+/// [`save_recording`] under a caller-chosen stem (`dictation-…`, so retention still owns it).
+/// A counter suffix guards a name that is already taken (never overwrite).
+pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -> Option<PathBuf> {
     if pcm.is_empty() {
         return None;
     }
@@ -396,13 +412,10 @@ pub fn save_recording(dir: &Path, pcm: &[u8], sample_rate: u32) -> Option<PathBu
         tracing::warn!("[record] could not create recordings dir: {e}");
         return None;
     }
-    // Human-readable, sortable local timestamp (e.g. dictation-2026-06-16_22-47-35.wav). A counter
-    // suffix guards the rare case of two recordings within the same second (never overwrite).
-    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
-    let mut path = dir.join(format!("dictation-{stamp}.wav"));
+    let mut path = dir.join(format!("{stem}.wav"));
     let mut n = 2;
     while path.exists() {
-        path = dir.join(format!("dictation-{stamp}-{n}.wav"));
+        path = dir.join(format!("{stem}-{n}.wav"));
         n += 1;
     }
     match write_new_private(&path, &wav_from_pcm16(pcm, sample_rate, 1)) {
