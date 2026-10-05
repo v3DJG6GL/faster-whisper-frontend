@@ -1357,7 +1357,7 @@ export default function Transcribe() {
             <span className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint transition-colors group-hover:bg-accent-soft group-hover:text-accent group-focus-visible:bg-accent-soft group-focus-visible:text-accent">
               <UploadCloud aria-hidden className="size-6" />
             </span>
-            <span className="mt-4 text-[14px] text-text underline-offset-4 transition-colors group-hover:text-accent group-hover:underline group-focus-visible:text-accent group-focus-visible:underline">
+            <span className="mt-4 text-[14px] text-text transition-colors group-hover:text-accent group-focus-visible:text-accent">
               {dragOver ? "Drop to add" : "Choose or drop files to transcribe"}
             </span>
           </button>
