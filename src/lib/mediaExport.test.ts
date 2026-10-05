@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, isVideoSourcePath,
   legacyTrackIndices, linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles,
   sidecarNames, stemTimestamp,
 } from "./mediaExport";
@@ -90,9 +90,6 @@ describe("embeddedSubtitleTracks", () => {
     expect(legacyTrackIndices([])).toEqual({ defaultTrack: null, originalTrack: null });
     expect(sidecarFiles(site, { format: "srt" }, order, "srt").map((f) => f.name("s")))
       .toEqual(["s.de.srt", "s.YouTube.de.sdh.srt", "s.en.srt", "s.YouTube-auto.en.srt"]);
-  });
-  it("isSubtitleFormat: only SRT and VTT ride with a video", () => {
-    expect(["srt", "vtt", "txt", "lrc", "json"].filter(isSubtitleFormat)).toEqual(["srt", "vtt"]);
   });
 });
 

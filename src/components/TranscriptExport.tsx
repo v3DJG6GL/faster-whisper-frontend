@@ -18,7 +18,8 @@ import {
 import { safeDisplayText } from "@/lib/sanitize";
 import { langCode, trackLanguageName } from "@/lib/languages";
 import {
-  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, prettySpeaker, previewExport, type ExportFormat,
+  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, prettySpeaker, previewExport,
+  type ExportFormat,
   type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
 import {
@@ -34,7 +35,7 @@ import {
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
-  basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath,
+  basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isVideoSourcePath,
   legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";

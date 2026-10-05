@@ -5,7 +5,7 @@
 
 import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
-import { generateExports, type ExportOptions } from "./transcriptExport";
+import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptExport";
 import { codeSlug } from "./sanitize";
 import type { BatchResult, Capabilities } from "./types";
 import { isSourceUrl } from "./urlSource";
@@ -13,14 +13,6 @@ import { isSourceUrl } from "./urlSource";
 export type MediaChoice = "none" | "audio" | "video";
 export type MediaContainer = "mkv" | "mp4";
 export type SubtitleMode = "embedded" | "sidecar" | "both";
-/** The two text formats a video player loads beside (or inside) a video.
- *  TXT, LRC and JSON are not subtitles: with Video on, the format row
- *  narrows to these two (D69 A). */
-export type SubtitleFormat = "srt" | "vtt";
-export const SUBTITLE_FORMATS: readonly SubtitleFormat[] = ["srt", "vtt"];
-export function isSubtitleFormat(format: string): format is SubtitleFormat {
-  return (SUBTITLE_FORMATS as readonly string[]).includes(format);
-}
 
 export function basename(path: string): string {
   return path.split(/[\\/]/).pop() || path;

@@ -2,7 +2,7 @@
 // format can carry, and what the file will contain. Pure, no Tauri imports —
 // the panel maps these onto its controls.
 
-import type { ExportFormat } from "./transcriptExport";
+import { isSubtitleFormat, type ExportFormat } from "./transcriptExport";
 
 /** on/off = a toggle; fixed = always in this format; na = the format can't
  *  carry it (or the transcript has nothing to carry). `why` is the tooltip. */
@@ -14,8 +14,6 @@ export interface ContentItem {
   state: ContentState;
   why: string;
 }
-
-const isSub = (f: ExportFormat) => f === "srt" || f === "vtt";
 
 /** The Content box: Timestamps · Speaker names · Speaker colors · Word timing,
  *  format-aware — the same values Read's toggles show. */
@@ -50,7 +48,7 @@ export function contentStates(a: {
       key: "colors", label: "Speaker colors",
       ...(!a.hasSpeakers ? noSpeakers
         : f === "json" ? { state: "fixed" as const, why: "always in JSON, as data" }
-          : isSub(f) ? toggle(a.colorize, f === "srt" ? "<font> tags — VLC and mpv show them" : "styled cues — browsers show them, some players don't")
+          : isSubtitleFormat(f) ? toggle(a.colorize, f === "srt" ? "<font> tags — VLC and mpv show them" : "styled cues — browsers show them, some players don't")
             : { state: "na" as const, why: "plain text has no colors" }),
     },
     {
@@ -96,7 +94,7 @@ export function exportSummary(a: {
   editCount: number;
   media: { choice: "none" | "audio" | "video"; container: string; subtitleMode: string; audioExt: string | null } | null;
 }): SummaryRow[] {
-  const sub = isSub(a.format);
+  const sub = isSubtitleFormat(a.format);
   const item = (k: ContentItem["key"]) => a.content.find((c) => c.key === k)!;
   const plural = (n: number, one: string) => `${n.toLocaleString("en")} ${one}${n === 1 ? "" : "s"}`;
   const rows: SummaryRow[] = [];

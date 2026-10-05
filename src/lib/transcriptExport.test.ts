@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport,
+  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat,
   generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
@@ -774,5 +774,11 @@ describe("exportOptionsFor (the panel's and History's one builder)", () => {
     const o = exportOptionsFor({ format: "txt", speakers: [], renames: {}, colorPicks: {}, toggles, cues: undefined, tracks: [] });
     expect(o.speakerColors).toBe("off");
     expect("tracks" in o).toBe(false);
+  });
+});
+
+describe("isSubtitleFormat", () => {
+  it("only SRT and VTT carry subtitle cues (and ride with a video)", () => {
+    expect(["srt", "vtt", "txt", "lrc", "json"].filter(isSubtitleFormat)).toEqual(["srt", "vtt"]);
   });
 });

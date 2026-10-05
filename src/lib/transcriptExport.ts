@@ -11,6 +11,13 @@ import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
 
 export type ExportFormat = "txt" | "srt" | "vtt" | "lrc" | "json";
+/** The two text formats a video player loads beside (or inside) a video —
+ *  the formats with subtitle cues. TXT, LRC and JSON are not subtitles: with
+ *  Video on, the format row narrows to these two (D69 A). */
+export type SubtitleFormat = "srt" | "vtt";
+export function isSubtitleFormat(format: string): format is SubtitleFormat {
+  return format === "srt" || format === "vtt";
+}
 /** How speaker identity is styled in subtitle formats:
  *  off = plain "Name:" prefix · name = only the name colored ·
  *  line = name + sentence colored · line-only = sentence colored, name hidden. */
@@ -586,13 +593,11 @@ function jsonTimedTrack(t: TimedTrack) {
   };
 }
 
-const isSubtitle = (f: ExportFormat) => f === "srt" || f === "vtt";
-
 /** Does `track` carry its own cue timing in this export? Site tracks always;
  *  a machine translation when the cue options ask for own timing. */
 function ownTimed(result: BatchResult, opts: ExportOptions, track: string): boolean {
   if (result.timedTracks?.some((t) => t.id === track)) return true;
-  return track !== "orig" && isSubtitle(opts.format) && opts.cues?.timing === "own";
+  return track !== "orig" && isSubtitleFormat(opts.format) && opts.cues?.timing === "own";
 }
 
 /** What the generators render: the segments themselves, or — for SRT/VTT
@@ -604,7 +609,7 @@ function projected(result: BatchResult, opts: ExportOptions): BatchResult {
   if (tracks.length === 1 && ownTimed(result, opts, tracks[0])) {
     return cueResult(result, cueGrid(result, opts, tracks), tracks[0]);
   }
-  return opts.cues && isSubtitle(opts.format) ? cueResult(result, cueGrid(result, opts, tracks)) : result;
+  return opts.cues && isSubtitleFormat(opts.format) ? cueResult(result, cueGrid(result, opts, tracks)) : result;
 }
 
 /** The cues of `tracks`, leaving room for the "Name: " prefix their first
@@ -643,7 +648,7 @@ export function generateExport(source: BatchResult, opts: ExportOptions): string
 function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
   const order = speakerOrder(result);
   const lineTracks = exportTrackList(opts);
-  const cues = isSubtitle(opts.format) ? opts.cues : undefined;
+  const cues = isSubtitleFormat(opts.format) ? opts.cues : undefined;
   return {
     opts,
     order,
@@ -686,7 +691,7 @@ export function exportFileGroups(
   // misleading and wrong when the track picker state survives a format switch.
   if (opts.format === "json") return [{ tracks: opts.tracks, name: (stem) => `${stem}.${ext}` }];
   const tracks = exportTrackList(opts);
-  const perTrack = opts.format === "lrc" || (isSubtitle(opts.format) && opts.cues?.timing === "own");
+  const perTrack = opts.format === "lrc" || (isSubtitleFormat(opts.format) && opts.cues?.timing === "own");
   const alone = tracks.filter((t) => perTrack || result.timedTracks?.some((x) => x.id === t));
   if (!alone.length) {
     const suffix = exportStemSuffix(opts.tracks);
@@ -719,7 +724,7 @@ export function previewExport(
 ): { text: string; count: number; total: number } {
   const tracks = opts.tracks ?? ["orig"];
   const segs = result.segments ?? [];
-  const grid = cueGrid(result, { ...opts, cues: isSubtitle(opts.format) ? opts.cues : undefined }, tracks);
+  const grid = cueGrid(result, { ...opts, cues: isSubtitleFormat(opts.format) ? opts.cues : undefined }, tracks);
   const list = tracks.length === 1
     ? trackCues(grid, tracks[0])
     : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : c.tr[t])));
