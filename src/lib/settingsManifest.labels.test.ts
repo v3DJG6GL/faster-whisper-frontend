@@ -11,6 +11,7 @@ import { SETTING } from "./settingsManifest";
 // tsconfig, and vitest resolves them through the same pipeline as the app.
 import transcribeSrc from "../screens/Transcribe.tsx?raw";
 import settingsSrc from "../screens/Settings.tsx?raw";
+import loggingSrc from "../components/settings/LoggingSection.tsx?raw";
 import viewerSrc from "../components/transcribe/TranscriptViewer.tsx?raw";
 import exportSrc from "../components/transcribe/TranscriptExport.tsx?raw";
 import summarySrc from "./transcript/exportSummary.ts?raw";
@@ -18,6 +19,7 @@ import summarySrc from "./transcript/exportSummary.ts?raw";
 const SOURCES: Record<string, string> = {
   "screens/Transcribe.tsx": transcribeSrc,
   "screens/Settings.tsx": settingsSrc,
+  "components/settings/LoggingSection.tsx": loggingSrc,
   "components/transcribe/TranscriptViewer.tsx": viewerSrc,
   "components/transcribe/TranscriptExport.tsx": exportSrc,
   "lib/transcript/exportSummary.ts": summarySrc,
@@ -63,9 +65,16 @@ describe("manifest labels match the screens' literal labels", () => {
   }
 
   it("Settings.tsx uses manifest references, not literals, for manifest-covered rows", () => {
-    const s = src("screens/Settings.tsx");
-    // A representative sample: these must never reappear as title literals.
-    for (const id of ["openAtLogin", "trimSilence", "chipPosition", "logLevel"] as const) {
+    // A representative sample: these must never reappear as title literals. Each id is
+    // read from the file that renders its row (the Logging section has its own module).
+    const sample = [
+      ["screens/Settings.tsx", "openAtLogin"],
+      ["screens/Settings.tsx", "trimSilence"],
+      ["screens/Settings.tsx", "chipPosition"],
+      ["components/settings/LoggingSection.tsx", "logLevel"],
+    ] as const;
+    for (const [file, id] of sample) {
+      const s = src(file);
       expect(s.includes(`title="${SETTING[id].label}"`)).toBe(false);
       expect(s.includes(`SETTING.${id}.label`)).toBe(true);
     }
