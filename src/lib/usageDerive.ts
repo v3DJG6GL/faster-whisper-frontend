@@ -2,7 +2,7 @@
 // per-kind densified series, scope filtering, tile values, the page query (range presets,
 // custom span, stage filter) and its URL form, chart bucketing, the quantile calendar and
 // hour-grid levels, streaks and the stage-row vocabulary. No React, no store — every function takes its inputs so
-// vitest covers it without a webview. The charts in components/UsageStats.tsx only
+// vitest covers it without a webview. The charts in components/stats/ only
 // lay these numbers out.
 
 import type {

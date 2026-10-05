@@ -10,7 +10,7 @@ import { Button, Card, Notice, Toggle } from "@/components/ui";
 import { routeParts } from "@/lib/routeParts";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
-import { HomeUsageStrip } from "@/components/UsageStats";
+import { HomeUsageStrip } from "@/components/stats/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/dictation/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";

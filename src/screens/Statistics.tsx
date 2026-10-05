@@ -12,7 +12,7 @@ import { BarChart3 } from "lucide-react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { StatisticsView } from "@/components/UsageStats";
+import { StatisticsView } from "@/components/stats/UsageStats";
 import { PageHeader } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { pageQueryParams, parsePageQuery, type ChartMetric, type Rhythm, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
