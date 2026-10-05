@@ -27,7 +27,7 @@ import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { navKey } from "@/lib/listNav";
-import { Kbd } from "@/components/ui";
+import { Kbd } from "@/components/Kbd";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 
