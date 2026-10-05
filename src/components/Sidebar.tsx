@@ -9,7 +9,7 @@ import { VISIBLE_SCREENS } from "@/lib/screenRegistry";
 import { PRIDE_FLAG_URI } from "@/lib/prideFlag";
 import { dictationVisual } from "@/lib/dictationVisual";
 import { runBadgeFraction, useTranscribeRun } from "@/lib/transcribeRun";
-import { unseenCount, useLogs } from "@/lib/logs";
+import { unseenCount, useLogs } from "@/lib/logViewer";
 import { StatusDot } from "./ui";
 
 /** Live percentage of an in-flight Transcribe run — visible from every tab,

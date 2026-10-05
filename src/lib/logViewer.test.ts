@@ -41,7 +41,7 @@ vi.mock("./api", () => ({
   },
 }));
 
-const { attachLogStream, clearView, visibleLines } = await import("./logs");
+const { attachLogStream, clearView, visibleLines } = await import("./logViewer");
 
 describe("visibleLines", () => {
   it("hands back a fresh array on every version bump, so memos keyed on it invalidate", async () => {

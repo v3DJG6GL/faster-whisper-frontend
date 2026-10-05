@@ -6,7 +6,7 @@
 
 import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
-import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptExport";
+import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcript/transcriptFormats";
 import { codeSlug } from "./sanitize";
 import type { BatchResult, Capabilities, TranscribeSettings } from "./types";
 import { isSourceUrl } from "./urlSource";

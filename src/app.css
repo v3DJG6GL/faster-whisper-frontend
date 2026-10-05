@@ -113,7 +113,7 @@
   --c-cal-4: #e0900e;
   /* Speaker-chip palette (Transcribe screen): eight hue-separated tones at
      matched brightness, indexed — exports resolve the same indexes to the
-     DEFAULT_SPEAKER_COLORS hexes in transcriptExport.ts. Coral stays
+     DEFAULT_SPEAKER_COLORS hexes in transcript/transcriptFormats.ts. Coral stays
      reserved for the recording pulse. */
   --spk-1: #ff9e2c; /* amber (armed) */
   --spk-2: #6faed9; /* sky (think) */

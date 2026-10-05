@@ -6,7 +6,7 @@ import { useApp } from "@/lib/store";
 import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labeled, ListScreenHeader, Notice, Segmented, SectionLabel, SetSummary, StatusDot, TextInput } from "@/components/ui";
 import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
 import { ServerInfoButton, ServerInfoPanel } from "@/components/ServerInfoPanel";
-import { backendChips } from "@/lib/backendChips";
+import { backendChips } from "@/lib/backendChipLabels";
 import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/envDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";

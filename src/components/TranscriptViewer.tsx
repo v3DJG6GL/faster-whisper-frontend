@@ -38,7 +38,7 @@ import {
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
-} from "@/lib/transcriptExport";
+} from "@/lib/transcript/transcriptFormats";
 import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";

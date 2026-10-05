@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendChips, deviceChip, modelDevice, versionChip, withBackendChips } from "./backendChips";
+import { backendChips, deviceChip, modelDevice, versionChip, withBackendChips } from "./backendChipLabels";
 import type { ConnectionInfo, ServerModel } from "./types";
 
 const models: ServerModel[] = [

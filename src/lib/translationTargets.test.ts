@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chipCodes, pruneTargets } from "./translationTargets";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the
-// sanitizers; the chip renderer is the last line of defence (mirrors overlay.test.ts).
+// sanitizers; the chip renderer is the last line of defence (mirrors dictation/chipController.test.ts).
 describe("chipCodes", () => {
   it("keeps only trimmed non-empty strings", () => {
     expect(chipCodes([123, null, {}, "", "  ", "fr", " de "])).toEqual(["fr", "de"]);

@@ -15,7 +15,7 @@ import { ownProp } from "./own";
 import { effectiveLanguage } from "./backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
-import { configuredRouteTargets } from "./overlay";
+import { configuredRouteTargets } from "./dictation/chipController";
 import { rememberRecent } from "./recent";
 import { maxTranslationTargets, translationTargetInfo } from "./capabilities";
 import type { Backend, Profile } from "./types";

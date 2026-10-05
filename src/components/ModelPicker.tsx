@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { Combobox } from "@/components/Combobox";
 import { Badge } from "@/components/ui";
-import { deviceChip } from "@/lib/backendChips";
+import { deviceChip } from "@/lib/backendChipLabels";
 import type { ServerModel } from "@/lib/types";
 
 export function ModelPicker({

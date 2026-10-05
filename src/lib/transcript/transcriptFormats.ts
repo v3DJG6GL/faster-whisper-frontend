@@ -6,11 +6,11 @@
 
 import {
   TRANSCRIBED_CPS, buildCues, cueResult, timedTrack, trText, trackCues, trackLimits, wrapLines, type CueOptions,
-} from "./cueSplit";
-import { planTracks, trackFileSuffixes } from "./exportTracks";
-import { codeSlug, stripControlChars } from "./sanitize";
-import { segmentWordRanges } from "./wordAlign";
-import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
+} from "../cueSplit";
+import { planTracks, trackFileSuffixes } from "../exportTracks";
+import { codeSlug, stripControlChars } from "../sanitize";
+import { segmentWordRanges } from "../wordAlign";
+import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
 
 export type ExportFormat = "txt" | "srt" | "vtt" | "lrc" | "json";
 /** The two text formats a video player loads beside (or inside) a video —

@@ -1,6 +1,6 @@
 // Round-trip guards: what generateExport writes, parseImportedText reads back.
 import { describe, expect, it } from "vitest";
-import { generateExport } from "./transcriptExport";
+import { generateExport } from "./transcript/transcriptFormats";
 import {
   ACCEPTED_EXTS,
   TEXT_SOURCE_EXTS,

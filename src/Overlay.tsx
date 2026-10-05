@@ -547,13 +547,13 @@ export default function Overlay() {
     .map((t) => langCode(t, 12))
     .filter(Boolean);
   const hasRoute = routeTargets.length > 0;
-  // A bounded number from our own overlay.ts, but it rides the peer-adjacent payload: clamp.
+  // A bounded number from our own chipController.ts, but it rides the peer-adjacent payload: clamp.
   const routeMore = Math.min(99, Math.max(0, Math.floor(Number(state.translateMore) || 0)));
   const routeText = routeMore > 0 ? `${routeTargets.join(" ")} +${routeMore}` : routeTargets.join(" ");
   // The route has its own visibility setting ("Show translation route"), sent only when on.
   const routeGate = !state.routeOnHover || hoverReveal;
   const showRoute = hasRoute && routeGate;
-  // What stands in for the route when there is none to promise (overlay.ts chipRoutePending):
+  // What stands in for the route when there is none to promise (chipController.ts chipRoutePending):
   // a dashed "→ ask" / "→ ?" glyph, the "choosing targets…" sub-label, or — for a moment —
   // "· original", the acknowledgement of an explicit "no translation". Same setting gate as
   // the route: these are the route's own honesty, not a separate feature.
@@ -605,7 +605,7 @@ export default function Overlay() {
       )}
     </span>
   ) : null;
-  // P16/D target readout: overlay.ts only sends `targetTitle` while a session is active AND the
+  // P16/D target readout: chipController.ts only sends `targetTitle` while a session is active AND the
   // "Show injection target" setting is on, so its presence alone gates the chip's "→ app" segment.
   // A `targetSkip` reason means injection was coerced to the clipboard → tint the readout warn.
   // The "only while speaking" and "on hover" reveal gates stack on top.
@@ -672,7 +672,7 @@ export default function Overlay() {
   // session, or — with the dock on — in standby too. Outside Tauri the calls no-op.
   const interactive = state.status !== "idle" || (state.persistentDock && state.position !== "off");
   // `state.status` MUST be a dependency: show_overlay re-applies set_ignore_cursor_events(true) on
-  // every (re)show — including the standby→session re-center in overlay.ts — which WIPES the input
+  // every (re)show — including the standby→session re-center in chipController.ts — which WIPES the input
   // shape and makes the whole window click-through again. With the dock on, neither `interactive`
   // nor `peeked` changes on session start, so without `status` the shape was never re-applied and
   // the chip stayed unhoverable for the entire session. The late 1500ms retry guarantees the final

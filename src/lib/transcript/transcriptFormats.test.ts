@@ -7,8 +7,8 @@ import {
   generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
-} from "./transcriptExport";
-import type { BatchResult } from "./types";
+} from "./transcriptFormats";
+import type { BatchResult } from "../types";
 
 const RESULT: BatchResult = {
   text: "Hello there. General greeting.",

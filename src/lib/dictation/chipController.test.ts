@@ -2,7 +2,7 @@
 // store or the cross-window payload it normally rides in.
 
 import { describe, expect, it } from "vitest";
-import { chipRouteMore, chipRoutePending, chipRouteTargets, configuredRouteTargets, trayStatus } from "./overlay";
+import { chipRouteMore, chipRoutePending, chipRouteTargets, configuredRouteTargets, trayStatus } from "./chipController";
 
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge.

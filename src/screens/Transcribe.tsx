@@ -27,7 +27,7 @@ import { diarizationSummary, separationSummary, speakersText, stageModelText } f
 import { envDesc } from "@/lib/envDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
-import { speakerOrder as speakersOf } from "@/lib/transcriptExport";
+import { speakerOrder as speakersOf } from "@/lib/transcript/transcriptFormats";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useBackendModels } from "@/lib/useBackendModels";
@@ -45,7 +45,7 @@ import {
 import { closeRecord, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
-import { withBackendChips } from "@/lib/backendChips";
+import { withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";

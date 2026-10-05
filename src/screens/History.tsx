@@ -32,7 +32,7 @@ import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeR
 import {
   EXPORT_EXTENSIONS, exportOptionsFor, generateExports, speakerOrder,
   type ExportFormat,
-} from "@/lib/transcriptExport";
+} from "@/lib/transcript/transcriptFormats";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";

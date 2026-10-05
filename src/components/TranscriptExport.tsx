@@ -20,7 +20,7 @@ import {
   cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, previewExport, speakerName, tracksOf,
   type ExportFormat,
   type ExportOptions, exportFileNames,
-} from "@/lib/transcriptExport";
+} from "@/lib/transcript/transcriptFormats";
 import {
   CUE_PRESETS, CUE_RANGES, TRANSCRIBED_CPS, limitsTitle, sanitizeCueLimits, trackLimits, type CueLimits,
   type CueOptions, type SubtitleLength,

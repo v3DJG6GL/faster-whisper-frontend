@@ -595,7 +595,7 @@ function foldTranslatePhase(p: BatchProgress): void {
     p.stage !== "loading" && typeof p.progress === "number"
       ? Math.min(1, Math.max(0, p.progress))
       : undefined;
-  if (cur.label === label && cur.pct === pct) return; // identical reading — keep the overlay gate transition-driven (overlay.ts `phase` comment)
+  if (cur.label === label && cur.pct === pct) return; // identical reading — keep the overlay gate transition-driven (chipController.ts `phase` comment)
   useApp.getState().setDictation({ dictationPhase: { ...cur, label, pct } });
 }
 /** Translate `text` for injection, or return it unchanged (no target set,
@@ -1630,7 +1630,7 @@ async function ensureListeners(): Promise<void> {
 
   // The level meter arrives per audio callback (~50–100 Hz). Pushing every sample
   // into the store fans out to a cross-window IPC `emit` + a full overlay re-render
-  // on EVERY frame (overlay.ts re-broadcasts on any `level` change) — over a multi-
+  // on EVERY frame (chipController.ts re-broadcasts on any `level` change) — over a multi-
   // hour session that churn alone bloated the shared WebKitGTK renderer to multiple
   // GB. ~30 Hz is indistinguishable for a level meter, so coalesce: fire on the
   // leading edge, then trail the latest value so the meter still settles to its true
@@ -1751,7 +1751,7 @@ async function ensureListeners(): Promise<void> {
     // firing the auto-Enter and resetting the clipboard baseline while the user was talking.
     const capturing = isCapturing();
     // Coalesced for the same measured reason as `stream://level` above, and against a worse
-    // pacer. `overlay.ts` subscribes on `state.partial !== prev.partial` exactly as it does on
+    // pacer. `chipController.ts` subscribes on `state.partial !== prev.partial` exactly as it does on
     // `level`, so every partial rebuilds the whole chip payload, IPC-emits it cross-window and
     // re-renders both windows — the churn that comment records as having bloated the shared
     // WebKitGTK renderer to multiple GB over a long session. But `level` is hardware-paced at
@@ -2862,7 +2862,7 @@ function mergeDecodeOverrides(
 
 /** How long a dictation error lingers on the chip before it auto-clears back to idle. Without
  *  this a transient failure (server unreachable, refused start) sticks forever — most visibly
- *  with the persistent dock on, where the chip never hides on its own (overlay.ts keeps it shown
+ *  with the persistent dock on, where the chip never hides on its own (chipController.ts keeps it shown
  *  while the dock is enabled, so its error hide-timer never runs). */
 const ERROR_LINGER_MS = 4000;
 let errorClearTimer: ReturnType<typeof setTimeout> | null = null;

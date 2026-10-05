@@ -1,7 +1,7 @@
 // Usage-stats controller (runs in the main window). Keeps the active backend's
 // usage (GET /v1/usage) fresh in the store so BOTH the Home stats section
 // (React) and the chip readout (the separate overlay webview, fed via
-// overlay.ts) can read it. Like overlay.ts it's a store-subscribed singleton.
+// chipController.ts) can read it. Like chipController.ts it's a store-subscribed singleton.
 //
 // Two documents per backend: a FIXED 30-day one for the Home strip and the chip
 // (`usage[backendId]`), and — for the viewed backend only — the Statistics page's own

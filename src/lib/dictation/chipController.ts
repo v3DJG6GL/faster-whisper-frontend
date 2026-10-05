@@ -7,16 +7,16 @@
 // "bottom" | "off"). The chip lingers briefly after a session so the final
 // transcript (or an error) stays readable before it disappears.
 
-import { useApp } from "./store";
-import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "./api";
-import { chipTagFor } from "./profileTag";
-import { backendForProfile, homeTargetProfile } from "./dictation";
-import { activeStatsBackend } from "./usage";
-import { fmtCompact, fmtDuration } from "./format";
-import { ownProp } from "./own";
-import { effectiveLanguage } from "./backends";
-import { isActiveDictation } from "./dictationVisual";
-import type { OverlayStatsMetric, ServerWork, UsageStats } from "./types";
+import { useApp } from "../store";
+import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "../api";
+import { chipTagFor } from "../profileTag";
+import { backendForProfile, homeTargetProfile } from "../dictation";
+import { activeStatsBackend } from "../usage";
+import { fmtCompact, fmtDuration } from "../format";
+import { ownProp } from "../own";
+import { effectiveLanguage } from "../backends";
+import { isActiveDictation } from "../dictationVisual";
+import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
 
 /** How many translation targets the chip spells out before the rest become "+N". Two, not
  *  `routeParts`' three: the chip's identity row shares one line with the live transcript,

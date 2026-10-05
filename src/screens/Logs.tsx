@@ -5,7 +5,7 @@
 // Layout follows the TranscriptViewer focus-mode shape: fixed header+toolbar,
 // the list is the one scrolling box (<main> scrolling stays unused here).
 // Lines are virtualized (@tanstack/react-virtual) — the DOM never holds the
-// full 10k-line buffer — and live OUTSIDE the store (see lib/logs.ts).
+// full 10k-line buffer — and live OUTSIDE the store (see lib/logViewer.ts).
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
@@ -21,7 +21,7 @@ import {
   markLogsViewed,
   takePrefilter,
   useLogs,
-  visibleLines, clearedCount } from "@/lib/logs";
+  visibleLines, clearedCount } from "@/lib/logViewer";
 import {
   buildBugReport,
   collectTags,

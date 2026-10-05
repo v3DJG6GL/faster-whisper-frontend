@@ -15,7 +15,7 @@ import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation";
-import { configuredRouteTargets } from "@/lib/overlay";
+import { configuredRouteTargets } from "@/lib/dictation/chipController";
 import { langCode, languageLabel } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
 import type { Backend, Profile } from "@/lib/types";

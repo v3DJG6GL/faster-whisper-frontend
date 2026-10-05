@@ -1,5 +1,5 @@
 // Parsers for text/subtitle sources (SRT / VTT / LRC / plain text / our own
-// JSON export) — the inverse of transcriptExport, reduced to what a
+// JSON export) — the inverse of transcriptFormats, reduced to what a
 // translate-only run needs: ordered segments with optional timing/speaker.
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
