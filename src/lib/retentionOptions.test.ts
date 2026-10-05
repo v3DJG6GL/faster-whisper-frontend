@@ -6,7 +6,7 @@ import {
   withCurrentDay,
 } from "./retentionOptions";
 
-// Pure screen helper, tested without a DOM (the axisLayout.test.ts precedent).
+// Pure helper, tested without a DOM.
 describe("withCurrentDay", () => {
   it("returns the same list when the value is already offered", () => {
     expect(withCurrentDay(LOG_RETENTION_OPTIONS, 30)).toBe(LOG_RETENTION_OPTIONS);

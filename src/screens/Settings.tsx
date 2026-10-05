@@ -66,7 +66,7 @@ import {
   HISTORY_RETENTION_OPTIONS,
   LOG_RETENTION_OPTIONS,
   withCurrentDay,
-} from "@/screens/retentionOptions";
+} from "@/lib/retentionOptions";
 
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
 function fmtBytes(n: number): string {
