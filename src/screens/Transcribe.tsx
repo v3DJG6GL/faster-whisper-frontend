@@ -15,7 +15,8 @@ import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
-import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
+import { TranslationOptionsFields } from "@/components/TranslationFields";
+import { pruneTargets, translationRunOptions } from "@/lib/translationTargets";
 import {
   inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName,
   withDefaultModel,

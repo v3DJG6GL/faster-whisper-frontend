@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chipCodes } from "./TranslationFields";
+import { chipCodes } from "./translationTargets";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the
 // sanitizers; the chip renderer is the last line of defence (mirrors overlay.test.ts).

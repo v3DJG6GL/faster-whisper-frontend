@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from "vitest";
 import { backendPrompt, backendPromptFields } from "./backends";
-import { pruneTranslationOverrides, translationRunOptions } from "@/components/TranslationFields";
+import { pruneTranslationOverrides, translationRunOptions } from "@/lib/translationTargets";
 import type { Backend } from "./types";
 
 const backend = (over: Partial<Backend> = {}): Backend => ({

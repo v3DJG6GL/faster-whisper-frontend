@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { SKIPPED_EXPLANATIONS, axisLayout } from "./Transcribe";
-import { pruneTargets } from "@/components/TranslationFields";
+import { pruneTargets } from "@/lib/translationTargets";
 import { railStages } from "@/lib/transcribeRun";
 
 // Pure screen helpers, tested without a DOM (the historyTracks.test.ts precedent).

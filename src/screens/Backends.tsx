@@ -12,7 +12,8 @@ import { envDesc } from "@/lib/settingDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
-import { TranslationDefaultsEditor, targetsLabel } from "@/components/TranslationFields";
+import { TranslationDefaultsEditor } from "@/components/TranslationFields";
+import { targetsLabel } from "@/lib/translationTargets";
 import {
   inheritLabel, LOCKED_REASON, serverContextSegments, serverInherited, serverLanguageLabel, shortModelName,
 } from "@/lib/inherit";
