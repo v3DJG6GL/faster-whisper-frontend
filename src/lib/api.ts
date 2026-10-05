@@ -42,6 +42,34 @@ import type {
 export const isTauri =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
+/** The server a command talks to: its URL plus whose key Rust resolves — the saved backend's
+ *  keyring entry (`backendId`) or an explicit `apiKey` (a backend not saved yet). */
+export interface ServerTarget {
+  serverUrl: string;
+  backendId?: string | null;
+  apiKey?: string | null;
+}
+
+/** Invoke a server command with the target's three args (absent ones sent as null) ahead of
+ *  `rest`. Outside Tauri it answers `offline` instead — or throws it, when that is an Error. */
+async function invokeServer<T>(
+  cmd: string,
+  target: ServerTarget,
+  rest: Record<string, unknown>,
+  offline: T | Error,
+): Promise<T> {
+  if (!isTauri) {
+    if (offline instanceof Error) throw offline;
+    return offline;
+  }
+  return invoke<T>(cmd, {
+    serverUrl: target.serverUrl,
+    backendId: target.backendId ?? null,
+    apiKey: target.apiKey ?? null,
+    ...rest,
+  });
+}
+
 /** The config plus whether Rust had to RECOVER it (backed up an unreadable/corrupt file to
  *  config.json.bak and returned defaults) — so the UI can warn the settings were reset. */
 export interface LoadedConfig {
@@ -107,25 +135,12 @@ export async function remoteDesktopAutoDetected(appId: string): Promise<boolean>
   }
 }
 
-export async function testConnection(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<ConnectionInfo> {
-  if (!isTauri) {
-    return { ok: false, openMode: false, models: [], error: "Not running in the desktop app." };
-  }
-  return invoke<ConnectionInfo>("test_connection", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function testConnection(args: ServerTarget): Promise<ConnectionInfo> {
+  const offline = { ok: false, openMode: false, models: [], error: "Not running in the desktop app." };
+  return invokeServer<ConnectionInfo>("test_connection", args, {}, offline);
 }
 
-export async function transcribeFile(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function transcribeFile(args: ServerTarget & {
   model: string;
   language: string;
   // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
@@ -137,11 +152,7 @@ export async function transcribeFile(args: {
    *  on the wire, so the server's own defaults apply. */
   options?: TranscribeOptions | null;
 }): Promise<BatchResult> {
-  if (!isTauri) throw new Error("Transcription requires the desktop app.");
-  return invoke<BatchResult>("transcribe_file", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<BatchResult>("transcribe_file", args, {
     model: args.model,
     language: args.language,
     prompt: args.prompt ?? null,
@@ -149,7 +160,7 @@ export async function transcribeFile(args: {
     overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
     options: args.options ?? null,
-  });
+  }, new Error("Transcription requires the desktop app."));
 }
 
 /** Read a subtitle/text source file (translate-only runs; 10 MB cap). */
@@ -178,10 +189,7 @@ export interface TextTranslationResult {
 /** Translate segment texts (T2T, no audio): dictation settle-time
  *  translation, the viewer's re-translate, retro-translation, and
  *  subtitle/text-file sources. */
-export async function translateText(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function translateText(args: ServerTarget & {
   texts: string[];
   targets: string[];
   source?: string | null;
@@ -205,11 +213,7 @@ export async function translateText(args: {
    *  Transcribe pump's text-source path only. */
   fileEpochCancel?: boolean;
 }): Promise<TextTranslationResult> {
-  if (!isTauri) throw new Error("Translation requires the desktop app.");
-  return invoke<TextTranslationResult>("translate_text", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<TextTranslationResult>("translate_text", args, {
     texts: args.texts,
     targets: args.targets,
     source: args.source ?? null,
@@ -221,33 +225,23 @@ export async function translateText(args: {
     capturedId: args.capturedId ?? null,
     clientJob: args.clientJob ?? null,
     cancelWithFileEpoch: args.fileEpochCancel ?? null,
-  });
+  }, new Error("Translation requires the desktop app."));
 }
 
 /** Tell the SERVER to abort the in-flight text translation behind
  *  `progressId` (the cancel endpoint is shared with batch transcription).
  *  Best-effort — an older backend just answers 404. */
-export async function cancelTextTranslation(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function cancelTextTranslation(args: ServerTarget & {
   progressId: string;
 }): Promise<void> {
-  if (!isTauri) return;
-  await invoke("cancel_text_translation", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  await invokeServer<void>("cancel_text_translation", args, {
     progressId: args.progressId,
-  });
+  }, undefined);
 }
 
 /** Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
  *  and runs the normal pipeline. Full backend only (url_download_enabled). */
-export async function transcribeUrl(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function transcribeUrl(args: ServerTarget & {
   model: string;
   language: string;
   prompt?: string | null;
@@ -256,11 +250,7 @@ export async function transcribeUrl(args: {
   sourceUrl: string;
   options?: TranscribeOptions | null;
 }): Promise<BatchResult> {
-  if (!isTauri) throw new Error("Transcription requires the desktop app.");
-  return invoke<BatchResult>("transcribe_url", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<BatchResult>("transcribe_url", args, {
     model: args.model,
     language: args.language,
     prompt: args.prompt ?? null,
@@ -268,25 +258,18 @@ export async function transcribeUrl(args: {
     overrideProfile: args.overrideProfile ?? null,
     sourceUrl: args.sourceUrl,
     options: args.options ?? null,
-  });
+  }, new Error("Transcription requires the desktop app."));
 }
 
 /** Metadata preview of a pasted media link (title/duration/thumbnail) —
  *  debounced from the URL field. Advisory: a failed preview never blocks
  *  adding the link; the run itself is the authority. */
-export async function urlPreview(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function urlPreview(args: ServerTarget & {
   url: string;
 }): Promise<UrlPreview> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
-  return invoke<UrlPreview>("url_preview", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UrlPreview>("url_preview", args, {
     url: args.url,
-  });
+  }, new Error("Not running in the desktop app."));
 }
 
 // ── Media export (audio / video / video + subtitle tracks) ─────────────────
@@ -318,10 +301,7 @@ export interface PackageOutcome {
  *  `destPath`: uploads a local file first (streamed), then muxes on the
  *  server and streams the result down. Progress on onMediaExportProgress
  *  filtered by `jobId`; cancel with cancelMediaExport. */
-export async function packageMedia(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function packageMedia(args: ServerTarget & {
   jobId: string;
   sourceMediaId?: string | null;
   sourcePath?: string | null;
@@ -337,11 +317,7 @@ export async function packageMedia(args: {
   filename: string;
   maxUploadBytes?: number | null;
 }): Promise<PackageOutcome> {
-  if (!isTauri) throw new Error("Video export requires the desktop app.");
-  return invoke<PackageOutcome>("package_media", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<PackageOutcome>("package_media", args, {
     jobId: args.jobId,
     sourceMediaId: args.sourceMediaId ?? null,
     sourcePath: args.sourcePath ?? null,
@@ -354,7 +330,7 @@ export async function packageMedia(args: {
     destPath: args.destPath,
     filename: args.filename,
     maxUploadBytes: args.maxUploadBytes ?? null,
-  });
+  }, new Error("Video export requires the desktop app."));
 }
 
 export async function cancelMediaExport(): Promise<void> {
@@ -372,19 +348,12 @@ export async function onMediaExportProgress(
 }
 
 /** Codec facts for a retained file; null when the server no longer has it. */
-export async function getMediaStreams(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function getMediaStreams(args: ServerTarget & {
   mediaId: string;
 }): Promise<MediaStreams | null> {
-  if (!isTauri) return null;
-  return invoke<MediaStreams | null>("get_media_streams", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<MediaStreams | null>("get_media_streams", args, {
     mediaId: args.mediaId,
-  });
+  }, null);
 }
 
 /** Plain copy of one of a record's media files (source, audio copy or
@@ -406,23 +375,16 @@ export async function copyMediaTo(args: {
 
 /** Pull the server-retained VIDEO of a link run into the local media store
  *  (video/<recordId>.<ext>). Null when the server no longer has it. */
-export async function fetchUrlVideo(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function fetchUrlVideo(args: ServerTarget & {
   mediaId: string;
   recordId: string;
   audioBase?: string | null;
 }): Promise<string | null> {
-  if (!isTauri) return null;
-  return invoke<string | null>("fetch_url_video", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<string | null>("fetch_url_video", args, {
     mediaId: args.mediaId,
     recordId: args.recordId,
     audioBase: args.audioBase ?? null,
-  });
+  }, null);
 }
 
 /** What the server answers when a link's video or audio was fetched on demand. */
@@ -440,45 +402,31 @@ export interface UrlMediaDownload {
  *  expired) into the server's media store; the id can then be pulled with
  *  fetchUrlVideo. Long-running: progress via getTranscribeProgress on
  *  `progressId` (stage downloading + the `video` sub-object). */
-export async function fetchUrlVideoOnDemand(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function fetchUrlVideoOnDemand(args: ServerTarget & {
   url: string;
   maxHeight?: number | null;
   formatId?: string | null;
   progressId?: string | null;
 }): Promise<UrlMediaDownload> {
-  if (!isTauri) throw new Error("Video download requires the desktop app.");
-  return invoke<UrlMediaDownload>("url_video_download", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UrlMediaDownload>("url_video_download", args, {
     url: args.url,
     maxHeight: args.maxHeight ?? null,
     formatId: args.formatId ?? null,
     progressId: args.progressId ?? null,
-  });
+  }, new Error("Video download requires the desktop app."));
 }
 
 /** Fetch a link's AUDIO on demand into the server's media store — a run whose
  *  transcript comes from the site's subtitles still keeps the audio; pull it
  *  with fetchUrlMedia. */
-export async function fetchUrlAudioOnDemand(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function fetchUrlAudioOnDemand(args: ServerTarget & {
   url: string;
   progressId?: string | null;
 }): Promise<UrlMediaDownload> {
-  if (!isTauri) throw new Error("Audio download requires the desktop app.");
-  return invoke<UrlMediaDownload>("url_audio_download", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UrlMediaDownload>("url_audio_download", args, {
     url: args.url,
     progressId: args.progressId ?? null,
-  });
+  }, new Error("Audio download requires the desktop app."));
 }
 
 /** What POST /v1/audio/url-subtitles answers: the raw VTT/SRT text of each
@@ -489,21 +437,14 @@ export interface UrlSubtitles {
 }
 
 /** Download a link's picked subtitle tracks (≤ 8 ids from its preview). */
-export async function fetchUrlSubtitles(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function fetchUrlSubtitles(args: ServerTarget & {
   url: string;
   tracks: string[];
 }): Promise<UrlSubtitles> {
-  if (!isTauri) throw new Error("Subtitle download requires the desktop app.");
-  return invoke<UrlSubtitles>("url_subtitles", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UrlSubtitles>("url_subtitles", args, {
     url: args.url,
     tracks: args.tracks,
-  });
+  }, new Error("Subtitle download requires the desktop app."));
 }
 
 /** What POST /v1/audio/url-language answers: the vote over three sampled
@@ -520,46 +461,32 @@ export interface UrlLanguageCheck {
 
 /** Which language does this link speak? Slow (the server downloads the audio
  *  first); cancel with cancelTextTranslation on the same `progressId`. */
-export async function urlLanguageCheck(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function urlLanguageCheck(args: ServerTarget & {
   url: string;
   model?: string | null;
   progressId?: string | null;
 }): Promise<UrlLanguageCheck> {
-  if (!isTauri) throw new Error("The language check requires the desktop app.");
-  return invoke<UrlLanguageCheck>("url_language_check", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UrlLanguageCheck>("url_language_check", args, {
     url: args.url,
     model: args.model ?? null,
     progressId: args.progressId ?? null,
-  });
+  }, new Error("The language check requires the desktop app."));
 }
 
 /** Pull the server-retained audio of a finished URL run into the local media
  *  store (media/<recordId>.<ext>). Returns the local path, or null when the
  *  server no longer has the file (retention expired) — the transcript stays
  *  usable, only playback is gone. */
-export async function fetchUrlMedia(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function fetchUrlMedia(args: ServerTarget & {
   mediaId: string;
   recordId: string;
   audioBase?: string | null;
 }): Promise<string | null> {
-  if (!isTauri) return null;
-  return invoke<string | null>("fetch_url_media", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<string | null>("fetch_url_media", args, {
     mediaId: args.mediaId,
     recordId: args.recordId,
     audioBase: args.audioBase ?? null,
-  });
+  }, null);
 }
 
 /** Abort every in-flight file transcription (Transcribe screen's Cancel). */
@@ -571,66 +498,34 @@ export async function cancelFileTranscription(): Promise<void> {
 /** Tell the SERVER to abort the in-flight transcription behind `progressId`
  *  (cancelFileTranscription only drops our end of the connection — without
  *  this the server's pipeline runs to completion). Best-effort. */
-export async function cancelBackendTranscription(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function cancelBackendTranscription(args: ServerTarget & {
   progressId: string;
 }): Promise<void> {
-  if (!isTauri) return;
-  await invoke("cancel_backend_transcription", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  await invokeServer<void>("cancel_backend_transcription", args, {
     progressId: args.progressId,
-  });
+  }, undefined);
 }
 
 /** Poll the live progress of an in-flight file transcription. */
-export async function getTranscribeProgress(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function getTranscribeProgress(args: ServerTarget & {
   progressId: string;
 }): Promise<BatchProgress> {
-  if (!isTauri) throw new Error("Not running in the desktop app.");
-  return invoke<BatchProgress>("get_transcribe_progress", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<BatchProgress>("get_transcribe_progress", args, {
     progressId: args.progressId,
-  });
+  }, new Error("Not running in the desktop app."));
 }
 
 /** Names of server-side override-profiles a client may reference (full backend
  *  only). Best-effort: returns [] outside Tauri or on any error. */
-export async function listOverrideProfiles(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<string[]> {
-  if (!isTauri) return [];
-  return invoke<string[]>("list_override_profiles", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function listOverrideProfiles(args: ServerTarget): Promise<string[]> {
+  return invokeServer<string[]>("list_override_profiles", args, {}, []);
 }
 
 /** The caller's effective request-override capabilities (full backend only).
  *  Best-effort: null outside Tauri or on any error (endpoint absent / standard
  *  server / unreachable) — callers treat null as "unknown ⇒ assume permitted". */
-export async function getCapabilities(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<Capabilities | null> {
-  if (!isTauri) return null;
-  return invoke<Capabilities | null>("get_capabilities", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function getCapabilities(args: ServerTarget): Promise<Capabilities | null> {
+  return invokeServer<Capabilities | null>("get_capabilities", args, {}, null);
 }
 
 /** A model family the server can pre-warm. There is deliberately no `vad`
@@ -642,20 +537,11 @@ export type PreloadFamily = "whisper" | "diarization" | "separation" | "translat
  *  Tauri or on any error — an older backend that 404s this endpoint must be
  *  indistinguishable from one that honours it, so no caller may branch on it
  *  beyond deciding not to retry. Never throws. */
-export async function preloadModels(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function preloadModels(args: ServerTarget & {
   models: { family: PreloadFamily; id: string }[];
 }): Promise<boolean> {
-  if (!isTauri) return false;
   try {
-    return await invoke<boolean>("preload_models", {
-      serverUrl: args.serverUrl,
-      backendId: args.backendId ?? null,
-      apiKey: args.apiKey ?? null,
-      models: args.models,
-    });
+    return await invokeServer<boolean>("preload_models", args, { models: args.models }, false);
   } catch {
     return false;
   }
@@ -665,55 +551,30 @@ export async function preloadModels(args: {
  *  (GET /v1/decode-defaults) — the "Inherit · <value>" labels. `model` "" = the server's default
  *  model; `overrideProfile` is what the request would name (NO_OVERRIDE_PROFILE included).
  *  Best-effort: null outside Tauri or on any error. */
-export async function getDecodeDefaults(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function getDecodeDefaults(args: ServerTarget & {
   model: string;
   overrideProfile?: string | null;
 }): Promise<DecodeDefaults | null> {
-  if (!isTauri) return null;
-  return invoke<DecodeDefaults | null>("get_decode_defaults", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<DecodeDefaults | null>("get_decode_defaults", args, {
     model: args.model,
     overrideProfile: args.overrideProfile?.trim() || null,
-  });
+  }, null);
 }
 
 /** P17: the post-processing ("Dictionary") rules the caller may view + edit
  *  (GET /v1/pipeline-rules). Returns a structured result with the HTTP status so
  *  the screen can branch (0 = unreachable, 200 = ok, 401/403 = gated, 404 =
  *  standard/old server). Outside Tauri → an unreachable result. */
-export async function getPipelineRules(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<PipelineFetch> {
-  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
-  return invoke<PipelineFetch>("get_pipeline_rules", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function getPipelineRules(args: ServerTarget): Promise<PipelineFetch> {
+  return invokeServer<PipelineFetch>("get_pipeline_rules", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
 /** P18: recently-transcribed word/phrase suggestions for the Dictionary's
  *  spoken-symbol key field (GET /v1/recent-words), scoped to the Backend's API
  *  key via the keyring. Best-effort: `{ words: [] }` outside Tauri or on any
  *  error (old/standard server, no history) — the field just becomes a plain input. */
-export async function getRecentWords(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<RecentWords> {
-  if (!isTauri) return { words: [] };
-  return invoke<RecentWords>("get_recent_words", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function getRecentWords(args: ServerTarget): Promise<RecentWords> {
+  return invokeServer<RecentWords>("get_recent_words", args, {}, { words: [] });
 }
 
 /** P28: the caller's own usage document (GET /v1/usage) — per-kind today/total,
@@ -722,17 +583,10 @@ export async function getRecentWords(args: {
  *  outside Tauri or on any error (endpoint absent / standard server / unreachable) —
  *  callers hide the stats surfaces when null. `tz` is the viewer's IANA zone so the
  *  server reckons "today" (and DST) the way the viewer does; `days` = the window. */
-export async function getUsageStats(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function getUsageStats(args: ServerTarget & {
   query: UsageQuery;
 }): Promise<UsageStats | null> {
-  if (!isTauri) return null;
-  return invoke<UsageStats | null>("get_usage_stats", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UsageStats | null>("get_usage_stats", args, {
     query: {
       days: args.query.days ?? null,
       from: args.query.from ?? null,
@@ -741,76 +595,48 @@ export async function getUsageStats(args: {
       with: args.query.with ?? [],
       tz: args.query.tz ?? null,
     },
-  });
+  }, null);
 }
 
 /** Report end-of-dictation outcomes (POST /v1/usage/outcome). Never throws — a
  *  structured result whose `status` (0 = unreachable) drives the queue's retry/drop
  *  decision (lib/usageOutcome.ts). */
-export async function postUsageOutcomes(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function postUsageOutcomes(args: ServerTarget & {
   outcomes: UsageOutcome[];
 }): Promise<UsageOutcomePostResult> {
-  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app.", results: [] };
-  return invoke<UsageOutcomePostResult>("post_usage_outcomes", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<UsageOutcomePostResult>("post_usage_outcomes", args, {
     outcomes: args.outcomes,
-  });
+  }, { ok: false, status: 0, error: "Not running in the desktop app.", results: [] });
 }
 
 /** `GET /v1/jobs/{id}` — a server job row, with the live progress while in
  *  flight. Deliberately NOT tied to the file-transcribe cancel epoch: a late
  *  re-attach must survive an unrelated cancel. */
-export async function getJob(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function getJob(args: ServerTarget & {
   jobId: string;
 }): Promise<JobOutcome<JobStatus>> {
-  if (!isTauri) return { kind: "error", message: "Not running in the desktop app." };
-  return invoke<JobOutcome<JobStatus>>("get_job", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<JobOutcome<JobStatus>>("get_job", args, {
     jobId: args.jobId,
-  });
+  }, { kind: "error", message: "Not running in the desktop app." });
 }
 
 /** `GET /v1/jobs/{id}/result` — the stored payload as the BatchResult the
  *  POST would have returned (same conversion + bounding in Rust). */
-export async function getJobResult(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function getJobResult(args: ServerTarget & {
   jobId: string;
 }): Promise<JobOutcome<BatchResult>> {
-  if (!isTauri) return { kind: "error", message: "Not running in the desktop app." };
-  return invoke<JobOutcome<BatchResult>>("get_job_result", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<JobOutcome<BatchResult>>("get_job_result", args, {
     jobId: args.jobId,
-  });
+  }, { kind: "error", message: "Not running in the desktop app." });
 }
 
 /** `DELETE /v1/jobs/{id}` — cancel a running job or delete a finished one. */
-export async function deleteJob(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function deleteJob(args: ServerTarget & {
   jobId: string;
 }): Promise<JobOutcome<null>> {
-  if (!isTauri) return { kind: "error", message: "Not running in the desktop app." };
-  return invoke<JobOutcome<null>>("delete_job", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<JobOutcome<null>>("delete_job", args, {
     jobId: args.jobId,
-  });
+  }, { kind: "error", message: "Not running in the desktop app." });
 }
 
 /** The on-disk in-flight jobs ledger (opaque to Rust; shape owned by lib/jobsLedger.ts). */
@@ -839,30 +665,21 @@ export async function saveUsageOutcomes(queue: unknown): Promise<void> {
  *  {rules_patch, fingerprints} object built from the user's edits. Returns
  *  saved / conflicts / requires_restart, plus 422 `errors` or a 400/403/500
  *  `detail`. */
-export async function savePipelineRules(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function savePipelineRules(args: ServerTarget & {
   patch: {
     rules_patch: Record<string, Record<string, unknown>>;
     fingerprints?: Record<string, string>;
   };
 }): Promise<PipelineSaveResult> {
-  if (!isTauri)
-    return {
-      ok: false,
-      status: 0,
-      saved: [],
-      conflicts: [],
-      requires_restart: false,
-      detail: "Not running in the desktop app.",
-    };
-  return invoke<PipelineSaveResult>("save_pipeline_rules", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-    patch: args.patch,
-  });
+  const offline = {
+    ok: false,
+    status: 0,
+    saved: [],
+    conflicts: [],
+    requires_restart: false,
+    detail: "Not running in the desktop app.",
+  };
+  return invokeServer<PipelineSaveResult>("save_pipeline_rules", args, { patch: args.patch }, offline);
 }
 
 const NO_MICS: MicInventory = {
@@ -1004,10 +821,7 @@ export async function onAudioLevel(cb: (level: number) => void): Promise<() => v
   return subscribe<number>("audio://level", cb);
 }
 
-export async function startStream(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function startStream(args: ServerTarget & {
   model: string;
   language: string;
   // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
@@ -1044,11 +858,7 @@ export async function startStream(args: {
   perUtteranceClips?: boolean;
   muteSystem?: boolean;
 }): Promise<void> {
-  if (!isTauri) return;
-  await invoke("start_stream", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  await invokeServer<void>("start_stream", args, {
     model: args.model,
     language: args.language,
     prompt: args.prompt ?? null,
@@ -1063,7 +873,7 @@ export async function startStream(args: {
     trimSilence: args.trimSilence ?? true,
     perUtteranceClips: args.perUtteranceClips ?? false,
     muteSystem: args.muteSystem ?? false,
-  });
+  }, undefined);
 }
 
 export async function stopStream(): Promise<void> {
@@ -1080,10 +890,7 @@ export async function cancelStream(userInitiated = false): Promise<void> {
   await invoke("cancel_stream", { userInitiated });
 }
 
-export async function startRecord(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function startRecord(args: ServerTarget & {
   model: string;
   language: string;
   // undefined/null = omit (inherit DEFAULT_PROMPT); "" = explicit clear; value = use.
@@ -1098,11 +905,7 @@ export async function startRecord(args: {
   /** Plain OpenAI-compatible server — an "auto" language is omitted, not sent empty. */
   standard?: boolean;
 }): Promise<void> {
-  if (!isTauri) return;
-  await invoke("start_record", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  await invokeServer<void>("start_record", args, {
     model: args.model,
     language: args.language,
     prompt: args.prompt ?? null,
@@ -1114,7 +917,7 @@ export async function startRecord(args: {
     trimSilence: args.trimSilence ?? true,
     muteSystem: args.muteSystem ?? false,
     standard: args.standard ?? false,
-  });
+  }, undefined);
 }
 
 export async function stopRecord(): Promise<void> {
@@ -1487,53 +1290,28 @@ export async function pickRecordingsDir(): Promise<string | null> {
 /** Pull the account's synced settings blob (GET /v1/client-settings). Structured
  *  result: 0 = unreachable, 200 = ok (version 0 = empty store), 401 = key,
  *  404 = the backend build predates sync. Outside Tauri → unreachable. */
-export async function syncPull(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<SyncPullResult> {
-  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
-  return invoke<SyncPullResult>("sync_pull", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function syncPull(args: ServerTarget): Promise<SyncPullResult> {
+  return invokeServer<SyncPullResult>("sync_pull", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
 /** Push the composed blob (PUT /v1/client-settings). `baseVersion` is the server
  *  version this device last saw (0 creates); a 409 comes back in `conflict`
  *  carrying the current server state for the merge loop. */
-export async function syncPush(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
+export async function syncPush(args: ServerTarget & {
   blob: SyncBlob;
   baseVersion: number;
   device: string;
 }): Promise<SyncPushResult> {
-  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
-  return invoke<SyncPushResult>("sync_push", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
+  return invokeServer<SyncPushResult>("sync_push", args, {
     blob: args.blob,
     baseVersion: args.baseVersion,
     device: args.device,
-  });
+  }, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
 /** Drop the account's server-side blob (DELETE /v1/client-settings). */
-export async function syncDelete(args: {
-  serverUrl: string;
-  backendId?: string | null;
-  apiKey?: string | null;
-}): Promise<SyncDeleteResult> {
-  if (!isTauri) return { ok: false, status: 0, error: "Not running in the desktop app." };
-  return invoke<SyncDeleteResult>("sync_delete", {
-    serverUrl: args.serverUrl,
-    backendId: args.backendId ?? null,
-    apiKey: args.apiKey ?? null,
-  });
+export async function syncDelete(args: ServerTarget): Promise<SyncDeleteResult> {
+  return invokeServer<SyncDeleteResult>("sync_delete", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
 
 /** Local sync bookkeeping (<config dir>/sync-state.json): last-synced snapshot
