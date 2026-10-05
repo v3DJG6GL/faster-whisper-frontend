@@ -16,3 +16,15 @@ export function releaseMedia(el: HTMLMediaElement): void {
     // A half-torn-down element has nothing left worth releasing.
   }
 }
+
+/** releaseMedia for a ref cleanup. Deferred to a microtask and skipped while
+ *  the element is still in the document: React 19 StrictMode replays callback
+ *  refs (attach → cleanup → attach) on the same mounted element and never
+ *  re-sets the unchanged `src`, so releasing on that cleanup left the player
+ *  empty at 0:00. A real detach (unmount, key change) has removed the node by
+ *  the time the microtask runs. */
+export function releaseDetachedMedia(el: HTMLMediaElement): void {
+  queueMicrotask(() => {
+    if (!el.isConnected) releaseMedia(el);
+  });
+}

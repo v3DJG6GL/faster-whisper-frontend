@@ -44,7 +44,7 @@ import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/mediaExport";
-import { releaseMedia } from "@/lib/media";
+import { releaseDetachedMedia } from "@/lib/media";
 import { patchRecord, useRecord } from "@/lib/transcriptHistory";
 import {
   defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, transcriptTracks, translationTracks, type TrackPrefs,
@@ -701,7 +701,7 @@ export function TranscriptViewer({
     if (!el) return;
     return () => {
       if (audioRef.current === el) audioRef.current = null;
-      releaseMedia(el);
+      releaseDetachedMedia(el);
     };
   }, []);
   const [playing, setPlaying] = useState(false);

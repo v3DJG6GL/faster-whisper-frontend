@@ -41,7 +41,7 @@ import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/exportTracks
 import { cueOptionsOf } from "@/lib/cueSplit";
 import { displayToggles } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
-import { releaseMedia } from "@/lib/media";
+import { releaseDetachedMedia } from "@/lib/media";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
 function dayBucket(iso: string): string {
@@ -147,7 +147,7 @@ function RecordingPlayer({ path }: { path: string }) {
     if (!el) return;
     return () => {
       if (audioRef.current === el) audioRef.current = null;
-      releaseMedia(el);
+      releaseDetachedMedia(el);
     };
   }, []);
 
