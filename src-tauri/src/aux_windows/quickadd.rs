@@ -605,7 +605,7 @@ pub(crate) mod win_seed {
         // Shift would mutate the copy chord (Ctrl+Shift+Insert is PASTE in many
         // terminals). Mirrors inject_text's release gate, except on timeout we SKIP
         // entirely — a seed is optional, firing a mutated chord into the source app
-        // is not worth the risk. The win_hotkeys worker feeds this held-set.
+        // is not worth the risk. The `hotkeys::windows` worker feeds this held-set.
         //
         // The wait is GENEROUS (3s, was 500ms): the default chord is Alt+Win — pure
         // modifiers, physically down at the instant the chord fires — and with no
@@ -615,9 +615,12 @@ pub(crate) mod win_seed {
         // tap by then) worked. Waiting longer is free — the copy fires the moment the
         // keys lift, and the window follows immediately after — only INJECTING with
         // modifiers down is dangerous.
-        let held = app.state::<crate::held_keys::HeldKeys>().inner().clone();
+        let held = app
+            .state::<crate::hotkeys::held_keys::HeldKeys>()
+            .inner()
+            .clone();
         let deadline = Instant::now() + Duration::from_millis(3000);
-        while held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
+        while held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES) {
             if Instant::now() >= deadline {
                 tracing::info!("[quickadd-seed] chord modifiers held past the release gate; skipping the copy grab");
                 return None;

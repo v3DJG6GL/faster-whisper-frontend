@@ -434,7 +434,7 @@ mod imp {
     }
 
     /// evdev keycode for a single-letter `KeyboardEvent.code` (KeyA..KeyZ). Physical-position Linux
-    /// input-event-codes (NOT alphabetical), mirroring evdev_hotkeys::imp::letter_key and the KEY_V
+    /// input-event-codes (NOT alphabetical), mirroring hotkeys::evdev::imp::letter_key and the KEY_V
     /// const above (V == 47).
     fn letter_keycode(code: &str) -> Option<i32> {
         let letter = code.strip_prefix("Key").filter(|s| s.len() == 1)?;

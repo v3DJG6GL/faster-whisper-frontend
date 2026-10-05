@@ -1,11 +1,11 @@
 // Platform-neutral chord state machine shared by BOTH hotkey backends
-// (evdev_hotkeys on Linux, win_hotkeys on Windows). The backends translate
+// (`evdev` on Linux, `windows` on Windows). The backends translate
 // bindings into u16 key codes (evdev codes / Windows VKs — both u16), feed the
 // current held-key set per key event, and dispatch the returned `Fire`s
 // (emit "trigger", quickadd::show, ACTIVE_HOLDS bookkeeping). Keeping the
 // chord-family DECISION here means those semantics exist exactly once;
 // the DISPATCH of each `Fire` variant lives in each backend's `commit()`
-// (evdev_hotkeys::commit and win_hotkeys::commit — both must be updated
+// (evdev::commit and windows::commit — both must be updated
 // when a `Fire` arm changes).
 //
 // Chord-family semantics (the designed nesting, mirrored by src/lib/conflicts.ts):

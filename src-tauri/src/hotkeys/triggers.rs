@@ -6,7 +6,7 @@
 //!     `app --profile <id> --action toggle` (or the zero-arg `app --toggle`,
 //!     which targets the first enabled hands-free Profile).
 //!   * In-app global hotkeys — the plugin below (Linux-X11), the evdev backend
-//!     (Linux, opt-in), or the win_hotkeys hook backend (Windows, always on).
+//!     (Linux, opt-in), or the `windows` hook backend (Windows, always on).
 
 use crate::config::{ActivationType, Profile};
 use serde::Serialize;
@@ -33,7 +33,7 @@ pub struct TriggerPayload {
 static TRIGGER_MODS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
 
 /// Are any of the modifiers that were down when the trigger fired STILL down?
-pub fn trigger_modifiers_still_held(held: &crate::held_keys::HeldKeys) -> bool {
+pub fn trigger_modifiers_still_held(held: &crate::hotkeys::held_keys::HeldKeys) -> bool {
     TRIGGER_MODS
         .lock()
         .ok()
@@ -43,7 +43,7 @@ pub fn trigger_modifiers_still_held(held: &crate::held_keys::HeldKeys) -> bool {
 /// Record which of `chord_mods` are still physically down, as the trigger's modifier snapshot.
 ///
 /// `chord_mods` are evdev keycodes — the `held_keys` namespace, which BOTH backends share
-/// (`win_hotkeys::commit` translates VKs through `vk_to_evdev_mod` before `held_keys.set`).
+/// (`windows::commit` translates VKs through `vk_to_evdev_mod` before `held_keys.set`).
 ///
 /// This is the ONLY writer of [`TRIGGER_MODS`]. It used to live inline in `emit_trigger`, which
 /// meant the CLI and global-shortcut-plugin registrars were the only ones that ever wrote it —
@@ -61,7 +61,7 @@ pub fn trigger_modifiers_still_held(held: &crate::held_keys::HeldKeys) -> bool {
 /// so the existing snapshot survives for the clipboard gate.
 pub fn snapshot_trigger_mods(app: &AppHandle, chord_mods: &[u16]) {
     if let Ok(mut g) = TRIGGER_MODS.lock() {
-        let held = app.state::<crate::held_keys::HeldKeys>();
+        let held = app.state::<crate::hotkeys::held_keys::HeldKeys>();
         *g = chord_mods
             .iter()
             .copied()
@@ -83,7 +83,7 @@ fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
     tracing::info!("[trigger] {profile_id_log}/{action}");
     // This registrar has no chord in hand (a CLI arg or a DE-level shortcut), so it keeps the
     // original behaviour: every shortcut modifier currently down.
-    snapshot_trigger_mods(app, &crate::held_keys::SHORTCUT_MOD_CODES);
+    snapshot_trigger_mods(app, &crate::hotkeys::held_keys::SHORTCUT_MOD_CODES);
     let _ = app.emit(
         "trigger",
         TriggerPayload {
@@ -193,7 +193,7 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
 // Native Wayland can't register here, and modifier-only chords like "Ctrl+Shift"
 // aren't registerable as plugin accelerators — those rely on the evdev backend or
 // the CLI path (a DE shortcut → `app --toggle`). On Windows the plugin is never
-// the registrar: the win_hotkeys hook backend owns all chords (apply_bindings).
+// the registrar: the `windows` hook backend owns all chords (apply_bindings).
 // The GlobalShortcuts portal is M7.
 
 #[derive(Clone)]

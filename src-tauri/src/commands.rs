@@ -2300,24 +2300,24 @@ static CAPTURE_SUSPENDED: AtomicBool = AtomicBool::new(false);
 #[tauri::command]
 pub fn suspend_shortcuts(app: AppHandle) {
     CAPTURE_SUSPENDED.store(true, Ordering::SeqCst);
-    crate::triggers::unregister_all(&app);
-    let state = app.state::<crate::evdev_hotkeys::EvdevState>();
-    crate::evdev_hotkeys::stop(&state);
+    crate::hotkeys::triggers::unregister_all(&app);
+    let state = app.state::<crate::hotkeys::evdev::EvdevState>();
+    crate::hotkeys::evdev::stop(&state);
     // Windows twin of the evdev teardown (no-op elsewhere): the hook backend is the
     // always-on low-level listener there and must fall silent during capture too.
-    crate::win_hotkeys::stop(&app.state::<crate::win_hotkeys::WinHookState>());
+    crate::hotkeys::windows::stop(&app.state::<crate::hotkeys::windows::WinHookState>());
     // stop() aborts the reader tasks, which skips their post-loop cleanup, so compensate for both:
     // (1) the held-KEY counts — a modifier held now would leave a phantom count and make the next
     // inject_text wait the full gate timeout; restore held_keys' "not running ⇒ empty".
-    app.state::<crate::held_keys::HeldKeys>().clear();
+    app.state::<crate::hotkeys::held_keys::HeldKeys>().clear();
     // (2) the held-SESSION "stop" — a PTT chord held while a rebind capture starts would otherwise
     // wedge "listening" until manual cancel (the release reaches no reader). No-op when none held.
-    crate::evdev_hotkeys::stop_held_sessions(&app);
-    crate::win_hotkeys::stop_held_sessions(&app);
+    crate::hotkeys::evdev::stop_held_sessions(&app);
+    crate::hotkeys::windows::stop_held_sessions(&app);
 }
 
 /// Whether ALL of the given chord's MODIFIER keys are physically held RIGHT NOW, per
-/// the low-level backends' shared HeldKeys signal (evdev on Linux, win_hotkeys on
+/// the low-level backends' shared HeldKeys signal (evdev on Linux, hotkeys::windows on
 /// Windows; always false when only the plugin backend runs — it can't see raw key
 /// state). `codes` is the binding's `event.code` list; non-modifier members are
 /// unobservable and ignored, and a chord with NO modifiers answers false.
@@ -2329,9 +2329,10 @@ pub fn suspend_shortcuts(app: AppHandle) {
 pub fn shortcut_mods_held(app: AppHandle, codes: Vec<String>) -> bool {
     let mods: Vec<u16> = codes
         .iter()
-        .filter_map(|c| crate::held_keys::modifier_code(c))
+        .filter_map(|c| crate::hotkeys::held_keys::modifier_code(c))
         .collect();
-    app.state::<crate::held_keys::HeldKeys>().all_held(&mods)
+    app.state::<crate::hotkeys::held_keys::HeldKeys>()
+        .all_held(&mods)
 }
 
 /// Apply the current bindings to the right backend: when the evdev backend is
@@ -2364,33 +2365,33 @@ pub fn apply_bindings(app: &AppHandle) {
     // PTT chord held right now — so a session held across this restart (e.g. editing a profile
     // while holding push-to-talk) would wedge "listening". Emit those stops first. No-op when
     // nothing is held. (The Windows hook worker exits gracefully and normally emits its own
-    // stops, but claim-based: whichever side runs first wins — see win_hotkeys::take_hold.)
-    crate::evdev_hotkeys::stop_held_sessions(app);
-    crate::win_hotkeys::stop_held_sessions(app);
+    // stops, but claim-based: whichever side runs first wins — see hotkeys::windows::take_hold.)
+    crate::hotkeys::evdev::stop_held_sessions(app);
+    crate::hotkeys::windows::stop_held_sessions(app);
     #[cfg(windows)]
     {
         // Windows: the low-level hook backend owns ALL chords — it registers everything
         // the plugin can, plus the modifier-only / left-right / N-key chords it can't
         // (the default Ctrl+Shift PTT). The plugin stays silent, mirroring the
         // evdev-XOR-plugin invariant below.
-        crate::triggers::unregister_all(app);
-        let hook = app.state::<crate::win_hotkeys::WinHookState>();
-        crate::win_hotkeys::start(app, &hook, &cfg.profiles, quick_add);
+        crate::hotkeys::triggers::unregister_all(app);
+        let hook = app.state::<crate::hotkeys::windows::WinHookState>();
+        crate::hotkeys::windows::start(app, &hook, &cfg.profiles, quick_add);
         tracing::info!("[bindings] windows hook backend active (plugin silenced)");
     }
     #[cfg(not(windows))]
     {
-        let state = app.state::<crate::evdev_hotkeys::EvdevState>();
-        if cfg.settings.general.evdev_enabled && crate::evdev_hotkeys::permitted() {
-            crate::triggers::unregister_all(app);
-            crate::evdev_hotkeys::start(app, &state, &cfg.profiles, quick_add);
+        let state = app.state::<crate::hotkeys::evdev::EvdevState>();
+        if cfg.settings.general.evdev_enabled && crate::hotkeys::evdev::permitted() {
+            crate::hotkeys::triggers::unregister_all(app);
+            crate::hotkeys::evdev::start(app, &state, &cfg.profiles, quick_add);
             tracing::info!("[bindings] evdev backend active (plugin silenced)");
         } else {
-            crate::evdev_hotkeys::stop(&state);
+            crate::hotkeys::evdev::stop(&state);
             // Aborting the reader skips its held-key cleanup; drop any stale counts so the
             // inject gate isn't wedged on a phantom modifier while evdev stays off.
-            app.state::<crate::held_keys::HeldKeys>().clear();
-            crate::triggers::register_from_config(app, &cfg.profiles, quick_add);
+            app.state::<crate::hotkeys::held_keys::HeldKeys>().clear();
+            crate::hotkeys::triggers::register_from_config(app, &cfg.profiles, quick_add);
         }
     }
 }
@@ -2490,7 +2491,7 @@ pub fn evdev_status(app: AppHandle) -> EvdevStatus {
         .unwrap_or(false);
     EvdevStatus {
         available: cfg!(target_os = "linux"),
-        permitted: crate::evdev_hotkeys::permitted(),
+        permitted: crate::hotkeys::evdev::permitted(),
         enabled,
     }
 }
@@ -2499,7 +2500,7 @@ pub fn evdev_status(app: AppHandle) -> EvdevStatus {
 /// log out and back in for it to take effect.
 #[tauri::command]
 pub async fn evdev_setup() -> Result<String, String> {
-    crate::evdev_hotkeys::setup().await
+    crate::hotkeys::evdev::setup().await
 }
 
 /// Whether a code-list chord can be registered by the platform's registrar. On
@@ -2511,7 +2512,7 @@ pub async fn evdev_setup() -> Result<String, String> {
 pub fn validate_codes(codes: Vec<String>) -> bool {
     #[cfg(windows)]
     {
-        !codes.is_empty() && codes.iter().all(|c| crate::win_hotkeys::code_valid(c))
+        !codes.is_empty() && codes.iter().all(|c| crate::hotkeys::windows::code_valid(c))
     }
     #[cfg(not(windows))]
     {
@@ -3093,10 +3094,13 @@ pub async fn inject_text(
     // the held set is empty so this is a no-op. Capped so we never drop the text.
     let mut modifiers_stuck = false;
     {
-        let held = app.state::<crate::held_keys::HeldKeys>().inner().clone();
-        if held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
+        let held = app
+            .state::<crate::hotkeys::held_keys::HeldKeys>()
+            .inner()
+            .clone();
+        if held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES) {
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
-            while held.any_held(&crate::held_keys::SHORTCUT_MOD_CODES) {
+            while held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES) {
                 if std::time::Instant::now() >= deadline {
                     // The gate used to fail OPEN here: it logged and typed anyway, so the
                     // transcript's characters folded into the still-held modifier and became
@@ -3108,7 +3112,7 @@ pub async fn inject_text(
                     // diverted — dictation looks broken with nothing to explain it. So divert
                     // only when the modifiers still down are the ones that were down when the
                     // TRIGGER fired, i.e. the dictation chord itself is not being released.
-                    modifiers_stuck = crate::triggers::trigger_modifiers_still_held(&held);
+                    modifiers_stuck = crate::hotkeys::triggers::trigger_modifiers_still_held(&held);
                     if modifiers_stuck {
                         tracing::warn!(
                             "[inject] trigger chord still held after 500ms — clipboard only"
@@ -3174,7 +3178,7 @@ pub async fn inject_text(
     // straight past this control, which is a one-line bypass by the actor the control defends
     // against.
     if !text.is_empty() {
-        let chord_lost = crate::held_keys::take_lost_if_fresh(HELD_CHORD_LATCH_TTL);
+        let chord_lost = crate::hotkeys::held_keys::take_lost_if_fresh(HELD_CHORD_LATCH_TTL);
         if chord_lost && !modifiers_stuck {
             tracing::warn!(
                 "[inject] a stop was manufactured for a still-held chord — clipboard only"

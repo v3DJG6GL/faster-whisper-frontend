@@ -25,7 +25,7 @@
 //!
 //! **Structure.** The bookkeeping ([`OfferLedger`]) is pure and compiled on every platform so it is
 //! unit-tested on Linux; only the Win32 owner thread (`imp`) is Windows-only. The owner thread
-//! follows `win_hotkeys::input_thread`: a message-only window, a ready handshake, commands over an
+//! follows `hotkeys::windows::input_thread`: a message-only window, a ready handshake, commands over an
 //! mpsc channel woken by `PostMessageW`. Every clipboard call that can RE-ENTER the window
 //! procedure (`EmptyClipboard` sends `WM_DESTROYCLIPBOARD` to the current owner — us —
 //! synchronously; `DestroyWindow` sends `WM_RENDERALLFORMATS`) is made with no `RefCell` borrow

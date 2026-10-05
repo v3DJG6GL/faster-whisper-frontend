@@ -1,4 +1,4 @@
-//! Windows hotkey backend — the Windows twin of `evdev_hotkeys`, built on **two
+//! Windows hotkey backend — the Windows twin of `evdev`, built on **two
 //! redundant feeds** into one chord matcher: **Raw Input** (`RIDEV_INPUTSINK` on a
 //! message-only window) plus an observation-only **`WH_KEYBOARD_LL` hook that is
 //! re-installed on every foreground change**.
@@ -35,7 +35,7 @@
 //!
 //! The receiver thread only decodes + forwards `(key, down)` transitions over a
 //! channel; a worker thread owns the chord-matching state machine — a direct port
-//! of `evdev_hotkeys::run_device` — emitting the same `trigger` events. Like
+//! of `evdev::run_device` — emitting the same `trigger` events. Like
 //! evdev, we react only to the configured chords, never swallow keys (both feeds
 //! are observation-only by design), and never persist or transmit keys.
 //!
@@ -47,7 +47,7 @@
 //! foot pedals, AutoHotkey remaps) deliver their configured chord as VK-only
 //! SendInput, which is invisible to raw input — without the hook keeping it,
 //! such chords could be bound but would never fire. The worker also feeds the
-//! shared [`crate::held_keys::HeldKeys`] gate, so `inject_text`'s
+//! shared [`crate::hotkeys::held_keys::HeldKeys`] gate, so `inject_text`'s
 //! wait-for-modifier-release works on Windows exactly as it does under evdev.
 //!
 //! Both feeds report TRANSITIONS, so the worker's held-set is only ever as good as
@@ -112,7 +112,7 @@ const NUMPAD_ENTER: u16 = 0x0D | 0x0100;
 
 /// Map a binding's `event.code` to a Windows virtual-key id (carrying left/right +
 /// AltGr, which arrives as `VK_RMENU`). None if the code isn't mappable. Must cover
-/// the same bindable set as `evdev_hotkeys::code_to_key` / keys.ts `codeToToken` —
+/// the same bindable set as `evdev::code_to_key` / keys.ts `codeToToken` —
 /// pinned by the test below. One known corner: numpad digits match only with
 /// NumLock ON. The capture UI records the PHYSICAL `event.code` ("Numpad4") in either
 /// NumLock state, so such a chord binds and validates but stays inert on Windows while
@@ -216,9 +216,9 @@ fn vk_to_evdev_mod(vk: u16) -> Option<u16> {
 #[cfg(windows)]
 mod imp {
     use super::{code_to_vk, vk_to_evdev_mod, Running, WinHookState, NUMPAD_ENTER};
-    use crate::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
     use crate::config::{ActivationType, Profile};
-    use crate::triggers::TriggerPayload;
+    use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
+    use crate::hotkeys::triggers::TriggerPayload;
     use std::cell::Cell;
     use std::collections::HashSet;
     use std::sync::mpsc::{channel, Receiver, Sender};
@@ -255,8 +255,8 @@ mod imp {
     /// Build chord specs for every enabled Profile whose hotkey maps cleanly,
     /// plus the quick-add window chord. Equal chords are de-duped (first by config
     /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
-    /// (Direct port of evdev_hotkeys::chords_from into VK space; the nesting/family
-    /// semantics live in the shared crate::chord_engine.)
+    /// (Direct port of evdev::chords_from into VK space; the nesting/family
+    /// semantics live in the shared crate::hotkeys::chord_engine.)
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
         const MAX_CHORDS: usize = 256;
         let mut out: Vec<ChordSpec> = Vec::new();
@@ -279,7 +279,7 @@ mod imp {
             let candidate = ChordSpec { keys, kind };
             let clash = out
                 .iter()
-                .find_map(|c| crate::chord_engine::registration_conflict(c, &candidate));
+                .find_map(|c| crate::hotkeys::chord_engine::registration_conflict(c, &candidate));
             match clash {
                 Some(why) => tracing::warn!(
                     "[winhook] {what} {why}; ignoring it (the Profiles screen flags this as a conflict)"
@@ -338,7 +338,7 @@ mod imp {
     ) {
         // Hold the state lock across the whole stop→spawn→store sequence so two
         // concurrent apply_bindings() calls can't interleave and leave two live
-        // hooks (mirrors evdev_hotkeys::start — see the comment there).
+        // hooks (mirrors evdev::start — see the comment there).
         let mut g = match state.0.lock() {
             Ok(g) => g,
             Err(_) => return,
@@ -348,7 +348,7 @@ mod imp {
                    // inject-gate can't wait on a phantom modifier — and retire the old worker's writer,
                    // so its late post-loop decrements (it wakes AFTER this) can't zero counts the new
                    // worker is about to record (see HeldKeys::clear).
-        let held_keys = app.state::<crate::held_keys::HeldKeys>();
+        let held_keys = app.state::<crate::hotkeys::held_keys::HeldKeys>();
         held_keys.clear();
         let held_keys = held_keys.writer();
         let chords = chords_from(profiles, quick_add_hotkey);
@@ -870,7 +870,7 @@ mod imp {
         // snapshot alone rather than clearing it, so a stop that follows a real chord press by
         // milliseconds cannot wipe the very modifiers the gate needs to see.
         if let Some(mods) = chord_mods {
-            crate::triggers::snapshot_trigger_mods(app, mods);
+            crate::hotkeys::triggers::snapshot_trigger_mods(app, mods);
         }
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
         // session causality is otherwise invisible in the log, which made the key-chatter
@@ -891,7 +891,7 @@ mod imp {
     // PTT (Hold) chords currently emitting "start", each with the VKs of the chord that
     // started it. A teardown (rebind capture, apply_bindings restart) must emit the "stop"
     // a mid-hold session would otherwise lose — see stop_held_sessions and
-    // evdev_hotkeys::ACTIVE_HOLDS. The keys are what lets the teardown ask the OS whether
+    // evdev::ACTIVE_HOLDS. The keys are what lets the teardown ask the OS whether
     // that chord is STILL physically down before it arms the loss latch on it.
     static ACTIVE_HOLDS: Mutex<Vec<(String, Vec<u16>)>> = Mutex::new(Vec::new());
 
@@ -907,7 +907,7 @@ mod imp {
     /// Is any shortcut MODIFIER of the chord still physically down, per the OS? Empty = no.
     /// See `chord_engine::any_chord_mod_down` for why it is "any modifier", not "all keys".
     fn chord_mod_still_down(keys: &[u16]) -> bool {
-        crate::chord_engine::any_chord_mod_down(
+        crate::hotkeys::chord_engine::any_chord_mod_down(
             keys,
             |k| vk_to_evdev_mod(k).is_some(),
             physically_down,
@@ -925,7 +925,7 @@ mod imp {
     /// so the predicate fails toward arming.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
         if chord_mod_still_down(keys) {
-            crate::held_keys::arm_chord_lost();
+            crate::hotkeys::held_keys::arm_chord_lost();
         } else {
             tracing::info!("[winhook] teardown stop for a chord the OS reports released; not arming the loss latch");
         }
@@ -975,7 +975,7 @@ mod imp {
     /// other two teardown sites apply.
     fn commit(
         app: &AppHandle,
-        held_keys: &crate::held_keys::HeldKeysWriter,
+        held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         id: u16,
@@ -1011,7 +1011,7 @@ mod imp {
                 Fire::Start(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
-                    crate::held_keys::clear_chord_lost();
+                    crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "start", Some(&chord_mods(&pid)));
                     note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
@@ -1031,7 +1031,7 @@ mod imp {
                 Fire::Toggle(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
-                    crate::held_keys::clear_chord_lost();
+                    crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
                 Fire::Reclassify(pid) => {
@@ -1041,7 +1041,7 @@ mod imp {
                     // makes any pending loss latch a dud. Reachable when the hook is briefly
                     // blind during a re-arm gap (≤3 s) and a release is missed, or when a
                     // desktop-switch release never reaches either feed.
-                    crate::held_keys::clear_chord_lost();
+                    crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
                 Fire::OpenQuickAdd => crate::aux_windows::quickadd::show(app),
@@ -1090,11 +1090,11 @@ mod imp {
     /// between calls.
     fn resync_held(
         app: &AppHandle,
-        held_keys: &crate::held_keys::HeldKeysWriter,
+        held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         up_once: &mut HashSet<u16>,
-        deb: &mut crate::key_debounce::Debouncer,
+        deb: &mut crate::hotkeys::debounce::Debouncer,
     ) {
         let up_now: HashSet<u16> = held
             .iter()
@@ -1119,20 +1119,20 @@ mod imp {
         }
     }
 
-    /// The chord-matching worker — the twin of `evdev_hotkeys::run_device` (one
+    /// The chord-matching worker — the twin of `evdev::run_device` (one
     /// instance, fed by the hook instead of per-device streams). All chord
     /// semantics (hold edges, hands-free re-arm, family handoff, peer arbitration) live in the
-    /// shared crate::chord_engine. Runs until the sender is dropped (shutdown/
+    /// shared crate::hotkeys::chord_engine. Runs until the sender is dropped (shutdown/
     /// restart), then releases its HeldKeys contributions and stops any live
     /// Hold session.
     fn worker(
         app: AppHandle,
-        held_keys: crate::held_keys::HeldKeysWriter,
+        held_keys: crate::hotkeys::held_keys::HeldKeysWriter,
         rx: Receiver<KeyEv>,
         mut engine: Engine,
     ) {
         // `held_keys` mirrors physical modifier state into the shared signal `inject_text`
-        // reads, so we never type into a still-held trigger modifier (see crate::held_keys).
+        // reads, so we never type into a still-held trigger modifier (see crate::hotkeys::held_keys).
         // It is this start's writer: once a later start has cleared the map, our writes —
         // including the post-loop's decrements below — are dropped rather than landing on
         // our successor's counts.
@@ -1140,9 +1140,10 @@ mod imp {
         // Chatter filter: key-ups for held keys are deferred RELEASE_DEBOUNCE and
         // erased if the key comes back down in the window (a worn-switch bounce fed
         // straight through here fired Stop+Start and killed the session instantly —
-        // see key_debounce). Downs commit immediately; deferred ups commit via the
+        // see `debounce`). Downs commit immediately; deferred ups commit via the
         // recv_timeout deadline below.
-        let mut deb = crate::key_debounce::Debouncer::new(crate::key_debounce::RELEASE_DEBOUNCE);
+        let mut deb =
+            crate::hotkeys::debounce::Debouncer::new(crate::hotkeys::debounce::RELEASE_DEBOUNCE);
         // First strikes for the held-set reconciler (see resync_held).
         let mut up_once: HashSet<u16> = HashSet::new();
         let mut next_resync = std::time::Instant::now() + RESYNC_INTERVAL;
@@ -1233,7 +1234,7 @@ mod tests {
     // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` +
     // MODIFIER_CODES) MUST map here, or its chord is silently dropped on Windows
     // while still binding fine in the capture UI. Pins the same bindability matrix
-    // as evdev_hotkeys' twin test — keep all three lists in sync.
+    // as `evdev`'s twin test — keep all three lists in sync.
     #[test]
     fn every_bindable_code_maps_to_a_windows_vk() {
         let mut codes: Vec<String> = [

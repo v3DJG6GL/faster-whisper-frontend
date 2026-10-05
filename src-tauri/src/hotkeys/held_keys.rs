@@ -120,8 +120,8 @@ pub const SHORTCUT_MOD_CODES: [u16; 8] = [
 
 /// A binding's `event.code` → the evdev keycode of that SHORTCUT modifier, or None
 /// for any non-modifier key. Non-modifiers are dropped for cross-backend parity, not
-/// because they are unobservable: `win_hotkeys::commit` mirrors only the eight modifiers
-/// (via `vk_to_evdev_mod`), while `evdev_hotkeys::commit` feeds `HeldKeys` every key code
+/// because they are unobservable: `windows::commit` mirrors only the eight modifiers
+/// (via `vk_to_evdev_mod`), while `evdev::commit` feeds `HeldKeys` every key code
 /// it sees. Projects a chord onto its portable subset, so the
 /// queued-start held check tests THE CHORD's modifiers rather than any modifier
 /// (holding an unrelated Shift must not read as "chord still held").

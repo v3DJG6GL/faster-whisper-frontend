@@ -106,7 +106,7 @@ fn default_true() -> bool {
 
 /// Quick-add default: Super+Alt (user-set 2026-07-13; canonical order per
 /// `code_rank`). An independent chord beside the push-to-talk/hands-free defaults;
-/// nesting it over a hold is a shadow conflict, not a feature (see chord_engine.rs).
+/// nesting it over a hold is a shadow conflict, not a feature (see hotkeys/chord_engine.rs).
 fn default_quick_add_hotkey() -> Vec<String> {
     vec!["AltLeft".into(), "MetaLeft".into()]
 }
@@ -346,7 +346,7 @@ fn accel_to_codes(accel: &str) -> Vec<String> {
 }
 
 /// A non-modifier `event.code` → the plugin's accelerator key token.
-#[cfg_attr(windows, allow(dead_code))] // plugin accelerators are the non-Windows registrar (win_hotkeys owns Windows)
+#[cfg_attr(windows, allow(dead_code))] // plugin accelerators are the non-Windows registrar (hotkeys::windows owns Windows)
 fn code_to_token(code: &str) -> String {
     if let Some(l) = code.strip_prefix("Key") {
         return l.to_string();
@@ -361,7 +361,7 @@ fn code_to_token(code: &str) -> String {
 /// registered there — a modifier-only chord, or one containing AltGr. Left/right
 /// modifiers collapse to logical ones (the plugin can't distinguish sides; that's
 /// the evdev backend's job).
-#[cfg_attr(windows, allow(dead_code))] // plugin accelerators are the non-Windows registrar (win_hotkeys owns Windows)
+#[cfg_attr(windows, allow(dead_code))] // plugin accelerators are the non-Windows registrar (hotkeys::windows owns Windows)
 pub fn codes_to_accelerator(codes: &[String]) -> Option<String> {
     let mut mods: Vec<&str> = Vec::new();
     let mut key: Option<String> = None;

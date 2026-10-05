@@ -9,7 +9,7 @@
 //! Each keyboard runs an async event loop tracking a held-key set; chord
 //! semantics (hold start/stop edges, hands-free toggle + re-arm, the designed
 //! hold ⊂ hands-free family's in-place reclassify, and peer arbitration) live in the shared
-//! [`crate::chord_engine`], and each completion emits the same `trigger` event
+//! [`crate::hotkeys::chord_engine`], and each completion emits the same `trigger` event
 //! the CLI/plugin paths use — so it plugs straight into the existing controller.
 
 use tauri::async_runtime::JoinHandle;
@@ -47,7 +47,7 @@ pub fn permitted() -> bool {
 #[cfg(not(target_os = "linux"))]
 pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 #[cfg(not(target_os = "linux"))]
-#[cfg_attr(windows, allow(dead_code))] // Windows never starts evdev (win_hotkeys owns all chords); stub kept for the shared signature
+#[cfg_attr(windows, allow(dead_code))] // Windows never starts evdev (`windows` owns all chords); stub kept for the shared signature
 pub fn start(
     _app: &tauri::AppHandle,
     _state: &EvdevState,
@@ -63,9 +63,9 @@ pub async fn setup() -> Result<String, String> {
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{EvdevState, Running};
-    use crate::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
     use crate::config::{ActivationType, Profile};
-    use crate::triggers::TriggerPayload;
+    use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
+    use crate::hotkeys::triggers::TriggerPayload;
     // evdev 0.13 renamed `Key` to `KeyCode` (same KEY_* constants, same .code()).
     use evdev::{Device, EventType, KeyCode as Key};
     use std::collections::HashSet;
@@ -174,7 +174,7 @@ mod imp {
             let candidate = ChordSpec { keys, kind };
             let clash = out
                 .iter()
-                .find_map(|c| crate::chord_engine::registration_conflict(c, &candidate));
+                .find_map(|c| crate::hotkeys::chord_engine::registration_conflict(c, &candidate));
             match clash {
                 Some(why) => tracing::warn!(
                     "[evdev] {what} {why}; ignoring it (the Profiles screen flags this as a conflict)"
@@ -243,7 +243,7 @@ mod imp {
                    // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
                    // (a reader whose stream ends past the abort point still runs its post-loop; see
                    // HeldKeys::clear). One writer per start, cloned into every reader.
-        let held_keys = app.state::<crate::held_keys::HeldKeys>();
+        let held_keys = app.state::<crate::hotkeys::held_keys::HeldKeys>();
         held_keys.clear();
         let held_keys = held_keys.writer();
         let chords = chords_from(profiles, quick_add_hotkey);
@@ -291,10 +291,10 @@ mod imp {
         // snapshot alone rather than clearing it, so a stop that follows a real chord press by
         // milliseconds cannot wipe the very modifiers the gate needs to see.
         if let Some(mods) = chord_mods {
-            crate::triggers::snapshot_trigger_mods(app, mods);
+            crate::hotkeys::triggers::snapshot_trigger_mods(app, mods);
         }
         // Log every fired trigger (same shape as the CLI path's emit_trigger): the chord →
-        // session causality is otherwise invisible in the log — see win_hotkeys::emit.
+        // session causality is otherwise invisible in the log — see windows::emit.
         // `profile_id` is blob- and import-authored (`sanitizeProfiles` type-checks `id` as a
         // string and never clamps it), so it is defanged for the log exactly as the CLI twin in
         // `triggers.rs` is: an embedded newline forges records in the Windows support log users
@@ -352,9 +352,9 @@ mod imp {
         evdev::enumerate().any(|(_, dev)| {
             is_keyboard(&dev)
                 && dev.get_key_state().is_ok_and(|ks| {
-                    crate::chord_engine::any_chord_mod_down(
+                    crate::hotkeys::chord_engine::any_chord_mod_down(
                         codes,
-                        |c| crate::held_keys::SHORTCUT_MOD_CODES.contains(&c),
+                        |c| crate::hotkeys::held_keys::SHORTCUT_MOD_CODES.contains(&c),
                         |c| ks.contains(Key::new(c)),
                     )
                 })
@@ -362,12 +362,12 @@ mod imp {
     }
 
     /// The manufactured-stop rule, shared by both teardown sites — the twin of
-    /// `win_hotkeys::manufactured_stop`, see there. Emit the stop; arm the loss latch ONLY if the
+    /// `windows::manufactured_stop`, see there. Emit the stop; arm the loss latch ONLY if the
     /// chord is still physically down. A chord the kernel reports released is safe to type into,
     /// and arming on it diverted the next phrase to the clipboard for nothing.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
         if chord_mod_still_down(keys) {
-            crate::held_keys::arm_chord_lost();
+            crate::hotkeys::held_keys::arm_chord_lost();
         } else {
             tracing::info!("[evdev] teardown stop for a chord the kernel reports released; not arming the loss latch");
         }
@@ -375,7 +375,7 @@ mod imp {
     }
 
     /// Remove `profile_id` from ACTIVE_HOLDS, reporting whether it was present — the twin of
-    /// `win_hotkeys::take_hold`, and here for the same reason its docblock gives: a manufactured
+    /// `windows::take_hold`, and here for the same reason its docblock gives: a manufactured
     /// stop must be CLAIMED, so whichever of the two racing producers runs first wins and a late
     /// duplicate cannot kill a session the user re-triggered in between.
     fn take_hold(profile_id: &str) -> bool {
@@ -409,7 +409,7 @@ mod imp {
     ///
     /// `teardown`: the post-loop drain of parked releases — a Stop is then emitted only if the
     /// hold is still unclaimed (`take_hold`), since `stop_held_sessions` may already have
-    /// manufactured it; see the win_hotkeys twin. The claimed Stop goes through
+    /// manufactured it; see the `windows` twin. The claimed Stop goes through
     /// `manufactured_stop`: the parked key IS released, but a staggered chord may still have its
     /// other modifier down when the post-loop wipes it from HeldKeys, and the kernel check is what
     /// decides whether the loss latch arms — the same rule the other two teardown sites apply.
@@ -417,7 +417,7 @@ mod imp {
     /// GTK thread, so that warning does not apply here.)
     fn commit(
         app: &AppHandle,
-        held_keys: &crate::held_keys::HeldKeysWriter,
+        held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
         held: &mut HashSet<u16>,
         engine: &mut Engine,
         code: u16,
@@ -440,7 +440,7 @@ mod imp {
             engine
                 .keys_for_profile(pid)
                 .into_iter()
-                .filter(|k| crate::held_keys::SHORTCUT_MOD_CODES.contains(k))
+                .filter(|k| crate::hotkeys::held_keys::SHORTCUT_MOD_CODES.contains(k))
                 .collect()
         };
         for fire in fires {
@@ -448,7 +448,7 @@ mod imp {
                 Fire::Start(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
-                    crate::held_keys::clear_chord_lost();
+                    crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "start", Some(&chord_mods(&pid)));
                     note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
@@ -468,7 +468,7 @@ mod imp {
                 Fire::Toggle(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
-                    crate::held_keys::clear_chord_lost();
+                    crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "toggle", Some(&chord_mods(&pid)));
                 }
                 Fire::Reclassify(pid) => {
@@ -482,7 +482,7 @@ mod imp {
                     // post-loop arms the latch, keyboard B's separate engine still has that hold,
                     // and completing the hands-free superset on B otherwise consumed the stale latch
                     // (TTL 130s) and diverted the phrase to the clipboard.
-                    crate::held_keys::clear_chord_lost();
+                    crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
                 Fire::OpenQuickAdd => crate::aux_windows::quickadd::show(app),
@@ -492,19 +492,20 @@ mod imp {
 
     async fn run_device(
         app: AppHandle,
-        held_keys: crate::held_keys::HeldKeysWriter,
+        held_keys: crate::hotkeys::held_keys::HeldKeysWriter,
         mut stream: evdev::EventStream,
         mut engine: Engine,
     ) {
         // `held_keys` mirrors physical key state into the shared signal `inject_text` reads,
-        // so we never type into a still-held trigger modifier (see crate::held_keys). It is
+        // so we never type into a still-held trigger modifier (see crate::hotkeys::held_keys). It is
         // this start's writer: retired by the next start's clear(), so a post-loop that runs
         // past the abort point cannot touch its successor's counts.
         let mut held: HashSet<u16> = HashSet::new();
         // Chatter filter (per device — bounce is per physical switch): key-ups for
         // held keys are deferred RELEASE_DEBOUNCE and erased if the key comes back
-        // down in the window; see key_debounce and the win_hotkeys twin.
-        let mut deb = crate::key_debounce::Debouncer::new(crate::key_debounce::RELEASE_DEBOUNCE);
+        // down in the window; see `debounce` and the `windows` twin.
+        let mut deb =
+            crate::hotkeys::debounce::Debouncer::new(crate::hotkeys::debounce::RELEASE_DEBOUNCE);
 
         loop {
             let ev = match deb.next_deadline() {
@@ -547,7 +548,7 @@ mod imp {
         // The device stream ended (unplugged / read error). First commit every release still
         // parked in the debouncer — those keys ARE released, and a hold whose release is parked
         // would otherwise still read as active below and get a manufactured stop with the loss
-        // latch armed on a chord the user let go of (see the win_hotkeys twin). Teardown mode:
+        // latch armed on a chord the user let go of (see the `windows` twin). Teardown mode:
         // the Stop is claimed via take_hold, since stop_held_sessions may have emitted it.
         for key in deb.drain() {
             commit(&app, &held_keys, &mut held, &mut engine, key, false, true);

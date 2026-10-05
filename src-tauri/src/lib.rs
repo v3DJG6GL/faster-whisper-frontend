@@ -1,13 +1,10 @@
 mod audio;
 mod aux_windows;
-mod chord_engine;
 mod commands;
 mod config;
-mod evdev_hotkeys;
 mod focus;
-mod held_keys;
+mod hotkeys;
 mod inject;
-mod key_debounce;
 mod logging;
 mod memwatch;
 mod migrate_identifier;
@@ -16,11 +13,9 @@ mod session;
 mod store;
 mod transport;
 mod tray;
-mod triggers;
 mod virtual_keyboard;
 mod wayland_inject;
 mod win_clip;
-mod win_hotkeys;
 #[cfg(windows)]
 mod win_session_end;
 
@@ -48,13 +43,13 @@ pub fn run() {
     tauri::Builder::default()
         // single-instance MUST be the first plugin registered.
         .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            triggers::handle_cli_args(app, &argv);
+            hotkeys::triggers::handle_cli_args(app, &argv);
         }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(triggers::handle_shortcut)
+                .with_handler(hotkeys::triggers::handle_shortcut)
                 .build(),
         )
         // The --autostart flag marks login launches so "start minimized to tray"
@@ -69,12 +64,12 @@ pub fn run() {
         .manage(audio::MicPlayback::default())
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
-        .manage(triggers::ShortcutRegistry::default())
+        .manage(hotkeys::triggers::ShortcutRegistry::default())
         .manage(wayland_inject::WaylandTyper::default())
         .manage(commands::ClipboardSnapshot::default())
-        .manage(evdev_hotkeys::EvdevState::default())
-        .manage(win_hotkeys::WinHookState::default())
-        .manage(held_keys::HeldKeys::default())
+        .manage(hotkeys::evdev::EvdevState::default())
+        .manage(hotkeys::windows::WinHookState::default())
+        .manage(hotkeys::held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
         .manage(focus::AtspiGuard::default())
         .manage(aux_windows::quickadd::SeedRendezvous::default())
