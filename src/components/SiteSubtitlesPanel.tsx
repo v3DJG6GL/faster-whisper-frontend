@@ -6,7 +6,7 @@
 
 import { Loader2, Trash2 } from "lucide-react";
 import { TargetLanguagePicker } from "@/components/LanguagePicker";
-import { FieldTrigger, Segmented, Toggle } from "@/components/ui";
+import { FieldTrigger, IconButton, Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { sourceTone } from "@/lib/sourceTone";
 import {
@@ -135,16 +135,15 @@ export function SiteSubtitlesPanel({
                     </div>
                     <div className="flex justify-end">
                       {row.deletable && row.code && (
-                        <button
-                          type="button"
+                        <IconButton
+                          label={`Remove ${row.label} from the list`}
+                          size="sm"
+                          danger
                           disabled={disabled}
-                          aria-label={`Remove ${row.label} from the list`}
-                          title={`Remove ${row.label} from the list`}
                           onClick={() => onChange(removeLanguage(input, state, row.code!))}
-                          className="ring-signal grid size-7 place-items-center rounded-lg border border-line-strong bg-surface-2 text-dim enabled:hover:border-rec/45 enabled:hover:text-rec"
                         >
                           <Trash2 className="size-3.5" />
-                        </button>
+                        </IconButton>
                       )}
                     </div>
                   </div>

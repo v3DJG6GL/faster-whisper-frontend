@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2, RefreshCw, RotateCcw } from "lucide-react";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
+import { IconButton } from "@/components/ui";
 import { cancelTextTranslation, urlLanguageCheck } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { languageLabel, namedLanguage } from "@/lib/languages";
@@ -100,9 +101,6 @@ export function useLinkLanguage(args: {
 
 const minSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
 
-const iconButton =
-  "ring-signal grid size-8 place-items-center rounded-lg border border-line-strong bg-surface-2 text-dim enabled:hover:border-accent/45 enabled:hover:text-accent";
-
 export function SpokenLanguageRow({
   lang,
   site,
@@ -174,26 +172,22 @@ export function SpokenLanguageRow({
         </span>
       )}
       <span className="ml-auto flex gap-1">
-        <button
-          type="button"
-          className={cn(iconButton, !lang.enabled && "invisible")}
+        <IconButton
+          label={checkLabel}
+          className={cn(!lang.enabled && "invisible")}
           disabled={running || disabled || !lang.enabled}
-          aria-label={checkLabel}
-          title={checkLabel}
           onClick={lang.recheck}
         >
           <RefreshCw className={cn("size-3.5", running && "animate-spin")} />
-        </button>
-        <button
-          type="button"
-          className={cn(iconButton, sp.source !== "edited" && "invisible")}
+        </IconButton>
+        <IconButton
+          label={resetLabel}
+          className={cn(sp.source !== "edited" && "invisible")}
           disabled={disabled || sp.source !== "edited"}
-          aria-label={resetLabel}
-          title={resetLabel}
           onClick={lang.reset}
         >
           <RotateCcw className="size-3.5" />
-        </button>
+        </IconButton>
       </span>
     </div>
   );

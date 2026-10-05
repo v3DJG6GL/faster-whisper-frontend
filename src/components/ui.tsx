@@ -1147,6 +1147,45 @@ export function FieldTrigger({
   );
 }
 
+/* ── IconButton ───────────────────────────────────────────────────────── */
+/** A square outlined button holding one icon; `label` is its accessible name and tooltip.
+ *  Hover takes the accent, or the danger tone for a removal. */
+export function IconButton({
+  label,
+  onClick,
+  disabled,
+  size = "md",
+  danger,
+  className,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  size?: "sm" | "md";
+  danger?: boolean;
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        "ring-signal grid place-items-center rounded-lg border border-line-strong bg-surface-2 text-dim",
+        size === "sm" ? "size-7" : "size-8",
+        danger ? "enabled:hover:border-rec/45 enabled:hover:text-rec" : "enabled:hover:border-accent/45 enabled:hover:text-accent",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 /* ── Keycap ───────────────────────────────────────────────────────────── */
 export function Kbd({ children }: { children: ReactNode }) {
   return (
