@@ -18,7 +18,7 @@ import {
 import { safeDisplayText } from "@/lib/sanitize";
 import { langCode, trackLanguageName } from "@/lib/languages";
 import {
-  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, prettySpeaker, previewExport,
+  cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, prettySpeaker, previewExport, tracksOf,
   type ExportFormat,
   type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
@@ -255,7 +255,7 @@ export function TranscriptExport({
       return videoTracks.map((t, i) => ({ key: t, tracks: [t], format, name: side?.[i] ?? null }));
     }
     return exportFileGroups(exportOptions, editedResult).map((g) => ({
-      key: (g.tracks ?? ["orig"]).join("+"), tracks: g.tracks, format: exportFormat, name: g.name,
+      key: tracksOf(g).join("+"), tracks: g.tracks, format: exportFormat, name: g.name,
     }));
   }, [videoPlan, exportFormat, subtitleMode, editedResult, videoTracks, exportOptions]);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
@@ -578,7 +578,7 @@ export function TranscriptExport({
       {previewFiles.length > 1 && (
         <div role="tablist" aria-label="Files" className="flex flex-wrap gap-1.5">
           {previewFiles.map((f) => {
-            const tracks = f.tracks ?? ["orig"];
+            const tracks = tracksOf(f);
             const on = f === previewFile;
             return (
               <button

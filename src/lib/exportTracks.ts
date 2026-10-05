@@ -2,7 +2,7 @@
 // reads in chips, tabs and lane labels, and — from the track order — which track is a
 // language's plain one, its title in a video and its file name. Pure; unit-tested.
 
-import { trackLang } from "./cueSplit";
+import { timedTrack, trackLang } from "./cueSplit";
 import { langCode, primarySubtag, trackLanguageName } from "./languages";
 import { codeSlug, stripControlChars } from "./sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge, type SourceWordStyle } from "./siteSubtitles";
@@ -27,7 +27,7 @@ export interface TrackInfo {
 
 export function trackInfo(result: TrackResult, track: string): TrackInfo {
   const lang = trackLang(result, track);
-  const tt = result.timedTracks?.find((t) => t.id === track);
+  const tt = timedTrack(result, track);
   if (tt) return { id: track, lang, source: tt.kind === "auto" ? "auto" : "site", hoh: !!tt.hoh, site: tt.site };
   return { id: track, lang, source: track === "orig" ? "whisper" : "mt", hoh: false };
 }

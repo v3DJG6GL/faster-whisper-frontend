@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat,
+  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat, tracksOf,
   generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
@@ -780,5 +780,14 @@ describe("exportOptionsFor (the panel's and History's one builder)", () => {
 describe("isSubtitleFormat", () => {
   it("only SRT and VTT carry subtitle cues (and ride with a video)", () => {
     expect(["srt", "vtt", "txt", "lrc", "json"].filter(isSubtitleFormat)).toEqual(["srt", "vtt"]);
+  });
+});
+
+describe("cueGrid / tracksOf", () => {
+  it("only subtitle formats split cues; no pick = the original only", () => {
+    expect(cueGrid(CUED, { format: "srt", cues: STANDARD }, ["orig"]).cues.length).toBeGreaterThan(1);
+    expect(cueGrid(CUED, { format: "txt", cues: STANDARD }, ["orig"]).cues).toHaveLength(1);
+    expect(tracksOf({})).toEqual(["orig"]);
+    expect(tracksOf({ tracks: ["en"] })).toEqual(["en"]);
   });
 });

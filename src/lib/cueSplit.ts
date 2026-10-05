@@ -14,7 +14,7 @@
 
 import { primarySubtag } from "./languages";
 import { segmentWordRanges } from "./wordAlign";
-import type { BatchResult, TranscriptSegment } from "./types";
+import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
 
 export type SubtitleLength = "transcribed" | "standard" | "short" | "custom";
 export type TranslationTiming = "same" | "own";
@@ -439,10 +439,15 @@ export function trackCues(grid: CueGrid, track: string): { start: number; end: n
     .filter((c) => c.text);
 }
 
+/** A result's site track by id (undefined for the original and machine translations). */
+export function timedTrack(result: Pick<BatchResult, "timedTracks">, id: string): TimedTrack | undefined {
+  return result.timedTracks?.find((t) => t.id === id);
+}
+
 /** The language code a track is filed under: the transcript's for the original, a site
  *  track's own, the target code otherwise — "und" when unknown. */
 export function trackLang(result: Pick<BatchResult, "language" | "timedTracks">, track: string): string {
-  const tt = result.timedTracks?.find((t) => t.id === track);
+  const tt = timedTrack(result, track);
   return ((tt ? tt.lang : track === "orig" ? result.language : track) ?? "").trim() || "und";
 }
 

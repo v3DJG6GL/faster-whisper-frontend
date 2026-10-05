@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, trText, trackCues, trackLang, wrapLines,
+  buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "./types";
@@ -214,6 +214,8 @@ describe("trackLang", () => {
     const r: BatchResult = { text: "", language: " de ", timedTracks: [{ id: "x", lang: "fr", source: "site", kind: "manual", cues: [] }] };
     expect(["orig", "en", "x"].map((t) => trackLang(r, t))).toEqual(["de", "en", "fr"]);
     expect(trackLang({}, "orig")).toBe("und");
+    expect(timedTrack(r, "x")?.lang).toBe("fr");
+    expect(timedTrack(r, "orig")).toBeUndefined();
   });
 });
 

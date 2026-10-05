@@ -4,7 +4,9 @@
 // segment/word text is server-controlled and speaker names are user-typed,
 // and both end up in files that get opened elsewhere.
 
-import { buildCues, cueResult, limitsFor, trText, trackCues, trackLang, wrapLines, type CueOptions } from "./cueSplit";
+import {
+  buildCues, cueResult, limitsFor, timedTrack, trText, trackCues, trackLang, wrapLines, type CueOptions,
+} from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { codeSlug, stripControlChars } from "./sanitize";
 import { segmentWordRanges } from "./wordAlign";
@@ -593,11 +595,18 @@ function jsonTimedTrack(t: TimedTrack) {
   };
 }
 
+/** The tracks an export (or one of its files) carries, in order — the original only
+ *  without a pick. */
+export const tracksOf = (opts: { tracks?: string[] }): string[] => opts.tracks ?? ["orig"];
+
+/** Machine translations get cues of their own: SRT/VTT whose cue options ask for own timing. */
+const ownTimingOn = (opts: Pick<ExportOptions, "format" | "cues">) =>
+  isSubtitleFormat(opts.format) && opts.cues?.timing === "own";
+
 /** Does `track` carry its own cue timing in this export? Site tracks always;
- *  a machine translation when the cue options ask for own timing. */
+ *  a machine translation under own timing. */
 function ownTimed(result: BatchResult, opts: ExportOptions, track: string): boolean {
-  if (result.timedTracks?.some((t) => t.id === track)) return true;
-  return track !== "orig" && isSubtitleFormat(opts.format) && opts.cues?.timing === "own";
+  return !!timedTrack(result, track) || (track !== "orig" && ownTimingOn(opts));
 }
 
 /** What the generators render: the segments themselves, or — for SRT/VTT
@@ -605,7 +614,7 @@ function ownTimed(result: BatchResult, opts: ExportOptions, track: string): bool
  *  as segments (cueResult), so every generator below stays cue-agnostic. */
 function projected(result: BatchResult, opts: ExportOptions): BatchResult {
   if (opts.format === "json") return result;
-  const tracks = opts.tracks ?? ["orig"];
+  const tracks = tracksOf(opts);
   if (tracks.length === 1 && ownTimed(result, opts, tracks[0])) {
     return cueResult(result, cueGrid(result, opts, tracks), tracks[0]);
   }
@@ -614,10 +623,11 @@ function projected(result: BatchResult, opts: ExportOptions): BatchResult {
 
 /** The cues of `tracks`, leaving room for the "Name: " prefix their first
  *  line will carry — shared by the export, its reading-speed check and the
- *  panel's preview and summary. */
+ *  panel's preview and summary. Only subtitle formats split: any other gets
+ *  one cue per segment. */
 export function cueGrid(result: BatchResult, opts: ExportOptions, tracks: string[]) {
   const pre = ctxOf(result, opts);
-  return buildCues(result, opts.cues, tracks, (seg) => nameReserve(pre, seg));
+  return buildCues(result, isSubtitleFormat(opts.format) ? opts.cues : undefined, tracks, (seg) => nameReserve(pre, seg));
 }
 
 /** Render `result` in the requested format. Pure — safe to golden-test. */
@@ -691,8 +701,8 @@ export function exportFileGroups(
   // misleading and wrong when the track picker state survives a format switch.
   if (opts.format === "json") return [{ tracks: opts.tracks, name: (stem) => `${stem}.${ext}` }];
   const tracks = exportTrackList(opts);
-  const perTrack = opts.format === "lrc" || (isSubtitleFormat(opts.format) && opts.cues?.timing === "own");
-  const alone = tracks.filter((t) => perTrack || result.timedTracks?.some((x) => x.id === t));
+  const perTrack = opts.format === "lrc" || ownTimingOn(opts);
+  const alone = tracks.filter((t) => perTrack || timedTrack(result, t));
   if (!alone.length) {
     const suffix = exportStemSuffix(opts.tracks);
     return [{ tracks: opts.tracks, name: (stem) => `${stem}${suffix}.${ext}` }];
@@ -722,9 +732,9 @@ export function previewExport(
   opts: ExportOptions,
   n: number,
 ): { text: string; count: number; total: number } {
-  const tracks = opts.tracks ?? ["orig"];
+  const tracks = tracksOf(opts);
   const segs = result.segments ?? [];
-  const grid = cueGrid(result, { ...opts, cues: isSubtitleFormat(opts.format) ? opts.cues : undefined }, tracks);
+  const grid = cueGrid(result, opts, tracks);
   const list = tracks.length === 1
     ? trackCues(grid, tracks[0])
     : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : c.tr[t])));
@@ -764,7 +774,7 @@ export function generateExports(
 /** The tracks an export writes, in order (the original only without a pick). */
 function exportTrackList(opts: ExportOptions): string[] {
   if (opts.format === "json") return opts.tracks?.includes("orig") === false ? [] : ["orig"];
-  return opts.tracks ?? ["orig"];
+  return tracksOf(opts);
 }
 
 /** The file names an export would write — NO content serialized, so the export panel can
