@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
+  derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath,
   legacyTrackIndices, linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles,
   sidecarNames, stemTimestamp,
 } from "./mediaExport";
@@ -93,14 +93,6 @@ describe("embeddedSubtitleTracks", () => {
   });
   it("isSubtitleFormat: only SRT and VTT ride with a video", () => {
     expect(["srt", "vtt", "txt", "lrc", "json"].filter(isSubtitleFormat)).toEqual(["srt", "vtt"]);
-  });
-});
-
-describe("languageLabel", () => {
-  it("names known codes and keeps a region", () => {
-    expect(languageLabel("pt-BR")).toBe("Portuguese (BR)");
-    expect(languageLabel("fi")).toBe("Finnish");
-    expect(languageLabel("xx")).toBe("XX");
   });
 });
 

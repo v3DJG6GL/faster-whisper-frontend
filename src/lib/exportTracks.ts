@@ -3,7 +3,7 @@
 // language's plain one, its title in a video and its file name. Pure; unit-tested.
 
 import { trackLang } from "./cueSplit";
-import { langCode, languageLabel as baseLanguageLabel, primarySubtag } from "./languages";
+import { langCode, primarySubtag, trackLanguageName } from "./languages";
 import { safeDisplayText, stripControlChars } from "./sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge } from "./siteSubtitles";
 import type { BatchResult } from "./types";
@@ -54,15 +54,6 @@ export function trackChipLabel(result: TrackResult, track: string): string {
 /** A track's language code as chips, lane cues and the Summary show it: "DE", "UND". */
 export function trackCode(result: TrackResult, track: string): string {
   return langCode(trackLang(result, track));
-}
-
-/** English names for the track titles — the same names the viewer's chips use; a code with
- *  no name is shown in caps. */
-export function languageLabel(code: string): string {
-  const base = code.split("-")[0].toLowerCase();
-  const region = code.includes("-") ? ` (${code.split("-")[1].toUpperCase()})` : "";
-  const name = baseLanguageLabel(base);
-  return (name === base ? base.toUpperCase() : name) + region;
 }
 
 /** The machine-translated tracks a result carries: its targets, then any other language its
@@ -248,7 +239,7 @@ export function planTracks(
   return chosen.map((id) => {
     const info = trackInfo(result, id);
     const g = groups.find((x) => x.tracks.includes(id))!;
-    const name = languageLabel(info.lang);
+    const name = trackLanguageName(info.lang);
     const defaultTitle = g.tracks.length > 1 ? `${name} [${titleSource(info)}]` : name;
     return {
       ...info,

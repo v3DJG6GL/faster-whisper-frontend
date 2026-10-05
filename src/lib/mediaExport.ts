@@ -86,8 +86,6 @@ export interface SidecarFile {
   content: string;
 }
 
-export { languageLabel } from "./exportTracks";
-
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for

@@ -8,10 +8,10 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEven
 import { CompoundChip } from "@/components/CompoundChip";
 import { cn } from "@/lib/cn";
 import {
-  languageGroups, languageLabel, moveLanguage, moveTrack, sourceKind, sourceWord, stepSlot, toggleLanguage, toggleTrack,
+  languageGroups, moveLanguage, moveTrack, sourceKind, sourceWord, stepSlot, toggleLanguage, toggleTrack,
   trackInfo,
 } from "@/lib/exportTracks";
-import { langCode } from "@/lib/languages";
+import { langCode, trackLanguageName } from "@/lib/languages";
 import type { ChipPart } from "@/lib/siteSubtitles";
 import type { BatchResult } from "@/lib/types";
 
@@ -118,7 +118,7 @@ export function ExportTrackChips({
     <div className="flex flex-wrap gap-1.5" role="group" aria-label="Tracks">
       {groups.map((g, gi) => {
         const on = g.tracks.some((t) => chosen.includes(t));
-        const name = languageLabel(g.lang);
+        const name = trackLanguageName(g.lang);
         const langDrag = shown?.kind === "lang" ? groups.findIndex((x) => x.lang === shown.id) : -1;
         const before = langDrag >= 0 && moves(shown!.slot, langDrag) && shown!.slot === gi;
         const after = langDrag >= 0 && moves(shown!.slot, langDrag) && shown!.slot === groups.length && gi === groups.length - 1;

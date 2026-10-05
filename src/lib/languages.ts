@@ -63,6 +63,15 @@ export function languageLabel(code: string): string {
   return LABEL_FIX[code] ?? intlName(code) ?? code;
 }
 
+/** A track's language as its titles and chips name it: the English name with the region in
+ *  caps ("Portuguese (BR)"); a code with no name in caps ("XX"). */
+export function trackLanguageName(code: string): string {
+  const [base, region] = code.split("-");
+  const b = base.toLowerCase();
+  const name = languageLabel(b);
+  return (name === b ? b.toUpperCase() : name) + (region !== undefined ? ` (${region.toUpperCase()})` : "");
+}
+
 const natives = new Map<string, string>();
 /** The language's name in itself ("Deutsch" for de), or "" when the runtime has no data for it
  *  (it then falls back to another locale — that name is not native) or it equals the English one. */

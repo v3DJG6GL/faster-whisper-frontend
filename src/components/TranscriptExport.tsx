@@ -16,7 +16,7 @@ import {
   fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia,
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
-import { langCode } from "@/lib/languages";
+import { langCode, trackLanguageName } from "@/lib/languages";
 import {
   cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, prettySpeaker, previewExport, type ExportFormat,
   type ExportOptions, exportFileNames,
@@ -34,7 +34,7 @@ import {
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
-  basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
+  basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath,
   legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
@@ -380,7 +380,7 @@ export function TranscriptExport({
         serverUrl, backendId: trBackend.id, jobId,
         ...source,
         container, subtitles, defaultTrack, originalTrack,
-        audioLang, audioLabel: audioLang ? languageLabel(audioLang) : null,
+        audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
         destPath: dest, filename: basename(dest).replace(/\.[^.]+$/, ""),
         maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
       });

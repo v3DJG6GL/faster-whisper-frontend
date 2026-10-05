@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, primarySubtag,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
 } from "./languages";
 
@@ -166,5 +166,13 @@ describe("langCode", () => {
     expect(langCode("de\u202e")).toBe("DE");
     expect(langCode("x".repeat(20))).toBe("X".repeat(16));
     expect(langCode("abcdefghij", 8)).toBe("ABCDEFGH");
+  });
+});
+
+describe("trackLanguageName", () => {
+  it("names known codes and keeps a region; an unknown code in caps", () => {
+    expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
+    expect(trackLanguageName("fi")).toBe("Finnish");
+    expect(trackLanguageName("xx")).toBe("XX");
   });
 });
