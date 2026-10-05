@@ -1769,7 +1769,16 @@ export default function Transcribe() {
                   }
                 >
                   <div className="flex items-center gap-1.5">
-                    {effBgm && separationModels.length > 1 && <StageGear state={bgmOptions} label="Music source separation" />}
+                    <StageGear
+                      state={bgmOptions}
+                      label="Music source separation"
+                      disabled={!effBgm || separationModels.length < 2}
+                      disabledReason={
+                        separationModels.length < 2
+                          ? "This server offers one separation model, nothing to choose"
+                          : "Turn on music source separation to change its settings"
+                      }
+                    />
                     <StageSwitch
                       value={separateBgm}
                       serverDefault={decodeDefaults?.separate_bgm}
@@ -1969,7 +1978,12 @@ export default function Transcribe() {
                   }
                 >
                   <div className="flex items-center gap-1.5">
-                    {effDiarize && <StageGear state={diarizeOptions} label="Speaker diarization" />}
+                    <StageGear
+                      state={diarizeOptions}
+                      label="Speaker diarization"
+                      disabled={!effDiarize}
+                      disabledReason="Turn on speaker diarization to change its settings"
+                    />
                     <StageSwitch
                       value={diarize}
                       serverDefault={decodeDefaults?.diarize}
@@ -2064,7 +2078,12 @@ export default function Transcribe() {
                     }
                   >
                     <div className="flex items-center gap-1.5">
-                      {translateTo.length > 0 && <StageGear state={translationOptions} label="Translation" />}
+                      <StageGear
+                        state={translationOptions}
+                        label="Translation"
+                        disabled={translateTo.length === 0}
+                        disabledReason="Turn on translation to change its settings"
+                      />
                       <Toggle
                         checked={translateTo.length > 0}
                         ariaLabel="Translation"

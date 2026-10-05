@@ -1,8 +1,9 @@
 // A stage row's settings, folded (Transcribe's processing card): a gear beside the row's
 // switch opens them, and under the row's description one quiet line names what the stage
 // will run with ("Auto speakers · Default · community-1") — the line toggles too. Closed by
-// default; open, the panel takes the accent edge and the gear the accent. A value off its
-// default puts the accent dot in the line, so a change shows while folded.
+// default; open, the panel takes the accent edge and the gear the accent. The gear never hides:
+// while the stage is off it greys out. A value off its default puts the accent dot in the
+// line, so a change shows while folded.
 //
 // The gear sits in SettingRow's control column and the panel in its `expand` slot, so the
 // two share one `useStageOptions()` state: <StageGear> beside the switch, <StageOptions> in
@@ -24,22 +25,36 @@ export function useStageOptions(): StageOptionsState {
   return { open, toggle: () => setOpen((v) => !v), panelId };
 }
 
-/** The gear beside a stage's switch. */
-export function StageGear({ state, label }: { state: StageOptionsState; label: string }) {
+/** The gear beside a stage's switch, sized to the switch. Always shown: while the stage is off
+ *  (or has nothing to set) it greys out and its tooltip says why, so the row never shifts. */
+export function StageGear({
+  state,
+  label,
+  disabled,
+  disabledReason,
+}: {
+  state: StageOptionsState;
+  label: string;
+  disabled?: boolean;
+  /** The tooltip while disabled. */
+  disabledReason?: string;
+}) {
+  const open = state.open && !disabled;
   return (
     <button
       type="button"
-      onClick={state.toggle}
-      aria-expanded={state.open}
-      aria-controls={state.open ? state.panelId : undefined}
+      onClick={disabled ? undefined : state.toggle}
+      aria-disabled={disabled || undefined}
+      aria-expanded={disabled ? undefined : open}
+      aria-controls={open ? state.panelId : undefined}
       aria-label={`${label} settings`}
-      title={`${label} settings`}
+      title={disabled ? (disabledReason ?? `${label} settings`) : `${label} settings`}
       className={cn(
-        "ring-signal grid size-8 shrink-0 place-items-center rounded-lg transition-colors",
-        state.open ? "text-accent" : "text-faint hover:text-text",
+        "ring-signal grid size-[30px] shrink-0 place-items-center rounded-lg transition-colors",
+        disabled ? "cursor-not-allowed text-faint opacity-40" : open ? "text-accent" : "text-dim hover:text-text",
       )}
     >
-      <Settings aria-hidden className="size-4" />
+      <Settings aria-hidden className="size-5" />
     </button>
   );
 }
