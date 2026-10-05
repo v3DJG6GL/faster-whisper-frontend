@@ -2,6 +2,7 @@
 // format can carry, and what the file will contain. Pure, no Tauri imports —
 // the panel maps these onto its controls.
 
+import { plural } from "./format";
 import { isSubtitleFormat, type ExportFormat } from "./transcriptExport";
 
 /** on/off = a toggle; fixed = always in this format; na = the format can't
@@ -96,7 +97,6 @@ export function exportSummary(a: {
 }): SummaryRow[] {
   const sub = isSubtitleFormat(a.format);
   const item = (k: ContentItem["key"]) => a.content.find((c) => c.key === k)!;
-  const plural = (n: number, one: string) => `${n.toLocaleString("en")} ${one}${n === 1 ? "" : "s"}`;
   const rows: SummaryRow[] = [];
   rows.push(
     sub ? { label: "Cue timings", state: "on", why: "start and end of every subtitle" }

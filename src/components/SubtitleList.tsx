@@ -12,7 +12,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { fmtTimestamp } from "@/lib/format";
+import { fmtTimestamp, plural } from "@/lib/format";
 import { trackChipLabel } from "@/lib/exportTracks";
 import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
@@ -316,7 +316,7 @@ export function SubtitleList({
               <div className="mb-1 flex items-center gap-2 border-b border-line px-2 pb-1.5">
                 <LangTag code={ln.code} orig={ln.track === "orig"} />
                 <span className="text-[11.5px] text-faint">
-                  {ln.rows.length.toLocaleString()} subtitle{ln.rows.length === 1 ? "" : "s"}
+                  {plural(ln.rows.length, "subtitle")}
                 </span>
               </div>
               <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === 0 ? pin : -1} lane scrollRef={scrollRef}

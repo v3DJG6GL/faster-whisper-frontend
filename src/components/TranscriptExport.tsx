@@ -42,7 +42,7 @@ import {
 import { patchRecord, type TranscriptRecord } from "@/lib/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
-import type { Backend, BatchResult, Capabilities, TranscribeSettings, TranscriptWord } from "@/lib/types";
+import type { Backend, BatchResult, Capabilities, TranscriptWord } from "@/lib/types";
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
@@ -210,7 +210,6 @@ export function TranscriptExport({
     format: exportFormat, speakers, renames: fileRenames, colorPicks: fileColors,
     toggles: { showTs, showNames, colorize, wordTs }, cues: cueOpts, tracks: effTracks,
   }), [exportFormat, fileRenames, colorize, showNames, showTs, fileColors, speakers, wordTs, effTracks, cueOpts]);
-  const exportOpts = (): ExportOptions => exportOptions;
   const subs = isSubtitleFormat(exportFormat);
   /** The original track's cues — the preview's slice and the summary's
    *  count; null when the file has no split subtitles. */
@@ -274,7 +273,7 @@ export function TranscriptExport({
   /** The files one Save writes (the media file first, then the text files),
    *  from the panel's current choices. */
   const exportPlanNow = () => {
-    const opts = exportOpts();
+    const opts = exportOptions;
     return mediaExportPlan({
       choice: mediaChoice, container, subtitleMode, format: exportFormat,
       textFileNames: exportFileNames(opts, editedResult),
@@ -284,8 +283,6 @@ export function TranscriptExport({
       hasVideoSource,
     });
   };
-
-  const persistMedia = (patch: Partial<TranscribeSettings>) => persistOptions(patch);
 
   /** Plain copy of the audio (the app's local copy; a link's is fetched
    *  first when the copy is missing and the server still has it). */
@@ -362,7 +359,7 @@ export function TranscriptExport({
       setMediaError({ kind: "none", msg: "No video is available for this transcription." });
       return false;
     }
-    const opts = exportOpts();
+    const opts = exportOptions;
     const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded, trackNames) : [];
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
@@ -437,7 +434,7 @@ export function TranscriptExport({
     setSaveError(null);
     setMediaError(null);
     const stem = exportStem(rec?.title, path, stemLink);
-    const opts = exportOpts();
+    const opts = exportOptions;
     const plan = exportPlanNow();
     // Beside a video the text files are one subtitle file per language; the
     // plain text export stays the (possibly bilingual) reading file.
@@ -625,7 +622,7 @@ export function TranscriptExport({
       : !packageOn && subtitleMode !== "sidecar" && !localVideo
         ? (trCaps?.media_package?.reason ?? "this server can't package subtitles")
         : null;
-    const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistMedia({ exportMedia: c }); };
+    const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); persistOptions({ exportMedia: c }); };
     return (
       <div className={box}>
         <span className={boxTitle}>Media</span>
@@ -664,7 +661,7 @@ export function TranscriptExport({
                 return (
                   <button key={c} type="button" aria-pressed={on} disabled={off}
                     title={c === "mp4" && mp4Why ? mp4Why : subtitleMode === "sidecar" && !!localVideo && !serverVideoId ? "a plain copy keeps the original container" : undefined}
-                    onClick={() => { if (!off) { setContainer(c); persistMedia({ exportContainer: c }); } }}
+                    onClick={() => { if (!off) { setContainer(c); persistOptions({ exportContainer: c }); } }}
                     className={cn(
                       "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
                       on ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
@@ -681,7 +678,7 @@ export function TranscriptExport({
                 <button key={v} type="button" aria-pressed={subtitleMode === v}
                   disabled={v !== "sidecar" && !packageOn}
                   title={v !== "sidecar" && !packageOn ? (trCaps?.media_package?.reason ?? "this server can't package subtitles") : undefined}
-                  onClick={() => { setSubtitleMode(v); persistMedia({ exportSubtitleMode: v }); }}
+                  onClick={() => { setSubtitleMode(v); persistOptions({ exportSubtitleMode: v }); }}
                   className={cn(
                     "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
                     subtitleMode === v ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
@@ -960,7 +957,7 @@ export function TranscriptExport({
                 {safeDisplayText(mediaError.msg, 300)}
                 {mediaError.kind === "mp4" && (
                   <button type="button" className="ml-2 underline"
-                    onClick={() => { setContainer("mkv"); persistMedia({ exportContainer: "mkv" }); setMediaError(null); }}>
+                    onClick={() => { setContainer("mkv"); persistOptions({ exportContainer: "mkv" }); setMediaError(null); }}>
                     Save as MKV
                   </button>
                 )}

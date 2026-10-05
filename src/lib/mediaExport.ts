@@ -24,7 +24,7 @@ export function fileStem(path: string): string {
 }
 
 /** Video containers the picker accepts and the packaging route can read. */
-export const VIDEO_SOURCE_EXTS = ["mp4", "mkv", "webm", "mov", "m4v"] as const;
+const VIDEO_SOURCE_EXTS = ["mp4", "mkv", "webm", "mov", "m4v"] as const;
 
 export function isVideoSourcePath(path: string): boolean {
   const m = /\.([A-Za-z0-9]+)$/.exec(path);

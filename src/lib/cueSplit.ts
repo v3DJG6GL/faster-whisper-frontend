@@ -55,7 +55,7 @@ export interface CueGrid {
   own: Record<string, Cue[]>;
 }
 
-export const MIN_CUE_DUR = 0.83;
+const MIN_CUE_DUR = 0.83;
 
 export const CUE_PRESETS: Record<"standard" | "short", CueLimits> = {
   standard: { cpl: 42, lines: 2, maxDur: 7, cps: 17 },

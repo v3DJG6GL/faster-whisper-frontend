@@ -130,7 +130,7 @@ export interface LangSection {
 
 const rowsOf = (codes: readonly string[]): LangRow[] => codes.map((value) => ({ value }));
 /** Recents shown above the full list — enough for a working set without pushing the list down. */
-export const MAX_RECENT_SHOWN = 5;
+const MAX_RECENT_SHOWN = 5;
 
 /** The spoken-language picker's groups. Without a query: the pinned rows (the inherit row when
  *  the field inherits, Auto-detect, Multiple languages when offered), Recent, all languages by

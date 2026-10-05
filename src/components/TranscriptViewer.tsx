@@ -19,7 +19,7 @@ import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, LangTag, Segmented } from "@/components/ui";
-import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { fmtBytes, fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { lastStartedAt, seekKeyTarget } from "@/lib/seekKeys";
 import {
   cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl, readMediaFile, isTauri, translateText,
@@ -1948,7 +1948,7 @@ export function TranscriptViewer({
             { value: "read", label: "Read", icon: BookOpen },
             {
               value: "edit", label: "Edit", icon: Pencil, disabled: !hasSegments, dot: editCount > 0,
-              title: editCount ? `${editCount} correction${editCount === 1 ? "" : "s"}` : undefined,
+              title: editCount ? plural(editCount, "correction") : undefined,
             },
             { value: "export", label: "Export", icon: Download },
           ]}
@@ -2000,7 +2000,7 @@ export function TranscriptViewer({
           <span className="text-[13px] font-medium text-accent">Editing transcript</span>
           <span className="text-[12px] text-dim">
             {editCount
-              ? `${editCount} correction${editCount === 1 ? "" : "s"} — they apply to Copy and every export`
+              ? `${plural(editCount, "correction")} — they apply to Copy and every export`
               : "click a sentence to correct it · click a speaker chip to reassign"}
           </span>
           <span className="flex-1" />
