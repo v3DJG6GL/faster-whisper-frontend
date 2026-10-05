@@ -38,9 +38,18 @@ export interface TriggerProps {
 
 export const optionId = (listId: string, i: number) => `${listId}-opt-${i}`;
 
-/** The grouped listbox: section headers with counts, options with the active one outlined.
- *  Rows never take focus (a mouse press is swallowed so the search field keeps it). Shared by
- *  ListPicker and the dictation LangPick window. */
+/** The search field's half of the listbox: it owns focus, the list follows `active`. */
+export const comboboxInputProps = (listId: string, active: number, hasRow: boolean) => ({
+  role: "combobox" as const,
+  "aria-expanded": true,
+  "aria-controls": listId,
+  "aria-autocomplete": "list" as const,
+  "aria-activedescendant": hasRow ? optionId(listId, active) : undefined,
+});
+
+/** The grouped listbox: section headers with counts, options with the active one outlined and
+ *  kept on screen. Rows never take focus (a mouse press is swallowed so the search field keeps
+ *  it). Shared by ListPicker and the dictation LangPick window. */
 export function OptionRows<R>({
   id,
   label,
@@ -79,6 +88,12 @@ export function OptionRows<R>({
     starts.push(total);
     total += s.rows.length;
   }
+  // Keyed on the active row too: a new filter can put a different row at the same index.
+  const activeRow = sections.flatMap((s) => s.rows)[active];
+  const activeKey = activeRow === undefined ? "" : rowKey(activeRow);
+  useEffect(() => {
+    document.getElementById(optionId(id, active))?.scrollIntoView({ block: "nearest" });
+  }, [id, active, activeKey]);
   return (
     <div id={id} role="listbox" aria-label={label} aria-multiselectable={multi || undefined} className={className} style={style}>
       {total === 0 && empty}
@@ -213,10 +228,6 @@ export function ListPicker<R>({
     return () => document.removeEventListener("mousedown", onDoc);
   }, [open]);
 
-  useEffect(() => {
-    if (open) document.getElementById(optionId(listId, act))?.scrollIntoView({ block: "nearest" });
-  }, [open, act, query, listId]);
-
   const pick = (r: R, index: number) => {
     setActive(index);
     onPick(r);
@@ -305,11 +316,7 @@ export function ListPicker<R>({
                 onKeyDown={onSearchKey}
                 placeholder={placeholder}
                 aria-label={`Search ${label.toLowerCase()}`}
-                role="combobox"
-                aria-expanded="true"
-                aria-controls={listId}
-                aria-autocomplete="list"
-                aria-activedescendant={flat[act] ? optionId(listId, act) : undefined}
+                {...comboboxInputProps(listId, act, !!flat[act])}
                 spellCheck={false}
                 autoComplete="off"
                 className="min-w-0 flex-1 bg-transparent text-[13px] text-text outline-none placeholder:text-faint"

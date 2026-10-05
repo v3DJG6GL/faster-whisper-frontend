@@ -29,7 +29,7 @@ import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
 import { langCode, targetSections, toggleCode, type LangRow } from "@/lib/languages";
 import { navKey } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
-import { KeyHint, OptionRows, optionId } from "@/components/ListPicker";
+import { KeyHint, OptionRows, comboboxInputProps } from "@/components/ListPicker";
 import { CodeChip } from "@/components/ui";
 import { TargetRow, untestedTitle } from "@/components/LanguagePicker";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
@@ -126,11 +126,6 @@ export default function LangPick() {
     [],
   );
   const abort = useCallback(() => void abortLangPick().catch((e) => console.error("lang pick abort failed:", e)), []);
-  // Keep the keyboard highlight on screen: arrows/digits move `active`, the list scrolls.
-  useEffect(() => {
-    document.getElementById(optionId(LIST_ID, active))?.scrollIntoView({ block: "nearest" });
-  }, [active]);
-
   // Recent, then the model's languages, then the rest — never the spoken language (translating
   // a language into itself is a no-op that would still cost a server round-trip per phrase).
   // Grouped rather than merged: a flat list ranked by recency reorders under the user between
@@ -260,11 +255,7 @@ export default function LangPick() {
         }}
         placeholder="Filter languages…"
         aria-label="Filter languages"
-        role="combobox"
-        aria-expanded="true"
-        aria-controls={LIST_ID}
-        aria-autocomplete="list"
-        aria-activedescendant={rows[active] ? optionId(LIST_ID, active) : undefined}
+        {...comboboxInputProps(LIST_ID, active, !!rows[active])}
         className="w-full border-b border-line bg-transparent px-4 py-2.5 text-[13px] text-text outline-none placeholder:text-faint"
       />
 
