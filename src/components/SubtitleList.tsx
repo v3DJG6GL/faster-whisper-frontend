@@ -3,8 +3,12 @@
 // language; own timing (or a site track with its own timing) = one
 // time-synced lane per language. Display only — corrections stay keyed to
 // segments, so "Edit its segment" hands over to the Segments view.
+// Rows are virtualized (@tanstack/react-virtual) against the viewer's
+// transcript box: a long video's ~2000 cue rows cost WebKitGTK its frame rate
+// in style/layout/paint alone, even with React idle.
 
-import { memo, useMemo } from "react";
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
@@ -12,6 +16,7 @@ import { fmtTimestamp } from "@/lib/format";
 import { trackChipLabel } from "@/lib/exportTracks";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
+import { rowsToRender } from "@/lib/virtualRows";
 import { cueTrackLang, limitsFor, trackCues, wrapLines, type CueGrid, type CueOptions } from "@/lib/cueSplit";
 import type { BatchResult } from "@/lib/types";
 
@@ -106,8 +111,83 @@ const CueRow = memo(function CueRow({
   );
 });
 
+/** First guess at a row's height before it is measured: its padding plus the
+ *  taller of the time block and its tallest explicitly wrapped text. */
+const estimate = (r: Row, lane?: boolean) =>
+  16 + Math.max(lane ? 36 : 43, 19 * Math.max(...r.lines.map((l) => l.text.split("\n").length)));
+
+/** One virtualized column of cue rows (the table, or one lane) scrolling in
+ *  the viewer's transcript box. `pin` = the row carrying the active segment's
+ *  id — always rendered, at its virtual position. */
+function VirtualCues({
+  rows, active, pin, columns, lane, scrollRef, canSeek, seekTo, onEditSegment,
+}: {
+  rows: Row[];
+  active: number;
+  pin: number;
+  columns?: string;
+  lane?: boolean;
+  scrollRef: RefObject<HTMLElement | null>;
+  canSeek: boolean;
+  seekTo: (t: number) => void;
+  onEditSegment: (seg: number) => void;
+}) {
+  const listRef = useRef<HTMLDivElement>(null);
+  // Where the rows start inside the box's scroll content (heads and focus
+  // padding sit above them) — the virtualizer's scrollMargin. Re-measured
+  // whenever the list's box changes (width, total height).
+  const [margin, setMargin] = useState(0);
+  useLayoutEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    const measure = () => {
+      const box = scrollRef.current;
+      if (box) setMargin(Math.round(el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [scrollRef]);
+  // Keyed on the rows: a new layout (options, tracks, edits) re-runs the
+  // positions with fresh estimates for the rows not measured yet.
+  const getItemKey = useCallback((i: number) => rows[i].key, [rows]);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getItemKey,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (i) => estimate(rows[i], lane),
+    overscan: 8,
+    gap: 2,
+    scrollMargin: margin,
+  });
+  // Lanes share one scroll box: a lane nudging scrollTop for its own
+  // re-measured rows would shift its neighbours — let each lane settle alone.
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = lane ? () => false : undefined;
+  const range = virtualizer.getVirtualItems().map((v) => v.index);
+  const items = rowsToRender(range, pin, rows.length).map((i) => virtualizer.measurementsCache[i]);
+  return (
+    <div ref={listRef} style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
+      {items.map((v) => {
+        const r = rows[v.index];
+        return (
+          <div
+            key={r.key}
+            ref={virtualizer.measureElement}
+            data-index={v.index}
+            style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start - margin}px)` }}
+          >
+            <CueRow row={r} active={v.index === active} columns={columns} lane={lane}
+              canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function SubtitleList({
-  result, grid, tracks, cues, curTime, canSeek, seekTo, onEditSegment, showNames, colorize, displayName, colorOf, maxRows,
+  result, grid, tracks, cues, curTime, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, showNames, colorize, displayName, colorOf,
 }: {
   result: BatchResult;
   /** Memoized by the viewer on edits, options and tracks — never on curTime. */
@@ -117,6 +197,10 @@ export function SubtitleList({
   /** Undefined = as transcribed (one cue per segment, unwrapped). */
   cues: CueOptions | undefined;
   curTime: number;
+  /** The viewer's active segment: its first cue's row stays in the page. */
+  activeSeg: number;
+  /** The viewer's transcript box — the rows' scroll container. */
+  scrollRef: RefObject<HTMLElement | null>;
   canSeek: boolean;
   seekTo: (t: number) => void;
   onEditSegment: (seg: number) => void;
@@ -124,7 +208,6 @@ export function SubtitleList({
   colorize: boolean;
   displayName: (label: string) => string;
   colorOf: (label: string) => string;
-  maxRows: number;
 }) {
   const lanes = tracks.some((t) => grid.own[t]);
   const layout = useMemo(() => {
@@ -164,7 +247,7 @@ export function SubtitleList({
     if (!lanes) {
       return {
         heads: tracks.map((t) => (t === "orig" ? `${code(t)} · original` : head(t))),
-        rows: grid.cues.slice(0, maxRows).map((c, i) =>
+        rows: grid.cues.map((c, i) =>
           rowOf(`${i}`, i + 1, c, i === 0 || grid.cues[i - 1].seg !== c.seg,
             tracks.map((t) => [t, t === "orig" ? c.text : (c.tr[t] ?? "")])),
         ),
@@ -179,12 +262,19 @@ export function SubtitleList({
         return {
           track: t,
           code: head(t),
-          rows: list.slice(0, maxRows).map((c, i) =>
+          rows: list.map((c, i) =>
             rowOf(`${t}-${i}`, i + 1, c, li === 0 && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text]])),
         };
       }),
     };
-  }, [result, grid, tracks, cues, lanes, maxRows, showNames, colorize, displayName, colorOf]);
+  }, [result, grid, tracks, cues, lanes, showNames, colorize, displayName, colorOf]);
+  /** Segment → the row carrying its id (the table, or the first lane). */
+  const firstOf = useMemo(() => {
+    const m = new Map<number, number>();
+    (lanes ? (layout.lanes[0]?.rows ?? []) : layout.rows).forEach((r, i) => r.first && m.set(r.seg, i));
+    return m;
+  }, [layout, lanes]);
+  const pin = firstOf.get(activeSeg) ?? -1;
 
   /** The cue under the playhead (binary search; a short grace after its end). */
   const activeIn = (rows: Row[]) => {
@@ -205,16 +295,14 @@ export function SubtitleList({
           <span>time</span>
           {layout.heads.map((h) => <span key={h}>{h}</span>)}
         </div>
-        {layout.rows.map((r, i) => (
-          <CueRow key={r.key} row={r} active={i === active} columns={columns}
-            canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
-        ))}
+        <VirtualCues rows={layout.rows} active={active} pin={pin} columns={columns} scrollRef={scrollRef}
+          canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
       </div>
     );
   }
   return (
     <div className="flex gap-4">
-      {layout.lanes.map((ln) => {
+      {layout.lanes.map((ln, li) => {
         const active = activeIn(ln.rows);
         return (
           <div key={ln.track} className="flex min-w-0 flex-1 flex-col gap-0.5">
@@ -224,10 +312,8 @@ export function SubtitleList({
                 {ln.rows.length.toLocaleString()} subtitle{ln.rows.length === 1 ? "" : "s"}
               </span>
             </div>
-            {ln.rows.map((r, i) => (
-              <CueRow key={r.key} row={r} active={i === active} lane
-                canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
-            ))}
+            <VirtualCues rows={ln.rows} active={active} pin={li === 0 ? pin : -1} lane scrollRef={scrollRef}
+              canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
           </div>
         );
       })}

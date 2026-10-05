@@ -2499,6 +2499,8 @@ export function TranscriptViewer({
                 tracks={subTracks}
                 cues={cueOpts}
                 curTime={curTime}
+                activeSeg={activeSegIdx}
+                scrollRef={transcriptBoxRef}
                 canSeek={canSeek}
                 seekTo={seekTo}
                 onEditSegment={onEditSegment}
@@ -2506,7 +2508,6 @@ export function TranscriptViewer({
                 colorize={colorize}
                 displayName={displayName}
                 colorOf={colorOf}
-                maxRows={MAX_SEGMENT_ROWS}
               />
             ) : effSegments.slice(0, MAX_SEGMENT_ROWS).map((seg, i) => (
               <SegmentRow
@@ -2545,7 +2546,7 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {reading && hasSegments && effSegments.length > MAX_SEGMENT_ROWS && (
+      {reading && !subtitlesView && effSegments.length > MAX_SEGMENT_ROWS && (
         <div className={cn("mt-3 text-[12px] text-faint", focus && "flex-none px-6 pb-4")}>
           Showing the first {MAX_SEGMENT_ROWS.toLocaleString()} of {effSegments.length.toLocaleString()}{" "}
           lines. Copy and every export write all of them.
