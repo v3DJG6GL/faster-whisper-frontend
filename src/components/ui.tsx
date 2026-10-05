@@ -1032,8 +1032,8 @@ export function Stepper({
             }
           }}
           className={cn(
-            "w-16 bg-transparent text-center text-[13px] leading-none tabular-nums text-text outline-none",
-            (showZero || (inheriting && !focused)) && "text-faint",
+            "w-16 bg-transparent text-center text-[13px] leading-none tabular-nums outline-none",
+            showZero ? "text-dim" : inheriting && !focused ? "text-faint" : "text-text",
           )}
         />
         {!showZero && unit && <span className="shrink-0 text-[12px] leading-none text-faint">{unit}</span>}

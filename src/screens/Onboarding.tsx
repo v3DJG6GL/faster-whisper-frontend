@@ -237,7 +237,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 <Button variant="accent" onClick={() => void testAndContinue()} disabled={busy || !url.trim()}>
                   {busy ? "Testing…" : "Test & continue"}
                 </Button>
-                <span className="text-[12px] text-faint">defaults: streaming · auto language</span>
+                <span className="text-[12px] text-faint">defaults: streaming · the server’s language</span>
               </div>
               {error && <Notice>{error}</Notice>}
               {url.trim() && insecureUrlWarning(url) && <Notice>{insecureUrlWarning(url)}</Notice>}

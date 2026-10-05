@@ -123,9 +123,8 @@ function Editor({
   const [savingKey, setSavingKey] = useState(false);
   const [keyError, setKeyError] = useState<string | null>(null);
   // Every disclosure starts closed; its header's "· n set" says whether it holds anything.
-  // A blank draft ("Enter details manually") opens on Connection: there is nothing to edit
-  // anywhere else until it has an address.
-  const [showConnection, setShowConnection] = useState(() => !initial.serverUrl.trim());
+  // Every disclosure starts closed (a manual draft is prefilled with localhost).
+  const [showConnection, setShowConnection] = useState(false);
   const [showDefaults, setShowDefaults] = useState(false);
   const [showDecode, setShowDecode] = useState(false);
   const [showLive, setShowLive] = useState(false);
@@ -1112,7 +1111,7 @@ export default function Backends() {
                       </span>
                       <Badge tone="accent">{b.endpoint}</Badge>
                       {/* "" = the backend leaves the language to the server. */}
-                      <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40) : "server default"}</Badge>
+                      <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40) : "server lang"}</Badge>
                       {b.hasApiKey && <Badge>key</Badge>}
                       {backendChips(b, conn).map((c) => (
                         <Badge key={c}>{c}</Badge>
