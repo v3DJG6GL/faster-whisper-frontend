@@ -51,6 +51,9 @@ export interface TranscriptRecord {
   speakerEdits?: Record<number, string>;
   /** Segment indexes whose translations went stale (original edited). */
   translationsStale?: Record<number, true>;
+  /** The export panel's dragged track order and typed track names
+   *  (lib/exportTracks TrackPrefs; read through readTrackPrefs). */
+  exportTracks?: { order?: string[]; names?: Record<string, string> };
   // ── dictation-only metadata ──
   /** Focused app id at session start (also the filter facet). */
   appId?: string;

@@ -248,3 +248,26 @@ export function trackFileSuffixes(
     return name;
   });
 }
+
+// ── Per-transcript prefs ────────────────────────────────────────────────────────────────────
+
+/** A transcript's dragged track order and typed track names (TranscriptRecord.exportTracks). */
+export interface TrackPrefs {
+  order?: string[];
+  names?: Record<string, string>;
+}
+
+/** The prefs as read back from a record on disk — anything malformed dropped, bounded. */
+export function readTrackPrefs(v: unknown): TrackPrefs {
+  const p = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  const order = Array.isArray(p.order)
+    ? p.order.filter((t): t is string => typeof t === "string" && t.length <= 64).slice(0, 64)
+    : undefined;
+  const names = p.names && typeof p.names === "object" && !Array.isArray(p.names)
+    ? Object.fromEntries(Object.entries(p.names as Record<string, unknown>)
+      .filter((e): e is [string, string] => typeof e[1] === "string")
+      .slice(0, 64)
+      .map(([k, n]) => [k, n.slice(0, TRACK_TITLE_MAX)]))
+    : undefined;
+  return { ...(order ? { order } : {}), ...(names ? { names } : {}) };
+}

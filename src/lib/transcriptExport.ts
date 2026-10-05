@@ -685,6 +685,39 @@ export function exportFileGroups(
   return groups.sort((a, b) => tracks.indexOf(a.tracks![0]) - tracks.indexOf(b.tracks![0]));
 }
 
+/** The start of one file (`opts.tracks` = the tracks it carries): its first
+ *  `n` subtitles — or segments, for a format without them — as the file
+ *  would write them, `count` of its `total`. The export panel's preview. */
+export function previewExport(
+  result: BatchResult,
+  opts: ExportOptions,
+  n: number,
+): { text: string; count: number; total: number } {
+  const tracks = opts.tracks ?? ["orig"];
+  const segs = result.segments ?? [];
+  const grid = cueGrid(result, { ...opts, cues: isSubtitle(opts.format) ? opts.cues : undefined }, tracks);
+  const list = tracks.length === 1
+    ? trackCues(grid, tracks[0])
+    : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : c.tr[t])));
+  const last = list[Math.min(n, list.length) - 1];
+  // The segments behind the first n cues — or, for a track with its own
+  // timing, everything before the n-th cue ends.
+  const until = !last ? Math.min(n, segs.length) : last.seg >= 0 ? last.seg + 1 : segs.filter((s) => s.start < last.end).length;
+  const end = (last && last.seg < 0 ? last.end : segs[until - 1]?.end ?? 0) + 0.05;
+  const sample: BatchResult = {
+    ...result,
+    segments: segs.slice(0, until),
+    words: result.words?.filter((w) => w.start < end),
+    text: segs.slice(0, until).map((s) => s.text.trim()).join(" "),
+    timedTracks: result.timedTracks?.map((t) => ({ ...t, cues: t.cues.filter((c) => c.start < end) })),
+  };
+  return {
+    text: generateExport(sample, opts),
+    count: list.filter((c) => (c.seg >= 0 ? c.seg < until : c.start < end)).length,
+    total: list.length,
+  };
+}
+
 /** Like generateExport, but one entry per file the export writes (see
  *  exportFileGroups). `name(stem)` appends the track suffix; `tracks` = the
  *  tracks the file carries (undefined = the original only). */

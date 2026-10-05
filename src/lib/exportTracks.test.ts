@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cleanTrackTitle, defaultTrackOrder, languageGroups, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
-  toggleLanguage, toggleTrack, trackChipLabel, trackFileSuffixes, trackInfo, trackOrder,
+  readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackFileSuffixes, trackInfo, trackOrder,
 } from "./exportTracks";
 import type { BatchResult } from "./types";
 
@@ -105,5 +105,14 @@ describe("names, flags and files (D89)", () => {
       .toEqual([".und.srt", ".de.srt"]);
     expect(trackFileSuffixes(planTracks({ language: "de", timedTracks: [site("x", "de", { site: "ARD Mediathek/../" })] }, ["orig", "x"]), "srt"))
       .toEqual([".de.srt", ".ARD-Mediathek.de.srt"]);
+  });
+});
+
+describe("per-transcript prefs", () => {
+  it("reads back only well-formed order and names", () => {
+    expect(readTrackPrefs({ order: ["orig", 3, "en"], names: { en: "English", x: 1, y: "z".repeat(99) } }))
+      .toEqual({ order: ["orig", "en"], names: { en: "English", y: "z".repeat(64) } });
+    expect(readTrackPrefs("nope")).toEqual({});
+    expect(readTrackPrefs({ names: ["a"] })).toEqual({});
   });
 });

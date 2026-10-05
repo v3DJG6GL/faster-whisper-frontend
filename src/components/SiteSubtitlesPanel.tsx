@@ -23,6 +23,14 @@ export function sourceTone(kind: SiteBadge["kind"] | "existing", hoh?: boolean):
   return hoh ? "bg-[var(--c-diarize)]/10 text-[var(--c-diarize)]" : "bg-ok/10 text-ok";
 }
 
+/** A source's colour as a dot (the export's track names and preview tabs). */
+export function sourceDot(kind: SiteBadge["kind"], hoh?: boolean): string {
+  if (kind === "transcribe") return "bg-accent";
+  if (kind === "mt") return "bg-think";
+  if (kind === "auto") return "bg-warn";
+  return hoh ? "bg-[var(--c-diarize)]" : "bg-ok";
+}
+
 /** The three badge states: idle greys out, off strikes through. */
 export const stateTone = (state: SiteBadge["state"]) =>
   state === "idle" ? "opacity-45 grayscale" : state === "off" ? "opacity-40 line-through" : "";

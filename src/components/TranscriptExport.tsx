@@ -4,10 +4,12 @@
 // running media export survive closing the panel.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Check, Circle, Download, Minus, PanelBottom, PanelRight, TriangleAlert } from "lucide-react";
+import { Check, Circle, Download, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
-import { Button, RangeField, Segmented } from "@/components/ui";
+import { Button, RangeField, Segmented, TextInput } from "@/components/ui";
+import { ExportTrackChips } from "@/components/ExportTrackChips";
+import { sourceDot } from "@/components/SiteSubtitlesPanel";
 import { fmtBytes } from "@/lib/format";
 import {
   pickExportPath, saveTextFile, audioBasePref, cancelMediaExport, copyMediaTo, fetchUrlMedia, fetchUrlVideo,
@@ -15,7 +17,8 @@ import {
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
 import {
-  cpsWarnings, cueGrid, generateExports, prettySpeaker, speakerHex, type ExportFormat, type ExportOptions, exportFileNames,
+  cpsWarnings, cueGrid, exportFileGroups, generateExports, prettySpeaker, previewExport, speakerHex, type ExportFormat,
+  type ExportOptions, exportFileNames,
 } from "@/lib/transcriptExport";
 import {
   CUE_PRESETS, CUE_RANGES, cueTrackLang, limitsFor, sanitizeCueLimits, type CueLimits, type CueOptions,
@@ -25,10 +28,13 @@ import { contentStates, exportSummary, type ContentItem } from "@/lib/exportSumm
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
-import { trackChipLabel } from "@/lib/exportTracks";
+import {
+  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, readTrackPrefs, sourceKind, trackChipLabel, trackInfo, trackOrder,
+  type TrackPrefs,
+} from "@/lib/exportTracks";
 import {
   basename, derivePickedStem, embeddedSubtitleTracks, exportStem, isSubtitleFormat, isVideoSourcePath, languageLabel,
-  legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, type MediaChoice, type MediaContainer,
+  legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
   type MediaExportPhase, type MediaStreams, type SubtitleMode,
 } from "@/lib/mediaExport";
 import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
@@ -101,7 +107,6 @@ export function TranscriptExport({
   // Which language tracks the export carries: null = follow the viewer's
   // visible tracks (the-view-is-the-export); a pick overrides per panel.
   const [exportTracks, setExportTracks] = useState<string[] | null>(null);
-  const [lineOrder, setLineOrder] = useState<"orig-first" | "trans-first">("orig-first");
   // Media section (audio / video / video + subtitle tracks), seeded from the
   // persisted defaults like the format card.
   const [mediaChoice, setMediaChoice] = useState<MediaChoice>(
@@ -147,6 +152,19 @@ export function TranscriptExport({
   // A link's export stem leads with when and where it was fetched.
   const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
   const stemLink = { createdAt: rec?.createdAt, extractor };
+  // The dragged track order and typed track names (D92/D89) live on the
+  // transcript's record; without one (not saved yet) in the panel.
+  const [localPrefs, setLocalPrefs] = useState<TrackPrefs>({});
+  const hasRec = !!rec;
+  const savedPrefs = rec?.exportTracks;
+  const prefs = useMemo(() => (hasRec ? readTrackPrefs(savedPrefs) : localPrefs), [hasRec, savedPrefs, localPrefs]);
+  const setPrefs = (patch: TrackPrefs) => {
+    if (rec) patchRecord(rec.id, (r) => ({ ...r, exportTracks: { ...readTrackPrefs(r.exportTracks), ...patch } }));
+    else setLocalPrefs((p) => ({ ...p, ...patch }));
+  };
+  const trackNames = useMemo(() => prefs.names ?? {}, [prefs.names]);
+  // Every track in track order; the export carries the picked ones in it.
+  const order = useMemo(() => trackOrder(editedResult, allTracks, prefs.order), [editedResult, allTracks, prefs.order]);
   const nowSec = Date.now() / 1000;
   // The server's retained VIDEO: a link run's kept video, or the upload a
   // file run retained (retain_media) — either way, packaging needs no upload.
@@ -185,12 +203,20 @@ export function TranscriptExport({
     setMediaError(null);
     // Track picks belong to the previous file's tracks.
     setExportTracks(null);
-    setLineOrder("orig-first");
+    setLocalPrefs({});
     // A "permission denied" line (or a still-ticking "Saved") must not sit
     // next to B's button.
     setSaveError(null);
     setSaved(false);
   }, [overlayKey, path]);
+  /** Tracks the export actually carries (the picker, else the visible ones),
+   *  in track order. `order` holds only THIS file's tracks, so a pick left
+   *  over from another file never silently empties the export. */
+  const chosen = exportTracks ?? visibleTracks;
+  const effTracks = useMemo(
+    () => (langs.length ? order.filter((t) => chosen.includes(t)) : []),
+    [langs, order, chosen],
+  );
   /** One source of truth for Save AND the live preview: the display toggles
    *  map onto the generator options (colors on → "line" mode; names/timestamps
    *  gate their prefixes). */
@@ -210,25 +236,14 @@ export function TranscriptExport({
     ),
     wordTimestamps: wordTs,
     cues: cueOpts,
-    // Intersect with THIS file's tracks — a pick left over from another
-    // file must never silently empty the export.
-    ...(langs.length
-      ? {
-          tracks: (lineOrder === "orig-first" ? allTracks : [...langs, "orig"])
-            .filter((t) => (exportTracks ?? visibleTracks).includes(t)),
-        }
-      : {}),
+    // In track order (D92) — the order of the files and of the lines a
+    // stacked subtitle holds.
+    ...(effTracks.length ? { tracks: effTracks } : {}),
   }), [
     exportFormat, fileRenames, hasSpeakers, colorize, showNames, showTs, fileColors, speakers,
-    wordTs, langs, exportTracks, visibleTracks, allTracks, lineOrder, cueOpts,
+    wordTs, effTracks, cueOpts,
   ]);
   const exportOpts = (): ExportOptions => exportOptions;
-
-  /** Tracks the export actually carries (the picker, else the visible ones). */
-  const effTracks = useMemo(
-    () => (langs.length ? (exportTracks ?? visibleTracks) : []),
-    [langs, exportTracks, visibleTracks],
-  );
   const subs = isSubtitleFormat(exportFormat);
   /** The original track's cues — the preview's slice and the summary's
    *  count; null when the file has no split subtitles. */
@@ -254,39 +269,41 @@ export function TranscriptExport({
     words: () => setWordTs(!wordTs),
   };
   const origCode = safeDisplayText((result.language ?? "??").toUpperCase(), 16);
-  /** The track chips in line order — the order Segmented reorders them. */
-  const chipTracks = lineOrder === "orig-first" ? allTracks : [...langs, "orig"];
+  /** The tracks a video carries, inside or beside it. */
+  const videoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
+  const videoPlan = mediaChoice === "video" && hasVideoSource;
 
   /** How many leading subtitles (or segments) the preview serializes — enough
    *  to show real content past a VTT STYLE block, still cheap per toggle. */
   const PREVIEW_CUES = 12;
 
-  /** The first subtitles of the ACTUAL file, re-serialized on every
+  /** The preview's tabs (D91): every file the Save writes — the text files,
+   *  or with a video one per track (its sidecar, else the track inside). */
+  const previewFiles = useMemo((): {
+    key: string; tracks?: string[]; format: ExportFormat; name: ((stem: string) => string) | null;
+  }[] => {
+    if (videoPlan) {
+      const format = exportFormat === "vtt" ? "vtt" : "srt";
+      const side = subtitleMode === "embedded" ? null : sidecarNames(editedResult, videoTracks, format);
+      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format, name: side?.[i] ?? null }));
+    }
+    return exportFileGroups(exportOptions, editedResult).map((g) => ({
+      key: (g.tracks ?? ["orig"]).join("+"), tracks: g.tracks, format: exportFormat, name: g.name,
+    }));
+  }, [videoPlan, exportFormat, subtitleMode, editedResult, videoTracks, exportOptions]);
+  const [previewKey, setPreviewKey] = useState<string | null>(null);
+  const previewFile = previewFiles.find((f) => f.key === previewKey) ?? previewFiles[0];
+
+  /** The first subtitles of the previewed file, re-serialized on every
    *  card/toggle change — the panel's answer to "what am I getting?".
    *  Memoized: a video export re-renders the viewer per progress event. Only
-   *  while the panel shows it. `count` = subtitles (else segments) shown. */
-  const exportPreview = useMemo((): { text: string; count: number } | null => {
-    if (!open || !result.segments?.length) return null;
-    const full = editedResult;
-    // Split subtitles: the segments behind the first PREVIEW_CUES cues.
-    const n = grid ? grid.cues[Math.min(PREVIEW_CUES, grid.cues.length) - 1].seg + 1 : PREVIEW_CUES;
-    const segs = (full.segments ?? []).slice(0, n);
-    const lastEnd = segs[segs.length - 1]?.end ?? 0;
-    const sample: BatchResult = {
-      ...full,
-      segments: segs,
-      words: full.words?.filter((w) => w.start < lastEnd + 0.05),
-      text: segs.map((s) => s.text.trim()).join(" "),
-      timedTracks: full.timedTracks?.map((t) => ({ ...t, cues: t.cues.filter((c) => c.start < lastEnd + 0.05) })),
-    };
-    // Preview the first file generateExports would actually write — the
-    // singular generateExport falls back to the original track for
-    // multi-track LRC, which no written file would contain.
-    return {
-      text: generateExports(sample, exportOptions)[0].content,
-      count: grid ? grid.cues.filter((c) => c.seg < n).length : segs.length,
-    };
-  }, [open, result.segments, editedResult, exportOptions, grid]);
+   *  while the panel shows it. */
+  const exportPreview = useMemo(() => {
+    if (!open || !result.segments?.length || !previewFile) return null;
+    return previewExport(
+      editedResult, { ...exportOptions, format: previewFile.format, tracks: previewFile.tracks }, PREVIEW_CUES,
+    );
+  }, [open, result.segments, editedResult, exportOptions, previewFile]);
 
   /** The files one Save writes (the media file first, then the text files),
    *  from the panel's current choices. */
@@ -380,7 +397,7 @@ export function TranscriptExport({
       return false;
     }
     const opts = exportOpts();
-    const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded) : [];
+    const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, opts, embedded, trackNames) : [];
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video).
@@ -478,12 +495,14 @@ export function TranscriptExport({
     // The picked path names the FIRST file; siblings land beside it under
     // the stem the user actually chose in the dialog.
     const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
+    // Each planned text file by its name (an empty track writes nothing).
+    const contents = new Map(files.map((f) => [f.name(pickedStem), f.content]));
     try {
-      let textIdx = 0;
       for (const f of plan.files) {
         const dest = dir + f.name(pickedStem);
         if (f.kind === "text") {
-          await saveTextFile(dest, files[textIdx++].content);
+          const content = contents.get(f.name(pickedStem));
+          if (content !== undefined) await saveTextFile(dest, content);
         } else if (f.kind === "audio") {
           await exportAudioTo(dest);
         } else if (!(await exportVideoTo(dest, plan.embedded))) {
@@ -533,7 +552,7 @@ export function TranscriptExport({
   );
   const summary = exportSummary({
     format: exportFormat,
-    trackCodes: (effTracks.length ? chipTracks.filter((t) => effTracks.includes(t)) : ["orig"]).map((t) =>
+    trackCodes: videoTracks.map((t) =>
       t === "orig" ? origCode : safeDisplayText(cueTrackLang(editedResult, t) ?? t, 16).toUpperCase()),
     stacked: textNames.length === 1,
     filePerTrack: textNames.length > 1 || !!plan.sidecars,
@@ -571,17 +590,55 @@ export function TranscriptExport({
       {wide ? "Collapse preview" : "Expand preview"}
     </Button>
   );
+  const planned = planTracks(editedResult, videoTracks, trackNames);
+  const trackDot = (track: string) => {
+    const t = trackInfo(editedResult, track);
+    return sourceDot(sourceKind(t), t.hoh);
+  };
+  /** A track as its file name, or — riding inside the video only — as its title there. */
+  const fileLine = (f: (typeof previewFiles)[number]) =>
+    f.name ? f.name(stem) : `${stem}.${container} · ${planned.find((t) => t.id === f.key)?.title ?? ""}`;
   const preview = (
     <div className={box}>
       <div className="flex items-center gap-3">
         <span className={boxTitle}>Preview</span>
         <span className="font-mono text-[11px] text-faint">
-          {exportPreview && (grid
-            ? `first ${exportPreview.count} of ${grid.cues.length.toLocaleString("en")} subtitles`
-            : (result.segments?.length ?? 0) > exportPreview.count ? "start of the file" : "")}
+          {exportPreview && previewFile && (isSubtitleFormat(previewFile.format)
+            ? `first ${exportPreview.count} of ${exportPreview.total.toLocaleString("en")} subtitles`
+            : exportPreview.total > exportPreview.count ? "start of the file" : "")}
         </span>
         {expand}
       </div>
+      {previewFiles.length > 1 && (
+        <div role="tablist" aria-label="Files" className="flex flex-wrap gap-1.5">
+          {previewFiles.map((f) => {
+            const tracks = f.tracks ?? ["orig"];
+            const on = f === previewFile;
+            return (
+              <button
+                key={f.key}
+                type="button"
+                role="tab"
+                aria-selected={on}
+                title={fileLine(f)}
+                onClick={() => setPreviewKey(f.key)}
+                className={cn(
+                  "ring-signal inline-flex h-6 items-center gap-1.5 rounded-pill border px-2.5 text-[11px]",
+                  on ? "border-accent/45 text-accent" : "border-line bg-surface-2 text-dim hover:text-text",
+                )}
+              >
+                <span aria-hidden className={cn("size-1.5 shrink-0 rounded-full", trackDot(tracks[0]))} />
+                {tracks.map((t) => trackChipLabel(editedResult, t)).join(" + ")}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {previewFile && (
+        <span className="-mb-1.5 truncate font-mono text-[11px] text-faint" title={fileLine(previewFile)}>
+          {fileLine(previewFile)}
+        </span>
+      )}
       <pre
         className={cn(
           "overflow-auto whitespace-pre rounded-xl border border-line bg-surface px-3.5 py-3 font-mono text-[11.5px] leading-relaxed text-dim",
@@ -676,51 +733,69 @@ export function TranscriptExport({
   })();
   const tracksBox = langs.length > 0 && exportFormat !== "json" && (
     <div className={box}>
-      <div className="flex flex-wrap items-start justify-between gap-2.5">
-        <span className={boxTitle}>Tracks</span>
-        <span
-          className="flex"
-          title={effTracks.length < 2 ? "Pick a second track to set the order"
-            : textNames.length > 1 ? "Each language goes to its own file" : "Lines inside each subtitle follow the chips"}
-        >
-          <Segmented
-            ariaLabel="Line order"
-            value={lineOrder}
-            onChange={setLineOrder}
-            disabled={effTracks.length < 2 || textNames.length > 1}
-            options={[
-              { value: "orig-first", label: "Original first" },
-              { value: "trans-first", label: "Translations first" },
-            ]}
+      <span className={boxTitle}>Tracks</span>
+      <ExportTrackChips
+        result={editedResult}
+        order={order}
+        chosen={effTracks}
+        onChosen={setExportTracks}
+        onOrder={(next) => setPrefs({ order: next })}
+      />
+    </div>
+  );
+
+  // Track names (D89): what each track is called inside the video, its
+  // sidecar's name and its flags. Only with a video.
+  const sideNames = plan.sidecars ? sidecarNames(editedResult, videoTracks, plan.sidecars.format) : null;
+  const renamed = (t: (typeof planned)[number]) => !!cleanTrackTitle(trackNames[t.id]) && t.title !== t.defaultTitle;
+  const setName = (id: string, name: string | null) => {
+    const next = { ...trackNames };
+    if (name === null) delete next[id];
+    else next[id] = name;
+    setPrefs({ names: next });
+  };
+  const resetIcon = <RotateCcw className="size-3" />;
+  const namesBox = videoPlan && (
+    <div className={box}>
+      <div className="flex items-center gap-3">
+        <span className={boxTitle}>Track names</span>
+        {planned.some(renamed) && (
+          <button type="button" onClick={() => setPrefs({ names: {} })} title="Every track back to its default name"
+            className="ring-signal ml-auto inline-flex items-center gap-1 rounded-md px-1 text-[11px] text-faint hover:text-text">
+            {resetIcon} Reset all
+          </button>
+        )}
+      </div>
+      <span className="-mt-2 truncate font-mono text-[11px] text-faint">{`${stem}.${container}`}</span>
+      {planned.map((t, i) => (
+        <div key={t.id} className="grid grid-cols-[auto_2.5rem_minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1">
+          <span aria-hidden className={cn("size-1.5 rounded-full", trackDot(t.id))} />
+          <span className="font-mono text-[11px] text-dim">{safeDisplayText(t.lang, 16).toUpperCase()}</span>
+          <TextInput
+            aria-label={`${trackChipLabel(editedResult, t.id)} track name`}
+            value={trackNames[t.id] ?? t.defaultTitle}
+            placeholder={t.defaultTitle}
+            maxLength={TRACK_TITLE_MAX}
+            disabled={subtitleMode === "sidecar"}
+            title={subtitleMode === "sidecar" ? "Names go into the video's own tracks — choose embedded or both" : undefined}
+            onChange={(e) => setName(t.id, e.target.value)}
+            className={cn("h-8 text-[12.5px]", renamed(t) && "shadow-[inset_0_0_0_1px_var(--c-accent)]")}
           />
-        </span>
-      </div>
-      <div className="flex flex-wrap gap-1.5">
-        {chipTracks.map((t) => {
-          const on = effTracks.includes(t);
-          return (
-            <button
-              key={t}
-              type="button"
-              aria-pressed={on}
-              onClick={() => {
-                const next = on ? effTracks.filter((x) => x !== t) : allTracks.filter((x) => effTracks.includes(x) || x === t);
-                if (next.length) setExportTracks(next);
-              }}
-              className={cn(
-                "ring-signal inline-flex h-6 items-center rounded-pill border px-2.5 font-mono text-[11px] font-medium",
-                on
-                  ? t === "orig"
-                    ? "border-accent/35 bg-accent-soft text-accent"
-                    : "border-accent/45 text-accent"
-                  : "border-line bg-surface-2 text-dim hover:text-text",
-              )}
-            >
-              {trackChipLabel(result, t)}
+          {renamed(t) ? (
+            <button type="button" onClick={() => setName(t.id, null)} title={`Back to ${t.defaultTitle}`}
+              aria-label={`Reset the ${t.defaultTitle} name`}
+              className="ring-signal grid size-7 place-items-center rounded-md text-faint hover:text-text">
+              {resetIcon}
             </button>
-          );
-        })}
-      </div>
+          ) : <span />}
+          <span className="col-start-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-faint">
+            {sideNames && <span className="min-w-0 truncate">{sideNames[i](stem)}</span>}
+            {([[t.original, "original"], [t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
+              <span key={flag} className="rounded-pill border border-line px-1.5 leading-4">{flag}</span>
+            ))}
+          </span>
+        </div>
+      ))}
     </div>
   );
 
@@ -802,6 +877,7 @@ export function TranscriptExport({
 
           {tracksBox}
           {media}
+          {namesBox}
 
           <div className={box}>
             <div className="flex flex-wrap items-start justify-between gap-2.5">

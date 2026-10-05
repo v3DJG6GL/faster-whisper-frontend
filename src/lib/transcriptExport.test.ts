@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  cpsWarnings, DEFAULT_SPEAKER_COLORS, exportFileNames, exportStemSuffix, generateExport, generateExports,
+  cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportStemSuffix, generateExport, generateExports,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
 } from "./transcriptExport";
@@ -712,6 +712,27 @@ describe("subtitle cues", () => {
       id: "de-x-site", lang: "de", source: "site", kind: "manual",
       cues: [{ start: 10.5, end: 12, text: "Hallo zusammen." }, { start: 12.5, end: 14, text: "Grüezi." }],
     });
+  });
+
+  it("preview: the first n subtitles of one file, counted against that file", () => {
+    const site: BatchResult = {
+      ...CUED,
+      timedTracks: [{
+        id: "de-x-site", lang: "de", source: "site", kind: "manual",
+        cues: [1, 2, 3, 4].map((i) => ({ start: i, end: i + 0.5, text: `Satz ${i}` })),
+      }],
+    };
+    const orig = previewExport(site, { format: "srt", tracks: ["orig"], cues: STANDARD }, 2);
+    const all = cueGrid(site, { format: "srt", cues: STANDARD }, ["orig"]).cues.length;
+    expect(orig.total).toBe(all);
+    expect(orig.count).toBe(all); // one segment: all its cues come along
+    expect(orig.text).toContain("00:00:10,000");
+    const own = previewExport(site, { format: "srt", tracks: ["de-x-site"] }, 2);
+    expect([own.count, own.total]).toEqual([2, 4]);
+    expect(own.text).toContain("Satz 2");
+    expect(own.text).not.toContain("Satz 3");
+    const txt = previewExport(CUED, { format: "txt", tracks: ["orig", "de"] }, 12);
+    expect([txt.count, txt.total]).toEqual([1, 1]);
   });
 
   it("json strips control characters from timed tracks", () => {

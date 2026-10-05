@@ -7,7 +7,7 @@ import { Eraser, RotateCcw } from "lucide-react";
 import { languageLabel } from "../lib/languages";
 import { modelShortName, translationLanguages } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
-import { sourceTone } from "./SiteSubtitlesPanel";
+import { CompoundChip } from "./CompoundChip";
 import type { ChipPart } from "../lib/siteSubtitles";
 import { cn } from "../lib/cn";
 import { safeDisplayText } from "../lib/sanitize";
@@ -103,26 +103,7 @@ export function TranslationTargetChips({
           </button>
         );
         if (!parts?.[code]) return chip;
-        return (
-          <span key={code} className="inline-flex h-7 items-stretch overflow-hidden rounded-pill border border-accent/50">
-            {chip}
-            {parts[code].map((p) => (
-              <button
-                key={p.key}
-                type="button"
-                disabled={disabled}
-                title={p.title}
-                onClick={() => onPart?.(p.key)}
-                className={cn(
-                  "ring-signal whitespace-nowrap border-l border-line px-2.5 text-[11.5px] enabled:hover:brightness-125",
-                  p.on ? sourceTone(p.kind, p.hoh) : "text-faint enabled:hover:text-text",
-                )}
-              >
-                {p.text}
-              </button>
-            ))}
-          </span>
-        );
+        return <CompoundChip key={code} head={chip} parts={parts[code]} onPart={onPart} disabled={disabled} />;
       })}
       <TargetLanguagePicker
         value={shown}
