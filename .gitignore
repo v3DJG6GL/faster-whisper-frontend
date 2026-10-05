@@ -1,22 +1,13 @@
 # Logs
-logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
 node_modules
 dist
-dist-ssr
 *.local
-
-# Local UX reference material (third-party app screenshots), not part of the project
-*_screenshots/
-
-# Local design mockups (rendered-HTML proposals for picking layouts), not part of the project
-design-mockups/
 
 # Editor directories and files
 .vscode/*
@@ -25,13 +16,13 @@ design-mockups/
 .DS_Store
 *.suo
 *.ntvs*
-*.njsproj
-*.sln
 *.sw?
+
+# Claude Code: per-user settings and agent worktrees (the shared
+# .claude/settings.json, if any, stays tracked)
+.claude/settings.local.json
+.claude/worktrees/
 
 # Code-review working notes (local only)
 CODE-REVIEW_NOTES.md
 SECURITY-REVIEW_NOTES.md
-
-# M9 / Windows-port planning notes (local only)
-WINDOWS-PORT-AND-PACKAGING.md
