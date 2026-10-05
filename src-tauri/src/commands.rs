@@ -1013,6 +1013,12 @@ pub async fn package_media(
         if out.kind == "ok" && out.expires_at.is_none() {
             out.expires_at = uploaded_expiry;
         }
+        // Busy (the user's export slot is taken elsewhere): name the server copy so the
+        // webview's retry packages it without uploading the file again.
+        if out.kind == "busy" {
+            out.media_id = Some(mid);
+            out.expires_at = uploaded_expiry;
+        }
         Ok(out)
     };
     let r = until_epoch_bumps(&MEDIA_EXPORT_EPOCH, epoch, fut).await;

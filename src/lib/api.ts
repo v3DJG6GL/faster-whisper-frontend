@@ -286,11 +286,15 @@ export interface SubtitleTrackIn {
 }
 export type PackageOutcomeKind =
   | "ok" | "expired" | "mp4_incompatible" | "no_video" | "too_large"
-  | "rate_limited" | "disabled" | "cancelled" | "error";
+  | "rate_limited" | "busy" | "disabled" | "cancelled" | "error";
 export interface PackageOutcome {
+  /** "busy" = this user's export slot is taken (another device): retry later
+   *  (queueMediaExport does). */
   kind: PackageOutcomeKind;
   detail: string;
   bytes: number;
+  /** "ok": the packaged server copy. "busy": the copy to retry with — a local
+   *  file was already uploaded, so the retry skips the upload. */
   mediaId: string | null;
   expiresAt: number | null;
   reason: string | null;

@@ -1,7 +1,8 @@
 // Media export (audio / video / video + embedded subtitle tracks): the pure
 // half of the export panel's Media section. No Tauri imports — unit-tested
 // in plain node. The React side (TranscriptViewer) wires these to the
-// dialogs, the Tauri commands and the record.
+// dialogs, the Tauri commands and the record. Also home to the one export
+// queue every viewer shares (bottom).
 
 import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
@@ -369,4 +370,104 @@ export interface MediaExportProgress {
   phase: MediaExportPhase;
   done: number;
   total: number | null;
+}
+
+// ── The export queue ──────────────────────────────────────────────────────────
+// The server packages one video per user at a time (MEDIA_PACKAGE_MAX_INFLIGHT_PER_USER),
+// and `cancel_media_export` aborts whatever export is running. So exports run one after
+// another on a module-level chain (like streaming's injectChain): a second Save waits here
+// instead of drawing a 429, and the wait outlives the viewer that started it. A server
+// "busy" (the slot is taken by another device) keeps the job at the head and retries.
+
+/** The server's Retry-After for a busy slot. */
+export const BUSY_RETRY_MS = 5_000;
+/** A slot that stays taken this long is reported instead of waited on forever. */
+export const BUSY_MAX_WAIT_MS = 30 * 60_000;
+
+interface QueuedExport {
+  jobId: string;
+  /** Whose Save it is (the viewer's record): that viewer's Save reads "Queued". */
+  owner: string;
+  /** Resolve the caller with `null` and end a busy wait early. */
+  drop: () => void;
+}
+
+let exportChain: Promise<void> = Promise.resolve();
+let waiting: QueuedExport[] = [];
+const queueListeners = new Set<() => void>();
+
+function setWaiting(next: QueuedExport[]): void {
+  waiting = next;
+  for (const fn of queueListeners) fn();
+}
+
+/** Run `attempt` once every export queued before it has finished, and again every
+ *  BUSY_RETRY_MS while it answers `busy`. Resolves with its last outcome, or `null` when
+ *  the job was dequeued (dequeueMediaExport) before or between attempts. */
+export function queueMediaExport<T extends { kind: string }>(
+  jobId: string,
+  owner: string,
+  attempt: () => Promise<T>,
+): Promise<T | null> {
+  return new Promise<T | null>((resolve, reject) => {
+    let wake = () => {};
+    const entry: QueuedExport = {
+      jobId,
+      owner,
+      drop: () => {
+        resolve(null);
+        wake();
+      },
+    };
+    setWaiting([...waiting, entry]);
+    exportChain = exportChain.then(async () => {
+      const since = Date.now();
+      for (;;) {
+        if (!waiting.includes(entry)) return; // dequeued while it waited
+        setWaiting(waiting.filter((w) => w !== entry));
+        let out: T;
+        try {
+          out = await attempt();
+        } catch (e) {
+          reject(e);
+          return;
+        }
+        if (out.kind !== "busy" || Date.now() - since >= BUSY_MAX_WAIT_MS) {
+          resolve(out);
+          return;
+        }
+        // Back at the head: it keeps the turn, and a Cancel now only dequeues it.
+        setWaiting([entry, ...waiting]);
+        await new Promise<void>((r) => {
+          const t = setTimeout(r, BUSY_RETRY_MS);
+          wake = () => {
+            clearTimeout(t);
+            r();
+          };
+        });
+      }
+    });
+  });
+}
+
+/** Take a waiting job off the queue (its caller gets `null`). Never touches a running
+ *  export — that one is cancelled through cancel_media_export, whose epoch would also
+ *  kill this one's predecessor. False when the job is not waiting. */
+export function dequeueMediaExport(jobId: string): boolean {
+  const entry = waiting.find((w) => w.jobId === jobId);
+  if (!entry) return false;
+  setWaiting(waiting.filter((w) => w !== entry));
+  entry.drop();
+  return true;
+}
+
+/** The job id `owner` has waiting, or null. */
+export function queuedExportFor(owner: string): string | null {
+  return waiting.find((w) => w.owner === owner)?.jobId ?? null;
+}
+
+/** Be told whenever a job joins or leaves the waiting list. Returns the unsubscribe. */
+export function subscribeExportQueue(fn: () => void): () => void {
+  queueListeners.add(fn);
+  return () => void queueListeners.delete(fn);
 }

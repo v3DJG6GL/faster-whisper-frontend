@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, isVideoSourcePath,
-  legacyTrackIndices, linkSiteName, mediaExportPlan, siteDisplayName, withTrackSites, mp4Disabled, sidecarFiles,
-  sidecarNames, stemTimestamp,
+  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem,
+  isVideoSourcePath, legacyTrackIndices, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor,
+  siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "./types";
 
@@ -247,5 +247,131 @@ describe("fileStem", () => {
     expect(fileStem("/out/talk.de.srt")).toBe("talk.de");
     expect(fileStem("C:\\out\\talk.mkv")).toBe("talk");
     expect(fileStem("/out/")).toBe("");
+  });
+});
+
+describe("queueMediaExport", () => {
+  type Out = { kind: string };
+  /** An attempt the test settles by hand; `calls` counts how often it ran. */
+  function gate() {
+    const g = { calls: 0, settle: (_o: Out) => {}, fail: (_e: Error) => {} };
+    const attempt = () => {
+      g.calls += 1;
+      return new Promise<Out>((res, rej) => {
+        g.settle = res;
+        g.fail = rej;
+      });
+    };
+    return { g, attempt };
+  }
+  const flush = () => vi.advanceTimersByTimeAsync(0);
+
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("runs exports one at a time in Save order; the waiting one reads as queued", async () => {
+    const a = gate();
+    const b = gate();
+    const seen: (string | null)[] = [];
+    const unsub = subscribeExportQueue(() => seen.push(queuedExportFor("rec-b")));
+    const pa = queueMediaExport("ja", "rec-a", a.attempt);
+    const pb = queueMediaExport("jb", "rec-b", b.attempt);
+    await flush();
+    expect([a.g.calls, b.g.calls]).toEqual([1, 0]);
+    expect(queuedExportFor("rec-a")).toBeNull(); // running, not waiting
+    expect(queuedExportFor("rec-b")).toBe("jb");
+    a.g.settle({ kind: "ok" });
+    await expect(pa).resolves.toEqual({ kind: "ok" });
+    await flush();
+    expect(b.g.calls).toBe(1);
+    expect(queuedExportFor("rec-b")).toBeNull();
+    b.g.settle({ kind: "error" });
+    await expect(pb).resolves.toEqual({ kind: "error" });
+    expect(seen).toContain("jb");
+    expect(seen[seen.length - 1]).toBeNull();
+    unsub();
+  });
+
+  it("cancelling a waiting export only dequeues it; the running one carries on", async () => {
+    const a = gate();
+    const b = gate();
+    const c = gate();
+    const pa = queueMediaExport("ja", "rec-a", a.attempt);
+    const pb = queueMediaExport("jb", "rec-b", b.attempt);
+    const pc = queueMediaExport("jc", "rec-c", c.attempt);
+    await flush();
+    expect(dequeueMediaExport("ja")).toBe(false); // running: not the queue's to cancel
+    expect(dequeueMediaExport("jb")).toBe(true);
+    await expect(pb).resolves.toBeNull();
+    expect(dequeueMediaExport("jb")).toBe(false);
+    a.g.settle({ kind: "ok" });
+    await expect(pa).resolves.toEqual({ kind: "ok" });
+    await flush();
+    expect(b.g.calls).toBe(0);
+    expect(c.g.calls).toBe(1);
+    c.g.settle({ kind: "ok" });
+    await expect(pc).resolves.toEqual({ kind: "ok" });
+  });
+
+  it("a busy server slot is retried every BUSY_RETRY_MS, holding the turn and reading as queued", async () => {
+    const a = gate();
+    const b = gate();
+    const pa = queueMediaExport("ja", "rec-a", a.attempt);
+    const pb = queueMediaExport("jb", "rec-b", b.attempt);
+    await flush();
+    a.g.settle({ kind: "busy" });
+    await flush();
+    expect(queuedExportFor("rec-a")).toBe("ja");
+    await vi.advanceTimersByTimeAsync(BUSY_RETRY_MS - 1);
+    expect(a.g.calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(a.g.calls).toBe(2);
+    expect(b.g.calls).toBe(0); // the head keeps its turn
+    a.g.settle({ kind: "ok" });
+    await expect(pa).resolves.toEqual({ kind: "ok" });
+    await flush();
+    expect(b.g.calls).toBe(1);
+    b.g.settle({ kind: "ok" });
+    await pb;
+  });
+
+  it("cancelling during a busy wait stops the retries and lets the next export start at once", async () => {
+    const a = gate();
+    const b = gate();
+    const pa = queueMediaExport("ja", "rec-a", a.attempt);
+    const pb = queueMediaExport("jb", "rec-b", b.attempt);
+    await flush();
+    a.g.settle({ kind: "busy" });
+    await flush();
+    expect(dequeueMediaExport("ja")).toBe(true);
+    await expect(pa).resolves.toBeNull();
+    await flush();
+    expect(b.g.calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(BUSY_RETRY_MS * 2);
+    expect(a.g.calls).toBe(1);
+    b.g.settle({ kind: "ok" });
+    await pb;
+  });
+
+  it("gives up on a slot that stays busy past BUSY_MAX_WAIT_MS, and a throw never wedges the chain", async () => {
+    let calls = 0;
+    const pa = queueMediaExport("ja", "rec-a", async () => {
+      calls += 1;
+      return { kind: "busy" };
+    });
+    const b = gate();
+    const pb = queueMediaExport("jb", "rec-b", b.attempt);
+    const c = gate();
+    const pc = queueMediaExport("jc", "rec-c", c.attempt);
+    await vi.advanceTimersByTimeAsync(BUSY_MAX_WAIT_MS);
+    await expect(pa).resolves.toEqual({ kind: "busy" });
+    expect(calls).toBe(BUSY_MAX_WAIT_MS / BUSY_RETRY_MS + 1);
+    await flush();
+    b.g.fail(new Error("boom"));
+    await expect(pb).rejects.toThrow("boom");
+    await flush();
+    expect(c.g.calls).toBe(1);
+    c.g.settle({ kind: "ok" });
+    await pc;
   });
 });

@@ -3,8 +3,8 @@
 // it stays mounted with the viewer (hidden while closed), so its picks and a
 // running media export survive closing the panel.
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Check, Circle, Download, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { Check, Circle, Download, Hourglass, Minus, PanelBottom, PanelRight, RotateCcw, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
 import { Button, ChipToggle, RangeField, Segmented, TextInput } from "@/components/ui";
@@ -35,9 +35,10 @@ import {
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
-  derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
-  legacyTrackIndices, mediaExportPlan, mp4Disabled, sidecarFiles, sidecarNames, type MediaChoice, type MediaContainer,
-  type MediaExportPhase, type MediaStreams, type SubtitleMode,
+  dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
+  legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, sidecarFiles, sidecarNames,
+  subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
+  type SubtitleMode,
 } from "@/lib/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
@@ -116,9 +117,18 @@ export function TranscriptExport({
   const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>(
     () => settings.transcribe?.exportSubtitleMode ?? "embedded",
   );
-  const [mediaJob, setMediaJob] = useState<{
-    jobId: string; phase: MediaExportPhase; done: number; total: number | null;
+  // The panel stays mounted across records, so a job names the record it saves: a running
+  // export shows on its own record only, and another record's Save can queue behind it.
+  const owner = rec?.id ?? path;
+  const [mediaJob, setMediaJobAny] = useState<{
+    owner: string; jobId: string; phase: MediaExportPhase; done: number; total: number | null;
   } | null>(null);
+  /** Set this record's job; null clears it only if it is still this record's. */
+  const setMediaJob = (j: Omit<NonNullable<typeof mediaJob>, "owner"> | null) =>
+    setMediaJobAny((cur) => (j ? { ...j, owner } : cur?.owner === owner ? null : cur));
+  const ownJob = mediaJob?.owner === owner ? mediaJob : null;
+  /** This record's export waiting its turn (queueMediaExport), or null. */
+  const queuedJob = useSyncExternalStore(subscribeExportQueue, () => queuedExportFor(owner));
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
   const [streams, setStreams] = useState<MediaStreams | null>(null);
   /** D69 A: with Video on, only subtitle formats stay live. A lit TXT/LRC/JSON
@@ -365,31 +375,51 @@ export function TranscriptExport({
     // whatever the uploader's default was ("en" on a German video).
     const audioLang = (editedResult.language ?? "").trim() || null;
     const jobId = newProgressId();
-    setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
+    const fromFile = !!source.sourcePath;
+    // A busy answer after an upload names that upload's server copy (and its expiry,
+    // which the retry that packages it no longer learns).
+    let uploadedExpiry: number | null = null;
     const unsub = await onMediaExportProgress((p) => {
       if (p.jobId !== jobId) return;
       setMediaJob({ jobId, phase: p.phase, done: p.done, total: p.total });
     });
     let outcome;
     try {
-      outcome = await packageMedia({
-        serverUrl, backendId: trBackend.id, jobId,
-        ...source,
-        container, subtitles, defaultTrack, originalTrack,
-        audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
-        destPath: dest, filename: fileStem(dest),
-        maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
+      // One export at a time, in Save order — across every viewer (lib/mediaExport.ts).
+      outcome = await queueMediaExport(jobId, owner, async () => {
+        setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
+        try {
+          const out = await packageMedia({
+            serverUrl, backendId: trBackend.id, jobId,
+            ...source,
+            container, subtitles, defaultTrack, originalTrack,
+            audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
+            destPath: dest, filename: fileStem(dest),
+            maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
+          });
+          if (out.kind === "busy" && out.mediaId) {
+            if (source.sourcePath) uploadedExpiry = out.expiresAt;
+            source = { sourceMediaId: out.mediaId };
+          }
+          return out;
+        } finally {
+          setMediaJob(null);
+        }
       });
     } finally {
       unsub();
       setMediaJob(null);
     }
+    if (!outcome) {
+      setMediaError({ kind: "cancelled", msg: "Export cancelled." });
+      return false;
+    }
     if (outcome.kind === "ok") {
       // An uploaded file's server copy is reusable for a while: remember it
       // so "Save as MKV" or a second export skips the upload.
-      if (source.sourcePath && outcome.mediaId) {
+      if (fromFile && outcome.mediaId) {
         const mediaId = outcome.mediaId;
-        const expiresAt = outcome.expiresAt ?? undefined;
+        const expiresAt = outcome.expiresAt ?? uploadedExpiry ?? undefined;
         patchRecord(rec.id, (r) => ({
           ...r,
           result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
@@ -517,12 +547,12 @@ export function TranscriptExport({
     media: showMedia ? { choice: mediaChoice, container, subtitleMode, audioExt } : null,
   });
   const phaseText =
-    mediaJob?.phase === "fetching" ? "fetching the video from the link…"
-      : mediaJob?.phase === "uploading" ? "uploading the video"
-        : mediaJob?.phase === "packaging" ? "packaging on the server…"
-          : mediaJob?.phase === "downloading" ? "receiving the packaged video"
-            : mediaJob?.phase === "copying" ? "copying…" : "writing…";
-  const pct = mediaJob && mediaJob.total ? Math.round((mediaJob.done / mediaJob.total) * 100) : null;
+    ownJob?.phase === "fetching" ? "fetching the video from the link…"
+      : ownJob?.phase === "uploading" ? "uploading the video"
+        : ownJob?.phase === "packaging" ? "packaging on the server…"
+          : ownJob?.phase === "downloading" ? "receiving the packaged video"
+            : ownJob?.phase === "copying" ? "copying…" : "writing…";
+  const pct = ownJob && ownJob.total ? Math.round((ownJob.done / ownJob.total) * 100) : null;
   const custom = sanitizeCueLimits(settings.transcribe?.subtitleCustom) ?? CUE_PRESETS.standard;
   const length = settings.transcribe?.subtitleLength ?? "standard";
   const expand = (
@@ -837,7 +867,7 @@ export function TranscriptExport({
                 {names.join(" + ")}
                 {switchNote && <span className="text-warn"> · {switchNote}</span>}
               </span>
-              {mediaJob ? (
+              {ownJob ? (
                 <span className="inline-flex items-center gap-2 font-mono text-[11px] tabular-nums text-dim">
                   <span className="inline-block h-1 w-24 overflow-hidden rounded-pill bg-surface-2">
                     <span
@@ -846,10 +876,20 @@ export function TranscriptExport({
                     />
                   </span>
                   {phaseText}{pct !== null ? ` ${pct}%` : ""}
-                  {mediaJob.total ? ` · ${fmtBytes(mediaJob.done)} of ${fmtBytes(mediaJob.total)}` : ""}
-                  {mediaJob.jobId && (
+                  {ownJob.total ? ` · ${fmtBytes(ownJob.done)} of ${fmtBytes(ownJob.total)}` : ""}
+                  {ownJob.jobId && (
                     <Button variant="ghost" size="sm" onClick={() => void cancelMediaExport()}>Cancel</Button>
                   )}
+                </span>
+              ) : queuedJob ? (
+                // Waiting its turn: Cancel only dequeues it — the export running ahead
+                // (cancel_media_export's target) carries on.
+                <span className="inline-flex items-center gap-2">
+                  <Button variant="ghost" size="sm" onClick={() => dequeueMediaExport(queuedJob)}>Cancel</Button>
+                  <Button variant="accent" disabled title="Starts when the video export ahead of it finishes">
+                    <Hourglass className="size-4" />
+                    Queued
+                  </Button>
                 </span>
               ) : (
                 <Button variant="accent" onClick={doExport}>

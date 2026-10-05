@@ -256,6 +256,8 @@ pub async fn get_streams(
 }
 
 /// The 422 body of the package route: `{"detail": {"code", "message"}}` or a plain string.
+/// A 429 names the refusing limit in `error.param` (`{"error": {"param", …}, "detail": "…"}`),
+/// returned as the code.
 fn error_code(body: &str) -> (Option<String>, String) {
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(body) {
         if let Some(d) = v.get("detail") {
@@ -272,8 +274,32 @@ fn error_code(body: &str) -> (Option<String>, String) {
                 return (code, msg);
             }
         }
+        let param = v
+            .pointer("/error/param")
+            .and_then(|p| p.as_str())
+            .map(|p| p.to_string());
+        if param.is_some() {
+            return (param, detail_from(body));
+        }
     }
     (None, detail_from(body))
+}
+
+/// The limit a second concurrent export trips (another device of the same user): the app
+/// waits and retries instead of failing.
+const INFLIGHT_PARAM: &str = "MEDIA_PACKAGE_MAX_INFLIGHT_PER_USER";
+
+/// The outcome kind of a non-2xx, non-404 package answer.
+fn package_error_kind(status: u16, code: Option<&str>) -> &'static str {
+    match (status, code) {
+        (422, Some("mp4_incompatible")) => "mp4_incompatible",
+        (422, Some("no_video")) => "no_video",
+        (429, Some(INFLIGHT_PARAM)) => "busy",
+        (429, _) => "rate_limited",
+        (403, _) | (503, _) => "disabled",
+        (413, _) => "too_large",
+        _ => "error",
+    }
 }
 
 /// Package `media_id` with `subtitles` and stream the result to `dest`
@@ -328,14 +354,7 @@ pub async fn package_to_path(
             .await
             .unwrap_or_else(|r| r);
         let (code, msg) = error_code(&text);
-        let kind = match (status, code.as_deref()) {
-            (422, Some("mp4_incompatible")) => "mp4_incompatible",
-            (422, Some("no_video")) => "no_video",
-            (429, _) => "rate_limited",
-            (403, _) | (503, _) => "disabled",
-            (413, _) => "too_large",
-            _ => "error",
-        };
+        let kind = package_error_kind(status, code.as_deref());
         let mut out = PackageOutcome::err(kind, msg.clone());
         if kind == "mp4_incompatible" {
             out.reason = Some(msg);
@@ -410,6 +429,22 @@ mod tests {
         let (code, msg) = error_code(r#"{"detail":"container must be mkv or mp4"}"#);
         assert!(code.is_none());
         assert!(msg.contains("container"));
+    }
+
+    #[test]
+    fn a_second_inflight_export_is_busy_other_429s_stay_rate_limited() {
+        let body = r#"{"error":{"message":"you already have 1 video export running","type":"rate_limit_exceeded","param":"MEDIA_PACKAGE_MAX_INFLIGHT_PER_USER","retry_after":5},"detail":"you already have 1 video export running"}"#;
+        let (code, msg) = error_code(body);
+        assert_eq!(code.as_deref(), Some(INFLIGHT_PARAM));
+        assert!(msg.contains("already have"));
+        assert_eq!(package_error_kind(429, code.as_deref()), "busy");
+        let (code, _) = error_code(
+            r#"{"error":{"type":"rate_limit_exceeded","param":"MEDIA_PACKAGE_RATE_PER_MIN"},"detail":"slow down"}"#,
+        );
+        assert_eq!(package_error_kind(429, code.as_deref()), "rate_limited");
+        assert_eq!(package_error_kind(429, None), "rate_limited");
+        // The param only means "busy" on a 429.
+        assert_eq!(package_error_kind(400, Some(INFLIGHT_PARAM)), "error");
     }
 
     #[test]
