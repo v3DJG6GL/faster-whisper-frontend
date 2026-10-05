@@ -5,13 +5,24 @@
 // field: ↑↓ / PageUp / PageDown / Home / End move the highlighted row (aria-activedescendant),
 // Enter picks it and closes, Space ticks it in a multi-select list (only while the search is
 // empty — a space can be part of a name), Esc closes back to the trigger, Tab and a click outside
-// just close. ↑↓ on the closed trigger opens it.
+// just close. ↑↓ on the closed trigger opens it. A short list (`search={false}`, ui.tsx's Select)
+// has no search field: the listbox itself takes focus and the same keys, Space included.
 //
 // The popover is PORTALED to <body> and fixed-positioned at the trigger (useAnchoredRect, shared
 // with Combobox), so a card's `overflow-hidden` can't crop it; it opens upward when the room
 // below is short. Which rows exist and in what order is the caller's pure `sections(query)`.
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode, type Ref } from "react";
+import {
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type CSSProperties,
+  type HTMLAttributes,
+  type KeyboardEvent,
+  type ReactNode,
+  type Ref,
+} from "react";
 import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -66,6 +77,7 @@ export function OptionRows<R>({
   empty,
   className,
   style,
+  listboxProps,
 }: {
   id: string;
   label: string;
@@ -82,6 +94,8 @@ export function OptionRows<R>({
   empty?: ReactNode;
   className?: string;
   style?: CSSProperties;
+  /** Focus and keys for a listbox that holds focus itself (no search field to own it). */
+  listboxProps?: HTMLAttributes<HTMLDivElement>;
 }) {
   // Each section's first flat index — the active row and option ids count across groups.
   const starts: number[] = [];
@@ -97,7 +111,15 @@ export function OptionRows<R>({
     document.getElementById(optionId(id, active))?.scrollIntoView({ block: "nearest" });
   }, [id, active, activeKey]);
   return (
-    <div id={id} role="listbox" aria-label={label} aria-multiselectable={multi || undefined} className={className} style={style}>
+    <div
+      {...listboxProps}
+      id={id}
+      role="listbox"
+      aria-label={label}
+      aria-multiselectable={multi || undefined}
+      className={className}
+      style={style}
+    >
       {total === 0 && empty}
       {sections.map((s, si) => (
         // role="group" owns its options for AT (an option must sit in the listbox or a group of it).
@@ -149,8 +171,9 @@ export function KeyHint({ k, children }: { k: string; children: ReactNode }) {
 /** Popover width floor and list height ceiling (px). */
 const MIN_WIDTH = 320;
 const MAX_LIST = 470;
-/** Search bar + hint line, so the list's height leaves room for both. */
+/** Search bar + hint line, so the list's height leaves room for both; the hint line alone. */
 const CHROME = 96;
+const CHROME_BARE = 48;
 
 export function ListPicker<R>({
   label,
@@ -167,6 +190,8 @@ export function ListPicker<R>({
   noun,
   keys,
   disabled,
+  search = true,
+  minWidth = MIN_WIDTH,
 }: {
   /** The list's accessible name ("Spoken language"). */
   label: string;
@@ -182,12 +207,17 @@ export function ListPicker<R>({
   renderTrigger: (p: TriggerProps) => ReactNode;
   /** After every close — the moment a Recent list may re-sort. */
   onClose?: () => void;
-  placeholder: string;
+  /** The search field's placeholder (unused without `search`). */
+  placeholder?: string;
   /** What a row is, for the no-match line ("language"). */
-  noun: string;
+  noun?: string;
   /** The hint line under the list. */
   keys: ReactNode;
   disabled?: boolean;
+  /** false = no search field; the listbox holds focus and the keys. */
+  search?: boolean;
+  /** Popover width floor (px); it is never narrower than the trigger. */
+  minWidth?: number;
 }) {
   const listId = `${useId()}-list`;
   const [open, setOpen] = useState(false);
@@ -196,6 +226,11 @@ export function ListPicker<R>({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const rect = useAnchoredRect(triggerRef, open);
+  // Without a search field the listbox takes focus once the popover is placed.
+  const placed = open && rect !== null;
+  useEffect(() => {
+    if (placed && !search) document.getElementById(listId)?.focus({ preventScroll: true });
+  }, [placed, search, listId]);
 
   const groups = open ? sections(query) : [];
   const flat = groups.flatMap((g) => g.rows);
@@ -222,7 +257,7 @@ export function ListPicker<R>({
     if (!multi) close(true);
   };
 
-  const onSearchKey = (e: KeyboardEvent<HTMLInputElement>) => {
+  const onListKey = (e: KeyboardEvent<HTMLElement>) => {
     const next = navKey(e.key, act, flat.length);
     if (next !== null) {
       e.preventDefault();
@@ -234,10 +269,13 @@ export function ListPicker<R>({
         onPick(r);
         close(true);
       }
-    } else if (e.key === " " && multi && !query) {
+    } else if (e.key === " " && (multi || !search) && !query) {
       e.preventDefault();
       const r = flat[act];
-      if (r) onPick(r);
+      if (r) {
+        onPick(r);
+        if (!multi) close(true);
+      }
     } else if (e.key === "Escape") {
       // Ours alone: a dialog or editor behind the picker must not take this Esc as its own.
       e.preventDefault();
@@ -254,11 +292,11 @@ export function ListPicker<R>({
   if (rect) {
     const vw = window.innerWidth;
     const vh = window.innerHeight;
-    const width = Math.min(Math.max(rect.width, MIN_WIDTH), vw - 16);
+    const width = Math.min(Math.max(rect.width, minWidth), vw - 16);
     const below = vh - rect.bottom - 12;
     const above = rect.top - 12;
     const up = below < 320 && above > below;
-    listMax = Math.max(120, Math.min(MAX_LIST, (up ? above : below) - CHROME));
+    listMax = Math.max(120, Math.min(MAX_LIST, (up ? above : below) - (search ? CHROME : CHROME_BARE)));
     pos = {
       position: "fixed",
       left: Math.max(8, Math.min(rect.left, vw - width - 8)),
@@ -292,24 +330,26 @@ export function ListPicker<R>({
             style={pos}
             className="animate-combobox-pop overflow-hidden rounded-xl border border-line-strong bg-panel shadow-[0_12px_32px_-8px_rgba(0,0,0,0.55)]"
           >
-            <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-faint">
-              <Search className="size-4 shrink-0" aria-hidden />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => {
-                  setQuery(e.target.value);
-                  setActive(0);
-                }}
-                onKeyDown={onSearchKey}
-                placeholder={placeholder}
-                aria-label={`Search ${label.toLowerCase()}`}
-                {...comboboxInputProps(listId, act, !!flat[act])}
-                spellCheck={false}
-                autoComplete="off"
-                className="min-w-0 flex-1 bg-transparent text-[13px] text-text outline-none placeholder:text-faint"
-              />
-            </div>
+            {search && (
+              <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-faint">
+                <Search className="size-4 shrink-0" aria-hidden />
+                <input
+                  autoFocus
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setActive(0);
+                  }}
+                  onKeyDown={onListKey}
+                  placeholder={placeholder}
+                  aria-label={`Search ${label.toLowerCase()}`}
+                  {...comboboxInputProps(listId, act, !!flat[act])}
+                  spellCheck={false}
+                  autoComplete="off"
+                  className="min-w-0 flex-1 bg-transparent text-[13px] text-text outline-none placeholder:text-faint"
+                />
+              </div>
+            )}
             <OptionRows
               id={listId}
               label={label}
@@ -321,9 +361,14 @@ export function ListPicker<R>({
               onPick={pick}
               renderRow={renderRow}
               rowTitle={rowTitle}
-              empty={<div className="px-3 py-4 text-[12.5px] text-dim">No {noun} matches “{query.slice(0, 40)}”.</div>}
-              className="overflow-y-auto p-1.5"
+              empty={<div className="px-3 py-4 text-[12.5px] text-dim">No {noun ?? "option"} matches “{query.slice(0, 40)}”.</div>}
+              className="overflow-y-auto p-1.5 outline-none"
               style={{ maxHeight: listMax }}
+              listboxProps={
+                search
+                  ? undefined
+                  : { tabIndex: -1, "aria-activedescendant": flat[act] ? optionId(listId, act) : undefined, onKeyDown: onListKey }
+              }
             />
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line px-3 py-2 text-[11px] text-faint">
               {keys}

@@ -18,6 +18,7 @@ import { AlertTriangle, ArrowLeft, Check, ChevronDown, Info, Minus, Plus, Rotate
 import { cn } from "@/lib/cn";
 import { langCode, languageLabel } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
+import { KeyHint, ListPicker } from "@/components/ListPicker";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -751,6 +752,12 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   },
 );
 
+/** Lists longer than this get a search field. */
+const SELECT_SEARCH_MIN = 9;
+
+/** A single-choice dropdown: the app's ListPicker under a FieldTrigger face, as wide as its
+ *  field. Picking the current option again changes nothing (no onChange). A value that matches
+ *  no option shows the first option, as a native select did. */
 export function Select<T extends string>({
   value,
   onChange,
@@ -766,31 +773,47 @@ export function Select<T extends string>({
   disabled?: boolean;
   ariaLabel?: string;
 }) {
+  type Option = { value: T; label: string };
+  const current = (options.find((o) => o.value === value) ?? options[0])?.label ?? "";
+  const search = options.length >= SELECT_SEARCH_MIN;
   return (
-    <div className={cn("relative", className)}>
-      <select
-        value={value}
-        disabled={disabled}
-        aria-label={ariaLabel}
-        onChange={(e) => onChange(e.target.value as T)}
-        className={cn(
-          "ring-signal h-10 w-full appearance-none rounded-xl border border-line bg-surface-2 pl-3.5 pr-9 text-[13px] text-text",
-          disabled && "cursor-not-allowed opacity-40",
+    <div className={className}>
+      <ListPicker<Option>
+        label={ariaLabel ?? current}
+        sections={(query) => {
+          const q = query.trim().toLowerCase();
+          return [{ title: "", rows: q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options }];
+        }}
+        rowKey={(o) => o.value}
+        isSelected={(o) => o.value === value}
+        onPick={(o) => {
+          if (o.value !== value) onChange(o.value);
+        }}
+        renderRow={(o, { selected }) => (
+          <>
+            <span className="grid size-4 shrink-0 place-items-center">
+              {selected && <Check className="size-3.5 text-accent" />}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-text">{o.label}</span>
+          </>
         )}
-      >
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-      <svg
-        className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-faint"
-        viewBox="0 0 16 16"
-        fill="none"
-      >
-        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      </svg>
+        renderTrigger={(p) => (
+          <FieldTrigger {...p} open={p["aria-expanded"]} aria-label={ariaLabel ? `${ariaLabel}: ${current}` : undefined}>
+            {current}
+          </FieldTrigger>
+        )}
+        search={search}
+        minWidth={0}
+        placeholder="Search"
+        keys={
+          <>
+            <KeyHint k="↑↓">move</KeyHint>
+            <KeyHint k="Enter">pick</KeyHint>
+            <KeyHint k="Esc">close</KeyHint>
+          </>
+        }
+        disabled={disabled}
+      />
     </div>
   );
 }
