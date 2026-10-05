@@ -155,6 +155,13 @@ export function safeIdentityText(s: unknown, max = 80): string {
   return chars.length > max ? chars.slice(0, max).join("") + "…" : t;
 }
 
+/** A user/server-authored code (a language, an extractor key) cut to what is safe in a file
+ *  name or a WebVTT class: ASCII letters, digits and hyphens, bounded; `fallback` when
+ *  nothing is left. Lowercase it first where the caller wants it lowercase. */
+export function codeSlug(code: string, max = 12, fallback = ""): string {
+  return code.replace(/[^A-Za-z0-9-]/g, "").slice(0, max) || fallback;
+}
+
 /** `max` bounds the OUTPUT: the result is the unbounded result's first `max` chars, so a
  *  160-char snippet never walks a whole transcript (History renders one per row per
  *  keystroke). Bounding the input instead would not be equivalent — this only ever drops

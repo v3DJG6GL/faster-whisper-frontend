@@ -4,7 +4,7 @@
 
 import { trackLang } from "./cueSplit";
 import { langCode, primarySubtag, trackLanguageName } from "./languages";
-import { safeDisplayText, stripControlChars } from "./sanitize";
+import { codeSlug, safeDisplayText, stripControlChars } from "./sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge } from "./siteSubtitles";
 import type { BatchResult } from "./types";
 
@@ -251,9 +251,6 @@ export function planTracks(
   });
 }
 
-/** Codes are user/server-authored, so keep them path-safe. */
-const langSlug = (code: string) => code.replace(/[^A-Za-z0-9-]/g, "").slice(0, 12) || "und";
-
 /** A non-plain track's file label — before the language code, where Jellyfin, Emby and Kodi
  *  read a title: Whisper, YouTube, YouTube-auto, Machine-translation. */
 export function trackFileLabel(t: TrackInfo): string {
@@ -273,7 +270,7 @@ export function trackFileSuffixes(
 ): string[] {
   const used = new Set(opts.taken ?? []);
   return tracks.map((t) => {
-    const code = langSlug(t.lang) + (t.hoh ? ".sdh" : "");
+    const code = codeSlug(t.lang, 12, "und") + (t.hoh ? ".sdh" : "");
     const label = trackFileLabel(t);
     const tries = [
       ...(t.plain ? [opts.origBare && t.source === "whisper" && !t.hoh ? `.${ext}` : `.${code}.${ext}`] : []),

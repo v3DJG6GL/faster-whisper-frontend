@@ -6,7 +6,7 @@
 
 import { buildCues, cueResult, trackLang, limitsFor, trackCues, wrapLines, type CueOptions } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
-import { stripControlChars } from "./sanitize";
+import { codeSlug, stripControlChars } from "./sanitize";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
 
@@ -219,8 +219,7 @@ function ambiguous(ctx: Ctx): boolean {
  *  hyphens only, bounded; an unusable code degrades to a positional `x`
  *  instead of emitting broken markup. */
 function vttClass(lang: string): string {
-  const safe = lang.toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 12);
-  return safe || "x";
+  return codeSlug(lang.toLowerCase(), 12, "x");
 }
 
 /** Cue text lines for one segment across the included tracks, in track order.
@@ -777,10 +776,6 @@ export function exportFileNames(
   return exportFileGroups(opts, result).map((g) => g.name);
 }
 
-/** Track codes reach a filename (the stem suffix and the per-track LRC name); they come
- *  from server-advertised / peer-synced settings, so keep them to path-safe characters. */
-const trackSlug = (c: string) => c.replace(/[^A-Za-z0-9-]/g, "").slice(0, 12);
-
 export function exportStemSuffix(tracks?: string[]): string {
   if (!tracks || tracks.includes("orig")) return "";
   const langs = tracks.filter((t) => t !== "orig");
@@ -788,7 +783,7 @@ export function exportStemSuffix(tracks?: string[]): string {
   // A multi-target export used to return "" here, so the file name carried no
   // language at all -- the one case where naming matters MOST, since the file
   // holds several. Bounded: these codes are user-authored and land in a path.
-  const slugs = langs.map(trackSlug).filter(Boolean).slice(0, 4);
+  const slugs = langs.map((c) => codeSlug(c)).filter(Boolean).slice(0, 4);
   return slugs.length ? "." + slugs.join("+") : "";
 }
 

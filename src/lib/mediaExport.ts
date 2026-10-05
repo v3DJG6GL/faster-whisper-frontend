@@ -6,6 +6,7 @@
 import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions } from "./transcriptExport";
+import { codeSlug } from "./sanitize";
 import type { BatchResult, Capabilities } from "./types";
 import { isSourceUrl } from "./urlSource";
 
@@ -256,7 +257,7 @@ export function linkSiteName(url: string, extractor?: string | null): string {
       : labels[labels.length - 2];
     if (/^[a-z0-9-]{1,40}$/.test(name) && !/^-|-$/.test(name)) return SITE_ALIASES[name] ?? name;
   }
-  const ex = (extractor ?? "").split(":")[0].toLowerCase().replace(/[^a-z0-9-]/g, "").slice(0, 40);
+  const ex = codeSlug((extractor ?? "").split(":")[0].toLowerCase(), 40);
   return ex && ex !== "generic" ? ex : "";
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { stripControlChars } from "./sanitize";
+import { codeSlug, stripControlChars } from "./sanitize";
 
 describe("stripControlChars with an output bound", () => {
   it("normalises a lone CR and a CRLF without touching the text past the bound", () => {
@@ -18,5 +18,16 @@ describe("stripControlChars with an output bound", () => {
   });
   it("is unchanged when no bound is given", () => {
     expect(stripControlChars("a\u0000b")).toBe("ab");
+  });
+});
+
+describe("codeSlug", () => {
+  it("keeps ASCII letters, digits and hyphens, bounded, with a fallback", () => {
+    expect(codeSlug("pt-BR")).toBe("pt-BR");
+    expect(codeSlug("de/../x y.z")).toBe("dexyz");
+    expect(codeSlug("a".repeat(20))).toHaveLength(12);
+    expect(codeSlug("Youtube:tab".split(":")[0].toLowerCase(), 40)).toBe("youtube");
+    expect(codeSlug("..", 12, "und")).toBe("und");
+    expect(codeSlug("ü")).toBe("");
   });
 });
