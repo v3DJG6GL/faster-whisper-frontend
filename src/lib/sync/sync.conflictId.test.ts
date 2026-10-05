@@ -4,11 +4,11 @@ import {
   getPendingReview,
   raiseConflictForTests,
   resolveSyncConflicts,
-} from "./sync/sync";
-import { useApp } from "./store";
-import { DEFAULT_SETTINGS } from "./defaults";
-import { DEFAULT_SETTING_SYNC } from "./settingsManifest";
-import type { Backend } from "./types";
+} from "./sync";
+import { useApp } from "../store";
+import { DEFAULT_SETTINGS } from "../defaults";
+import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
+import type { Backend } from "../types";
 
 function backend(over: Partial<Backend> = {}): Backend {
   return {

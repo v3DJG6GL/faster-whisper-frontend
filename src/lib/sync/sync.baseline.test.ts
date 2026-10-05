@@ -12,18 +12,18 @@ import {
   migrateBlob,
   sanitizeProfiles,
   securityChanges,
-} from "./sync/sync";
-import { useApp } from "./store";
-import { DEFAULT_SETTINGS } from "./defaults";
-import { IS_WINDOWS } from "./platform";
-import type { SyncBlob } from "./sync/syncTypes";
-import type { AppSettings, Backend, Profile, SyncSubSettings } from "./types";
+} from "./sync";
+import { useApp } from "../store";
+import { DEFAULT_SETTINGS } from "../defaults";
+import { IS_WINDOWS } from "../platform";
+import type { SyncBlob } from "./syncTypes";
+import type { AppSettings, Backend, Profile, SyncSubSettings } from "../types";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
  *  parked, the store is live and the user can keep editing. Default is passthrough. */
 const keyring = vi.hoisted(() => ({ park: null as null | Promise<Record<string, string>> }));
-vi.mock("./api", async (importOriginal) => {
-  const orig = await importOriginal<typeof import("./api")>();
+vi.mock("../api", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../api")>();
   return {
     ...orig,
     readBackendKeys: (ids: string[]) => keyring.park ?? orig.readBackendKeys(ids),

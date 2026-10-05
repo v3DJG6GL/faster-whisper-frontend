@@ -1136,7 +1136,7 @@ export function holdCoerced(activation: ActivationKind | undefined, method: Inse
  *  Clipboard-only is a live-ENABLER, not a blocker: it types nothing, so it is safe under
  *  a held chord and may run live in any activation — it just refreshes the clipboard per
  *  phrase. `!holdCoerced` would forbid exactly that, and would also forbid the ordinary
- *  hands-free + clipboard-only session. (Caught by insertionResolve.test.ts, which is why
+ *  hands-free + clipboard-only session. (Caught by streaming.insertion.test.ts, which is why
  *  the two predicates are stated separately rather than one defined from the other.)
  *
  *  `activation` is the RUNTIME value, not the Profile's: the Home button and the chip's

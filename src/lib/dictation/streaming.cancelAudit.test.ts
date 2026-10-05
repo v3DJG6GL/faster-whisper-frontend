@@ -7,12 +7,12 @@
 // must cancel it, and the cost of forgetting is invisible on this side of the
 // wire — which is exactly the kind of omission a test has to catch.
 //
-// It reads the SOURCE (the `?raw` idiom settingsLabels.test.ts established —
+// It reads the SOURCE (the `?raw` idiom settingsManifest.labels.test.ts established —
 // the only cross-file regression mechanism here that needs no Tauri), slices
 // each function body by brace depth, and asserts the call appears in it.
 import { describe, expect, it } from "vitest";
-import streamingSrc from "./dictation/streaming.ts?raw";
-import transcribeRunSrc from "./transcribeRun.ts?raw";
+import streamingSrc from "./streaming.ts?raw";
+import transcribeRunSrc from "../transcribeRun.ts?raw";
 
 /** Blank out comments, strings and template literals — same length, so indexes
  *  into the original stay valid — so the brace scan can't be thrown off by a
@@ -112,7 +112,7 @@ describe("dictation teardowns cancel the in-flight translate", () => {
       expect(
         bodyAfter(streamingSrc, anchor).includes("cancelDictationTranslate("),
         `${anchor} in streaming.ts abandons a dictation translate without stopping the server — ` +
-          "add cancelDictationTranslate() or update cancelAudit.test.ts",
+          "add cancelDictationTranslate() or update streaming.cancelAudit.test.ts",
       ).toBe(true);
     });
   }
@@ -125,7 +125,7 @@ describe("dictation teardowns cancel the in-flight translate", () => {
     expect(cancelLive).toContain("cancelRecord(true)");
     expect(cancelLive).toContain("cancelStream(true)");
     const closedRelease = streamingSrc.match(/\(activeEndpoint === "batch" \? cancelRecord\(([^)]*)\) : cancelStream\(([^)]*)\)\)/);
-    expect(closedRelease, "the closed-handler release moved — update cancelAudit.test.ts").not.toBeNull();
+    expect(closedRelease, "the closed-handler release moved — update streaming.cancelAudit.test.ts").not.toBeNull();
     expect(closedRelease![1]).toBe("");
     expect(closedRelease![2]).toBe("");
   });
@@ -165,7 +165,7 @@ describe("every transcribe epoch bump abandons the server-side run", () => {
       expect(
         body.includes("abandonActiveRun("),
         `${name} in transcribeRun.ts bumps the epoch — abandoning our end of the request — but ` +
-          "never tells the server to stop; add abandonActiveRun() or update cancelAudit.test.ts",
+          "never tells the server to stop; add abandonActiveRun() or update streaming.cancelAudit.test.ts",
       ).toBe(true);
     });
   }

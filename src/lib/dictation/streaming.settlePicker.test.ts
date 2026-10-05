@@ -6,10 +6,10 @@
 // rewrites that session's targets. Likewise `sessionTargets` is the chip's/tray's route
 // and must die with the session, or the standby dock previews a finished run's route.
 //
-// Same `?raw` + brace-slice idiom as cancelAudit.test.ts: the seams are module-private.
+// Same `?raw` + brace-slice idiom as streaming.cancelAudit.test.ts: the seams are module-private.
 import { describe, expect, it } from "vitest";
-import streamingSrc from "./dictation/streaming.ts?raw";
-import dictationSrc from "./dictation/dictation.ts?raw";
+import streamingSrc from "./streaming.ts?raw";
+import dictationSrc from "./dictation.ts?raw";
 
 function mask(src: string): string {
   const out = src.split("");

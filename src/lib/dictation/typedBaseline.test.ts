@@ -1,6 +1,6 @@
 // The live-typing baseline's arithmetic: the diff, the hard-break carry and the divergence
 // report. Pure, so testable without Tauri — the handlers that use it in streaming.ts are pinned
-// by source pattern in cancelAudit.test.ts instead.
+// by source pattern in streaming.cancelAudit.test.ts instead.
 
 import { describe, expect, it } from "vitest";
 import { baselineDivergence, charClass, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";

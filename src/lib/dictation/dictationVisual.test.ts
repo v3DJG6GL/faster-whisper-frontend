@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import homeSrc from "../../screens/Dashboard.tsx?raw";
-// Raw source import (vite `?raw`), as settingsLabels.test.ts does: Overlay.tsx pulls in
+// Raw source import (vite `?raw`), as settingsManifest.labels.test.ts does: Overlay.tsx pulls in
 // motion/react and DOM globals, and there is no jsdom in this repo — but the maps'
 // COMPLETENESS is exactly what a missing entry breaks (a tone with no fill/glow renders
 // as `undefined`, i.e. an invisible dot), so read them out of the source instead.
