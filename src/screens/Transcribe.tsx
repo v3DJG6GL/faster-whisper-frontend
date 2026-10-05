@@ -5,7 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, ChevronDown, Link2, AudioLines, Film } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { patchTranscribe } from "@/lib/useDisplayToggles";
-import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
@@ -21,6 +21,8 @@ import {
   withDefaultModel,
 } from "@/lib/inherit";
 import { OverrideHeader } from "@/components/OverrideField";
+import { StageOptions } from "@/components/StageOptions";
+import { diarizationSummary, separationSummary, speakersText, stageModelText, translationSummary } from "@/lib/stageSummary";
 import { envDesc } from "@/lib/settingDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
@@ -1740,7 +1742,11 @@ export default function Transcribe() {
                   disabled={!bgmAvailable}
                   expand={
                     effBgm && separationModels.length > 1 ? (
-                      <SettingExpand>
+                      <StageOptions
+                        label="Music source separation"
+                        summary={separationSummary(stageModelText(separationModel, defaultSeparationName))}
+                        changed={separationModel !== ""}
+                      >
                         <div>
                           <MicroLabel>model</MicroLabel>
                           <div className="w-56">
@@ -1753,7 +1759,7 @@ export default function Transcribe() {
                             />
                           </div>
                         </div>
-                      </SettingExpand>
+                      </StageOptions>
                     ) : undefined
                   }
                 >
@@ -1860,7 +1866,17 @@ export default function Transcribe() {
                   last={!translationAvailable}
                   expand={
                     effDiarize ? (
-                      <SettingExpand>
+                      <StageOptions
+                        label="Speaker diarization"
+                        summary={diarizationSummary(
+                          speakersText(speakerMode, numSpeakers, minSpeakers, maxSpeakers),
+                          // The model only says something when there is a choice of one.
+                          diarizationModels.length > 1 || diarizationModel
+                            ? stageModelText(diarizationModel, defaultDiarizationName)
+                            : defaultDiarizationName,
+                        )}
+                        changed={speakerMode !== "auto" || diarizationModel !== ""}
+                      >
                         <div>
                           <MicroLabel>speakers</MicroLabel>
                           <div className="flex flex-wrap items-center gap-2">
@@ -1939,7 +1955,7 @@ export default function Transcribe() {
                             </div>
                           </div>
                         )}
-                      </SettingExpand>
+                      </StageOptions>
                     ) : undefined
                   }
                 >
@@ -1967,7 +1983,21 @@ export default function Transcribe() {
                     last
                     expand={
                       translateTo.length > 0 ? (
-                        <SettingExpand>
+                        <StageOptions
+                          label="Translation"
+                          summary={translationSummary(
+                            siteChips?.targets ?? translateTo,
+                            translationMode,
+                            (caps?.translation_models?.length ?? 0) > 1
+                              ? stageModelText(
+                                  translationModel,
+                                  shortModelName(backend?.translationOverrides?.model || caps?.translation_models?.[0]?.id) ??
+                                    "server model",
+                                )
+                              : undefined,
+                          )}
+                          changed={!!translationModel || runContextSegments !== undefined}
+                        >
                           <TranslationOptionsFields
                             sectionLabels
                             targets={siteChips?.targets ?? translateTo}
@@ -2016,7 +2046,7 @@ export default function Transcribe() {
                               word highlighting during playback stays on the original
                             </p>
                           </TranslationOptionsFields>
-                        </SettingExpand>
+                        </StageOptions>
                       ) : undefined
                     }
                   >

@@ -1489,9 +1489,13 @@ export function SettingRow({
 
 /** The SettingRow sub-panel (`expand` slot) and its micro-labels — the
  *  Processing card's "options live INSIDE the row" idiom. */
-export function SettingExpand({ children }: { children: ReactNode }) {
+export function SettingExpand({ children, id, open }: { children: ReactNode; id?: string; open?: boolean }) {
+  // `open`: a panel the user unfolded (StageOptions) — the accent edge an open DisclosureCard has.
   return (
-    <div className="mt-2.5 space-y-3 rounded-xl border border-line bg-surface-2/40 p-3.5">
+    <div
+      id={id}
+      className={cn("mt-2.5 space-y-3 rounded-xl border bg-surface-2/40 p-3.5", open ? "border-accent/45" : "border-line")}
+    >
       {children}
     </div>
   );
