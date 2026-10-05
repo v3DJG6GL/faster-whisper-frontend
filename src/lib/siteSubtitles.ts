@@ -408,6 +408,27 @@ export function removeLanguage(input: SiteSubsInput, st: SiteSubsState, code: st
   );
 }
 
+/** The translation chips' own picker while the panel is in charge: chips no longer in
+ *  `next` switch their language off, new codes are added as languages (rows at the bottom). */
+export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readonly string[]): SiteChange {
+  const chips = derive(input, st).chips.map((c) => c.code);
+  let ch: SiteChange = { state: st, targets: [...input.targets] };
+  const step = (c: SiteChange) => {
+    ch = c;
+    input = { ...input, targets: c.targets };
+  };
+  for (const code of chips) if (!next.includes(code)) step(toggleTarget(input, ch.state, code, false));
+  for (const code of next) if (!chips.includes(code)) step(addLanguage(input, ch.state, code));
+  return ch;
+}
+
+/** What a link run freezes into its metadata at Add link: the view's run, its machine
+ *  translation only where the server can translate (`mt`), and the preview's facts about
+ *  the tracks it fetches. */
+export function frozenSiteRun(run: SiteSubsRun, tracks: readonly SiteTrackInfo[], mt: boolean): SiteSubsRun {
+  return { ...run, mtTargets: mt ? run.mtTargets : [], tracks: tracks.filter((t) => run.fetch.includes(t.id)) };
+}
+
 /** The languages already in the table — what "Add language" leaves out. */
 export function listedLanguages(input: SiteSubsInput, st: SiteSubsState): string[] {
   const m = model(input, st);

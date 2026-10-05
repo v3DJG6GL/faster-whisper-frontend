@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "./urlSource";
@@ -239,5 +239,23 @@ describe("the link's spoken language", () => {
     expect(spokenPill(linkSpoken({ check: { state: "failed", error: "x" }, screen: "auto", edited: null }), { state: "failed", error: "x" })).toEqual({ text: "unknown", tone: "plain", title: "x" });
     expect(spokenPill(linkSpoken({ siteLanguage: "de", check: { state: "idle" }, screen: "auto", edited: null }), { state: "idle" })?.text)
       .toBe("from the site");
+  });
+});
+
+describe("the chips' own picker and the frozen run (moved out of Transcribe)", () => {
+  it("setTargets: a dropped chip switches its language off, a new code is added at the bottom", () => {
+    const inp = input();
+    const st = initialSiteState(inp.targets);
+    expect(derive(inp, st).chips.map((c) => c.code)).toEqual(["en", "fr", "it"]);
+    const [inp2, st2] = apply(inp, setTargets(inp, st, ["en", "it", "es"]));
+    expect(derive(inp2, st2).chips.map((c) => c.code)).toEqual(["en", "it", "es"]);
+    expect(st2.off).toEqual(["fr"]);
+    expect(st2.added).toEqual(["es"]);
+    expect(setTargets(inp, st, ["en", "fr", "it"])).toEqual({ state: st, targets: ["en", "fr"] });
+  });
+  it("frozenSiteRun: no machine translation without a translator; only the fetched tracks' facts", () => {
+    const run = { fetch: ["de", "en"], transcriptTrackId: "de", mtTargets: ["fr"] };
+    expect(frozenSiteRun(run, ARTE, true)).toEqual({ ...run, tracks: [ARTE[0], ARTE[2]] });
+    expect(frozenSiteRun(run, ARTE, false).mtTargets).toEqual([]);
   });
 });

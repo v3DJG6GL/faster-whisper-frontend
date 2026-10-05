@@ -9,7 +9,7 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
-import { addLanguage, derive, flip, initialSiteState, toggleTarget, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
+import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
 import { siteDisplayName } from "@/lib/mediaExport";
 import { translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -864,19 +864,7 @@ export default function Transcribe() {
     ? {
         targets: siteView.chips.map((c) => c.code),
         parts: Object.fromEntries(siteView.chips.map((c) => [c.code, c.parts])),
-        onTargetsChange: (next: string[]) => {
-          let input = siteInput;
-          let st = siteState;
-          let ch: SiteChange = { state: st, targets: [...input.targets] };
-          const step = (c: SiteChange) => {
-            ch = c;
-            input = { ...input, targets: c.targets };
-            st = c.state;
-          };
-          for (const code of siteView.chips.map((c) => c.code)) if (!next.includes(code)) step(toggleTarget(input, st, code, false));
-          for (const code of next) if (!siteView.chips.some((c) => c.code === code)) step(addLanguage(input, st, code));
-          applySite(ch);
-        },
+        onTargetsChange: (next: string[]) => applySite(setTargets(siteInput, siteState, next)),
         onPart: (key: string) => applySite(flip(siteInput, siteState, key)),
       }
     : null;
@@ -995,13 +983,7 @@ export default function Transcribe() {
         // Always written (undefined clears a re-added link's old values).
         spokenLanguage: linkLang.sp.value !== spoken.value ? linkLang.sp.value : undefined,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
-        siteSubs: siteView?.run
-          ? {
-              ...siteView.run,
-              mtTargets: translationAvailable ? siteView.run.mtTargets : [],
-              tracks: siteInput?.tracks.filter((t) => siteView.run!.fetch.includes(t.id)),
-            }
-          : undefined,
+        siteSubs: siteView?.run ? frozenSiteRun(siteView.run, siteInput?.tracks ?? [], translationAvailable) : undefined,
       });
     }
     addFiles([url]);
