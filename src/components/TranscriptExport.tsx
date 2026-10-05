@@ -29,7 +29,7 @@ import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import {
-  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, readTrackPrefs, sourceKind, trackChipLabel, trackInfo, trackOrder,
+  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceKind, trackChipLabel, trackInfo, trackOrder,
   type TrackPrefs,
 } from "@/lib/exportTracks";
 import {
@@ -55,8 +55,8 @@ const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
 
 
 export function TranscriptExport({
-  open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport, langs: mtLangs,
-  allTracks: mtTracks, visibleTracks: viewTracks, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
+  open, result, editedResult, effWords, path, mediaPath, overlayKey, initialExport,
+  allTracks, visibleTracks, trackPrefs: prefs, onTrackPrefs: setPrefs, fileRenames, fileColors, speakers, editCount, cueOpts, fill, focus, trBackend, trCaps,
 }: {
   /** The panel shows; closed it renders nothing but keeps its state. */
   open: boolean;
@@ -69,11 +69,13 @@ export function TranscriptExport({
   mediaPath?: string;
   overlayKey?: string;
   initialExport?: { media: MediaChoice };
-  /** Translated tracks of the result, and "orig" + those. */
-  langs: string[];
+  /** Every track: "orig", its machine translations and the site's own tracks. */
   allTracks: string[];
   /** The viewer's visible tracks — the export's default pick. */
   visibleTracks: string[];
+  /** The transcript's track order and names (D92/D89) — shared with Read's chips. */
+  trackPrefs: TrackPrefs;
+  onTrackPrefs: (patch: TrackPrefs) => void;
   fileRenames: Record<string, string>;
   fileColors: Record<string, number>;
   speakers: string[];
@@ -85,12 +87,6 @@ export function TranscriptExport({
   trBackend: Backend | undefined;
   trCaps: Capabilities | null | undefined;
 }) {
-  // The site's own subtitle tracks (D86) are export tracks too, picked by default: the viewer's
-  // track lists hold only the original and its machine translations.
-  const timedIds = useMemo(() => (result.timedTracks ?? []).map((t) => t.id), [result.timedTracks]);
-  const langs = useMemo(() => [...mtLangs, ...timedIds], [mtLangs, timedIds]);
-  const allTracks = useMemo(() => [...mtTracks, ...timedIds], [mtTracks, timedIds]);
-  const visibleTracks = useMemo(() => [...viewTracks, ...timedIds], [viewTracks, timedIds]);
   const settings = useApp((s) => s.settings);
   const updateSettings = useApp((s) => s.updateSettings);
   const persistOptions = (patch: Partial<TranscribeSettings>) => {
@@ -152,16 +148,6 @@ export function TranscriptExport({
   // A link's export stem leads with when and where it was fetched.
   const extractor = useTranscribeRun((s) => s.urlMeta[path]?.extractor);
   const stemLink = { createdAt: rec?.createdAt, extractor };
-  // The dragged track order and typed track names (D92/D89) live on the
-  // transcript's record; without one (not saved yet) in the panel.
-  const [localPrefs, setLocalPrefs] = useState<TrackPrefs>({});
-  const hasRec = !!rec;
-  const savedPrefs = rec?.exportTracks;
-  const prefs = useMemo(() => (hasRec ? readTrackPrefs(savedPrefs) : localPrefs), [hasRec, savedPrefs, localPrefs]);
-  const setPrefs = (patch: TrackPrefs) => {
-    if (rec) patchRecord(rec.id, (r) => ({ ...r, exportTracks: { ...readTrackPrefs(r.exportTracks), ...patch } }));
-    else setLocalPrefs((p) => ({ ...p, ...patch }));
-  };
   const trackNames = useMemo(() => prefs.names ?? {}, [prefs.names]);
   // Every track in track order; the export carries the picked ones in it.
   const order = useMemo(() => trackOrder(editedResult, allTracks, prefs.order), [editedResult, allTracks, prefs.order]);
@@ -203,7 +189,6 @@ export function TranscriptExport({
     setMediaError(null);
     // Track picks belong to the previous file's tracks.
     setExportTracks(null);
-    setLocalPrefs({});
     // A "permission denied" line (or a still-ticking "Saved") must not sit
     // next to B's button.
     setSaveError(null);
@@ -214,8 +199,8 @@ export function TranscriptExport({
    *  over from another file never silently empties the export. */
   const chosen = exportTracks ?? visibleTracks;
   const effTracks = useMemo(
-    () => (langs.length ? order.filter((t) => chosen.includes(t)) : []),
-    [langs, order, chosen],
+    () => (allTracks.length > 1 ? order.filter((t) => chosen.includes(t)) : []),
+    [allTracks, order, chosen],
   );
   /** One source of truth for Save AND the live preview: the display toggles
    *  map onto the generator options (colors on → "line" mode; names/timestamps
@@ -731,7 +716,7 @@ export function TranscriptExport({
       </div>
     );
   })();
-  const tracksBox = langs.length > 0 && exportFormat !== "json" && (
+  const tracksBox = allTracks.length > 1 && exportFormat !== "json" && (
     <div className={box}>
       <span className={boxTitle}>Tracks</span>
       <ExportTrackChips
@@ -912,7 +897,7 @@ export function TranscriptExport({
                 ))}
               </div>
             )}
-            {mtLangs.length > 0 && (
+            {allTracks.some((t) => trackInfo(result, t).source === "mt") && (
               <div className="flex flex-col gap-2 border-t border-line pt-3">
                 <span className="text-[12.5px] text-dim">Translation timing</span>
                 <div role="radiogroup" aria-label="Translation timing" className="flex gap-2.5">

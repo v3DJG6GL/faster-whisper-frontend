@@ -398,8 +398,9 @@ export interface TranscribeSettings {
   translationModel?: string;
   /** Sticky T2T mode pick; absent = "fluent" (the server's default). */
   translationMode?: "fluent" | "faithful";
-  /** Viewer track visibility ("orig" + language codes). LOCAL view state —
-   *  never synced, like layout. Absent = all tracks visible. */
+  /** Viewer track visibility ("orig", language codes, site track ids). LOCAL
+   *  view state — never synced, like layout. Absent = the default pick (the
+   *  original + one track per other language, three at most). */
   viewTracks?: string[];
   separateBgm?: boolean;
   exportFormat?: "txt" | "srt" | "vtt" | "lrc" | "json";

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  cleanTrackTitle, defaultTrackOrder, languageGroups, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
+  cleanTrackTitle, defaultTrackOrder, defaultViewTracks, languageGroups, mergeOrder, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
   readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackFileSuffixes, trackInfo, trackOrder,
 } from "./exportTracks";
 import type { BatchResult } from "./types";
@@ -52,6 +52,24 @@ describe("track order (D92)", () => {
     expect(moveItem(["a", "b", "c"], 0, 2)).toEqual(["b", "a", "c"]);
     expect(moveItem(["a", "b", "c"], 2, 0)).toEqual(["c", "a", "b"]);
     expect(moveItem(["a", "b", "c"], 1, 1)).toEqual(["a", "b", "c"]);
+  });
+});
+
+describe("a view that hides some tracks (Read's Segments)", () => {
+  const order = defaultTrackOrder(LINK, ALL);
+  it("merges a reorder of the shown tracks back into the whole order", () => {
+    expect(mergeOrder(LINK, order, ["en", "orig"])).toEqual(["en-x-site", "en", "orig", "de-x-site", "de-x-site-auto"]);
+    expect(mergeOrder(LINK, order, ["orig", "en"])).toEqual(order);
+    // A language the view doesn't show at all keeps its slot.
+    const fr = ["orig", "de-x-site", "fr-x-site", "en"];
+    const withFr = { ...LINK, timedTracks: [...LINK.timedTracks!, site("fr-x-site", "fr")] };
+    expect(mergeOrder(withFr, fr, ["en", "orig"])).toEqual(["en", "fr-x-site", "orig", "de-x-site"]);
+  });
+  it("shows the original and the first track of each other language — three at most", () => {
+    expect(defaultViewTracks(LINK, order)).toEqual(["orig", "en-x-site"]);
+    expect(defaultViewTracks(LINK, ["en", "en-x-site", "de-x-site", "orig"])).toEqual(["en", "orig"]);
+    expect(defaultViewTracks(LINK, [...order, "fr", "es"])).toEqual(["orig", "en-x-site", "fr"]);
+    expect(defaultViewTracks(LINK, ["de-x-site", "en"])).toEqual(["de-x-site", "en"]);
   });
 });
 

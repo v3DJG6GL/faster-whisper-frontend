@@ -141,6 +141,25 @@ export function moveTrack(result: TrackResult, order: readonly string[], track: 
     g.tracks.includes(track) ? moveItem(g.tracks, g.tracks.indexOf(track), slot) : g.tracks);
 }
 
+/** `xs` with the items of `sub` back in the slots they held, in `sub`'s new order. */
+const refill = <T,>(xs: readonly T[], sub: readonly T[]): T[] => {
+  let k = 0;
+  return xs.map((x) => (sub.includes(x) ? sub[k++] : x));
+};
+
+/** A reorder of some of the tracks (the chips of a view that hides some, Read's Segments)
+ *  merged into the whole order: its languages and tracks take the slots they held, the
+ *  hidden ones keep theirs. */
+export function mergeOrder(result: TrackResult, order: readonly string[], sub: readonly string[]): string[] {
+  const groups = languageGroups(result, order);
+  const subGroups = languageGroups(result, sub);
+  return refill(groups.map((g) => g.lang), subGroups.map((g) => g.lang)).flatMap((lang) => {
+    const g = groups.find((x) => x.lang === lang)!;
+    const s = subGroups.find((x) => x.lang === lang);
+    return s ? refill(g.tracks, s.tracks) : g.tracks;
+  });
+}
+
 // ── Picking tracks (D88) ────────────────────────────────────────────────────────────────────
 
 /** A language's code segment: on (any track chosen) → all its tracks off; off → all but its
@@ -154,6 +173,14 @@ export function toggleLanguage(
   const add = on ? [] : human.length ? human : mine;
   const next = order.filter((t) => (chosen.includes(t) && !(on && mine.includes(t))) || add.includes(t));
   return next.length ? next : null;
+}
+
+/** What Read shows before anything is picked: the original, then the first track of each
+ *  other language, in track order — at most `max`, so lanes stay readable. */
+export function defaultViewTracks(result: TrackResult, order: readonly string[], max = 3): string[] {
+  const firsts = languageGroups(result, order).map((g) => (g.tracks.includes("orig") ? "orig" : g.tracks[0]));
+  const picks = [...firsts.filter((t) => t === "orig"), ...firsts.filter((t) => t !== "orig")].slice(0, max);
+  return order.filter((t) => picks.includes(t));
 }
 
 /** One track's part: flip it. Null = nothing would be left. */

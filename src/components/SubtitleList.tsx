@@ -186,6 +186,13 @@ function VirtualCues({
   );
 }
 
+/** Each column or lane readable (20rem) but no wider than a subtitle line wants (60ch),
+ *  centred; when they don't fit, the transcript box scrolls sideways. `fixed` = the rest. */
+const widths = (n: number, fixed: string) => ({
+  minWidth: `calc(${fixed} + ${n} * 20rem)`,
+  maxWidth: `calc(${fixed} + ${n} * 60ch)`,
+});
+
 export function SubtitleList({
   result, grid, tracks, cues, curTime, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, showNames, colorize, displayName, colorOf,
 }: {
@@ -213,8 +220,6 @@ export function SubtitleList({
   const layout = useMemo(() => {
     const limitOf = (track: string) => (cues ? limitsFor(cues, cueTrackLang(result, track)) : null);
     const code = (track: string) => safeDisplayText(cueTrackLang(result, track) ?? "??", 16).toUpperCase();
-    /** A lane's head: a site track says whose it is ("DE · YouTube"), others show their code. */
-    const head = (track: string) => (result.timedTracks?.some((t) => t.id === track) ? trackChipLabel(result, track) : code(track));
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
@@ -246,7 +251,7 @@ export function SubtitleList({
     };
     if (!lanes) {
       return {
-        heads: tracks.map((t) => (t === "orig" ? `${code(t)} · original` : head(t))),
+        heads: tracks.map((t) => trackChipLabel(result, t)),
         rows: grid.cues.map((c, i) =>
           rowOf(`${i}`, i + 1, c, i === 0 || grid.cues[i - 1].seg !== c.seg,
             tracks.map((t) => [t, t === "orig" ? c.text : (c.tr[t] ?? "")])),
@@ -261,7 +266,7 @@ export function SubtitleList({
         const list = t === "orig" ? grid.cues : trackCues(grid, t);
         return {
           track: t,
-          code: head(t),
+          code: trackChipLabel(result, t),
           rows: list.map((c, i) =>
             rowOf(`${t}-${i}`, i + 1, c, li === 0 && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text]])),
         };
@@ -282,41 +287,42 @@ export function SubtitleList({
     return i >= 0 && curTime < rows[i].end + 0.3 ? i : -1;
   };
 
-  if (!lanes) {
-    const columns = `2.25rem 7.5rem ${layout.heads.map(() => "minmax(0,1fr)").join(" ")}`;
-    const active = activeIn(layout.rows);
-    return (
-      <div className="flex flex-col gap-0.5">
-        <div
-          className="grid gap-3.5 px-2 pb-1 font-mono text-[10px] uppercase tracking-label text-faint"
-          style={{ gridTemplateColumns: columns }}
-        >
-          <span>#</span>
-          <span>time</span>
-          {layout.heads.map((h) => <span key={h}>{h}</span>)}
-        </div>
-        <VirtualCues rows={layout.rows} active={active} pin={pin} columns={columns} scrollRef={scrollRef}
-          canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
-      </div>
-    );
-  }
+  const columns = `2.25rem 7.5rem ${layout.heads.map(() => "minmax(0,1fr)").join(" ")}`;
+  const n = lanes ? layout.lanes.length : layout.heads.length;
   return (
-    <div className="flex gap-4">
-      {layout.lanes.map((ln, li) => {
-        const active = activeIn(ln.rows);
-        return (
-          <div key={ln.track} className="flex min-w-0 flex-1 flex-col gap-0.5">
-            <div className="mb-1 flex items-center gap-2 border-b border-line px-2 pb-1.5">
-              <LangTag code={ln.code} orig={ln.track === "orig"} />
-              <span className="text-[11.5px] text-faint">
-                {ln.rows.length.toLocaleString()} subtitle{ln.rows.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            <VirtualCues rows={ln.rows} active={active} pin={li === 0 ? pin : -1} lane scrollRef={scrollRef}
-              canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+    // width 0 + min-width 100%: the box's width, with no say in the page's —
+    // lanes wider than the box overflow it (it scrolls sideways) instead of
+    // widening the card.
+    <div className="w-0 min-w-full">
+      {!lanes ? (
+        <div className="mx-auto flex flex-col gap-0.5" style={widths(n, `${10.75 + 0.875 * (n + 1)}rem`)}>
+          <div
+            className="grid gap-3.5 px-2 pb-1 font-mono text-[10px] uppercase tracking-label text-faint"
+            style={{ gridTemplateColumns: columns }}
+          >
+            <span>#</span>
+            <span>time</span>
+            {layout.heads.map((h, i) => <span key={i}>{h}</span>)}
           </div>
-        );
-      })}
+          <VirtualCues rows={layout.rows} active={activeIn(layout.rows)} pin={pin} columns={columns} scrollRef={scrollRef}
+            canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+        </div>
+      ) : (
+        <div className="mx-auto flex gap-4" style={widths(n, `${n - 1}rem`)}>
+          {layout.lanes.map((ln, li) => (
+            <div key={ln.track} className="flex min-w-0 flex-1 flex-col gap-0.5">
+              <div className="mb-1 flex items-center gap-2 border-b border-line px-2 pb-1.5">
+                <LangTag code={ln.code} orig={ln.track === "orig"} />
+                <span className="text-[11.5px] text-faint">
+                  {ln.rows.length.toLocaleString()} subtitle{ln.rows.length === 1 ? "" : "s"}
+                </span>
+              </div>
+              <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === 0 ? pin : -1} lane scrollRef={scrollRef}
+                canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

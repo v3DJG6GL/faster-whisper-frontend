@@ -45,7 +45,9 @@ import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/mediaExport";
 import { releaseMedia } from "@/lib/media";
-import { useTranscriptHistory } from "@/lib/transcriptHistory";
+import { patchRecord, useTranscriptHistory } from "@/lib/transcriptHistory";
+import { defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, type TrackPrefs } from "@/lib/exportTracks";
+import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { useDisplayToggles } from "@/lib/useDisplayToggles";
 import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
@@ -647,8 +649,9 @@ export function TranscriptViewer({
   const [view, setView] = useState<"segments" | "subtitles">("segments");
   // "Edit its segment": the segment row to scroll to once Edit has rendered.
   const [jumpSeg, setJumpSeg] = useState<number | null>(null);
-  // Visible language tracks ("orig" + target codes). Empty/absent = all.
-  // LOCAL view state (like layout) — persisted but never synced.
+  // Visible tracks ("orig", target codes, site track ids). Empty/absent =
+  // the default pick (defaultViewTracks). LOCAL view state (like layout) —
+  // persisted but never synced.
   const [viewTracks, setViewTracks] = useState<string[]>(
     () => settings.transcribe?.viewTracks ?? [],
   );
@@ -864,31 +867,50 @@ export function TranscriptViewer({
     // the component re-renders at playhead cadence while audio plays.
   }, [editCount, result, effSegments, effWords]);
 
-  // ── language tracks (which lines each segment row renders) ───────────────
-  const allTracks = useMemo(() => ["orig", ...langs], [langs]);
+  // ── tracks (the Subtitles view's lanes; the lines each segment row renders) ──
+  // The dragged track order and typed track names (D92/D89) live on the
+  // transcript's record — without one (not saved yet) here. Read's chips and
+  // the export share them, so lanes, chips and files keep one order.
+  const [localTrackPrefs, setLocalTrackPrefs] = useState<TrackPrefs>({});
+  const recId = useTranscriptHistory((s) => (overlayKey && s.records.some((r) => r.id === overlayKey) ? overlayKey : null));
+  const savedTrackPrefs = useTranscriptHistory((s) => (recId ? s.records.find((r) => r.id === recId)?.exportTracks : undefined));
+  const trackPrefs = useMemo(
+    () => (recId ? readTrackPrefs(savedTrackPrefs) : localTrackPrefs),
+    [recId, savedTrackPrefs, localTrackPrefs],
+  );
+  const setTrackPrefs = useCallback((patch: TrackPrefs) => {
+    if (recId) patchRecord(recId, (r) => ({ ...r, exportTracks: { ...readTrackPrefs(r.exportTracks), ...patch } }));
+    else setLocalTrackPrefs((p) => ({ ...p, ...patch }));
+  }, [recId]);
+  useEffect(() => setLocalTrackPrefs((p) => (Object.keys(p).length ? {} : p)), [overlayKey, path]);
+  const timedIds = useMemo(() => (result.timedTracks ?? []).map((t) => t.id), [result.timedTracks]);
+  const allTracks = useMemo(() => ["orig", ...langs, ...timedIds], [langs, timedIds]);
+  const trackOrd = useMemo(() => trackOrder(result, allTracks, trackPrefs.order), [result, allTracks, trackPrefs.order]);
   const visibleTracks = useMemo(() => {
-    const pick = viewTracks.length ? allTracks.filter((t) => viewTracks.includes(t)) : allTracks;
-    return pick.length ? pick : allTracks; // never zero tracks
-  }, [allTracks, viewTracks]);
+    const pick = trackOrd.filter((t) => viewTracks.includes(t));
+    return pick.length ? pick : defaultViewTracks(result, trackOrd); // never zero tracks
+  }, [result, trackOrd, viewTracks]);
+  // The Segments view has no lane for a site track's own cues: its chips and
+  // rows leave them out (the original stands in when only those are picked).
+  const segOrder = useMemo(() => trackOrd.filter((t) => !timedIds.includes(t)), [trackOrd, timedIds]);
+  const segVisible = useMemo(() => {
+    const v = visibleTracks.filter((t) => !timedIds.includes(t));
+    return v.length ? v : ["orig"];
+  }, [visibleTracks, timedIds]);
   // Editing needs the original on screen — Edit mode forces it visible.
-  const origVisible = visibleTracks.includes("orig") || editMode;
-  const visLangs = useMemo(() => visibleTracks.filter((t) => t !== "orig"), [visibleTracks]);
+  const origVisible = segVisible.includes("orig") || editMode;
+  const visLangs = useMemo(() => segVisible.filter((t) => t !== "orig"), [segVisible]);
   const visLangsKey = visLangs.join(","); // stable string for the row memo
 
   // ── Subtitles view ───────────────────────────────────────────────────────
   const subtitlesView = view === "subtitles" && !editMode && hasSegments;
-  /** What the Subtitles view shows: the visible tracks + site tracks. */
-  const subTracks = useMemo(
-    () => [...visibleTracks, ...(result.timedTracks ?? []).map((t) => t.id)],
-    [visibleTracks, result.timedTracks],
-  );
   /** The export's cues — memoized on edits, options and tracks, never on the
    *  playhead (the list picks its active cue by binary search). */
   const subGrid = useMemo(
     () => (subtitlesView
-      ? cueGrid(editedResult, { format: "srt", cues: cueOpts, renames: fileRenames, speakerNames: showNames }, subTracks)
+      ? cueGrid(editedResult, { format: "srt", cues: cueOpts, renames: fileRenames, speakerNames: showNames }, visibleTracks)
       : null),
-    [subtitlesView, editedResult, cueOpts, fileRenames, showNames, subTracks],
+    [subtitlesView, editedResult, cueOpts, fileRenames, showNames, visibleTracks],
   );
   const onEditSegment = useCallback((seg: number) => {
     setMode("edit");
@@ -901,12 +923,13 @@ export function TranscriptViewer({
     row?.querySelector<HTMLElement>("[contenteditable]")?.focus();
     setJumpSeg(null);
   }, [jumpSeg, editMode]);
-  const toggleTrack = (t: string) => {
-    const cur = visibleTracks;
-    const next = cur.includes(t) ? cur.filter((x) => x !== t) : allTracks.filter((x) => cur.includes(x) || x === t);
-    if (!next.length) return; // the last chip can't be untoggled
-    setViewTracks(next);
-    persistOptions({ viewTracks: next });
+  /** A pick from Read's chips (they never offer an empty one). The Segments
+   *  view's chips don't show the site tracks — those stay as they were. */
+  const pickTracks = (next: string[]) => {
+    const all = subtitlesView ? next : [...next, ...visibleTracks.filter((t) => timedIds.includes(t))];
+    const picked = trackOrd.filter((t) => all.includes(t));
+    setViewTracks(picked);
+    persistOptions({ viewTracks: picked });
   };
 
   // ── re-translate / retro-translate ───────────────────────────────────────
@@ -2188,39 +2211,17 @@ export function TranscriptViewer({
         </div>
       )}
 
-      {reading && hasSegments && langs.length > 0 && (
+      {reading && hasSegments && allTracks.length > 1 && (
         <div className="mb-2.5 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            aria-pressed={visibleTracks.includes("orig")}
-            onClick={() => toggleTrack("orig")}
-            className={cn(
-              "ring-signal inline-flex h-7 items-center gap-1 rounded-pill border px-3 font-mono text-[11.5px] font-medium transition-colors",
-              visibleTracks.includes("orig")
-                ? "border-accent/35 bg-accent-soft text-accent"
-                : "border-line bg-surface-2 text-dim hover:text-text",
-            )}
-          >
-            {visibleTracks.includes("orig") ? "✓ " : ""}
-            {safeDisplayText((result.language ?? "??").toUpperCase(), 16)} · original
-          </button>
-          {langs.map((lang) => (
-            <button
-              key={lang}
-              type="button"
-              aria-pressed={visibleTracks.includes(lang)}
-              onClick={() => toggleTrack(lang)}
-              className={cn(
-                "ring-signal inline-flex h-7 items-center gap-1 rounded-pill border px-3 font-mono text-[11.5px] font-medium transition-colors",
-                visibleTracks.includes(lang)
-                  ? "border-accent/45 text-accent"
-                  : "border-line bg-surface-2 text-dim hover:text-text",
-              )}
-            >
-              {visibleTracks.includes(lang) ? "✓ " : ""}
-              {lang.toUpperCase()}
-            </button>
-          ))}
+          {(subtitlesView ? trackOrd : segOrder).length > 1 && (
+            <ExportTrackChips
+              result={result}
+              order={subtitlesView ? trackOrd : segOrder}
+              chosen={subtitlesView ? visibleTracks : segVisible}
+              onChosen={pickTracks}
+              onOrder={(next) => setTrackPrefs({ order: subtitlesView ? next : mergeOrder(result, trackOrd, next) })}
+            />
+          )}
           {result.translation?.model && (
             <span className="text-[11px] text-faint">
               MT · {safeDisplayText(result.translation.model.split("/").pop() ?? "", 40)}
@@ -2439,9 +2440,10 @@ export function TranscriptViewer({
         mediaPath={mediaPath}
         overlayKey={overlayKey}
         initialExport={initialExport}
-        langs={langs}
         allTracks={allTracks}
         visibleTracks={visibleTracks}
+        trackPrefs={trackPrefs}
+        onTrackPrefs={setTrackPrefs}
         fileRenames={fileRenames}
         fileColors={fileColors}
         speakers={speakers}
@@ -2476,8 +2478,10 @@ export function TranscriptViewer({
           // (studio pane, focus). In the stacked card, hitting the box's top
           // must chain to the page — with contain, a page scrolled to the
           // bottom left the first lines unreachable behind the stuck toolbar.
+          // Sideways too: Subtitles lanes that don't fit keep their width and
+          // scroll inside the box, never the page.
           className={cn(
-            "select-text overflow-y-auto text-text",
+            "select-text overflow-auto text-text",
             focus
               ? "min-h-0 flex-1 overscroll-contain"
               : cn(
@@ -2489,14 +2493,15 @@ export function TranscriptViewer({
           <div
             // Focus mode is a reading room: a centred ~68ch column with the
             // type stepped up — line length stays in the readable band no
-            // matter how wide the window is.
-            className={focus ? "mx-auto max-w-[72ch] px-6 py-10 text-[15.5px] leading-[1.8]" : undefined}
+            // matter how wide the window is. The Subtitles view sizes its own
+            // columns and lanes (SubtitleList widths), so it only gets the room.
+            className={focus ? (subGrid ? "px-6 py-10" : "mx-auto max-w-[72ch] px-6 py-10 text-[15.5px] leading-[1.8]") : undefined}
           >
             {subGrid ? (
               <SubtitleList
                 result={editedResult}
                 grid={subGrid}
-                tracks={subTracks}
+                tracks={visibleTracks}
                 cues={cueOpts}
                 curTime={curTime}
                 activeSeg={activeSegIdx}
