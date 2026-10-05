@@ -837,13 +837,15 @@ export default function Transcribe() {
     model: model || backend?.model,
     screen: spoken.value,
   });
+  /** The previewed link's site ("YouTube"): the source words of its subtitles and the spoken pill. */
+  const previewSite = urlPreviewData ? siteDisplayName(normalizeMediaUrl(urlDraft) ?? "", urlPreviewData.extractor) : "";
   const siteInput = siteState && caps?.url_subtitles_enabled === true && urlPreviewData?.subtitle_tracks?.length
     ? {
         tracks: urlPreviewData.subtitle_tracks,
         spoken: linkLang.sp.spoken,
         multi: linkLang.sp.multi,
         targets: translationAvailable ? translateTo : [],
-        site: siteDisplayName(normalizeMediaUrl(urlDraft) ?? "", urlPreviewData.extractor),
+        site: previewSite,
       }
     : null;
   const siteView = siteInput && siteState ? derive(siteInput, siteState) : null;
@@ -1482,7 +1484,7 @@ export default function Transcribe() {
                 <div className="mt-2.5">
                   <SpokenLanguageRow
                     lang={linkLang}
-                    extractor={urlPreviewData.extractor}
+                    site={previewSite}
                     multiOffered={multiOffered}
                     disabled={busy}
                   />

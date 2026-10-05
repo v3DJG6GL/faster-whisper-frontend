@@ -103,18 +103,19 @@ const iconButton =
 
 export function SpokenLanguageRow({
   lang,
-  extractor,
+  site,
   multiOffered,
   disabled,
 }: {
   lang: LinkLanguage;
-  extractor?: string | null;
+  /** The link's site (siteDisplayName) — the pill's "from YouTube". */
+  site?: string;
   multiOffered: boolean;
   disabled?: boolean;
 }) {
   const { sp, check } = lang;
   const running = check.state === "running";
-  const pill = spokenPill(sp, check, extractor);
+  const pill = spokenPill(sp, check, site);
   const r = check.state === "done" ? check.result : undefined;
   const checkLabel = running
     ? "Checking the audio…"

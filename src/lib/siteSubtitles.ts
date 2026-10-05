@@ -128,10 +128,25 @@ const uniq = <T,>(xs: T[]) => [...new Set(xs)];
 export const WHISPER_WORD = "Whisper";
 export const MT_WORD = "Machine translation";
 
+/** Where a source word goes: chips and badges ("YouTube auto"), a track title's brackets
+ *  ("YouTube, auto-generated"), a file name ("YouTube-auto"). */
+export type SourceWordStyle = "word" | "title" | "file";
+
+/** A site track's site as text: its display name, bounded; an unknown site reads "Site". */
+const siteOf = (t: { site?: string }) => safeDisplayText(t.site ?? "", 40) || "Site";
+
 /** A site track's source word: "YouTube", "YouTube auto" (auto-generated), "YouTube SDH"
- *  (hearing-impaired). An unknown site reads "Site". */
-export function siteWord(t: { kind: "manual" | "auto"; hoh?: boolean; site?: string }): string {
-  const site = safeDisplayText(t.site ?? "", 40) || "Site";
+ *  (hearing-impaired); as a title "YouTube, auto-generated" / "YouTube, SDH"; in a file name
+ *  "YouTube-auto" (SDH is the file's own `.sdh` part there), path-safe. */
+export function siteWord(
+  t: { kind: "manual" | "auto"; hoh?: boolean; site?: string }, style: SourceWordStyle = "word",
+): string {
+  const site = siteOf(t);
+  if (style === "file") {
+    const safe = site.replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "") || "Site";
+    return t.kind === "auto" ? `${safe}-auto` : safe;
+  }
+  if (style === "title") return t.kind === "auto" ? `${site}, auto-generated` : t.hoh ? `${site}, SDH` : site;
   return t.kind === "auto" ? `${site} auto` : t.hoh ? `${site} SDH` : site;
 }
 
@@ -493,7 +508,8 @@ export function linkSpoken(args: {
 export function spokenPill(
   sp: LinkSpoken,
   check: LinkLanguageCheck,
-  extractor?: string | null,
+  /** The site's display name (siteDisplayName). */
+  site?: string,
 ): { text: string; tone: "edited" | "mixed" | "plain"; title?: string } | null {
   if (sp.source === "edited") return { text: "edited", tone: "edited" };
   if (check.state === "running") return null;
@@ -504,7 +520,7 @@ export function spokenPill(
     const n = r.pieces.filter((p) => p.language === r.language).length;
     return { text: r.pieces.length ? `detected in ${n} of ${r.pieces.length} pieces` : "detected", tone: "plain" };
   }
-  if (sp.source === "site") return { text: `from ${/^youtube$/i.test(extractor ?? "") ? "YouTube" : extractor || "the site"}`, tone: "plain" };
+  if (sp.source === "site") return { text: `from ${safeDisplayText(site ?? "", 40) || "the site"}`, tone: "plain" };
   if (sp.source === "screen") return null;
   return { text: "unknown", tone: "plain", ...(check.error ? { title: check.error } : {}) };
 }

@@ -4,8 +4,8 @@
 
 import { trackLang } from "./cueSplit";
 import { langCode, primarySubtag, trackLanguageName } from "./languages";
-import { codeSlug, safeDisplayText, stripControlChars } from "./sanitize";
-import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge } from "./siteSubtitles";
+import { codeSlug, stripControlChars } from "./sanitize";
+import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge, type SourceWordStyle } from "./siteSubtitles";
 import type { BatchResult } from "./types";
 
 type TrackResult = Pick<BatchResult, "language" | "timedTracks">;
@@ -32,11 +32,12 @@ export function trackInfo(result: TrackResult, track: string): TrackInfo {
   return { id: track, lang, source: track === "orig" ? "whisper" : "mt", hoh: false };
 }
 
-/** The source word (D88): Whisper, Machine translation, YouTube, YouTube auto, YouTube SDH. */
-export function sourceWord(t: TrackInfo): string {
+/** The source word (D88): Whisper, Machine translation, YouTube, YouTube auto, YouTube SDH —
+ *  or as a title's brackets / a file label (siteWord's styles; Machine-translation in a file). */
+export function sourceWord(t: TrackInfo, style: SourceWordStyle = "word"): string {
   if (t.source === "whisper") return WHISPER_WORD;
-  if (t.source === "mt") return MT_WORD;
-  return siteWord({ kind: t.source === "auto" ? "auto" : "manual", hoh: t.hoh, site: t.site });
+  if (t.source === "mt") return style === "file" ? MT_WORD.replace(/ /g, "-") : MT_WORD;
+  return siteWord({ kind: t.source === "auto" ? "auto" : "manual", hoh: t.hoh, site: t.site }, style);
 }
 
 /** The badge kind a source is coloured as (sourceTone). */
@@ -222,13 +223,6 @@ export function cleanTrackTitle(s: string | undefined): string {
   return stripControlChars(s ?? "").replace(/\s+/g, " ").trim().slice(0, TRACK_TITLE_MAX).trim();
 }
 
-/** The bracketed source of a title: Whisper, Machine translation, YouTube, "YouTube, SDH". */
-function titleSource(t: TrackInfo): string {
-  if (t.source === "whisper" || t.source === "mt") return sourceWord(t);
-  const site = safeDisplayText(t.site ?? "", 40) || "Site";
-  return t.source === "auto" ? `${site}, auto-generated` : t.hoh ? `${site}, SDH` : site;
-}
-
 /** The chosen tracks, in order, with their names and flags. `names` = the user's titles by
  *  track id. */
 export function planTracks(
@@ -240,7 +234,7 @@ export function planTracks(
     const info = trackInfo(result, id);
     const g = groups.find((x) => x.tracks.includes(id))!;
     const name = trackLanguageName(info.lang);
-    const defaultTitle = g.tracks.length > 1 ? `${name} [${titleSource(info)}]` : name;
+    const defaultTitle = g.tracks.length > 1 ? `${name} [${sourceWord(info, "title")}]` : name;
     return {
       ...info,
       plain: g.tracks[0] === id,
@@ -249,15 +243,6 @@ export function planTracks(
       title: cleanTrackTitle(names[id]) || defaultTitle,
     };
   });
-}
-
-/** A non-plain track's file label — before the language code, where Jellyfin, Emby and Kodi
- *  read a title: Whisper, YouTube, YouTube-auto, Machine-translation. */
-export function trackFileLabel(t: TrackInfo): string {
-  if (t.source === "whisper") return WHISPER_WORD;
-  if (t.source === "mt") return MT_WORD.replace(/ /g, "-");
-  const site = (t.site ?? "").replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "Site";
-  return t.source === "auto" ? `${site}-auto` : site;
 }
 
 /** Each track's file suffix (the name after the stem), D89: a language's plain track
@@ -271,7 +256,8 @@ export function trackFileSuffixes(
   const used = new Set(opts.taken ?? []);
   return tracks.map((t) => {
     const code = codeSlug(t.lang, 12, "und") + (t.hoh ? ".sdh" : "");
-    const label = trackFileLabel(t);
+    // A non-plain track's label sits before the code, where Jellyfin, Emby and Kodi read a title.
+    const label = sourceWord(t, "file");
     const tries = [
       ...(t.plain ? [opts.origBare && t.source === "whisper" && !t.hoh ? `.${ext}` : `.${code}.${ext}`] : []),
       `.${label}.${code}.${ext}`,

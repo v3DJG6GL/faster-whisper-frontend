@@ -194,6 +194,11 @@ describe("site tracks in a result", () => {
     expect(siteWord(timed[1])).toBe("Site SDH");
     expect(siteTimedTracks([{ id: "de", lang: "de", kind: "manual", parsed: parsed("a") }], [], "SRF")[0].site).toBe("SRF");
     expect(siteWord({ kind: "manual", site: "SRF" })).toBe("SRF");
+    // One site name, three styles: chips, a title's brackets, a file label.
+    expect(siteWord({ kind: "auto", site: "YouTube" }, "title")).toBe("YouTube, auto-generated");
+    expect(siteWord({ kind: "manual", hoh: true, site: "YouTube" }, "title")).toBe("YouTube, SDH");
+    expect(siteWord({ kind: "auto", site: "ARD Mediathek" }, "file")).toBe("ARD-Mediathek-auto");
+    expect(siteWord({ kind: "manual", hoh: true, site: "日本" }, "file")).toBe("Site");
   });
   it("attaching keeps the result's own tracks and warnings", () => {
     const res = { text: "", segments: [], warnings: ["w1"] } as never;
@@ -225,12 +230,14 @@ describe("the link's spoken language", () => {
   });
   it("pills: detected in n of 3, also X, from YouTube, edited, nothing while checking", () => {
     const sp = (c: Parameters<typeof linkSpoken>[0]["check"], edited: string | null = null) =>
-      spokenPill(linkSpoken({ siteLanguage: "de", check: c, screen: "auto", edited }), c, "Youtube")?.text;
+      spokenPill(linkSpoken({ siteLanguage: "de", check: c, screen: "auto", edited }), c, "YouTube")?.text;
     expect(sp(done())).toBe("detected in 3 of 3 pieces");
     expect(sp(done({ verdict: "mixed", also: ["en"] }))).toBe("detected · also English");
     expect(sp({ state: "idle" })).toBe("from YouTube");
     expect(sp({ state: "running" })).toBeUndefined();
     expect(sp({ state: "idle" }, "fr")).toBe("edited");
     expect(spokenPill(linkSpoken({ check: { state: "failed", error: "x" }, screen: "auto", edited: null }), { state: "failed", error: "x" })).toEqual({ text: "unknown", tone: "plain", title: "x" });
+    expect(spokenPill(linkSpoken({ siteLanguage: "de", check: { state: "idle" }, screen: "auto", edited: null }), { state: "idle" })?.text)
+      .toBe("from the site");
   });
 });
