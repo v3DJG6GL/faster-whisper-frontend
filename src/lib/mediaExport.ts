@@ -79,6 +79,12 @@ export interface SidecarFile {
   content: string;
 }
 
+/** One track's subtitle file in `format`, generated exactly as the panel's own export would
+ *  (edits, renames and speaker colouring included). */
+function trackSubtitle(result: BatchResult, opts: ExportOptions, track: string, format: SubtitleFormat): string {
+  return generateExports(result, { ...opts, format, tracks: [track] })[0]?.content ?? "";
+}
+
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for
@@ -90,7 +96,7 @@ export function embeddedSubtitleTracks(
   names?: Record<string, string>,
 ): EmbeddedTrack[] {
   return planTracks(result, tracks, names).flatMap((t) => {
-    const srt = generateExports(result, { ...opts, format: "srt", tracks: [t.id] })[0]?.content ?? "";
+    const srt = trackSubtitle(result, opts, t.id, "srt");
     return srt.trim()
       ? [{ lang: t.lang, label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
       : [];
@@ -127,7 +133,7 @@ export function sidecarFiles(
 ): SidecarFile[] {
   const names = sidecarNames(result, tracks, format);
   return tracks.flatMap((t, i) => {
-    const content = generateExports(result, { ...opts, format, tracks: [t] })[0]?.content ?? "";
+    const content = trackSubtitle(result, opts, t, format);
     return content.trim() ? [{ track: t, lang: trackLang(result, t), name: names[i], content }] : [];
   });
 }
