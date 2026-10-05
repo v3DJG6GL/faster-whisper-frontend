@@ -140,6 +140,32 @@ export function countSet(ov: DecodeOverrides | undefined, scope: "decode" | "liv
   }).length;
 }
 
+/** The decode editor's sections after the primary rows, in the order they are shown. */
+export const DECODE_SECTIONS: readonly { id: KeySection; title: string }[] = [
+  { id: "vad", title: "Voice activity (VAD)" },
+  { id: "thresholds", title: "Recognition thresholds" },
+  { id: "sampling", title: "Beam & sampling" },
+  { id: "vocab", title: "Vocabulary & punctuation" },
+  { id: "langdetect", title: "Language detection" },
+];
+
+/** The keys of one editor section, in table order. */
+export function sectionKeys(section: KeySection): DecodeKey[] {
+  return DECODE_KEY_LIST.filter((k) => keySpec(k).section === section);
+}
+
+/** What the TEMPERATURE field stores for what was typed: undefined = inherit (empty), a number
+ *  for one plain rung ("0.2" — what a standard server takes), else the text as typed (a retry
+ *  ladder "0.0,0.4", or a rung half-typed like "0."; the sync sanitizer and the server parse it).
+ *  null = refused: anything but digits, dots, commas and spaces, or a comma when `singleOnly`
+ *  (a standard Whisper server takes one number, no ladder). */
+export function parseLadderInput(raw: string, singleOnly: boolean): number | string | undefined | null {
+  const t = raw.trim();
+  if (!t) return undefined;
+  if (!/^[0-9., ]*$/.test(raw) || (singleOnly && raw.includes(","))) return null;
+  return /^\d+(\.\d+)?$/.test(t) && String(Number(t)) === t ? Number(t) : raw;
+}
+
 // ── sanitizing (sync pull / file import) ────────────────────────────────────
 
 const clamp = (n: number, min = -Infinity, max = Infinity) => Math.min(max, Math.max(min, n));

@@ -19,7 +19,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
+import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { conflicts as chordConflicts, conflictsByProfile, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/conflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
@@ -444,6 +444,8 @@ function Editor({
             locked={server.locked}
             pinned={server.pinned}
             ignored={server.ignored}
+            known={server.known}
+            languagePinned={namedLanguage(p.language || backend?.language)}
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />

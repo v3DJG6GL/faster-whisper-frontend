@@ -8,10 +8,14 @@ import {
   keySpec,
   LIVE_KEYS,
   NULL_TEXT,
+  DECODE_SECTIONS,
+  parseLadderInput,
   sanitizeDecodeValue,
+  sectionKeys,
   TYPED_TEXT_KEYS,
   type DecodeKey,
 } from "./decodeKeys";
+
 import {
   applyBlob,
   approvePendingReview,
@@ -361,5 +365,37 @@ describe("typed-text security review", () => {
       output_prefix: ">> ",
       streaming_hard_break_separator: "\n",
     });
+  });
+});
+
+describe("decode editor rows", () => {
+  it("every row key sits in the primary rows or one shown section", () => {
+    const shown = ["primary", ...DECODE_SECTIONS.map((s) => s.id)];
+    const rows = shown.flatMap((s) => sectionKeys(s as Parameters<typeof sectionKeys>[0]));
+    // Live keys have their own block, multilingual rides the language picker.
+    expect(rows.sort()).toEqual(DECODE_KEY_LIST.filter((k) => !LIVE_KEYS.has(k) && k !== "multilingual").sort());
+  });
+  it("orders the sections as the mockup does, language detection last", () => {
+    expect(DECODE_SECTIONS.map((s) => s.id)).toEqual(["vad", "thresholds", "sampling", "vocab", "langdetect"]);
+    expect(sectionKeys("thresholds")[0]).toBe("hallucination_silence_threshold");
+  });
+});
+
+describe("parseLadderInput", () => {
+  it("empty inherits", () => {
+    expect(parseLadderInput("  ", false)).toBeUndefined();
+  });
+  it("one plain rung is a number", () => {
+    expect(parseLadderInput("0.2", false)).toBe(0.2);
+    expect(parseLadderInput("1", true)).toBe(1);
+  });
+  it("a ladder or a half-typed rung stays text", () => {
+    expect(parseLadderInput("0.0,0.4", false)).toBe("0.0,0.4");
+    expect(parseLadderInput("0.", false)).toBe("0.");
+    expect(parseLadderInput("0.20", true)).toBe("0.20");
+  });
+  it("refuses letters, and a ladder on a standard server", () => {
+    expect(parseLadderInput("0.2x", false)).toBeNull();
+    expect(parseLadderInput("0,0.2", true)).toBeNull();
   });
 });

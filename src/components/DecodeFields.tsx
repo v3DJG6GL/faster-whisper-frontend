@@ -1,63 +1,27 @@
 import { useId, useState } from "react";
 import { Info } from "lucide-react";
-import { DisclosureCard, Segmented, TextInput, SectionLabel } from "@/components/ui";
-import { OverrideHeader, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
+import { DisclosureCard, Segmented, SetSummary, TextInput } from "@/components/ui";
+import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
-import { inheritLabel, LOCKED_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, NOT_ON_SERVER_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";
+import { DECODE_SECTIONS, keySpec, parseLadderInput, sectionKeys, type KeySection } from "@/lib/decodeKeys";
+import { envDesc } from "@/lib/settingDesc";
 
-// Decode-param editor shared by the Backend (defaults) and Profile (override)
-// editors and Transcribe. Every field is OPTIONAL: empty = "inherit" (backend default ?? the
-// server's resolved default, GET /v1/decode-defaults — see serverInherited). A key the server
-// admin locked is read-only and shows the server's value; live dictation's pinned key likewise. Booleans are tri-state (Inherit/On/Off) because an
-// unset boolean must stay distinct from an explicit false. The backend clamps
-// every value, so the ranges shown here are guidance, not hard gates.
+// Decode-param editor shared by the Backend (defaults) and Profile (override) editors and
+// Transcribe. Every field is OPTIONAL: empty = "inherit" (backend default ?? the server's resolved
+// default, GET /v1/request-default-settings — see serverInherited). A key the server admin locked
+// is read-only and shows the server's value; live dictation's pinned key likewise; a key the
+// server does not list (an older backend) is disabled. Booleans are tri-state (Inherit/On/Off)
+// because an unset boolean must stay distinct from an explicit false. The backend clamps every
+// value; the bounds here come from the one key table (decodeKeys.ts) and mirror the server's.
 //
-// Only the per-request `decode_overrides` keys the backend actually honours live
-// here (the full server-managed set — streaming, output wrappers, language
-// detection — is reached via a named server override-profile, not per field).
-// Layout: ~5 primary fields, then one "Advanced" disclosure with labeled groups.
+// Rows are titled by the server's ENV name with the backend's short description; the primary
+// fields are always shown, every other section is its own (closed) block. Live dictation's keys
+// have their own block (LiveDictationFields); `multilingual` rides the spoken-language picker.
 
-type Section = "primary" | "vad" | "thresholds" | "sampling" | "vocab";
-type Base = { key: keyof DecodeOverrides; label: string; section: Section; wide?: boolean };
-type NumField = Base & { kind: "number"; hint: string; min?: number; max?: number; step?: number };
-type BoolField = Base & { kind: "bool" };
-type TextField = Base & { kind: "text"; hint: string };
-type Field = NumField | BoolField | TextField;
-
-const SECTIONS: { id: Exclude<Section, "primary">; title: string }[] = [
-  { id: "vad", title: "Voice activity (VAD)" },
-  { id: "thresholds", title: "Recognition thresholds" },
-  { id: "sampling", title: "Beam & sampling" },
-  { id: "vocab", title: "Vocabulary & punctuation" },
-];
-
-const FIELDS: Field[] = [
-  // ── primary (always visible) ──
-  { key: "beam_size", label: "Beam size", section: "primary", kind: "number", hint: "1–20", min: 1, max: 20, step: 1 },
-  { key: "temperature", label: "Temperature", section: "primary", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.1 },
-  { key: "condition_on_previous_text", label: "Condition on previous text", section: "primary", kind: "bool" },
-  { key: "vad_filter", label: "Skip silence (VAD)", section: "primary", kind: "bool" },
-  { key: "hotwords", label: "Hotwords", section: "primary", kind: "text", hint: "bias terms", wide: true },
-  // ── Voice activity (VAD) ──
-  { key: "vad_threshold", label: "VAD threshold", section: "vad", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.05 },
-  { key: "vad_min_silence_duration_ms", label: "VAD min silence (ms)", section: "vad", kind: "number", hint: "0–10000", min: 0, max: 10000, step: 50 },
-  { key: "vad_speech_pad_ms", label: "VAD speech pad (ms)", section: "vad", kind: "number", hint: "0–2000", min: 0, max: 2000, step: 10 },
-  // ── Recognition thresholds ──
-  { key: "best_of", label: "Best of", section: "thresholds", kind: "number", hint: "1–20", min: 1, max: 20, step: 1 },
-  { key: "no_speech_threshold", label: "No-speech threshold", section: "thresholds", kind: "number", hint: "0–1", min: 0, max: 1, step: 0.05 },
-  { key: "log_prob_threshold", label: "Log-prob threshold", section: "thresholds", kind: "number", hint: "-10–0", min: -10, max: 0, step: 0.5 },
-  { key: "compression_ratio_threshold", label: "Compression-ratio threshold", section: "thresholds", kind: "number", hint: "0–10", min: 0, max: 10, step: 0.1 },
-  // ── Beam & sampling ──
-  { key: "patience", label: "Patience", section: "sampling", kind: "number", hint: "0.5–5", min: 0.5, max: 5, step: 0.1 },
-  { key: "length_penalty", label: "Length penalty", section: "sampling", kind: "number", hint: "0.1–5", min: 0.1, max: 5, step: 0.1 },
-  { key: "repetition_penalty", label: "Repetition penalty", section: "sampling", kind: "number", hint: "0.5–5", min: 0.5, max: 5, step: 0.1 },
-  { key: "no_repeat_ngram_size", label: "No-repeat n-gram", section: "sampling", kind: "number", hint: "0–10", min: 0, max: 10, step: 1 },
-  // ── Vocabulary & punctuation ──
-  { key: "prepend_punctuations", label: "Prepend punctuation", section: "vocab", kind: "text", hint: "" },
-  { key: "append_punctuations", label: "Append punctuation", section: "vocab", kind: "text", hint: "" },
-  { key: "suppress_tokens", label: "Suppress tokens", section: "vocab", kind: "text", hint: "comma-separated ids", wide: true },
-];
+/** Why the language-detection rows are disabled while a language is pinned. */
+const LANG_PINNED_REASON = "Language detection only runs when the language is auto-detected; this one names a language.";
 
 export function DecodeFields({
   value,
@@ -67,6 +31,8 @@ export function DecodeFields({
   locked,
   pinned,
   ignored,
+  known,
+  languagePinned,
   inheritWord = "Inherit",
   serverKind,
   canCustomize,
@@ -85,36 +51,49 @@ export function DecodeFields({
   pinned?: ServerInherited["pinned"];
   /** Keys whose value from the layer below the server ignores (locked). */
   ignored?: readonly DecodeKey[];
+  /** The keys the server lists (serverInherited().known); a missing key's row is disabled.
+   *  null/undefined = unknown, nothing disabled. */
+  known?: ReadonlySet<DecodeKey> | null;
+  /** The request names a language: the language-detection rows do nothing and are disabled. */
+  languagePinned?: boolean;
   /** "Inherit" in override editors (Profile, Backend), "Default" for a per-run choice. */
   inheritWord?: InheritWord;
   /** When "standard", a conventional Whisper server: disable everything the
-   *  faster-whisper backend adds (keep only temperature). */
+   *  faster-whisper backend adds (keep only temperature, a single number). */
   serverKind?: ServerKind;
   /** Per-identity capability: when false, this caller may not send any custom
    *  decode params — the whole editor is disabled behind one banner. undefined
    *  ("unknown") = permitted (never gate a knob we can't prove is disabled). */
   canCustomize?: boolean;
 }) {
-  const [showAdvanced, setShowAdvanced] = useState(false); // every block starts closed
+  // Every block starts closed; its header says how many fields in it are set.
+  const [openSection, setOpenSection] = useState<Partial<Record<KeySection, boolean>>>({});
   const blocked = canCustomize === false; // capability gate: all params disabled
   const standard = serverKind === "standard";
-  const isGated = (f: Field) => blocked || (standard && f.key !== "temperature");
+  const uid = useId();
+  const descId = (k: DecodeKey) => `${uid}-${k}-src`;
+
+  /** Why a whole row can't be used right now (tooltip), or undefined. */
+  const unavailable = (k: DecodeKey): string | undefined => {
+    if (blocked) return "Custom transcription parameters are disabled for this connection by the server admin.";
+    if (standard && k !== "temperature") return "A standard Whisper server honours only TEMPERATURE.";
+    if (known && !known.has(k)) return NOT_ON_SERVER_REASON;
+    if (languagePinned && keySpec(k).section === "langdetect") return LANG_PINNED_REASON;
+    return undefined;
+  };
   // Per-key server lock / dictation pin. Skipped when the whole editor is blocked: the banner says
   // it once, and every key reads as locked then.
-  const pinOf = (f: Field) => (blocked ? undefined : pinned?.[f.key]);
-  const isLocked = (f: Field) => !blocked && !pinOf(f) && !!locked?.has(f.key);
-  const readOnly = (f: Field) => isGated(f) || isLocked(f) || !!pinOf(f);
-  const uid = useId();
-  const descId = (f: Field) => `${uid}-${f.key}-src`;
+  const pinOf = (k: DecodeKey) => (blocked ? undefined : pinned?.[k]);
+  const isLocked = (k: DecodeKey) => !blocked && !pinOf(k) && !!locked?.has(k);
   /** The tooltip / screen-reader line for a field's inherited value. */
-  const sourceOf = (f: Field): string | undefined => {
-    const pin = pinOf(f);
+  const sourceOf = (k: DecodeKey): string | undefined => {
+    const pin = pinOf(k);
     if (pin) return pin.reason;
-    if (isLocked(f)) return LOCKED_REASON;
-    return sources?.[f.key];
+    if (isLocked(k)) return LOCKED_REASON;
+    return sources?.[k];
   };
 
-  const setField = (key: keyof DecodeOverrides, v: number | boolean | string | undefined) => {
+  const setField = (key: DecodeKey, v: number | boolean | string | undefined) => {
     const next: DecodeOverrides = { ...value };
     if (v === undefined) delete next[key];
     else (next as Record<string, unknown>)[key] = v;
@@ -122,35 +101,35 @@ export function DecodeFields({
   };
 
   // The inherited (baseline) value as a short string, or undefined if none.
-  const fmtInherited = (f: Field): string | undefined => {
-    const iv = inherited?.[f.key];
+  const fmtInherited = (k: DecodeKey): string | undefined => {
+    const iv = inherited?.[k];
     if (iv === undefined || iv === null || iv === "") return undefined;
-    if (f.kind === "bool") return iv ? "on" : "off";
+    if (keySpec(k).kind === "bool") return iv ? "on" : "off";
     return String(iv);
   };
 
-  // NB: renderControl / fieldCell / grid are plain functions called inline, NOT
-  // nested components. Rendering them as <Component/> gives a fresh identity on
-  // every keystroke, remounting the focused <input> so it loses focus after one
-  // character. Calling them as functions reconciles the inputs in place.
-  const renderControl = (f: Field) => {
-    const cur = value[f.key];
-    const gated = isGated(f);
-    const inh = fmtInherited(f); // inherited value as a short string, or undefined
-    const pin = pinOf(f);
-    const title = sourceOf(f);
-    const described = title ? descId(f) : undefined;
+  // NB: renderControl / row are plain functions called inline, NOT nested components. Rendering
+  // them as <Component/> gives a fresh identity on every keystroke, remounting the focused
+  // <input> so it loses focus after one character.
+  const renderControl = (k: DecodeKey) => {
+    const spec = keySpec(k);
+    const cur = value[k];
+    const off = !!unavailable(k);
+    const inh = fmtInherited(k);
+    const pin = pinOf(k);
+    const title = sourceOf(k);
+    const described = title ? descId(k) : undefined;
     // A locked or pinned key shows the value the server uses, not this layer's (ignored) one.
-    const fixedLabel = pin ? `Dictation always · ${pin.value}` : isLocked(f) ? inheritLabel(inh, "Set by server") : undefined;
-    if (f.kind === "bool") {
+    const fixedLabel = pin ? `Dictation always · ${pin.value}` : isLocked(k) ? inheritLabel(inh, "Set by server") : undefined;
+    if (spec.kind === "bool") {
       const v = fixedLabel ? "inherit" : cur === true ? "on" : cur === false ? "off" : "inherit";
       // Ghost the inherited state on the "Inherit" segment, e.g. "Inherit · on".
       return (
         <Segmented
           value={v}
-          ariaLabel={f.label}
-          disabled={gated || !!fixedLabel}
-          onChange={(nv) => setField(f.key, nv === "inherit" ? undefined : nv === "on")}
+          ariaLabel={spec.env}
+          disabled={off || !!fixedLabel}
+          onChange={(nv) => setField(k, nv === "inherit" ? undefined : nv === "on")}
           options={
             fixedLabel
               ? [{ value: "inherit", label: fixedLabel, title }]
@@ -163,99 +142,118 @@ export function DecodeFields({
         />
       );
     }
-    if (f.kind === "number") {
-      // Ghost the inherited value into the placeholder when not overridden.
+    if (spec.kind === "text") {
+      return (
+        <OverrideText
+          ariaLabel={spec.env}
+          describedBy={described}
+          title={title}
+          disabled={off}
+          fixedLabel={fixedLabel}
+          value={typeof cur === "string" ? cur : undefined}
+          // An explicit empty string is a real override ("send empty", distinct from inherit):
+          // "" is stored as typed; inherit is reached only via reset.
+          onChange={(s) => setField(k, s)}
+          inherited={inh}
+          inheritWord={inheritWord}
+          maxLength={spec.maxLen}
+        />
+      );
+    }
+    const range = spec.min !== undefined && spec.max !== undefined ? `${spec.min}–${spec.max}${spec.unit ? ` ${spec.unit}` : ""}` : undefined;
+    if (spec.kind === "ladder") {
+      // One number, or a retry ladder "0.0,0.2,0.4" — a standard server takes one number only.
       return (
         <TextInput
-          type="number"
-          aria-label={f.label}
+          aria-label={spec.env}
           aria-describedby={described}
-          title={title}
-          disabled={gated || !!fixedLabel}
-          min={f.min}
-          max={f.max}
-          step={f.step}
+          title={title ?? (standard ? "One number, 0–1" : "One number, or retry rungs 0–1 separated by commas")}
+          disabled={off || !!fixedLabel}
+          inputMode="decimal"
+          spellCheck={false}
           value={fixedLabel || cur === undefined ? "" : String(cur)}
-          placeholder={fixedLabel ?? `${inheritLabel(inh, inheritWord)} · ${f.hint}`}
+          placeholder={fixedLabel ?? inheritLabel(inh, inheritWord)}
+          className={cur !== undefined && !fixedLabel ? "border-accent/55" : undefined}
           onChange={(e) => {
-            const s = e.target.value;
-            if (s === "") return setField(f.key, undefined);
-            const n = Number(s);
-            // isFinite (not isNaN) so "1e999" → Infinity also falls back to undefined,
-            // instead of being JSON-serialized to null in the request body.
-            setField(f.key, Number.isFinite(n) ? n : undefined);
+            // A ladder stored before (e.g. synced from a full backend) can still be edited down.
+            const parsed = parseLadderInput(e.target.value, standard && !String(cur ?? "").includes(","));
+            if (parsed !== null) setField(k, parsed);
           }}
         />
       );
     }
+    // Ghost the inherited value into the placeholder when not overridden.
     return (
       <TextInput
-        aria-label={f.label}
+        type="number"
+        aria-label={spec.env}
         aria-describedby={described}
-        title={title}
-        disabled={gated || !!fixedLabel}
+        title={[title, range].filter(Boolean).join(" · ") || undefined}
+        disabled={off || !!fixedLabel}
+        min={spec.min}
+        max={spec.max}
+        step={spec.step}
         value={fixedLabel || cur === undefined ? "" : String(cur)}
-        // An explicit empty string is a real override ("clear this — send empty",
-        // distinct from inherit), so DON'T coerce "" → undefined here: store the raw
-        // value and reach inherit only via the reset button. The accent dot marks the
-        // explicit-empty override; a distinct placeholder keeps it from reading as inherit.
-        placeholder={
-          fixedLabel ??
-          (cur === ""
-            ? "(cleared — overrides inherited)"
-            : inh
-              ? inheritLabel(inh, inheritWord)
-              : f.hint
-                ? `${inheritWord} · ${f.hint}`
-                : inheritWord)
-        }
-        onChange={(e) => setField(f.key, e.target.value)}
+        placeholder={fixedLabel ?? inheritLabel(inh, inheritWord)}
+        className={cur !== undefined && !fixedLabel ? "border-accent/55" : undefined}
+        onChange={(e) => {
+          const s = e.target.value;
+          if (s === "") return setField(k, undefined);
+          const n = Number(s);
+          // isFinite (not isNaN) so "1e999" → Infinity also falls back to undefined,
+          // instead of being JSON-serialized to null in the request body.
+          setField(k, Number.isFinite(n) ? n : undefined);
+        }}
       />
     );
   };
 
-  const fieldCell = (f: Field, last: boolean) => {
-    const overridden = value[f.key] !== undefined;
-    const fixed = isLocked(f) || !!pinOf(f);
-    const title = sourceOf(f);
-    // The inherited value is ghosted into the control itself (placeholder / "Inherit · on"
-    // segment) by renderControl; the row names the field and carries clear / reset.
+  const row = (k: DecodeKey, last: boolean) => {
+    const spec = keySpec(k);
+    const overridden = value[k] !== undefined;
+    const fixed = isLocked(k) || !!pinOf(k);
+    const why = unavailable(k);
+    const title = sourceOf(k);
     return (
       <OverrideHeader
-        key={f.key}
-        title={f.label}
-        env={false}
+        key={k}
+        title={spec.env}
+        desc={envDesc(spec.env)}
         overridden={overridden && !fixed}
         lockReason={fixed ? title : undefined}
-        describedById={title ? descId(f) : undefined}
+        describedById={title ? descId(k) : undefined}
         // Text fields can be CLEARED to an explicit empty override (suppress the inherited value).
-        onClear={f.kind === "text" && !readOnly(f) ? () => setField(f.key, "") : undefined}
-        canClear={value[f.key] !== ""}
-        // Reset stays offered on a locked/pinned key: the stored value is ignored, and clearing
-        // it is the only thing left to do with it.
-        onReset={isGated(f) ? undefined : () => setField(f.key, undefined)}
+        onClear={spec.kind === "text" && !fixed && !why ? () => setField(k, "") : undefined}
+        canClear={value[k] !== ""}
+        // Reset stays offered on a locked/pinned/unavailable key while it holds a value: the
+        // stored value is ignored, and clearing it is the only thing left to do with it.
+        onReset={blocked ? undefined : () => setField(k, undefined)}
+        disabled={!!why && !overridden}
+        disabledTitle={why}
         note={
           overridden && fixed
-            ? pinOf(f)
+            ? pinOf(k)
               ? "Ignored in live dictation"
               : "Ignored · locked by the server"
-            : !overridden && !fixed && ignored?.includes(f.key)
-              ? "Backend value ignored · locked by the server"
-              : undefined
+            : overridden && why
+              ? "Ignored here"
+              : !overridden && !fixed && ignored?.includes(k)
+                ? "Backend value ignored · locked by the server"
+                : undefined
         }
         last={last}
       >
-        {f.kind === "bool" ? renderControl(f) : <div className={OVERRIDE_CONTROL_W}>{renderControl(f)}</div>}
+        {spec.kind === "bool" ? renderControl(k) : <div className={OVERRIDE_CONTROL_W}>{renderControl(k)}</div>}
       </OverrideHeader>
     );
   };
 
-  const grid = (fields: Field[]) => <div>{fields.map((f, i) => fieldCell(f, i === fields.length - 1))}</div>;
+  const rows = (keys: DecodeKey[]) => keys.map((k, i) => row(k, i === keys.length - 1));
 
   return (
     <div>
       {blocked ? (
-        <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
+        <div className="mb-1 mt-2 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
           <Info className="mt-0.5 size-3.5 shrink-0 text-faint" />
           <div>
             Custom transcription parameters are <span className="text-text">disabled</span> for this
@@ -263,42 +261,42 @@ export function DecodeFields({
           </div>
         </div>
       ) : standard ? (
-        <div className="mb-3 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
+        <div className="mb-1 mt-2 flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
           <Info className="mt-0.5 size-3.5 shrink-0 text-faint" />
           <div>
-            This looks like a standard Whisper server — only <span className="text-text">Temperature</span> is
+            This looks like a standard Whisper server — only <span className="text-text">TEMPERATURE</span> is
             honoured. The rest are faster-whisper-specific and are disabled here.
           </div>
         </div>
       ) : null}
 
-      {grid(FIELDS.filter((f) => f.section === "primary"))}
+      <div className="mb-3">{rows(sectionKeys("primary"))}</div>
 
-      <DisclosureCard
-        className="mt-4"
-        nested
-        open={showAdvanced}
-        onToggle={() => setShowAdvanced((v) => !v)}
-        title="Advanced decode params"
-        summary={(() => {
-          const n = FIELDS.filter((f) => f.section !== "primary" && value[f.key] !== undefined).length;
-          return n ? <span className="text-accent">· {n} set</span> : undefined;
-        })()}
-      >
-        {/* Guarded at the call site: `children` are built before DisclosureCard runs, so the
-            ~19 advanced cells were created on every keystroke in a primary field while
-            collapsed (the default). */}
-        {showAdvanced && (
-          <div className="space-y-5">
-            {SECTIONS.map((s) => (
-              <div key={s.id}>
-                <SectionLabel className="mb-2.5">{s.title}</SectionLabel>
-                {grid(FIELDS.filter((f) => f.section === s.id))}
-              </div>
-            ))}
-          </div>
-        )}
-      </DisclosureCard>
+      <div className="flex flex-col gap-2.5 pb-3">
+        {DECODE_SECTIONS.map((s) => {
+          const keys = sectionKeys(s.id);
+          const open = !!openSection[s.id];
+          return (
+            <DisclosureCard
+              key={s.id}
+              nested
+              open={open}
+              onToggle={() => setOpenSection((o) => ({ ...o, [s.id]: !open }))}
+              title={s.title}
+              summary={
+                keys.some((k) => value[k] !== undefined) ? (
+                  <SetSummary count={keys.filter((k) => value[k] !== undefined).length} inherit="" />
+                ) : undefined
+              }
+              hint={s.id === "langdetect" && languagePinned ? LANG_PINNED_REASON : undefined}
+            >
+              {/* Guarded: `children` are built before DisclosureCard runs, so a closed block's
+                  rows would otherwise be created on every keystroke elsewhere. */}
+              {open && rows(keys)}
+            </DisclosureCard>
+          );
+        })}
+      </div>
     </div>
   );
 }

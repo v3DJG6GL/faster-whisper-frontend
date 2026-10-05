@@ -15,7 +15,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel, offersMultilingual, spokenField } from "@/lib/languages";
+import { languageLabel, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/syncTypes";
@@ -463,6 +463,8 @@ function Editor({
             inherited={server.values}
             sources={server.sources}
             locked={server.locked}
+            known={server.known}
+            languagePinned={namedLanguage(b.language)}
             serverKind={kind}
             canCustomize={caps?.can_request_decode_overrides}
           />

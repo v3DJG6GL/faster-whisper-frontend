@@ -48,6 +48,13 @@ function dd(over: Partial<DecodeDefaults> = {}): DecodeDefaults {
 }
 
 describe("serverInherited", () => {
+  it("knows which keys the server lists — a missing one is a row to disable", () => {
+    const s = serverInherited(dd());
+    expect(s.known?.has("beam_size")).toBe(true);
+    expect(s.known?.has("suppress_chars")).toBe(false);
+    // No answer: nothing is known, so nothing is disabled.
+    expect(serverInherited(null).known).toBeNull();
+  });
   it("shows the server's values with their source", () => {
     const s = serverInherited(dd());
     expect(s.values.beam_size).toBe(10);

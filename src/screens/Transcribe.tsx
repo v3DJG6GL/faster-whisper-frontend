@@ -13,7 +13,7 @@ import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteCha
 import { siteDisplayName } from "@/lib/mediaExport";
 import { translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
-import { offersMultilingual, spokenField } from "@/lib/languages";
+import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields, pruneTargets, translationRunOptions } from "@/components/TranslationFields";
 import { inheritLabel, onOff, serverInherited } from "@/lib/inherit";
@@ -1991,6 +1991,8 @@ export default function Transcribe() {
             sources={server.sources}
             locked={server.locked}
             ignored={server.ignored}
+            known={server.known}
+            languagePinned={namedLanguage(language)}
             inheritWord="Default"
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}

@@ -73,7 +73,13 @@ export interface ServerInherited {
   ignored: DecodeKey[];
   /** The server's default prompt (undefined = none), and whether it is locked. */
   prompt: { value: string | undefined; locked: boolean; source: string } | undefined;
+  /** The keys the server lists; a key missing here is one it does not have (an older backend),
+   *  so its row is disabled. null = unknown (no answer yet) — nothing is disabled then. */
+  known: ReadonlySet<DecodeKey> | null;
 }
+
+/** Why a decode row is disabled because the server does not list its key. */
+export const NOT_ON_SERVER_REASON = "This server doesn't have this setting (an older backend).";
 
 /**
  * The decode baseline an editor inherits. `dd` is the server's resolved defaults (already
@@ -94,6 +100,8 @@ export function serverInherited(
   const locked = new Set<DecodeKey>();
   const pinned: ServerInherited["pinned"] = {};
   const model = dd?.model ?? "";
+  const known =
+    dd?.settings && typeof dd.settings === "object" ? new Set(Object.keys(dd.settings).filter(isDecodeKey)) : null;
   if (dd?.settings) {
     // Known keys only: a newer server's key this build has no row for has nowhere to show.
     for (const key of Object.keys(dd.settings).filter(isDecodeKey)) {
@@ -138,5 +146,5 @@ export function serverInherited(
           source: sourceText(p, model),
         }
       : undefined;
-  return { values, sources, locked, pinned, ignored, prompt };
+  return { values, sources, locked, pinned, ignored, prompt, known };
 }
