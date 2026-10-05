@@ -1171,7 +1171,7 @@ fn restore_mute(mode: &MuteMode) {
 /// SystemMuteGuard::new / Drop only SEND a Mute / Unmute message — they never block. They run
 /// inside start_stream / start_record (async commands on the blocking pool since d960783) and in
 /// session Drop, which can land on any thread including the GTK/UI one: a wedged PulseAudio/
-/// PipeWire socket must never stall whichever thread holds the guard (overlay.rs
+/// PipeWire socket must never stall whichever thread holds the guard (aux_windows/overlay.rs
 /// makes the same off-thread move for its KWin shell-outs). Processing in FIFO order also means a
 /// session's Unmute always runs before the next session's Mute, so the per-app muted set can't race.
 fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {

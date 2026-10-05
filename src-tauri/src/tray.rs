@@ -299,7 +299,7 @@ mod sni {
         let _ = app.run_on_main_thread(move || {
             if let Some(window) = handle.get_webview_window("main") {
                 if !window.is_visible().unwrap_or(true) {
-                    crate::winvis::notify(&window, "main", true);
+                    crate::aux_windows::visibility::notify(&window, "main", true);
                     let _ = window.show();
                     let _ = window.minimize();
                 }
@@ -343,7 +343,7 @@ pub(crate) fn show_main(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(window) = handle.get_webview_window("main") {
-            crate::winvis::notify(&window, "main", true);
+            crate::aux_windows::visibility::notify(&window, "main", true);
             let _ = window.show();
             let _ = window.unminimize();
             let _ = window.set_focus();
@@ -352,7 +352,7 @@ pub(crate) fn show_main(app: &AppHandle) {
 }
 
 /// The tray icon's left click: hide the main window when it is up (visible, not minimized),
-/// otherwise bring it up like `show_main`. Hiding goes through the same winvis notice as the
+/// otherwise bring it up like `show_main`. Hiding goes through the same visibility notice as the
 /// close-to-tray path, so the webview knows it went to the tray.
 pub(crate) fn toggle_main(app: &AppHandle) {
     let handle = app.clone();
@@ -363,9 +363,9 @@ pub(crate) fn toggle_main(app: &AppHandle) {
         let up = window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false);
         if up && !tray_missing() {
             let _ = window.hide();
-            crate::winvis::notify(&window, "main", false);
+            crate::aux_windows::visibility::notify(&window, "main", false);
         } else {
-            crate::winvis::notify(&window, "main", true);
+            crate::aux_windows::visibility::notify(&window, "main", true);
             let _ = window.show();
             let _ = window.unminimize();
             let _ = window.set_focus();

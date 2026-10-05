@@ -8,7 +8,7 @@
 //!     comment in Cargo.toml). The pin is fixed; answering 1 here keeps our own window
 //!     from ever depending on a default arm again.
 //!   * `WM_ENDSESSION` — tao 0.35 tears its event loop down (`RunEvent::Exit` fires) but
-//!     never exits the process. The 50 ms chip hover poller (overlay.rs) then posts a user
+//!     never exits the process. The 50 ms chip hover poller (aux_windows/overlay.rs) then posts a user
 //!     event into the destroyed loop, which panics ("cannot move state from Destroyed").
 //!     Harmless when the OS is about to kill us anyway, a crash dialog when it was only an
 //!     installer asking us to close. tao 0.37 exits in that handler (PR #1157).

@@ -1,4 +1,5 @@
 mod audio;
+mod aux_windows;
 mod chord_engine;
 mod commands;
 mod config;
@@ -7,14 +8,9 @@ mod focus;
 mod held_keys;
 mod inject;
 mod key_debounce;
-#[cfg(target_os = "linux")]
-mod kwin;
-mod langpick;
 mod logging;
 mod memwatch;
 mod migrate_identifier;
-mod overlay;
-mod quickadd;
 mod remote_desktop;
 mod session;
 mod store;
@@ -27,10 +23,6 @@ mod win_clip;
 mod win_hotkeys;
 #[cfg(windows)]
 mod win_session_end;
-#[cfg(windows)]
-mod win_topmost;
-mod winpos;
-mod winvis;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -85,7 +77,7 @@ pub fn run() {
         .manage(held_keys::HeldKeys::default())
         .manage(virtual_keyboard::VirtualKeyboard::default())
         .manage(focus::AtspiGuard::default())
-        .manage(quickadd::SeedRendezvous::default())
+        .manage(aux_windows::quickadd::SeedRendezvous::default())
         .manage(log_ring)
         .manage(log_writer)
         // Close-to-tray for the MAIN window. Its webview hosts the dictation state machine and the
@@ -110,7 +102,7 @@ pub fn run() {
                         return;
                     }
                     let _ = window.hide();
-                    winvis::notify(window, window.label(), false);
+                    aux_windows::visibility::notify(window, window.label(), false);
                 }
                 // An OS/WM close (Alt+F4 / compositor close) of quick-add bypasses the in-app
                 // Esc/X path, so its debounced-save flush + correct-on-close word replacement would
@@ -120,7 +112,7 @@ pub fn run() {
                     use tauri::{Emitter, Manager};
                     window
                         .app_handle()
-                        .state::<crate::quickadd::SeedRendezvous>()
+                        .state::<crate::aux_windows::quickadd::SeedRendezvous>()
                         .clear();
                     let _ = window.emit("quickadd://closing", ());
                 }
@@ -176,7 +168,7 @@ pub fn run() {
             // show — a first-ever run otherwise maps the chip centred (unruled) and it
             // jumps to its edge only once the rule lands.
             #[cfg(target_os = "linux")]
-            overlay::prewarm_chip_rule(&cfg);
+            aux_windows::overlay::prewarm_chip_rule(&cfg);
             // Consolidate all stored audio under the single base folder
             // (dictations/, files/, links/) — idempotent, runs before the
             // sweeps so they look in the right place.
@@ -303,16 +295,16 @@ pub fn run() {
             commands::set_deep_field_detection,
             commands::get_quickadd_seed,
             commands::get_focused_selection,
-            overlay::show_overlay,
-            overlay::set_overlay_scale,
-            overlay::hide_overlay,
-            overlay::set_chip_hit_region,
-            overlay::chip_pointer_over,
-            langpick::show_lang_pick,
-            langpick::commit_lang_pick,
-            langpick::abort_lang_pick,
-            quickadd::show_quick_add,
-            quickadd::hide_quick_add,
+            aux_windows::overlay::show_overlay,
+            aux_windows::overlay::set_overlay_scale,
+            aux_windows::overlay::hide_overlay,
+            aux_windows::overlay::set_chip_hit_region,
+            aux_windows::overlay::chip_pointer_over,
+            aux_windows::langpick::show_lang_pick,
+            aux_windows::langpick::commit_lang_pick,
+            aux_windows::langpick::abort_lang_pick,
+            aux_windows::quickadd::show_quick_add,
+            aux_windows::quickadd::hide_quick_add,
             audio::cues::play_cue,
             tray::set_tray_state,
             tray::show_main_at_screen,

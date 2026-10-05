@@ -485,7 +485,7 @@ mod imp {
                     crate::held_keys::clear_chord_lost();
                     emit(app, &pid, "reclassify", Some(&chord_mods(&pid)))
                 }
-                Fire::OpenQuickAdd => crate::quickadd::show(app),
+                Fire::OpenQuickAdd => crate::aux_windows::quickadd::show(app),
             }
         }
     }

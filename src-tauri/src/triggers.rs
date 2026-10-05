@@ -160,7 +160,7 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
                 i += 1;
             }
             "--quick-add" => {
-                crate::quickadd::show(app);
+                crate::aux_windows::quickadd::show(app);
                 recognized = true;
                 i += 1;
             }
@@ -270,7 +270,7 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
         }
         ShortcutTarget::OpenQuickAdd => {
             if event.state() == ShortcutState::Pressed {
-                crate::quickadd::show(app);
+                crate::aux_windows::quickadd::show(app);
             }
         }
     }

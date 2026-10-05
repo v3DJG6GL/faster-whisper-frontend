@@ -10,8 +10,8 @@
 //! Placement is platform-specific:
 //!   * **Windows / Linux-X11** — `set_position` works, so the chip is centred at the top (or
 //!     bottom). Keep-above comes from the window's `alwaysOnTop` config flag; on Windows tao
-//!     asserts that only once, at creation, so `win_topmost` re-pins the chip on every show
-//!     and a slow watchdog repairs it if Windows misplaces it later (see win_topmost.rs).
+//!     asserts that only once, at creation, so `topmost` re-pins the chip on every show
+//!     and a slow watchdog repairs it if Windows misplaces it later (see topmost.rs).
 //!   * **KDE Wayland** — clients can't position themselves or force keep-above, so
 //!     we install a small, reversible **KWin window rule** (matched on a unique,
 //!     invisible chip title) that keeps the chip above, off the taskbar, and unable
@@ -78,7 +78,7 @@ fn window_size(monitor_logical_w: f64) -> (f64, f64) {
 
 /// Logical width of the monitor the chip lives on (unbounded when it can't be read).
 fn monitor_logical_w(win: &WebviewWindow) -> f64 {
-    crate::winpos::monitor_of(win)
+    crate::aux_windows::position::monitor_of(win)
         .map(|m| m.size().width as f64 / m.scale_factor())
         .unwrap_or(f64::MAX)
 }
@@ -133,7 +133,7 @@ const CHIP_TITLE: &str = "fwf-dictation-chip";
 /// "raise the window off the border" trick never actually applied). A no-op on native
 /// Wayland (the compositor decides).
 fn position(win: &WebviewWindow, edge: &str) {
-    let Some(monitor) = crate::winpos::monitor_of(win) else {
+    let Some(monitor) = crate::aux_windows::position::monitor_of(win) else {
         return;
     };
 
@@ -205,7 +205,7 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     #[cfg(target_os = "linux")]
     if kwin::is_kde_wayland() {
         let _ = win.set_title(CHIP_TITLE);
-        crate::winvis::notify(&win, "overlay", true);
+        crate::aux_windows::visibility::notify(&win, "overlay", true);
         let _ = win.show();
         ignore_cursor(&win);
         // ignore_cursor REPLACED the input shape with an empty one (whole window click-through);
@@ -234,7 +234,7 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     #[cfg(windows)]
     ignore_cursor(&win);
 
-    crate::winvis::notify(&win, "overlay", true);
+    crate::aux_windows::visibility::notify(&win, "overlay", true);
     let _ = win.show();
 
     #[cfg(not(windows))]
@@ -251,8 +251,8 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     {
         let _ = win.set_focusable(false);
         // The set_always_on_top(true) above is a no-op here and show() never raises — this
-        // is what actually puts the chip on top (never activating it). See win_topmost.rs.
-        crate::win_topmost::assert_topmost(&win);
+        // is what actually puts the chip on top (never activating it). See topmost.rs.
+        crate::aux_windows::topmost::assert_topmost(&win);
         win_hover::on_show(&app);
     }
 }
@@ -267,7 +267,7 @@ pub fn repair_topmost(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = handle.get_webview_window("overlay") {
-            crate::win_topmost::repair_if_covered(&win);
+            crate::aux_windows::topmost::repair_if_covered(&win);
         }
     });
 }
@@ -301,7 +301,7 @@ pub fn set_overlay_scale(app: AppHandle, scale: f64) {
 pub fn hide_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
         let _ = win.hide();
-        crate::winvis::notify(&win, "overlay", false);
+        crate::aux_windows::visibility::notify(&win, "overlay", false);
     }
     #[cfg(windows)]
     win_hover::on_hide();
@@ -614,7 +614,7 @@ mod win_hover {
     }
 
     /// Visible ticks between topmost checks: 40 × 50 ms ≈ 2 s. Slow on purpose — the check
-    /// only ever repairs a verified-wrong z-order (win_topmost.rs), so there is nothing to
+    /// only ever repairs a verified-wrong z-order (topmost.rs), so there is nothing to
     /// gain from racing, and two eager always-on-top apps would flicker against each other.
     const TOPMOST_EVERY: u32 = 40;
 
@@ -707,9 +707,9 @@ mod kwin {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
 
-    // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::kwin.
-    pub use crate::kwin::is_kde_wayland;
-    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
+    // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::aux_windows::kwin.
+    pub use crate::aux_windows::kwin::is_kde_wayland;
+    use crate::aux_windows::kwin::{config_tools, merge_general, reconfigure, set_key};
 
     /// KConfig group (and `rules=` entry) for our rule. A fixed name keeps the
     /// operation idempotent — re-runs update the same entry instead of piling up.

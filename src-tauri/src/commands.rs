@@ -2464,7 +2464,7 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                     // A resume reshuffles the desktop (display re-attach, lock screen); make
                     // sure the chip did not come back underneath something.
                     #[cfg(windows)]
-                    crate::overlay::repair_topmost(&app);
+                    crate::aux_windows::overlay::repair_topmost(&app);
                     let _ = app.emit("system://resumed", ());
                 }
             }
@@ -2770,7 +2770,7 @@ pub async fn get_focused_other_app(
 #[tauri::command]
 pub async fn get_quickadd_seed(
     guard: State<'_, crate::focus::AtspiGuard>,
-    seed_rdv: State<'_, crate::quickadd::SeedRendezvous>,
+    seed_rdv: State<'_, crate::aux_windows::quickadd::SeedRendezvous>,
 ) -> Result<Option<String>, String> {
     // Windows: no AT-SPI / PRIMARY — the copy chord fired BEFORE the window took focus
     // (quickadd::show → win_seed), but the clipboard may still be settling (Office
@@ -2862,7 +2862,7 @@ pub async fn get_focused_selection(
     {
         let _ = &guard;
         let sel = tauri::async_runtime::spawn_blocking(move || {
-            crate::quickadd::win_seed::grab(&app, None, None)
+            crate::aux_windows::quickadd::win_seed::grab(&app, None, None)
         })
         .await
         .ok()

@@ -45,7 +45,7 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
             let _ = handle.emit("langpick://unavailable", ());
             return;
         };
-        crate::winpos::center_on_monitor(&win, LP_W, LP_H);
+        crate::aux_windows::position::center_on_monitor(&win, LP_W, LP_H);
         let _ = win.set_always_on_top(true);
         // KDE-Wayland ignores client keep-above; install a KWin rule instead, matched on a
         // unique title. The focus-ALLOWED variant (like quick-add's, unlike the chip's) —
@@ -55,11 +55,11 @@ pub fn show_lang_pick(app: AppHandle, seed: serde_json::Value) {
             let _ = win.set_title(LP_TITLE);
             std::thread::spawn(kwin::install_keep_above);
         }
-        crate::winvis::notify(&win, "langpick", true);
+        crate::aux_windows::visibility::notify(&win, "langpick", true);
         let _ = win.show();
-        // set_always_on_top(true) above is a no-op on Windows — see win_topmost.rs.
+        // set_always_on_top(true) above is a no-op on Windows — see topmost.rs.
         #[cfg(windows)]
-        crate::win_topmost::assert_topmost(&win);
+        crate::aux_windows::topmost::assert_topmost(&win);
         let _ = win.unminimize();
         let _ = win.set_focus();
         // A Tauri emit with no listener is dropped, never queued. What makes this one safe
@@ -88,7 +88,7 @@ pub(crate) fn hide_lang_pick(app: AppHandle) {
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = handle.get_webview_window("langpick") {
             let _ = win.hide();
-            crate::winvis::notify(&win, "langpick", false);
+            crate::aux_windows::visibility::notify(&win, "langpick", false);
         }
     });
 }
@@ -126,8 +126,8 @@ pub fn abort_lang_pick(app: AppHandle) {
 mod kwin {
     use std::sync::atomic::{AtomicBool, Ordering};
 
-    pub use crate::kwin::is_kde_wayland;
-    use crate::kwin::{config_tools, merge_general, reconfigure, set_key};
+    pub use crate::aux_windows::kwin::is_kde_wayland;
+    use crate::aux_windows::kwin::{config_tools, merge_general, reconfigure, set_key};
 
     const GROUP: &str = "fwf-translate-to";
     static INSTALLED: AtomicBool = AtomicBool::new(false);
