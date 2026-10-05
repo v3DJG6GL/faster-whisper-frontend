@@ -8,6 +8,15 @@
 //!
 //! Backed by `enigo` (Windows SendInput / X11 XTEST; Wayland via XWayland today —
 //! a native libei path is M7) and `arboard` for the clipboard.
+//!
+//! Submodules: the native-Wayland typing backends (`wayland` — portal keycodes, `virtual_keyboard`
+//! — zwp_virtual_keyboard_v1), the Windows clipboard owner for remote-desktop pastes
+//! (`windows_clipboard`) and remote-desktop client detection (`rdp_client`).
+
+pub mod rdp_client;
+pub mod virtual_keyboard;
+pub mod wayland;
+pub mod windows_clipboard;
 
 use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::borrow::Cow;
@@ -465,7 +474,7 @@ pub fn is_wayland() -> bool {
 /// drop controls; this brings the paste / clipboard / X11-direct paths to the same posture.
 pub fn sanitize_injected(text: &str) -> String {
     // Collapse CRLF and a lone CR to LF first, so every path sees exactly one '\n' per line break.
-    // The Wayland typing paths map both '\r' and '\n' to an Enter keypress (wayland_inject's
+    // The Wayland typing paths map both '\r' and '\n' to an Enter keypress (`wayland`'s
     // KeySpec, the virtual keyboard), so a server's CRLF would otherwise type TWO Enters per break
     // — a spurious blank line. The enigo path (X11/Windows/macOS) does NOT get Enter from a
     // character at all — enigo maps '\n' to XK_Linefeed on X11 and may inject U+200B on macOS —
@@ -899,13 +908,13 @@ pub fn restore_clipboard_later(prev: Option<String>) {
     });
 }
 
-/// The Windows remote-target write: the delayed-rendering owner (`win_clip`) unless the mode is
+/// The Windows remote-target write: the delayed-rendering owner (`windows_clipboard`) unless the mode is
 /// `legacy` or the owner is unavailable, in which case the plain synchronous write. Ok carries the
 /// offer id when the owner took it (None for the legacy write); Err is the `Landed` to report —
 /// always `NothingWritten`, because no chord has been pressed and the caller's re-send is safe.
 #[cfg(windows)]
 fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
-    use crate::win_clip::{self, Mode, OfferError};
+    use crate::inject::windows_clipboard::{self, Mode, OfferError};
     let exclude = clipboard_privacy();
     let legacy = || -> Result<Option<u64>, Landed> {
         let crlf = clipboard_newlines(text, true);
@@ -924,10 +933,10 @@ fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
             }
         }
     };
-    if win_clip::mode() == Mode::Legacy {
+    if windows_clipboard::mode() == Mode::Legacy {
         return legacy();
     }
-    match win_clip::offer(text, exclude) {
+    match windows_clipboard::offer(text, exclude) {
         Ok(id) => {
             note_injected(text);
             Ok(Some(id))
@@ -1031,7 +1040,7 @@ fn paste(
     // "transcript stays on the clipboard" consolation above would be false. Same rule as the
     // chord-divert guard: data that must outlive the call goes through the live owner.
     //
-    // On Windows the remote write goes through the delayed-rendering owner instead (`win_clip`),
+    // On Windows the remote write goes through the delayed-rendering owner instead (`windows_clipboard`),
     // which is what makes the remote's fetch observable — and, in enforce mode, orderable.
     #[cfg(windows)]
     let mut offer_id: Option<u64> = None;
@@ -1071,11 +1080,11 @@ fn paste(
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
     // needs the new content to cross the network (format-list announcement) before the forwarded
     // Ctrl+V lands, or the remote pastes its previously-synced clipboard — give it a longer window
-    // (`FWF_RDP_SETTLE_MS` on Windows, so the race can be measured; see `win_clip`).
+    // (`FWF_RDP_SETTLE_MS` on Windows, so the race can be measured; see `windows_clipboard`).
     let settle_ms = if remote_target {
         #[cfg(windows)]
         {
-            crate::win_clip::settle_ms()
+            crate::inject::windows_clipboard::settle_ms()
         }
         #[cfg(not(windows))]
         {
@@ -1088,7 +1097,7 @@ fn paste(
     // Second check, at the sink. The one above guards the clipboard WRITE; this one guards the
     // KEYSTROKE, and the settle between them is 60ms (300ms remote) of wall clock during which
     // `cancel_stream`/`cancel_record` run un-chained on another blocking thread. The Wayland twin
-    // has always re-asked on this leg (`wayland_inject::paste`'s own pre-job check), and P3's
+    // has always re-asked on this leg (`wayland::paste`'s own pre-job check), and P3's
     // verifier named this gap explicitly; only the first half was applied.
     //
     // It bails differently from the check above, and must: the transcript is already ON the
@@ -1137,7 +1146,10 @@ fn paste(
     // target is the foreground process now, which is where the keystroke goes.
     #[cfg(windows)]
     if let Some(id) = offer_id {
-        crate::win_clip::note_chord(id, crate::win_clip::foreground_pid());
+        crate::inject::windows_clipboard::note_chord(
+            id,
+            crate::inject::windows_clipboard::foreground_pid(),
+        );
     }
     let res = paste_keystroke(enigo, chord);
     // Enforce: wait (bounded) for the target's fetch of THIS offer before returning, so the next
@@ -1145,7 +1157,7 @@ fn paste(
     // the wait says — re-sending would type the phrase twice.
     #[cfg(windows)]
     if let (Some(id), Ok(())) = (offer_id, &res) {
-        use crate::win_clip::{await_target_fetch, mode, FetchWait, Mode};
+        use crate::inject::windows_clipboard::{await_target_fetch, mode, FetchWait, Mode};
         if mode() == Mode::Enforce {
             match await_target_fetch(id, Duration::from_millis(1500)) {
                 FetchWait::Fetched {

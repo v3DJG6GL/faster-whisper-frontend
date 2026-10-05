@@ -113,7 +113,7 @@ pub fn cleanup_for_exit(app: &AppHandle) {
     // after we exit. No exit path destroys that window otherwise (`exit()` skips destructors).
     // A no-op when the owner never started.
     #[cfg(windows)]
-    crate::win_clip::shutdown(std::time::Duration::from_millis(500));
+    crate::inject::windows_clipboard::shutdown(std::time::Duration::from_millis(500));
 }
 
 pub struct StartParams {

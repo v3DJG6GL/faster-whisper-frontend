@@ -662,8 +662,8 @@ pub(crate) mod win_seed {
         // Read while focus is still on the source (the last pre-injection moment): a
         // remote-desktop client gets the longer network deadline AND keeps our window
         // unshown until the copy lands / the forwarding grace passes — see the consts.
-        // The window-class detector lives in `remote_desktop` now, shared with the paste path.
-        let remote = crate::remote_desktop::focus_is_remote_desktop_client();
+        // The window-class detector lives in `inject::rdp_client` now, shared with the paste path.
+        let remote = crate::inject::rdp_client::focus_is_remote_desktop_client();
         if remote {
             tracing::info!(
                 "[quickadd-seed] remote-desktop client focused; holding the window for the copy"

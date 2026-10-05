@@ -880,7 +880,7 @@ mod imp {
             Requester::Unknown
         } else if pid == self_pid {
             Requester::SelfApp
-        } else if chord_pid == Some(pid) || crate::remote_desktop::is_remote_desktop_app(exe) {
+        } else if chord_pid == Some(pid) || crate::inject::rdp_client::is_remote_desktop_app(exe) {
             Requester::Target
         } else {
             Requester::Other

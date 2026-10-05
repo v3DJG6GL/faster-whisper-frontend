@@ -1,7 +1,7 @@
 //! Layout- & Caps-independent text typing on Linux Wayland via the wlroots/KWin
 //! `zwp_virtual_keyboard_v1` protocol (the `wtype`/`wvkbd` approach).
 //!
-//! The portal keycode path (`wayland_inject.rs`) injects raw evdev codes that KWin
+//! The portal keycode path (`wayland.rs`) injects raw evdev codes that KWin
 //! resolves under the LIVE seat state — so a locked Caps Lock inverts letter case,
 //! and characters not reachable on the active layout don't type at all. Here we
 //! instead UPLOAD OUR OWN one-shot keymap in which every needed character is its own
@@ -196,7 +196,7 @@ mod imp {
             if failed {
                 // A type_text error means a roundtrip/flush failed — the wl connection is likely dead.
                 // Break so rx drops; ensure_started sees the closed channel (tx.is_closed) and respawns
-                // a fresh connection on the next call (mirrors wayland_inject::session_loop's self-heal).
+                // a fresh connection on the next call (mirrors wayland::session_loop's self-heal).
                 // Otherwise the worker keeps looping on a dead connection and every direct-typing
                 // injection silently falls back to the portal for the rest of the run, losing the VK
                 // fast-path and its Caps-Lock/layout immunity. Breaking on a rare non-fatal error is
@@ -370,7 +370,7 @@ mod imp {
                 // fallback in commands.rs (only an Err with `after_typing: false` does), so the
                 // landed prefix is never re-typed; and a user cancel is not a transport failure,
                 // so run_thread must not tear the connection down for it (inject.rs /
-                // wayland_inject.rs report the same event the same way). The keymap build, the
+                // wayland.rs report the same event the same way). The keymap build, the
                 // memfd write and the compositor roundtrip sit between the pre-loop check and
                 // here, so this also covers a bare auto-Enter job (`order == ["Return"]`)
                 // cancelled in that gap — nothing is synthesized.

@@ -240,7 +240,7 @@ pub async fn focused_selection(g: &AtspiGuard) -> SelRead {
 #[cfg(windows)]
 mod windows;
 /// Pid → exe basename, the identity `windows` gives apps (see there). Re-exported for
-/// `win_clip`, which names the process behind each clipboard fetch.
+/// `inject::windows_clipboard`, which names the process behind each clipboard fetch.
 #[cfg(windows)]
 pub(crate) use windows::exe_basename;
 

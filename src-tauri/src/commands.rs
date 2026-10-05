@@ -2,9 +2,9 @@
 
 use crate::audio::{self, AudioState, MicPlayback, MicTestClip};
 use crate::config::{self, Config};
+use crate::inject::wayland::WaylandTyper;
 use crate::session::{self, RecordParams, RecordState, StartParams, StreamState};
 use crate::transport;
-use crate::wayland_inject::WaylandTyper;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -2985,7 +2985,7 @@ pub struct InjectOutcome {
 pub async fn inject_text(
     app: AppHandle,
     typer: State<'_, WaylandTyper>,
-    vkbd: State<'_, crate::virtual_keyboard::VirtualKeyboard>,
+    vkbd: State<'_, crate::inject::virtual_keyboard::VirtualKeyboard>,
     guard: State<'_, crate::focus::AtspiGuard>,
     text: String,
     method: String,
@@ -3269,7 +3269,7 @@ pub async fn inject_text(
         });
     }
     // Now that the method is final and focus has been read once, at the sink. Two detectors (see
-    // `remote_desktop`): the focused app id against the known clients, and — Windows — the focused
+    // `inject::rdp_client`): the focused app id against the known clients, and — Windows — the focused
     // window's class, which also catches the RDP control hosted by RDCMan/mRemoteNG & co. The
     // per-app rule overrides both when it says On/Off; `None` is "Auto". Both are logged so a
     // support log shows WHICH detector fired and whether the rule overrode it.
@@ -3277,8 +3277,8 @@ pub async fn inject_text(
         && {
             let by_exe = focused_now
                 .as_ref()
-                .is_some_and(|f| crate::remote_desktop::is_remote_desktop_app(&f.app_id));
-            let by_class = crate::remote_desktop::focus_is_remote_desktop_client();
+                .is_some_and(|f| crate::inject::rdp_client::is_remote_desktop_app(&f.app_id));
+            let by_class = crate::inject::rdp_client::focus_is_remote_desktop_client();
             let detected = by_exe || by_class;
             let remote = remote_desktop.unwrap_or(detected);
             if remote || remote_desktop.is_some_and(|r| r != detected) {
@@ -3329,14 +3329,14 @@ pub async fn inject_text(
             // branch below: VK type_text("", true) cleanly types Return — and on KWin, where VK is
             // unavailable, it falls back to this same portal path — so the per-phrase Enter takes the
             // SAME silent VK route the phrase's words did instead of forcing a portal consent prompt.)
-            crate::wayland_inject::type_text(&app, typer.inner(), "", true, epoch).await
+            crate::inject::wayland::type_text(&app, typer.inner(), "", true, epoch).await
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
             // or a job fails.
             let vk_probe: std::sync::Arc<dyn Fn() -> bool + Send + Sync> =
                 std::sync::Arc::new(own_focused_probe.clone());
-            match crate::virtual_keyboard::type_text(
+            match crate::inject::virtual_keyboard::type_text(
                 vkbd.inner(),
                 &text,
                 auto_enter,
@@ -3357,7 +3357,7 @@ pub async fn inject_text(
                         "[inject] virtual keyboard unavailable ({}); using portal",
                         e.message
                     );
-                    crate::wayland_inject::type_text(&app, typer.inner(), &text, auto_enter, epoch)
+                    crate::inject::wayland::type_text(&app, typer.inner(), &text, auto_enter, epoch)
                         .await
                 }
                 Err(e) => {
@@ -3529,7 +3529,7 @@ pub async fn inject_text(
                     diverted: true,
                 });
             }
-            let r = crate::wayland_inject::paste(
+            let r = crate::inject::wayland::paste(
                 &app,
                 typer.inner(),
                 paste_shortcut,
@@ -3651,7 +3651,7 @@ pub async fn inject_text(
 pub fn remote_desktop_auto_detected(app_id: String) -> bool {
     // An app id is short; bound the input so a junk IPC argument costs nothing.
     let id: String = app_id.chars().take(256).collect();
-    crate::remote_desktop::is_remote_desktop_app(&id)
+    crate::inject::rdp_client::is_remote_desktop_app(&id)
 }
 
 /// Longest message `frontend_log` writes.

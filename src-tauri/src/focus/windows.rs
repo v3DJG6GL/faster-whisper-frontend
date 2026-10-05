@@ -211,7 +211,7 @@ unsafe fn is_shell_window(hwnd: HWND) -> bool {
 /// Process id → lowercased exe basename without `.exe`. None when the process
 /// can't be opened (protected / cross-session) — callers keep the prior state.
 ///
-/// `pub(crate)` (re-exported by `focus`) so the clipboard owner in `win_clip` names the
+/// `pub(crate)` (re-exported by `focus`) so the clipboard owner in `inject::windows_clipboard` names the
 /// process that fetched a delayed-rendered paste with the SAME identity the per-app rules and the
 /// remote-desktop detector use — "render #12 for mstsc" must mean the id a rule would match.
 pub(crate) unsafe fn exe_basename(pid: u32) -> Option<String> {

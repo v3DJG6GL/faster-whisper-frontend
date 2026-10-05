@@ -8,14 +8,10 @@ mod inject;
 mod logging;
 mod memwatch;
 mod migrate_identifier;
-mod remote_desktop;
 mod session;
 mod store;
 mod transport;
 mod tray;
-mod virtual_keyboard;
-mod wayland_inject;
-mod win_clip;
 #[cfg(windows)]
 mod win_session_end;
 
@@ -65,12 +61,12 @@ pub fn run() {
         .manage(session::StreamState::default())
         .manage(session::RecordState::default())
         .manage(hotkeys::triggers::ShortcutRegistry::default())
-        .manage(wayland_inject::WaylandTyper::default())
+        .manage(inject::wayland::WaylandTyper::default())
         .manage(commands::ClipboardSnapshot::default())
         .manage(hotkeys::evdev::EvdevState::default())
         .manage(hotkeys::windows::WinHookState::default())
         .manage(hotkeys::held_keys::HeldKeys::default())
-        .manage(virtual_keyboard::VirtualKeyboard::default())
+        .manage(inject::virtual_keyboard::VirtualKeyboard::default())
         .manage(focus::AtspiGuard::default())
         .manage(aux_windows::quickadd::SeedRendezvous::default())
         .manage(log_ring)
