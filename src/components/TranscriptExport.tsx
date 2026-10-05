@@ -944,7 +944,7 @@ export function TranscriptExport({
           </div>
         </div>
 
-        <div className={cn("flex min-w-0 flex-col gap-3.5", twoCol && "sticky top-3")}>
+        <div className={cn("flex min-w-0 flex-col gap-3.5", twoCol && "sticky top-[calc(var(--viewer-bar,0px)+0.75rem)]")}>
           <div className={cn(box, "gap-0.5")}>
             <div className="mb-1 flex items-center gap-3">
               <span className={boxTitle}>Summary</span>

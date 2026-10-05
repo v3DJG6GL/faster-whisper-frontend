@@ -1488,6 +1488,23 @@ export function TranscriptViewer({
   // feedback-loop). The box, its content, and crucially its scrollbar then
   // exactly span what is visible; earlier padding-based compensation left
   // the element itself 65vh tall with the scrollbar running off-screen.
+  // The sticky toolbar's height as `--viewer-bar` on the card: the export panel's sticky
+  // Summary column sits below it instead of under it. 0 where the toolbar isn't sticky.
+  useEffect(() => {
+    const bar = toolbarRef.current;
+    const card = bar?.parentElement;
+    if (!bar || !card) return;
+    if (fill || focus) {
+      card.style.removeProperty("--viewer-bar");
+      return;
+    }
+    const ro = new ResizeObserver(() => card.style.setProperty("--viewer-bar", `${bar.offsetHeight}px`));
+    ro.observe(bar);
+    return () => {
+      ro.disconnect();
+      card.style.removeProperty("--viewer-bar");
+    };
+  }, [fill, focus]);
   const stickyShiftRef = useRef(0); // current translateY, read by follow
   useEffect(() => {
     if (fill || focus) return; // toolbar isn't sticky there — no overlap
