@@ -35,7 +35,7 @@ import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } 
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "./paste";
 import { IS_WINDOWS } from "./platform";
 import { hasOwn, ownProp } from "./own";
-import { sanitizeCueLimits } from "./cueSplit";
+import { sanitizeCueLimits } from "./transcript/cueSplit";
 import { normalizeAppId, safeDisplayText } from "./sanitize";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./hotkeyConflicts";
 import { LEGACY_HANDSFREE } from "./types";

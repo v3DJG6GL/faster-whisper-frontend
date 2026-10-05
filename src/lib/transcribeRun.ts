@@ -14,24 +14,24 @@ import {
 } from "./api";
 import { errorText, transportErrorDoorway, uploadTooLargeText } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
-import { isTextSourcePath, parseImportedText, type ImportedText } from "./subtitleImport";
+import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
 import {
   currentRecord, patchRecord, setRecordForgetHook, upsertRecord, type TranscriptRecord,
-} from "./transcriptHistory";
+} from "./transcript/transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
   TranscriptSegment, VideoProgress,
 } from "./types";
 import type { VideoRung } from "./urlSource";
-import { isVideoSourcePath, siteDisplayName } from "./mediaExport";
+import { isVideoSourcePath, siteDisplayName } from "./transcript/mediaExport";
 import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
-import { trText } from "./cueSplit";
+import { trText } from "./transcript/cueSplit";
 import { newProgressId } from "./ids";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
-} from "./siteSubtitles";
+} from "./transcript/siteSubtitles";
 
 export type ItemStatus = "queued" | "running" | "done" | "failed" | "cancelled";
 

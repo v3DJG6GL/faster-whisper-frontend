@@ -2,8 +2,8 @@
 // format can carry, and what the file will contain. Pure, no Tauri imports —
 // the panel maps these onto its controls.
 
-import { plural } from "./format";
-import { isSubtitleFormat, type ExportFormat } from "./transcript/transcriptFormats";
+import { plural } from "../format";
+import { isSubtitleFormat, type ExportFormat } from "./transcriptFormats";
 
 /** on/off = a toggle; fixed = always in this format; na = the format can't
  *  carry it (or the transcript has nothing to carry). `why` is the tooltip. */

@@ -23,7 +23,7 @@
 
 import { useApp } from "../store";
 import { translateFailureDoorway } from "../errors";
-import { attachRecordingPath, patchRecord, recordDictation } from "../transcriptHistory";
+import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
 import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "../backends";

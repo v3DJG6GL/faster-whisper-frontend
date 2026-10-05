@@ -13,14 +13,14 @@ import transcribeSrc from "../screens/Transcribe.tsx?raw";
 import settingsSrc from "../screens/Settings.tsx?raw";
 import viewerSrc from "../components/TranscriptViewer.tsx?raw";
 import exportSrc from "../components/TranscriptExport.tsx?raw";
-import summarySrc from "./exportSummary.ts?raw";
+import summarySrc from "./transcript/exportSummary.ts?raw";
 
 const SOURCES: Record<string, string> = {
   "screens/Transcribe.tsx": transcribeSrc,
   "screens/Settings.tsx": settingsSrc,
   "components/TranscriptViewer.tsx": viewerSrc,
   "components/TranscriptExport.tsx": exportSrc,
-  "lib/exportSummary.ts": summarySrc,
+  "lib/transcript/exportSummary.ts": summarySrc,
 };
 const src = (p: string) => SOURCES[p];
 
@@ -34,7 +34,7 @@ describe("manifest labels match the screens' literal labels", () => {
     ["components/TranscriptViewer.tsx", "showTimestamps"],
     ["components/TranscriptViewer.tsx", "showSpeakerNames"],
     ["components/TranscriptViewer.tsx", "colorizeSpeakers"],
-    ["lib/exportSummary.ts", "wordTimestamps"], // the export's Content box
+    ["lib/transcript/exportSummary.ts", "wordTimestamps"], // the export's Content box
     ["components/TranscriptExport.tsx", "subtitleLength"],
     ["components/TranscriptExport.tsx", "translationTiming"],
     ["components/TranscriptExport.tsx", "revealAfterSave"], // the Save button's menu

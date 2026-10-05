@@ -4,8 +4,8 @@
 // source reads the same in the link card's subtitles table, the compound translation chips
 // and the export's tracks.
 
-import { sourceKind, type TrackInfo } from "./exportTracks";
-import type { SiteBadge } from "./siteSubtitles";
+import { sourceKind, type TrackInfo } from "./transcript/exportTracks";
+import type { SiteBadge } from "./transcript/siteSubtitles";
 
 /** `soft` = a tinted badge (fill + text), `dot` = a solid dot. */
 export type ToneVariant = "soft" | "dot";

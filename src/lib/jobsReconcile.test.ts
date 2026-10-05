@@ -32,7 +32,7 @@ const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import(
 const { _resetReconcileForTests, initJobReconcile, reconcileJobs, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun } = await import("./transcribeRun");
-const { useTranscriptHistory } = await import("./transcriptHistory");
+const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
 const { useApp } = await import("./store");
 type LedgerRow = import("./jobsLedger").LedgerRow;
 

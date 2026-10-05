@@ -39,22 +39,22 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
 } from "@/lib/transcript/transcriptFormats";
-import { applyTextEdits, segmentWordRanges } from "@/lib/wordAlign";
+import { applyTextEdits, segmentWordRanges } from "@/lib/transcript/wordAlign";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
-import { isTextSourcePath } from "@/lib/subtitleImport";
-import { basename, withTrackSites, type MediaChoice } from "@/lib/mediaExport";
-import { releaseDetachedMedia } from "@/lib/media";
-import { patchRecord, useRecord } from "@/lib/transcriptHistory";
+import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
+import { basename, withTrackSites, type MediaChoice } from "@/lib/transcript/mediaExport";
+import { releaseDetachedMedia } from "@/lib/transcript/media";
+import { patchRecord, useRecord } from "@/lib/transcript/transcriptHistory";
 import {
   defaultViewTracks, mergeOrder, readTrackPrefs, trackOrder, transcriptTracks, translationTracks, type TrackPrefs,
-} from "@/lib/exportTracks";
+} from "@/lib/transcript/exportTracks";
 import { ExportTrackChips } from "@/components/ExportTrackChips";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 import { TranscriptExport } from "@/components/TranscriptExport";
 import { SubtitleList } from "@/components/SubtitleList";
-import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/cueSplit";
+import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/transcript/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 

@@ -8,7 +8,7 @@
 // Descript's "Correct text" and Hyperaudio use. Timings are DERIVED from the
 // stored text edits wherever they're needed, so nothing new is persisted.
 
-import type { BatchResult, TranscriptSegment, TranscriptWord } from "./types";
+import type { BatchResult, TranscriptSegment, TranscriptWord } from "../types";
 
 /** Word index ranges per segment. One pass: words arrive time-ordered; each
  *  word belongs to the first segment whose window (±0.05 s slack) it falls

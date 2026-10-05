@@ -1,7 +1,7 @@
 // Bridge to the Rust core. Every call is guarded so the UI still runs in a plain
 // browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
 
-import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./subtitleImport";
+import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./transcript/subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   PlanStage,
@@ -27,7 +27,7 @@ import type {
   UsageQuery,
 } from "./types";
 import type { UrlPreview } from "./urlSource";
-import type { MediaExportProgress, MediaStreams } from "./mediaExport";
+import type { MediaExportProgress, MediaStreams } from "./transcript/mediaExport";
 import type {
   ExportEnvelope,
   ImportResult,

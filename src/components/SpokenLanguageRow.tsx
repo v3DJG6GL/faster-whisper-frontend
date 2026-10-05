@@ -12,7 +12,7 @@ import { cancelTextTranslation, urlLanguageCheck } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { languageLabel, namedLanguage } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
-import { linkSpoken, spokenPill, type LinkLanguageCheck, type LinkSpoken } from "@/lib/siteSubtitles";
+import { linkSpoken, spokenPill, type LinkLanguageCheck, type LinkSpoken } from "@/lib/transcript/siteSubtitles";
 import type { UrlPreview } from "@/lib/urlSource";
 import { errorText } from "@/lib/errors";
 import { newProgressId } from "@/lib/ids";

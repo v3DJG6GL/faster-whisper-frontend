@@ -10,12 +10,12 @@
 // three states: active (used), idle (chosen but not needed — greyed), off (not chosen — struck).
 // Any badge click flips used ↔ not used and snapshots everything into Custom (v25, v27).
 
-import type { UrlLanguageCheck } from "./api";
-import { MULTI_LANGUAGE, languageLabel, namedLanguage, primarySubtag, spokenLabel } from "./languages";
-import { safeDisplayText } from "./sanitize";
+import type { UrlLanguageCheck } from "../api";
+import { MULTI_LANGUAGE, languageLabel, namedLanguage, primarySubtag, spokenLabel } from "../languages";
+import { safeDisplayText } from "../sanitize";
 import type { ImportedText } from "./subtitleImport";
-import type { BatchResult, TimedTrack } from "./types";
-import type { SiteTrackInfo } from "./urlSource";
+import type { BatchResult, TimedTrack } from "../types";
+import type { SiteTrackInfo } from "../urlSource";
 
 export type SitePolicy = "prefer" | "both" | "generate" | "custom";
 

@@ -3,7 +3,7 @@ import {
   CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, limitsTitle, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
-import type { BatchResult, TranscriptWord } from "./types";
+import type { BatchResult, TranscriptWord } from "../types";
 
 /** Words for `text` spread over [a, b]; `pauses` adds silence after the word index. */
 function wordsOf(text: string, a: number, b: number, pauses: Record<number, number> = {}): TranscriptWord[] {

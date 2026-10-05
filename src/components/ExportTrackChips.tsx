@@ -2,7 +2,7 @@
 // whole language, each part one track — and the track order: a chip dragged (or its code
 // moved with Alt+←/→) reorders the languages, a part dragged (Alt+←/→ on it) reorders the
 // tracks inside its language. Pointer events, not HTML5 drag and drop: WebKitGTK's DnD is
-// unreliable in the webview. Every rule lives in lib/exportTracks.
+// unreliable in the webview. Every rule lives in lib/transcript/exportTracks.
 
 import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { CompoundChip } from "@/components/CompoundChip";
@@ -10,9 +10,9 @@ import { cn } from "@/lib/cn";
 import {
   languageGroups, moveLanguage, moveTrack, sourceKind, sourceWord, stepSlot, toggleLanguage, toggleTrack,
   trackInfo,
-} from "@/lib/exportTracks";
+} from "@/lib/transcript/exportTracks";
 import { langCode, trackLanguageName } from "@/lib/languages";
-import type { ChipPart } from "@/lib/siteSubtitles";
+import type { ChipPart } from "@/lib/transcript/siteSubtitles";
 import type { BatchResult } from "@/lib/types";
 
 interface Drag {

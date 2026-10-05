@@ -27,7 +27,7 @@ import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/
 import {
   appChipLabel, appLabel, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks,
   useTranscriptHistory, type TranscriptRecord,
-} from "@/lib/transcriptHistory";
+} from "@/lib/transcript/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
 import {
   EXPORT_EXTENSIONS, exportOptionsFor, generateExports, speakerOrder,
@@ -36,12 +36,12 @@ import {
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";
-import { derivePickedStem, exportStem, isVideoSourcePath, revealAfterSaveOn, withTrackSites } from "@/lib/mediaExport";
-import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/exportTracks";
-import { cueOptionsOf } from "@/lib/cueSplit";
+import { derivePickedStem, exportStem, isVideoSourcePath, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
+import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/transcript/exportTracks";
+import { cueOptionsOf } from "@/lib/transcript/cueSplit";
 import { displayToggles } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
-import { releaseDetachedMedia } from "@/lib/media";
+import { releaseDetachedMedia } from "@/lib/transcript/media";
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
 function dayBucket(iso: string): string {

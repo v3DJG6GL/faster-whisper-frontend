@@ -6,7 +6,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
 import { cn } from "@/lib/cn";
 import { sourceTone } from "@/lib/sourceTone";
-import type { ChipPart } from "@/lib/siteSubtitles";
+import type { ChipPart } from "@/lib/transcript/siteSubtitles";
 
 export function CompoundChip({
   head,

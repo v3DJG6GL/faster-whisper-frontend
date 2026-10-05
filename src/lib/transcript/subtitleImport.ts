@@ -3,7 +3,7 @@
 // translate-only run needs: ordered segments with optional timing/speaker.
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
-import { safeDisplayText, stripControlChars } from "./sanitize";
+import { safeDisplayText, stripControlChars } from "../sanitize";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];

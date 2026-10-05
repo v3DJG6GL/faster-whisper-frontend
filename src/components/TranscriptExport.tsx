@@ -24,23 +24,23 @@ import {
 import {
   CUE_PRESETS, CUE_RANGES, TRANSCRIBED_CPS, limitsTitle, sanitizeCueLimits, trackLimits, type CueLimits,
   type CueOptions, type SubtitleLength,
-} from "@/lib/cueSplit";
-import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/exportSummary";
+} from "@/lib/transcript/cueSplit";
+import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/transcript/exportSummary";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
-import { isTextSourcePath } from "@/lib/subtitleImport";
+import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { trackTone } from "@/lib/sourceTone";
 import {
   TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceWord, trackChipLabel, trackCode, trackInfo,
   type TrackPrefs,
-} from "@/lib/exportTracks";
+} from "@/lib/transcript/exportTracks";
 import {
   dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
   legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarNames,
   subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
   type SubtitleMode,
-} from "@/lib/mediaExport";
-import { patchRecord, type TranscriptRecord } from "@/lib/transcriptHistory";
+} from "@/lib/transcript/mediaExport";
+import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities } from "@/lib/types";
@@ -385,7 +385,7 @@ export function TranscriptExport({
     });
     let outcome;
     try {
-      // One export at a time, in Save order — across every viewer (lib/mediaExport.ts).
+      // One export at a time, in Save order — across every viewer (lib/transcript/mediaExport.ts).
       outcome = await queueMediaExport(jobId, owner, async () => {
         setMediaJob({ jobId, phase: source.sourcePath ? "uploading" : "packaging", done: 0, total: null });
         try {

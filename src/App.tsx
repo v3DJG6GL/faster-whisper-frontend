@@ -16,7 +16,7 @@ import { cancelLive, requestStopIfStarting } from "@/lib/dictation/streaming";
 import { SCREEN_PATH } from "@/lib/screenRegistry";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
-import { flushRecordWrites } from "@/lib/transcriptHistory";
+import { flushRecordWrites } from "@/lib/transcript/transcriptHistory";
 import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";

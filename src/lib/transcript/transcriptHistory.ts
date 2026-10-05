@@ -7,9 +7,9 @@
 import { create } from "zustand";
 import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
-} from "./api";
-import { useApp } from "./store";
-import type { BatchResult, TranscribeOptions } from "./types";
+} from "../api";
+import { useApp } from "../store";
+import type { BatchResult, TranscribeOptions } from "../types";
 import { applyTextEdits } from "./wordAlign";
 
 export interface TranscriptRecord {

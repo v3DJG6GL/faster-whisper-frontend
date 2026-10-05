@@ -4,7 +4,7 @@ import {
   isVideoSourcePath, legacyTrackIndices, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
-import type { BatchResult } from "./types";
+import type { BatchResult } from "../types";
 
 describe("isVideoSourcePath", () => {
   it("accepts the video containers, not audio or text", () => {

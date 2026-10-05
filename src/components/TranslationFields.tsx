@@ -10,7 +10,7 @@ import { chipCodes, pruneTranslationOverrides } from "../lib/translationTargets"
 import { maxTranslationTargets, translationTargetInfo } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
-import type { ChipPart } from "../lib/siteSubtitles";
+import type { ChipPart } from "../lib/transcript/siteSubtitles";
 import { cn } from "../lib/cn";
 import type { Capabilities, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";

@@ -2,7 +2,7 @@
 // faster-whisper-backend contract. The frontend never holds raw API keys — those
 // live in the OS keyring (Rust); the UI only knows whether a key is set.
 
-import type { CueLimits, SubtitleLength, TranslationTiming } from "./cueSplit";
+import type { CueLimits, SubtitleLength, TranslationTiming } from "./transcript/cueSplit";
 
 export type EndpointKind = "stream" | "batch";
 export type ResponseFormat = "json" | "verbose_json";

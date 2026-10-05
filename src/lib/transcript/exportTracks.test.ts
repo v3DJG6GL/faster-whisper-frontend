@@ -4,7 +4,7 @@ import {
   readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackCode, trackFileSuffixes, trackInfo, trackOrder, transcriptTracks,
   translationTracks,
 } from "./exportTracks";
-import type { BatchResult } from "./types";
+import type { BatchResult } from "../types";
 
 const site = (id: string, lang: string, extra: object = {}) =>
   ({ id, lang, source: "site" as const, kind: "manual" as const, site: "YouTube", cues: [], ...extra });

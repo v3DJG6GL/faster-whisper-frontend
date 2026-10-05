@@ -22,7 +22,7 @@ import {
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
-import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcriptHistory";
+import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcript/transcriptHistory";
 
 describe("railOf", () => {
   it("folds resolving onto the download row", () => {
@@ -500,7 +500,7 @@ describe("selectPath keeps a same-path open record", () => {
 
 describe("mergeSegmentTranslations kept-original marks", () => {
   it("sets translationsKept per merged segment; a clean re-merge clears it", async () => {
-    const { useTranscriptHistory } = await import("./transcriptHistory");
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     const rec: TranscriptRecord = {
       schemaVersion: 1,
       kind: "file",
@@ -539,7 +539,7 @@ describe("mergeSegmentTranslations kept-original marks", () => {
 
 describe("mergeSegmentTranslations respects the OPEN record", () => {
   it("a background merge of record A never repaints the open record B of the same source", async () => {
-    const { useTranscriptHistory } = await import("./transcriptHistory");
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     const of = (id: string, text: string): TranscriptRecord => ({
       schemaVersion: 1,
       kind: "file",
@@ -688,7 +688,7 @@ describe("runBadgeFraction (the sidebar badge)", () => {
 
 describe("forgetRecord (a deleted record must stay deleted)", () => {
   it("a later overlay edit cannot re-save a forgotten record", async () => {
-    const { useTranscriptHistory } = await import("./transcriptHistory");
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     vi.useFakeTimers();
     // The workbench's persist debounce runs on window timers (it lives in a webview);
     // the test env is `node`, so point `window` at the (faked) globals.
@@ -740,7 +740,7 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   const saves = () => saveTranscriptRecord.mock.calls.filter(([id]) => id === rec.id);
 
   beforeEach(async () => {
-    const { useTranscriptHistory } = await import("./transcriptHistory");
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
     useTranscriptHistory.setState({ records: [rec], loaded: true });
@@ -753,7 +753,7 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a viewer write, then a rename, keeps the viewer's fields", async () => {
-    const { currentRecord } = await import("./transcriptHistory");
+    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     // The export panel's writes go straight to the history, not through the workbench.
     patchRecord(rec.id, (r) => ({ ...r, videoPath: "/video/cur-1.mkv" }));
@@ -777,7 +777,7 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a record deleted during the edit debounce is not re-saved", async () => {
-    const { currentRecord } = await import("./transcriptHistory");
+    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     setRename(rec.id, "SPEAKER_00", "Kate");
     deleteRecord(rec.id);
@@ -788,7 +788,7 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a record gone from the mirror (a wipe's reload) resolves to nothing", async () => {
-    const { currentRecord, useTranscriptHistory } = await import("./transcriptHistory");
+    const { currentRecord, useTranscriptHistory } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     // The forced listing after a wipe no longer lists it; nothing told the registry.
     useTranscriptHistory.setState({ records: [] });
@@ -801,7 +801,7 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 
   it("a translation merge lands on the latest copy too", async () => {
-    const { currentRecord } = await import("./transcriptHistory");
+    const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
     patchRecord(rec.id, (r) => ({ ...r, videoPath: "/video/cur-1.mkv" }));
     mergeSegmentTranslations(rec.id, { 0: { de: "A-de" } }, { targets: ["de"] });

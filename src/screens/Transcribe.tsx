@@ -9,8 +9,8 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
-import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/siteSubtitles";
-import { siteDisplayName } from "@/lib/mediaExport";
+import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
+import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
@@ -41,13 +41,13 @@ import {
 import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, rungFacts, tierWords, type UrlPreview, type VideoRung, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
-} from "@/lib/transcriptHistory";
+} from "@/lib/transcript/transcriptHistory";
 import { closeRecord, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
 import { withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
+import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";

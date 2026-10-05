@@ -12,10 +12,10 @@
 // synthesized clocks) are never split — only their lines are wrapped.
 // Pure, no Tauri imports.
 
-import { plural } from "./format";
-import { primarySubtag } from "./languages";
+import { plural } from "../format";
+import { primarySubtag } from "../languages";
 import { segmentWordRanges } from "./wordAlign";
-import type { BatchResult, TimedTrack, TranscriptSegment } from "./types";
+import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
 
 export type SubtitleLength = "transcribed" | "standard" | "short" | "custom";
 export type TranslationTiming = "same" | "own";

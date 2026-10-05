@@ -13,14 +13,14 @@ import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { fmtTimestamp, plural } from "@/lib/format";
-import { trackChipLabel } from "@/lib/exportTracks";
+import { trackChipLabel } from "@/lib/transcript/exportTracks";
 import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
 import {
   TRANSCRIBED_CPS, trackCues, trackLimits, wrapLines, type CueGrid, type CueOptions,
-} from "@/lib/cueSplit";
-import { trackCode } from "@/lib/exportTracks";
+} from "@/lib/transcript/cueSplit";
+import { trackCode } from "@/lib/transcript/exportTracks";
 import type { BatchResult } from "@/lib/types";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 

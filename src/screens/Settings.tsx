@@ -9,7 +9,7 @@ import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta, screenEyebrow, scree
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
-import { dropPendingWrites, loadHistory } from "@/lib/transcriptHistory";
+import { dropPendingWrites, loadHistory } from "@/lib/transcript/transcriptHistory";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,

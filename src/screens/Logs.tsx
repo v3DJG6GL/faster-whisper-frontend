@@ -32,7 +32,7 @@ import {
   type FoldedLine,
   type FollowState,
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
-import { loadHistory, useTranscriptHistory } from "@/lib/transcriptHistory";
+import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";

@@ -2,7 +2,7 @@
 // the Existing-subtitles presets, and the "Subtitles" table — one row per language with its
 // source badges (Whisper / the site's / machine translation; active, idle = greyed, off =
 // struck), a trash button for languages the site lacks, and "Add language" last. Every rule
-// lives in lib/siteSubtitles; this file only draws derive() and routes clicks back.
+// lives in lib/transcript/siteSubtitles; this file only draws derive() and routes clicks back.
 
 import { Loader2, Trash2 } from "lucide-react";
 import { TargetLanguagePicker } from "@/components/LanguagePicker";
@@ -12,7 +12,7 @@ import { sourceTone } from "@/lib/sourceTone";
 import {
   SITE_POLICIES, addLanguage, derive, flip, listedLanguages, pickPolicy, removeLanguage,
   type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState,
-} from "@/lib/siteSubtitles";
+} from "@/lib/transcript/siteSubtitles";
 
 /** A table row: language, its source badges, the remove button. */
 const ROW =

@@ -4,7 +4,7 @@ import {
   addLanguage, attachSiteTracks, derive, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
-import type { SiteTrackInfo } from "./urlSource";
+import type { SiteTrackInfo } from "../urlSource";
 
 const tr = (id: string, lang: string, extra: Partial<SiteTrackInfo> = {}): SiteTrackInfo => ({
   id, lang, kind: "manual", ext: "vtt", hoh: false, ...extra,

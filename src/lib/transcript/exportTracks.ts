@@ -3,10 +3,10 @@
 // language's plain one, its title in a video and its file name. Pure; unit-tested.
 
 import { timedTrack, trackLang } from "./cueSplit";
-import { langCode, primarySubtag, trackLanguageName } from "./languages";
-import { codeSlug, stripControlChars } from "./sanitize";
+import { langCode, primarySubtag, trackLanguageName } from "../languages";
+import { codeSlug, stripControlChars } from "../sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge, type SourceWordStyle } from "./siteSubtitles";
-import type { BatchResult } from "./types";
+import type { BatchResult } from "../types";
 
 type TrackResult = Pick<BatchResult, "language" | "timedTracks">;
 

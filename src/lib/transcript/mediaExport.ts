@@ -6,10 +6,10 @@
 
 import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
-import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcript/transcriptFormats";
-import { codeSlug } from "./sanitize";
-import type { BatchResult, Capabilities, TranscribeSettings } from "./types";
-import { isSourceUrl } from "./urlSource";
+import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptFormats";
+import { codeSlug } from "../sanitize";
+import type { BatchResult, Capabilities, TranscribeSettings } from "../types";
+import { isSourceUrl } from "../urlSource";
 
 export type MediaChoice = "none" | "audio" | "video";
 export type MediaContainer = "mkv" | "mp4";

@@ -1,6 +1,6 @@
 // Round-trip guards: what generateExport writes, parseImportedText reads back.
 import { describe, expect, it } from "vitest";
-import { generateExport } from "./transcript/transcriptFormats";
+import { generateExport } from "./transcriptFormats";
 import {
   ACCEPTED_EXTS,
   TEXT_SOURCE_EXTS,
@@ -10,7 +10,7 @@ import {
   isTextSourcePath,
   parseImportedText,
 } from "./subtitleImport";
-import type { BatchResult } from "./types";
+import type { BatchResult } from "../types";
 
 const RESULT: BatchResult = {
   text: "Hello there. General greeting.",

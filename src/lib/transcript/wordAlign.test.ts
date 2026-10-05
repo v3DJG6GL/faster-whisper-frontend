@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { alignSegmentWords, applyTextEdits, segmentWordRanges } from "./wordAlign";
-import type { BatchResult, TranscriptWord } from "./types";
+import type { BatchResult, TranscriptWord } from "../types";
 
 /** Whisper-style words: leading space, tight timings. */
 const w = (word: string, start: number, end: number): TranscriptWord => ({
