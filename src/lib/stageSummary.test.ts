@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diarizationSummary, separationSummary, speakersText, stageModelText, translationSummary } from "./stageSummary";
+import { diarizationSummary, separationSummary, speakersText, stageModelText } from "./stageSummary";
 
 describe("speakersText", () => {
   it("names the speaker mode in words", () => {
@@ -25,9 +25,5 @@ describe("stage summaries", () => {
     expect(diarizationSummary("Auto speakers", "speaker-diarization-community-1")).toBe(
       "Auto speakers · speaker-diarization-community-1",
     );
-  });
-  it("translation: targets as codes, mode, model", () => {
-    expect(translationSummary(["en", "fr"], "fluent", "Default · HY-MT1.5-7B")).toBe("EN, FR · Fluent · Default · HY-MT1.5-7B");
-    expect(translationSummary(["en", "fr", "it", "es", "pt"], "faithful", undefined)).toBe("EN, FR, IT, ES +1 · Faithful");
   });
 });

@@ -5,7 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { UploadCloud, FileAudio, FileText, X, Loader2, Check, Plus, RotateCcw, ChevronsRight, ChevronDown, Link2, AudioLines, Film } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { patchTranscribe } from "@/lib/useDisplayToggles";
-import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
+import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented, Select, SettingExpand, SettingRow, Stepper, TextInput, Toggle } from "@/components/ui";
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/SiteSubtitlesPanel";
@@ -22,7 +22,7 @@ import {
 } from "@/lib/inherit";
 import { OverrideHeader } from "@/components/OverrideField";
 import { StageGear, StageOptions, useStageOptions } from "@/components/StageOptions";
-import { diarizationSummary, separationSummary, speakersText, stageModelText, translationSummary } from "@/lib/stageSummary";
+import { diarizationSummary, separationSummary, speakersText, stageModelText } from "@/lib/stageSummary";
 import { envDesc } from "@/lib/settingDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { TranscriptViewer } from "@/components/TranscriptViewer";
@@ -682,7 +682,6 @@ export default function Transcribe() {
   // Each stage's folded settings: the gear beside its switch and the panel share one state.
   const bgmOptions = useStageOptions();
   const diarizeOptions = useStageOptions();
-  const translationOptions = useStageOptions();
   // Per-RUN decode overrides layered over the Backend's stored defaults —
   // deliberately not persisted: this is "for this file, try beam 5", not a
   // settings edit (those live on the Backend / Profile editors).
@@ -2009,22 +2008,7 @@ export default function Transcribe() {
                     last
                     expand={
                       translateTo.length > 0 ? (
-                        <StageOptions
-                          state={translationOptions}
-                          label="Translation"
-                          summary={translationSummary(
-                            siteChips?.targets ?? translateTo,
-                            translationMode,
-                            (caps?.translation_models?.length ?? 0) > 1
-                              ? stageModelText(
-                                  translationModel,
-                                  shortModelName(backend?.translationOverrides?.model || caps?.translation_models?.[0]?.id) ??
-                                    "server model",
-                                )
-                              : undefined,
-                          )}
-                          changed={!!translationModel || runContextSegments !== undefined}
-                        >
+                        <SettingExpand>
                           <TranslationOptionsFields
                             sectionLabels
                             targets={siteChips?.targets ?? translateTo}
@@ -2073,52 +2057,44 @@ export default function Transcribe() {
                               word highlighting during playback stays on the original
                             </p>
                           </TranslationOptionsFields>
-                        </StageOptions>
+                        </SettingExpand>
                       ) : undefined
                     }
                   >
-                    <div className="flex items-center gap-1.5">
-                      <StageGear
-                        state={translationOptions}
-                        label="Translation"
-                        disabled={translateTo.length === 0}
-                        disabledReason="Turn on translation to change its settings"
-                      />
-                      <Toggle
-                        checked={translateTo.length > 0}
-                        ariaLabel="Translation"
-                        onChange={(v) => {
-                          if (v) {
-                            // Seed: Backend Translation defaults → the caller's
-                            // server-side default → English; never the known
-                            // source (en→en would be a no-op stage).
-                            const src = language !== "auto" ? language : undefined;
-                            const seed = (
-                              backend?.translationOverrides?.translateTo?.length
-                                ? backend.translationOverrides.translateTo
-                                : caps?.translate_to_default?.length
-                                  ? caps.translate_to_default
-                                  : ["en"]
-                            ).filter((c) => c !== src);
-                            // Within the server's target cap, as the picker is.
-                            const next = (seed.length ? seed : [src === "en" ? "de" : "en"]).slice(0, maxTranslationTargets(caps));
-                            setTranslateTo(next);
-                            if (translate) {
-                              setTranslate(false);
-                              setTranslateExclNotice("whisper");
-                              persistOptions({ translateTo: next, translate: false });
-                            } else {
-                              setTranslateExclNotice(null);
-                              persistOptions({ translateTo: next });
-                            }
+                    <Toggle
+                      checked={translateTo.length > 0}
+                      ariaLabel="Translation"
+                      onChange={(v) => {
+                        if (v) {
+                          // Seed: Backend Translation defaults → the caller's
+                          // server-side default → English; never the known
+                          // source (en→en would be a no-op stage).
+                          const src = language !== "auto" ? language : undefined;
+                          const seed = (
+                            backend?.translationOverrides?.translateTo?.length
+                              ? backend.translationOverrides.translateTo
+                              : caps?.translate_to_default?.length
+                                ? caps.translate_to_default
+                                : ["en"]
+                          ).filter((c) => c !== src);
+                          // Within the server's target cap, as the picker is.
+                          const next = (seed.length ? seed : [src === "en" ? "de" : "en"]).slice(0, maxTranslationTargets(caps));
+                          setTranslateTo(next);
+                          if (translate) {
+                            setTranslate(false);
+                            setTranslateExclNotice("whisper");
+                            persistOptions({ translateTo: next, translate: false });
                           } else {
-                            setTranslateTo([]);
                             setTranslateExclNotice(null);
-                            persistOptions({ translateTo: [] });
+                            persistOptions({ translateTo: next });
                           }
-                        }}
-                      />
-                    </div>
+                        } else {
+                          setTranslateTo([]);
+                          setTranslateExclNotice(null);
+                          persistOptions({ translateTo: [] });
+                        }
+                      }}
+                    />
                   </SettingRow>
                   {translateExclNotice === "t2t" && (
                     <p className="-mt-2 pb-3 text-[12px] text-warn">
