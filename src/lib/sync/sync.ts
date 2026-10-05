@@ -902,7 +902,7 @@ export function isCodeList(v: unknown): v is string[] {
  *  debounced save gate runs the same scan. A real binding is at most a handful of codes. */
 const MAX_CHORD_CODES = 16;
 
-/** Ceiling on the LENGTH of one code, paired with `MAX_CHORD_CODE_LEN` in commands.rs — the same
+/** Ceiling on the LENGTH of one code, paired with `MAX_CHORD_CODE_LEN` in commands/sync.rs — the same
  *  number, but not the same measure: this counts UTF-16 code units and Rust counts UTF-8 bytes, so
  *  the two disagree on non-ASCII input (Rust is the stricter of the pair). Every real code is
  *  ASCII, where the measures coincide, and both bound the field regardless. The count cap
@@ -933,7 +933,7 @@ function disableConflictingProfiles(
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
   // Collapse modifier SIDES only where the registrar does (the plugin / evdev-off platforms):
-  // the Windows low-level hook registers side-distinct chords (win_hotkeys.rs, VK_LCONTROL ≠
+  // the Windows low-level hook registers side-distinct chords (hotkeys/windows.rs, VK_LCONTROL ≠
   // VK_RCONTROL), the save gate (persistence.ts) and the Sync tab's preview both know that,
   // and collapsing here anyway disabled a working LCtrl+Space / RCtrl+Space pair on every
   // pull — persisted, and pushed back out. On Linux the over-detection is kept on purpose:

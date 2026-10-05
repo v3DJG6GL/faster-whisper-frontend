@@ -1177,7 +1177,7 @@ export default function Overlay() {
           title={targetWarn ? skipLabel : undefined}
         >
           {/* The only remaining render of remote-authored identity that was not defanged. On
-              Linux `atspi_guard` already runs the app name through `bounded_server_text`; on
+              Linux `focus::atspi` already runs the app name through `bounded_server_text`; on
               Windows `fold_foreground` sets `title` straight from `exe_basename`, which only
               lowercases and strips `.exe`. H13's refutation ("an NTFS filename cannot contain
               control characters") holds for Cc but not for U+202E/U+2066/U+200B — and this is the

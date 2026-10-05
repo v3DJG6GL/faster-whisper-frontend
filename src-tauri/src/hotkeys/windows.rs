@@ -272,7 +272,7 @@ mod imp {
             }
             // The registration filter: duplicates, and every nesting except the designed
             // hold ⊂ hands-free upgrade, are dropped — first in config order wins. The Settings
-            // UI refuses to save these (`conflicts.ts`); this is the same rule for the lists
+            // UI refuses to save these (`hotkeyConflicts.ts`); this is the same rule for the lists
             // that never pass through it (a sync pull, an import), because the engine cannot
             // make sense of them: two nested holds run two sessions at once, and the inner
             // hold's release then stops the OUTER session at the wrong key.

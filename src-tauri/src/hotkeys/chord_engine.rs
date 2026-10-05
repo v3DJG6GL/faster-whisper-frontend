@@ -8,7 +8,7 @@
 // (evdev::commit and windows::commit — both must be updated
 // when a `Fire` arm changes).
 //
-// Chord-family semantics (the designed nesting, mirrored by src/lib/conflicts.ts):
+// Chord-family semantics (the designed nesting, mirrored by src/lib/hotkeyConflicts.ts):
 //   • A HOLD chord fires `Start` the instant its keys complete — zero added
 //     latency — unless a strict-superset chord is already fully held (keys
 //     arrived superset-first: the superset wins, the subset stays silent).
@@ -89,7 +89,7 @@ impl ChordKind {
     /// May a chord of this kind be a strict SUBSET of one of kind `sup`? True for exactly
     /// the designed nesting — a hold inside a hands-free superset (the in-place upgrade).
     /// Every other nesting is a shadow: the shorter chord would fire on the way into the
-    /// longer one, or two sessions would run at once. `src/lib/conflicts.ts` enforces the
+    /// longer one, or two sessions would run at once. `src/lib/hotkeyConflicts.ts` enforces the
     /// same rule in the Settings UI; this is its twin for the profile lists that never pass
     /// through the UI (a sync pull, an import), applied by both backends' `chords_from`.
     fn may_nest_in(&self, sup: &ChordKind) -> bool {
@@ -794,7 +794,7 @@ mod tests {
         );
     }
 
-    /// The registration filter is the UI conflict rule (`conflicts.ts`) for lists that skip
+    /// The registration filter is the UI conflict rule (`hotkeyConflicts.ts`) for lists that skip
     /// the UI: exactly one nesting is allowed, a hold inside a hands-free superset.
     #[test]
     fn registration_allows_only_the_hold_in_handsfree_nesting() {

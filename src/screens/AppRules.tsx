@@ -91,7 +91,7 @@ function Editor({
   }, [detectId]);
 
   // Fill appId (and a label) from the most recently focused OTHER window (ours took
-  // focus when the user clicked here) — AT-SPI on Linux, win_focus on Windows.
+  // focus when the user clicked here) — AT-SPI on Linux, focus::windows on Windows.
   // Returns null when the detector has seen nothing yet.
   const captureCurrent = async () => {
     setCapturing(true);

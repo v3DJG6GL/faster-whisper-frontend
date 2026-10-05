@@ -19,10 +19,10 @@ use tauri::{App, AppHandle, Emitter, Manager};
 const TRAY_TITLE: &str = "faster-whisper-frontend";
 
 /// Menu item id prefix for a screen entry; the rest is the screen id the router's
-/// navigate bridge understands (lib/screens.tsx SCREENS, the same ids the overlay uses).
+/// navigate bridge understands (lib/screenRegistry.ts SCREENS, the same ids the overlay uses).
 const SCREEN_PREFIX: &str = "screen:";
 
-/// The screens the menu lists, in sidebar order (lib/screens.tsx). App rules is backed
+/// The screens the menu lists, in sidebar order (lib/screenRegistry.ts). App rules is backed
 /// by the focused-app detector and only exists on Linux / Windows.
 const SCREENS: &[(&str, &str)] = &[
     ("dashboard", "Dashboard"),
@@ -392,7 +392,7 @@ pub fn show_main_at_screen(app: AppHandle, screen: String) {
 ///
 /// `route` is the pre-rendered "DE → FR IT" the chip shows, or empty for a session
 /// that doesn't translate. It is built from peer-authored language codes by
-/// `trayRoute` (overlay.ts), which — unlike `chipPayload` — does NOT screen them, so
+/// `trayRoute` (dictation/chipController.ts), which — unlike `chipPayload` — does NOT screen them, so
 /// this is the only bound: length-capped AND defanged (bidi/format controls
 /// stripped, controls folded), since the value goes straight into a shell-drawn
 /// tooltip whose whole point is to disclose the route.

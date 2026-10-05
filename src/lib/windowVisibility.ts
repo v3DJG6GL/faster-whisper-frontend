@@ -4,7 +4,7 @@
 // hidden quick-add or picker kept restamping the accent 4× a second — a steady CPU cost, and
 // memory the hidden page built up and never released. Two independent reasons, either of
 // which pauses:
-//   "window"   — Rust's own show/hide (`window://visibility`, winvis.rs). Exact, and the one
+//   "window"   — Rust's own show/hide (`window://visibility`, aux_windows/visibility.rs). Exact, and the one
 //                that also works where the page is never told (WebView2 on a hidden HWND).
 //   "document" — the page's `visibilitychange` (WebKitGTK reports an unmapped or minimized
 //                view as hidden).

@@ -7,7 +7,7 @@
 //                   The shorter chord would fire whenever the longer one is held.
 //
 // ONE DESIGNED NESTING is exempt from "shadow" — the chord family the matcher
-// implements on purpose (src-tauri/src/chord_engine.rs), and the shape every
+// implements on purpose (src-tauri/src/hotkeys/chord_engine.rs), and the shape every
 // dictation product ships (Wispr Flow: Ctrl+Win → Ctrl+Win+Space):
 //   • a HOLD chord ⊂ a HANDS-FREE chord  — completing the superset UPGRADES the
 //     running push-to-talk session to hands-free (reclassify, no restart) — or, when

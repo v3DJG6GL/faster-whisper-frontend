@@ -150,7 +150,7 @@ mod imp {
     /// plus the quick-add window chord. Equal chords are de-duped (first by config
     /// order wins) so one keypress can't fire two actions. Unmappable / empty skipped.
     /// Nesting is filtered by `chord_engine::registration_conflict` (the twin of the
-    /// Settings screen's conflicts.ts): only a hold strictly inside a hands-free chord
+    /// Settings screen's hotkeyConflicts.ts): only a hold strictly inside a hands-free chord
     /// registers; every other nesting is dropped with a WARN, first in config order wins.
     fn chords_from(profiles: &[Profile], quick_add_hotkey: &[String]) -> Vec<ChordSpec> {
         const MAX_CHORDS: usize = 256;
@@ -167,7 +167,7 @@ mod imp {
             }
             // The registration filter: duplicates, and every nesting except the designed
             // hold ⊂ hands-free upgrade, are dropped — first in config order wins. The Settings
-            // UI refuses to save these (`conflicts.ts`); this is the same rule for the lists
+            // UI refuses to save these (`hotkeyConflicts.ts`); this is the same rule for the lists
             // that never pass through it (a sync pull, an import), because the engine cannot
             // make sense of them: two nested holds run two sessions at once, and the inner
             // hold's release then stops the OUTER session at the wrong key.

@@ -14,7 +14,7 @@ use tauri::{AppHandle, Manager, State};
 ///
 /// That leg is NOT bounded by the frontend's stuck-finalize watchdog, which is what this constant
 /// was first tied to: `armStuckWatchdog` returns early unless the endpoint is `stream`
-/// (`src/lib/streaming.ts`), and `activation: "hold"` with `endpoint: "batch"` is a legal profile —
+/// (`src/lib/dictation/streaming.ts`), and `activation: "hold"` with `endpoint: "batch"` is a legal profile —
 /// one that lands in stop-timing mode, where the single insert carries the WHOLE transcript through
 /// the typing path. On that leg the only bound is the shared HTTP client's 120s default
 /// (`transport::mod`, which `batch` dictation does not override), so a transcription that takes

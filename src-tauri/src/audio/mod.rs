@@ -437,7 +437,7 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
 /// save (`trim_silence_16k` below, fed the finished buffer). Keeps only the spans the
 /// chip shows as "speaking" plus a short lead-in, so a long hands-free session doesn't store
 /// hours of silence and the file matches the indicator. Ported from the frontend
-/// detector (`lib/speaking.ts`): a two-stage smoothed RMS with hysteresis (enter above
+/// detector (`lib/dictation/speaking.ts`): a two-stage smoothed RMS with hysteresis (enter above
 /// `SPEAK_HIGH`, leave below `SPEAK_LOW` after ~900 ms quiet) feeding a 250 ms pre-roll ring
 /// that's flushed on each silence→speech edge (so word onsets aren't clipped; the 900 ms
 /// leave-hold gives the trailing tail for free). The hold/pre-roll are sample-counted, so

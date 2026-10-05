@@ -159,13 +159,13 @@ pub async fn import_settings_file(path: String) -> Result<ImportResult, String> 
 
 fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     const MAX_IMPORT_BYTES: u64 = 20_000_000; // sanity cap, not a format limit
-                                              // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync.ts).
+                                              // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync/sync.ts).
                                               // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
                                               // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
                                               // entries in the user's wallet, with the webview blocked throughout. This is the designated
                                               // validator for the untrusted-file path; it should fail here, with a message.
     const MAX_ENTRIES: usize = 500;
-    // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync.ts. The count cap
+    // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync/sync.ts. The count cap
     // above bounds how MANY chords arrive, never how long one is: `de_hotkey`'s `visit_seq` pushes
     // an unbounded sequence and `canonicalize` only sorts + dedups, which does not bound DISTINCT
     // strings. `chordConflicts` runs in the import preview's render body — before the user has
@@ -315,7 +315,7 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
             }
         }
     }
-    // Every scalar wire category — keep in step with `SCALAR_CATS` in src/lib/syncGates.ts. A
+    // Every scalar wire category — keep in step with `SCALAR_CATS` in src/lib/sync/syncGates.ts. A
     // category missing here passed validation and then vanished silently at apply time.
     for key in [
         "general",

@@ -29,7 +29,7 @@ export type Gates = Record<SettingId, boolean>;
 
 /** Scalar wire categories where payload keys equal store field keys. The ONE list —
  *  sync.ts's compose and apply gating both iterate it, so a new scalar category is added here
- *  and nowhere else (the Rust importer's shape check in commands.rs mirrors it by hand). */
+ *  and nowhere else (the Rust importer's shape check in commands/sync.rs mirrors it by hand). */
 export const SCALAR_CATS: readonly WireCategory[] = [
   "general",
   "recording",

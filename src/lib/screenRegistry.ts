@@ -14,7 +14,7 @@ export interface ScreenDef {
   path: string; // router path (HashRouter)
   icon: LucideIcon;
   end?: boolean; // exact-match the index route
-  /** Backed by the focused-app detector (AT-SPI on Linux, win_focus on Windows)
+  /** Backed by the focused-app detector (AT-SPI on Linux, focus::windows on Windows)
    *  — hidden on platforms without one. */
   needsFocusDetection?: boolean;
 }

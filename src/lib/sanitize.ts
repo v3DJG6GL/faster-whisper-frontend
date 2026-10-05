@@ -1,11 +1,11 @@
-// TS mirror of the Rust `sanitize_injected` (src-tauri/src/inject.rs). Strips C0/C1 control
+// TS mirror of the Rust `sanitize_injected` (src-tauri/src/inject/mod.rs). Strips C0/C1 control
 // characters (except Tab and LF) and normalizes CR/CRLF -> LF, so a malicious / compromised /
 // garbled transcription server can't smuggle terminal-escape or other control sequences onto
 // the clipboard. Tab and newline are kept (legitimate text); CR is normalized to LF first.
 //
 // Used by the manual "Copy" surfaces (which write a raw server response to the clipboard) to match
 // the same posture every automatic injection path already has via inject_text -> sanitize_injected.
-/** Mirror of `is_deceptive_format_char` in src-tauri/src/inject.rs: Unicode FORMAT characters
+/** Mirror of `is_deceptive_format_char` in src-tauri/src/inject/mod.rs: Unicode FORMAT characters
  *  (category Cf) that change how text READS without being visible. `char::is_control()` — and the
  *  Cc test below — cover none of them, so a bidi override lets the server make the text that lands
  *  on the clipboard differ from the text the user watched appear. Trojan-Source, via dictation.
@@ -79,9 +79,9 @@ export function safeDisplayText(s: unknown, max = 200): string {
  *  re-saving it did not repair it. App rules have no consent gate and raise no security-review
  *  prompt, so such a rule arrives on an unattended pull.
  *
- *  The producer side is normalized to match: `atspi_guard` runs the AT-SPI application name
+ *  The producer side is normalized to match: `focus::atspi` runs the AT-SPI application name
  *  through `bounded_server_text` (which calls `is_deceptive_format_char`), and
- *  `win_focus::exe_basename` does too — normalizing only the rule would invert the bug on
+ *  `focus::windows::exe_basename` does too — normalizing only the rule would invert the bug on
  *  Windows, where a filename legitimately may carry those characters. */
 export function normalizeAppId(s: unknown): string {
   let out = "";

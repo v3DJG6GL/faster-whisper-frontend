@@ -1071,7 +1071,7 @@ export async function getFocusedApp(): Promise<FocusedApp | null> {
 }
 
 /** Whether ALL of this chord's modifier keys are physically held right now, per the
- *  low-level hotkey backends' shared HeldKeys signal (evdev / win_hotkeys; always false
+ *  low-level hotkey backends' shared HeldKeys signal (hotkeys::evdev / hotkeys::windows; always false
  *  when only the plugin backend runs, or when the chord has no modifiers — non-modifier
  *  keys aren't observable). Consumer: the queued fast re-press start — fire only while
  *  the pressed chord itself is still down. */
