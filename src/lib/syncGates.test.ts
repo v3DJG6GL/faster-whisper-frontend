@@ -4,8 +4,8 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import { applyBlob, backendsBlobIncomplete, categorySelection, composeBlob, mergeBlobs } from "./sync";
-import { completeGates, DEFAULT_SETTING_SYNC } from "./settingsManifest";
-import { catsFromGates, gateApplyScalar, gateComposeScalar } from "./syncGates";
+import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "./settingsManifest";
+import { catsFromGates, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
 import { stableStringify } from "./stable";
 import { useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
@@ -359,5 +359,50 @@ describe("backendsBlobIncomplete (the push refusal's real gate)", () => {
     expect(backendsBlobIncomplete({ backends: { list: [b("x", false)], secrets: {} } } as SyncBlob)).toBe(false);
     expect(backendsBlobIncomplete({} as SyncBlob)).toBe(false);
     expect(backendsBlobIncomplete({ backends: [] as never } as SyncBlob)).toBe(false);
+  });
+});
+
+// The disclosure toggle must never claim a panel it does not drive: in
+// "changed & default-off" mode the panel's contents follow the filter, not the
+// toggle, and a collapsed group has no panel node to point `aria-controls` at.
+describe("groupPanelState", () => {
+  const DEFS = [{ id: "a" }, { id: "b" }] as unknown as SettingDef[];
+  const ALL_ON = { a: true, b: true } as unknown as Record<SettingId, boolean>;
+  const A_OFF = { a: false, b: true } as unknown as Record<SettingId, boolean>;
+  const NONE = new Set<SettingId>();
+  const SOME = new Set(["a"] as unknown as SettingId[]);
+
+  it("filter off + expanded: every row shows and the toggle owns the panel", () => {
+    const s = groupPanelState(DEFS, ALL_ON, NONE, true, false);
+    expect(s.visible).toHaveLength(2);
+    expect(s.panelOpen).toBe(true);
+    expect(s.owns).toBe(true);
+  });
+
+  it("filter off + collapsed: no rows, no panel, no ownership", () => {
+    const s = groupPanelState(DEFS, ALL_ON, NONE, false, false);
+    expect(s.visible).toHaveLength(0);
+    expect(s.panelOpen).toBe(false);
+    expect(s.owns).toBe(false);
+  });
+
+  it("filter on with exceptions: the panel opens but the toggle owns nothing", () => {
+    const s = groupPanelState(DEFS, ALL_ON, SOME, false, true);
+    expect(s.visible.map((d) => d.id)).toEqual(["a"]);
+    expect(s.panelOpen).toBe(true);
+    expect(s.owns).toBe(false);
+  });
+
+  it("filter on with no exceptions: the group stays closed even when expanded", () => {
+    const s = groupPanelState(DEFS, ALL_ON, NONE, true, true);
+    expect(s.visible).toHaveLength(0);
+    expect(s.panelOpen).toBe(false);
+    expect(s.owns).toBe(false);
+  });
+
+  it("filter on: a disabled switch surfaces the row even when unchanged", () => {
+    const s = groupPanelState(DEFS, A_OFF, NONE, false, true);
+    expect(s.visible.map((d) => d.id)).toEqual(["a"]);
+    expect(s.panelOpen).toBe(true);
   });
 });

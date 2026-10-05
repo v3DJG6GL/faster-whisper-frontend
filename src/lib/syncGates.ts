@@ -19,6 +19,7 @@
 import {
   DEFS,
   settingsOfCategory,
+  type SettingDef,
   type SettingId,
   type WireCategory,
 } from "./settingsManifest";
@@ -194,3 +195,24 @@ export const APP_RULE_PASTE_FIELDS = ["pasteShortcut"] as const;
 export const APP_RULE_LOCAL_ONLY_FIELDS = ["autoEnter"] as const;
 /** The per-Profile insertion overrides the Profiles field switch governs. */
 export const PROFILE_INSERTION_FIELDS = ["typeAsISpeak", "insertionOverrides"] as const;
+
+/** The disclosure contract for one group, in one place: which rows render,
+ *  whether the panel is open, and whether the toggle honestly OWNS that panel.
+ *  Filter on → the group's exceptions (changed OR switch off), expansion
+ *  ignored, and the toggle drives nothing so it claims no `aria-controls`;
+ *  filter off → all rows when expanded, none when collapsed (the header +
+ *  summary IS the collapsed view). The header always renders so the group
+ *  master stays reachable in every mode. */
+export function groupPanelState(
+  defs: SettingDef[],
+  gates: Record<SettingId, boolean>,
+  changed: ReadonlySet<SettingId>,
+  expanded: boolean,
+  changedOnly: boolean,
+): { visible: SettingDef[]; panelOpen: boolean; owns: boolean } {
+  const isException = (d: SettingDef) =>
+    !gates[d.id as SettingId] || changed.has(d.id as SettingId);
+  const visible = changedOnly ? defs.filter(isException) : expanded ? defs : [];
+  const panelOpen = visible.length > 0;
+  return { visible, panelOpen, owns: !changedOnly && panelOpen };
+}

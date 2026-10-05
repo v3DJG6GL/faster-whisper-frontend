@@ -29,7 +29,7 @@ import {
   type SettingId,
   type SyncGroup,
 } from "@/lib/settingsManifest";
-import type { Gates } from "@/lib/syncGates";
+import { groupPanelState, type Gates } from "@/lib/syncGates";
 import { DisclosureToggle, Segmented, Toast, Toggle } from "@/components/ui";
 
 const UI_STATE_KEY = "fwf.syncUi.v1";
@@ -280,28 +280,6 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
       )}
     </div>
   );
-}
-
-
-/** The disclosure contract for one group, in one place: which rows render,
- *  whether the panel is open, and whether the toggle honestly OWNS that panel.
- *  Filter on → the group's exceptions (changed OR switch off), expansion
- *  ignored, and the toggle drives nothing so it claims no `aria-controls`;
- *  filter off → all rows when expanded, none when collapsed (the header +
- *  summary IS the collapsed view). The header always renders so the group
- *  master stays reachable in every mode. */
-export function groupPanelState(
-  defs: SettingDef[],
-  gates: Record<SettingId, boolean>,
-  changed: ReadonlySet<SettingId>,
-  expanded: boolean,
-  changedOnly: boolean,
-): { visible: SettingDef[]; panelOpen: boolean; owns: boolean } {
-  const isException = (d: SettingDef) =>
-    !gates[d.id as SettingId] || changed.has(d.id as SettingId);
-  const visible = changedOnly ? defs.filter(isException) : expanded ? defs : [];
-  const panelOpen = visible.length > 0;
-  return { visible, panelOpen, owns: !changedOnly && panelOpen };
 }
 
 function GroupCard({
