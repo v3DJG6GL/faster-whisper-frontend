@@ -544,6 +544,7 @@ function SecurityReviewDialog() {
     "dictation-retention": "Dictations would start being deleted",
     "dictation-history": "Dictation history would be turned off and wiped",
     "report-target-app": "Reporting the app you dictate into would be turned on",
+    "typed-text": "Text typed into your apps would change",
   };
   const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);

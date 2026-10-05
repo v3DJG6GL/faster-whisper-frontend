@@ -8,7 +8,8 @@
 // The server's own decode values come from GET /v1/request-default-settings (serverInherited); a value
 // nobody can name (the server is unreachable) leaves the bare word.
 
-import type { DecodeDefault, DecodeDefaults, DecodeOverrides, InheritedValues } from "./types";
+import type { DecodeDefault, DecodeDefaults, InheritedValues } from "./types";
+import { BOOL_KEYS, isDecodeKey, keySpec, NULL_TEXT, type DecodeKey } from "./decodeKeys";
 
 export type InheritWord = "Inherit" | "Default";
 
@@ -22,18 +23,10 @@ export function onOff(v: boolean | null | undefined): string | undefined {
   return typeof v === "boolean" ? (v ? "on" : "off") : undefined;
 }
 
-export type DecodeKey = keyof DecodeOverrides;
+export type { DecodeKey };
 /** Which decode the values are for: a batch file run, or live dictation (its final decode). */
 export type DecodeMode = "batch" | "stream";
 
-const BOOL_KEYS: ReadonlySet<DecodeKey> = new Set(["vad_filter", "condition_on_previous_text", "multilingual"]);
-/** A null threshold switches that check off; null hotwords are none. */
-const NULL_TEXT: Partial<Record<DecodeKey, string>> = {
-  hotwords: "none",
-  no_speech_threshold: "off",
-  log_prob_threshold: "off",
-  compression_ratio_threshold: "off",
-};
 
 /** Why live dictation pins condition_on_previous_text (tooltip + screen-reader text). */
 export const DICTATION_PIN_REASON = "Live dictation turns this off to stop echoed text.";
@@ -57,12 +50,13 @@ export function sourceText(d: Pick<DecodeDefault, "source" | "label">, model: st
 }
 
 /** One server value as the editor shows it, or undefined when it can't be shown. A bool key
- *  takes only a real boolean ("false" would read as on); null takes the key's "none"/"off". */
+ *  takes only a real boolean ("false" would read as on); null takes the key's "none"/"off"
+ *  (decodeKeys `nullText`); a multiline key's "\n" is a value, not blank space. */
 function shownValue(key: DecodeKey, v: DecodeDefault["value"] | undefined): string | number | boolean | undefined {
   if (BOOL_KEYS.has(key)) return typeof v === "boolean" ? v : undefined;
   if (v === null) return NULL_TEXT[key];
   if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
-  if (typeof v === "string") return v.trim() ? v : undefined;
+  if (typeof v === "string") return (keySpec(key).multiline ? v !== "" : v.trim()) ? v : undefined;
   return undefined;
 }
 
@@ -101,7 +95,8 @@ export function serverInherited(
   const pinned: ServerInherited["pinned"] = {};
   const model = dd?.model ?? "";
   if (dd?.settings) {
-    for (const key of Object.keys(dd.settings) as DecodeKey[]) {
+    // Known keys only: a newer server's key this build has no row for has nowhere to show.
+    for (const key of Object.keys(dd.settings).filter(isDecodeKey)) {
       const d = dd.settings[key];
       if (!d || typeof d !== "object") continue;
       const v = shownValue(key, d.value);

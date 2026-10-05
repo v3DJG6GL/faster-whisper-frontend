@@ -39,6 +39,8 @@ import { sanitizeCueLimits } from "./cueSplit";
 import { normalizeAppId, safeDisplayText } from "./sanitize";
 import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "./conflicts";
 import { LEGACY_HANDSFREE } from "./types";
+import { TRANSLATION_MAX_TARGETS } from "./languages";
+import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "./decodeKeys";
 import type {
   ActivationKind,
   AppRule,
@@ -46,7 +48,6 @@ import type {
   Backend,
   BackendKind,
   Config,
-  DecodeOverrides,
   EndpointKind,
   IndicatorPosition,
   InsertMethod,
@@ -58,6 +59,7 @@ import type {
   SyncCategory,
   ThemeName,
   TranscribeSettings,
+  TranslationOverrides,
 } from "./types";
 import {
   CHIP_FIELDS,
@@ -748,20 +750,28 @@ function isReservedBackendId(id: unknown): boolean {
  *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
  *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
  *  entries here so both paths share the same floor. */
-/** The `decodeOverrides` leaf, shared by the profile and backend sanitizers: numeric/boolean
- *  entries pass, the four string leaves are length-capped, anything else (a string root, an
- *  array, nested objects) is dropped. Rust holds it as opaque JSON and forwards it into every
- *  session request, so this is the only floor it gets. */
-function clampDecodeOverrides(v: unknown): DecodeOverrides | undefined {
+/** The `translationOverrides` leaf, shared by the profile and backend sanitizers. Rust holds it as
+ *  opaque JSON and forwards `contextSegments` into an `Option<u32>` IPC field on every dictation
+ *  translation, so a fractional or negative value would fail that call — it is an integer 0–10
+ *  (the server's TRANSLATION_CONTEXT_SEGMENTS range) or nothing. */
+export function clampTranslationOverrides(v: unknown): TranslationOverrides | undefined {
   if (!isPlainObject(v)) return undefined;
+  const cs = v.contextSegments;
   return {
-    ...Object.fromEntries(Object.entries(v).filter(([, x]) => typeof x === "number" || typeof x === "boolean")),
-    hotwords: typeof v.hotwords === "string" ? v.hotwords.slice(0, 2000) : undefined,
-    prepend_punctuations: typeof v.prepend_punctuations === "string" ? v.prepend_punctuations.slice(0, 200) : undefined,
-    append_punctuations: typeof v.append_punctuations === "string" ? v.append_punctuations.slice(0, 200) : undefined,
-    suppress_tokens: typeof v.suppress_tokens === "string" ? v.suppress_tokens.slice(0, 500) : undefined,
+    translateTo: Array.isArray(v.translateTo)
+      ? v.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, TRANSLATION_MAX_TARGETS)
+      : undefined,
+    model: typeof v.model === "string" ? v.model.slice(0, 200) : undefined,
+    contextSegments:
+      typeof cs === "number" && Number.isFinite(cs) ? Math.min(CONTEXT_SEGMENTS_MAX, Math.max(0, Math.round(cs))) : undefined,
+    glossary: typeof v.glossary === "string" ? v.glossary.slice(0, 4000) : undefined,
+    mode: v.mode === "fluent" || v.mode === "faithful" ? v.mode : undefined,
+    includeOriginal: v.includeOriginal == null ? undefined : v.includeOriginal === true,
   };
 }
+
+/** TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server. */
+const CONTEXT_SEGMENTS_MAX = 10;
 
 export function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
@@ -835,18 +845,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
             autoEnter: undefined,
           }
         : undefined,
-      translationOverrides: p.translationOverrides && typeof p.translationOverrides === "object"
-        ? {
-            translateTo: Array.isArray(p.translationOverrides.translateTo)
-              ? p.translationOverrides.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, 8)
-              : undefined,
-            model: typeof p.translationOverrides.model === "string" ? p.translationOverrides.model.slice(0, 200) : undefined,
-            contextSegments: typeof p.translationOverrides.contextSegments === "number" ? p.translationOverrides.contextSegments : undefined,
-            glossary: typeof p.translationOverrides.glossary === "string" ? p.translationOverrides.glossary.slice(0, 4000) : undefined,
-            mode: p.translationOverrides.mode === "fluent" || p.translationOverrides.mode === "faithful" ? p.translationOverrides.mode : undefined,
-            includeOriginal: p.translationOverrides.includeOriginal == null ? undefined : p.translationOverrides.includeOriginal === true,
-          }
-        : undefined,
+      translationOverrides: clampTranslationOverrides(p.translationOverrides),
       model: typeof p.model === "string" ? p.model : undefined,
       language: typeof p.language === "string" ? p.language : undefined,
       prompt: typeof p.prompt === "string" ? p.prompt : undefined,
@@ -1062,12 +1061,12 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
     if (typeof str === "string" && str.length <= 256) out[k] = str;
   }
   // T2T targets: the blob's only array-of-strings field — clamp shape hard
-  // (8 short codes max) so a hostile peer can't balloon the settings blob.
+  // (TRANSLATION_MAX_TARGETS short codes max) so a hostile peer can't balloon the settings blob.
   const tt = ownProp(v, "translateTo");
   if (Array.isArray(tt)) {
     out.translateTo = tt
       .filter((x): x is string => typeof x === "string" && x.length > 0 && x.length <= 16)
-      .slice(0, 8);
+      .slice(0, TRANSLATION_MAX_TARGETS);
   }
   return out as Partial<TranscribeSettings>;
 }
@@ -1141,7 +1140,7 @@ const ENDPOINT_KINDS = ["stream", "batch"] as const;
 const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
 const BACKEND_KINDS = ["auto", "full", "standard"] as const;
 
-function sanitizeBackends(list: unknown): Backend[] {
+export function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
   return dedupeById(list.filter(
     (b): b is Backend =>
@@ -1203,18 +1202,7 @@ function sanitizeBackends(list: unknown): Backend[] {
       // connection test", which is what an absent key already means.
       kind: b.kind == null ? undefined : oneOf<BackendKind>(b.kind, BACKEND_KINDS, "auto"),
       decodeOverrides: clampDecodeOverrides(b.decodeOverrides),
-      translationOverrides: b.translationOverrides && typeof b.translationOverrides === "object"
-        ? {
-            translateTo: Array.isArray(b.translationOverrides.translateTo)
-              ? b.translationOverrides.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, 8)
-              : undefined,
-            model: typeof b.translationOverrides.model === "string" ? b.translationOverrides.model.slice(0, 200) : undefined,
-            contextSegments: typeof b.translationOverrides.contextSegments === "number" ? b.translationOverrides.contextSegments : undefined,
-            glossary: typeof b.translationOverrides.glossary === "string" ? b.translationOverrides.glossary.slice(0, 4000) : undefined,
-            mode: b.translationOverrides.mode === "fluent" || b.translationOverrides.mode === "faithful" ? b.translationOverrides.mode : undefined,
-            includeOriginal: b.translationOverrides.includeOriginal == null ? undefined : b.translationOverrides.includeOriginal === true,
-          }
-        : undefined,
+      translationOverrides: clampTranslationOverrides(b.translationOverrides),
     }))
     )
     .slice(0, MAX_SYNCED_ENTRIES);
@@ -2458,10 +2446,15 @@ export interface SecurityChange {
     | "history-retention"
     | "dictation-retention"
     | "dictation-history"
-    | "report-target-app";
+    | "report-target-app"
+    | "typed-text";
   /** The backend a `backends`-category change applies to; the recording kinds have no backend and
-   *  set this to an empty string (the dialog omits it). */
+   *  set this to an empty string (the dialog omits it). A `typed-text` change names the backend
+   *  or profile whose decode defaults carry the text. */
   backend: string;
+  /** `typed-text` only: the category that holds it — a profile's overrides or a backend's
+   *  defaults — so exactly that category waits for the approval. */
+  category?: "profiles" | "backends";
   detail: string;
   /** The address that would take effect, unformatted, for the kinds that carry one. The dialog
    *  parses this rather than trusting `detail`: a URL's real authority is whatever follows the
@@ -2472,7 +2465,8 @@ export interface SecurityChange {
 
 /** Which category each held-back change lives in, so the apply can suppress exactly that one and
  *  let everything else through. */
-function catOf(kind: SecurityChange["kind"]): SyncCategory {
+function catOf({ kind, category }: SecurityChange): SyncCategory {
+  if (kind === "typed-text") return category ?? "profiles";
   if (
     kind === "recording-retention" ||
     kind === "save-recordings" ||
@@ -2492,7 +2486,7 @@ function heldBack(
   risky: SecurityChange[],
 ): Record<SyncCategory, boolean> {
   const out = { ...cats };
-  for (const c of risky) out[catOf(c.kind)] = false;
+  for (const c of risky) out[catOf(c)] = false;
   return out;
 }
 
@@ -2521,13 +2515,48 @@ function gatedSecurityCheck(
   cats: Record<SyncCategory, boolean>,
 ): SecurityChange[] {
   const g = settingGates();
-  return securityChanges(gateScalars(incoming, g), gateScalars(localForReview(localBlob), g), cats);
+  return securityChanges(gateScalars(incoming, g), gateScalars(localForReview(localBlob), g), cats, g);
+}
+
+/**
+ * The decode keys whose text the app TYPES into the focused window (the live hard-break
+ * separator, the output prefix/suffix) — the same class as the `autoEnter` refusal: a peer that
+ * can set them can make every dictation type text of its choosing, a newline included. Only a
+ * change to a non-empty value is held (clearing one types less, not more), compared after the
+ * sanitizer, so a value it would drop or cap raises nothing it would not apply.
+ */
+function typedTextChanges(
+  incomingList: unknown,
+  localList: readonly (Profile | Backend)[] | undefined,
+  category: "profiles" | "backends",
+): SecurityChange[] {
+  if (!Array.isArray(incomingList)) return [];
+  const here = new Map((localList ?? []).map((e) => [e.id, e]));
+  const out: SecurityChange[] = [];
+  for (const e of incomingList) {
+    if (!isPlainObject(e) || typeof e.id !== "string") continue;
+    const next = clampDecodeOverrides(e.decodeOverrides) ?? {};
+    const cur = here.get(e.id)?.decodeOverrides ?? {};
+    const name = typeof e.name === "string" && e.name ? e.name : e.id;
+    for (const key of TYPED_TEXT_KEYS) {
+      const v = next[key];
+      if (typeof v !== "string" || v === "" || v === cur[key]) continue;
+      out.push({
+        kind: "typed-text",
+        backend: name,
+        category,
+        detail: `${DECODE_KEYS[key].env} would type ${JSON.stringify(v)}`,
+      });
+    }
+  }
+  return out;
 }
 
 export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
   cats: Record<SyncCategory, boolean>,
+  gates?: Pick<Gates, "modelDecodeDefaults">,
 ): SecurityChange[] {
   const out: SecurityChange[] = [];
   // The three retention clocks drive sweeps that DELETE stored data (saved
@@ -2614,6 +2643,14 @@ export function securityChanges(
     clockCheck(incoming.fileTranscriptions, local.fileTranscriptions, "historyRetentionDays", 0,
       "file transcriptions", "history-retention");
   }
+  if (cats.profiles && incoming.profiles) {
+    out.push(...typedTextChanges(incoming.profiles.list, local.profiles?.list, "profiles"));
+  }
+  // Backend decode defaults travel only under the "Model & decode defaults" switch; with it off
+  // the apply re-pins this device's values, so a peer's text could never land.
+  if (cats.backends && incoming.backends && gates?.modelDecodeDefaults !== false) {
+    out.push(...typedTextChanges(incoming.backends.list, local.backends?.list, "backends"));
+  }
   if (!cats.backends || !incoming.backends) return out;
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   const localSecrets = local.backends?.secrets ?? {};
@@ -2691,7 +2728,7 @@ function raiseReview(r: PendingReview): void {
   setRuntime({
     syncStatus: "error",
     syncError:
-      "A pulled update wants to change where your dictation is sent, or what is kept on this device — review it in Settings → Sync.",
+      "A pulled update wants to change where your dictation is sent, what it types, or what is kept on this device — review it in Settings → Sync.",
   });
 }
 

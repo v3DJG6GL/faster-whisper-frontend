@@ -185,77 +185,18 @@ pub struct DecodeDefault {
     pub locked: bool,
 }
 
-/// The 20 client decode keys, named (not a map) so a key the server renames fails the
-/// round-trip test instead of silently vanishing from the editor.
-#[derive(Debug, Default, Serialize, Deserialize)]
-pub struct DecodeDefaultSettings {
-    #[serde(default)]
-    pub beam_size: DecodeDefault,
-    #[serde(default)]
-    pub best_of: DecodeDefault,
-    #[serde(default)]
-    pub vad_filter: DecodeDefault,
-    #[serde(default)]
-    pub vad_min_silence_duration_ms: DecodeDefault,
-    #[serde(default)]
-    pub vad_speech_pad_ms: DecodeDefault,
-    #[serde(default)]
-    pub vad_threshold: DecodeDefault,
-    #[serde(default)]
-    pub condition_on_previous_text: DecodeDefault,
-    #[serde(default)]
-    pub no_speech_threshold: DecodeDefault,
-    #[serde(default)]
-    pub log_prob_threshold: DecodeDefault,
-    #[serde(default)]
-    pub compression_ratio_threshold: DecodeDefault,
-    #[serde(default)]
-    pub hotwords: DecodeDefault,
-    #[serde(default)]
-    pub temperature: DecodeDefault,
-    #[serde(default)]
-    pub patience: DecodeDefault,
-    #[serde(default)]
-    pub length_penalty: DecodeDefault,
-    #[serde(default)]
-    pub repetition_penalty: DecodeDefault,
-    #[serde(default)]
-    pub no_repeat_ngram_size: DecodeDefault,
-    #[serde(default)]
-    pub suppress_tokens: DecodeDefault,
-    #[serde(default)]
-    pub prepend_punctuations: DecodeDefault,
-    #[serde(default)]
-    pub append_punctuations: DecodeDefault,
-    #[serde(default)]
-    pub multilingual: DecodeDefault,
-}
+/// The client decode keys, as a map: the server lists every key it has (the registry drives
+/// it), so a typed struct would silently drop each key a newer server adds. Bounded in discovery
+/// (key shape, entry count, value text); the TS `DECODE_KEYS` table is the one that names them,
+/// and a test there pins it against a recorded server key list.
+pub type DecodeDefaultSettings = std::collections::BTreeMap<String, DecodeDefault>;
 
-impl DecodeDefaultSettings {
-    pub fn each_mut(&mut self) -> [&mut DecodeDefault; 20] {
-        [
-            &mut self.beam_size,
-            &mut self.best_of,
-            &mut self.vad_filter,
-            &mut self.vad_min_silence_duration_ms,
-            &mut self.vad_speech_pad_ms,
-            &mut self.vad_threshold,
-            &mut self.condition_on_previous_text,
-            &mut self.no_speech_threshold,
-            &mut self.log_prob_threshold,
-            &mut self.compression_ratio_threshold,
-            &mut self.hotwords,
-            &mut self.temperature,
-            &mut self.patience,
-            &mut self.length_penalty,
-            &mut self.repetition_penalty,
-            &mut self.no_repeat_ngram_size,
-            &mut self.suppress_tokens,
-            &mut self.prepend_punctuations,
-            &mut self.append_punctuations,
-            &mut self.multilingual,
-        ]
-    }
+/// `translation` in request-default-settings: the translating stage's inherited values.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct TranslationDefaults {
+    /// TRANSLATION_CONTEXT_SEGMENTS (int 0–10).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_segments: Option<DecodeDefault>,
 }
 
 /// Live dictation's final decode pins `condition_on_previous_text` (a client value is ignored).
@@ -301,6 +242,27 @@ pub struct DecodeDefaults {
     pub prompt: DecodeDefault,
     #[serde(default)]
     pub streaming: StreamingDefaults,
+    // The stage, language and word-timing defaults a run inherits (newer backends). Optional and
+    // kept absent when the server sends none, so the webview can tell "older server" from a value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub translation: Option<TranslationDefaults>,
+    /// DIARIZE (bool).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diarize: Option<DecodeDefault>,
+    /// SEPARATE_BGM (bool).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separate_bgm: Option<DecodeDefault>,
+    /// DEFAULT_LANGUAGE (a code; "" = auto-detect).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<DecodeDefault>,
+    /// The diarization pipeline / separation model a run would use (model refs).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diarization_model: Option<DecodeDefault>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub separation_model: Option<DecodeDefault>,
+    /// WORD_TIMESTAMPS_ENABLED (bool).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub word_timestamps: Option<DecodeDefault>,
 }
 
 // P28: per-user usage stats (`GET /v1/usage`). snake_case passthrough like
@@ -769,17 +731,33 @@ pub const MAX_META_BODY: usize = 1024 * 1024;
 /// reason the injection path strips them. Doing it here means every consumer of a bounded server
 /// string inherits it, instead of each render site remembering to sanitize.
 pub fn bounded_server_text(s: &str, n: usize) -> String {
+    bounded_chars(s, n, |_| Some(' '))
+}
+
+/// [`bounded_server_text`] for a VALUE whose line breaks are part of it (an inherited hard-break
+/// separator is "\n"): `\n` is kept, every other control character and the invisible-format set
+/// are dropped. Same cap and ellipsis.
+pub fn bounded_server_value(s: &str, n: usize) -> String {
+    bounded_chars(s, n, |c| (c == '\n').then_some(c))
+}
+
+/// The shared walk: drop the invisible-format set, map each control character through `control`
+/// (`None` drops it), stop at `n` kept characters with an ellipsis.
+fn bounded_chars(s: &str, n: usize, control: impl Fn(char) -> Option<char>) -> String {
     let mut out = String::with_capacity(n.min(s.len()));
     let mut kept = 0usize;
     for c in s.chars() {
         if crate::inject::is_deceptive_format_char(c) {
             continue;
         }
+        let Some(c) = (if c.is_control() { control(c) } else { Some(c) }) else {
+            continue;
+        };
         if kept >= n {
             out.push('…');
             return out;
         }
-        out.push(if c.is_control() { ' ' } else { c });
+        out.push(c);
         kept += 1;
     }
     out

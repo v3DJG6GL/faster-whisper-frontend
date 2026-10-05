@@ -88,6 +88,25 @@ describe("serverInherited", () => {
     expect(p.source).toBe("Set for your account on the server (user · profile studio)");
     expect(serverInherited(dd({ prompt: { value: null, source: "server", label: "", locked: false } })).prompt?.value).toBeUndefined();
   });
+  it("keeps a multiline value's newline and names the new keys' null text", () => {
+    const entry = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
+    const s = serverInherited(
+      dd({
+        settings: {
+          streaming_hard_break_separator: entry("\n"),
+          output_prefix: entry(" "),
+          hallucination_silence_threshold: entry(null),
+          suppress_chars: entry(null),
+          some_newer_server_key: entry(5),
+        } as DecodeDefaults["settings"],
+      }),
+    );
+    expect(s.values.streaming_hard_break_separator).toBe("\n");
+    expect(s.values.output_prefix).toBeUndefined(); // blank single-line text shows nothing
+    expect(s.values.hallucination_silence_threshold).toBe("off");
+    expect(s.values.suppress_chars).toBe("none");
+    expect(Object.keys(s.values)).not.toContain("some_newer_server_key");
+  });
   it("is empty without server data", () => {
     const s = serverInherited(null, { beam_size: 2 });
     expect(s.values).toEqual({ beam_size: 2 });

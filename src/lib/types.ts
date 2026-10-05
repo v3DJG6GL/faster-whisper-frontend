@@ -15,12 +15,15 @@ export type BackendKind = "auto" | "full" | "standard";
  * from server" (the backend falls back to its per-model config). Lives on both
  * Backend (defaults) and Profile (override-of-defaults). Keys match the backend's
  * faster-whisper kwarg names so they pass straight through the wire. The backend
- * clamps every value to the admin-config bounds.
+ * clamps every value to the admin-config bounds. Bounds, kinds and sections live in ONE
+ * table, `decodeKeys.ts` `DECODE_KEYS` — a key added here without a row there fails to compile.
+ * Text keys: absent = inherit, "" = an explicit empty override.
  */
 export interface DecodeOverrides {
   beam_size?: number; // 1..20
   best_of?: number; // 1..20
-  temperature?: number; // 0..1 (single value; overrides the server's ladder)
+  /** One value 0..1, or a retry ladder "0.0,0.2,0.4" (rungs 0..1, ≤16) that replaces the server's. */
+  temperature?: number | string;
   condition_on_previous_text?: boolean;
   vad_filter?: boolean;
   vad_threshold?: number; // 0..1
@@ -40,6 +43,24 @@ export interface DecodeOverrides {
   /** Language detection per 30 s window instead of once per file ("Multiple languages");
    *  the server ignores it when the request names a language. */
   multilingual?: boolean;
+  /** Seconds of silence after which a likely hallucination is skipped (0..60; 0 = off). Needs
+   *  word timestamps. */
+  hallucination_silence_threshold?: number;
+  /** Characters never emitted (≤64; "" = explicitly none). */
+  suppress_chars?: string;
+  /** Auto-detected language only: windows probed (1..10) and the confidence to stop (0..1). */
+  language_detection_segments?: number;
+  language_detection_threshold?: number;
+  /** Text around every transcript (≤512 each) — typed into the focused app. */
+  output_prefix?: string;
+  output_suffix?: string;
+  // Live dictation only (the stream handshake); every batch request drops `streaming_*`.
+  streaming_vad_threshold?: number; // 0..1
+  streaming_vad_inner_silence_ms?: number; // 0..5000; the server keeps inner < outer
+  streaming_vad_outer_silence_ms?: number; // 100..10000
+  streaming_hard_break_silence_ms?: number; // 0..120000; 0 = never
+  /** Typed at a hard break (≤8, "\n" kept) — into the focused app. */
+  streaming_hard_break_separator?: string;
 }
 
 /** A configured connection to a faster-whisper / OpenAI-compatible server. */
@@ -693,9 +714,20 @@ export interface DecodeDefaults {
   /** The model the server resolved ("" → its default model). */
   model: string;
   profile_applied: string | null;
-  settings: Record<keyof DecodeOverrides, DecodeDefault>;
+  /** Per client key. A key missing here is one this server does not have (an older backend):
+   *  its row is disabled rather than sent. */
+  settings: Partial<Record<keyof DecodeOverrides, DecodeDefault>>;
   /** The default prompt (DEFAULT_PROMPT); value null = none. */
   prompt: DecodeDefault;
+  /** The stage and language defaults a run inherits (newer backends; absent on older ones). */
+  translation?: { context_segments?: DecodeDefault };
+  diarize?: DecodeDefault;
+  separate_bgm?: DecodeDefault;
+  /** DEFAULT_LANGUAGE; value "" = auto-detect. */
+  language?: DecodeDefault;
+  diarization_model?: DecodeDefault;
+  separation_model?: DecodeDefault;
+  word_timestamps?: DecodeDefault;
   /** Live dictation's final decode: condition_on_previous_text is pinned (a client value is
    *  ignored); best_of has its own default (a client value still wins). */
   streaming: {

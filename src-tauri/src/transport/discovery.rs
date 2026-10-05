@@ -466,12 +466,12 @@ fn decode_defaults_url(
     Some(url)
 }
 
-/// Every server string here ends up in a Segmented label, a placeholder or a tooltip.
-fn bound_decode_default(d: &mut DecodeDefault, text_max: usize) {
+/// Every server string here ends up in a Segmented label, a placeholder or a tooltip. `bound`
+/// shapes a string VALUE: folded to one line for most, [`super::bounded_server_value`] for the
+/// decode settings, whose line breaks can be the value (an inherited hard-break separator).
+fn bound_decode_default(d: &mut DecodeDefault, text_max: usize, bound: fn(&str, usize) -> String) {
     d.value = match std::mem::take(&mut d.value) {
-        serde_json::Value::String(s) => {
-            serde_json::Value::String(super::bounded_server_text(&s, text_max))
-        }
+        serde_json::Value::String(s) => serde_json::Value::String(bound(&s, text_max)),
         // Documented as a scalar; an array or object is not a value the editor can show.
         v @ (serde_json::Value::Bool(_) | serde_json::Value::Number(_)) => v,
         _ => serde_json::Value::Null,
@@ -480,13 +480,57 @@ fn bound_decode_default(d: &mut DecodeDefault, text_max: usize) {
     d.label = bounded_name(&d.label);
 }
 
+/// A settings key as the server's registry spells client keys (`beam_size`, `streaming_vad_…`).
+fn is_decode_key(k: &str) -> bool {
+    let b = k.as_bytes();
+    (1..=48).contains(&b.len())
+        && b[0].is_ascii_lowercase()
+        && b.iter()
+            .all(|&c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'_')
+}
+
+/// Ceiling on the settings map (31 client keys today): it is a map so a newer server's keys
+/// survive, and the cap keeps a hostile one from filling the editor's tables.
+const MAX_DECODE_KEYS: usize = 64;
+
 fn bound_decode_defaults(d: &mut DecodeDefaults) {
+    let fold = super::bounded_server_text;
     d.model = bounded_name(&d.model);
     d.profile_applied = d.profile_applied.as_deref().map(bounded_name);
-    for entry in d.settings.each_mut() {
-        bound_decode_default(entry, SERVER_TEXT_MAX);
+    let settings = std::mem::take(&mut d.settings);
+    d.settings = settings
+        .into_iter()
+        .filter(|(k, _)| is_decode_key(k))
+        .take(MAX_DECODE_KEYS)
+        .map(|(k, mut v)| {
+            bound_decode_default(&mut v, SERVER_TEXT_MAX, super::bounded_server_value);
+            (k, v)
+        })
+        .collect();
+    bound_decode_default(&mut d.prompt, SERVER_TEXT_MAX, fold);
+    if let Some(t) = d.translation.as_mut() {
+        if let Some(c) = t.context_segments.as_mut() {
+            bound_decode_default(c, MAX_NAME, fold);
+        }
     }
-    bound_decode_default(&mut d.prompt, SERVER_TEXT_MAX);
+    for entry in [
+        &mut d.diarize,
+        &mut d.separate_bgm,
+        &mut d.language,
+        &mut d.word_timestamps,
+    ]
+    .into_iter()
+    .flatten()
+    {
+        bound_decode_default(entry, MAX_NAME, fold);
+    }
+    // Model refs ("org/repo:quant") — the picker matches them by id, so the id cap applies.
+    for entry in [&mut d.diarization_model, &mut d.separation_model]
+        .into_iter()
+        .flatten()
+    {
+        bound_decode_default(entry, MODEL_ID_MAX, fold);
+    }
 }
 
 /// The decode values the caller inherits from the server for `model` (and `profile`, the
@@ -547,31 +591,20 @@ mod tests {
         assert_eq!(long.query(), Some("model="));
     }
 
-    /// The typed mirror drops what it does not name: every decode key, the prompt and the
-    /// streaming pins must survive the round trip to the webview.
+    /// The typed mirror drops what it does not name: every decode key (the settings map keeps
+    /// whatever the server lists), the prompt, the streaming pins and the stage/language
+    /// defaults must survive the round trip to the webview.
     #[test]
     fn decode_defaults_keep_every_key() {
         let keys = [
             "beam_size",
-            "best_of",
-            "vad_filter",
-            "vad_min_silence_duration_ms",
-            "vad_speech_pad_ms",
-            "vad_threshold",
-            "condition_on_previous_text",
-            "no_speech_threshold",
-            "log_prob_threshold",
-            "compression_ratio_threshold",
-            "hotwords",
             "temperature",
-            "patience",
-            "length_penalty",
-            "repetition_penalty",
-            "no_repeat_ngram_size",
-            "suppress_tokens",
-            "prepend_punctuations",
-            "append_punctuations",
             "multilingual",
+            "streaming_vad_outer_silence_ms",
+            "streaming_hard_break_separator",
+            "hallucination_silence_threshold",
+            "output_prefix",
+            "a_key_from_a_newer_server",
         ];
         let settings: serde_json::Map<String, serde_json::Value> = keys
             .iter()
@@ -581,19 +614,28 @@ mod tests {
                 (k.to_string(), v)
             })
             .collect();
+        let entry = |v: serde_json::Value| serde_json::json!({"value": v, "source": "model", "label": "per-model · tiny", "locked": false});
         let raw = serde_json::json!({
             "model": "tiny", "profile_applied": "studio", "settings": settings,
             "prompt": {"value": "Hallo", "source": "account", "label": "key · direct", "locked": true},
             "streaming": {"condition_on_previous_text": {"final": false, "partial": false, "pinned": true},
                           "best_of": {"value": 1}},
+            "translation": {"context_segments": entry(serde_json::json!(3))},
+            "diarize": entry(serde_json::json!(true)),
+            "separate_bgm": entry(serde_json::json!(false)),
+            "language": entry(serde_json::json!("")),
+            "diarization_model": entry(serde_json::json!("pyannote/speaker-diarization-3.1")),
+            "separation_model": entry(serde_json::json!("UVR-MDX-NET")),
+            "word_timestamps": entry(serde_json::json!(true)),
         });
-        let d: DecodeDefaults = serde_json::from_value(raw).unwrap();
+        let mut d: DecodeDefaults = serde_json::from_value(raw).unwrap();
+        bound_decode_defaults(&mut d);
         let out = serde_json::to_value(d).unwrap();
         for (i, k) in keys.iter().enumerate() {
             assert_eq!(out["settings"][k]["value"], i, "{k}");
         }
         assert_eq!(
-            out["settings"]["vad_min_silence_duration_ms"]["locked"],
+            out["settings"]["streaming_vad_outer_silence_ms"]["locked"],
             true
         );
         assert_eq!(out["prompt"]["value"], "Hallo");
@@ -607,6 +649,64 @@ mod tests {
             false
         );
         assert_eq!(out["streaming"]["best_of"]["value"], 1);
+        assert_eq!(out["translation"]["context_segments"]["value"], 3);
+        assert_eq!(out["translation"]["context_segments"]["source"], "model");
+        assert_eq!(out["diarize"]["value"], true);
+        assert_eq!(out["separate_bgm"]["value"], false);
+        assert_eq!(out["language"]["value"], "");
+        assert_eq!(
+            out["diarization_model"]["value"],
+            "pyannote/speaker-diarization-3.1"
+        );
+        assert_eq!(out["separation_model"]["value"], "UVR-MDX-NET");
+        assert_eq!(out["word_timestamps"]["value"], true);
+        assert_eq!(out["word_timestamps"]["label"], "per-model · tiny");
+    }
+
+    /// An older server sends none of the stage/language entries: they stay absent (not
+    /// zero-filled), so the webview can tell "this server can't say" from a value.
+    #[test]
+    fn an_old_server_keeps_the_new_entries_absent() {
+        let d: DecodeDefaults =
+            serde_json::from_value(serde_json::json!({"model": "tiny", "settings": {}})).unwrap();
+        let out = serde_json::to_value(d).unwrap();
+        for k in [
+            "translation",
+            "diarize",
+            "separate_bgm",
+            "language",
+            "diarization_model",
+            "separation_model",
+            "word_timestamps",
+        ] {
+            assert!(out.get(k).is_none(), "{k}");
+        }
+    }
+
+    /// The map is bounded: a key the registry could not have produced is dropped, at most 64
+    /// survive, and a value keeps its "\n" while other controls and bidi overrides go — the
+    /// label beside it stays one line.
+    #[test]
+    fn decode_settings_map_is_bounded_and_values_keep_their_newline() {
+        let mut settings = serde_json::Map::new();
+        for i in 0..100 {
+            settings.insert(format!("k{i:03}"), serde_json::json!({"value": i}));
+        }
+        settings.insert("Bad-Key".into(), serde_json::json!({"value": 1}));
+        settings.insert("x".repeat(49), serde_json::json!({"value": 1}));
+        let mut d: DecodeDefaults =
+            serde_json::from_value(serde_json::json!({"settings": settings})).unwrap();
+        bound_decode_defaults(&mut d);
+        assert_eq!(d.settings.len(), 64);
+        assert!(!d.settings.contains_key("Bad-Key"));
+        assert!(!d.settings.contains_key(&"x".repeat(49)));
+        let mut sep: DecodeDefaults = serde_json::from_value(serde_json::json!({"settings": {
+            "streaming_hard_break_separator": {"value": "\n\u{202e}\r\t¶", "label": "a\nb"}}}))
+        .unwrap();
+        bound_decode_defaults(&mut sep);
+        let e = &sep.settings["streaming_hard_break_separator"];
+        assert_eq!(e.value, "\n¶");
+        assert_eq!(e.label, "a b");
     }
 
     #[test]
@@ -623,11 +723,12 @@ mod tests {
         });
         let mut d: DecodeDefaults = serde_json::from_value(raw).unwrap();
         bound_decode_defaults(&mut d);
-        assert!(d.settings.beam_size.value.is_null());
-        assert!(d.settings.vad_filter.value.is_null());
-        assert_eq!(d.settings.temperature.value, "0.0,0.2");
-        assert!(d.settings.hotwords.value.as_str().unwrap().chars().count() <= 2049); // + "…"
-        assert!(d.settings.hotwords.label.chars().count() <= 121);
+        assert!(d.settings["beam_size"].value.is_null());
+        assert!(d.settings["vad_filter"].value.is_null());
+        assert_eq!(d.settings["temperature"].value, "0.0,0.2");
+        let hot = &d.settings["hotwords"];
+        assert!(hot.value.as_str().unwrap().chars().count() <= 2049); // + "…"
+        assert!(hot.label.chars().count() <= 121);
         assert!(d.model.chars().count() <= 121);
         assert!(!d.prompt.value.as_str().unwrap().contains('\u{202e}'));
     }

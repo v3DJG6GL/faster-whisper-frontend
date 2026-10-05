@@ -254,13 +254,52 @@ fn translate_to_field(requested: Option<&[String]>) -> Option<String> {
     Some(targets.join(","))
 }
 
+/// The `decode_overrides` form value of a batch request: the object as JSON, less every
+/// `streaming_*` key — those are live dictation's (the stream handshake keeps them), and a batch
+/// run is never live. Every batch path (file, link, batch dictation, retry) passes through
+/// `post`, so this is the one place the rule lives. `None` = nothing left to send.
+fn batch_decode_overrides(v: &serde_json::Value) -> Option<String> {
+    let batch: serde_json::Map<String, serde_json::Value> = v
+        .as_object()?
+        .iter()
+        .filter(|(k, _)| !k.starts_with("streaming_"))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if batch.is_empty() {
+        return None;
+    }
+    serde_json::to_string(&batch).ok()
+}
+
 #[cfg(test)]
 mod wire_field_tests {
     use super::{
-        bound_language_check, bound_progress, bound_rung, bound_subtitles, bound_tracks,
-        is_format_id, is_track_id, to_batch_result, translate_to_field, BatchProgress,
-        UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
+        batch_decode_overrides, bound_language_check, bound_progress, bound_rung, bound_subtitles,
+        bound_tracks, is_format_id, is_track_id, to_batch_result, translate_to_field,
+        BatchProgress, UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
     };
+
+    /// Live dictation's keys never ride a batch request; everything else does, verbatim.
+    #[test]
+    fn batch_requests_drop_the_live_dictation_keys() {
+        let v = serde_json::json!({
+            "beam_size": 5,
+            "output_prefix": ">> ",
+            "streaming_vad_outer_silence_ms": 2500,
+            "streaming_hard_break_separator": "\n",
+        });
+        let sent: serde_json::Value =
+            serde_json::from_str(&batch_decode_overrides(&v).unwrap()).unwrap();
+        assert_eq!(
+            sent,
+            serde_json::json!({"beam_size": 5, "output_prefix": ">> "})
+        );
+        // Only live keys (or none at all) → the field is omitted.
+        let live_only = serde_json::json!({"streaming_vad_threshold": 0.4});
+        assert_eq!(batch_decode_overrides(&live_only), None);
+        assert_eq!(batch_decode_overrides(&serde_json::json!({})), None);
+        assert_eq!(batch_decode_overrides(&serde_json::json!("x")), None);
+    }
 
     /// Preview tracks: ids and languages gated (they ride back in a body), kinds
     /// whitelisted, names bounded, at most 24.
@@ -1103,12 +1142,8 @@ async fn post(
         form = form.text("prompt", p.to_string());
     }
     // Per-request decode overrides as a JSON Form field (only when non-empty).
-    if let Some(v) = overrides {
-        if v.as_object().is_some_and(|m| !m.is_empty()) {
-            if let Ok(s) = serde_json::to_string(v) {
-                form = form.text("decode_overrides", s);
-            }
-        }
+    if let Some(s) = overrides.and_then(batch_decode_overrides) {
+        form = form.text("decode_overrides", s);
     }
     // Per-request server override-profile name (only when non-empty).
     if let Some(p) = override_profile {
