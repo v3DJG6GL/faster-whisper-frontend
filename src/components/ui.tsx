@@ -892,7 +892,9 @@ export function Stepper({
   disabled,
   inherited,
   inheritNote,
+  inheritedText,
   onReset,
+  className,
 }: {
   value: number | undefined;
   onChange: (v: number) => void;
@@ -908,7 +910,12 @@ export function Stepper({
   inherited?: number;
   /** Who the inherited value belongs to ("server", "backend"). */
   inheritNote?: string;
+  /** What an unset value inherits when that isn't a number ("off" for a threshold the server
+   *  leaves unset): shown greyed in place of the number. */
+  inheritedText?: string;
   onReset?: () => void;
+  /** Sizing for the frame (e.g. "w-full" in a form grid: the value column takes the slack). */
+  className?: string;
 }) {
   const inheriting = own === undefined;
   const value = own ?? inherited ?? min;
@@ -965,15 +972,18 @@ export function Stepper({
     onChange(next);
     setText(String(next));
   };
-  // Keep only digits — and, when decimals are allowed, a single leading dot.
+  // Keep only digits — a leading minus when the range goes below zero, and, when decimals are
+  // allowed, a single dot.
   const filter = (raw: string) => {
-    if (decimals <= 0) return raw.replace(/[^0-9]/g, "");
+    const neg = min < 0 && raw.trimStart().startsWith("-") ? "-" : "";
+    if (decimals <= 0) return neg + raw.replace(/[^0-9]/g, "");
     const v = raw.replace(/[^0-9.]/g, "");
     const i = v.indexOf(".");
-    return i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, "");
+    return neg + (i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""));
   };
 
   const showZero = !focused && zeroLabel != null && value === 0;
+  const showInheritedText = !focused && inheriting && inherited === undefined && inheritedText != null;
   const btn =
     "ring-signal grid h-full w-9 shrink-0 place-items-center text-dim transition-colors hover:bg-line/40 hover:text-text disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
 
@@ -982,6 +992,7 @@ export function Stepper({
       className={cn(
         "inline-flex h-10 items-stretch overflow-hidden rounded-xl border border-line bg-surface-2 transition-colors focus-within:border-faint",
         disabled && "pointer-events-none opacity-40",
+        className,
       )}
     >
       <button
@@ -1004,9 +1015,9 @@ export function Stepper({
       >
         <Minus className="size-4" />
       </button>
-      <div className="flex items-center justify-center gap-1 border-x border-line px-2">
+      <div className="flex flex-1 items-center justify-center gap-1 border-x border-line px-2">
         <input
-          value={showZero ? zeroLabel : text}
+          value={showZero ? zeroLabel : showInheritedText ? inheritedText : text}
           inputMode={decimals > 0 ? "decimal" : "numeric"}
           aria-label={ariaLabel}
           disabled={disabled}
@@ -1036,7 +1047,7 @@ export function Stepper({
             showZero ? "text-dim" : inheriting && !focused ? "text-faint" : "text-text",
           )}
         />
-        {!showZero && unit && <span className="shrink-0 text-[12px] leading-none text-faint">{unit}</span>}
+        {!showZero && !showInheritedText && unit && <span className="shrink-0 text-[12px] leading-none text-faint">{unit}</span>}
         {inheriting && inheritNote && !focused && (
           <span className="shrink-0 whitespace-nowrap text-[12px] leading-none text-faint">· {inheritNote}</span>
         )}

@@ -247,3 +247,10 @@ export function clampDecodeOverrides(v: unknown): DecodeOverrides | undefined {
   }
   return out as DecodeOverrides;
 }
+
+/** How many decimals a stepper needs for `step` (0.05 → 2, 0.5 → 1, 1 → 0). */
+export function stepDecimals(step: number | undefined): number {
+  if (step === undefined || Number.isInteger(step)) return 0;
+  const frac = String(step).split(".")[1] ?? "";
+  return Math.min(frac.length, 4);
+}

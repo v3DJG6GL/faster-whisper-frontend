@@ -3,6 +3,7 @@ import {
   BOOL_KEYS,
   clampDecodeOverrides,
   countSet,
+  stepDecimals,
   DECODE_KEY_LIST,
   DECODE_KEYS,
   keySpec,
@@ -397,5 +398,15 @@ describe("parseLadderInput", () => {
   it("refuses letters, and a ladder on a standard server", () => {
     expect(parseLadderInput("0.2x", false)).toBeNull();
     expect(parseLadderInput("0,0.2", true)).toBeNull();
+  });
+});
+
+describe("stepDecimals", () => {
+  it("counts the step's decimals", () => {
+    expect(stepDecimals(undefined)).toBe(0);
+    expect(stepDecimals(1)).toBe(0);
+    expect(stepDecimals(1000)).toBe(0);
+    expect(stepDecimals(0.5)).toBe(1);
+    expect(stepDecimals(0.05)).toBe(2);
   });
 });

@@ -1,11 +1,11 @@
 import { useId, useState } from "react";
 import { Info } from "lucide-react";
-import { DisclosureCard, Segmented, SetSummary, TextInput } from "@/components/ui";
+import { DisclosureCard, Segmented, SetSummary, Stepper, TextInput } from "@/components/ui";
 import { OverrideHeader, OverrideText, OVERRIDE_CONTROL_W } from "@/components/OverrideField";
 import type { DecodeOverrides, InheritedValues } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 import { inheritLabel, LOCKED_REASON, NOT_ON_SERVER_REASON, type DecodeKey, type InheritWord, type ServerInherited } from "@/lib/inherit";
-import { DECODE_SECTIONS, keySpec, parseLadderInput, sectionKeys, type KeySection } from "@/lib/decodeKeys";
+import { DECODE_SECTIONS, keySpec, parseLadderInput, sectionKeys, stepDecimals, type KeySection } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/settingDesc";
 
 // Decode-param editor shared by the Backend (defaults) and Profile (override) editors and
@@ -182,29 +182,29 @@ export function DecodeFields({
         />
       );
     }
-    // Ghost the inherited value into the placeholder when not overridden.
+    // A locked or pinned number shows the server's value, read-only.
+    if (fixedLabel)
+      return <TextInput aria-label={spec.env} aria-describedby={described} title={title} disabled value="" placeholder={fixedLabel} />;
+    // The app's own −/+ stepper (never the browser's spinner); unset = the inherited value, greyed.
+    const inhNum = typeof inherited?.[k] === "number" ? (inherited[k] as number) : undefined;
     return (
-      <TextInput
-        type="number"
-        aria-label={spec.env}
-        aria-describedby={described}
-        title={[title, range].filter(Boolean).join(" · ") || undefined}
-        disabled={off || !!fixedLabel}
-        min={spec.min}
-        max={spec.max}
-        step={spec.step}
-        value={fixedLabel || cur === undefined ? "" : String(cur)}
-        placeholder={fixedLabel ?? inheritLabel(inh, inheritWord)}
-        className={cur !== undefined && !fixedLabel ? "border-accent/55" : undefined}
-        onChange={(e) => {
-          const s = e.target.value;
-          if (s === "") return setField(k, undefined);
-          const n = Number(s);
-          // isFinite (not isNaN) so "1e999" → Infinity also falls back to undefined,
-          // instead of being JSON-serialized to null in the request body.
-          setField(k, Number.isFinite(n) ? n : undefined);
-        }}
-      />
+      <div aria-describedby={described} title={[title, range].filter(Boolean).join(" · ") || undefined}>
+        <Stepper
+          className="w-full"
+          value={typeof cur === "number" ? cur : undefined}
+          onChange={(n) => setField(k, n)}
+          min={spec.min}
+          max={spec.max}
+          step={spec.step}
+          decimals={stepDecimals(spec.step)}
+          unit={spec.unit}
+          zeroLabel={spec.nullText && spec.min === 0 ? spec.nullText : undefined}
+          inherited={inhNum}
+          inheritedText={inhNum === undefined ? (inh ?? inheritWord) : undefined}
+          ariaLabel={spec.env}
+          disabled={off}
+        />
+      </div>
     );
   };
 
