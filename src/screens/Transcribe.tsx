@@ -21,7 +21,7 @@ import {
   withDefaultModel,
 } from "@/lib/inherit";
 import { OverrideHeader } from "@/components/OverrideField";
-import { StageOptions } from "@/components/StageOptions";
+import { StageGear, StageOptions, useStageOptions } from "@/components/StageOptions";
 import { diarizationSummary, separationSummary, speakersText, stageModelText, translationSummary } from "@/lib/stageSummary";
 import { envDesc } from "@/lib/settingDesc";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -679,6 +679,10 @@ export default function Transcribe() {
   const [translateExclNotice, setTranslateExclNotice] = useState<"whisper" | "t2t" | null>(null);
   // undefined = the server's default (request-default-settings `separate_bgm`).
   const [separateBgm, setSeparateBgm] = useState<boolean | undefined>(() => settings.transcribe?.separateBgm);
+  // Each stage's folded settings: the gear beside its switch and the panel share one state.
+  const bgmOptions = useStageOptions();
+  const diarizeOptions = useStageOptions();
+  const translationOptions = useStageOptions();
   // Per-RUN decode overrides layered over the Backend's stored defaults —
   // deliberately not persisted: this is "for this file, try beam 5", not a
   // settings edit (those live on the Backend / Profile editors).
@@ -1743,6 +1747,7 @@ export default function Transcribe() {
                   expand={
                     effBgm && separationModels.length > 1 ? (
                       <StageOptions
+                        state={bgmOptions}
                         label="Music source separation"
                         summary={separationSummary(stageModelText(separationModel, defaultSeparationName))}
                         changed={separationModel !== ""}
@@ -1763,16 +1768,19 @@ export default function Transcribe() {
                     ) : undefined
                   }
                 >
-                  <StageSwitch
-                    value={separateBgm}
-                    serverDefault={decodeDefaults?.separate_bgm}
-                    disabled={!bgmAvailable}
-                    ariaLabel="Music source separation"
-                    onChange={(v) => {
-                      setSeparateBgm(v);
-                      persistOptions({ separateBgm: v });
-                    }}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    {effBgm && separationModels.length > 1 && <StageGear state={bgmOptions} label="Music source separation" />}
+                    <StageSwitch
+                      value={separateBgm}
+                      serverDefault={decodeDefaults?.separate_bgm}
+                      disabled={!bgmAvailable}
+                      ariaLabel="Music source separation"
+                      onChange={(v) => {
+                        setSeparateBgm(v);
+                        persistOptions({ separateBgm: v });
+                      }}
+                    />
+                  </div>
                 </SettingRow>
               </div>
               <div className="relative">
@@ -1867,6 +1875,7 @@ export default function Transcribe() {
                   expand={
                     effDiarize ? (
                       <StageOptions
+                        state={diarizeOptions}
                         label="Speaker diarization"
                         summary={diarizationSummary(
                           speakersText(speakerMode, numSpeakers, minSpeakers, maxSpeakers),
@@ -1959,16 +1968,19 @@ export default function Transcribe() {
                     ) : undefined
                   }
                 >
-                  <StageSwitch
-                    value={diarize}
-                    serverDefault={decodeDefaults?.diarize}
-                    disabled={!diarAvailable}
-                    ariaLabel="Speaker diarization"
-                    onChange={(v) => {
-                      setDiarize(v);
-                      persistOptions({ diarize: v });
-                    }}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    {effDiarize && <StageGear state={diarizeOptions} label="Speaker diarization" />}
+                    <StageSwitch
+                      value={diarize}
+                      serverDefault={decodeDefaults?.diarize}
+                      disabled={!diarAvailable}
+                      ariaLabel="Speaker diarization"
+                      onChange={(v) => {
+                        setDiarize(v);
+                        persistOptions({ diarize: v });
+                      }}
+                    />
+                  </div>
                 </SettingRow>
               </div>
               {translationAvailable && (
@@ -1984,6 +1996,7 @@ export default function Transcribe() {
                     expand={
                       translateTo.length > 0 ? (
                         <StageOptions
+                          state={translationOptions}
                           label="Translation"
                           summary={translationSummary(
                             siteChips?.targets ?? translateTo,
@@ -2050,40 +2063,43 @@ export default function Transcribe() {
                       ) : undefined
                     }
                   >
-                    <Toggle
-                      checked={translateTo.length > 0}
-                      ariaLabel="Translation"
-                      onChange={(v) => {
-                        if (v) {
-                          // Seed: Backend Translation defaults → the caller's
-                          // server-side default → English; never the known
-                          // source (en→en would be a no-op stage).
-                          const src = language !== "auto" ? language : undefined;
-                          const seed = (
-                            backend?.translationOverrides?.translateTo?.length
-                              ? backend.translationOverrides.translateTo
-                              : caps?.translate_to_default?.length
-                                ? caps.translate_to_default
-                                : ["en"]
-                          ).filter((c) => c !== src);
-                          // Within the server's target cap, as the picker is.
-                          const next = (seed.length ? seed : [src === "en" ? "de" : "en"]).slice(0, maxTranslationTargets(caps));
-                          setTranslateTo(next);
-                          if (translate) {
-                            setTranslate(false);
-                            setTranslateExclNotice("whisper");
-                            persistOptions({ translateTo: next, translate: false });
+                    <div className="flex items-center gap-1.5">
+                      {translateTo.length > 0 && <StageGear state={translationOptions} label="Translation" />}
+                      <Toggle
+                        checked={translateTo.length > 0}
+                        ariaLabel="Translation"
+                        onChange={(v) => {
+                          if (v) {
+                            // Seed: Backend Translation defaults → the caller's
+                            // server-side default → English; never the known
+                            // source (en→en would be a no-op stage).
+                            const src = language !== "auto" ? language : undefined;
+                            const seed = (
+                              backend?.translationOverrides?.translateTo?.length
+                                ? backend.translationOverrides.translateTo
+                                : caps?.translate_to_default?.length
+                                  ? caps.translate_to_default
+                                  : ["en"]
+                            ).filter((c) => c !== src);
+                            // Within the server's target cap, as the picker is.
+                            const next = (seed.length ? seed : [src === "en" ? "de" : "en"]).slice(0, maxTranslationTargets(caps));
+                            setTranslateTo(next);
+                            if (translate) {
+                              setTranslate(false);
+                              setTranslateExclNotice("whisper");
+                              persistOptions({ translateTo: next, translate: false });
+                            } else {
+                              setTranslateExclNotice(null);
+                              persistOptions({ translateTo: next });
+                            }
                           } else {
+                            setTranslateTo([]);
                             setTranslateExclNotice(null);
-                            persistOptions({ translateTo: next });
+                            persistOptions({ translateTo: [] });
                           }
-                        } else {
-                          setTranslateTo([]);
-                          setTranslateExclNotice(null);
-                          persistOptions({ translateTo: [] });
-                        }
-                      }}
-                    />
+                        }}
+                      />
+                    </div>
                   </SettingRow>
                   {translateExclNotice === "t2t" && (
                     <p className="-mt-2 pb-3 text-[12px] text-warn">
