@@ -7,7 +7,7 @@
 // and edit state survive every layout switch.
 
 import {
-  memo, useCallback, useEffect, useMemo, useRef, useState,
+  memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
 } from "react";
 import {
   ArrowDownToLine, BookOpen, Check, Copy, Download, ExternalLink, Maximize2,
@@ -88,6 +88,18 @@ const TRANSCRIPT_PREVIEW_CHARS = 50_000;
  *  disclosed in a footer line. Unlike the character preview it cannot be lifted: the
  *  un-capped render is exactly the stall it guards. Copy and exports carry everything. */
 const MAX_SEGMENT_ROWS = 5_000;
+
+/** The nearest ancestor that actually scrolls — the page scroller (`<main>`)
+ *  around the stacked card; null where nothing above scrolls (studio, focus). */
+function scrollParentOf(el: HTMLElement | null): HTMLElement | null {
+  for (let p = el?.parentElement ?? null; p; p = p.parentElement) {
+    if (p.scrollHeight > p.clientHeight + 1) {
+      const oy = getComputedStyle(p).overflowY;
+      if (oy === "auto" || oy === "scroll") return p;
+    }
+  }
+  return null;
+}
 
 /** Chip styling from a speaker's CSS color (a --spk-N token, so it follows
  *  the light/dark theme): readable text, a soft fill, and a solid dot. */
@@ -653,20 +665,8 @@ export function TranscriptViewer({
   const toggleFocus = useCallback(() => {
     setFocus((v) => {
       if (!v) {
-        preFocusScroll.current = null;
-        for (
-          let p = toolbarRef.current?.parentElement ?? null;
-          p;
-          p = p.parentElement
-        ) {
-          if (p.scrollHeight > p.clientHeight + 1) {
-            const oy = getComputedStyle(p).overflowY;
-            if (oy === "auto" || oy === "scroll") {
-              preFocusScroll.current = { el: p, top: p.scrollTop };
-              break;
-            }
-          }
-        }
+        const p = scrollParentOf(toolbarRef.current);
+        preFocusScroll.current = p ? { el: p, top: p.scrollTop } : null;
       }
       return !v;
     });
@@ -1557,6 +1557,56 @@ export function TranscriptViewer({
     // re-measure on each.
   }, [fill, focus, mode, view, showFullText, hasSegments, result, showTranslate, visLangsKey, showTs, showNames, colorize]);
 
+  // A mode switch swaps what sits under the toolbar (the list ↔ the export
+  // panel) while the page keeps its scrollTop. With the page scrolled into
+  // the card the toolbar is stuck, so the new content's top landed hidden
+  // under it (Export opened mid-panel; Read came back mid-list). When the
+  // content's top isn't in view, bring the card's top to the scroller's top —
+  // the toolbar, then as much of the content as fits. Coming back from
+  // Export the list is a fresh node at scrollTop 0: re-centre the active row
+  // in it, box only. Layout effect + instant: the content swaps in one frame,
+  // so the position lands in that same frame (nothing to ease, nothing for
+  // follow to fight — follow is idle in Export and re-checks after this).
+  const prevModeRef = useRef(mode);
+  useLayoutEffect(() => {
+    const was = prevModeRef.current;
+    prevModeRef.current = mode;
+    if (was === mode) return;
+    const bar = toolbarRef.current;
+    const card = bar?.parentElement;
+    if (!bar || !card) return;
+    const box = transcriptBoxRef.current;
+    if (was === "export" && box && activeSegIdx >= 0) {
+      const row = box.querySelector<HTMLElement>(`#seg-row-${activeSegIdx}`);
+      if (row) {
+        box.scrollTop +=
+          row.getBoundingClientRect().top -
+          box.getBoundingClientRect().top -
+          (box.clientHeight - row.offsetHeight) / 2;
+      }
+    }
+    if (fill || focus) return; // only the box/panel scrolls there
+    // The toolbar's next sibling IS the mode's content: the export panel in
+    // Export (TranscriptExport renders nothing while closed), else the list.
+    const content = bar.nextElementSibling;
+    const page = scrollParentOf(card);
+    if (!content || !page) return;
+    const pageRect = page.getBoundingClientRect();
+    const top = content.getBoundingClientRect().top;
+    const visBottom = Math.min(pageRect.bottom, window.innerHeight);
+    // Hidden under the stuck toolbar, or under ~a box title from the bottom.
+    if (top >= bar.getBoundingClientRect().bottom - 1 && top <= visBottom - 120) return;
+    page.scrollTop = Math.max(
+      0,
+      Math.min(
+        page.scrollTop + card.getBoundingClientRect().top - pageRect.top,
+        page.scrollHeight - page.clientHeight,
+      ),
+    );
+    // activeSegIdx is read at switch time only — the row to land on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode]);
+
   // Follow: keep the active row centred while playing. Primarily by scrolling
   // the transcript BOX (its own scroll container); only when the box alone
   // cannot reach the row — a box edge scrolled out of the page viewport — a
@@ -1567,8 +1617,9 @@ export function TranscriptViewer({
   const followAnimRef = useRef<number | null>(null);
   useEffect(() => {
     // Not while editing: the highlight is not drawn in Edit mode, and a scroll on every
-    // segment boundary would pull the transcript out from under the caret.
-    if (!follow || !playing || editMode || activeSegIdx < 0) return;
+    // segment boundary would pull the transcript out from under the caret. Not in
+    // Export either: the list isn't there, and playback (Space) keeps running.
+    if (!follow || !playing || editMode || !reading || activeSegIdx < 0) return;
     const box = transcriptBoxRef.current;
     const row = document.getElementById(`seg-row-${activeSegIdx}`);
     if (!box || !row) return;
@@ -1613,15 +1664,8 @@ export function TranscriptViewer({
     );
     const revealBottom = Math.max(0, boxRect.bottom - window.innerHeight);
     const pageShift = Math.max(-revealBottom, Math.min(shortfall, revealTop));
-    const page = (() => {
-      for (let p = box.parentElement; p; p = p.parentElement) {
-        if (p.scrollHeight > p.clientHeight + 1) {
-          const oy = getComputedStyle(p).overflowY;
-          if (oy === "auto" || oy === "scroll") return p;
-        }
-      }
-      return (document.scrollingElement as HTMLElement | null) ?? null;
-    })();
+    const page =
+      scrollParentOf(box) ?? ((document.scrollingElement as HTMLElement | null) ?? null);
     const pageFrom = page ? page.scrollTop : 0;
     const pageTarget = page
       ? Math.max(
@@ -1659,7 +1703,7 @@ export function TranscriptViewer({
         followAnimRef.current = null;
       }
     };
-  }, [activeSegIdx, follow, playing, editMode]);
+  }, [activeSegIdx, follow, playing, editMode, reading]);
   // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
   // re-arms); scrolling anywhere else on the page leaves it armed — a stray
   // tick over the sidebar used to kill it. Listener-level, not onScroll:

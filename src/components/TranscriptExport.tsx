@@ -3,7 +3,7 @@
 // it stays mounted with the viewer (hidden while closed), so its picks and a
 // running media export survive closing the panel.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Circle, Download, Minus, PanelBottom, PanelRight, TriangleAlert } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { effectiveServerUrl } from "@/lib/backends";
@@ -500,6 +500,26 @@ export function TranscriptExport({
   // Clear a still-pending confirmation timer if the panel unmounts mid-window.
   useEffect(() => () => window.clearTimeout(saveTimer.current), []);
 
+  // The panel's width bands (two columns from 860 px, Tracks beside Media
+  // from 560 px), MEASURED rather than CSS container queries: WebKit(GTK)
+  // first lays a query container out with its content unsized, and the page
+  // scroller clamps its scrollTop on that collapsed pass — opening Export or
+  // expanding the preview yanked the page up until the panel's top sat at
+  // the bottom of the window. Measured before paint; kept while closed.
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const [panelW, setPanelW] = useState(0);
+  useLayoutEffect(() => {
+    const el = panelRef.current;
+    if (!open || !el) return;
+    const measure = () => setPanelW(el.clientWidth);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [open]);
+  const twoCol = panelW >= 860;
+
   if (!open) return null;
 
   const plan = exportPlanNow();
@@ -702,15 +722,16 @@ export function TranscriptExport({
 
   return (
     <div
+      ref={panelRef}
       className={cn(
-        "@container mb-4 flex flex-col gap-3.5",
+        "mb-4 flex flex-col gap-3.5",
         // The panel replaces the list: in the studio pane and focus mode it
         // is the part that scrolls.
         (fill || focus) && "min-h-0 flex-1 overflow-y-auto",
         focus && "mx-6 mt-3",
       )}
     >
-      <div className="grid items-start gap-3.5 @[860px]:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] @[860px]:gap-4">
+      <div className={cn("grid items-start", twoCol ? "grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)] gap-4" : "gap-3.5")}>
         <div className="flex min-w-0 flex-col gap-3.5">
           <div className={box}>
             <span className={boxTitle}>Format</span>
@@ -776,7 +797,7 @@ export function TranscriptExport({
           </div>
 
           {(tracksBox || media) && (
-            <div className={cn("grid gap-3.5", tracksBox && media && "@[560px]:grid-cols-2")}>
+            <div className={cn("grid gap-3.5", tracksBox && media && panelW >= 560 && "grid-cols-2")}>
               {tracksBox}
               {media}
             </div>
@@ -847,7 +868,7 @@ export function TranscriptExport({
           </div>
         </div>
 
-        <div className="flex min-w-0 flex-col gap-3.5 @[860px]:sticky @[860px]:top-3">
+        <div className={cn("flex min-w-0 flex-col gap-3.5", twoCol && "sticky top-3")}>
           <div className={cn(box, "gap-0.5")}>
             <div className="mb-1 flex items-center gap-3">
               <span className={boxTitle}>Summary</span>
