@@ -1,4 +1,6 @@
+/// <reference types="vitest/config" />
 import { defineConfig } from "vite";
+import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { fileURLToPath, URL } from "node:url";
@@ -24,6 +26,11 @@ export default defineConfig(async () => ({
     chunkSizeWarningLimit: 1000,
   },
 
+  // Agent worktrees live under .claude/worktrees — full repo copies whose tests would run twice.
+  test: {
+    exclude: [...configDefaults.exclude, ".claude/**"],
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
@@ -42,7 +49,7 @@ export default defineConfig(async () => ({
       : undefined,
     watch: {
       // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      ignored: ["**/src-tauri/**", "**/.claude/**"],
     },
   },
 }));
