@@ -17,6 +17,7 @@ import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { navKey } from "@/lib/listNav";
 import { useAnchoredRect } from "@/lib/useAnchoredRect";
+import { useOutsidePress } from "@/lib/useOutsidePress";
 
 export interface PickerSection<R> {
   /** "" = no header (pinned rows). */
@@ -214,19 +215,7 @@ export function ListPicker<R>({
     if (refocus) triggerRef.current?.focus();
     onClose?.();
   };
-  // Latest close for the outside-press listener, which is bound once per opening.
-  const closeRef = useRef(close);
-  closeRef.current = close;
-
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (!popRef.current?.contains(t) && !triggerRef.current?.contains(t)) closeRef.current(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  useOutsidePress([popRef, triggerRef], open, () => close(false));
 
   const pick = (r: R, index: number) => {
     setActive(index);

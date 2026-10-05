@@ -108,6 +108,7 @@ import {
 import { homeTargetProfile } from "@/lib/dictation";
 import { ownProp } from "@/lib/own";
 import { safeDisplayText } from "@/lib/sanitize";
+import { useOutsidePress } from "@/lib/useOutsidePress";
 import { BackendChips } from "@/components/BackendChips";
 import type { UsageKind, UsageKinds, UsageSeriesPoint, UsageStageKey, UsageStats, UsageStreaks } from "@/lib/types";
 
@@ -1411,12 +1412,7 @@ function FilterBar({
   const [open, setOpen] = useState(false);
   // Un-pinning shows the full bar inline again; the overlay has nothing left to do.
   useEffect(() => { if (!stuck) setOpen(false); }, [stuck]);
-  useEffect(() => {
-    if (!open) return;
-    const onDown = (e: MouseEvent) => { if (!barRef.current?.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [open]);
+  useOutsidePress([barRef], open, () => setOpen(false));
   const win = resolveWindow(query, today, firstDay);
   const pickRange = (r: RangePreset) => {
     if (r === "custom") {

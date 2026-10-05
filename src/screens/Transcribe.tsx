@@ -41,6 +41,7 @@ import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
+import { useOutsidePress } from "@/lib/useOutsidePress";
 import {
   NO_OVERRIDE_PROFILE,
   type BatchProgress, type DecodeOverrides, type TranscribeOptions, type VideoProgress,
@@ -227,14 +228,7 @@ function RungPicker({
   const words = tierWords(rungs.length);
   const idx = Math.max(0, chosen ? rungs.indexOf(chosen) : 0);
   const cur = rungs[idx];
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  useOutsidePress([ref], open, () => setOpen(false));
   const fmt = { bytes: fmtBytes, bitrate: fmtBitrate };
   const spec = (r: VideoRung) =>
     r.note && r.label ? r.label.replace(r.note, "").trim() : r.label ?? "";

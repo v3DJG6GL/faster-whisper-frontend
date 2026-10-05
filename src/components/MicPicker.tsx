@@ -14,6 +14,7 @@ import { Badge, FieldTrigger, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { buildMicView, isSelectable, type MicRow, type SelectableRow } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
+import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { MicInventory } from "@/lib/types";
 
 const LABEL_MAX = 80;
@@ -50,14 +51,7 @@ export function MicPicker({
     choices.findIndex((r) => r.value === value),
   );
 
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e: MouseEvent) => {
-      if (!rootRef.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
+  useOutsidePress([rootRef], open, () => setOpen(false));
 
   // Opening focuses the list on the current choice.
   useEffect(() => {
