@@ -38,7 +38,7 @@ pub fn save(dir: &Path, state: &serde_json::Value) -> anyhow::Result<()> {
     let text = serde_json::to_string(state)?;
     // Don't leave the tmp behind when the write OR the rename fails — see `config::save`. The
     // tmp here holds a partial copy of the whole merge-base snapshot.
-    if let Err(e) = super::write_private(&tmp, &text) {
+    if let Err(e) = crate::config::write_private(&tmp, &text) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.into());
     }

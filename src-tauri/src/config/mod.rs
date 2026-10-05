@@ -9,10 +9,6 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-pub mod jobs_ledger;
-pub mod sync_state;
-pub mod usage_queue;
-
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 
 /// Write a file only the owner can read (Unix `0600`; a no-op refinement on Windows, where the
@@ -730,7 +726,7 @@ pub struct AppSettings {
     /// round-trips it, and reads exactly THREE keys — `historyRetentionDays`
     /// (`transcribe_retention_days`), `dictationRetentionDays`
     /// (`dictation_retention_days`) and `keepDictationHistory`
-    /// (`keep_dictation_history`) — for the retention sweeps in transcripts.rs.
+    /// (`keep_dictation_history`) — for the retention sweeps in store/transcripts.rs.
     /// Renaming any of them on the TS side silently changes retention. Was silently
     /// DROPPED before this field existed (serde ignored the unknown key), so
     /// these preferences never survived a restart. `#[serde(default, skip…)]`

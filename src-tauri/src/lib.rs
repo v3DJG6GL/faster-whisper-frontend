@@ -19,7 +19,7 @@ mod quickadd;
 mod remote_desktop;
 mod session;
 mod sound;
-mod transcripts;
+mod store;
 mod transport;
 mod tray;
 mod triggers;
@@ -187,7 +187,7 @@ pub fn run() {
             // to a machine that dictated for months and only just enabled it.
             commands::apply_recordings_retention(app.handle(), &cfg);
             // Same once-per-launch sweep for the transcription history.
-            transcripts::apply_transcripts_retention(app.handle(), &cfg);
+            store::transcripts::apply_transcripts_retention(app.handle(), &cfg);
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start. Known to have
             // no tray: minimize instead. (A Linux tray still connecting counts as present; if
@@ -241,14 +241,14 @@ pub fn run() {
             commands::save_text_file,    // transcript exports (Transcribe screen)
             commands::read_text_file,    // subtitle/text sources for translate-only runs
             commands::reveal_in_folder,  // show a saved export in the file manager
-            transcripts::save_transcript_record, // transcription history (local store)
-            transcripts::list_transcript_records,
-            transcripts::delete_transcript_record,
-            transcripts::save_transcript_media,
-            transcripts::transcript_store_stats,
-            transcripts::delete_all_dictations,
-            transcripts::clear_file_transcriptions,
-            transcripts::remove_transcript_media,
+            store::transcripts::save_transcript_record, // transcription history (local store)
+            store::transcripts::list_transcript_records,
+            store::transcripts::delete_transcript_record,
+            store::transcripts::save_transcript_media,
+            store::transcripts::transcript_store_stats,
+            store::transcripts::delete_all_dictations,
+            store::transcripts::clear_file_transcriptions,
+            store::transcripts::remove_transcript_media,
             commands::read_media_file, // playback blob fallback (Transcribe screen)
             commands::decode_media_file, // playback codec fallback (webview can't do AAC)
             commands::open_source_url, // "Open link" on a URL transcript

@@ -151,7 +151,7 @@ fn rewrite_media_paths(app: &AppHandle, map: &[(String, String)]) {
     }
     let lookup: std::collections::HashMap<&str, &str> =
         map.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-    crate::transcripts::rewrite_media_paths(app, &lookup);
+    crate::store::transcripts::rewrite_media_paths(app, &lookup);
 }
 
 /// One-time (idempotent) migration into the single-base layout: legacy saved
@@ -209,7 +209,7 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         }
     }
     // Legacy media store: split by record kind (url → links, else files).
-    if let Ok(legacy_media) = crate::transcripts::legacy_media_dir(app) {
+    if let Ok(legacy_media) = crate::store::transcripts::legacy_media_dir(app) {
         if let Ok(entries) = std::fs::read_dir(&legacy_media) {
             for entry in entries.flatten() {
                 let src = entry.path();
@@ -224,7 +224,9 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
                     .and_then(|s| s.to_str())
                     .unwrap_or_default()
                     .to_owned();
-                let sub = if crate::transcripts::record_kind(app, &stem).as_deref() == Some("url") {
+                let sub = if crate::store::transcripts::record_kind(app, &stem).as_deref()
+                    == Some("url")
+                {
                     "links"
                 } else {
                     "files"
@@ -259,10 +261,10 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     // no records skips the scan entirely and only stamps; the expensive read+parse is reserved
     // for a base that actually has history to heal.
     let stamp = base.join(".heal-v1");
-    if !stamp.exists() && map.is_empty() && !crate::transcripts::has_any_records(app) {
+    if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
         let _ = std::fs::write(&stamp, b"");
     } else if !map.is_empty() || !stamp.exists() {
-        crate::transcripts::heal_media_paths(app, &base);
+        crate::store::transcripts::heal_media_paths(app, &base);
         let _ = std::fs::write(&stamp, b"");
     }
 }
@@ -395,7 +397,7 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart(&app, config.settings.general.open_at_login);
     apply_recordings_retention(&app, &config);
-    crate::transcripts::apply_transcripts_retention(&app, &config);
+    crate::store::transcripts::apply_transcripts_retention(&app, &config);
     // Log level reload / session-file move / prune — so Settings changes
     // apply live, not at the next restart.
     crate::logging::apply_log_settings(&app, &config);
@@ -667,18 +669,18 @@ async fn fetch_link_media(
     audio_base: Option<String>,
     video: bool,
 ) -> Result<Option<String>, String> {
-    if !crate::transcripts::valid_id(&record_id) {
+    if !crate::store::transcripts::valid_id(&record_id) {
         return Err("malformed record id".into());
     }
     let key = resolve_key(api_key, backend_id);
     let (dir, timeout) = if video {
         (
-            crate::transcripts::video_media_dir(app, audio_base)?,
+            crate::store::transcripts::video_media_dir(app, audio_base)?,
             transport::batch::FILE_TRANSCRIBE_TIMEOUT * 4,
         )
     } else {
         (
-            crate::transcripts::links_media_dir(app, audio_base)?,
+            crate::store::transcripts::links_media_dir(app, audio_base)?,
             transport::batch::FILE_TRANSCRIBE_TIMEOUT,
         )
     };
@@ -688,7 +690,7 @@ async fn fetch_link_media(
         &media_id,
         &dir,
         &record_id,
-        crate::transcripts::MAX_MEDIA_BYTES,
+        crate::store::transcripts::MAX_MEDIA_BYTES,
         timeout,
     )
     .await
@@ -915,7 +917,7 @@ pub async fn package_media(
             if !meta.is_file() {
                 return Err("the video is not a file".into());
             }
-            if meta.len() > max_upload_bytes.unwrap_or(crate::transcripts::MAX_MEDIA_BYTES) {
+            if meta.len() > max_upload_bytes.unwrap_or(crate::store::transcripts::MAX_MEDIA_BYTES) {
                 return Ok(PackageOutcome::err_pub(
                     "too_large",
                     "the video is larger than the server's upload limit",
@@ -958,7 +960,7 @@ pub async fn package_media(
             },
         );
     });
-    let max_upload = max_upload_bytes.unwrap_or(crate::transcripts::MAX_MEDIA_BYTES);
+    let max_upload = max_upload_bytes.unwrap_or(crate::store::transcripts::MAX_MEDIA_BYTES);
     let dest_for_cleanup = dest.clone();
     let fut = async {
         let mut uploaded_expiry: Option<i64> = None;
@@ -1006,7 +1008,7 @@ pub async fn package_media(
             audio_label.as_deref(),
             &filename,
             &dest,
-            crate::transcripts::MAX_MEDIA_BYTES,
+            crate::store::transcripts::MAX_MEDIA_BYTES,
             progress.clone(),
         )
         .await?;
@@ -1061,7 +1063,7 @@ pub async fn copy_media_to(
     record_id: String,
     audio_base: Option<String>,
 ) -> Result<u64, String> {
-    if !crate::transcripts::valid_id(&record_id) {
+    if !crate::store::transcripts::valid_id(&record_id) {
         return Err("malformed record id".into());
     }
     let src_path = PathBuf::from(&src);
@@ -1072,7 +1074,7 @@ pub async fn copy_media_to(
     if !src_real.is_file() {
         return Err("the media file is missing".into());
     }
-    let owned = crate::transcripts::record_media_paths(&app, &record_id)
+    let owned = crate::store::transcripts::record_media_paths(&app, &record_id)
         .iter()
         .any(|p| p.canonicalize().map(|c| c == src_real).unwrap_or(false));
     let in_store = resolve_audio_base(&app, audio_base.clone())
@@ -1334,13 +1336,13 @@ pub fn load_usage_outcomes(app: AppHandle) -> Option<serde_json::Value> {
     app.path()
         .app_data_dir()
         .ok()
-        .and_then(|d| config::usage_queue::load(&d))
+        .and_then(|d| crate::store::usage_queue::load(&d))
 }
 
 #[tauri::command]
 pub fn save_usage_outcomes(app: AppHandle, queue: serde_json::Value) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    config::usage_queue::save(&dir, &queue).map_err(|e| e.to_string())
+    crate::store::usage_queue::save(&dir, &queue).map_err(|e| e.to_string())
 }
 
 /// The on-disk in-flight jobs ledger (`<app_data_dir>/jobs-ledger.json`): which server
@@ -1351,13 +1353,13 @@ pub fn load_jobs_ledger(app: AppHandle) -> Option<serde_json::Value> {
     app.path()
         .app_data_dir()
         .ok()
-        .and_then(|d| config::jobs_ledger::load(&d))
+        .and_then(|d| crate::store::jobs_ledger::load(&d))
 }
 
 #[tauri::command]
 pub fn save_jobs_ledger(app: AppHandle, ledger: serde_json::Value) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    config::jobs_ledger::save(&dir, &ledger).map_err(|e| e.to_string())
+    crate::store::jobs_ledger::save(&dir, &ledger).map_err(|e| e.to_string())
 }
 
 // ── P30: settings export/import + server sync ──────────────────────────────
@@ -1407,20 +1409,20 @@ pub async fn sync_delete(
 pub fn load_sync_state(app: AppHandle) -> Option<serde_json::Value> {
     config_dir(&app)
         .ok()
-        .and_then(|d| config::sync_state::load(&d))
+        .and_then(|d| crate::store::sync_state::load(&d))
 }
 
 #[tauri::command]
 pub fn save_sync_state(app: AppHandle, state: serde_json::Value) -> Result<(), String> {
     let dir = config_dir(&app)?;
-    config::sync_state::save(&dir, &state).map_err(|e| e.to_string())
+    crate::store::sync_state::save(&dir, &state).map_err(|e| e.to_string())
 }
 
 /// This machine's sync identity (persistent uuid + hostname + platform).
 #[tauri::command]
-pub fn sync_device_info(app: AppHandle) -> Result<config::sync_state::DeviceInfo, String> {
+pub fn sync_device_info(app: AppHandle) -> Result<crate::store::sync_state::DeviceInfo, String> {
     let dir = config_dir(&app)?;
-    Ok(config::sync_state::device_info(&dir))
+    Ok(crate::store::sync_state::device_info(&dir))
 }
 
 /// Bulk keyring read for export/sync composition: the API keys of the given
