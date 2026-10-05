@@ -144,6 +144,12 @@ memfd = "0.6"
 atspi = { version = "0.30", default-features = false, features = ["proxies", "wrappers", "tokio", "zbus"] }
 atspi-connection = { version = "0.14", default-features = false, features = ["wrappers"] }
 
+# The tray icon as a StatusNotifierItem over D-Bus. Tauri's Linux tray is a libappindicator item,
+# which reports no clicks and opens the menu on any button, so a left click could never open the
+# window; ksni gets `Activate` (left click) and `SecondaryActivate` (middle click) from the shell.
+# Rides the zbus 5 + tokio already in the tree (atspi) — keep it on the same zbus major.
+ksni = "0.3.6"
+
 # Windows-only: the hybrid hotkey backend (win_hotkeys.rs — raw input + a
 # re-armed observation hook, so modifier-only/L-R/N-key chords work and survive a
 # focused RDP client's keyboard capture) and the foreground-app tracker

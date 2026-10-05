@@ -96,13 +96,21 @@ pub fn run() {
         // their stop/cancel through this webview), stranding the dictation until a force-quit. So
         // we intercept the close, keep the window (and its listeners) alive, and just hide it —
         // reachable again via the tray "Show window"; truly quit via the tray "Quit". Other windows
-        // (the overlay chip) are left to close normally.
+        // (the overlay chip) are left to close normally. With no tray to come back through (Linux
+        // without a StatusNotifierWatcher), closing main quits instead — the same clean exit as the
+        // tray "Quit" — rather than hiding the window out of reach.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 // main: keep the dictation state machine + listeners alive (see above).
                 // quickadd: keep it prewarmed so the next summon is instant.
                 if matches!(window.label(), "main" | "quickadd" | "langpick") {
                     api.prevent_close();
+                    if window.label() == "main" && tray::tray_missing() {
+                        use tauri::Manager;
+                        crate::session::cleanup_for_exit(window.app_handle());
+                        window.app_handle().exit(0);
+                        return;
+                    }
                     let _ = window.hide();
                     winvis::notify(window, window.label(), false);
                 }
@@ -181,12 +189,18 @@ pub fn run() {
             // Same once-per-launch sweep for the transcription history.
             transcripts::apply_transcripts_retention(app.handle(), &cfg);
             // Start hidden to the tray if requested (reachable via the tray menu) —
-            // but only on login launches (--autostart), never on a manual start.
+            // but only on login launches (--autostart), never on a manual start. Known to have
+            // no tray: minimize instead. (A Linux tray still connecting counts as present; if
+            // it then fails, the tray reveals the hidden window minimized itself.)
             if cfg.settings.general.start_minimized
                 && std::env::args_os().any(|a| a == "--autostart")
             {
                 if let Some(win) = app.get_webview_window("main") {
-                    let _ = win.hide();
+                    if tray::tray_missing() {
+                        let _ = win.minimize();
+                    } else {
+                        let _ = win.hide();
+                    }
                 }
             }
             Ok(())
