@@ -1341,22 +1341,28 @@ export default function Transcribe() {
           </button>
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={choose}
+        // The dashed box is only the drop target (the window-level drag-drop
+        // listener drives dragOver); just the icon + title open the picker.
+        <div
           className={cn(
-            "ring-signal mt-5 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors hover:border-faint",
+            "mt-5 grid w-full place-items-center rounded-card border border-dashed border-line-strong bg-surface/60 px-8 py-12 text-center transition-colors",
             dragOver && "border-accent bg-accent-soft/30",
           )}
         >
-          <div className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint">
-            <UploadCloud className="size-6" />
-          </div>
-          <div className="mt-4 text-[14px] text-text">
-            {dragOver ? "Drop to add" : "Choose or drop files to transcribe"}
-          </div>
-          <div className="mt-1 text-[12.5px] text-dim">Audio, video — or subtitles/text to translate (srt, vtt, lrc, txt, json)</div>
-        </button>
+          <button
+            type="button"
+            onClick={choose}
+            className="ring-signal group flex cursor-pointer flex-col items-center rounded-xl px-3 py-1.5"
+          >
+            <span className="grid size-12 place-items-center rounded-2xl bg-surface-2 text-faint transition-colors group-hover:bg-accent-soft group-hover:text-accent group-focus-visible:bg-accent-soft group-focus-visible:text-accent">
+              <UploadCloud aria-hidden className="size-6" />
+            </span>
+            <span className="mt-4 text-[14px] text-text underline-offset-4 transition-colors group-hover:text-accent group-hover:underline group-focus-visible:text-accent group-focus-visible:underline">
+              {dragOver ? "Drop to add" : "Choose or drop files to transcribe"}
+            </span>
+          </button>
+          <div className="mt-0.5 text-[12.5px] text-dim">Audio, video — or subtitles/text to translate (srt, vtt, lrc, txt, json)</div>
+        </div>
       )}
 
       {urlAvailable && (
