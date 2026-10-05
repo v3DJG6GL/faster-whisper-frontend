@@ -164,7 +164,7 @@ mod native {
 
 #[cfg(target_os = "linux")]
 mod sni {
-    use super::{menu_entries, run_menu_action, show_main, toggle_main, MenuEntry, TRAY_TITLE};
+    use super::{menu_entries, run_menu_action, toggle_main, MenuEntry, TRAY_TITLE};
     use ksni::{menu::StandardItem, Handle, Icon, MenuItem, ToolTip, TrayMethods};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Mutex, OnceLock};
@@ -227,9 +227,9 @@ mod sni {
             toggle_main(&self.app);
         }
 
-        /// Middle click.
+        /// Middle click: toggles the window too.
         fn secondary_activate(&mut self, _x: i32, _y: i32) {
-            show_main(&self.app);
+            toggle_main(&self.app);
         }
 
         fn menu(&self) -> Vec<MenuItem<Self>> {
