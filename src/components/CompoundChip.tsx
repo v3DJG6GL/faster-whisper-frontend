@@ -1,5 +1,6 @@
 // One language as a compound chip (D86/D88): its code segment, then one part per source, each
-// in its source's colour while on and "+ …" in the faint tone while off. Shared by the
+// in its source's colour while on and in the faint tone while off (same text either way, so
+// a click never resizes the chip). Shared by the
 // Translate-into chips and the export's Tracks chips so a source reads the same in both.
 
 import type { ButtonHTMLAttributes, ReactNode } from "react";

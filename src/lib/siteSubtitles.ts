@@ -299,10 +299,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     const [mtB, ...exBs] = langSources(code).badges;
     const exB = exBs.find((b) => !b.hoh) ?? exBs[0];
     const mtOn = mtB.state === "active";
-    // Fixed order — machine translation, the site's — so nothing jumps; off parts read "+ …" (v30).
+    // Fixed order — machine translation, the site's — so nothing jumps; off parts only go faint (no "+", which resized the chip).
     const parts: ChipPart[] = [{
       kind: "mt", on: mtOn, key: mtB.key!,
-      text: mtOn ? MT_WORD : `+ ${MT_WORD}`,
+      text: MT_WORD,
       title: mtOn ? `Stop machine-translating into ${name}` : `Machine-translate into ${name} as well`,
     }];
     if (exB) {
@@ -310,7 +310,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       const word = exB.text;
       parts.push({
         kind: exB.kind, hoh: exB.hoh, on: exOn, key: exB.key!,
-        text: exOn ? word : `+ ${word}`,
+        text: word,
         title: exOn ? `Leave out the ${word} ${name} subtitles` : `Add the ${word} ${name} subtitles`,
       });
     }

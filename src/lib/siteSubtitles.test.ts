@@ -53,7 +53,7 @@ describe("presets (v18, v31, v32)", () => {
     const inp = input({ targets: [] });
     const v = derive(inp, initialSiteState([]));
     expect(v.chips.map((c) => c.code)).toEqual(["en", "fr", "it"]);
-    expect(v.chips[2].parts.map((p) => p.text)).toEqual(["+ Machine translation", "Site"]);
+    expect(v.chips[2].parts.map((p) => p.text)).toEqual(["Machine translation", "Site"]);
   });
   it("Prefer with an unknown spoken language behaves like Side by side: transcribe, candidates ride along", () => {
     const inp = input({ spoken: null, tracks: YT });
@@ -142,7 +142,7 @@ describe("rows and chips (v30, v34, v37)", () => {
     const inp = input({ targets: ["en", "es"] });
     const v = derive(inp, initialSiteState(inp.targets));
     const en = v.chips.find((c) => c.code === "en")!;
-    expect(en.parts.map((p) => [p.kind, p.text])).toEqual([["mt", "+ Machine translation"], ["existing", "Site"]]);
+    expect(en.parts.map((p) => [p.kind, p.text])).toEqual([["mt", "Machine translation"], ["existing", "Site"]]);
     const es = v.chips.find((c) => c.code === "es")!;
     expect(es.parts.map((p) => p.text)).toEqual(["Machine translation"]);
   });

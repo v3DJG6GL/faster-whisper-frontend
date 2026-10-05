@@ -129,7 +129,7 @@ export function ExportTrackChips({
           const pOn = chosen.includes(t);
           return {
             kind: sourceKind(info), hoh: info.hoh, on: pOn, key: t,
-            text: pOn ? word : `+ ${word}`,
+            text: word,
             title: `${pOn ? "Leave out" : "Add"} ${name} · ${word} — drag to reorder`,
           };
         });
