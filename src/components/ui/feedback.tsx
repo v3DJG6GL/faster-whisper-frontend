@@ -2,6 +2,7 @@ import { type ReactNode, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { AlertTriangle, Check, Info } from "lucide-react";
 import { cn } from "@/lib/cn";
+import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { routeParts } from "@/lib/routeParts";
 
 /* ── Badge ────────────────────────────────────────────────────────────── */
@@ -187,7 +188,10 @@ export function Toast({
 }
 
 /* ── Status dot ───────────────────────────────────────────────────────── */
-const DOT_BG: Record<string, string> = {
+// The dictation tones plus the generic ones. Typed so a tone added to DictationTone (the
+// sidebar hands `vis.tone` straight through) fails to compile until DOT_BG styles it.
+type StatusTone = DictationTone | "ok" | "warn" | "idle" | "accent";
+const DOT_BG: Record<StatusTone, string> = {
   ok: "bg-ok",
   warn: "bg-warn",
   rec: "bg-rec",
@@ -210,10 +214,7 @@ export function StatusDot({
   filled = true,
   title,
 }: {
-  // The dictation half of this union IS DictationTone — the sidebar hands `vis.tone`
-  // straight through, so a tone added there must exist here (and in DOT_BG) or the dot
-  // renders unstyled.
-  tone?: "ok" | "warn" | "rec" | "idle" | "faint" | "accent" | "armed" | "live" | "dim" | "think" | "translate";
+  tone?: StatusTone;
   pulse?: boolean;
   filled?: boolean;
   title?: string;

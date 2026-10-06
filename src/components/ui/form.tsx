@@ -412,6 +412,9 @@ export function Stepper({
       return;
     }
     onChangeRef.current(next);
+    // The resync effect skips a focused field, so follow the step here — else the blur commit
+    // would re-commit the pre-step text and undo an Arrow-key or −/+ step made while focused.
+    setText(String(next));
   };
   // Press-and-hold: one step immediately, then repeat after a short delay (held mouse/touch).
   const press = (d: number) => {
@@ -430,9 +433,13 @@ export function Stepper({
   useEffect(() => stopRepeat, []); // stop any running repeat on unmount
 
   const commit = () => {
-    // Focusing and leaving an inheriting field changes nothing: only a typed number overrides.
-    if (inheriting && text === String(value)) return;
     const n = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
+    // Focusing and leaving an inheriting field changes nothing, nor does emptying it or leaving
+    // a lone "-" / ".": only a typed number overrides.
+    if (inheriting && (text === String(value) || !Number.isFinite(n))) {
+      setText(String(value));
+      return;
+    }
     const next = Number.isFinite(n) ? round(clamp(n)) : value;
     onChange(next);
     setText(String(next));

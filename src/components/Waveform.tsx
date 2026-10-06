@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
+import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { PRIDE_RAINBOW_STOPS } from "@/lib/prideFlag";
 
 /**
@@ -65,11 +66,11 @@ export function Waveform({
   processing?: boolean;
   bars?: number;
   variant?: "bars" | "dots";
-  // Mirrors DictationTone minus "faint" (callers map that to "dim"): the chip and
-  // Home hand `dictationVisual().tone` straight through, so a tone added there must
-  // be renderable here or the bars fall back to amber "ready" beside a working dot.
+  // DictationTone minus "faint" (callers map that to "dim"): the chip and Home hand
+  // `dictationVisual().tone` straight through, so a tone added there must get a class
+  // below or the bars fall back to amber "ready" beside a working dot.
   // "armed" is the fixed amber state token (--c-armed), not the accent.
-  tone?: "armed" | "rec" | "dim" | "live" | "think" | "translate";
+  tone?: Exclude<DictationTone, "faint">;
   /** Reveal the Pride flag through the bars while hovered (see component note). */
   pride?: boolean;
   className?: string;

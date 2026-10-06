@@ -12,3 +12,11 @@ export function escapeText(s: string): string {
 export function unescapeText(s: string): string {
   return s.replace(/\\([\\nt])/g, (_, c: string) => (c === "n" ? "\n" : c === "t" ? "\t" : "\\"));
 }
+
+/** What a controlled escaped field shows: the text as typed (`draft`) while it still means the
+ *  stored `value`, so a half-typed escape such as a lone `\` isn't re-rendered doubled before the
+ *  `n` that completes it; otherwise (no draft, or the value changed from outside: a reset, a
+ *  maxLength cut) the escaped value. */
+export function escapedFieldText(draft: string | null, value: string): string {
+  return draft !== null && unescapeText(draft) === value ? draft : escapeText(value);
+}

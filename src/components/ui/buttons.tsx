@@ -328,21 +328,25 @@ export function CodeChip({
 
 /* ── FieldTrigger ─────────────────────────────────────────────────────── */
 /** A dropdown's closed face drawn as a form field: the current value and a chevron. `open`
- *  outlines it in the accent while its list is up; `sm` = a table row's compact field. */
+ *  outlines it in the accent while its list is up; `sm` = a table row's compact field;
+ *  `muted` dims an md value (a className can't: cn doesn't merge, and text-text wins). */
 export function FieldTrigger({
   open,
   size = "md",
+  muted,
   className,
   children,
   ...rest
-}: ComponentProps<"button"> & { open?: boolean; size?: "sm" | "md" }) {
+}: ComponentProps<"button"> & { open?: boolean; size?: "sm" | "md"; muted?: boolean }) {
   return (
     <button
       type="button"
       {...rest}
       className={cn(
         "ring-signal flex w-full items-center justify-between gap-2 border border-line bg-surface-2 text-left",
-        size === "md" ? "h-10 rounded-xl pl-3.5 pr-3 text-[13px] text-text" : "h-8 rounded-lg px-2.5 text-[12.5px] text-dim",
+        size === "md"
+          ? `h-10 rounded-xl pl-3.5 pr-3 text-[13px] ${muted ? "text-dim" : "text-text"}`
+          : "h-8 rounded-lg px-2.5 text-[12.5px] text-dim",
         open && "border-accent/55",
         rest.disabled && "cursor-not-allowed opacity-40",
         className,

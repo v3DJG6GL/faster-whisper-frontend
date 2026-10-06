@@ -19,7 +19,13 @@ export function useAnchoredRect(ref: RefObject<HTMLElement | null>, open: boolea
     const el = ref.current;
     if (!el) return;
     const r = el.getBoundingClientRect();
-    setRect({ left: r.left, top: r.top, bottom: r.bottom, width: r.width });
+    // Every scroll in the page lands here (capture phase), including scrolling inside the
+    // popover itself: keep the same object while the anchor hasn't moved, so nothing re-renders.
+    setRect((prev) =>
+      prev && prev.left === r.left && prev.top === r.top && prev.bottom === r.bottom && prev.width === r.width
+        ? prev
+        : { left: r.left, top: r.top, bottom: r.bottom, width: r.width },
+    );
   }, [ref]);
   useLayoutEffect(() => {
     if (!open) return;
