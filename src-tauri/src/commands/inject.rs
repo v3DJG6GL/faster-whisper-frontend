@@ -71,7 +71,8 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
         }
         // An error-abort recovery just put the abandoned transcript on the clipboard for the
         // user to paste manually. Restoring `prev` 400ms later would erase it — the same
-        // erasure the per-paste restore declines a few hundred lines below, on the one path
+        // erasure the per-paste restore declines in `inject::text::inject_text` (and
+        // `inject::paste`), on the one path
         // that guard cannot cover (it needs the job's epoch; this command has none). The
         // snapshot is consumed either way, so it cannot leak into a later session.
         if recovered_on_clipboard {
@@ -436,6 +437,28 @@ pub async fn inject_text(
         remote_desktop,
     )
     .await
+}
+
+/// Put a stop-mode transcript the session could not deliver on the clipboard for the user to paste
+/// manually, and say whether the write succeeded. Not `inject_text` with the clipboard method: that
+/// runs the own-window entry guard first and writes nothing while one of our windows holds focus —
+/// exactly when these recoveries fire, and the guard's reason (clobbering the clipboard for an
+/// insert the user cannot see land) does not apply to a recovery the user is told about. So no
+/// own-window guard, epoch check or modifier wait here; nothing is typed.
+#[tauri::command]
+pub async fn recover_to_clipboard(text: String) -> Result<bool, String> {
+    // Same sanitising as every injection path (see `inject_text`).
+    let text = crate::inject::sanitize_injected(&text);
+    if text.is_empty() {
+        return Ok(false);
+    }
+    let res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard_persistent(&text))
+        .await
+        .map_err(|e| e.to_string())?;
+    if let Err(e) = &res {
+        tracing::warn!("[inject] clipboard recovery failed: {e}");
+    }
+    Ok(res.is_ok())
 }
 
 /// Would "Auto" treat `app_id` as a remote-desktop client? For the per-app rule editor, which

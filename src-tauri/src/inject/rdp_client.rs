@@ -136,8 +136,9 @@ pub fn focus_is_remote_desktop_client() -> bool {
 /// Is focus on a remote-desktop / VDI client, by EITHER detector (they are only complete
 /// together): the window class (mstsc, and the RDP control hosted by RDCMan & co.) or the
 /// focused app id (VirtualBox, VMware, Citrix, AnyDesk… — clients whose window class says
-/// nothing). The class check runs first, being a few Win32 calls; `app_id` (a focus-snapshot
-/// read behind a lock) is called only when it misses.
+/// nothing). The class check runs first, being a few Win32 calls; `app_id` (the callers pass the
+/// live foreground app id: a process-image lookup on Windows, a snapshot read on Linux) is called
+/// only when it misses.
 pub fn focus_is_remote_desktop(app_id: impl FnOnce() -> Option<String>) -> bool {
     focus_is_remote_desktop_client() || app_id().is_some_and(|id| is_remote_desktop_app(&id))
 }

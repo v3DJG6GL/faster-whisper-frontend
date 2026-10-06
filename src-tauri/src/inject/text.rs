@@ -441,7 +441,9 @@ pub(crate) async fn inject_text(
                         _ if crate::inject::injection_cancelled(epoch) => {
                             tracing::info!("[inject] virtual keyboard: stopped by cancel")
                         }
-                        _ => tracing::info!("[inject] typed via virtual keyboard"),
+                        _ => tracing::info!(
+                            "[inject] virtual keyboard job finished (a preceding [vkbd] 'stopped' line means it was cut short)"
+                        ),
                     }
                     Ok(landed)
                 }
@@ -729,26 +731,12 @@ pub(crate) async fn inject_text(
         })
         .await
         .map_err(|e| e.to_string())?;
-        // The X11/Windows paste sink's LAST_PASTE_REMOTE record (the Wayland arm records its own
-        // right after its write). `OnClipboard`, and `Yes` outside a cancel, mean the transcript
-        // was written; `NothingWritten` means it was not. An Err, or a `Yes` from a cancel (which
-        // `paste` also returns when it bailed before the write), may or may not have written, so
-        // it may only ever record a REMOTE target — the safe side, which skips a restore rather
-        // than serving one over a fetch the remote has not made yet.
-        if is_paste && !recovery_text.is_empty() {
-            let cancelled = crate::inject::injection_cancelled(epoch);
-            match &x11_res {
-                Ok(crate::inject::Landed::OnClipboard) => {
-                    crate::inject::note_paste_target(remote_target)
-                }
-                Ok(crate::inject::Landed::Yes) if !cancelled => {
-                    crate::inject::note_paste_target(remote_target)
-                }
-                Ok(crate::inject::Landed::Yes) | Err(_) if remote_target => {
-                    crate::inject::note_paste_target(true)
-                }
-                _ => {}
-            }
+        // LAST_PASTE_REMOTE: the X11/Windows sink (`inject::paste`) records its own target at the
+        // write, as the Wayland arm does. This covers only an Err, which may or may not have
+        // written, so it may only ever record a REMOTE target — the safe side, which skips a
+        // restore rather than serving one over a fetch the remote has not made yet.
+        if is_paste && !recovery_text.is_empty() && remote_target && x11_res.is_err() {
+            crate::inject::note_paste_target(true);
         }
         x11_res
     };

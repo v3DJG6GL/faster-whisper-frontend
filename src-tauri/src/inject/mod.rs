@@ -133,7 +133,8 @@ pub fn take_recovery_on_clipboard() -> bool {
     RECOVERY_ON_CLIPBOARD.swap(false, Ordering::SeqCst)
 }
 
-/// Drop a recovery flag nobody consumed (a new session is starting).
+/// Drop a recovery flag nobody consumed: the session ended without a restore
+/// (`discard_injection_snapshot`). Never call this at session START — see `RECOVERY_ON_CLIPBOARD`.
 pub fn clear_recovery_on_clipboard() {
     RECOVERY_ON_CLIPBOARD.store(false, Ordering::SeqCst);
 }
@@ -175,10 +176,10 @@ pub fn is_own_injected(text: &str) -> bool {
 /// INTO an RDP window (skipping a restore the local paste was owed) or OUT of one (restoring over
 /// the transcript a still-pending remote fetch has not collected yet — the delayed-rendering hazard
 /// this skip exists for). What decides whether a restore is safe is where the paste WENT, so that
-/// is what gets recorded: set by `inject_text`'s paste sinks once the transcript reached the
-/// clipboard (a phrase that bailed before its write leaves the previous paste's target in place;
-/// an outcome that may or may not have written records only `true`, the safe side), cleared by the
-/// two session teardowns.
+/// is what gets recorded: set at the X11/Windows write in `paste` and by `inject_text`'s Wayland
+/// arm right after its write (a phrase that bailed before its write leaves the previous paste's
+/// target in place); only an Err to a remote target is recorded post hoc, as `true` — the safe
+/// side, since it may or may not have written. Cleared by the two session teardowns.
 static LAST_PASTE_REMOTE: AtomicBool = AtomicBool::new(false);
 
 /// Record where the paste whose transcript just reached the clipboard goes (see
@@ -1094,6 +1095,11 @@ fn paste(
         write_transcript(&mut clipboard, text).map_err(|e| e.to_string())?;
         false
     };
+    // The transcript is on the clipboard now, so this is where the paste went — see
+    // LAST_PASTE_REMOTE. Recorded here, at the write, because only this function knows where the
+    // write happened: every return above wrote nothing and leaves the previous paste's target, and
+    // a cancel landing after this line (the settle, the chord) cannot un-write it.
+    note_paste_target(remote_target);
     // Written: the pending restore is now either this paste's own "previous" or superseded.
     let previous = merge_pending_restore(previous, requeue.0.take(), !remote_target);
     // Let the new clipboard owner settle before pasting. A remote-desktop client additionally
