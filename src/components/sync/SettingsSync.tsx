@@ -579,8 +579,8 @@ function SecurityReviewDialog() {
       </div>
       {pending.relisted && (
         <Notice tone="warn" className="mt-3">
-          Your sync switches changed since this was listed — it now includes changes that were
-          hidden before. Review them again before applying.
+          This device or your sync switches changed since this was listed — review the updated
+          list before applying.
         </Notice>
       )}
       <div className="mt-4 flex flex-col gap-2">

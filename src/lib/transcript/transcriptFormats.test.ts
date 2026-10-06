@@ -652,6 +652,17 @@ describe("lrc word tags", () => {
     expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>これは <00:00.50>iPhone <00:01.00>の<00:01.50>新しい<00:02.00>機能<00:02.50>です\n");
   });
+  it("a segment without whitespace joins every tag without a space (Thai, CJK + digits)", () => {
+    const one = (text: string, ws: string[]): BatchResult => ({
+      text,
+      segments: [{ start: 0, end: ws.length * 0.5, text }],
+      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
+    });
+    expect(generateExport(one("สวัสดีครับ", ["สวัสดี", "ครับ"]), { format: "lrc", wordTimestamps: true }))
+      .toBe("[00:00.00]<00:00.00>สวัสดี<00:00.50>ครับ\n");
+    expect(generateExport(one("今年是2024年", ["今年", "是", "2024", "年"]), { format: "lrc", wordTimestamps: true }))
+      .toBe("[00:00.00]<00:00.00>今年<00:00.50>是<00:01.00>2024<00:01.50>年\n");
+  });
 });
 
 describe("joinSegmentTexts", () => {

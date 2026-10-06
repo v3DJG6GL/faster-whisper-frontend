@@ -541,12 +541,15 @@ function Editor({
               the PROFILE's activation for display only — the runtime value is what liveAllowed
               tests, because the Home button and the chip's quick-launch both start a hold
               profile hands-free. A clipboard-only hold profile injects no keys, so liveAllowed
-              lets it run live and it gets no on-release note (same as the Translation row). */}
+              lets it run live and it gets no on-release note (same as the Translation row) —
+              unless it asks for its translation targets: that hold profile answers at the
+              one-shot insert, so it inserts on release whatever the method (liveInsert below). */}
           {(() => {
             const effEndpoint = p.endpoint ?? backend?.endpoint;
             const batch = effEndpoint === "batch";
             const hold =
-              p.activation === "hold" && (p.insertionOverrides?.insertMethod ?? globalInsertMethod) !== "clipboard";
+              p.activation === "hold" &&
+              (!!p.askTranslationTargets || (p.insertionOverrides?.insertMethod ?? globalInsertMethod) !== "clipboard");
             const why = batch
               ? "Not available with a Batch endpoint: the audio is sent once, after you stop, so there are no live phrases to insert. Switch this profile's endpoint to Streaming to enable it."
               : hold

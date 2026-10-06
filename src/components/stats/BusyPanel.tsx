@@ -99,27 +99,40 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
   const tz = stats.tz === "local" ? "server time" : stats.tz;
   const peakOcc = peak ? model.occOf(peak) : 0;
   // The two average ticks are drawn once across each track (a per-cell dash would break
-  // at every grid gap): measured from the first and last bar of each track after layout.
-  const [ticks, setTicks] = useState<{ top: { x1: number; x2: number; y: number }; side: { x: number; y1: number; y2: number } } | null>(null);
+  // at every grid gap): measured from the first and last bar of each track after layout —
+  // the top one per contiguous run of live columns (a months window wrapping the year end
+  // leaves a hidden stretch between its runs).
+  const [ticks, setTicks] = useState<{ top: { runs: { x1: number; x2: number }[]; y: number }; side: { x: number; y1: number; y2: number } } | null>(null);
   useLayoutEffect(() => {
     const host = boundsRef.current;
     if (!host) { setTicks(null); return; }
     const measure = () => {
       const box = host.getBoundingClientRect();
       // Only the columns the window reaches: an out-of-window top bar keeps its layout box.
-      const live = host.querySelectorAll<HTMLElement>('[data-track="top"][data-live]');
-      const tops = live.length ? live : host.querySelectorAll<HTMLElement>('[data-track="top"]');
+      const all = [...host.querySelectorAll<HTMLElement>('[data-track="top"]')];
+      const anyLive = all.some((el) => el.dataset.live);
       const sides = host.querySelectorAll<HTMLElement>('[data-track="side"]');
-      if (!tops.length || !sides.length) { setTicks(null); return; }
-      const t0 = tops[0].getBoundingClientRect();
-      const t1 = tops[tops.length - 1].getBoundingClientRect();
+      if (!all.length || !sides.length) { setTicks(null); return; }
+      // Runs of consecutive live columns (every column when none is live).
+      const spans: [HTMLElement, HTMLElement][] = [];
+      let open = false;
+      for (const el of all) {
+        const live = !anyLive || !!el.dataset.live;
+        if (live && open) spans[spans.length - 1][1] = el;
+        else if (live) spans.push([el, el]);
+        open = live;
+      }
+      const t0 = spans[0][0].getBoundingClientRect();
       const s0 = sides[0].getBoundingClientRect();
       const s1 = sides[sides.length - 1].getBoundingClientRect();
       const next = {
-        top: { x1: t0.left - box.left, x2: t1.right - box.left, y: t0.bottom - box.top - t0.height / cMax },
+        top: {
+          runs: spans.map(([a, b]) => ({ x1: a.getBoundingClientRect().left - box.left, x2: b.getBoundingClientRect().right - box.left })),
+          y: t0.bottom - box.top - t0.height / cMax,
+        },
         side: { x: s0.left - box.left + s0.width / rMax, y1: s0.top - box.top, y2: s1.bottom - box.top },
       };
-      setTicks((p) => (p && p.top.x1 === next.top.x1 && p.top.x2 === next.top.x2 && p.top.y === next.top.y && p.side.x === next.side.x && p.side.y1 === next.side.y1 && p.side.y2 === next.side.y2 ? p : next));
+      setTicks((p) => (p && JSON.stringify(p) === JSON.stringify(next) ? p : next));
     };
     measure();
     const ro = typeof ResizeObserver === "function" ? new ResizeObserver(measure) : null;
@@ -226,7 +239,9 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
           </div>
           {ticks && (
             <>
-              <i className="pointer-events-none absolute border-t border-dashed border-line-strong" style={{ left: ticks.top.x1, width: ticks.top.x2 - ticks.top.x1, top: ticks.top.y }} aria-hidden />
+              {ticks.top.runs.map((t) => (
+                <i key={t.x1} className="pointer-events-none absolute border-t border-dashed border-line-strong" style={{ left: t.x1, width: t.x2 - t.x1, top: ticks.top.y }} aria-hidden />
+              ))}
               <i className="pointer-events-none absolute border-l border-dashed border-line-strong" style={{ left: ticks.side.x, top: ticks.side.y1, height: ticks.side.y2 - ticks.side.y1 }} aria-hidden />
             </>
           )}

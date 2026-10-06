@@ -72,6 +72,11 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
 
 /** Scripts written without spaces between words: a run of them can break anywhere. */
 export const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+/** CJK punctuation and fullwidth forms: like the unspaced scripts, no space around them. */
+const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
+/** An unspaced-script character or CJK/fullwidth punctuation — the one predicate the LRC
+ *  export and import (and joinSegmentTexts) decide a seam's space with, so they agree. */
+export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 
 /** Clamp an untrusted (synced / stored) limits object; undefined when unusable. */
@@ -216,11 +221,17 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
   return out;
 }
 
-/** CJK punctuation and fullwidth forms: they stick to the unspaced character before them. */
-const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/;
-/** A token of spaced text: a word, or one unspaced (CJK) character with its punctuation — so
- *  a CJK translation holding one Latin word still splits between its characters. */
-const MIXED_TOKEN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}][\u3000-\u303f\uff00-\uffef]*|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
+/** CJK and fullwidth opening brackets: they stick to the character after them. */
+const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
+/** A token of spaced text: a word, or one unspaced (CJK) character with the opening
+ *  brackets before it and its other punctuation after it — so a CJK translation holding one
+ *  Latin word still splits between its characters, and never right after a 「 or （. */
+const MIXED_TOKEN = new RegExp(
+  `[${OPEN_PUNCT}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}](?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
+    + "|[^\\s\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]+",
+  "gu",
+);
+const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
@@ -334,7 +345,7 @@ export function cutByShare(text: string, shares: number[]): string[] {
     const c = text.charCodeAt(i);
     if (
       spaced
-        ? /\s/.test(text[i]) || ((UNSPACED.test(text[i - 1]) || UNSPACED_PUNCT.test(text[i - 1])) && UNSPACED.test(text[i]))
+        ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && !OPENER.test(text[i - 1]) && UNSPACED.test(text[i]))
         : c < 0xdc00 || c > 0xdfff
     ) cand.push(i);
   }

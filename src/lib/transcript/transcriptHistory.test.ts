@@ -306,6 +306,46 @@ describe("flushRecordWrites resolves once the parked writes land", () => {
       vi.useRealTimers();
     }
   });
+  it("also waits for a save already in flight (the leading-edge write and a fired timer)", async () => {
+    vi.useFakeTimers();
+    try {
+      saveTranscriptRecord.mockClear();
+      const base: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "quit-3", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/q.mp3", sourceName: "q.mp3", status: "done", result: { text: "v0" },
+      };
+      let land: () => void = () => {};
+      saveTranscriptRecord.mockImplementationOnce(() => new Promise<void>((r) => { land = r; }));
+      upsertRecord(base); // leading edge: issued now, nothing parked
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      let settled = false;
+      const flushed = flushRecordWrites().then(() => { settled = true; });
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(1);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      land();
+      await flushed;
+      expect(settled).toBe(true);
+
+      // A coalesce timer that already fired: its write is in flight, not parked.
+      let land2: () => void = () => {};
+      upsertRecord({ ...base, result: { text: "v1" } }); // parked behind the window
+      saveTranscriptRecord.mockImplementationOnce(() => new Promise<void>((r) => { land2 = r; }));
+      vi.advanceTimersByTime(2_000);
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
+      settled = false;
+      const flushed2 = flushRecordWrites().then(() => { settled = true; });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      land2();
+      await flushed2;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("loadHistory(force) chains onto an in-flight listing", () => {

@@ -208,6 +208,16 @@ const WRITE_COALESCE_MS = 2_000;
 const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingWrite = new Map<string, TranscriptRecord>();
 const lastWriteAt = new Map<string, number>();
+/** Saves and deletes already issued and not yet settled — the immediate write and a fired
+ *  coalesce timer drop their promise, so flushRecordWrites must find them here. */
+const inFlight = new Set<Promise<void>>();
+
+/** Track one disk call until it settles (it must never reject). */
+function track(p: Promise<void>): Promise<void> {
+  inFlight.add(p);
+  void p.finally(() => inFlight.delete(p));
+  return p;
+}
 
 /** Write one record now; the promise settles when the save does (never rejects). */
 function writeNow(rec: TranscriptRecord): Promise<void> {
@@ -219,9 +229,9 @@ function writeNow(rec: TranscriptRecord): Promise<void> {
     for (const [id, at] of lastWriteAt) if (now - at >= WRITE_COALESCE_MS) lastWriteAt.delete(id);
   }
   lastWriteAt.set(rec.id, now);
-  return saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
+  return track(saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
     console.error("history save failed:", e),
-  );
+  ));
 }
 
 /** DROP every coalesced write (never land it): the caller is about to move or wipe the
@@ -243,18 +253,18 @@ export function setRecordForgetHook(fn: (id: string | null) => void): void {
 }
 
 /** Write every coalesced record now. The writes are issued synchronously; the promise
- *  settles once they have all landed (or failed) — a quit path must await it before it
- *  exits, since a real exit (tray Quit, the trayless close) never fires `beforeunload`.
- *  Callers that only need the writes issued (loadHistory, beforeunload) may ignore it. */
+ *  settles once they — and every save or delete already in flight — have all landed (or
+ *  failed): a quit path must await it before it exits, since a real exit (tray Quit, the
+ *  trayless close) never fires `beforeunload`. Callers that only need the writes issued
+ *  (loadHistory, beforeunload) may ignore it. */
 export function flushRecordWrites(): Promise<void> {
-  const saves: Promise<void>[] = [];
   for (const [id, rec] of pendingWrite) {
     clearTimeout(writeTimers.get(id));
     writeTimers.delete(id);
-    saves.push(writeNow(rec));
+    writeNow(rec); // tracked in inFlight
   }
   pendingWrite.clear();
-  return Promise.allSettled(saves).then(() => undefined);
+  return Promise.allSettled([...inFlight]).then(() => undefined);
 }
 
 export function upsertRecord(rec: TranscriptRecord): void {
@@ -384,9 +394,9 @@ export function deleteRecord(id: string): void {
   useTranscriptHistory.setState((s) => ({
     records: s.records.filter((r) => r.id !== id),
   }));
-  void deleteTranscriptRecord(id, audioBasePref(useApp.getState().settings.recording)).catch(
+  void track(deleteTranscriptRecord(id, audioBasePref(useApp.getState().settings.recording)).catch(
     (e) => console.error("history delete failed:", e),
-  );
+  ));
 }
 
 /** The record's transcript text with corrections applied — snippet + search. */

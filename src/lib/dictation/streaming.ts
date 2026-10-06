@@ -2827,8 +2827,9 @@ async function ensureListeners(): Promise<void> {
             else sessionTyped = true;
           } else if (!t.isSelf && !landed) {
             // Nothing was written: our own window took focus mid-insert (the sink skip returns
-            // before any write), or — on a clipboard-method insert — the clipboard write itself
-            // failed, which Rust reports the same way. Recover through `recover_to_clipboard`, not
+            // before any write), or a clipboard write failed — the clipboard method's own, or the
+            // write a paste / direct insert diverted to the clipboard (focus moved to another app,
+            // stuck modifiers) — which Rust reports the same way. Recover through `recover_to_clipboard`, not
             // `inject_text` with the clipboard method: the latter's own-window entry guard writes
             // nothing while our window still holds focus — this skip's main cause. Still believe
             // the ANSWER rather than the attempt: false = the clipboard write itself failed, and
@@ -2840,13 +2841,10 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             if (onClipboard) {
               sessionClipboard = true;
-              // On the clipboard method the skip may have been a failed clipboard write rather than
-              // our window taking focus, so make no focus claim there.
-              flashError(
-                t.method === "clipboard"
-                  ? "The transcript is on the clipboard to paste manually."
-                  : "Focus moved to this app — the transcript is on the clipboard to paste manually.",
-              );
+              // On any method the skip may have been a failed clipboard write (the clipboard
+              // method's own, or a paste / direct insert's divert) rather than our window taking
+              // focus — the two cannot be told apart here — so make no focus claim.
+              flashError("The transcript is on the clipboard to paste manually.");
             } else {
               flashError(sinkSkipMessage());
             }

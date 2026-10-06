@@ -86,6 +86,21 @@ describe("round-trips against generateExport", () => {
     // Tags with no space between Latin words still separate them.
     expect(parseImportedText("lrc", "[00:01.00]<00:01.00>Hello<00:01.50>there\n").segments[0].text).toBe("Hello there");
   });
+  it("lrc: a tag beside CJK punctuation round-trips without a space (same seam rule as the export)", () => {
+    const tagged = (text: string, ws: string[]): BatchResult => ({
+      text,
+      language: "ja",
+      segments: [{ start: 0, end: ws.length * 0.5, text }],
+      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
+    });
+    const lrc = (r: BatchResult) => generateExport(r, { format: "lrc", wordTimestamps: true });
+    const period = lrc(tagged("晴れです。明日は雨", ["晴れ", "です。", "明日", "は", "雨"]));
+    expect(period).toContain("です。<00:01.00>明日");
+    expect(parseImportedText("lrc", period).segments[0].text).toBe("晴れです。明日は雨");
+    const bracket = lrc(tagged("彼は「新機能」です", ["彼は", "「新機能」", "です"]));
+    expect(bracket).toContain("彼は<00:00.50>「新機能」");
+    expect(parseImportedText("lrc", bracket).segments[0].text).toBe("彼は「新機能」です");
+  });
   it("json: our export shape incl. language and speakerName", () => {
     const json = generateExport(RESULT, { format: "json" });
     const back = parseImportedText("json", json);

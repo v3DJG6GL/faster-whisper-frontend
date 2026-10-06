@@ -5,7 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  UNSPACED, buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, wrapLines,
+  buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
   type CueGrid, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
@@ -199,15 +199,12 @@ interface Ctx {
   wrap: (text: string, track: string, reserve: number) => string;
 }
 
-/** CJK punctuation and fullwidth forms: like the unspaced scripts, no space around them. */
-const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
 /** The first (`end` false) or last code point of `s` — "" when empty. */
 function edgeChar(s: string, end: boolean): string {
   if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
   const lo = s.charCodeAt(s.length - 1);
   return s.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
 }
-const unspacedChar = (c: string) => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")`. */
@@ -551,12 +548,14 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
       if (ws.length) {
         // Enhanced LRC (A2): inline <mm:ss.xx> tags, each marking the start
         // of the following word — the karaoke convention.
-        // Unspaced (CJK) text has no spaces between its words: joining them with one would add
-        // some. Decided per seam (as joinSegmentTexts), so one Latin word in a CJK line keeps
-        // its spaces without spacing out the rest.
+        // Unspaced text (CJK, Thai, "今年是2024年") has no spaces between its words: joining
+        // them with one would add some, so a segment without whitespace joins with none. A
+        // spaced segment decides per seam (as joinSegmentTexts), so one Latin word in a CJK
+        // line keeps its spaces without spacing out the rest.
         const cw = ws.map((w) => clean(w.word));
+        const spaced = /\s/.test(seg.text.trim());
         const body = cw
-          .map((c, k) => (k && !(unspacedChar(edgeChar(cw[k - 1], true)) && unspacedChar(edgeChar(c, false))) ? " " : "")
+          .map((c, k) => (k && spaced && !(unspacedChar(edgeChar(cw[k - 1], true)) && unspacedChar(edgeChar(c, false))) ? " " : "")
             + `<${lrcTime(ws[k].start)}>${c}`)
           .join("");
         out.push(`[${lrcTime(seg.start)}]${prefix}${body}`);

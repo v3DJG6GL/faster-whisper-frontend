@@ -131,6 +131,22 @@ describe("reconcileJobs", () => {
     expect(records()).toHaveLength(1);
   });
 
+  it("a done row stopped while its result is in flight lands no record", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    let land: (v: JobOutcome<BatchResult>) => void = () => {};
+    getJobResult.mockImplementation(() => new Promise((res) => { land = res; }));
+    const pass = reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    // The user deletes the lost request's failed record (or retries its file) meanwhile.
+    stopOrphan(JOB_A);
+    land(ok(RESULT));
+    await pass;
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
+    expect(ledgerRows()).toEqual([]);
+  });
+
   it("not_found writes a failed record with the not-found reason and forgets the row", async () => {
     await seed(row(JOB_A, T0, "url"));
     getJob.mockResolvedValue({ kind: "not_found" });

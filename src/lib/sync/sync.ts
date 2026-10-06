@@ -2864,8 +2864,9 @@ interface PendingReview {
   /** Raised over a degraded-keyring compose (`backendsDegraded`): `cats` already holds backends
    *  out, and the approval may adopt the remote as base only under `degradedBaseWithheld`. */
   degraded?: boolean;
-  /** Re-raised by an approval that found rows the first list did not show (the gates changed
-   *  since): the dialog says so, or a second click consents to rows nobody read. */
+  /** Re-raised by an approval that found rows the first list did not show (the gates, this
+   *  device's own settings or its keyring changed since): the dialog says so, or a second
+   *  click consents to rows nobody read. */
   relisted?: boolean;
 }
 let pendingReview: PendingReview | null = null;

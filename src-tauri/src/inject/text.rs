@@ -581,6 +581,7 @@ pub(crate) async fn inject_text(
                     // naturally: the error teardown refocuses our own window, which is what makes
                     // this guard fire in the first place.
                     crate::inject::note_recovery_on_clipboard();
+                    crate::inject::note_delivered_on_clipboard();
                     return Ok(InjectOutcome {
                         landed: true,
                         diverted: true,
@@ -664,6 +665,9 @@ pub(crate) async fn inject_text(
                         });
                     }
                 }
+                // Delivered — and after this paste's `note_paste_target` above, which cleared the
+                // flag: the session-end restore must not serve the snapshot over it.
+                crate::inject::note_delivered_on_clipboard();
                 return Ok(InjectOutcome {
                     landed: true,
                     diverted: true,
@@ -781,7 +785,20 @@ pub(crate) async fn inject_text(
             }
         }
     }
-    res.map(|landed| match landed {
+    settle_outcome(res, recovered)
+}
+
+/// `inject_text`'s final answer from the sink's `Landed` (and whether the error-abort recovery
+/// block put the transcript on the clipboard). Every `diverted: true` it reports tells the
+/// frontend the transcript is on the clipboard to paste — the chord-time own-window divert in
+/// `inject::paste` (`Landed::OnClipboard`) and a recovered abort alike — so it arms
+/// `DELIVERED_ON_CLIPBOARD` here, after the sink's last `note_paste_target` (which clears it),
+/// or the session-end restore would serve the snapshot over that transcript.
+pub(crate) fn settle_outcome(
+    res: Result<crate::inject::Landed, String>,
+    recovered: bool,
+) -> Result<InjectOutcome, String> {
+    let outcome = res.map(|landed| match landed {
         crate::inject::Landed::Yes => InjectOutcome {
             landed: true,
             diverted: false,
@@ -803,5 +820,9 @@ pub(crate) async fn inject_text(
             landed: true,
             diverted: true,
         },
-    })
+    });
+    if outcome.as_ref().is_ok_and(|o| o.diverted) {
+        crate::inject::note_delivered_on_clipboard();
+    }
+    outcome
 }

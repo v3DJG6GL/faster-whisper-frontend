@@ -211,7 +211,8 @@ pub fn clear_paste_target() {
 /// the writes), rather than captured by the frontend: a paste already queued but not yet written
 /// would otherwise land after a snapshot of the flags and leave them stale.
 ///
-/// Armed by the two clipboard-only/divert writes in `inject_text`, cleared by every paste write
+/// Armed by the clipboard-only/divert writes in `inject_text` and by every `diverted: true` it
+/// reports (`text::settle_outcome`, the Wayland chord divert), cleared by every paste write
 /// (`note_paste_target`) — that paste replaced the delivered text — and consumed by `end_injection`
 /// or dropped by `discard_injection_snapshot` (both via `clear_paste_target`).
 static DELIVERED_ON_CLIPBOARD: AtomicBool = AtomicBool::new(false);
@@ -1589,5 +1590,31 @@ mod tests {
             "a session teardown left it armed"
         );
         assert!(!last_paste_was_remote());
+
+        // Every `diverted: true` answer arms it — the chord-time own-window divert after its
+        // paste target was noted — and no other answer does.
+        use super::{text::settle_outcome, Landed};
+        note_paste_target(false);
+        let o = settle_outcome(Ok(Landed::OnClipboard), false).unwrap();
+        assert!(o.landed && o.diverted);
+        assert!(
+            take_delivered_on_clipboard(),
+            "a chord divert left it unarmed"
+        );
+        let o = settle_outcome(Ok(Landed::NothingWritten), true).unwrap();
+        assert!(o.landed && o.diverted);
+        assert!(
+            take_delivered_on_clipboard(),
+            "a recovered abort left it unarmed"
+        );
+        for (res, recovered) in [
+            (Ok(Landed::Yes), false),
+            (Ok(Landed::NothingWritten), false),
+            (Err("boom".to_string()), true),
+        ] {
+            let _ = settle_outcome(res, recovered);
+            assert!(!take_delivered_on_clipboard(), "armed without a divert");
+        }
+        clear_paste_target();
     }
 }

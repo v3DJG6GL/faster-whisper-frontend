@@ -281,7 +281,10 @@ export async function reconcileJobs(): Promise<void> {
       if (status.state === "running") {
         running.push(row);
       } else if (status.state === "done") {
-        if (!(await ingestDone(row, status, false))) retry = true;
+        // Not watched, so stopOrphan (a retry of its file, a delete of its record) cannot
+        // reach this ingest: re-check the ledger after each of its awaits instead.
+        const gone = () => !ledgerRows().some((x) => x.jobId === row.jobId);
+        if (!(await ingestDone(row, status, false, undefined, gone))) retry = true;
       } else {
         failJob(row, failedText(status), { attached: false });
         await forgetRow(row.jobId);
