@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { codeSlug, stripControlChars } from "./sanitize";
+import { appRuleKey, codeSlug, safeIdentityText, stripControlChars } from "./sanitize";
 
 describe("stripControlChars with an output bound", () => {
   it("normalises a lone CR and a CRLF without touching the text past the bound", () => {
@@ -29,5 +29,26 @@ describe("codeSlug", () => {
     expect(codeSlug("Youtube:tab".split(":")[0].toLowerCase(), 40)).toBe("youtube");
     expect(codeSlug("..", 12, "und")).toBe("und");
     expect(codeSlug("ü")).toBe("");
+  });
+});
+
+describe("safeIdentityText", () => {
+  it("collapses padding even when deleted characters are interleaved with it", () => {
+    for (const hidden of ["​", "­", "\u0001"]) {
+      expect(safeIdentityText("konsole" + ` ${hidden}`.repeat(100) + "evil")).toBe("konsole evil");
+    }
+  });
+
+  it("marks a cut that lands on a space, with no space before the marker", () => {
+    expect(safeIdentityText("a".repeat(80) + " evil").endsWith("…")).toBe(true);
+    expect(safeIdentityText("a".repeat(79) + " evil")).toBe("a".repeat(79) + "…");
+    expect(safeIdentityText("  short  ")).toBe("short");
+  });
+});
+
+describe("appRuleKey", () => {
+  it("keys an app id the way the matcher compares it", () => {
+    expect(appRuleKey(" Konsole​ ")).toBe("konsole");
+    expect(appRuleKey("Konsole️")).toBe(appRuleKey("konsole"));
   });
 });

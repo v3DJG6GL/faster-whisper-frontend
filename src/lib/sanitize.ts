@@ -1,3 +1,5 @@
+import type { AppRule } from "./types";
+
 // TS mirror of the Rust `sanitize_injected` (src-tauri/src/inject/mod.rs). Strips C0/C1 control
 // characters (except Tab and LF) and normalizes CR/CRLF -> LF, so a malicious / compromised /
 // garbled transcription server can't smuggle terminal-escape or other control sequences onto
@@ -91,6 +93,29 @@ export function normalizeAppId(s: unknown): string {
   return out.trim();
 }
 
+/** The appRules floor every path into the store shares (hydration, and the quick-add window that
+ *  has no store) — lives here, store-free, so quick-add can apply it without instantiating the
+ *  store in its webview. Shape only, like the store's other floors (store.ts wellFormedProfiles):
+ *  it drops only what Rust's typed load would have rejected anyway. */
+export function wellFormedAppRules(v: unknown): AppRule[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter(
+      (r): r is AppRule =>
+        !!r && typeof r === "object" &&
+        typeof (r as AppRule).id === "string" &&
+        typeof (r as AppRule).appId === "string",
+    )
+    // The one normalization this floor DOES apply, and the exception to the shape-only rule.
+    // `appId` is the rule's matching key, and the audit screen renders it through a filter that
+    // deletes invisible characters — so an un-normalized key displays as armed and matches
+    // nothing. On a legitimate rule (already trimmed by the editor, no invisible characters) this
+    // is a no-op, so it is not the silent rewrite the rule warns about. Rules whose key is
+    // entirely invisible are dropped: they could never match and could never be read.
+    .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
+    .filter((r) => r.appId.length > 0);
+}
+
 /** Characters that render as NOTHING but are neither in the deceptive-format denylist above nor
  *  `WhiteSpace` (so `trim()` misses them too).
  *
@@ -145,14 +170,35 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // exactly like a space. `"kate" + 200×U+2800` reproduced the padding attack this function was
   // written for, one character class over. Fold those to spaces first, then collapse, so the run
   // shrinks and the real suffix survives the cut.
+  //
+  // The characters `safeDisplayText` DELETES (Cc, the deceptive-format set) are deleted here too,
+  // before the collapse: left in place they split the run — `" \u200b"` × 100 is a hundred
+  // one-space runs that collapse to nothing, then lose their separators to the display filter, and
+  // the padded name renders as exactly `konsole` again.
   const raw = typeof s === "string" ? s : "";
   const defanged = [...raw]
-    .map((ch) => (isInvisibleKeyChar(ch.codePointAt(0) ?? 0) ? " " : ch))
+    .map((ch) => {
+      const code = ch.codePointAt(0) ?? 0;
+      if (/\s/.test(ch) || isInvisibleKeyChar(code)) return " ";
+      if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || isDeceptiveFormatChar(code)) return "";
+      return ch;
+    })
     .join("");
   const collapsed = defanged.replace(/\s+/g, " ");
-  const t = safeDisplayText(collapsed, max + 1).trim();
+  // Trim BEFORE the cut, and trim what precedes the marker: a cut at `max + 1` that lands on the
+  // collapsed space used to be trimmed away before the length test, so `"a"×80 + " evil"`
+  // rendered as its own 80-char prefix with no ellipsis.
+  const t = safeDisplayText(collapsed.trim(), max + 1);
   const chars = [...t];
-  return chars.length > max ? chars.slice(0, max).join("") + "…" : t;
+  return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
+}
+
+/** The comparison key of an app rule — how two `appId`s are judged to name the same app, for
+ *  both the dedupe on save/merge and the injection-target matcher. One function so they cannot
+ *  drift: a dedupe looser or stricter than the matcher saves two rules where one silently
+ *  shadows the other. */
+export function appRuleKey(appId: unknown): string {
+  return normalizeAppId(appId).toLowerCase();
 }
 
 /** A user/server-authored code (a language, an extractor key) cut to what is safe in a file

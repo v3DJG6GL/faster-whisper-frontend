@@ -47,6 +47,12 @@ export function quickAddPeer(hotkey: string[]): Profile {
   return { id: QUICK_ADD_PEER_ID, name: "Quick add", activation: "hold", enabled: true, hotkey, backendId: null };
 }
 
+/** `peers` plus the synthetic quick-add peer when a quick-add chord is bound — the one peer list
+ *  every conflict gate (save-gate, per-card banner, capture warn, sync) checks against. */
+export function withQuickAddPeer(peers: Profile[], qa: string[]): Profile[] {
+  return qa.length > 0 ? [...peers, quickAddPeer(qa)] : peers;
+}
+
 /** Is `a` a strict subset of `b` (fewer keys, all contained in `b`)? */
 function isStrictSubset(a: string[], b: string[]): boolean {
   return a.length < b.length && a.every((c) => b.includes(c));

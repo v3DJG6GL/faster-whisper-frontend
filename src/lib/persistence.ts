@@ -1,6 +1,6 @@
 import { useApp, CONFIG_VERSION } from "./store";
 import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
-import { conflicts, quickAddPeer } from "./hotkeyConflicts";
+import { conflicts, withQuickAddPeer } from "./hotkeyConflicts";
 import { IS_WINDOWS } from "./platform";
 
 /**
@@ -125,7 +125,7 @@ export async function initConfig(): Promise<void> {
       // enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
       // unless the save-gate sees it too.
       const qa = s.settings.general.quickAddHotkey;
-      const conflictPeers = qa.length > 0 ? [...s.profiles, quickAddPeer(qa)] : s.profiles;
+      const conflictPeers = withQuickAddPeer(s.profiles, qa);
       // No low-level backend (Linux with evdev off OR enabled-but-not-permitted) ⇒ the plugin
       // registers and can't tell modifier sides apart, so collapse L/R for conflict detection (else
       // two side-only-different chords pass here yet one silently never registers). Mirrors Rust's

@@ -3,6 +3,7 @@
 
 import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./transcript/subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
+import { safeDisplayText } from "./sanitize";
 import type {
   PlanStage,
   BatchProgress,
@@ -320,6 +321,8 @@ export async function packageMedia(args: ServerTarget & {
   destPath: string;
   filename: string;
   maxUploadBytes?: number | null;
+  /** The custom audio base (`audioBasePref`), so a source under it counts as app storage. */
+  audioBase?: string | null;
 }): Promise<PackageOutcome> {
   return invokeServer<PackageOutcome>("package_media", args, {
     jobId: args.jobId,
@@ -334,6 +337,7 @@ export async function packageMedia(args: ServerTarget & {
     destPath: args.destPath,
     filename: args.filename,
     maxUploadBytes: args.maxUploadBytes ?? null,
+    audioBase: args.audioBase ?? null,
   }, new Error("Video export requires the desktop app."));
 }
 
@@ -1419,7 +1423,7 @@ export function audioBasePref(rec: {
 
 /** Copy a run's input audio into the store (`<base>/files/<id>.<ext>`) so
  *  playback survives the original moving. Null = no copy (outside Tauri, or
- *  the source is over the 2 GB cap). */
+ *  the source is over the 10 GiB cap, MAX_MEDIA_BYTES). */
 export async function saveTranscriptMedia(
   id: string,
   sourcePath: string,
@@ -1470,7 +1474,8 @@ export async function clearFileTranscriptions(audioBase: string | null): Promise
 }
 
 /** "Delete audio from … transcriptions" — empties one media subfolder
- *  ("file" → files/, "url" → links/); transcripts stay. */
+ *  ("file" → files/, "url" → links/, "video" → video/; any other kind empties all three);
+ *  transcripts stay. */
 export async function removeTranscriptMedia(
   kind: "file" | "url" | "video",
   audioBase: string | null,
@@ -1537,6 +1542,22 @@ export async function pickImportFile(): Promise<string | null> {
     filters: [{ name: "Settings export", extensions: ["json"] }],
   });
   return typeof selected === "string" ? selected : null;
+}
+
+/** Pick a settings export and import it — the one sequence behind all three import buttons
+ *  (Setup checklist, Onboarding, Sync tab). null = the dialog was cancelled. */
+export async function pickAndImportSettings(): Promise<{ result: ImportResult } | { error: string } | null> {
+  try {
+    const path = await pickImportFile();
+    if (!path) return null;
+    return { result: await importSettingsFile(path) };
+  } catch (e) {
+    // `import_settings_file`'s serde errors echo the offending input VERBATIM and untruncated
+    // (the config enums are plain unit variants, so `unknown_variant` quotes whatever the file
+    // said), and the only ceiling on it is the 20 MB whole-file cap. That is attacker-authored
+    // text from a file that never passed validation — defang and bound it before display.
+    return { error: safeDisplayText(String(e), 300) };
+  }
 }
 
 /** The active audio base folder for display (the user's custom base, or the default

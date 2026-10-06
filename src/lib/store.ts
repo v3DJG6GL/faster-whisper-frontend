@@ -25,7 +25,7 @@ import type { TranslateFailure } from "./dictation/dictationTranslate";
 import { newSpeakMemo, stepSpeaking } from "./dictation/speaking";
 import { swap } from "./arr";
 import { hasOwn } from "./own";
-import { normalizeAppId } from "./sanitize";
+import { appRuleKey, wellFormedAppRules } from "./sanitize";
 import { applyTheme } from "./theme";
 
 // Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
@@ -194,25 +194,6 @@ function wellFormedBackends(v: unknown): Backend[] {
       // is our own snapshot stash. Same rejection the sync path makes.
       !isReservedId((b as Backend).id),
   );
-}
-
-function wellFormedAppRules(v: unknown): AppRule[] {
-  if (!Array.isArray(v)) return [];
-  return v
-    .filter(
-      (r): r is AppRule =>
-        !!r && typeof r === "object" &&
-        typeof (r as AppRule).id === "string" &&
-        typeof (r as AppRule).appId === "string",
-    )
-    // The one normalization this floor DOES apply, and the exception to the shape-only rule above.
-    // `appId` is the rule's matching key, and the audit screen renders it through a filter that
-    // deletes invisible characters — so an un-normalized key displays as armed and matches
-    // nothing. On a legitimate rule (already trimmed by the editor, no invisible characters) this
-    // is a no-op, so it is not the silent rewrite the rule warns about. Rules whose key is
-    // entirely invisible are dropped: they could never match and could never be read.
-    .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
-    .filter((r) => r.appId.length > 0);
 }
 
 function isStringList(v: unknown): v is string[] {
@@ -816,8 +797,8 @@ export const useApp = create<AppState>((set) => ({
       // rule for an already-ruled app would never apply (the older one keeps winning). Upsert by
       // appId (and the id being edited): replace any rule for this appId in place, so the rule the
       // user just saved is the one that takes effect.
-      const key = r.appId.trim().toLowerCase();
-      const matches = (x: AppRule) => x.id === r.id || x.appId.trim().toLowerCase() === key;
+      const key = appRuleKey(r.appId);
+      const matches = (x: AppRule) => x.id === r.id || appRuleKey(x.appId) === key;
       const pos = s.appRules.findIndex(matches);
       const rest = s.appRules.filter((x) => !matches(x));
       return { appRules: pos < 0 ? [...rest, r] : [...rest.slice(0, pos), r, ...rest.slice(pos)] };
