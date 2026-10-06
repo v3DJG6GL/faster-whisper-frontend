@@ -269,7 +269,13 @@ export function useHotkeyCapture(opts: {
       });
       return;
     }
-    const taken = takenRef.current;
+    // Re-check every owner taken earlier in this chain too, not only the last one parked: an
+    // Activation flip while a later owner was parked can make an earlier clash the designed
+    // nesting, whose keys must then stay with it.
+    const taken = takenRef.current.filter((id) => {
+      const o = ref.current.others.find((x) => x.id === id);
+      return !!o && !!findChordConflict(pending.codes, [o], !ref.current.lowLevelActive, ref.current.selfKind);
+    });
     takenRef.current = [];
     for (const id of taken) ref.current.onTakeOver(id);
     ref.current.onCommit(pending.codes);

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  approvePendingReview,
   getPendingConflict,
   getPendingReview,
   raiseConflictForTests,
@@ -88,5 +89,33 @@ describe("resolveSyncConflicts", () => {
     const last = saved.last as SyncState | null; // written by the mock, not visible to narrowing
     expect(last?.version).toBe(4);
     expect(last?.updatedAt).toBe(1700000000);
+  });
+
+  it("approving a review after 'Server addresses' was turned on re-raises it with the repoint", async () => {
+    // Raised with the gate off, the review lists only the new backend (the apply would re-pin
+    // b1's address). Turning the gate on does not supersede the review, and applyBlob reads the
+    // gates live — so approving as shown would repoint b1 without the user ever seeing it.
+    const setServerAddresses = (on: boolean) => {
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+      useApp.setState({ settings });
+    };
+    setServerAddresses(false);
+    raiseConflictForTests({
+      categories: ["backends"],
+      local: {},
+      remote: { backends: { list: [backend({ serverUrl: "http://evil:9" }), backend({ id: "b2", serverUrl: "http://peer:9" })] } },
+      merged: {},
+    });
+    await resolveSyncConflicts({ backends: "remote" });
+    expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["new-backend"]);
+    setServerAddresses(true);
+    await approvePendingReview();
+    expect(getPendingReview()?.changes.map((c) => c.kind).sort()).toEqual(["new-backend", "server-url"]);
+    expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://10.0.0.2:8000");
+    // Approving the list as now shown applies it.
+    await approvePendingReview();
+    expect(getPendingReview()).toBeNull();
+    expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://evil:9");
   });
 });

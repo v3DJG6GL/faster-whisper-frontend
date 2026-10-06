@@ -2408,7 +2408,7 @@ export async function pushNow(manual = false): Promise<void> {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
-            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
+            changes: riskyPush, blob: merged, local: blob, cats: pushCats, remote: remoteBlob,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
           });
@@ -2478,7 +2478,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     await applyBlob(merged, heldBack(applyCats, risky));
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      changes: risky, blob: merged, local, cats: applyCats, remote: remoteBlob,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
     });
@@ -2849,6 +2849,9 @@ export function securityChanges(
 interface PendingReview {
   changes: SecurityChange[];
   blob: SyncBlob;
+  /** The local side the changes were judged against, so the approval can re-judge `blob` under
+   *  the gates as they are THEN (see approvePendingReview). */
+  local: SyncBlob;
   cats: Record<SyncCategory, boolean>;
   remote: SyncBlob;
   version: number;
@@ -2875,6 +2878,11 @@ function raiseReview(r: PendingReview): void {
   });
 }
 
+/** A change's identity for "was this row on the list the user saw". */
+function changeKey(c: SecurityChange): string {
+  return JSON.stringify([c.kind, c.category ?? null, c.backend, c.detail, c.url ?? null]);
+}
+
 /** Approve the held-back pull: apply it and adopt the server's version as the new base. */
 export async function approvePendingReview(): Promise<void> {
   const r = pendingReview;
@@ -2884,6 +2892,17 @@ export async function approvePendingReview(): Promise<void> {
   // after the user changed their mind and pressed Reject. Leave the review up instead; the
   // dialog says why.
   if (useApp.getState().status !== "idle") return;
+  // applyBlob reads the gates LIVE, but the list was judged under the gates at raise time: with
+  // "Server addresses" / "API keys" off then, a repoint or key swap was left off the list (the
+  // apply would strip it). Turning the gate on since does not supersede the review, so approving
+  // as shown would land a change the user never saw. Re-judge under today's gates and, if
+  // anything new appears, show the new list instead of applying.
+  const now = gatedSecurityCheck(r.blob, r.local, r.cats);
+  const shown = new Set(r.changes.map(changeKey));
+  if (now.some((c) => !shown.has(changeKey(c)))) {
+    raiseReview({ ...r, changes: now });
+    return;
+  }
   // The epoch this approval belongs to: a supersede during the apply's keyring wait (sync off,
   // server switched, server copy deleted) dropped this review on purpose — never revive it, and
   // never adopt the old server's version into the new state.
@@ -2990,6 +3009,7 @@ export async function resolveSyncConflicts(
     raiseReview({
       changes: risky,
       blob: final,
+      local: c.local,
       cats: applyCats,
       remote: c.remote,
       version: c.remoteVersion,

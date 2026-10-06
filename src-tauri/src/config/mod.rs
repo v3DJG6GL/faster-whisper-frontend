@@ -1031,6 +1031,15 @@ pub fn backup_failed() -> bool {
     BACKUP_FAILED.load(Ordering::SeqCst)
 }
 
+/// A reset nobody has saved over yet: `config.json` is gone but its `.bak` is there (the reset
+/// renamed it, and no settings change has been written since). A later launch then loads the
+/// defaults with `recovered = false`, so the startup retention sweeps check this too — the
+/// defaults' window must not delete history the backed-up settings said to keep.
+pub fn reset_unconfirmed(dir: &Path) -> bool {
+    let path = config_path(dir);
+    !path.exists() && path.with_extension("json.bak").exists()
+}
+
 /// Where to stash a config backup: `config.json.bak`, after moving an existing `.bak` aside to
 /// a timestamped `config.json.bak.<secs>` sibling — a second reset in a later session must not
 /// replace the backup of the user's original settings with the post-reset file. When the old
@@ -1118,12 +1127,9 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
     };
     // Fast path: already the current (v3) shape.
     if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
-        // An earlier load this session hit a transient lock and couldn't back the file up, so
-        // `save` refuses. It reads fine now: back it up and let saves through again.
-        if BACKUP_FAILED.load(Ordering::SeqCst) && std::fs::copy(&path, bak_target(&path)).is_ok() {
-            tracing::info!("[config] config readable again and backed up; saves re-enabled");
-            BACKUP_FAILED.store(false, Ordering::SeqCst);
-        }
+        // BACKUP_FAILED stays set even when a later load reads the file fine: an earlier load
+        // may already have handed defaults to a webview, whose auto-save would then overwrite
+        // the real config (and run the defaults' retention sweeps).
         return (cfg, *recovered);
     }
     // Migration path: a legacy `profiles`/`modes` config (no `backends`).
@@ -1321,6 +1327,21 @@ mod tests {
         );
         // Nothing to rename and nothing to copy: the caller must learn no backup exists.
         assert!(!backup_unreadable(&dir.join("gone.json")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_reset_stays_unconfirmed_until_a_config_is_saved() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-unconf-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Fresh install: no config, no backup.
+        assert!(!reset_unconfirmed(&dir));
+        std::fs::write(dir.join("config.json"), b"{not json").unwrap();
+        let _ = load_outcome(&dir);
+        assert!(reset_unconfirmed(&dir));
+        save(&dir, &Config::default()).unwrap();
+        assert!(!reset_unconfirmed(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

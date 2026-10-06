@@ -487,6 +487,7 @@ export function TranscriptExport({
             audioBase,
           });
           if (out.kind === "busy" && out.mediaId) {
+            // Also covers an export dequeued (cancelled) after this answer: the id is kept.
             if (source.sourcePath) {
               uploadedExpiry = out.expiresAt;
               const mid = out.mediaId;
@@ -508,17 +509,6 @@ export function TranscriptExport({
       setMediaJob(null);
     }
     if (!outcome) {
-      // Cancelled while Queued after a busy answer named an upload's server copy: keep
-      // it, or the next Save uploads the whole file again. (`fromFile` = the source began
-      // as a path, so a server id here can only be that upload's.)
-      if (fromFile && source.sourceMediaId) {
-        const mediaId = source.sourceMediaId;
-        const expiresAt = uploadedExpiry ?? undefined;
-        patchRecord(rec.id, (r) => ({
-          ...r,
-          result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
-        }));
-      }
       if (mine()) setMediaError({ kind: "cancelled", msg: "Export cancelled." });
       return false;
     }

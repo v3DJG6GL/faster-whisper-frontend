@@ -1172,7 +1172,7 @@ export default function Backends() {
                     <div className="flex items-center gap-1">
                       <ServerInfoButton
                         info={ownProp(caps, b.id)?.server_info}
-                        tested={!!conn?.ok && ownProp(caps, b.id) != null}
+                        tested={!!conn?.ok && (ownProp(caps, b.id) != null || effectiveServerKind(b, conn) === "standard")}
                         open={infoOpen === b.id}
                         onToggle={() => setInfoOpen((cur) => (cur === b.id ? null : b.id))}
                         controls={`${infoBase}-${b.id}`}

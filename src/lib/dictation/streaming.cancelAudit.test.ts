@@ -286,6 +286,16 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(body.indexOf("recoverTextToClipboard(")).toBeGreaterThan(wait);
   });
 
+  it("the stop-mode sink-skip recovery copies without the own-window guard, then re-checks the session", () => {
+    // The skip's main cause is our own window taking focus; inject_text's clipboard method
+    // writes nothing then, so the whole transcript would be lost behind a false "not on the clipboard".
+    const block = mask(bodyAfter(streamingSrc, "} else if (!t.isSelf && !landed)"));
+    expect(block).not.toContain("recoverToClipboard(");
+    const copy = block.indexOf("recoverTextToClipboard(");
+    expect(copy, "sink-skip recovery must use recoverTextToClipboard").toBeGreaterThanOrEqual(0);
+    expect(block.indexOf("insertCfg !== cfg", copy)).toBeGreaterThan(copy);
+  });
+
   it("the stuck-finalize recovery stands down for a session started while it awaited", () => {
     // cancelLive idles the chip synchronously, so a new session can start before the recovery's
     // awaits finish; an unguarded flashError then stamps THAT session "error" (frames dropped,

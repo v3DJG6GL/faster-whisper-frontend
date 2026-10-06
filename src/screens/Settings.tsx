@@ -233,11 +233,12 @@ export default function Settings() {
     void openAudioDir(basePref).catch((e) => console.error("open audio dir:", e));
   // `dirBusy` gates every folder button while a move runs: the move walks every audio
   // file and can take minutes, and a second click (Reset during a Change) started a
-  // concurrent move over the same folders with the same stale `current`.
+  // concurrent move over the same folders with the same stale `current`. A store wipe in flight
+  // (storeBusyRef) refuses a move too: it deletes from the very folder the move would walk.
   const changeRecDir = () =>
     void pickRecordingsDir()
       .then(async (picked) => {
-        if (!picked || dirBusyRef.current) return;
+        if (!picked || dirBusyRef.current || storeBusyRef.current) return;
         dirBusyRef.current = true;
         setDirBusy(true);
         try {
@@ -267,7 +268,7 @@ export default function Settings() {
       })
       .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }));
   const resetRecDir = () => {
-    if (dirBusyRef.current) return;
+    if (dirBusyRef.current || storeBusyRef.current) return;
     dirBusyRef.current = true;
     setDirBusy(true);
     dropPendingWrites();

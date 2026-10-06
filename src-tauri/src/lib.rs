@@ -180,12 +180,17 @@ pub fn run() {
             // sweeps so they look in the right place.
             commands::ensure_audio_layout(app.handle(), &cfg);
             // Enforce the saved-recording retention window once per launch, so it also applies
-            // to a machine that dictated for months and only just enabled it. Skipped when the
-            // config was reset this launch: the defaults' 7-day window would otherwise delete
-            // history the user's real (backed-up or unreadable) settings said to keep.
-            if cfg_recovered || config::backup_failed() {
+            // to a machine that dictated for months and only just enabled it. Skipped while the
+            // config is a reset nobody has saved over (this launch, or an earlier one): the
+            // defaults' 7-day window would otherwise delete history the user's real (backed-up
+            // or unreadable) settings said to keep.
+            let reset_unconfirmed = app
+                .path()
+                .app_config_dir()
+                .is_ok_and(|dir| config::reset_unconfirmed(&dir));
+            if cfg_recovered || config::backup_failed() || reset_unconfirmed {
                 tracing::info!(
-                    "[config] settings were reset this launch; retention sweeps skipped"
+                    "[config] settings were reset and not saved since; retention sweeps skipped"
                 );
             } else {
                 commands::apply_recordings_retention(app.handle(), &cfg);

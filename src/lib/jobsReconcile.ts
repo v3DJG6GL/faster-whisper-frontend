@@ -49,7 +49,7 @@ let retryTimer: ReturnType<typeof setTimeout> | undefined;
 /** Job ids a watcher is polling right now (→ its stop): a retry pass re-reads the live
  *  ledger, where a watched row stays until it settles, and must not start a second watcher. */
 const watching = new Map<string, () => void>();
-/** Job ids a watchOrphan watcher is polling (→ the file's path): the queue row that
+/** Job ids a headless watcher (watchOrphan's, or reconcile's) is polling (→ the file's path): the queue row that
  *  names the job can be rebuilt without it (a History record opened, the workbench
  *  closed), so a re-run of the path finds the watcher by path, not by row. */
 const orphans = new Map<string, string>();
@@ -280,6 +280,9 @@ export async function reconcileJobs(): Promise<void> {
         const epoch = reattachRun(row);
         watchJob(row, { attached: true, epoch });
       } else {
+        // Stoppable by the path-keyed orphan stop like watchOrphan's: a History record
+        // of this lost request can be retried, and the old job must not land beside it.
+        if (row.path) orphans.set(row.jobId, row.path);
         watchJob(row, { attached: false });
       }
     }

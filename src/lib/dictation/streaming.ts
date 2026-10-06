@@ -1330,12 +1330,13 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
 }
 
 /** Copy `text` to the clipboard for a RESOLVED target — the clipboard-only phrase path and the
- *  recovery copies after a failed or sink-skipped insert. `expectAppId` is passed for
+ *  recovery copies after a failed insert. `expectAppId` is passed for
  *  uniformity only: on a clipboard-method call Rust returns from its clipboard arm BEFORE the
  *  per-app sink re-check that reads it, so it is inert here. The guard that CAN answer
  *  `landed: false` is inject_text's own-window ENTRY check (or a failed clipboard write) —
  *  callers believe that answer rather than the attempt. The target-less recovery copies
- *  (stuck-finalize, stream://error, stopLive reject) have no `t` and stay spelled out. */
+ *  (stuck-finalize, stream://error, stopLive reject) and the stop-mode sink-skip recovery go
+ *  through the guard-free `recoverTextToClipboard` instead. */
 function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>>) {
   return injectText({
     text,
@@ -1348,7 +1349,7 @@ function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>
   });
 }
 
-/** The recovery copy after a failed or sink-skipped insert: copyForTarget, keeping only whether
+/** The recovery copy after a failed insert: copyForTarget, keeping only whether
  *  the text really landed on the clipboard. A rejected copy is logged and answers `false`, so the
  *  caller flashes the honest "Couldn't insert" instead of promising a clipboard recovery. */
 async function recoverToClipboard(
@@ -2820,13 +2821,19 @@ async function ensureListeners(): Promise<void> {
           } else if (!t.isSelf && !landed) {
             // Nothing was written: our own window took focus mid-insert (the sink skip returns
             // before any write), or — on a clipboard-method insert — the clipboard write itself
-            // failed, which Rust reports the same way. Offer the same recovery, but believe the
-            // ANSWER rather than the attempt: this retry goes back through the same own-window
-            // guard, so while our window still holds focus it writes nothing and reports false.
-            // Claiming a clipboard recovery there would be the false confirmation this whole fix
-            // removes. `outText`, not `text`: the translated transcript is what was being inserted,
-            // and history has already booked it as the delivered translation.
-            const onClipboard = await recoverToClipboard(outText, t, "a sink-skipped insert");
+            // failed, which Rust reports the same way. Recover through `recover_to_clipboard`, not
+            // `inject_text` with the clipboard method: the latter's own-window entry guard writes
+            // nothing while our window still holds focus — this skip's main cause. Still believe
+            // the ANSWER rather than the attempt: false = the clipboard write itself failed, and
+            // claiming a recovery then would be a false confirmation. `outText`, not `text`: the
+            // translated transcript is what was being inserted, and history has already booked it
+            // as the delivered translation.
+            let onClipboard = false;
+            try {
+              onClipboard = await recoverTextToClipboard(outText);
+            } catch (e) {
+              console.error("clipboard fallback after a sink-skipped insert failed:", e);
+            }
             // Same post-await re-check as the failed-insert recovery above.
             if (insertCfg !== cfg) return;
             if (onClipboard) {

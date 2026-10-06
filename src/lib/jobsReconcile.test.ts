@@ -507,6 +507,29 @@ describe("reconcileJobs", () => {
     expect(records().some((x) => x.id === JOB_A && x.status === "done")).toBe(false);
   });
 
+  it("a lost request reconciled headless after a restart is stopped by a retry from History", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r);
+    // Not idle: the row is watched headless, not re-attached.
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    expect(useTranscribeRun.getState().queue).toEqual([]);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    expect(openHistoryRecord(rec)).toBe(true);
+    deleteJob.mockClear();
+    retryFile(r.path, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(records().some((x) => x.id === JOB_A && x.status === "done")).toBe(false);
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+  });
+
   it("a lost request's watcher is stopped by a re-run of its file after the workbench was closed", async () => {
     const r = row(JOB_A, Date.now());
     await persistRow(r);
