@@ -66,6 +66,10 @@ describe("exportSummary", () => {
     expect(row(rows, "Corrections")?.why).toBe("2 included");
     expect(row(rows, "Media")?.why).toBe("video in MKV, subtitles embedded and as files");
   });
+  it("a site track on its own beside a shared file: not \"one file each\"", () => {
+    const rows = sum({ trackCodes: ["EN", "DE", "YouTube EN"], fileCount: 2, filePerTrack: false, stacked: false });
+    expect(row(rows, "Tracks")?.why).toBe("EN · DE · YouTube EN — in 2 files, each site track on its own");
+  });
   it("txt: no subtitle rows apply, no speaker rows without speakers", () => {
     const rows = sum({ format: "txt", hasSpeakers: false, content: contentStates({ ...base, format: "txt", hasSpeakers: false }) });
     expect(row(rows, "Subtitle length")?.state).toBe("na");

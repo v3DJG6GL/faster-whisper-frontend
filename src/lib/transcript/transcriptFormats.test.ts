@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat, speakerName, tracksOf,
-  generateExports,
+  generateExports, joinSegmentTexts,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
 } from "./transcriptFormats";
@@ -640,6 +640,25 @@ describe("lrc word tags", () => {
     };
     expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>今日<00:00.50>は<00:01.00>晴れ\n");
+  });
+  it("one Latin word in a CJK line keeps its spaces, the CJK seams stay joined", () => {
+    const ja = ["これは", "iPhone", "の", "新しい", "機能", "です"];
+    const r: BatchResult = {
+      text: "これは iPhone の新しい機能です",
+      language: "ja",
+      segments: [{ start: 0, end: 3, text: "これは iPhone の新しい機能です" }],
+      words: ja.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
+    };
+    expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
+      .toBe("[00:00.00]<00:00.00>これは <00:00.50>iPhone <00:01.00>の<00:01.50>新しい<00:02.00>機能<00:02.50>です\n");
+  });
+});
+
+describe("joinSegmentTexts", () => {
+  it("spaces spaced text, joins CJK seams, spaces a Latin/CJK seam", () => {
+    expect(joinSegmentTexts(["Hello there.", "How are you?"])).toBe("Hello there. How are you?");
+    expect(joinSegmentTexts(["今日は晴れ。", "明日は雨。"])).toBe("今日は晴れ。明日は雨。");
+    expect(joinSegmentTexts(["今日は", "iPhone"])).toBe("今日は iPhone");
   });
 });
 

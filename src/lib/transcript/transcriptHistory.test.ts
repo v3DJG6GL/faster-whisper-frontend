@@ -17,7 +17,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 const {
-  appChipLabel, currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation,
+  appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, loadHistory, patchRecord, recordDictation,
   recordEditedResult, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
@@ -111,6 +111,27 @@ describe("loadHistory", () => {
     await loadHistory(true);
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["keep-me"]);
     expect(useTranscriptHistory.getState().loaded).toBe(true);
+  });
+
+  it("keeps a record with a non-string appId, dropping only that field", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "dictation",
+        id: "bad-app",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "",
+        sourceName: "Dictation",
+        status: "done",
+        appId: 123,
+      },
+    ]);
+    await loadHistory(true);
+    const [r] = useTranscriptHistory.getState().records;
+    expect(r?.id).toBe("bad-app");
+    expect(r?.appId).toBeUndefined();
+    expect(() => appLabel(r)).not.toThrow();
+    expect(() => appChipLabel(r)).not.toThrow();
   });
 
   it("survives a rejected listing", async () => {
@@ -246,6 +267,41 @@ describe("pending writes are droppable and flushable", () => {
       expect(String(saveTranscriptRecord.mock.calls[1][1])).toContain("w2");
       resolveList([]);
       await load;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("flushRecordWrites resolves once the parked writes land", () => {
+  it("a quit path can await it: it settles only after the save does, and survives a failure", async () => {
+    vi.useFakeTimers();
+    try {
+      saveTranscriptRecord.mockClear();
+      const base: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "quit-1", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/q.mp3", sourceName: "q.mp3", status: "done", result: { text: "v0" },
+      };
+      upsertRecord({ ...base, result: { text: "v1" } }); // leading edge
+      upsertRecord({ ...base, result: { text: "v2" } }); // parked
+      let land: () => void = () => {};
+      saveTranscriptRecord.mockImplementationOnce(() => new Promise<void>((r) => { land = r; }));
+      let settled = false;
+      const flushed = flushRecordWrites().then(() => { settled = true; });
+      expect(saveTranscriptRecord).toHaveBeenCalledTimes(2);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      land();
+      await flushed;
+      expect(settled).toBe(true);
+
+      // A failing save still settles the flush (it must never block the exit).
+      upsertRecord({ ...base, id: "quit-2", result: { text: "x1" } });
+      upsertRecord({ ...base, id: "quit-2", result: { text: "x2" } });
+      saveTranscriptRecord.mockImplementationOnce(() => Promise.reject(new Error("disk full")));
+      const err = vi.spyOn(console, "error").mockImplementation(() => {});
+      await expect(flushRecordWrites()).resolves.toBeUndefined();
+      err.mockRestore();
     } finally {
       vi.useRealTimers();
     }
@@ -417,7 +473,22 @@ describe("recordEditedResult", () => {
   it("rebuilds the text from the segments once a segment is corrected", () => {
     const out = recordEditedResult(rec({ edits: { 1: "地球。" } }));
     expect(out.segments?.[1].text).toBe("地球。");
-    expect(out.text).toBe("你好。 地球。");
+    // An unspaced script keeps its seams unspaced (the TXT writer's join, not a space-join).
+    expect(out.text).toBe("你好。地球。");
+  });
+
+  it("joins Japanese segments without spaces and spaced scripts with one", () => {
+    const ja = {
+      text: "今日は晴れ。明日は雨。",
+      segments: [
+        { id: 0, start: 0, end: 1, text: "今日は晴れ。" },
+        { id: 1, start: 1, end: 2, text: "明日も雨。" },
+      ],
+    };
+    const jaOut = recordEditedResult({ id: "j", result: ja, edits: { 1: "明日は雨。" } } as Partial<TranscriptRecord> as TranscriptRecord);
+    expect(jaOut.text).toBe("今日は晴れ。明日は雨。");
+    const en = { text: "Hello there. Bye.", segments: [{ id: 0, start: 0, end: 1, text: "Hello there." }, { id: 1, start: 1, end: 2, text: "Bye." }] };
+    expect(recordEditedResult({ id: "e", result: en, edits: { 1: "Goodbye." } } as Partial<TranscriptRecord> as TranscriptRecord).text).toBe("Hello there. Goodbye.");
   });
 });
 

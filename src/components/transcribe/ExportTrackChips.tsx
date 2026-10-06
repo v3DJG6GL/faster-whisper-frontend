@@ -69,6 +69,13 @@ export function ExportTrackChips({
     refocus.current = null;
   }, [order]);
 
+  /** Hand on an order that actually moved something: a step past the edge or a drop on
+   *  the item's own slot yields an equal copy, and every onOrder rewrites the record. */
+  const reorder = (next: string[]): boolean => {
+    if (next.length === order.length && next.every((x, i) => x === order[i])) return false;
+    onOrder(next);
+    return true;
+  };
   const press = (kind: Drag["kind"], id: string) => (e: PointerEvent<HTMLElement>) => {
     dragged.current = false;
     if (e.button !== 0) return;
@@ -95,7 +102,7 @@ export function ExportTrackChips({
     if (!d?.active) return;
     dragged.current = true;
     if (d.slot !== null) {
-      onOrder(d.kind === "lang" ? moveLanguage(result, order, d.id, d.slot) : moveTrack(result, order, d.id, d.slot));
+      reorder(d.kind === "lang" ? moveLanguage(result, order, d.id, d.slot) : moveTrack(result, order, d.id, d.slot));
     }
   };
   const dragProps = (kind: Drag["kind"], id: string) => ({
@@ -108,8 +115,9 @@ export function ExportTrackChips({
   const keyMove = (e: KeyboardEvent<HTMLElement>, from: number, move: (slot: number) => string[]) => {
     if (!e.altKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
     e.preventDefault();
-    refocus.current = e.currentTarget;
-    onOrder(move(stepSlot(from, e.key === "ArrowLeft" ? -1 : 1)));
+    // Refocus only after a real move: a stale target would steal focus on the next order change.
+    const el = e.currentTarget;
+    if (reorder(move(stepSlot(from, e.key === "ArrowLeft" ? -1 : 1)))) refocus.current = el;
   };
   const pick = (next: string[] | null) => {
     if (dragged.current) dragged.current = false;

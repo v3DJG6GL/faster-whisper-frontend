@@ -91,6 +91,9 @@ export function exportSummary(a: {
   stacked: boolean;
   /** One file per track (LRC, own timing). */
   filePerTrack: boolean;
+  /** Text files the export writes: a site track with its own timing gets one of its own
+   *  while the rest share one, so two files can hold three tracks. */
+  fileCount?: number;
   /** Subtitles the original track gets; null = as transcribed. */
   cueCount: number | null;
   segCount: number;
@@ -120,7 +123,8 @@ export function exportSummary(a: {
     why: a.format === "json" ? "every track, as data"
       : a.trackCodes.join(" · ") + (a.trackCodes.length > 1
         ? a.filePerTrack ? " — one file each"
-          : a.stacked ? (sub ? " — in that order inside each subtitle" : " — in that order, interleaved") : ""
+          : a.stacked ? (sub ? " — in that order inside each subtitle" : " — in that order, interleaved")
+            : (a.fileCount ?? 0) > 1 ? ` — in ${a.fileCount} files, each site track on its own` : ""
         : ""),
   });
   rows.push(

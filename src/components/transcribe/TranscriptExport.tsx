@@ -46,6 +46,7 @@ import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { useResizeObserver } from "@/lib/useResizeObserver";
+import { ownProp } from "@/lib/own";
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
@@ -184,8 +185,14 @@ export function TranscriptExport({
   // The record's copy counts too: a Save that fetched it stamps the record, and the
   // queue row's `mediaPath` prop only follows while that record is the open one.
   const localAudio = mediaPath ?? rec?.mediaPath ?? null;
-  const audioExt = localAudio ? extOf(localAudio) || "m4a" : urlSource && rec?.result?.sourceMediaId ? "m4a" : null;
-  const audioAvailable = urlSource && !!(localAudio || rec?.result?.sourceMediaId);
+  // A link's server AUDIO while the server still has it (no expiry stored = available).
+  const serverAudioId =
+    urlSource && rec?.result?.sourceMediaId
+      && (rec.result.sourceMediaExpiresAt == null || rec.result.sourceMediaExpiresAt > nowSec)
+      ? rec.result.sourceMediaId
+      : null;
+  const audioExt = localAudio ? extOf(localAudio) || "m4a" : serverAudioId ? "m4a" : null;
+  const audioAvailable = urlSource && !!(localAudio || serverAudioId);
   const videoWhy = !hasVideoSource
     ? "no video is available for this transcription"
     : !packageOn && !localVideo
@@ -320,12 +327,15 @@ export function TranscriptExport({
     key: string; tracks?: string[]; format: ExportFormat; name: ((stem: string) => string) | null;
   }[] => {
     if (videoPlan) {
-      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format: exportFormat, name: sideNames?.[i] ?? null }));
+      // A sidecar is written in its plan's format; a track inside the video is always SRT
+      // (embeddedSubtitleTracks), whatever subtitle format is picked.
+      const format: ExportFormat = plan.sidecars ? plan.sidecars.format : "srt";
+      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format, name: sideNames?.[i] ?? null }));
     }
     return exportFileGroups(exportOptions, editedResult).map((g) => ({
       key: tracksOf(g).join("+"), tracks: g.tracks, format: exportFormat, name: g.name,
     }));
-  }, [videoPlan, sideNames, exportFormat, editedResult, videoTracks, exportOptions]);
+  }, [videoPlan, plan, sideNames, exportFormat, editedResult, videoTracks, exportOptions]);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const previewFile = previewFiles.find((f) => f.key === previewKey) ?? previewFiles[0];
 
@@ -364,12 +374,13 @@ export function TranscriptExport({
    *  otherwise to exactly `dest`, the path the user confirmed. */
   const exportAudioTo = async (dest: string): Promise<string> => {
     let src = localAudio;
-    if (!src && urlSource && rec?.result?.sourceMediaId && trBackend) {
+    if (!src && serverAudioId && !trBackend) throw new Error("No backend is selected.");
+    if (!src && serverAudioId && rec && trBackend) {
       setMediaJob({ jobId: "", phase: "fetching-audio", done: 0, total: null });
       try {
         src = await fetchUrlMedia({
           serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
-          mediaId: rec.result.sourceMediaId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
+          mediaId: serverAudioId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
         });
       } finally {
         setMediaJob(null);
@@ -462,6 +473,16 @@ export function TranscriptExport({
     const audioLang = (editedResult.language ?? "").trim() || null;
     const jobId = newProgressId();
     const fromFile = !!source.sourcePath;
+    /** Remember an upload's server copy in the field this record kind reuses it from:
+     *  a link's `sourceMediaId` is its server AUDIO (Save audio fetches it), so a link's
+     *  upload goes to `sourceVideoMediaId`; a file's upload is its retained source. */
+    const rememberUpload = (id: string, exp: number | undefined) => patchRecord(rec.id, (r) => ({
+      ...r,
+      result: {
+        ...(r.result ?? { text: "" }),
+        ...(urlSource ? { sourceVideoMediaId: id, sourceVideoExpiresAt: exp } : { sourceMediaId: id, sourceMediaExpiresAt: exp }),
+      },
+    }));
     // A busy answer after an upload names that upload's server copy (and its expiry,
     // which the retry that packages it no longer learns). The copy is remembered on the
     // record as soon as the busy answer names it, so a dequeue, a thrown retry or an
@@ -490,12 +511,7 @@ export function TranscriptExport({
             // Also covers an export dequeued (cancelled) after this answer: the id is kept.
             if (source.sourcePath) {
               uploadedExpiry = out.expiresAt;
-              const mid = out.mediaId;
-              const exp = out.expiresAt ?? undefined;
-              patchRecord(rec.id, (r) => ({
-                ...r,
-                result: { ...(r.result ?? { text: "" }), sourceMediaId: mid, sourceMediaExpiresAt: exp },
-              }));
+              rememberUpload(out.mediaId, out.expiresAt ?? undefined);
             }
             source = { sourceMediaId: out.mediaId };
           }
@@ -513,14 +529,11 @@ export function TranscriptExport({
       return false;
     }
     // An uploaded file's server copy is reusable for a while: remember it — after a
-    // failed package too — so "Save as MKV" or a second export skips the upload.
+    // failed package too — so "Save as MKV" or a second export skips the upload. A link
+    // record keeps it as its server VIDEO (its `sourceMediaId` is the audio); a file
+    // record as its retained source (rememberUpload).
     if (fromFile && outcome.mediaId && outcome.kind !== "expired" && outcome.kind !== "cancelled") {
-      const mediaId = outcome.mediaId;
-      const expiresAt = outcome.expiresAt ?? uploadedExpiry ?? undefined;
-      patchRecord(rec.id, (r) => ({
-        ...r,
-        result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
-      }));
+      rememberUpload(outcome.mediaId, outcome.expiresAt ?? uploadedExpiry ?? undefined);
     }
     if (outcome.kind === "ok") return true;
     if (outcome.kind === "expired") {
@@ -577,11 +590,6 @@ export function TranscriptExport({
     setSaveError(null);
     setMediaError(null);
     setAudioSavedAs(null);
-    // Beside a video the text files are one subtitle file per language; the
-    // plain text export stays the (possibly bilingual) reading file.
-    const files = plan.sidecars
-      ? sidecarFiles(editedResult, exportOptions, plan.sidecars.tracks, plan.sidecars.format)
-      : generateExports(editedResult, exportOptions);
     let target: string | null;
     try {
       target = await pickExportPath(
@@ -596,6 +604,12 @@ export function TranscriptExport({
       return;
     }
     if (!target) return; // cancelled
+    // Beside a video the text files are one subtitle file per language; the
+    // plain text export stays the (possibly bilingual) reading file. Built after the
+    // dialog: a cancel pays nothing, and the dialog opens without waiting on them.
+    const files = plan.sidecars
+      ? sidecarFiles(editedResult, exportOptions, plan.sidecars.tracks, plan.sidecars.format)
+      : generateExports(editedResult, exportOptions);
     // The picked path names the FIRST file; siblings land beside it under
     // the stem the user actually chose in the dialog.
     const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
@@ -659,7 +673,10 @@ export function TranscriptExport({
     format: exportFormat,
     trackCodes: videoTracks.map((t) => trackCode(editedResult, t)),
     stacked: textNames.length === 1,
-    filePerTrack: textNames.length > 1 || !!plan.sidecars,
+    // A site (timed) track gets its own file beside ONE shared file for the rest, so more than
+    // one text file is "one each" only when the count matches the tracks.
+    filePerTrack: !!plan.sidecars || (textNames.length > 1 && textNames.length === videoTracks.length),
+    fileCount: textNames.length,
     // Null without split subtitles.
     cueCount: cueOpts && subGrid ? subGrid.cues.length : null,
     segCount: editedResult.segments?.length ?? 0,
@@ -810,7 +827,14 @@ export function TranscriptExport({
 
   // Track names (D89): what each track is called inside the video, its
   // sidecar's name and its flags. Only with a video.
-  const renamed = (t: (typeof planned)[number]) => !!cleanTrackTitle(trackNames[t.id]) && t.title !== t.defaultTitle;
+  // Read own-only (as planTracks does): a track id like "constructor" must not find a
+  // function off Object.prototype, nor a hand-edited non-string name reach the input.
+  const renamed = (t: (typeof planned)[number]) =>
+    !!cleanTrackTitle(ownProp(trackNames, t.id)) && t.title !== t.defaultTitle;
+  const nameValue = (t: (typeof planned)[number]) => {
+    const raw = ownProp(trackNames, t.id);
+    return typeof raw === "string" ? raw : t.defaultTitle;
+  };
   const setName = (id: string, name: string | null) => {
     const next = { ...trackNames };
     if (name === null) delete next[id];
@@ -832,7 +856,7 @@ export function TranscriptExport({
           <span className="font-mono text-[11px] text-dim">{langCode(t.lang)}</span>
           <TextInput
             aria-label={`${trackChipLabel(editedResult, t.id)} track name`}
-            value={trackNames[t.id] ?? t.defaultTitle}
+            value={nameValue(t)}
             placeholder={t.defaultTitle}
             maxLength={TRACK_TITLE_MAX}
             disabled={effSubtitleMode === "sidecar"}

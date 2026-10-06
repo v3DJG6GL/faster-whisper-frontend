@@ -4,6 +4,7 @@
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
 import { safeDisplayText, stripControlChars } from "../sanitize";
+import { UNSPACED } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -261,8 +262,13 @@ function parseLrc(body: string): ImportedText {
       lastTagEnd = tagRe.lastIndex;
     }
     if (starts.length === 0) continue; // metadata tags ([ti:…]) and blanks
-    // Enhanced-LRC inline <mm:ss.xx> word tags reduce to plain text.
-    const { text, speaker } = cueText([trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, " ")]);
+    // Enhanced-LRC inline <mm:ss.xx> word tags reduce to plain text: a space,
+    // except between two unspaced (CJK) characters — our own export joins those
+    // words without one, and "<t>word<t>word" files elsewhere still get theirs.
+    const { text, speaker } = cueText([
+      trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
+        UNSPACED.test(s[off - 1] ?? "") && UNSPACED.test(s[off + m.length] ?? "") ? "" : " "),
+    ]);
     if (text) {
       for (const start of starts) segments.push({ start, text, speaker });
     } else stops.push(...starts);

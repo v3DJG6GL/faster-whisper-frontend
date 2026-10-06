@@ -211,7 +211,7 @@ const unspacedChar = (c: string) => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")`. */
-function joinTexts(parts: string[]): string {
+export function joinSegmentTexts(parts: string[]): string {
   let out = "";
   parts.forEach((p, i) => {
     out += i && !(unspacedChar(edgeChar(out, true)) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
@@ -350,7 +350,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
           if (!b.length) return;
           const lang = slotLangs[i];
           const tag = lang && ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : "";
-          paras.push(tag + prefix + joinTexts(b));
+          paras.push(tag + prefix + joinSegmentTexts(b));
         });
       }
       bufs = Array.from({ length: trackCount }, () => []);
@@ -386,7 +386,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
   const flush = () => {
     if (buf.length) {
       const prefix = who ? `${nameOf(ctx, who)}: ` : "";
-      paras.push(prefix + joinTexts(buf));
+      paras.push(prefix + joinSegmentTexts(buf));
     }
     buf = [];
   };
@@ -551,9 +551,14 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
       if (ws.length) {
         // Enhanced LRC (A2): inline <mm:ss.xx> tags, each marking the start
         // of the following word — the karaoke convention.
-        // Unspaced (CJK) text has no spaces between its words: joining them with one would add some.
-        const sep = /\s/.test(seg.text.trim()) ? " " : "";
-        const body = ws.map((w) => `<${lrcTime(w.start)}>${clean(w.word)}`).join(sep);
+        // Unspaced (CJK) text has no spaces between its words: joining them with one would add
+        // some. Decided per seam (as joinSegmentTexts), so one Latin word in a CJK line keeps
+        // its spaces without spacing out the rest.
+        const cw = ws.map((w) => clean(w.word));
+        const body = cw
+          .map((c, k) => (k && !(unspacedChar(edgeChar(cw[k - 1], true)) && unspacedChar(edgeChar(c, false))) ? " " : "")
+            + `<${lrcTime(ws[k].start)}>${c}`)
+          .join("");
         out.push(`[${lrcTime(seg.start)}]${prefix}${body}`);
         continue;
       }
@@ -835,12 +840,10 @@ export function exportFileNames(
 
 export function exportStemSuffix(tracks?: string[]): string {
   if (!tracks || tracks.includes("orig")) return "";
-  const langs = tracks.filter((t) => t !== "orig");
-  if (!langs.length) return "";
   // A multi-target export used to return "" here, so the file name carried no
   // language at all -- the one case where naming matters MOST, since the file
   // holds several. Bounded: these codes are user-authored and land in a path.
-  const slugs = langs.map((c) => codeSlug(c)).filter(Boolean).slice(0, 4);
+  const slugs = tracks.map((c) => codeSlug(c)).filter(Boolean).slice(0, 4);
   return slugs.length ? "." + slugs.join("+") : "";
 }
 

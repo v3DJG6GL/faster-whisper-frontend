@@ -178,6 +178,16 @@ describe("buildCues", () => {
     expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
   });
 
+  it("own timing: a CJK translation with one Latin word still splits between its characters", () => {
+    const ja = "今日は朝から iPhone の新しい機能について説明しますが駅までの道はとても混んでいて電車も遅れていました";
+    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+    const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
+    const L = limitsFor(STD, "ja");
+    expect(grid.own.ja.length).toBeGreaterThan(2);
+    expect(grid.own.ja.every((c) => c.text.length <= L.cpl * L.lines)).toBe(true);
+    expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
+  });
+
   it("site tracks always keep their own timing", () => {
     const r: BatchResult = {
       ...seg1("Hello there.", 0, 2),
@@ -321,6 +331,13 @@ describe("cutByShare", () => {
     const parts = cutByShare("今日🎉楽しい", [3, 4]);
     expect(parts.join("")).toBe("今日🎉楽しい");
     expect(parts.every(wellFormed)).toBe(true);
+  });
+  it("cuts a CJK run between its characters even when one Latin word adds a space", () => {
+    const text = "A案 は今日の会議で正式に承認されましたので来週から実施します";
+    const parts = cutByShare(text, [10, 10, 10]);
+    expect(parts).toHaveLength(3);
+    expect(parts.every((p) => p.length > 0)).toBe(true);
+    expect(parts.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
   });
   it("still avoids a cut right after an article past the bounded look-back", () => {
     const text = "Understandably everyone waited for the announcement";

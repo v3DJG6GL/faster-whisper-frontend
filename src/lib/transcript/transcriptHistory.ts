@@ -10,6 +10,7 @@ import {
 } from "../api";
 import { useApp } from "../store";
 import type { BatchResult, TranscribeOptions } from "../types";
+import { joinSegmentTexts } from "./transcriptFormats";
 import { applyTextEdits } from "./wordAlign";
 
 export interface TranscriptRecord {
@@ -163,12 +164,19 @@ export function loadHistory(force = false): Promise<void> {
   // Issue any parked coalesced write before listing. The write is not awaited (nothing
   // orders the two IPC calls), but without this a just-edited record trailed the listing by
   // the whole debounce window and reverted to its older on-disk text in the UI.
-  flushRecordWrites();
+  void flushRecordWrites();
   touchedSinceListing = new Map();
   loading = listTranscriptRecords()
     .then((raw) => {
       const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();
-      const byId = new Map(raw.filter(isRecord).map((r) => [r.id, r]));
+      // A non-string appId (hand-edited or foreign file) would throw in the History search and
+      // app chips (`.toLowerCase()` / `.split()`); keep the record, drop only the bad field.
+      const byId = new Map(
+        raw
+          .filter(isRecord)
+          .map((r) => (r.appId != null && typeof r.appId !== "string" ? { ...r, appId: undefined } : r))
+          .map((r) => [r.id, r]),
+      );
       for (const [id, rec] of touched) {
         if (rec) byId.set(id, rec);
         else byId.delete(id);
@@ -201,7 +209,8 @@ const writeTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingWrite = new Map<string, TranscriptRecord>();
 const lastWriteAt = new Map<string, number>();
 
-function writeNow(rec: TranscriptRecord): void {
+/** Write one record now; the promise settles when the save does (never rejects). */
+function writeNow(rec: TranscriptRecord): Promise<void> {
   const now = Date.now();
   // One stamp per record ever written would grow for the whole session (every dictation
   // adds one). A stamp older than the window decides nothing — upsertRecord reads a missing
@@ -210,7 +219,7 @@ function writeNow(rec: TranscriptRecord): void {
     for (const [id, at] of lastWriteAt) if (now - at >= WRITE_COALESCE_MS) lastWriteAt.delete(id);
   }
   lastWriteAt.set(rec.id, now);
-  void saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
+  return saveTranscriptRecord(rec.id, JSON.stringify(rec), rec.kind === "dictation").catch((e) =>
     console.error("history save failed:", e),
   );
 }
@@ -233,14 +242,19 @@ export function setRecordForgetHook(fn: (id: string | null) => void): void {
   forgetHook = fn;
 }
 
-/** Write every coalesced record now (app teardown). */
-export function flushRecordWrites(): void {
+/** Write every coalesced record now. The writes are issued synchronously; the promise
+ *  settles once they have all landed (or failed) — a quit path must await it before it
+ *  exits, since a real exit (tray Quit, the trayless close) never fires `beforeunload`.
+ *  Callers that only need the writes issued (loadHistory, beforeunload) may ignore it. */
+export function flushRecordWrites(): Promise<void> {
+  const saves: Promise<void>[] = [];
   for (const [id, rec] of pendingWrite) {
     clearTimeout(writeTimers.get(id));
     writeTimers.delete(id);
-    writeNow(rec);
+    saves.push(writeNow(rec));
   }
   pendingWrite.clear();
+  return Promise.allSettled(saves).then(() => undefined);
 }
 
 export function upsertRecord(rec: TranscriptRecord): void {
@@ -250,7 +264,7 @@ export function upsertRecord(rec: TranscriptRecord): void {
   }));
   const since = Date.now() - (lastWriteAt.get(rec.id) ?? 0);
   if (since >= WRITE_COALESCE_MS && !writeTimers.has(rec.id)) {
-    writeNow(rec);
+    void writeNow(rec);
     return;
   }
   pendingWrite.set(rec.id, rec);
@@ -261,7 +275,7 @@ export function upsertRecord(rec: TranscriptRecord): void {
       writeTimers.delete(rec.id);
       const last = pendingWrite.get(rec.id);
       pendingWrite.delete(rec.id);
-      if (last) writeNow(last);
+      if (last) void writeNow(last);
     }, WRITE_COALESCE_MS),
   );
 }
@@ -461,6 +475,6 @@ export function recordEditedResult(rec: TranscriptRecord): BatchResult {
     ...res,
     segments,
     words,
-    text: segments.map((s) => s.text.trim()).join(" "),
+    text: joinSegmentTexts(segments.map((s) => s.text.trim())),
   };
 }

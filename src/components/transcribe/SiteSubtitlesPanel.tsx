@@ -174,7 +174,7 @@ export function SiteSubtitlesPanel({
                         // there is no room for one more.
                         disabled={disabled || mtFull}
                         renderTrigger={(p) => (
-                          <span title={mtFull ? `This server translates into at most ${maxTargets} languages` : undefined} className="block">
+                          <span title={mtFull ? `At most ${maxTargets} target languages per run` : undefined} className="block">
                             <FieldTrigger {...p} open={p["aria-expanded"]} size="sm">
                               Choose a language…
                             </FieldTrigger>

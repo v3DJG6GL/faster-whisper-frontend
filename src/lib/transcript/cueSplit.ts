@@ -216,13 +216,19 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
   return out;
 }
 
+/** CJK punctuation and fullwidth forms: they stick to the unspaced character before them. */
+const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/;
+/** A token of spaced text: a word, or one unspaced (CJK) character with its punctuation — so
+ *  a CJK translation holding one Latin word still splits between its characters. */
+const MIXED_TOKEN = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}][\u3000-\u303f\uff00-\uffef]*|[^\s\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]+/gu;
+
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
  *  without spaces (CJK) splits per code point. */
 function spreadTokens(text: string, a: number, b: number): Tok[] {
   const spans: [number, number][] = [];
   if (/\s/.test(text.trim())) {
-    for (const m of text.matchAll(/\S+/g)) spans.push([m.index!, m.index! + m[0].length]);
+    for (const m of text.matchAll(MIXED_TOKEN)) spans.push([m.index!, m.index! + m[0].length]);
   } else {
     for (const m of text.matchAll(/\S/gu)) spans.push([m.index!, m.index! + m[0].length]);
   }
@@ -320,11 +326,17 @@ export function cutByShare(text: string, shares: number[]): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
   // Candidate cut positions: a space (dropped) or, for CJK, any code-point
-  // boundary (never inside a surrogate pair, e.g. an emoji).
+  // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may
+  // still hold a CJK run (one Latin word in a Japanese line): it cuts between
+  // its characters too — a lone surrogate is never UNSPACED, so no pair splits.
   const cand: number[] = [];
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
-    if (spaced ? /\s/.test(text[i]) : c < 0xdc00 || c > 0xdfff) cand.push(i);
+    if (
+      spaced
+        ? /\s/.test(text[i]) || ((UNSPACED.test(text[i - 1]) || UNSPACED_PUNCT.test(text[i - 1])) && UNSPACED.test(text[i]))
+        : c < 0xdc00 || c > 0xdfff
+    ) cand.push(i);
   }
   const tot = shares.reduce((a, b) => a + b, 0) || 1;
   const cuts: number[] = [];

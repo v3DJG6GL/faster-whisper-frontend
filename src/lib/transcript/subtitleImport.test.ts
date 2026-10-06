@@ -70,6 +70,22 @@ describe("round-trips against generateExport", () => {
     expect(back.segments[0].text).toBe("Hello there.");
     expect(back.segments[0].end).toBeCloseTo(2.1, 2); // next line's start
   });
+  it("lrc: CJK word tags reduce to text without spaces the export never wrote", () => {
+    const ja: BatchResult = {
+      text: "今日は晴れ",
+      language: "ja",
+      segments: [{ start: 0, end: 1.5, text: "今日は晴れ" }],
+      words: [
+        { word: "今日", start: 0, end: 0.5 },
+        { word: "は", start: 0.5, end: 1 },
+        { word: "晴れ", start: 1, end: 1.5 },
+      ],
+    };
+    const back = parseImportedText("lrc", generateExport(ja, { format: "lrc", wordTimestamps: true }));
+    expect(back.segments[0].text).toBe("今日は晴れ");
+    // Tags with no space between Latin words still separate them.
+    expect(parseImportedText("lrc", "[00:01.00]<00:01.00>Hello<00:01.50>there\n").segments[0].text).toBe("Hello there");
+  });
   it("json: our export shape incl. language and speakerName", () => {
     const json = generateExport(RESULT, { format: "json" });
     const back = parseImportedText("json", json);
