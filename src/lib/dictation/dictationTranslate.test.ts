@@ -150,6 +150,28 @@ describe("runDictationTranslate", () => {
     expect(d.cancel).not.toHaveBeenCalled();
   });
 
+  it("submits only as many context phrases as the profile's depth", async () => {
+    // The server translates every submitted segment, so context past the depth
+    // would be paid for in full and still lend the phrase implicit context.
+    const run = async (contextSegments: number | undefined) => {
+      const seen: { texts: string[]; ctx: number | null | undefined }[] = [];
+      const d = deps((a) => {
+        seen.push({ texts: a.texts, ctx: a.contextSegments });
+        return Promise.resolve(answer(a.texts));
+      });
+      const r = await runDictationTranslate(
+        req({ text: "drei", context: ["eins", "zwei"], contextSegments }),
+        d,
+      );
+      expect(r.text).toBe("en:drei");
+      return seen[0];
+    };
+    expect(await run(0)).toEqual({ texts: ["drei"], ctx: 0 });
+    expect(await run(1)).toEqual({ texts: ["zwei", "drei"], ctx: 1 });
+    // No depth = inherit: everything the stream kept, depth = what was sent.
+    expect(await run(undefined)).toEqual({ texts: ["eins", "zwei", "drei"], ctx: 2 });
+  });
+
   it("drops a target the server kept as the source text", async () => {
     // `kept` is aligned with the full texts array (context + original).
     const d = deps((a) =>

@@ -245,9 +245,18 @@ export async function runDictationTranslate(
 ): Promise<DictationTranslateResult> {
   const original = req.text;
   const progressId = (deps.newId ?? newProgressId)();
+  // The server translates EVERY submitted segment into every target and uses the
+  // depth only to pick context lines, so phrases beyond the profile's depth would
+  // cost full passes (and still lend implicit context with context turned off).
+  // No depth = inherit: send what the stream kept.
+  const depth =
+    typeof req.contextSegments === "number"
+      ? Math.max(0, Math.floor(req.contextSegments))
+      : req.context.length;
+  const context = depth > 0 ? req.context.slice(-depth) : [];
   // Every character the server will actually translate, not just this phrase's.
   const submittedChars =
-    req.context.reduce((n, c) => n + c.length, 0) + original.length;
+    context.reduce((n, c) => n + c.length, 0) + original.length;
   const ceilingMs = translateCeilingMs(submittedChars, req.targets.length, {
     oneShot: req.oneShot,
     queued: req.queued,
@@ -267,13 +276,13 @@ export async function runDictationTranslate(
         backendId: req.backendId,
         // Prior phrases ride along as context segments; only the last result
         // (the current text) is consumed.
-        texts: [...req.context, original],
+        texts: [...context, original],
         targets: req.targets,
         source: req.source?.trim() ? req.source.trim() : null,
         model: req.model,
         mode: req.mode,
         glossary: req.glossary,
-        contextSegments: req.contextSegments ?? (req.context.length ? req.context.length : null),
+        contextSegments: req.contextSegments ?? (context.length ? context.length : null),
         progressId,
         capturedId: req.capturedId ?? null,
         clientJob: req.clientJob ?? null,

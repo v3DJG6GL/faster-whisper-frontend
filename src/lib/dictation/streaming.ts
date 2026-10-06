@@ -1336,7 +1336,7 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
  *  `landed: false` is inject_text's own-window ENTRY check (or a failed clipboard write) —
  *  callers believe that answer rather than the attempt. The target-less recovery copies
  *  (stuck-finalize, stream://error, stopLive reject) and the stop-mode sink-skip recovery go
- *  through the guard-free `recoverTextToClipboard` instead. */
+ *  through the guard-free `recoverUnguarded` instead. */
 function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>>) {
   return injectText({
     text,
@@ -1361,6 +1361,21 @@ async function recoverToClipboard(
     return (await copyForTarget(text, t)).landed;
   } catch (e) {
     console.error(`clipboard fallback after ${what} failed:`, e);
+    return false;
+  }
+}
+
+/** The target-less recovery copy (stuck-finalize, stream error, stop reject, stop-mode sink skip).
+ *  Not `inject_text` with the clipboard method: its own-window entry guard writes nothing while one
+ *  of our windows holds focus — exactly when these recovery paths fire (the user is most likely
+ *  looking at, or clicking into, our own window). `recover_to_clipboard` has no such guard; it
+ *  types nothing, so it cannot duplicate text. The answer is the clipboard write's own result:
+ *  false = nothing was written; a rejected copy is logged and answers `false` too. */
+async function recoverUnguarded(text: string, what: string): Promise<boolean> {
+  try {
+    return await recoverTextToClipboard(text);
+  } catch (e) {
+    console.error(`clipboard recovery after ${what} failed:`, e);
     return false;
   }
 }
@@ -1665,24 +1680,16 @@ function armStuckWatchdog(): void {
       // those two recovery paths. Live mode injected per-phrase already → "". endInjection (chained by
       // cancelLive) is a no-op in stop mode (nothing snapshotted), so there's no clobber race, and
       // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
-      // The recovery copy WAITS for cancelLive, though, so the copy is the session's last clipboard
-      // write: cancelLive's teardown (cancelStream(true), endInjection) has settled before it.
+      // The recovery copy WAITS for cancelLive, so cancelStream(true) and the synchronous idle land
+      // before the copy and before the superseded check below. endInjection is only void-chained by
+      // cancelLive, not awaited; it is a no-op in stop mode (nothing snapshotted), which is the only
+      // mode with a pending transcript here.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
       const cancelled = cancelLive().catch((e) => console.error("stuck-finalize cancel failed:", e));
       if (pending) {
         void (async () => {
           await cancelled;
-          let onClipboard = false;
-          try {
-            // Not `inject_text` with the clipboard method: its own-window entry guard writes
-            // nothing while one of our windows holds focus — exactly when these recovery paths
-            // fire (the user is most likely looking at, or clicking into, our own window).
-            // `recover_to_clipboard` has no such guard; it types nothing, so it cannot duplicate
-            // text. The answer is the clipboard write's own result: false = nothing was written.
-            onClipboard = await recoverTextToClipboard(pending);
-          } catch (err) {
-            console.error("clipboard recovery after stuck-finalize failed:", err);
-          }
+          const onClipboard = await recoverUnguarded(pending, "stuck-finalize");
           // Notify in BOTH branches, mirroring the stream://error / stopLive-reject siblings: on a
           // double failure (link died AND the clipboard copy threw) the text is genuinely lost, so
           // surface it rather than silently idling. (No error payload here — it's a watchdog timeout.)
@@ -2828,24 +2835,20 @@ async function ensureListeners(): Promise<void> {
             // claiming a recovery then would be a false confirmation. `outText`, not `text`: the
             // translated transcript is what was being inserted, and history has already booked it
             // as the delivered translation.
-            let onClipboard = false;
-            try {
-              onClipboard = await recoverTextToClipboard(outText);
-            } catch (e) {
-              console.error("clipboard fallback after a sink-skipped insert failed:", e);
-            }
+            const onClipboard = await recoverUnguarded(outText, "a sink-skipped insert");
             // Same post-await re-check as the failed-insert recovery above.
             if (insertCfg !== cfg) return;
             if (onClipboard) {
               sessionClipboard = true;
-              // A clipboard-method skip has two possible causes (see sinkSkipMessage): no focus claim there.
+              // On the clipboard method the skip may have been a failed clipboard write rather than
+              // our window taking focus, so make no focus claim there.
               flashError(
                 t.method === "clipboard"
                   ? "The transcript is on the clipboard to paste manually."
                   : "Focus moved to this app — the transcript is on the clipboard to paste manually.",
               );
             } else {
-              flashError(sinkSkipMessage(t.method));
+              flashError(sinkSkipMessage());
             }
           }
         });
@@ -2892,19 +2895,24 @@ async function ensureListeners(): Promise<void> {
     // teardownAfterFatalInject. endInjection is chained on `owed` above, so any snapshot still restores.
     insertCfg = null;
     console.error("stream error:", e.payload);
+    // Flash BEFORE the recovery await: a dead socket emits error then `closed` back-to-back, and a
+    // `closed` that still saw listening/transcribing would cancel + settleIdle this session (idle
+    // chip, outcome post, queued hold-start) — and the late flash could then stamp a session
+    // started in that window "error".
+    flashError(e.payload);
     if (pending) {
       void (async () => {
-        let onClipboard = false;
-        try {
-          // Same as the stuck-finalize sibling: no own-window guard; false means nothing was written.
-          onClipboard = await recoverTextToClipboard(pending);
-        } catch (err) {
-          console.error("clipboard recovery after stream error failed:", err);
+        const onClipboard = await recoverUnguarded(pending, "stream error");
+        if (!onClipboard) return;
+        // Upgrade the message only while this errored session still owns the chip.
+        const app = useApp.getState();
+        if (app.status === "error" && app.dictationError === e.payload && insertCfg === null && !startingSession) {
+          app.setDictation({ dictationError: `${e.payload} — your text is on the clipboard to paste manually.` });
+        } else {
+          console.warn("[dictation] stream-error recovery finished after the error chip moved on (on clipboard: true)");
+          app.setLogsDoorway("Connection lost — your earlier text is on the clipboard to paste manually.");
         }
-        flashError(onClipboard ? `${e.payload} — your text is on the clipboard to paste manually.` : e.payload);
       })();
-    } else {
-      flashError(e.payload);
     }
     // Tear down the Rust capture session so the mic closes and system audio
     // un-mutes immediately — the dead WS task doesn't drop it, so without this the
@@ -3023,13 +3031,11 @@ function teardownAfterFatalInject(): void {
   void retireSessionEpoch().catch((err) => console.error("retire epoch after fatal inject failed:", err));
 }
 
-/** The wording for "nothing was written and the clipboard retry failed too". The retry goes
- *  through the guard-free recover_to_clipboard, so its failure means the clipboard write itself
- *  failed. On a non-clipboard method the skip itself was our window taking focus. */
-export function sinkSkipMessage(method: InsertMethod): string {
-  return method === "clipboard"
-    ? "Nothing was inserted — the text couldn’t be put on the clipboard."
-    : "Focus moved to this app — nothing was inserted, and the text couldn’t be put on the clipboard.";
+/** The wording for "nothing was written and the clipboard retry failed too". The guard-free
+ *  retry failed, so the clipboard write itself failed; the first skip's cause (our own window, or
+ *  a failed divert write) cannot be told apart here, so name only the clipboard. */
+export function sinkSkipMessage(): string {
+  return "Nothing was inserted — the text couldn’t be put on the clipboard.";
 }
 
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
@@ -3660,13 +3666,7 @@ export async function stopLive(): Promise<void> {
     insertCfg = null;
     if (pending) {
       void (async () => {
-        let onClipboard = false;
-        try {
-          // Same as the stuck-finalize sibling: no own-window guard; false means nothing was written.
-          onClipboard = await recoverTextToClipboard(pending);
-        } catch (err) {
-          console.error("clipboard recovery after stop reject failed:", err);
-        }
+        const onClipboard = await recoverUnguarded(pending, "stop reject");
         flashError(onClipboard ? `${String(e)} — your text is on the clipboard to paste manually.` : String(e));
       })();
     } else {

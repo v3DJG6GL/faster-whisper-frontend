@@ -158,17 +158,22 @@ export default function LangPick() {
       // Abort the whole action (don't start / don't insert) — see the header comment.
       abort();
     } else if (e.key === "Enter") {
-      if (typing) {
+      if (query.length > 0) {
         // A live filter means the user is hunting for a row, not confirming the
         // preset: pick it and clear the filter so the NEXT Enter commits. No match
         // (a mistyped filter) is a no-op — committing the preset here would be the
-        // very habit trap the footer hint says this key avoids.
+        // very habit trap the footer hint says this key avoids. Keyed on the filter,
+        // not on focus: clicking a heading or blank padding moves focus to <body>
+        // while the query (and the "pick filtered" hint) stays. Picking never
+        // un-picks — a row the preset already holds stays chosen (Space/digits
+        // toggle).
         const code = rows[active];
         if (code) {
-          toggle(code);
+          if (!chosen.includes(code)) toggle(code);
           setQuery("");
           setActive(0);
         }
+        inputRef.current?.focus();
       } else {
         commit(chosen);
       }

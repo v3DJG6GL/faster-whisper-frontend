@@ -276,14 +276,29 @@ describe("work that must wait for the queue or the cancel", () => {
   // against an IPC or a queued task it raced, so pin the order in the source.
   const fns = topLevelFunctions(streamingSrc);
 
-  it("the stuck-finalize recovery copy waits for cancelLive before copying", () => {
-    // The copy must be the session's last clipboard write: cancelLive's teardown
-    // (cancelStream(true), endInjection) settles first.
+  it("the stuck-finalize recovery copy waits for cancelLive's cancel before copying", () => {
+    // cancelStream(true) and the synchronous idle land before the copy (and before the superseded
+    // check). endInjection is only void-chained by cancelLive; it is a no-op in stop mode, the only
+    // mode with a pending transcript here.
     const body = mask(fns.armStuckWatchdog);
     expect(body).not.toMatch(/void cancelLive\(\)/);
     const wait = body.indexOf("await cancelled");
     expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
-    expect(body.indexOf("recoverTextToClipboard(")).toBeGreaterThan(wait);
+    expect(body.indexOf("recoverUnguarded(")).toBeGreaterThan(wait);
+  });
+
+  it("the stream-error handler flashes the error before awaiting the recovery copy", () => {
+    // A dead socket emits error then `closed` back-to-back; a flash deferred behind the copy lets
+    // that `closed` see a live status, cancel + settleIdle the session, and then the late flash
+    // can stamp a newly started session "error".
+    const body = mask(bodyAfter(streamingSrc, 'reg<string>("stream://error"'));
+    const flash = body.indexOf("flashError(");
+    expect(flash, "stream-error handler must flash").toBeGreaterThanOrEqual(0);
+    const copy = body.indexOf("recoverUnguarded(");
+    expect(copy, "stream-error recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
+    expect(flash).toBeLessThan(copy);
+    // The post-await upgrade must not re-flash (that would stamp a superseding session).
+    expect(body.indexOf("flashError(", copy)).toBe(-1);
   });
 
   it("the stop-mode sink-skip recovery copies without the own-window guard, then re-checks the session", () => {
@@ -291,8 +306,8 @@ describe("work that must wait for the queue or the cancel", () => {
     // writes nothing then, so the whole transcript would be lost behind a false "not on the clipboard".
     const block = mask(bodyAfter(streamingSrc, "} else if (!t.isSelf && !landed)"));
     expect(block).not.toContain("recoverToClipboard(");
-    const copy = block.indexOf("recoverTextToClipboard(");
-    expect(copy, "sink-skip recovery must use recoverTextToClipboard").toBeGreaterThanOrEqual(0);
+    const copy = block.indexOf("recoverUnguarded(");
+    expect(copy, "sink-skip recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
     expect(block.indexOf("insertCfg !== cfg", copy)).toBeGreaterThan(copy);
   });
 
