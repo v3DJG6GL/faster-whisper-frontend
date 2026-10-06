@@ -1424,7 +1424,10 @@ export async function applyBlob(
     // An explicit one-shot restore (file import, Restore from server, onboarding) is not
     // a sync round: the "what this device syncs" switches must not silently discard the
     // values the user asked to restore — the export composes WITHOUT gates, and on a stock
-    // install every machine-specific switch is off (chip position, paste chord, folders…).
+    // install every machine-specific switch is off (chip position, paste chord…).
+    // Folders are the exception: every one-shot restore strips them before calling here
+    // (`stripMachineFolders`), because a path from another machine (e.g. a Windows path on
+    // Linux) is meaningless on this one.
     // All-on gates also neutralise the per-element repins in the list arms below.
     const gates = opts.ignoreGates
       ? (Object.fromEntries(MANIFEST.map((d) => [d.id, true])) as Gates)

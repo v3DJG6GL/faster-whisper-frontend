@@ -19,7 +19,7 @@ import {
   Toggle,
 } from "@/components/ui";
 import { evdevStatus, pickAndImportSettings, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
-import { applyImport, exportToFile } from "@/lib/sync/settingsFile";
+import { applyImport, exportToFile, stripMachineFolders } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/sync/SyncSettingsList";
 import {
   ALL_CATEGORIES,
@@ -399,7 +399,8 @@ export function RestoreFromServer({
       // check above and applyBlob's own, or the apply was dropped stale after its retries).
       // Binding sync to the new backend on a state that never landed would then push this
       // device's pre-restore config over the server copy.
-      const ok = await applyBlob(blob, sel, 2, { ignoreGates: true });
+      // The gate bypass opens the folder gates — keep this machine's folders.
+      const ok = await applyBlob(stripMachineFolders(blob), sel, 2, { ignoreGates: true });
       if (!ok) {
         setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
         setApplying(false);
@@ -440,6 +441,7 @@ export function RestoreFromServer({
       </div>
 
       <div className="mt-3 flex flex-col gap-2">
+        <Notice>Never restored: this device&apos;s audio and log folders.</Notice>
         {replaced.length > 0 && (
           <Notice tone="warn">
             Selected categories replace what&apos;s on this device — your current{" "}

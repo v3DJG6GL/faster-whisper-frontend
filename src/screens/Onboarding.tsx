@@ -27,6 +27,7 @@ import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
 import { ImportPreview, IncomingAddresses } from "@/components/sync/SettingsSync";
+import { stripMachineFolders } from "@/lib/sync/settingsFile";
 import { relTime } from "@/lib/format";
 import type { ImportResult, SyncPullResult } from "@/lib/sync/syncTypes";
 import type { Backend, ConnectionInfo, PipelineRule, Profile } from "@/lib/types";
@@ -179,7 +180,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // `false` = nothing landed (dictation started meanwhile, or the apply was dropped stale
       // after its retries). Binding sync to a state that never hydrated would push this
       // device's pre-restore config over the server copy — same guard as the Sync tab's restore.
-      const ok = await applyBlob(migrateBlob(blob), ALL_ON, 2, { ignoreGates: true });
+      // The peer's folder paths are stripped: the gate bypass would otherwise apply them here.
+      const ok = await applyBlob(stripMachineFolders(migrateBlob(blob)), ALL_ON, 2, { ignoreGates: true });
       if (!ok) {
         setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
         return;

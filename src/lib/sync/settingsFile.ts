@@ -55,6 +55,25 @@ export async function exportToFile(
   return { keysMissing };
 }
 
+/** Drop this machine's folder paths (recordings, audio base, logs) from a blob
+ *  about to be applied by a one-shot restore — file import, Restore from server,
+ *  onboarding. Those apply with `ignoreGates`, which opens the folder gates, so a
+ *  blob naming folders would move this device's recordings and logs to a path
+ *  from another machine (a Windows path on Linux means nothing here). Absent keys
+ *  keep the local values. Pure: returns a new blob, the input is untouched. */
+export function stripMachineFolders(blob: SyncBlob): SyncBlob {
+  const out: SyncBlob = { ...blob };
+  if (isPlainObject(out.recording)) {
+    const { recordingsDir: _r, audioBaseDir: _a, ...rec } = out.recording;
+    out.recording = rec as SyncBlob["recording"];
+  }
+  if (isPlainObject(out.logging)) {
+    const { logDir: _l, ...lg } = out.logging;
+    out.logging = lg as SyncBlob["logging"];
+  }
+  return out;
+}
+
 /** Apply the user's per-category selection from a parsed import. Secrets ride
  *  inside the blob (applyBlob writes them to the keyring and re-derives
  *  hasApiKey from keyring truth). Throws "dictating" if a session is live —
@@ -67,19 +86,9 @@ export async function applyImport(
   if (useApp.getState().status !== "idle") throw new Error("dictating");
   // Normalize a file written before the category split (chip fields inside
   // recording, the quick-add chord/pin under general/backends).
-  const blob: SyncBlob = migrateBlob({ ...result.categories });
-  // ignoreGates turns the folder gates on, so a file naming folder paths would
-  // move this device's recordings and logs — which the dialog promises never
-  // happens. Our own exports never carry these keys; strip them so a
-  // hand-edited file cannot either (absent keys keep the local values).
-  if (isPlainObject(blob.recording)) {
-    const { recordingsDir: _r, audioBaseDir: _a, ...rec } = blob.recording;
-    blob.recording = rec as SyncBlob["recording"];
-  }
-  if (isPlainObject(blob.logging)) {
-    const { logDir: _l, ...lg } = blob.logging;
-    blob.logging = lg as SyncBlob["logging"];
-  }
+  // Our own exports never carry the folder keys; strip them so a hand-edited
+  // file cannot either.
+  const blob: SyncBlob = stripMachineFolders(migrateBlob({ ...result.categories }));
   if (selection.backends && blob.backends && Object.keys(result.secrets).length > 0) {
     blob.backends = { ...blob.backends, secrets: result.secrets };
   }

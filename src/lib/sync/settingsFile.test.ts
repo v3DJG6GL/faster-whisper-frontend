@@ -93,6 +93,34 @@ describe("exportToFile", () => {
   });
 });
 
+// ── stripMachineFolders ─────────────────────────────────────────────────────
+// Every one-shot restore (import, Restore from server, onboarding) applies with
+// the gates bypassed, so the peer's folder paths must be gone before the apply.
+describe("stripMachineFolders", () => {
+  it("drops the three folder paths and keeps every other recording/logging key", async () => {
+    const { stripMachineFolders } = await import("./settingsFile");
+    const input = {
+      recording: { recordingsDir: "C:\\rec", audioBaseDir: "C:\\audio", saveRecordings: true, keepDays: 30 },
+      logging: { logDir: "C:\\logs", level: "debug", keepDays: 7 },
+      general: { theme: "dark" },
+    } as unknown as SyncBlob;
+    const out = stripMachineFolders(input) as unknown as Record<string, Record<string, unknown>>;
+    expect(out.recording).toEqual({ saveRecordings: true, keepDays: 30 });
+    expect(out.logging).toEqual({ level: "debug", keepDays: 7 });
+    expect(out.general).toEqual({ theme: "dark" });
+    // Pure: the caller's blob still carries its folders.
+    const orig = input as unknown as Record<string, Record<string, unknown>>;
+    expect(orig.recording.recordingsDir).toBe("C:\\rec");
+    expect(orig.logging.logDir).toBe("C:\\logs");
+  });
+
+  it("passes a blob without recording/logging through unchanged", async () => {
+    const { stripMachineFolders } = await import("./settingsFile");
+    const input = { general: { theme: "dark" } } as unknown as SyncBlob;
+    expect(stripMachineFolders(input)).toEqual(input);
+  });
+});
+
 // ── applyImport ────────────────────────────────────────────────────────────
 // The import path hands the sync engine a MIGRATED blob, gates the plaintext
 // secrets on the backends checkbox, and always applies with the gates
