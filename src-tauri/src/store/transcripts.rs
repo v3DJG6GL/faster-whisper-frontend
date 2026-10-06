@@ -660,35 +660,14 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     }
 }
 
-/// Delete records older than `days` (0 = keep forever). Same shape and
-/// rationale as `audio::prune_recordings`, including the overflow clamp.
+/// Delete records older than `days` (0 = keep forever), through the same clamped mtime sweep
+/// as `audio::prune_recordings` (`audio::prune_older_than`).
 pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
-    if days == 0 {
-        return 0;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    const MAX_RETENTION_DAYS: u32 = 3650;
-    let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(days.min(MAX_RETENTION_DAYS) as u64 * 86_400);
-    let mut removed = 0;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let old = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|t| t < cutoff)
-            .unwrap_or(false);
-        if old && std::fs::remove_file(&path).is_ok() {
-            removed += 1;
-        }
-    }
+    let removed = crate::audio::prune_older_than(dir, days, |e| {
+        e.path().extension().and_then(|x| x.to_str()) == Some("json")
+    });
     if removed > 0 {
-        let effective = days.min(MAX_RETENTION_DAYS);
+        let effective = days.min(crate::audio::MAX_RETENTION_DAYS);
         tracing::info!(
             "[transcripts] retention: removed {removed} record(s) older than {effective}d"
         );
@@ -699,9 +678,11 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 /// Enforce both history retention windows. Called on startup and after every
 /// config save, mirroring `apply_recordings_retention`.
 /// - File transcriptions: `historyRetentionDays` (0/absent = keep forever).
-/// - Dictations: their own, stricter `dictationRetentionDays` (default 7) —
-///   and when `keepDictationHistory` is off, the whole dictation store is
-///   wiped (the setting's copy promises exactly that).
+/// - Dictations: the one dictation clock, `effective_dictation_days` (the
+///   stricter non-zero of `recordingsRetentionDays` and `dictationRetentionDays`,
+///   default 7), the same window the recordings sweep uses — and when
+///   `keepDictationHistory` is off, the whole dictation store is wiped (the
+///   setting's copy promises exactly that).
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
     let days = config.settings.transcribe_retention_days();
     if days > 0 {

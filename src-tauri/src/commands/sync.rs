@@ -99,7 +99,6 @@ pub async fn read_backend_keys(
 pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let path = PathBuf::from(path);
-        let tmp = crate::transport::media::tmp_sibling(&path);
         let text = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
         // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
         // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.
@@ -109,15 +108,8 @@ pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> 
         // nearly-full USB stick or a network share. What survives is a PARTIAL plaintext-credential
         // file in a directory the user chose, and they see only an error toast. The 0600 does not
         // cover it there either — FAT/exFAT removable media and most SMB mounts carry no Unix mode.
-        if let Err(e) = config::write_private(&tmp, &text) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.to_string());
-        }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.to_string());
-        }
-        Ok(())
+        // `write_private_atomic` removes `<path>.tmp` on both the write and the rename failure.
+        config::write_private_atomic(&path, &text).map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())?

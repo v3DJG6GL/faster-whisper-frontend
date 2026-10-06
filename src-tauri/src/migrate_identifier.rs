@@ -168,7 +168,7 @@ pub fn run() {
         // A custom audio base that moved carries its own heal stamp; drop it so the setup heal
         // re-points the records' absolute media paths there too (see `after_move`).
         for base in rewrite_config_paths(&config, &moved) {
-            let _ = std::fs::remove_file(base.join(".heal-v1"));
+            let _ = std::fs::remove_file(base.join(crate::commands::HEAL_STAMP));
         }
     }
 }
@@ -249,7 +249,7 @@ fn after_move(new: &Path) {
     // re-finds every no-longer-existing path by file name under the audio base — the same
     // repair an audio-folder move uses. A custom audio folder elsewhere never moved, so its
     // paths are still valid and heal leaves them alone.
-    let _ = std::fs::remove_file(new.join("audio").join(".heal-v1"));
+    let _ = std::fs::remove_file(new.join("audio").join(crate::commands::HEAL_STAMP));
 }
 
 /// A custom audio/log folder the user placed INSIDE an old app folder moved with it; point
@@ -296,7 +296,7 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
     }
     if changed {
         if let Ok(out) = serde_json::to_string_pretty(&json) {
-            let _ = crate::config::write_private(config, &out);
+            let _ = crate::config::write_private_atomic(config, &out);
         }
     }
     audio_bases

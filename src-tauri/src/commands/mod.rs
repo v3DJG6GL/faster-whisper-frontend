@@ -36,6 +36,11 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// Names of the per-type subfolders inside the audio base folder.
 pub(crate) const AUDIO_SUBDIRS: [&str; 4] = ["dictations", "files", "links", "video"];
 
+/// The heal stamp in an audio base: while it exists, setup skips the media-path re-heal; the
+/// app-folder migration deletes it so moved records get re-pointed. Bump the suffix to force one
+/// more re-heal everywhere.
+pub(crate) const HEAL_STAMP: &str = ".heal-v1";
+
 /// The one base folder for ALL stored audio (dictations/, files/, links/
 /// inside it). A non-empty `custom` (audioBaseDir, with the legacy
 /// recordingsDir as fallback — the caller passes the effective preference)

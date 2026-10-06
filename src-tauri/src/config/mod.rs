@@ -18,7 +18,7 @@ const KEYRING_SERVICE: &str = "faster-whisper-frontend";
 /// restore token is a capability that re-acquires input-injection rights without a consent prompt.
 ///
 /// The open does not follow a symlink at the final component. `export_settings_file` writes to
-/// `<user-picked-path>.json.tmp`, which can land in a world-writable directory (a save dialog
+/// `<user-picked-path>.tmp`, which can land in a world-writable directory (a save dialog
 /// pointed at /tmp is entirely plausible) — without `O_NOFOLLOW` a pre-planted symlink there
 /// would have this truncate and overwrite whatever it pointed at, with the user's privileges.
 pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
@@ -47,14 +47,14 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     f.sync_all()
 }
 
-/// Replace `path` atomically: write `<path>.json.tmp` owner-only (`write_private`), then rename it
+/// Replace `path` atomically: write `<path>.tmp` owner-only (`write_private`), then rename it
 /// into place, so a reader sees the old file or the new one, never half of it. Don't leave the
 /// tmp behind when the write OR the rename fails (a full volume — write_private fails AFTER
 /// creating and truncating the file — a Windows AV/indexer lock, which the config reader already
-/// retries for, a read-only or cross-device app-data dir). The settings-export sibling cleans up
-/// on both paths too.
+/// retries for, a read-only or cross-device app-data dir). `export_settings_file` writes through
+/// here too.
 pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
+    let tmp = crate::transport::media::tmp_sibling(path);
     if let Err(e) = write_private(&tmp, contents) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
@@ -529,10 +529,13 @@ pub struct RecordingSettings {
     /// session doesn't store hours of quiet. `#[serde(default)]` (true) so older configs load.
     #[serde(default = "default_true")]
     pub trim_silence: bool,
-    /// Delete saved recordings (and their transcript sidecars) older than this many days.
-    /// 0 = keep forever. Saved recordings are a plaintext archive of everything dictated —
-    /// passwords, private documents — and without this they accumulate for the life of the
-    /// install. Defaults to 0 so an upgrade never deletes anything the user already has.
+    /// The audio half of the one dictation clock (see `AppSettings::effective_dictation_days`):
+    /// the recordings sweep deletes saved recordings (and their transcript sidecars) older than
+    /// the stricter non-zero of this key and `transcribe.dictationRetentionDays` (default 7), so
+    /// 0 here means keep forever only when the record window is 0 too. Settings' "Delete
+    /// dictations after" row writes both keys. Saved recordings are a plaintext archive of
+    /// everything dictated — passwords, private documents — and without a window they
+    /// accumulate for the life of the install.
     #[serde(default)]
     pub recordings_retention_days: u32,
     pub mute_system_audio: bool,
@@ -1096,6 +1099,7 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
 pub mod keys {
     use super::KEYRING_SERVICE;
     use std::collections::HashMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, OnceLock};
 
     /// Write-through cache over the OS store. Every command resolves the key
@@ -1108,6 +1112,33 @@ pub mod keys {
     fn cache() -> &'static Mutex<HashMap<String, Option<String>>> {
         static CACHE: OnceLock<Mutex<HashMap<String, Option<String>>>> = OnceLock::new();
         CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Bumped by `set`/`delete` under the cache lock, at the moment they update the cache. A
+    /// `get` notes it before its keyring read and caches the result only if it is unchanged:
+    /// a read that finished before a concurrent write but reached the cache after it would
+    /// otherwise pin the old secret (or a stale "no entry") for the life of the process.
+    static GEN: AtomicU64 = AtomicU64::new(0);
+
+    /// Cache what a `get` read, unless a `set`/`delete` ran since it noted `seen` (the
+    /// read may predate that write). Checked under the cache lock, where writers bump it.
+    pub(crate) fn remember(backend_id: &str, seen: u64, value: Option<String>) -> bool {
+        let mut cache = cache().lock().unwrap();
+        if GEN.load(Ordering::SeqCst) != seen {
+            return false;
+        }
+        cache.insert(backend_id.to_string(), value);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn generation() -> u64 {
+        GEN.load(Ordering::SeqCst)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached(backend_id: &str) -> Option<Option<String>> {
+        cache().lock().unwrap().get(backend_id).cloned()
     }
 
     /// Whether a failed keyring read is worth exactly one more attempt. Only a
@@ -1131,10 +1162,9 @@ pub mod keys {
 
     pub fn set(backend_id: &str, secret: &str) -> anyhow::Result<()> {
         entry(backend_id)?.set_password(secret)?;
-        cache()
-            .lock()
-            .unwrap()
-            .insert(backend_id.to_string(), Some(secret.to_string()));
+        let mut cache = cache().lock().unwrap();
+        GEN.fetch_add(1, Ordering::SeqCst);
+        cache.insert(backend_id.to_string(), Some(secret.to_string()));
         Ok(())
     }
 
@@ -1142,6 +1172,7 @@ pub mod keys {
         if let Some(k) = cache().lock().unwrap().get(backend_id) {
             return k.clone();
         }
+        let seen = GEN.load(Ordering::SeqCst);
         // One extra attempt on a transient platform error: each try opens a
         // fresh D-Bus connection (and, with an encrypted session, a fresh DH
         // keypair), so per-session daemon flakiness rarely strikes twice.
@@ -1151,16 +1182,15 @@ pub mod keys {
                     if attempt > 0 {
                         tracing::debug!("[keys] keyring read recovered on retry");
                     }
-                    cache()
-                        .lock()
-                        .unwrap()
-                        .insert(backend_id.to_string(), Some(k.clone()));
+                    // Returned either way; cached only if no write raced this read.
+                    remember(backend_id, seen, Some(k.clone()));
                     return Some(k);
                 }
                 // Simply not stored — the caller treats the backend as keyless. Memoized
-                // like a hit: `set`/`delete` write through, so it cannot go stale in-process.
+                // like a hit: `set`/`delete` write through (and a read that raced one is not
+                // cached), so it cannot go stale in-process.
                 Err(keyring::Error::NoEntry) => {
-                    cache().lock().unwrap().insert(backend_id.to_string(), None);
+                    remember(backend_id, seen, None);
                     return None;
                 }
                 // Anything else (Ambiguous duplicate items, a store/platform failure) means a
@@ -1189,9 +1219,12 @@ pub mod keys {
             Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(e.into()),
         };
-        // Evict AFTER the deletion so a concurrent `get` racing this window
-        // caches `None` (correct) rather than re-inserting the old secret.
-        cache().lock().unwrap().remove(backend_id);
+        // Evict AFTER the deletion, and bump `GEN` with it: a concurrent `get` whose keyring
+        // read finished before the deletion returns the old secret once but never caches it,
+        // so the next `get` re-reads the store.
+        let mut cache = cache().lock().unwrap();
+        GEN.fetch_add(1, Ordering::SeqCst);
+        cache.remove(backend_id);
         result
     }
 }
@@ -1241,6 +1274,20 @@ mod tests {
             0,
             &keyring::Error::NoStorageAccess("locked".into())
         ));
+    }
+
+    #[test]
+    fn a_keyring_read_that_raced_a_write_is_not_cached() {
+        use super::keys::{cached, generation, remember};
+        let id = format!("race-{}", uuid::Uuid::new_v4());
+        // A `set`/`delete` landed between the read noting the generation and caching: the
+        // (possibly old) value must not be pinned in the cache.
+        let stale = generation().wrapping_sub(1);
+        assert!(!remember(&id, stale, Some("old".into())));
+        assert_eq!(cached(&id), None);
+        // No write in between: the read is cached as before.
+        assert!(remember(&id, generation(), Some("k".into())));
+        assert_eq!(cached(&id), Some(Some("k".into())));
     }
 
     #[test]
