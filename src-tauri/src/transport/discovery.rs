@@ -230,11 +230,6 @@ pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option
     Some(caps)
 }
 
-/// A server count, size or duration: kept only when it is a non-negative finite number.
-fn bound_num(n: Option<f64>) -> Option<f64> {
-    n.filter(|n| n.is_finite() && *n >= 0.0)
-}
-
 /// An extractor name as yt-dlp spells them ("youtube", "Vimeo:album", "generic").
 fn is_extractor_name(s: &str) -> bool {
     (1..=64).contains(&s.len())
@@ -249,8 +244,8 @@ fn bound_server_info(i: super::ServerInfo) -> super::ServerInfo {
     use super::{CapturesKeep, RecentKeep, ServerKeeps, ServerLimits, ServerLogKeep};
     super::ServerInfo {
         limits: i.limits.map(|l| ServerLimits {
-            translation_max_targets: bound_num(l.translation_max_targets),
-            url_max_duration_s: bound_num(l.url_max_duration_s),
+            translation_max_targets: super::fin_nonneg(l.translation_max_targets),
+            url_max_duration_s: super::fin_nonneg(l.url_max_duration_s),
             url_allowed_extractors: l.url_allowed_extractors.map(|v| {
                 v.into_iter()
                     .filter(|e| is_extractor_name(e))
@@ -262,22 +257,22 @@ fn bound_server_info(i: super::ServerInfo) -> super::ServerInfo {
         keeps: i.keeps.map(|k| ServerKeeps {
             captures: k.captures.map(|c| CapturesKeep {
                 enabled: c.enabled,
-                retention_days: bound_num(c.retention_days),
-                sample_fraction: bound_num(c.sample_fraction),
-                max: bound_num(c.max),
+                retention_days: super::fin_nonneg(c.retention_days),
+                sample_fraction: super::fin_nonneg(c.sample_fraction),
+                max: super::fin_nonneg(c.max),
             }),
             server_log: k.server_log.map(|s| ServerLogKeep {
-                max_bytes: bound_num(s.max_bytes),
-                backup_count: bound_num(s.backup_count),
+                max_bytes: super::fin_nonneg(s.max_bytes),
+                backup_count: super::fin_nonneg(s.backup_count),
             }),
             recent_transcriptions: k.recent_transcriptions.map(|r| RecentKeep {
-                retention_days: bound_num(r.retention_days),
-                max: bound_num(r.max),
+                retention_days: super::fin_nonneg(r.retention_days),
+                max: super::fin_nonneg(r.max),
             }),
-            usage_app_retention_days: bound_num(k.usage_app_retention_days),
-            usage_retention_days: bound_num(k.usage_retention_days),
-            usage_jobs_retention_days: bound_num(k.usage_jobs_retention_days),
-            url_media_ttl_s: bound_num(k.url_media_ttl_s),
+            usage_app_retention_days: super::fin_nonneg(k.usage_app_retention_days),
+            usage_retention_days: super::fin_nonneg(k.usage_retention_days),
+            usage_jobs_retention_days: super::fin_nonneg(k.usage_jobs_retention_days),
+            url_media_ttl_s: super::fin_nonneg(k.url_media_ttl_s),
         }),
     }
 }

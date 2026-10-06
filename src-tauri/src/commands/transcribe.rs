@@ -1,7 +1,7 @@
 //! Batch transcription and translation of files and links, link media fetches,
 //! and media export (both share the cancel epochs below).
 
-use super::{resolve_audio_base, resolve_key, AUDIO_SUBDIRS};
+use super::{resolve_audio_base, resolve_key_async, AUDIO_SUBDIRS};
 use crate::transport;
 use std::path::PathBuf;
 use tauri::{Emitter, Manager};
@@ -26,7 +26,7 @@ pub async fn transcribe_file(
     // Capture the epoch BEFORE the (potentially slow) keyring resolve so a
     // cancel that lands during the D-Bus round-trip is never missed.
     let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     // Cancellation: cancel_file_transcription bumps the epoch; this select
     // polls it and DROPS the reqwest future on a change, which closes the
     // connection (the server cancels its handler task on the disconnect —
@@ -78,7 +78,7 @@ pub async fn translate_text(
 ) -> Result<transport::text::TextTranslationResult, String> {
     // Captured BEFORE the keyring resolve, as in `transcribe_file`.
     let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     let fut = transport::text::translate_texts(
         &server_url,
         key.as_deref(),
@@ -96,7 +96,7 @@ pub async fn translate_text(
     if cancel_with_file_epoch == Some(true) {
         until_file_epoch_bumps(epoch, fut).await
     } else {
-        fut.await.map_err(|e| e.to_string())
+        fut.await.map_err(|e| format!("{e:#}"))
     }
 }
 
@@ -111,10 +111,10 @@ pub async fn cancel_text_translation(
     api_key: Option<String>,
     progress_id: String,
 ) -> Result<(), String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::cancel(&server_url, key.as_deref(), &progress_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Transcribe a pasted media link: the SERVER downloads the audio (yt-dlp)
@@ -137,7 +137,7 @@ pub async fn transcribe_url(
     options: Option<transport::batch::BatchOptions>,
 ) -> Result<transport::batch::BatchResult, String> {
     let epoch = FILE_TRANSCRIBE_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     let fut = transport::batch::transcribe_url(
         &server_url,
         key.as_deref(),
@@ -161,10 +161,10 @@ pub async fn url_preview(
     api_key: Option<String>,
     url: String,
 ) -> Result<transport::batch::UrlPreview, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::url_preview(&server_url, key.as_deref(), &url)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Pull the server-retained audio of a finished URL run into the local media
@@ -221,7 +221,7 @@ async fn fetch_link_media(
     if !crate::store::transcripts::valid_id(&record_id) {
         return Err("malformed record id".into());
     }
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     let (dir, timeout) = if video {
         (
             crate::store::transcripts::video_media_dir(app, audio_base)?,
@@ -243,7 +243,7 @@ async fn fetch_link_media(
         timeout,
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Ask the server to fetch a link's VIDEO on demand (POST /v1/audio/url-media/video).
@@ -257,7 +257,7 @@ pub async fn url_video_download(
     format_id: Option<String>,
     progress_id: Option<String>,
 ) -> Result<transport::batch::UrlMediaDownload, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::url_video_download(
         &server_url,
         key.as_deref(),
@@ -267,7 +267,7 @@ pub async fn url_video_download(
         progress_id.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| format!("{e:#}"))
 }
 
 /// Ask the server to fetch a link's AUDIO on demand (POST /v1/audio/url-media/audio) —
@@ -280,10 +280,10 @@ pub async fn url_audio_download(
     url: String,
     progress_id: Option<String>,
 ) -> Result<transport::batch::UrlMediaDownload, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::url_audio_download(&server_url, key.as_deref(), &url, progress_id.as_deref())
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Download a link's picked subtitle tracks (POST /v1/audio/url-subtitles).
@@ -295,10 +295,10 @@ pub async fn url_subtitles(
     url: String,
     tracks: Vec<String>,
 ) -> Result<transport::batch::UrlSubtitles, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::url_subtitles(&server_url, key.as_deref(), &url, &tracks)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Which language a link speaks (POST /v1/audio/url-language). Cancel with
@@ -312,7 +312,7 @@ pub async fn url_language_check(
     model: Option<String>,
     progress_id: Option<String>,
 ) -> Result<transport::batch::UrlLanguageCheck, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::url_language_check(
         &server_url,
         key.as_deref(),
@@ -321,11 +321,11 @@ pub async fn url_language_check(
         progress_id.as_deref(),
     )
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| format!("{e:#}"))
 }
 
-/// Epoch for aborting in-flight `transcribe_file` calls (see above). Same
-/// shape as session.rs's CANCELLED_BATCH_EPOCH for dictation clips.
+/// Epoch for aborting in-flight `transcribe_file` calls (see above). The same
+/// idea as session.rs's DETACHED_BATCH_EPOCH / CANCELLED_BATCHES for dictation clips.
 static FILE_TRANSCRIBE_EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Drive `fut` to completion unless `cancel_file_transcription` bumps the epoch captured as
@@ -349,7 +349,7 @@ async fn until_epoch_bumps<T, E: std::fmt::Display>(
     tokio::pin!(fut);
     loop {
         tokio::select! {
-            r = &mut fut => return r.map_err(|e| e.to_string()),
+            r = &mut fut => return r.map_err(|e| format!("{e:#}")),
             _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
                 if counter.load(std::sync::atomic::Ordering::SeqCst) != epoch {
                     return Err("cancelled".into());
@@ -478,7 +478,7 @@ pub async fn package_media(
         }
         _ => return Err("name exactly one of a media id or a local file".into()),
     };
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     let emit_app = app.clone();
     let job = job_id.clone();
     // Throttled to ~10 events/s: the transfer loops report every KB-sized chunk, and each
@@ -592,10 +592,10 @@ pub async fn get_media_streams(
     api_key: Option<String>,
     media_id: String,
 ) -> Result<Option<transport::media::MediaStreams>, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::media::get_streams(&server_url, key.as_deref(), &media_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Copy one of a record's media files (its source, its audio copy or its
@@ -649,32 +649,34 @@ pub async fn copy_media_to(
     let no_clobber = no_clobber.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<u64>, String> {
         let tmp = transport::media::tmp_sibling(&dest_path);
-        let n = match std::fs::copy(&src_real, &tmp) {
-            Ok(n) => n,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(e.to_string());
-            }
-        };
         // No-clobber: claim the name with an exclusive create (fails if anything is there,
-        // a dangling symlink included), then rename the finished copy over our own placeholder.
+        // a dangling symlink included) BEFORE copying, so a taken name costs no copy; then
+        // rename the finished copy over our own placeholder. A foreign `<dest>.tmp` is a
+        // name the dialog never approved either: leave it alone and report the name taken.
         if no_clobber {
+            if std::fs::symlink_metadata(&tmp).is_ok() {
+                return Ok(None);
+            }
             match std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .open(&dest_path)
             {
                 Ok(_) => {}
-                Err(e) => {
-                    let _ = std::fs::remove_file(&tmp);
-                    return if e.kind() == std::io::ErrorKind::AlreadyExists {
-                        Ok(None)
-                    } else {
-                        Err(e.to_string())
-                    };
-                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
+                Err(e) => return Err(e.to_string()),
             }
         }
+        let n = match std::fs::copy(&src_real, &tmp) {
+            Ok(n) => n,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                if no_clobber {
+                    let _ = std::fs::remove_file(&dest_path);
+                }
+                return Err(e.to_string());
+            }
+        };
         if let Err(e) = std::fs::rename(&tmp, &dest_path) {
             let _ = std::fs::remove_file(&tmp);
             if no_clobber {
@@ -705,10 +707,10 @@ pub async fn cancel_backend_transcription(
     api_key: Option<String>,
     progress_id: String,
 ) -> Result<(), String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::cancel(&server_url, key.as_deref(), &progress_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 /// Poll the live progress of an in-flight file transcription.
@@ -719,10 +721,10 @@ pub async fn get_transcribe_progress(
     api_key: Option<String>,
     progress_id: String,
 ) -> Result<transport::batch::BatchProgress, String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::batch::progress(&server_url, key.as_deref(), &progress_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| format!("{e:#}"))
 }
 
 // ── Server jobs: re-attach to a run the app lost the connection to ─────────

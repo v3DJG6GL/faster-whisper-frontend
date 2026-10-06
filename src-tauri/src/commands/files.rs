@@ -1,7 +1,7 @@
 //! The audio base folder (layout, move, open) and the file I/O commands: media reads
 //! for playback, text save/read, opening a source link, reveal in the file manager.
 
-use super::{audio_base_pref, resolve_audio_base, AUDIO_SUBDIRS};
+use super::{audio_base_pref, resolve_audio_base, AUDIO_SUBDIRS, HEAL_STAMP};
 use crate::config::Config;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
@@ -217,7 +217,7 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     // This runs synchronously inside setup(), before the event loop, so a fresh install with
     // no records skips the scan entirely and only stamps; the expensive read+parse is reserved
     // for a base that actually has history to heal.
-    let stamp = base.join(".heal-v1");
+    let stamp = base.join(HEAL_STAMP);
     if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
         let _ = std::fs::write(&stamp, b"");
     } else if !map.is_empty() || !stamp.exists() {
@@ -256,9 +256,9 @@ pub async fn move_audio_base(
             }
         }
         // Move the heal stamp so the new base is stamped and the old one is clean.
-        // Without this the old base keeps a stray `.heal-v1` and the new one
+        // Without this the old base keeps a stray stamp and the new one
         // re-runs the full heal scan on the next launch.
-        let stamp_name = ".heal-v1";
+        let stamp_name = HEAL_STAMP;
         let old_stamp = from.join(stamp_name);
         let new_stamp = to.join(stamp_name);
         if old_stamp.exists() {

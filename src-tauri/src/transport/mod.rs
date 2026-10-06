@@ -802,6 +802,12 @@ pub const MAX_ERROR_BODY: usize = 256 * 1024;
 /// a transcription (`batch`) or a T2T translation (`text`).
 pub const MAX_META_BODY: usize = 1024 * 1024;
 
+/// A finite, non-negative server number (seconds, a count, a size, a unix time) — anything else
+/// is dropped (absent) rather than rendered as "NaNs left" or clamped into a different claim.
+pub(crate) fn fin_nonneg(v: Option<f64>) -> Option<f64> {
+    v.filter(|x| x.is_finite() && *x >= 0.0)
+}
+
 /// Bound and defang a server-supplied string on its way to the UI or the log.
 ///
 /// The streaming parse path caps its `error` frames at [`MAX_ERROR_TEXT`], but the BATCH sibling

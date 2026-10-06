@@ -458,7 +458,7 @@ mod wire_field_tests {
             })
             .collect();
         let json = format!(
-            r#"{{"stage":"translating","progress":0.5,"target":"{}","target_progress":7.0,
+            r#"{{"stage":"translating","progress":9e9,"vad_retained":-1.0,"position":-4.0,"target":"{}","target_progress":7.0,
                 "overall":-3.0,"eta_s":"nope","plan":[{}, {{"stage":"translating","state":"active",
                 "elapsed_s":-1.0,"units":[{{"target":"fr","state":"running","progress":9e9,"est_s":12.5}}]}}]}}"#,
             "x".repeat(40),
@@ -474,6 +474,9 @@ mod wire_field_tests {
         let p = bound_progress(parsed);
         assert_eq!(p.target.as_deref().map(|s| s.chars().count()), Some(17)); // 16 + "…"
         assert_eq!(p.target_progress, Some(1.0));
+        assert_eq!(p.progress, Some(1.0));
+        assert_eq!(p.vad_retained, Some(0.0));
+        assert_eq!(p.position, None); // negative → dropped
         assert_eq!(p.overall, Some(0.0));
         assert_eq!(p.eta_s, None); // negative → dropped
         let plan = p.plan.expect("plan kept");
@@ -646,12 +649,6 @@ const SERVER_HEIGHT: std::ops::RangeInclusive<u32> = 1..=8192;
 /// The video height cap the server accepts on a request.
 const REQUEST_HEIGHT: std::ops::RangeInclusive<u32> = 144..=4320;
 
-/// A finite, non-negative seconds value — anything else is dropped rather
-/// than rendered as "NaNs left".
-fn fin_secs(v: Option<f64>) -> Option<f64> {
-    v.filter(|x| x.is_finite() && *x >= 0.0)
-}
-
 /// A finite 0..1 fraction, clamped.
 fn fin_frac(v: Option<f64>) -> Option<f64> {
     v.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0))
@@ -670,9 +667,9 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
             device: st.device.map(|s| super::bounded_server_text(&s, 32)),
             compute: st.compute.map(|s| super::bounded_server_text(&s, 32)),
             phase: st.phase.map(|s| super::bounded_server_text(&s, 32)),
-            est_s: fin_secs(st.est_s),
-            took_s: fin_secs(st.took_s),
-            elapsed_s: fin_secs(st.elapsed_s),
+            est_s: super::fin_nonneg(st.est_s),
+            took_s: super::fin_nonneg(st.took_s),
+            elapsed_s: super::fin_nonneg(st.elapsed_s),
             units: st.units.map(|us| {
                 us.into_iter()
                     .take(MAX_PLAN_UNITS)
@@ -680,9 +677,9 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
                         target: u.target.map(|s| super::bounded_server_text(&s, 16)),
                         state: u.state.map(|s| super::bounded_server_text(&s, 16)),
                         instant: u.instant,
-                        est_s: fin_secs(u.est_s),
-                        took_s: fin_secs(u.took_s),
-                        elapsed_s: fin_secs(u.elapsed_s),
+                        est_s: super::fin_nonneg(u.est_s),
+                        took_s: super::fin_nonneg(u.took_s),
+                        elapsed_s: super::fin_nonneg(u.elapsed_s),
                         progress: fin_frac(u.progress),
                     })
                     .collect()
@@ -832,9 +829,14 @@ pub(crate) fn bound_progress(parsed: BatchProgress) -> BatchProgress {
         }),
         target: parsed.target.map(|s| super::bounded_server_text(&s, 16)),
         target_progress: fin_frac(parsed.target_progress),
+        // The row's bar width / percent label and the VAD share read these raw.
+        progress: fin_frac(parsed.progress),
+        vad_retained: fin_frac(parsed.vad_retained),
+        position: super::fin_nonneg(parsed.position),
+        duration: super::fin_nonneg(parsed.duration),
         plan: parsed.plan.map(bound_plan),
         overall: fin_frac(parsed.overall),
-        eta_s: fin_secs(parsed.eta_s),
+        eta_s: super::fin_nonneg(parsed.eta_s),
         video: parsed.video.map(bound_video),
         ..parsed
     }
@@ -1593,7 +1595,7 @@ pub async fn url_preview(
             .collect(),
         language: parsed.language.filter(|l| super::is_lang_code(l)),
         subtitle_tracks: bound_tracks(parsed.subtitle_tracks),
-        url_max_duration_s: fin_secs(parsed.url_max_duration_s),
+        url_max_duration_s: super::fin_nonneg(parsed.url_max_duration_s),
         ..parsed
     })
 }
@@ -1917,6 +1919,8 @@ fn media_tmp_pid(name: &str, record_id: &str, ext: &str) -> Option<u32> {
 /// sweep skips `.tmp`. Only OTHER processes' tmps: this process's belong to fetches that may
 /// still be streaming. Best effort — errors are ignored.
 async fn remove_stale_media_tmps(dest_dir: &Path, record_id: &str, ext: &str) {
+    // The fixed pre-unique-name tmp older builds left here; no live writer uses it in this folder.
+    let _ = tokio::fs::remove_file(dest_dir.join(format!("{record_id}.{ext}.tmp"))).await;
     let Ok(mut dir) = tokio::fs::read_dir(dest_dir).await else {
         return;
     };
@@ -1930,12 +1934,12 @@ async fn remove_stale_media_tmps(dest_dir: &Path, record_id: &str, ext: &str) {
     }
 }
 
-/// Fetch the server-retained audio of a finished URL run into the local
-/// media store as `media/<record_id>.<ext>` (tmp+rename, owner-only), so the
-/// existing local-playback machinery works unchanged. `Ok(None)` when the
-/// server no longer has it (retention expired / restarted) — the transcript
-/// stays fully usable, only playback is gone. Streaming with a byte cap: the
-/// response is never fully resident.
+/// Fetch the server-retained audio or video of a URL run into `dest_dir` (the
+/// caller's `links/` or `video/` folder) as `<record_id>.<ext>` (tmp+rename,
+/// owner-only), so the existing local-playback machinery works unchanged.
+/// `Ok(None)` when the server no longer has it (retention expired / restarted)
+/// — the transcript stays fully usable, only playback is gone. Streaming with a
+/// byte cap: the response is never fully resident.
 pub async fn download_result_media(
     server_url: &str,
     api_key: Option<&str>,

@@ -124,6 +124,20 @@ const MAX_SAFE_VERSION: i64 = 9_007_199_254_740_991;
 /// version and make every later push a 409.
 const VERSION_ERR: &str = "The server sent a settings version this app cannot represent.";
 
+/// Accept one parsed server state: version-checked, then bounded; a parse error is prefixed
+/// with `what`. The ONE gate for all three response arms (pull, push 2xx, push 409), so the
+/// version guard cannot go missing from one of them again (see `version_representable`).
+fn accept(parsed: Result<SyncRemoteState, String>, what: &str) -> Result<SyncRemoteState, String> {
+    match parsed {
+        Ok(state) if state.version_representable() => Ok(state.bounded()),
+        Ok(_) => Err(VERSION_ERR.into()),
+        Err(e) => Err(format!(
+            "{what}: {}",
+            super::bounded_server_text(&e, super::MAX_ERROR_TEXT)
+        )),
+    }
+}
+
 /// A device label is a short human name ("mar's laptop"), never prose.
 const DEVICE_LABEL_MAX: usize = 80;
 
@@ -180,27 +194,21 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match json_capped_to::<SyncRemoteState>(resp, SYNC_MAX_BODY).await {
-                    Ok(state) if state.version_representable() => SyncPull {
+                match accept(
+                    json_capped_to(resp, SYNC_MAX_BODY).await,
+                    "Unexpected response",
+                ) {
+                    Ok(state) => SyncPull {
                         ok: true,
                         status: code,
-                        state: Some(state.bounded()),
+                        state: Some(state),
                         error: None,
-                    },
-                    Ok(_) => SyncPull {
-                        ok: false,
-                        status: code,
-                        state: None,
-                        error: Some(VERSION_ERR.into()),
                     },
                     Err(e) => SyncPull {
                         ok: false,
                         status: code,
                         state: None,
-                        error: Some(format!(
-                            "Unexpected response: {}",
-                            super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT)
-                        )),
+                        error: Some(e),
                     },
                 }
             } else {
@@ -286,53 +294,41 @@ async fn push_at(url: String, api_key: Option<&str>, bytes: Vec<u8>) -> SyncPush
                 }
             };
             if (200..300).contains(&(code as i32)) {
-                match serde_json::from_str::<SyncRemoteState>(&text) {
-                    Ok(state) if state.version_representable() => SyncPush {
+                match accept(
+                    serde_json::from_str(&text).map_err(|e| e.to_string()),
+                    "Unexpected response",
+                ) {
+                    Ok(state) => SyncPush {
                         ok: true,
                         status: code,
-                        state: Some(state.bounded()),
+                        state: Some(state),
                         conflict: None,
                         error: None,
-                    },
-                    Ok(_) => SyncPush {
-                        ok: false,
-                        status: code,
-                        error: Some(VERSION_ERR.into()),
-                        ..Default::default()
                     },
                     Err(e) => SyncPush {
                         ok: false,
                         status: code,
-                        error: Some(format!(
-                            "Unexpected response: {}",
-                            super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT)
-                        )),
+                        error: Some(e),
                         ..Default::default()
                     },
                 }
             } else if code == 409 {
                 // The conflict body IS the current server state (+ a detail
                 // string serde ignores) — hand it to the merge loop.
-                match serde_json::from_str::<SyncRemoteState>(&text) {
-                    Ok(current) if current.version_representable() => SyncPush {
+                match accept(
+                    serde_json::from_str(&text).map_err(|e| e.to_string()),
+                    "Unexpected conflict response",
+                ) {
+                    Ok(current) => SyncPush {
                         ok: false,
                         status: code,
-                        conflict: Some(current.bounded()),
-                        ..Default::default()
-                    },
-                    Ok(_) => SyncPush {
-                        ok: false,
-                        status: code,
-                        error: Some(VERSION_ERR.into()),
+                        conflict: Some(current),
                         ..Default::default()
                     },
                     Err(e) => SyncPush {
                         ok: false,
                         status: code,
-                        error: Some(format!(
-                            "Unexpected conflict response: {}",
-                            super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT)
-                        )),
+                        error: Some(e),
                         ..Default::default()
                     },
                 }

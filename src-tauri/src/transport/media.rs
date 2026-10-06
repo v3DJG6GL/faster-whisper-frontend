@@ -118,7 +118,7 @@ fn bound_streams(s: MediaStreams) -> MediaStreams {
             .map(|v| super::bounded_server_text(&v, super::MAX_ERROR_TEXT)),
         width: s.width.filter(|w| (1..=16384).contains(w)),
         height: s.height.filter(|h| (1..=16384).contains(h)),
-        duration: s.duration.filter(|d| d.is_finite() && *d >= 0.0),
+        duration: super::fin_nonneg(s.duration),
         ..s
     }
 }

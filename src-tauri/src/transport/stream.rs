@@ -733,15 +733,8 @@ pub async fn run<F>(
             if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
                 // Label the .wav with the session transcript IN RUST (ungated), so a cancelled/
                 // superseded recording still gets its sibling .txt — matching the batch path.
-                // The same MAX_SIDECAR_BYTES budget the Boundary arm enforces: this end-of-drain
-                // flush is the session's OTHER push site, and it had no check, so a server that
-                // banked right up to the budget and then sent one last `final` overshot it by a
-                // whole MAX_TRANSCRIPT before `join` allocated the lot again.
-                let last = transcript_cur.trim();
-                let banked: usize = transcript_docs.iter().map(|d| d.len()).sum();
-                if !last.is_empty() && banked + last.len() <= MAX_SIDECAR_BYTES {
-                    transcript_docs.push(last.to_string());
-                }
+                // The last document goes through bank_doc, under the Boundary arm's budget.
+                bank_doc(&mut transcript_docs, &transcript_cur);
                 let transcript = transcript_docs.join("\n");
                 if !transcript.is_empty() {
                     crate::audio::save_transcript_sidecar(&path, &transcript);
@@ -886,8 +879,14 @@ impl ClipCutter {
                     );
                 }
             }
+            // Not the closing final: the server stamps it with the NEXT ordinal (its utterance
+            // counter has already advanced) though no such utterance was announced. Cutting on it
+            // flushed the previous clip's `.txt` before that final's released words folded in and
+            // wrote the ungated drain tail as an orphan clip; the close-time flush covers it.
             StreamEvent::Final {
-                utterance: Some(n), ..
+                utterance: Some(n),
+                last: false,
+                ..
             } => {
                 // The previous clip's text ends here: this final opens the next utterance's.
                 self.flush_txt(doc);
@@ -940,20 +939,25 @@ fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut 
             current.push_str(tail);
         }
         StreamEvent::Boundary { .. } => {
-            let trimmed = current.trim();
-            // Total-size budget across the whole session. Each field is capped at MAX_TRANSCRIPT,
-            // but the number of banked documents was not, so a server looping final/boundary grew
-            // this without limit and `join("\n")` then allocated the whole thing a second time
-            // before writing it under the user's recordings directory. Only the `.txt` sidecar
-            // clips: the `.wav` and the text actually typed are untouched, and 8 MiB is well over
-            // a million words.
-            let banked: usize = docs.iter().map(|d| d.len()).sum();
-            if !trimmed.is_empty() && banked + trimmed.len() <= MAX_SIDECAR_BYTES {
-                docs.push(trimmed.to_string());
-            }
+            bank_doc(docs, current);
             current.clear();
         }
         _ => {}
+    }
+}
+
+/// Bank one finished document (trimmed, non-empty) into the session transcript. The ONE push
+/// site for both a hard break and the end of the drain, so the budget cannot drift between them
+/// again. Total-size budget across the whole session: each field is capped at MAX_TRANSCRIPT,
+/// but the number of banked documents was not, so a server looping final/boundary grew this
+/// without limit and `join("\n")` then allocated the whole thing a second time before writing it
+/// under the user's recordings directory. Only the `.txt` sidecar clips: the `.wav` and the text
+/// actually typed are untouched, and 8 MiB is well over a million words.
+fn bank_doc(docs: &mut Vec<String>, doc: &str) {
+    let trimmed = doc.trim();
+    let banked: usize = docs.iter().map(|d| d.len()).sum();
+    if !trimmed.is_empty() && banked + trimmed.len() <= MAX_SIDECAR_BYTES {
+        docs.push(trimmed.to_string());
     }
 }
 
@@ -1304,6 +1308,56 @@ mod clip_tests {
         };
         assert_eq!(txt(0), "Hallo Welt Komma\n");
         assert_eq!(txt(1), "und weiter\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The closing final carries the NEXT (never announced) ordinal: it must not cut an orphan
+    /// clip from the drain tail, and its released words still reach the last clip's `.txt`.
+    #[test]
+    fn the_closing_final_cuts_no_clip() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-last-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let seen: RefCell<Vec<Option<u32>>> = RefCell::new(Vec::new());
+        let on_event = |e: StreamEvent| {
+            if let StreamEvent::RecordingSaved { utterance, .. } = e {
+                seen.borrow_mut().push(utterance);
+            }
+        };
+        let mut saved = vec![0u8; 32_000];
+        let mut clips = Some(ClipCutter::new());
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
+            forward_saved(e, Some(&dir), saved, clips, &mut docs, &mut cur, &on_event);
+        };
+        feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
+        saved.extend(vec![0u8; 3_200]);
+        feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
+        saved.extend(vec![0u8; 640]); // the ungated drain/resampler tail
+        feed(
+            StreamEvent::Final {
+                committed: " Hallo Welt Komma".into(),
+                tail: String::new(),
+                last: true,
+                utterance: Some(2),
+            },
+            &mut saved,
+            &mut clips,
+        );
+        let mut clips = clips.unwrap();
+        assert!(clips.cut_any);
+        clips.flush_txt(&cur);
+
+        assert_eq!(seen.into_inner(), vec![Some(1)]);
+        let names: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(!names.iter().any(|n| n.contains("-u2")), "{names:?}");
+        let u1 = names.iter().find(|n| n.ends_with("-u1.txt")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join(u1)).unwrap(),
+            "Hallo Welt Komma\n"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

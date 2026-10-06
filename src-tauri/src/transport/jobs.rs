@@ -92,14 +92,13 @@ pub struct JobStatus {
 /// value the client would interpolate into its next request.
 pub(crate) fn bound_job_status(parsed: JobStatus) -> JobStatus {
     let text = |s: Option<String>, n: usize| s.map(|v| super::bounded_server_text(&v, n));
-    let unix = |v: Option<f64>| v.filter(|x| x.is_finite() && *x >= 0.0);
     JobStatus {
         job_id: parsed.job_id.filter(|s| is_progress_id(s)),
         kind: text(parsed.kind, 16),
         state: text(parsed.state, 16),
-        created_at: unix(parsed.created_at),
-        finished_at: unix(parsed.finished_at),
-        expires_at: unix(parsed.expires_at),
+        created_at: super::fin_nonneg(parsed.created_at),
+        finished_at: super::fin_nonneg(parsed.finished_at),
+        expires_at: super::fin_nonneg(parsed.expires_at),
         model: text(parsed.model, 128),
         source_kind: text(parsed.source_kind, 8),
         source_name: text(parsed.source_name, 200),
