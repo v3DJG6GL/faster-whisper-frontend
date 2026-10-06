@@ -260,6 +260,7 @@ fn bound_server_info(i: super::ServerInfo) -> super::ServerInfo {
                 retention_days: super::fin_nonneg(c.retention_days),
                 sample_fraction: super::fin_nonneg(c.sample_fraction),
                 max: super::fin_nonneg(c.max),
+                max_mb: super::fin_nonneg(c.max_mb),
             }),
             server_log: k.server_log.map(|s| ServerLogKeep {
                 max_bytes: super::fin_nonneg(s.max_bytes),
@@ -872,7 +873,7 @@ mod tests {
                     "url_allow_direct_media": true
                 },
                 "keeps": {
-                    "captures": {"enabled": true, "retention_days": 365, "sample_fraction": 0.25, "max": 1000},
+                    "captures": {"enabled": true, "retention_days": 365, "sample_fraction": 0.25, "max": 1000, "max_mb": 5000},
                     "server_log": {"max_bytes": 10485760, "backup_count": 10},
                     "recent_transcriptions": {"retention_days": 30, "max": 500},
                     "usage_app_retention_days": 90,
@@ -897,6 +898,7 @@ mod tests {
         assert_eq!(si["keeps"]["captures"]["enabled"], true);
         assert_eq!(si["keeps"]["captures"]["sample_fraction"], 0.25);
         assert_eq!(si["keeps"]["captures"]["max"], 1000.0);
+        assert_eq!(si["keeps"]["captures"]["max_mb"], 5000.0);
         assert_eq!(si["keeps"]["server_log"]["backup_count"], 10.0);
         assert_eq!(si["keeps"]["recent_transcriptions"]["max"], 500.0);
         assert_eq!(si["keeps"]["usage_app_retention_days"], 90.0);

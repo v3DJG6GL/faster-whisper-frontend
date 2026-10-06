@@ -206,6 +206,9 @@ pub struct CapturesKeep {
     pub sample_fraction: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max: Option<f64>,
+    /// CAPTURES_MAX_MB: the audio size cap in MiB.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mb: Option<f64>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

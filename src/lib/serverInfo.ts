@@ -69,6 +69,15 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
       tone: on ? "warn" : "none",
     });
   }
+  // The caps evict the oldest captures; 0 turns that cap off.
+  if (c?.max !== undefined)
+    rows.push({ env: "CAPTURES_MAX", value: c.max === 0 ? "0 · unbounded" : String(c.max), tone: on ? "warn" : "none" });
+  if (c?.max_mb !== undefined)
+    rows.push({
+      env: "CAPTURES_MAX_MB",
+      value: c.max_mb === 0 ? "0 · unbounded" : `${c.max_mb} · ~${fmtBytes(c.max_mb * 1024 * 1024)}`,
+      tone: on ? "warn" : "none",
+    });
   const log = k.server_log;
   if (log?.max_bytes !== undefined) rows.push({ env: "LOG_MAX_BYTES", value: fmtBytes(log.max_bytes), tone: "warn" });
   if (log?.backup_count !== undefined)
@@ -100,5 +109,13 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
       value: keepDays(k.usage_retention_days),
       tone: k.usage_retention_days === 0 ? "none" : "warn",
     });
+  if (k.usage_jobs_retention_days !== undefined)
+    rows.push({
+      env: "USAGE_JOBS_RETENTION_DAYS",
+      value: keepDays(k.usage_jobs_retention_days),
+      tone: k.usage_jobs_retention_days === 0 ? "none" : "warn",
+    });
+  if (k.url_media_ttl_s !== undefined)
+    rows.push({ env: "URL_MEDIA_TTL_S", value: `${k.url_media_ttl_s} · ${fmtDuration(k.url_media_ttl_s)}`, tone: "warn" });
   return rows;
 }

@@ -707,12 +707,14 @@ export interface ServerInfo {
     url_allow_direct_media?: boolean;
   };
   keeps?: {
-    captures?: { enabled?: boolean; retention_days?: number; sample_fraction?: number; max?: number };
+    /** `max` = CAPTURES_MAX rows, `max_mb` = CAPTURES_MAX_MB (MiB). */
+    captures?: { enabled?: boolean; retention_days?: number; sample_fraction?: number; max?: number; max_mb?: number };
     server_log?: { max_bytes?: number; backup_count?: number };
     recent_transcriptions?: { retention_days?: number; max?: number };
     usage_app_retention_days?: number;
     /** 0 = forever. */
     usage_retention_days?: number;
+    /** 0 = forever. */
     usage_jobs_retention_days?: number;
     url_media_ttl_s?: number;
   };

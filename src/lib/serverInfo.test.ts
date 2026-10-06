@@ -74,4 +74,32 @@ describe("keepRows", () => {
     expect(capturesOn(off)).toBe(false);
     expect(keepRows(off, true).map((r) => r.tone)).toEqual(["ok", "none"]);
   });
+  it("shows the capture caps, the per-job rows and the link media window", () => {
+    const more: ServerInfo = {
+      keeps: {
+        captures: { enabled: true, max: 5000, max_mb: 5000 },
+        usage_retention_days: 0,
+        usage_jobs_retention_days: 365,
+        url_media_ttl_s: 3600,
+      },
+    };
+    const row = (i: ServerInfo, env: string) => keepRows(i, true).find((r) => r.env === env);
+    expect(row(more, "CAPTURES_MAX")).toEqual({ env: "CAPTURES_MAX", value: "5000", tone: "warn" });
+    expect(row(more, "CAPTURES_MAX_MB")).toEqual({ env: "CAPTURES_MAX_MB", value: "5000 · ~5.24 GB", tone: "warn" });
+    expect(row(more, "USAGE_JOBS_RETENTION_DAYS")).toEqual({ env: "USAGE_JOBS_RETENTION_DAYS", value: "365 days", tone: "warn" });
+    expect(row(more, "URL_MEDIA_TTL_S")).toEqual({ env: "URL_MEDIA_TTL_S", value: "3600 · 1h", tone: "warn" });
+    // Order: the caps follow the capture rows, the per-job rows follow the hourly rollup.
+    expect(keepRows(more, true).map((r) => r.env)).toEqual([
+      "CAPTURES_RECORDING_ENABLED",
+      "CAPTURES_MAX",
+      "CAPTURES_MAX_MB",
+      "USAGE_RETENTION_DAYS",
+      "USAGE_JOBS_RETENTION_DAYS",
+      "URL_MEDIA_TTL_S",
+    ]);
+    const off: ServerInfo = { keeps: { captures: { enabled: false, max: 0, max_mb: 0 }, usage_jobs_retention_days: 0 } };
+    expect(row(off, "CAPTURES_MAX")).toEqual({ env: "CAPTURES_MAX", value: "0 · unbounded", tone: "none" });
+    expect(row(off, "CAPTURES_MAX_MB")?.value).toBe("0 · unbounded");
+    expect(row(off, "USAGE_JOBS_RETENTION_DAYS")).toEqual({ env: "USAGE_JOBS_RETENTION_DAYS", value: "0 · forever", tone: "none" });
+  });
 });
