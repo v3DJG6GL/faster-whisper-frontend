@@ -3,6 +3,7 @@ import { LangTag } from "@/components/ui";
 import { fmtTimestamp } from "@/lib/format";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
+import { ownProp } from "@/lib/own";
 import type { TranscriptWord } from "@/lib/types";
 import { chipStyle, type EffSegment } from "@/components/transcribe/viewerKit";
 
@@ -230,7 +231,9 @@ export const SegmentRow = memo(function SegmentRow({
         </span>
       ) : null}
       {visLangs.map((lang) => {
-        const tr = translations?.[lang];
+        // Own-property read: a language code like `valueOf` would otherwise
+        // return an inherited function and `.trim()` would throw mid-render.
+        const tr = ownProp(translations, lang);
         if (!tr?.trim()) return null;
         // The quality guard kept the SOURCE text for this target: don't
         // present it as a translation — neutral faint line, flagged inline,

@@ -25,7 +25,7 @@ import {
   linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, lostContact, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
@@ -1038,5 +1038,28 @@ describe("a ledgered file whose request lost contact", () => {
     expect(rows).toEqual([]);
     expect(records).toHaveLength(1);
     expect(records[0].id).not.toBe(pid);
+  });
+
+  it("a connection dropped mid-wait is handed off like a timeout", async () => {
+    const { pid, watch, rows } = await run("error sending request");
+    expect(watch).toHaveBeenCalledWith(pid);
+    expect(rows.map((r) => r.jobId)).toEqual([pid]);
+  });
+});
+
+describe("lostContact (which failures leave a job the server may still finish)", () => {
+  it.each([
+    ["Timed out waiting for the server.", true],
+    ["Could not connect — is the server running and the URL correct?", true],
+    ["error sending request", true],
+    ["HTTP 504: Gateway Timeout", true],
+    ["HTTP 502: Bad Gateway", true],
+    ["HTTP 503: timed out waiting for a peer worker", false],
+    ["HTTP 500: boom", false],
+    ["HTTP 500: error sending request upstream", false],
+    ["error decoding response body", false],
+    ["upload_too_large:300000000:200000000", false],
+  ])("%s → %s", (msg, lost) => {
+    expect(lostContact(new Error(msg))).toBe(lost);
   });
 });

@@ -134,10 +134,12 @@ export function applyMap(text: string, rows: MapRow[]): string {
       // a char whose lowercase changes length (e.g. Turkish "İ" → "i̇") would otherwise desync the
       // original-case index `i` from a precomputed lowercased string and silently miss every later key.
       if (text.slice(i, i + key.length).toLowerCase() !== kl) continue;
-      const before = i > 0 ? text[i - 1] : "";
-      const after = i + key.length < text.length ? text[i + key.length] : "";
+      // Whole code points on each edge (Python's \b is code-point based): a lone surrogate half of
+      // an astral letter (CJK Ext-B, math alphanumerics) would not test as a word char.
+      const before = cpBefore(text, i);
+      const after = cpAt(text, i + key.length);
       // \b on each side: a boundary sits where one neighbour is a word char and the other isn't.
-      if (isBoundary(before, key[0]) && isBoundary(text[i + key.length - 1], after)) {
+      if (isBoundary(before, cpAt(key, 0)) && isBoundary(cpBefore(key, key.length), after)) {
         hit = key;
         break; // first (longest) key that matches with boundaries wins
       }
@@ -157,6 +159,21 @@ export function applyMap(text: string, rows: MapRow[]): string {
  *  counts as a non-word char). Unicode-aware. */
 function isBoundary(left: string, right: string): boolean {
   return isWordChar(left) !== isWordChar(right);
+}
+/** The code point starting at UTF-16 index `i` ("" past either end). */
+function cpAt(s: string, i: number): string {
+  return i >= 0 && i < s.length ? String.fromCodePoint(s.codePointAt(i)!) : "";
+}
+/** The code point ending just before UTF-16 index `i` ("" at the start): both halves of a
+ *  surrogate pair, else the single unit. */
+function cpBefore(s: string, i: number): string {
+  if (i <= 0) return "";
+  const lo = s.charCodeAt(i - 1);
+  if (i >= 2 && lo >= 0xdc00 && lo <= 0xdfff) {
+    const hi = s.charCodeAt(i - 2);
+    if (hi >= 0xd800 && hi <= 0xdbff) return s.slice(i - 2, i);
+  }
+  return s[i - 1];
 }
 function isWordChar(ch: string): boolean {
   return ch !== "" && /[\p{L}\p{N}_]/u.test(ch);

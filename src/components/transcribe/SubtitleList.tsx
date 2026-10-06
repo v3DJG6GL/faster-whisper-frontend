@@ -51,7 +51,7 @@ interface Row {
 /** One cue row, memoized: during playback only the rows entering and leaving
  *  the playhead re-render (the SegmentRow idiom). */
 const CueRow = memo(function CueRow({
-  row, active, columns, lane, canSeek, seekTo, onEditSegment,
+  row, active, columns, lane, canSeek, seekTo, onEditSegment, maxEditSeg,
 }: {
   row: Row;
   active: boolean;
@@ -61,6 +61,9 @@ const CueRow = memo(function CueRow({
   canSeek: boolean;
   seekTo: (t: number) => void;
   onEditSegment: (seg: number) => void;
+  /** Segments at or past this index aren't rendered by the Segments view's
+   *  Edit list — no pencil there, it would land on a row that doesn't exist. */
+  maxEditSeg?: number;
 }) {
   const time = (
     <div className={cn("font-mono text-[10.5px] leading-relaxed tabular-nums", active ? "text-accent" : "text-faint")}>
@@ -98,7 +101,7 @@ const CueRow = memo(function CueRow({
           {l.text}
         </div>
       ))}
-      {row.seg >= 0 && (
+      {row.seg >= 0 && (maxEditSeg === undefined || row.seg < maxEditSeg) && (
         <button
           type="button"
           title="Edit its segment"
@@ -125,7 +128,7 @@ const estimate = (r: Row, lane?: boolean) =>
  *  the viewer's transcript box. `pin` = the row carrying the active segment's
  *  id — always rendered, at its virtual position. */
 function VirtualCues({
-  rows, active, pin, columns, lane, scrollRef, canSeek, seekTo, onEditSegment,
+  rows, active, pin, columns, lane, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg,
 }: {
   rows: Row[];
   active: number;
@@ -136,6 +139,7 @@ function VirtualCues({
   canSeek: boolean;
   seekTo: (t: number) => void;
   onEditSegment: (seg: number) => void;
+  maxEditSeg?: number;
 }) {
   const listRef = useRef<HTMLDivElement>(null);
   // Where the rows start inside the box's scroll content (heads and focus
@@ -175,7 +179,7 @@ function VirtualCues({
             style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start - margin}px)` }}
           >
             <CueRow row={r} active={v.index === active} columns={columns} lane={lane}
-              canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+              canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
           </div>
         );
       })}
@@ -191,7 +195,7 @@ const widths = (n: number, fixed: string) => ({
 });
 
 export function SubtitleList({
-  result, grid, tracks, cues, curTime, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, showNames, colorize, displayName, colorOf,
+  result, grid, tracks, cues, curTime, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg, showNames, colorize, displayName, colorOf,
 }: {
   result: BatchResult;
   /** Memoized by the viewer on edits, options and tracks — never on curTime. */
@@ -208,6 +212,8 @@ export function SubtitleList({
   canSeek: boolean;
   seekTo: (t: number) => void;
   onEditSegment: (seg: number) => void;
+  /** The Edit view's row cap: segments from here on get no "Edit its segment". */
+  maxEditSeg?: number;
   showNames: boolean;
   colorize: boolean;
   displayName: (label: string) => string;
@@ -309,7 +315,7 @@ export function SubtitleList({
             {layout.heads.map((h, i) => <span key={i}>{h}</span>)}
           </div>
           <VirtualCues rows={layout.rows} active={activeIn(layout.rows)} pin={pin} columns={columns} scrollRef={scrollRef}
-            canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+            canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
         </div>
       ) : (
         <div className="mx-auto flex gap-4" style={widths(n, `${n - 1}rem`)}>
@@ -322,7 +328,7 @@ export function SubtitleList({
                 </span>
               </div>
               <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === layout.idLane ? pin : -1} lane scrollRef={scrollRef}
-                canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
+                canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
             </div>
           ))}
         </div>

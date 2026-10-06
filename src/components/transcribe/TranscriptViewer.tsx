@@ -41,7 +41,7 @@ import {
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import {
-  cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
+  cueGrid, DEFAULT_SPEAKER_COLORS, joinSegmentTexts, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
 } from "@/lib/transcript/transcriptFormats";
 import { applyTextEdits, segmentWordRanges } from "@/lib/transcript/wordAlign";
 import { cn } from "@/lib/cn";
@@ -397,7 +397,7 @@ export function TranscriptViewer({
     const segs = effSegments.map(({ edited: _e, ...seg }) => seg);
     return {
       ...result,
-      text: segs.map((seg) => seg.text.trim()).join(" "),
+      text: joinSegmentTexts(segs.map((seg) => seg.text.trim())),
       segments: segs,
       words: effWords,
     };
@@ -453,6 +453,9 @@ export function TranscriptViewer({
     [subtitlesView, editedResult, cueOpts, fileRenames, showNames, visibleTracks],
   );
   const onEditSegment = useCallback((seg: number) => {
+    // Edit renders only the first MAX_SEGMENT_ROWS rows — past that the jump
+    // would find no row and drop the user at the top.
+    if (seg >= MAX_SEGMENT_ROWS) return;
     setMode("edit");
     setJumpSeg(seg);
   }, []);
@@ -921,6 +924,10 @@ export function TranscriptViewer({
             if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
             setBlobSrc(convertFileSrc(wavPath));
+            // Fell through from a GONE original to the stored copy (stage 1 skipped
+            // its note when the copy was over the buffer cap) — disclose it. A codec
+            // failure on the original doesn't earn the "moved or deleted" wording.
+            if (prior?.why === "gone") setAudioNote("copy");
           })
           .catch((e) => {
             if (stale()) { decodePendingRef.current = false; return; }
@@ -2026,6 +2033,7 @@ export function TranscriptViewer({
                 canSeek={canSeek}
                 seekTo={seekTo}
                 onEditSegment={onEditSegment}
+                maxEditSeg={MAX_SEGMENT_ROWS}
                 showNames={showNames}
                 colorize={colorize}
                 displayName={displayName}

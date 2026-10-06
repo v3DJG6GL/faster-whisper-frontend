@@ -403,6 +403,13 @@ export default function Transcribe() {
   const defaultModelName = backend?.model || (model ? undefined : decodeDefaults?.model) || "server model";
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
   const serverLang = serverLanguageLabel(decodeDefaults);
+  // The source a run's translation starts from: the picked language, else the server's
+  // DEFAULT_LANGUAGE; "" when neither names one (auto-detect, several languages).
+  const sourceOf = (lang: string): string => {
+    const s = lang || String(decodeDefaults?.language?.value ?? "").trim();
+    return namedLanguage(s) ? s : "";
+  };
+  const knownSource = sourceOf(language) || undefined;
   // The stage models a blank pick runs with, as the server resolves them for this caller (an
   // identity-bound default joins the list so the field can name it).
   const separationModels = withDefaultModel(caps?.separation_models, decodeDefaults?.separation_model?.value);
@@ -510,8 +517,11 @@ export default function Transcribe() {
     : null;
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+  // Add waits for a running spoken-language check: the run reuses its download and picks the
+  // site track by its result, and Add (a new preview) would cancel it half-way.
+  const linkChecking = linkLang.check.state === "running";
   /** One gate for the Add button, Enter and addLink itself. */
-  const canAddLink = !!draftUrl && !busy && !urlPreviewLoading && !linkTooLongWhy;
+  const canAddLink = !!draftUrl && !busy && !urlPreviewLoading && !linkChecking && !linkTooLongWhy;
   const runningOverall = useTranscribeRun(runBadgeFraction);
   const lastRunPath = useTranscribeRun((st) => st.lastRunPath);
 
@@ -527,19 +537,17 @@ export default function Transcribe() {
     const forUrl = files.some((p) => isSourceUrl(p));
     const forText = files.every((p) => !isSourceUrl(p) && isTextSourcePath(p));
     // The same gating `run()` applies, so we never ask the server to warm a
-    // stage this run would not actually request — including a link whose site
-    // tracks already cover every target (runLink then sends no translateTo).
-    const t2t =
-      translationAvailable &&
-      translateTo.length > 0 &&
-      files.some((p) => {
-        if (!isSourceUrl(p)) return true;
-        const site = urlMeta[p]?.siteSubs;
-        return !site || site.mtTargets.length > 0;
-      });
+    // stage this run would not actually request: a link translates what runLink
+    // sends (linkTranslateTo — none when its site tracks cover every target, its
+    // frozen targets even after the chips are cleared), every other file the chips.
+    const runT = translationAvailable ? translateTo : [];
+    const targetsOf = (p: string) => (isSourceUrl(p) ? (linkTranslateTo({ translateTo: runT }, urlMeta[p]) ?? []) : runT);
+    const warmTargets = translationAvailable ? files.map(targetsOf).find((t) => t.length > 0) : undefined;
+    // A text source only runs the translation stage, and the pump fails it without targets.
+    if (forText && !warmTargets) return;
     const stages = railStages(
       {
-        ...(t2t ? { translateTo } : {}),
+        ...(warmTargets ? { translateTo: warmTargets } : {}),
         ...(effDiarize ? { diarize: true } : {}),
         ...(effBgm ? { separateBgm: true } : {}),
       },
@@ -1129,7 +1137,7 @@ export default function Transcribe() {
                   setRunOverrides(overrides ?? {});
                   // The seed never targets the known source; keep that true when the
                   // source changes AFTER seeding (a de→de stage is a no-op run).
-                  const next = pruneTargets(translateTo, lang);
+                  const next = pruneTargets(translateTo, sourceOf(lang));
                   if (next.length !== translateTo.length) setTranslateTo(next);
                   persistOptions({ backendId, language: lang, translateTo: next });
                 }}
@@ -1170,7 +1178,9 @@ export default function Transcribe() {
               title={
                 urlPreviewLoading
                   ? "Waiting for the link preview and its download options"
-                  : (linkTooLongWhy ?? undefined)
+                  : linkChecking
+                    ? "Waiting for the spoken-language check — the run reuses its download"
+                    : (linkTooLongWhy ?? undefined)
               }
             >
               {urlPreviewLoading ? (
@@ -1646,7 +1656,7 @@ export default function Transcribe() {
                             }}
                             inheritedModel={backend?.translationOverrides?.model}
                             caps={caps}
-                            exclude={language !== "auto" ? language : undefined}
+                            exclude={knownSource}
                           >
                             <OverrideHeader
                               title="TRANSLATION_CONTEXT_SEGMENTS"
@@ -1689,7 +1699,7 @@ export default function Transcribe() {
                           const next = seedTargets({
                             backendTargets: backend?.translationOverrides?.translateTo,
                             serverDefault: caps?.translate_to_default,
-                            source: language !== "auto" ? language : undefined,
+                            source: knownSource,
                             max: maxTranslationTargets(caps),
                           });
                           setTranslateTo(next);
@@ -1744,7 +1754,7 @@ export default function Transcribe() {
             locked={server.locked}
             ignored={server.ignored}
             known={server.known}
-            languagePinned={namedLanguage(language || String(decodeDefaults?.language?.value ?? ""))}
+            languagePinned={!!knownSource}
             inheritWord="Default"
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}

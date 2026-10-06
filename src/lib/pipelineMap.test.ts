@@ -2,7 +2,7 @@
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
-import { collapseCounts, mapBodyFromRows, mapRowsFromRule, ruleListOf } from "./pipelineMap";
+import { applyMap, collapseCounts, mapBodyFromRows, mapRowsFromRule, ruleListOf } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule } from "./types";
 
 function fetchWith(rules: unknown): PipelineFetch {
@@ -83,5 +83,15 @@ describe("collapseCounts", () => {
 
   it("between the collapse point and the cap, every hidden row is revealable", () => {
     expect(collapseCounts(200, 15, 500)).toEqual({ hidden: 185, unshown: 0 });
+  });
+});
+
+describe("applyMap", () => {
+  it("treats an astral letter at a key's edge as one word char, like Python's \\b", () => {
+    expect(applyMap(" \u{20BB7}野家 ", [{ id: 1, k: "\u{20BB7}野家", v: "X" }])).toBe("X");
+  });
+
+  it("finds no boundary between an astral letter and a key", () => {
+    expect(applyMap("\u{1D400}ok", [{ id: 1, k: "ok", v: "Y" }])).toBe("\u{1D400}ok");
   });
 });

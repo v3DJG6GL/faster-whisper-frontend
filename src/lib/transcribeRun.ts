@@ -762,6 +762,9 @@ export function forgetRecord(id: string | null): void {
     return;
   }
   registeredIds.delete(id);
+  // A lost request's failed record carries its job id: deleting it must also stop the
+  // headless watcher and drop the ledger row, or the finished job re-adds the record.
+  if (ledgerRows().some((r) => r.jobId === id)) orphanForget?.(id);
   // By value, not via the record's sourcePath: deleteRecord calls this before the mirror
   // drops the record, but nothing guarantees the mirror still has it.
   for (const [p, v] of Object.entries(idByPath)) if (v === id) delete idByPath[p];
@@ -942,6 +945,8 @@ function awaitRunUrlVideo(
     getTranscribeProgress({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid })
       .then((p) => {
         failures = 0;
+        // A headless poll (epoch -1) paints nothing: match the headless watcher's 5 s cadence.
+        if (epoch === -1) skip = 4;
         if (p.stage === "unknown" || !p.stage) {
           // Entry gone without a terminal state: the fetch is lost to us
           // (the export panel can still fetch on demand).
@@ -1388,6 +1393,21 @@ export function setReattachStop(fn: (() => void) | null): void {
   reattachStop = fn;
 }
 
+/** Did the request lose contact with a server that may still be running its job? Our own
+ *  wait ran out or the connection never came up / dropped mid-wait (reqwest's "error
+ *  sending request", passed through by friendly_err), or a gateway gave up (502/504 — the
+ *  proxy's answer, not the backend's). Never an over-limit refusal, another HTTP answer
+ *  (a 503 "timed out waiting for a peer worker" is the backend speaking), or a malformed
+ *  body ("decoding response"): the job is settled, and a watcher would retry it for 72 h. */
+export function lostContact(e: unknown): boolean {
+  if (uploadTooLarge(e)) return false;
+  const cause = shortCause(e);
+  if (cause === "timed out" || cause === "could not connect") return true;
+  if (cause === "HTTP 502" || cause === "HTTP 504") return true;
+  // Only outside an HTTP answer: a backend's 500 body may quote the phrase.
+  return cause === "see the log" && String(e ?? "").includes("error sending request");
+}
+
 /** Hands a ledgered job whose request lost contact (timed out, connection
  *  dropped) to a headless watcher, so a transcript the server still finishes
  *  lands in History. Set by jobsReconcile; unset, the pump forgets the row. */
@@ -1402,6 +1422,13 @@ export function setOrphanWatch(fn: ((jobId: string) => void) | null): void {
 let orphanStop: ((paths: string[]) => void) | null = null;
 export function setOrphanStop(fn: ((paths: string[]) => void) | null): void {
   orphanStop = fn;
+}
+
+/** Stops the watcher of one lost request and forgets its row (forgetRecord: the user
+ *  deleted the failed record that carries the job id). Set by jobsReconcile. */
+let orphanForget: ((jobId: string) => void) | null = null;
+export function setOrphanForget(fn: ((jobId: string) => void) | null): void {
+  orphanForget = fn;
 }
 
 /** Take over the rail for a run the server is still working on (found in
@@ -1979,8 +2006,7 @@ async function pump(
         // finish. Record the failure under the job id, so the transcript a
         // headless watcher picks up later replaces it instead of adding a
         // second record, and keep the ledger row for that watcher.
-        const cause = shortCause(e);
-        const lost = ledgered && (cause === "timed out" || cause === "could not connect") && !uploadTooLarge(e);
+        const lost = ledgered && lostContact(e);
         if (lost && pid && orphanWatch) {
           const error = String(e);
           patchItem(next.path, { status: "failed", error, orphanJobId: pid });

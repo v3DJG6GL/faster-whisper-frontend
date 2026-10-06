@@ -38,7 +38,7 @@ const { _resetReconcileForTests, initJobReconcile, reconcileJobs, stopOrphan, wa
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun, closeRecord, openHistoryRecord, retryFile, startRun } =
   await import("./transcribeRun");
-const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+const { useTranscriptHistory, deleteRecord } = await import("./transcript/transcriptHistory");
 const { useApp } = await import("./store");
 type LedgerRow = import("./jobsLedger").LedgerRow;
 type TranscriptRecord = import("./transcript/transcriptHistory").TranscriptRecord;
@@ -417,6 +417,27 @@ describe("reconcileJobs", () => {
     expect(useTranscribeRun.getState().stageMeta).toEqual({});
   });
 
+  it("a headless video poll runs at the headless watcher's 5 s cadence, not once a second", async () => {
+    await seed(row(JOB_A, T0, "url"));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceVideoPending: true }));
+    getTranscribeProgress.mockImplementation(() =>
+      Promise.resolve({ stage: "done", video: { state: "downloading", downloaded: 1, total: 10 } }));
+    try {
+      await reconcileJobs();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(2);
+    } finally {
+      // Settle the poller so it does not outlive the test.
+      getTranscribeProgress.mockImplementation(() => Promise.resolve({ stage: "unknown" }));
+      await vi.advanceTimersByTimeAsync(6_000);
+    }
+  });
+
   it("a lost request's job is watched headless and its transcript lands under the job id", async () => {
     await persistRow(row(JOB_A, Date.now()));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
@@ -579,6 +600,62 @@ describe("reconcileJobs", () => {
     expect([it0.status, it0.error, it0.orphanJobId]).toEqual(["failed", "CUDA out of memory", undefined]);
     expect(records().find((x) => x.id === JOB_A)?.error).toBe("CUDA out of memory");
     expect(ledgerRows()).toEqual([]);
+  });
+
+  it("deleting a lost request's failed record stops its watcher, so the finished job can't re-add it", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscriptHistory.setState({ records: [rec] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    deleteJob.mockClear();
+    deleteRecord(JOB_A);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
+  });
+
+  it("a retry stops an earlier launch's lost request that reconcile could not reach yet", async () => {
+    const r = row(JOB_B, T0);
+    loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [r] }));
+    getJob.mockResolvedValue({ kind: "error", message: "Could not connect" });
+    await initJobReconcile();
+    expect(ledgerRows()).toHaveLength(1);
+    useTranscribeRun.setState({ files: [r.path], running: false,
+      queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_B }] });
+    deleteJob.mockClear();
+    retryFile(r.path, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_B }));
+    expect(ledgerRows().some((x) => x.jobId === JOB_B)).toBe(false);
+    // The 30 s retry pass no longer finds it: nothing is fetched or ingested.
+    getJob.mockResolvedValue(ok({ jobId: JOB_B, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getJobResult).not.toHaveBeenCalled();
+    expect(records().some((x) => x.id === JOB_B)).toBe(false);
+  });
+
+  it("a row stopped while reconcile awaits its status is neither re-attached nor watched", async () => {
+    await seed(row(JOB_A, T0));
+    let answer!: (v: JobOutcome<JobStatus>) => void;
+    getJob.mockImplementationOnce(() => new Promise((res) => { answer = res; }));
+    const pass = reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    stopOrphan(JOB_A);
+    answer(ok({ jobId: JOB_A, state: "running" }));
+    await pass;
+    expect(useTranscribeRun.getState().running).toBe(false);
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob).not.toHaveBeenCalled();
   });
 
   it("initJobReconcile loads the persisted ledger after configReady, once", async () => {

@@ -5,6 +5,7 @@
 // TranscriptViewer supplies the actual translateText call and the store merge.
 import type { BatchProgress } from "./types";
 import type { TextTranslationResult } from "./api";
+import { ownProp } from "./own";
 
 /** Segments per /v1/text/translations request. Small on purpose: results
  *  merge into the transcript per chunk, so the chunk size IS the "live fill"
@@ -24,7 +25,7 @@ export function untranslatedIndexes(
 ): number[] {
   if (!langs.length) return [];
   return (segments ?? []).flatMap((s, i) =>
-    langs.some((l) => !(s.translations?.[l] ?? "").trim()) ? [i] : [],
+    langs.some((l) => !(ownProp(s.translations, l) ?? "").trim()) ? [i] : [],
   );
 }
 

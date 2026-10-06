@@ -22,8 +22,8 @@ import { configReady } from "./persistence";
 import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
 import {
-  failJob, foldProgress, ingestJobResult, reattachRun, setOrphanStop, setOrphanWatch, setReattachStop,
-  useTranscribeRun, withSiteTracks,
+  failJob, foldProgress, ingestJobResult, reattachRun, setOrphanForget, setOrphanStop, setOrphanWatch,
+  setReattachStop, useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
 import type { JobStatus } from "./types";
 
@@ -53,6 +53,8 @@ const watching = new Map<string, () => void>();
  *  names the job can be rebuilt without it (a History record opened, the workbench
  *  closed), so a re-run of the path finds the watcher by path, not by row. */
 const orphans = new Map<string, string>();
+/** The job the rail's reattached watcher polls: never torn down by a record delete. */
+let attachedId: string | null = null;
 /** When this launch's reconcile started. Rows the pump persists from then on are its
  *  own live requests, never something to reconcile. */
 let launchedAt = Infinity;
@@ -117,8 +119,10 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     clearTimeout(timer);
     watching.delete(row.jobId);
     orphans.delete(row.jobId);
+    if (attachedId === row.jobId) attachedId = null;
   };
   watching.set(row.jobId, stop);
+  if (opts.attached) attachedId = row.jobId;
   // The rail's stop hook (abandonActiveRun): the user moved on, so the row goes too.
   const abandon = () => {
     stop();
@@ -213,10 +217,22 @@ export function stopOrphan(jobId: string): void {
   void forgetRow(jobId);
   void deleteJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId }).catch(() => {});
 }
-/** The pump's hook (retryFile, startRun): stop every lost request's watcher whose file
- *  the user is about to run again. */
+/** The pump's hook (retryFile, startRun): stop every lost request whose file the user is
+ *  about to run again — a watched one, and an earlier launch's row reconcile could not
+ *  reach yet (server unreachable: no watcher, but a retry pass would still land it). The
+ *  rail's reattached watcher and this launch's own requests are left alone. */
 setOrphanStop((paths) => {
-  for (const [jobId, path] of [...orphans]) if (paths.includes(path)) stopOrphan(jobId);
+  for (const r of [...ledgerRows()]) {
+    if (!r.path || !paths.includes(r.path)) continue;
+    if (orphans.has(r.jobId) || (r.startedAt < launchedAt && !watching.has(r.jobId))) stopOrphan(r.jobId);
+  }
+});
+
+/** The user deleted the failed record of a lost request (its id is the job id): stop the
+ *  job like a retry does, or it lands the deleted record again when it finishes. */
+setOrphanForget((jobId) => {
+  if (attachedId === jobId) return;
+  stopOrphan(jobId);
 });
 
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
@@ -239,6 +255,9 @@ export async function reconcileJobs(): Promise<void> {
         continue;
       }
       const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
+      // Stopped meanwhile (a retry of its file, a delete of its record): forgetRow already
+      // dropped it from the in-memory ledger.
+      if (!ledgerRows().some((x) => x.jobId === row.jobId)) continue;
       switch (r.kind) {
         case "error":
           retry = true;
@@ -272,10 +291,12 @@ export async function reconcileJobs(): Promise<void> {
     // (no run, no picked files, no queue, no open record: a retry pass can come long
     // after launch, and reattachRun replaces all of them); every other running row,
     // or the newest one then, is watched headless and still lands in History.
-    const newest = running[running.length - 1];
+    // A row stopped during a later row's await (forgotten) is neither reattached nor watched.
+    const live = running.filter((row) => ledgerRows().some((x) => x.jobId === row.jobId));
+    const newest = live[live.length - 1];
     const s = useTranscribeRun.getState();
     const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
-    for (const row of running) {
+    for (const row of live) {
       if (row === newest && idle) {
         const epoch = reattachRun(row);
         watchJob(row, { attached: true, epoch });
@@ -317,5 +338,6 @@ export function _resetReconcileForTests(): void {
   retryTimer = undefined;
   watching.clear();
   orphans.clear();
+  attachedId = null;
   launchedAt = Infinity;
 }

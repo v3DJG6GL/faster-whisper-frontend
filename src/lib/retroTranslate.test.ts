@@ -280,6 +280,9 @@ describe("untranslatedIndexes (the resume set after a cancelled run)", () => {
     expect(untranslatedIndexes(segs, [])).toEqual([]);
     expect(untranslatedIndexes(undefined, ["de"])).toEqual([]);
   });
+  it("reads an inherited key like valueOf as missing instead of throwing", () => {
+    expect(untranslatedIndexes([{ translations: { valueOf: "x" } }, { translations: {} }], ["valueOf"])).toEqual([1]);
+  });
 });
 
 describe("translateOptsFrom", () => {
