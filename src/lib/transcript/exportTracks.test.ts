@@ -114,6 +114,11 @@ describe("names, flags and files (D89)", () => {
     expect(plan.map((t) => t.title)).toEqual(["Deutsch (Whisper)", "English"]);
     expect(cleanTrackTitle("x".repeat(80))).toHaveLength(64);
   });
+  it("a target spelled like an Object.prototype member gets its default title, not a crash", () => {
+    const plan = planTracks({ language: "de" }, ["orig", "toString"]);
+    expect(plan[1].title).toBe(plan[1].defaultTitle);
+    expect(cleanTrackTitle({} as unknown as string)).toBe("");
+  });
   it("files: plain stem.de.srt, others stem.<Label>.de.srt, SDH after the language, never two alike", () => {
     const plan = planTracks(RESULT, ["orig", "de-x-site", "de-x-site-auto", "de-x-site-hoh", "en", "en-x-site"]);
     expect(trackFileSuffixes(plan, "srt")).toEqual([

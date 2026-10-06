@@ -6,6 +6,7 @@
 
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptFormats";
+import { primarySubtag } from "../languages";
 import { ownProp } from "../own";
 import { codeSlug } from "../sanitize";
 import type { BatchResult, Capabilities, TranscribeSettings } from "../types";
@@ -93,6 +94,16 @@ function trackSubtitle(result: BatchResult, opts: ExportOptions, track: string, 
   return generateExports(result, { ...opts, format, tracks: [track] })[0]?.content ?? "";
 }
 
+/** A track's language as the packager accepts it (Rust `is_package_lang`: a lowercase 2–3 letter
+ *  primary, at most one 2–8 alnum subtag). Site-track langs only pass the looser `is_lang_code`
+ *  ("en-x-autogen", "zh-Hant-TW"), and one bad tag would fail the whole save: fall back to the
+ *  primary subtag, else "und". The track's label keeps the full name. */
+export function packageLang(lang: string): string {
+  if (/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(lang)) return lang;
+  const primary = primarySubtag(lang);
+  return /^[a-z]{2,3}$/.test(primary) ? primary : "und";
+}
+
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for
@@ -106,7 +117,7 @@ export function embeddedSubtitleTracks(
   return planTracks(result, tracks, names).flatMap((t) => {
     const srt = trackSubtitle(result, opts, t.id, "srt");
     return srt.trim()
-      ? [{ lang: t.lang, label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
+      ? [{ lang: packageLang(t.lang), label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
       : [];
   });
 }
@@ -228,6 +239,8 @@ function cleanStemPart(s: string | null | undefined, max = 120): string {
     .trim()
     .replace(/[. ]+$/, "")
     .slice(0, max)
+    // A cut through an emoji leaves half of it, which no file name may carry.
+    .replace(/[\uD800-\uDBFF]$/, "")
     .replace(/[. ]+$/, "");
 }
 

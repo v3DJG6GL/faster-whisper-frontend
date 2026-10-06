@@ -5,10 +5,11 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, wrapLines, type CueGrid,
-  type CueOptions,
+  UNSPACED, buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, wrapLines,
+  type CueGrid, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
+import { ownProp } from "../own";
 import { codeSlug, stripControlChars } from "../sanitize";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
@@ -198,6 +199,26 @@ interface Ctx {
   wrap: (text: string, track: string, reserve: number) => string;
 }
 
+/** CJK punctuation and fullwidth forms: like the unspaced scripts, no space around them. */
+const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
+/** The first (`end` false) or last code point of `s` — "" when empty. */
+function edgeChar(s: string, end: boolean): string {
+  if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
+  const lo = s.charCodeAt(s.length - 1);
+  return s.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
+}
+const unspacedChar = (c: string) => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
+/** Segment texts joined into one paragraph: a space between two, except where both sides of
+ *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
+ *  had one there. Spaced text joins exactly as `.join(" ")`. */
+function joinTexts(parts: string[]): string {
+  let out = "";
+  parts.forEach((p, i) => {
+    out += i && !(unspacedChar(edgeChar(out, true)) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
+  });
+  return out;
+}
+
 /** A segment's translation for one track (trText), cleaned; null when there is none. */
 function trOf(seg: TranscriptSegment, lang: string): string | null {
   const t = trText(seg, lang);
@@ -253,7 +274,7 @@ function cueLines(
  *  rename made only of bidi/format characters is truthy but cleans to "", which would
  *  blank the name everywhere. */
 export function speakerName(renames: Record<string, string> | undefined, label: string): string {
-  return clean(renames?.[label] ?? "") || clean(prettySpeaker(label));
+  return clean(ownProp(renames, label) ?? "") || clean(prettySpeaker(label));
 }
 
 function nameOf(ctx: Ctx, label: string): string {
@@ -329,7 +350,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
           if (!b.length) return;
           const lang = slotLangs[i];
           const tag = lang && ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : "";
-          paras.push(tag + prefix + b.join(" "));
+          paras.push(tag + prefix + joinTexts(b));
         });
       }
       bufs = Array.from({ length: trackCount }, () => []);
@@ -365,7 +386,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
   const flush = () => {
     if (buf.length) {
       const prefix = who ? `${nameOf(ctx, who)}: ` : "";
-      paras.push(prefix + buf.join(" "));
+      paras.push(prefix + joinTexts(buf));
     }
     buf = [];
   };
@@ -530,7 +551,9 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
       if (ws.length) {
         // Enhanced LRC (A2): inline <mm:ss.xx> tags, each marking the start
         // of the following word — the karaoke convention.
-        const body = ws.map((w) => `<${lrcTime(w.start)}>${clean(w.word)}`).join(" ");
+        // Unspaced (CJK) text has no spaces between its words: joining them with one would add some.
+        const sep = /\s/.test(seg.text.trim()) ? " " : "";
+        const body = ws.map((w) => `<${lrcTime(w.start)}>${clean(w.word)}`).join(sep);
         out.push(`[${lrcTime(seg.start)}]${prefix}${body}`);
         continue;
       }
@@ -767,7 +790,7 @@ export function previewExport(
   grid ??= cueGrid(result, opts, tracks);
   const list = tracks.length === 1
     ? trackCues(grid, tracks[0])
-    : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : c.tr[t])));
+    : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : ownProp(c.tr, t))));
   const last = list[Math.min(n, list.length) - 1];
   // The segments behind the first n cues — or, for a track with its own
   // timing, everything before the n-th cue ends.

@@ -55,6 +55,23 @@ describe("txt", () => {
     });
     expect(out).toBe("Nadia: Hello there.\n\nSpeaker 2: General greeting.\n");
   });
+  it("with speakers: a CJK turn's segments join without spaces, as the plain text does", () => {
+    const ja: BatchResult = {
+      text: "今日は晴れ。明日は雨。",
+      language: "ja",
+      speakers: ["SPEAKER_00"],
+      segments: [
+        { start: 0, end: 1, text: "今日は晴れ。", speaker: "SPEAKER_00", translations: { zh: "今天晴天。" } },
+        { start: 1, end: 2, text: "明日は雨。", speaker: "SPEAKER_00", translations: { zh: "明天下雨。" } },
+      ],
+    };
+    expect(generateExport(ja, { format: "txt" })).toBe("Speaker 1: 今日は晴れ。明日は雨。\n");
+    expect(generateExport(ja, { format: "txt", tracks: ["orig", "zh"] }))
+      .toBe("Speaker 1: 今日は晴れ。明日は雨。\n\nSpeaker 1: 今天晴天。明天下雨。\n");
+    // A seam with spaced text on either side keeps its space.
+    const mixed = { ...ja, segments: [ja.segments![0], { ...ja.segments![1], text: "OK." }] };
+    expect(generateExport(mixed, { format: "txt" })).toBe("Speaker 1: 今日は晴れ。 OK.\n");
+  });
 });
 
 describe("srt", () => {
@@ -610,6 +627,20 @@ describe("lrc word tags", () => {
     expect(out.split("<00:01.00>").length - 1).toBe(1);
     expect(out).toContain("[00:01.00]<00:01.00>b");
   });
+  it("unspaced (CJK) words are tagged without a space between them", () => {
+    const r: BatchResult = {
+      text: "今日は晴れ",
+      language: "ja",
+      segments: [{ start: 0, end: 1.5, text: "今日は晴れ" }],
+      words: [
+        { word: "今日", start: 0, end: 0.5 },
+        { word: "は", start: 0.5, end: 1 },
+        { word: "晴れ", start: 1, end: 1.5 },
+      ],
+    };
+    expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
+      .toBe("[00:00.00]<00:00.00>今日<00:00.50>は<00:01.00>晴れ\n");
+  });
 });
 
 // ── subtitle cues (D83/D84) ─────────────────────────────────────────────────
@@ -820,5 +851,10 @@ describe("speakerName (viewer, panel and exports)", () => {
     expect(speakerName({ SPEAKER_00: "  Ann\n Lee " }, "SPEAKER_00")).toBe("Ann  Lee");
     expect(speakerName({ SPEAKER_00: "\u202e\u200f" }, "SPEAKER_00")).toBe("Speaker 1");
     expect(speakerName(undefined, "SPEAKER_01")).toBe("Speaker 2");
+  });
+  it("a label spelled like an Object.prototype member reads as unrenamed", () => {
+    expect(() => speakerName({}, "constructor")).not.toThrow();
+    expect(speakerName({}, "constructor")).toBe(speakerName(undefined, "constructor"));
+    expect(() => speakerName({}, "toString")).not.toThrow();
   });
 });

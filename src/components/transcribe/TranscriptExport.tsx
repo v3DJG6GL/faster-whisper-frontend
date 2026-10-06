@@ -41,7 +41,7 @@ import {
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
-import { useTranscribeRun } from "@/lib/transcribeRun";
+import { patchItem, useTranscribeRun } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
@@ -181,8 +181,11 @@ export function TranscriptExport({
   const hasVideoSource = !!(serverVideoId || localVideo || urlVideoOnDemand);
   const showMedia = !textSource && (urlSource || isVideoSourcePath(path));
   // A link's audio: the app's copy, else the server's (fetched at Save; m4a until then).
-  const audioExt = mediaPath ? extOf(mediaPath) || "m4a" : urlSource && rec?.result?.sourceMediaId ? "m4a" : null;
-  const audioAvailable = urlSource && !!(mediaPath || rec?.result?.sourceMediaId);
+  // The record's copy counts too: a Save that fetched it stamps the record, and the
+  // queue row's `mediaPath` prop only follows while that record is the open one.
+  const localAudio = mediaPath ?? rec?.mediaPath ?? null;
+  const audioExt = localAudio ? extOf(localAudio) || "m4a" : urlSource && rec?.result?.sourceMediaId ? "m4a" : null;
+  const audioAvailable = urlSource && !!(localAudio || rec?.result?.sourceMediaId);
   const videoWhy = !hasVideoSource
     ? "no video is available for this transcription"
     : !packageOn && !localVideo
@@ -268,9 +271,6 @@ export function TranscriptExport({
     () => (open && subs ? cueGrid(editedResult, { ...exportOptions, format: "srt" }, gridTracks) : null),
     [open, subs, editedResult, exportOptions, gridTracks],
   );
-  /** The original track's cues — the preview's slice and the summary's
-   *  count; null when the file has no split subtitles. */
-  const grid = cueOpts ? subGrid : null;
   /** Reading-speed scan over every cue the file carries — memoized so the
    *  summary in JSX doesn't re-walk the transcript at playhead cadence. */
   const cpsWarn = useMemo(
@@ -337,7 +337,7 @@ export function TranscriptExport({
     if (!open || !editedResult.segments?.length || !previewFile) return null;
     // The shared grid serves only a subtitle file whose tracks it covers.
     const shared = subGrid && isSubtitleFormat(previewFile.format)
-      && (previewFile.tracks ?? ["orig"]).every((t) => gridTracks.includes(t))
+      && tracksOf(previewFile).every((t) => gridTracks.includes(t))
       ? subGrid
       : undefined;
     return previewExport(
@@ -363,7 +363,7 @@ export function TranscriptExport({
    *  (the dialog approved overwriting `dest`, never that other name);
    *  otherwise to exactly `dest`, the path the user confirmed. */
   const exportAudioTo = async (dest: string): Promise<string> => {
-    let src = mediaPath ?? null;
+    let src = localAudio;
     if (!src && urlSource && rec?.result?.sourceMediaId && trBackend) {
       setMediaJob({ jobId: "", phase: "fetching-audio", done: 0, total: null });
       try {
@@ -379,6 +379,9 @@ export function TranscriptExport({
         // next Save copies it instead of downloading again.
         const got = src;
         patchRecord(rec.id, (r) => (r.mediaPath === got ? r : { ...r, mediaPath: got }));
+        // The viewer's queue row too (as a run's own copy does), but only while it
+        // still shows this record — a re-run of the link may own the row by now.
+        if (useTranscribeRun.getState().openRecordId === rec.id) patchItem(path, { mediaPath: got });
       }
     }
     if (!src) throw new Error("No audio is stored for this transcription.");
@@ -460,7 +463,9 @@ export function TranscriptExport({
     const jobId = newProgressId();
     const fromFile = !!source.sourcePath;
     // A busy answer after an upload names that upload's server copy (and its expiry,
-    // which the retry that packages it no longer learns).
+    // which the retry that packages it no longer learns). The copy is remembered on the
+    // record as soon as the busy answer names it, so a dequeue, a thrown retry or an
+    // mp4_incompatible retry (which packages by id and returns no mediaId) does not lose it.
     let uploadedExpiry: number | null = null;
     const unsub = await onMediaExportProgress((p) => {
       if (p.jobId !== jobId) return;
@@ -482,7 +487,15 @@ export function TranscriptExport({
             audioBase,
           });
           if (out.kind === "busy" && out.mediaId) {
-            if (source.sourcePath) uploadedExpiry = out.expiresAt;
+            if (source.sourcePath) {
+              uploadedExpiry = out.expiresAt;
+              const mid = out.mediaId;
+              const exp = out.expiresAt ?? undefined;
+              patchRecord(rec.id, (r) => ({
+                ...r,
+                result: { ...(r.result ?? { text: "" }), sourceMediaId: mid, sourceMediaExpiresAt: exp },
+              }));
+            }
             source = { sourceMediaId: out.mediaId };
           }
           return out;
@@ -495,6 +508,17 @@ export function TranscriptExport({
       setMediaJob(null);
     }
     if (!outcome) {
+      // Cancelled while Queued after a busy answer named an upload's server copy: keep
+      // it, or the next Save uploads the whole file again. (`fromFile` = the source began
+      // as a path, so a server id here can only be that upload's.)
+      if (fromFile && source.sourceMediaId) {
+        const mediaId = source.sourceMediaId;
+        const expiresAt = uploadedExpiry ?? undefined;
+        patchRecord(rec.id, (r) => ({
+          ...r,
+          result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
+        }));
+      }
       if (mine()) setMediaError({ kind: "cancelled", msg: "Export cancelled." });
       return false;
     }
@@ -646,7 +670,8 @@ export function TranscriptExport({
     trackCodes: videoTracks.map((t) => trackCode(editedResult, t)),
     stacked: textNames.length === 1,
     filePerTrack: textNames.length > 1 || !!plan.sidecars,
-    cueCount: grid ? grid.cues.length : null,
+    // Null without split subtitles.
+    cueCount: cueOpts && subGrid ? subGrid.cues.length : null,
     segCount: editedResult.segments?.length ?? 0,
     showTs,
     content,
@@ -731,7 +756,7 @@ export function TranscriptExport({
       { value: "none", label: "None", sub: "text file only" },
       ...(urlSource ? [{
         value: "audio" as const, label: "Audio",
-        sub: mediaPath ? `${audioExt} copy` : audioAvailable ? "from the server" : "not stored",
+        sub: localAudio ? `${audioExt} copy` : audioAvailable ? "from the server" : "not stored",
         why: audioAvailable ? undefined : "no audio is stored for this link",
       }] : []),
       { value: "video", label: "Video", sub: videoWhy ? "not available" : "with subtitles", why: videoWhy ?? undefined },
@@ -1030,7 +1055,7 @@ export function TranscriptExport({
                 {safeDisplayText(mediaError.msg, 300)}
                 {mediaError.kind === "mp4" && (
                   <button type="button" className="ml-2 underline"
-                    onClick={() => { setContainer("mkv"); patchTranscribe({ exportContainer: "mkv" }); setMediaError(null); }}>
+                    onClick={() => void doExport()}>
                     Save as MKV
                   </button>
                 )}

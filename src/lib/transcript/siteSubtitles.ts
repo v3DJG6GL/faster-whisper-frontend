@@ -392,11 +392,15 @@ export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: Site
 export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: string, on?: boolean): SiteChange {
   const m = model(input, st);
   const want = on ?? !m.targets.includes(code);
-  return fromMap(
-    input,
-    st.sel ? { ...st, sel: { ...st.sel, ["mt:" + code]: want } } : st,
-    { ...m.tmap, [code]: want },
-  );
+  let next = st;
+  if (st.sel) {
+    const sel = { ...st.sel, ["mt:" + code]: want };
+    // Dropping a language drops its site tracks too: under Custom a stale pick of one
+    // would otherwise keep it downloading (the pick outranks the off language).
+    if (!want) for (const k of Object.keys(m.codeOf)) if (m.codeOf[k] === code) sel[k] = false;
+    next = { ...st, sel };
+  }
+  return fromMap(input, next, { ...m.tmap, [code]: want });
 }
 
 /** "Add language": a machine-translated language, its row at the bottom. */
@@ -468,7 +472,11 @@ export function siteTimedTracks(
     if (taken(id)) id = `${base}${f.kind === "auto" ? "-auto" : hoh ? "-hoh" : ""}`;
     for (let n = 2; taken(id); n++) id = `${base}-${n}`;
     const cues = f.parsed.segments.flatMap((s) =>
-      s.start !== undefined && s.end !== undefined ? [{ start: s.start, end: s.end, text: s.text }] : [],
+      // A timed cue has no speaker field: the import moved a leading "Name:" (or a VTT <v> voice)
+      // into `speaker`, so put it back into the text rather than drop it.
+      s.start !== undefined && s.end !== undefined
+        ? [{ start: s.start, end: s.end, text: s.speaker ? `${s.speaker}: ${s.text}` : s.text }]
+        : [],
     );
     if (!cues.length) continue;
     out.push({

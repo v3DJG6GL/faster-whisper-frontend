@@ -4,6 +4,7 @@
 
 import { timedTrack, trackLang } from "./cueSplit";
 import { langCode, primarySubtag, trackLanguageName } from "../languages";
+import { ownProp } from "../own";
 import { codeSlug, stripControlChars } from "../sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge, type SourceWordStyle } from "./siteSubtitles";
 import type { BatchResult } from "../types";
@@ -77,7 +78,7 @@ export function transcriptTracks(result: Pick<BatchResult, "translation" | "segm
 const SOURCE_RANK: Record<TrackSource, number> = { whisper: 0, site: 1, auto: 2, mt: 3 };
 
 /** The language a track counts for — its primary subtag ("de-CH" and "de" are one language). */
-const langOf = (result: TrackResult, track: string) => primarySubtag(trackInfo(result, track).lang);
+const langOf = (result: TrackResult, track: string) => primarySubtag(trackLang(result, track));
 
 /** The order nothing was dragged into: the spoken language first, then the other languages in
  *  the order `tracks` brings them; within a language by source (SOURCE_RANK). */
@@ -218,9 +219,10 @@ export interface PlannedTrack extends TrackInfo {
 /** The longest track title the server keeps. */
 export const TRACK_TITLE_MAX = 64;
 
-/** A typed track name as a title: no control characters, bounded; "" = use the default. */
+/** A typed track name as a title: no control characters, bounded; "" = use the default.
+ *  Anything but a string (a stored map's junk) reads as no name. */
 export function cleanTrackTitle(s: string | undefined): string {
-  return stripControlChars(s ?? "").replace(/\s+/g, " ").trim().slice(0, TRACK_TITLE_MAX).trim();
+  return stripControlChars(typeof s === "string" ? s : "").replace(/\s+/g, " ").trim().slice(0, TRACK_TITLE_MAX).trim();
 }
 
 /** The chosen tracks, in order, with their names and flags. `names` = the user's titles by
@@ -240,7 +242,7 @@ export function planTracks(
       plain: g.tracks[0] === id,
       original: !!spoken && g.lang === spoken,
       defaultTitle,
-      title: cleanTrackTitle(names[id]) || defaultTitle,
+      title: cleanTrackTitle(ownProp(names, id)) || defaultTitle,
     };
   });
 }

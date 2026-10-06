@@ -5,6 +5,7 @@ import {
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
+import { parseImportedText } from "./subtitleImport";
 
 const tr = (id: string, lang: string, extra: Partial<SiteTrackInfo> = {}): SiteTrackInfo => ({
   id, lang, kind: "manual", ext: "vtt", hoh: false, ...extra,
@@ -212,6 +213,11 @@ describe("site tracks in a result", () => {
     expect(siteWord({ kind: "auto", site: "ARD Mediathek" }, "file")).toBe("ARD-Mediathek-auto");
     expect(siteWord({ kind: "manual", hoh: true, site: "日本" }, "file")).toBe("Site");
   });
+  it("a speaker the import split off a cue stays in the site cue's text", () => {
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nJOHN: Hello\n\n00:00:03.000 --> 00:00:04.000\n<v Kate>Hi</v>\n";
+    const timed = siteTimedTracks([{ id: "en", lang: "en", kind: "manual", parsed: parseImportedText("vtt", vtt) }]);
+    expect(timed[0].cues.map((c) => c.text)).toEqual(["JOHN: Hello", "Kate: Hi"]);
+  });
   it("attaching keeps the result's own tracks and warnings", () => {
     const res = { text: "", segments: [], warnings: ["w1"] } as never;
     expect(attachSiteTracks(res, [], [])).toBe(res);
@@ -264,6 +270,15 @@ describe("the chips' own picker and the frozen run (moved out of Transcribe)", (
     expect(st2.off).toEqual(["fr"]);
     expect(st2.added).toEqual(["es"]);
     expect(setTargets(inp, st, ["en", "fr", "it"])).toEqual({ state: st, targets: ["en", "fr"] });
+  });
+  it("setTargets under Custom: a dropped chip stops downloading its site track", () => {
+    const inp = input();
+    const [inp1, st1] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    expect(derive(inp1, st1).run!.fetch).toContain("fr");
+    const [inp2, st2] = apply(inp1, setTargets(inp1, st1, ["en", "it"]));
+    expect(derive(inp2, st2).chips.map((c) => c.code)).toEqual(["en", "it"]);
+    expect(derive(inp2, st2).run!.fetch).not.toContain("fr");
+    expect(badge(inp2, st2, "fr", "ex:fr").state).toBe("off");
   });
   it("frozenSiteRun: no machine translation without a translator; only the fetched tracks' facts", () => {
     const run = { fetch: ["de", "en"], transcriptTrackId: "de", mtTargets: ["fr"] };

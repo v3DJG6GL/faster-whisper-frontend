@@ -188,6 +188,31 @@ describe("buildCues", () => {
     expect(buildCues(r, STD, ["orig"]).own["de-x-site"]).toBeUndefined();
   });
 
+  it("a site track alone skips the original's split: one cue per segment, the track unchanged", () => {
+    const r: BatchResult = {
+      ...seg1(LONG, 10, 30),
+      timedTracks: [{ id: "de-x-site", lang: "de", source: "site", kind: "manual", cues: [{ start: 10, end: 12, text: "Hallo." }] }],
+    };
+    const grid = buildCues(r, STD, ["de-x-site"]);
+    expect(grid.cues).toHaveLength(1);
+    expect(grid.own["de-x-site"]).toEqual(buildCues(r, STD, ["orig", "de-x-site"]).own["de-x-site"]);
+  });
+
+  it("a target spelled like an Object.prototype member reads as absent, not as a function", () => {
+    const r: BatchResult = {
+      text: "One. Two.",
+      language: "en",
+      segments: [
+        { start: 0, end: 1, text: " One.", translations: { toString: "x" } },
+        { start: 1, end: 2, text: " Two.", translations: {} },
+      ],
+    };
+    const grid = buildCues(r, STD, ["orig", "toString"]);
+    expect(trackCues(grid, "toString").map((c) => c.text)).toEqual(["x"]);
+    expect(trText(r.segments![1], "toString")).toBeNull();
+    expect(cueResult(r, grid, "valueOf").segments).toEqual([]);
+  });
+
   it("cueResult renders cues as segments for the existing generators", () => {
     const r = seg1(LONG, 10, 30, { speakers: ["S0"], segments: [{ start: 10, end: 30, text: " " + LONG, speaker: "S0" }] });
     const grid = buildCues(r, STD, ["orig"]);
@@ -299,7 +324,7 @@ describe("cutByShare", () => {
   });
   it("still avoids a cut right after an article past the bounded look-back", () => {
     const text = "Understandably everyone waited for the announcement";
-    expect(cutByShare(text, [1, 1]).every((p) => !/\bthe$/.test(p))).toBe(true);
+    expect(cutByShare(text, [38, 13]).every((p) => !/\bthe$/.test(p))).toBe(true);
   });
 });
 

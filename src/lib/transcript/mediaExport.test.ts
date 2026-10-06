@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem,
+  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
   isVideoSourcePath, legacyTrackIndices, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
@@ -100,6 +100,21 @@ describe("embeddedSubtitleTracks", () => {
     expect(sidecarFiles(site, { format: "srt" }, order, "srt").map((f) => f.name("s")))
       .toEqual(["s.de.srt", "s.YouTube.de.sdh.srt", "s.en.srt", "s.YouTube-auto.en.srt"]);
   });
+  it("a site track's looser language tag embeds as one the packager accepts", () => {
+    const site: BatchResult = {
+      ...result,
+      timedTracks: [
+        { id: "zh-Hant-TW-x-site", lang: "zh-Hant-TW", source: "site", kind: "manual", site: "YouTube",
+          cues: [{ start: 0, end: 1, text: "你好" }] },
+        { id: "en-x-autogen-x-site", lang: "en-x-autogen", source: "site", kind: "auto", site: "Vimeo",
+          cues: [{ start: 0, end: 1, text: "Hi" }] },
+      ],
+    };
+    const tracks = embeddedSubtitleTracks(site, { format: "srt" }, ["orig", "zh-Hant-TW-x-site", "en-x-autogen-x-site"]);
+    expect(tracks.map((t) => t.lang)).toEqual(["de", "zh", "en"]);
+    expect(packageLang("pt-BR")).toBe("pt-BR");
+    expect(packageLang("!!")).toBe("und");
+  });
 });
 
 describe("mediaExportPlan", () => {
@@ -168,6 +183,8 @@ describe("exportStem", () => {
     expect(exportStem(undefined, "/tmp/interview-2026.mkv")).toBe("interview-2026");
     expect(exportStem(undefined, "C:\\rec\\Interview 2026.wav")).toBe("Interview 2026");
     expect(exportStem("x".repeat(200), "/a.mp4")).toHaveLength(120);
+    // The bound never splits an emoji into a lone surrogate.
+    expect(exportStem("a".repeat(119) + "\u{1F600}" + "b", "/a.mp4")).toBe("a".repeat(119));
     // The link info is ignored for a local file — its names stay as before.
     expect(exportStem("Talk", "/a.mp4", { createdAt: new Date(2026, 9, 4, 19, 34), extractor: "Youtube" })).toBe("Talk");
   });

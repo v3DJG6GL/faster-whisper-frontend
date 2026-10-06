@@ -71,7 +71,7 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
 };
 
 /** Scripts written without spaces between words: a run of them can break anywhere. */
-const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+export const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 
 /** Clamp an untrusted (synced / stored) limits object; undefined when unusable. */
@@ -470,8 +470,8 @@ export function buildCues(
   const own: Record<string, Cue[]> = {};
   const ownMt = !!o && o.timing === "own";
   if (ownMt) for (const l of mtLangs) own[l] = [];
-  // Own-timed translations never read the original's split: skip it unless it is exported.
-  const needMine = tracks.includes("orig") || !ownMt;
+  // Only the original itself and same-timed translations read its split.
+  const needMine = tracks.includes("orig") || (!ownMt && mtLangs.length > 0);
   const cues: Cue[] = [];
 
   segs.forEach((seg, si) => {
@@ -510,7 +510,7 @@ export function buildCues(
  *  quality guard KEPT the source text for this target (it would duplicate the original). */
 export function trText(seg: TranscriptSegment, lang: string): string | null {
   if (seg.translationsKept?.includes(lang)) return null;
-  const t = seg.translations?.[lang]?.trim();
+  const t = ownProp(seg.translations, lang)?.trim();
   return t ? t : null;
 }
 
@@ -519,7 +519,8 @@ export function trText(seg: TranscriptSegment, lang: string): string | null {
 export function trackCues(
   grid: CueGrid, track: string,
 ): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
-  if (grid.own[track]) return grid.own[track];
+  const own = ownProp(grid.own, track);
+  if (own) return own;
   // Speaker kept like own-timed cues keep it, so a shared-cue lane still prefixes "Name: ".
   return grid.cues
     .map((c) => ({
@@ -527,7 +528,7 @@ export function trackCues(
       end: c.end,
       seg: c.seg,
       ...(c.speaker ? { speaker: c.speaker } : {}),
-      text: track === "orig" ? c.text : (c.tr[track] ?? ""),
+      text: track === "orig" ? c.text : (ownProp(c.tr, track) ?? ""),
     }))
     .filter((c) => c.text);
 }
@@ -551,7 +552,7 @@ export function cueResult(result: BatchResult, grid: CueGrid, ownTrack?: string)
   if (ownTrack) {
     return {
       ...result,
-      segments: (grid.own[ownTrack] ?? []).map((c) => ({
+      segments: (ownProp(grid.own, ownTrack) ?? []).map((c) => ({
         start: c.start,
         end: c.end,
         text: "",
