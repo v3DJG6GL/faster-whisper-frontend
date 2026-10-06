@@ -13,7 +13,7 @@ pub async fn list_audio_devices(
     let include_paths = include_paths.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || audio::device::list_input_devices(include_paths))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?
 }
 
 /// One-time migration of a microphone saved by display name (before pins were device ids):

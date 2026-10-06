@@ -61,7 +61,9 @@ pub fn on_sound_server() -> bool {
 fn with_host<R>(f: impl Fn(&cpal::Host) -> Option<R>) -> Option<R> {
     #[cfg(target_os = "linux")]
     {
-        if super::pulse::server_present() {
+        // A sound server already known to be wedged (pulse's timeout hold) would block here with
+        // no timeout, holding HOST and the caller's locks: record through ALSA until it answers.
+        if super::pulse::server_present() && !super::pulse::held() {
             if let Some(r) = with_pulse(&f) {
                 return Some(r);
             }

@@ -17,6 +17,8 @@
 //! after resume) recovers while the server itself is fine. Each parked helper keeps its connection
 //! open, so retries stop once MAX_PARKED helpers are parked: a server that stays wedged costs a
 //! fixed handful of threads and sockets, not one more per back-off for the life of the process.
+//! A parked helper whose connection answers late puts it back into the empty slot for reuse; only
+//! one the slot has already replaced is dropped (and its reactor lingers until the server hangs up).
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -102,6 +104,24 @@ fn clear_stuck(helper: u64) {
     }
 }
 
+/// Is a timeout's hold (or its one post-back-off retry) in force? Then a None from [`snapshot`]
+/// means "the server is not answering", not "no server": callers must not fall back to raw ALSA.
+/// A refused connect never raises the hold.
+pub fn held() -> bool {
+    stuck().is_some()
+}
+
+/// Put a connection that answered after its caller gave up back into the empty slot: it is
+/// healthy, and dropping it would leak its reactor thread and socket (they only go when the
+/// server hangs up). A slot already refilled by a fresh client keeps that one.
+fn restore(client: Arc<pulseaudio::Client>) {
+    if let Ok(mut slot) = CLIENT.lock() {
+        if slot.is_none() {
+            *slot = Some(client);
+        }
+    }
+}
+
 /// May a call go to the server now? None = a helper is parked and the back-off is still running.
 /// Once it ran out, the first caller is let through (Some(true)) and the hold is restamped, so
 /// concurrent callers keep waiting while that one attempt runs — unless MAX_PARKED helpers are
@@ -124,8 +144,11 @@ fn admit() -> Option<bool> {
 
 /// Why [`query`] produced no snapshot.
 enum QueryFail {
-    /// The server answered with an error (or the client is disconnected): worth a fresh client.
+    /// The connection is gone (disconnected, a socket error, a dead helper): worth a fresh client.
     Error,
+    /// The server answered with an error (or a reply that would not decode): the connection is
+    /// alive, so it is kept — dropping it would leak its reactor thread and socket.
+    Rejected,
     /// No answer in time; the helper is still parked on this client.
     TimedOut,
 }
@@ -195,6 +218,8 @@ fn attempt() -> Option<Snapshot> {
                 }
                 return None;
             }
+            // Answered with an error: the connection is fine, a fresh one would get the same.
+            Err(QueryFail::Rejected) => return None,
             // Failed: rebuild the client once (a restarted server leaves the old one
             // disconnected; its reactor thread has already exited).
             Err(QueryFail::Error) => {
@@ -219,7 +244,12 @@ fn client() -> Option<Arc<pulseaudio::Client>> {
         .name("pulse-connect".into())
         .spawn(move || {
             let _live = live;
-            let _ = tx.send(pulseaudio::Client::from_env(c"faster-whisper-frontend"));
+            // Connected after the caller gave up: keep the connection rather than leak it.
+            if let Err(mpsc::SendError(Ok(c))) =
+                tx.send(pulseaudio::Client::from_env(c"faster-whisper-frontend"))
+            {
+                restore(Arc::new(c));
+            }
             clear_stuck(id);
         })
         .ok()?;
@@ -253,7 +283,12 @@ fn query(client: Arc<pulseaudio::Client>) -> Result<Snapshot, QueryFail> {
                 let sources = client.list_sources().await?;
                 Ok::<_, pulseaudio::ClientError>((info, sources))
             });
-            let _ = tx.send(res);
+            // Answered after the caller timed out (and dropped the client from the slot): the
+            // connection is alive, so put it back rather than leak it.
+            let alive = res.as_ref().map_or_else(connection_alive, |_| true);
+            if tx.send(res).is_err() && alive {
+                restore(client);
+            }
             clear_stuck(id);
         })
         .map_err(|_| QueryFail::Error)?;
@@ -261,7 +296,11 @@ fn query(client: Arc<pulseaudio::Client>) -> Result<Snapshot, QueryFail> {
         Ok(Ok(v)) => v,
         Ok(Err(e)) => {
             tracing::debug!("[audio] sound server query failed: {e}");
-            return Err(QueryFail::Error);
+            return Err(if connection_alive(&e) {
+                QueryFail::Rejected
+            } else {
+                QueryFail::Error
+            });
         }
         Err(Waited::TimedOut) => {
             tracing::warn!("[audio] sound server query timed out after {TIMEOUT:?}");
@@ -301,6 +340,15 @@ fn query(client: Arc<pulseaudio::Client>) -> Result<Snapshot, QueryFail> {
             })
             .collect(),
     })
+}
+
+/// Does the connection survive this error? Only a socket error or a hang-up ends its reactor; a
+/// server-side error or an undecodable reply leaves it running.
+fn connection_alive(e: &pulseaudio::ClientError) -> bool {
+    !matches!(
+        e,
+        pulseaudio::ClientError::Disconnected | pulseaudio::ClientError::Io(_)
+    )
 }
 
 /// Property values arrive as C strings with their terminating NUL.
@@ -394,6 +442,29 @@ mod tests {
     fn prop_values_lose_their_nul_and_survive_non_ascii() {
         assert_eq!(prop_text("RØDE\0".as_bytes()), "RØDE");
         assert_eq!(prop_text(b"usb"), "usb");
+    }
+
+    #[test]
+    fn only_a_dead_socket_drops_the_connection() {
+        use pulseaudio::ClientError;
+        assert!(!connection_alive(&ClientError::Disconnected));
+        let broken_pipe = ClientError::Io(std::io::ErrorKind::BrokenPipe.into());
+        assert!(!connection_alive(&broken_pipe));
+        assert!(connection_alive(&ClientError::UnexpectedSequenceNumber));
+        assert!(connection_alive(&ClientError::ServerUnavailable));
+    }
+
+    #[test]
+    fn a_timeout_hold_reads_as_held_until_its_helper_lifts_it() {
+        *stuck() = Some(Stuck {
+            since: Instant::now(),
+            helper: 7,
+        });
+        assert!(held());
+        clear_stuck(8);
+        assert!(held(), "another helper's return must not lift the hold");
+        clear_stuck(7);
+        assert!(!held());
     }
 
     #[test]

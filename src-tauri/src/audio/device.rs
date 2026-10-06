@@ -73,21 +73,25 @@ pub struct Resolved {
     pub watch_source: Option<String>,
 }
 
-/// List the microphones (and, on request, every raw ALSA path grouped under them).
-pub fn list_input_devices(include_paths: bool) -> MicInventory {
+/// List the microphones (and, on request, every raw ALSA path grouped under them). Errs while
+/// the sound server is held after a timeout: the raw ALSA list would show the pinned source as
+/// disconnected, so the picker keeps its previous list instead.
+pub fn list_input_devices(include_paths: bool) -> Result<MicInventory, String> {
     #[cfg(target_os = "linux")]
     {
         if let Some(snap) = super::pulse::snapshot() {
             if host::on_sound_server() {
-                return linux_server_inventory(&snap, include_paths);
+                return Ok(linux_server_inventory(&snap, include_paths));
             }
+        } else if super::pulse::held() {
+            return Err("the sound server is not answering".into());
         }
-        linux_alsa_inventory(include_paths)
+        Ok(linux_alsa_inventory(include_paths))
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = include_paths;
-        native_inventory()
+        Ok(native_inventory())
     }
 }
 
@@ -374,6 +378,11 @@ pub fn resolve_legacy(name: &str) -> Option<(String, String)> {
                 ));
             }
         }
+        // A server that is held after a timeout is there, just not answering: an ALSA pin now
+        // would be persisted for good and fight it. None = the migration retries next launch.
+        if super::pulse::held() {
+            return None;
+        }
         // No server: the card's shared ALSA path.
         let card = alsa_paths::card_label(name);
         alsa_cards()
@@ -503,7 +512,7 @@ mod tests {
 #[test]
 #[ignore]
 fn live_inventory() {
-    let inv = list_input_devices(true);
+    let inv = list_input_devices(true).unwrap();
     println!("{}", serde_json::to_string_pretty(&inv).unwrap());
     if let Ok(name) = std::env::var("LEGACY_PIN") {
         println!("legacy {name:?} -> {:?}", resolve_legacy(&name));
