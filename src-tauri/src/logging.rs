@@ -370,6 +370,9 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
 /// writes `config.json` BEFORE calling in, so this is the state the save started from.
 static UNCONFIRMED_BEFORE: AtomicBool = AtomicBool::new(false);
 
+/// The pruning-hold line is logged once per session: `apply_log_settings` runs on every save.
+static LOGGED_PRUNE_HOLD: AtomicBool = AtomicBool::new(false);
+
 /// Whether log pruning waits — the same hold as the retention sweeps: the config is a reset
 /// nobody has saved over (this session's, or an earlier launch's), or this call is the save
 /// made over one. The defaults' `keep_days` would otherwise delete logs the user's real
@@ -392,8 +395,10 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config) {
         return;
     };
     let prune = !pruning_held(app);
-    if !prune {
-        tracing::info!("[logging] settings were reset and not saved since; log pruning skipped");
+    if !prune && !LOGGED_PRUNE_HOLD.swap(true, Ordering::SeqCst) {
+        tracing::info!(
+            "[logging] settings were reset; log pruning skipped (held until a save after the reset)"
+        );
     }
     let writer = app.state::<SwapWriter>();
     let ring = app.state::<LogRing>();
