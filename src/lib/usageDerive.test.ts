@@ -248,6 +248,11 @@ describe("usageDerive", () => {
     const feb1 = 20_485, feb28 = 20_512;
     const f = rhythmModel("days", { dom_hours }, "all", "words", feb1, feb28);
     expect(f.layout.cols).toBe(28);
+    expect(f.colLive).toEqual(f.layout.colOcc!.map((n) => n > 0));
+    expect(m.colLive).toEqual(m.layout.colOcc!.map((n) => n > 0));
+    // 5–20 Aug: the days the window never reaches keep no top bar.
+    const part = rhythmModel("days", { dom_hours }, "all", "words", aug1 + 4, aug1 + 19);
+    expect(part.colLive).toEqual(Array.from({ length: 31 }, (_, c) => c >= 4 && c <= 19));
     expect(f.peak?.value).toBe(100);
     // Across many months: 31 columns, "the 29th", occurrences per day of month.
     const y = rhythmModel("days", { dom_hours }, "all", "words", 20_000, 20_364);
@@ -281,6 +286,8 @@ describe("usageDerive", () => {
     expect(m.layout.rows).toBe(1);
     expect(m.cells.filter((c) => !c.inWindow)).toHaveLength(10);
     expect(m.cells[7].inWindow && m.cells[8].inWindow).toBe(true);
+    // Only the two touched months keep a top bar.
+    expect(m.colLive).toEqual(Array.from({ length: 12 }, (_, c) => c === 7 || c === 8));
     expect(m.counts.reduce((a, n) => a + n, 0)).toBe(2);
     // An even split reads as two average months, not 6× a flat year.
     expect(m.colIndex[7]).toBeCloseTo(1);

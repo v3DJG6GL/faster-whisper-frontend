@@ -601,6 +601,9 @@ export interface RhythmModel {
   rowTotals: number[];
   /** Each column's / row's total relative to a flat distribution (1 = average). */
   colIndex: number[];
+  /** Whether a column holds any in-window cell: a day of month the window never reaches,
+   *  or a month it never touches, gets no top bar. */
+  colLive: boolean[];
   rowIndex: number[];
   sum: number;
   /** How many times a cell's period occurs in the window: that weekday (hours), that day of
@@ -806,11 +809,12 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   const liveCols = L.colOcc ? L.colOcc.filter((n) => n > 0).length || L.cols : rhythm === "months" ? liveOf(L.cols, (c) => c.col) : L.cols;
   const liveRows = rhythm === "months" ? liveOf(L.rows, (c) => c.row) : L.rows;
   const colIndex = colTotals.map((v) => (sum > 0 ? v / (sum / liveCols) : 0));
+  const colLive = Array.from({ length: L.cols }, (_, c) => active.some((x) => x.col === c));
   const rowIndex = rowTotals.map((v) => (sum > 0 ? v / (sum / liveRows) : 0));
   const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
   const { y0: _y0, ...layout } = L;
   return {
-    layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, rowIndex, sum, sent,
+    layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, colLive, rowIndex, sum, sent,
     occOf: (c) => (wd ? wd[c.row] : L.colOcc ? L.colOcc[c.col] : 1),
     occWord: (c) => (rhythm === "hours" ? DOW_LONG[c.row] : rhythm === "days" ? "month" : ""),
     phrase: rhythmPhrase(rhythm, cells.map((c) => c.value), colTotals, rowTotals, L.cols),

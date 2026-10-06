@@ -173,11 +173,11 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
               <div
                 key={`t${c}`}
                 data-i={N + c}
-                tabIndex={0}
+                tabIndex={model.colLive[c] ? 0 : -1}
                 role="img"
                 aria-label={`${L.colLong(c)}: ${metricText(metric, model.colTotals[c])}, ${idx.toFixed(1)} times an average ${L.colUnit}`}
                 data-track="top"
-                className={cn("relative flex h-[24px] items-end rounded-[2px] outline-none", CELL_HOVER, !(L.colOcc ? L.colOcc[c] > 0 : true) && "invisible", tip?.i === N + c && CELL_HOT)}
+                className={cn("relative flex h-[24px] items-end rounded-[2px] outline-none", CELL_HOVER, !model.colLive[c] && "invisible", tip?.i === N + c && CELL_HOT)}
               >
                 <i className="block w-full rounded-t-[2px]" style={{ height: `${barLen(idx, cMax)}%`, background: barBg(idx) }} />
               </div>

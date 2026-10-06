@@ -248,6 +248,10 @@ async function refreshAll(): Promise<void> {
         } catch {
           /* the calendar keeps its last year */
         }
+      } else if (statsPagesOpen > 0) {
+        // Hidden with the page open — whichever pass this is (tick, after-session, backend
+        // edit): the show handler fetches the page's documents then.
+        pageMissed = true;
       }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
@@ -265,7 +269,6 @@ export function initUsageController(): void {
   setInterval(() => {
     if (isWindowHidden() && ++skippedTicks < HIDDEN_EVERY) return;
     skippedTicks = 0;
-    pageMissed = pageMissed || (isWindowHidden() && statsPagesOpen > 0);
     void refreshAll();
   }, POLL_MS);
   // Shown again after ticks were passed over — or right after a hidden pass that skipped the

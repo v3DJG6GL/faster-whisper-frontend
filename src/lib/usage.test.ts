@@ -115,6 +115,21 @@ describe("usage poll gates", () => {
     expect(calls().page).toBe(2);
     close();
   });
+
+  it("shown right after a hidden after-session pass, the open page still catches up", async () => {
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    useApp.setState({ status: "recording" } as never);
+    useApp.setState({ status: "idle" } as never);
+    await vi.advanceTimersByTimeAsync(1_500); // the after-session pass runs without the page
+    await settle();
+    getUsageStats.mockClear();
+    setHidden(false); // no tick passed over, yet that pass skipped the page's documents
+    await settle();
+    expect(calls().page).toBe(2);
+    close();
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

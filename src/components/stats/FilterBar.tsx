@@ -251,7 +251,7 @@ export function FilterBar({
       )}
       {query.with.length > 0 && (
         <div className="mt-2 text-[11.5px] text-faint">
-          {retentionDays === 0 ? (
+          {retentionDays !== undefined && retentionDays <= 0 ? (
             <>Stage filters cover every day the server kept:</>
           ) : (
             <>Stage filters cover the last {fmtFull(retentionDays ?? 365)} days:</>
