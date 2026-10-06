@@ -139,7 +139,7 @@ pub(crate) async fn inject_text(
                 });
             }
             // Delivered: the session-end restore must not serve the snapshot over it.
-            crate::inject::note_delivered_on_clipboard();
+            crate::inject::note_delivered_unless_user_cancelled(epoch);
             // A recovery write too when an error abort fell through the gate above: arm the
             // session-restore guard, as the mid-function divert below does, so the error
             // teardown's `end_injection` does not serve the session snapshot over the transcript.
@@ -340,7 +340,7 @@ pub(crate) async fn inject_text(
                 });
             }
             // Delivered: the session-end restore must not serve the snapshot over it.
-            crate::inject::note_delivered_on_clipboard();
+            crate::inject::note_delivered_unless_user_cancelled(epoch);
             // Another recovery write: an error abort that fell through the gate above has just put
             // the transcript on the clipboard; arm the session-restore guard like the two
             // paste-path writes so end_injection does not serve `prev` over it. Not armed on a
@@ -581,7 +581,7 @@ pub(crate) async fn inject_text(
                     // naturally: the error teardown refocuses our own window, which is what makes
                     // this guard fire in the first place.
                     crate::inject::note_recovery_on_clipboard();
-                    crate::inject::note_delivered_on_clipboard();
+                    crate::inject::note_delivered_unless_user_cancelled(epoch);
                     return Ok(InjectOutcome {
                         landed: true,
                         diverted: true,
@@ -667,7 +667,7 @@ pub(crate) async fn inject_text(
                 }
                 // Delivered — and after this paste's `note_paste_target` above, which cleared the
                 // flag: the session-end restore must not serve the snapshot over it.
-                crate::inject::note_delivered_on_clipboard();
+                crate::inject::note_delivered_unless_user_cancelled(epoch);
                 return Ok(InjectOutcome {
                     landed: true,
                     diverted: true,
@@ -685,6 +685,32 @@ pub(crate) async fn inject_text(
                 )
                 .await
             };
+            // The portal job's own pre-job own-window probe (`wayland.rs`) answers
+            // `NothingWritten` — but by then THIS arm has already written the transcript and
+            // noted the paste target. Treating it as a landed paste would schedule the `prev`
+            // restore over a phrase nobody pasted and report it as never written, with nothing
+            // keeping the session snapshot. It is the chord-time own-window divert above, one
+            // queue hop later: hand the transcript to the persistent owner and report the divert.
+            // The recovery block below cannot apply — the job checks the epoch before focus.
+            if matches!(r, Ok(crate::inject::Landed::NothingWritten)) {
+                tracing::info!(
+                    "[inject] skipped at the portal job: our own window took focus — left on the clipboard"
+                );
+                if !persisted {
+                    if let Err(e) = persist_off_runtime(text.clone()).await {
+                        tracing::warn!("[inject] divert at the portal job failed: {e}");
+                        return Ok(InjectOutcome {
+                            landed: false,
+                            diverted: false,
+                        });
+                    }
+                }
+                crate::inject::note_delivered_unless_user_cancelled(epoch);
+                return Ok(InjectOutcome {
+                    landed: true,
+                    diverted: true,
+                });
+            }
             // Restore the user's prior clipboard only if the paste actually landed. If it failed,
             // leave the transcript on the clipboard so it's recoverable (the user can paste it
             // manually) instead of silently clobbering it with the old clipboard.
@@ -785,7 +811,7 @@ pub(crate) async fn inject_text(
             }
         }
     }
-    settle_outcome(res, recovered)
+    settle_outcome(res, recovered, epoch)
 }
 
 /// `inject_text`'s final answer from the sink's `Landed` (and whether the error-abort recovery
@@ -793,10 +819,12 @@ pub(crate) async fn inject_text(
 /// frontend the transcript is on the clipboard to paste — the chord-time own-window divert in
 /// `inject::paste` (`Landed::OnClipboard`) and a recovered abort alike — so it arms
 /// `DELIVERED_ON_CLIPBOARD` here, after the sink's last `note_paste_target` (which clears it),
-/// or the session-end restore would serve the snapshot over that transcript.
+/// or the session-end restore would serve the snapshot over that transcript — unless a user
+/// cancel superseded the job started at `epoch`, which owes that restore instead.
 pub(crate) fn settle_outcome(
     res: Result<crate::inject::Landed, String>,
     recovered: bool,
+    epoch: u64,
 ) -> Result<InjectOutcome, String> {
     let outcome = res.map(|landed| match landed {
         crate::inject::Landed::Yes => InjectOutcome {
@@ -822,7 +850,7 @@ pub(crate) fn settle_outcome(
         },
     });
     if outcome.as_ref().is_ok_and(|o| o.diverted) {
-        crate::inject::note_delivered_on_clipboard();
+        crate::inject::note_delivered_unless_user_cancelled(epoch);
     }
     outcome
 }

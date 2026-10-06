@@ -222,6 +222,20 @@ pub fn note_delivered_on_clipboard() {
     DELIVERED_ON_CLIPBOARD.store(true, Ordering::SeqCst);
 }
 
+/// `note_delivered_on_clipboard` for a write made by the job started at `epoch` — unless a USER
+/// cancel superseded that job in the meantime. The pre-write cancel gates run before the write,
+/// so a cancel landing during it still reaches the arm; the frontend then drops the outcome, and
+/// the cancel's chained `end_injection` would take the flag and skip the snapshot restore,
+/// leaving the discarded transcript on the clipboard and the user's own clipboard lost. A user
+/// cancel owes that restore. An error abort (`cancel_wants_recovery`) still arms it: its text is
+/// meant to stay recoverable.
+pub fn note_delivered_unless_user_cancelled(epoch: u64) {
+    if injection_cancelled(epoch) && !cancel_wants_recovery(epoch) {
+        return;
+    }
+    note_delivered_on_clipboard();
+}
+
 /// Take the delivered-transcript flag: true once, for the session-end restore that would erase it.
 pub fn take_delivered_on_clipboard() -> bool {
     DELIVERED_ON_CLIPBOARD.swap(false, Ordering::SeqCst)
@@ -261,7 +275,7 @@ pub fn clipboard_privacy() -> bool {
 ///   * macOS: `org.nspasteboard.ConcealedType`.
 ///
 /// `wait` (Linux only) keeps serving the selection until another app replaces it.
-fn set_text_ext(
+pub(crate) fn set_text_ext(
     cb: &mut arboard::Clipboard,
     text: &str,
     exclude: bool,
@@ -1259,7 +1273,7 @@ fn code_to_enigo(code: &str) -> Option<(Key, bool)> {
         "AltLeft" | "AltRight" => (Key::Alt, true),
         "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight" => (Key::Meta, true),
         // enigo declares `Key::Insert` only off macOS; there an "Insert" chord falls to `None`
-        // and the caller's unmapped-key fallback.
+        // and the caller's unmapped-key fallback, so Shift + Insert sends a plain Cmd+V.
         #[cfg(not(target_os = "macos"))]
         "Insert" => (Key::Insert, false),
         c if c.len() == 4 && c.starts_with("Key") => (
@@ -1270,7 +1284,8 @@ fn code_to_enigo(code: &str) -> Option<(Key, bool)> {
     })
 }
 
-fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
+/// Resolve a paste chord's `KeyboardEvent.code`s to the modifiers to hold and the key to click.
+fn paste_chord_keys(chord: &[String]) -> (Vec<Key>, Key) {
     let (mut mods, mut main) = (Vec::new(), None);
     for code in chord {
         if let Some((k, is_mod)) = code_to_enigo(code) {
@@ -1281,8 +1296,16 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
             }
         }
     }
-    // Fall back to Ctrl/Cmd+V if the chord didn't map to a usable main key.
-    let main = main.unwrap_or(Key::Unicode('v'));
+    // Fall back to a WHOLE Ctrl/Cmd+V if the chord didn't map to a usable main key. Its
+    // modifiers go too: keeping them (Shift + an unmapped Insert) sent Shift+V — a literal
+    // 'V' typed while reporting a paste. Same fallback as the Wayland `chord_to_keycodes`.
+    let main = match main {
+        Some(k) => k,
+        None => {
+            mods.clear();
+            Key::Unicode('v')
+        }
+    };
     if mods.is_empty() {
         mods.push(if cfg!(target_os = "macos") {
             Key::Meta
@@ -1290,6 +1313,11 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
             Key::Control
         });
     }
+    (mods, main)
+}
+
+fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
+    let (mods, main) = paste_chord_keys(chord);
     // Settle delays: without them a modifier can arrive after the key, so the target
     // sees a literal character instead of a paste (an XTEST timing race).
     //
@@ -1595,13 +1623,23 @@ mod tests {
         // paste target was noted — and no other answer does.
         use super::{text::settle_outcome, Landed};
         note_paste_target(false);
-        let o = settle_outcome(Ok(Landed::OnClipboard), false).unwrap();
+        let live = super::injection_epoch();
+        let o = settle_outcome(Ok(Landed::OnClipboard), false, live).unwrap();
         assert!(o.landed && o.diverted);
         assert!(
             take_delivered_on_clipboard(),
             "a chord divert left it unarmed"
         );
-        let o = settle_outcome(Ok(Landed::NothingWritten), true).unwrap();
+        // A user cancel that landed during the write owes the session-end restore, so the
+        // divert must not arm it. A never-reached epoch reads as cancelled (and not as an error
+        // abort) without bumping the shared `INJECT_EPOCH` other tests read.
+        let stale = u64::MAX - 7;
+        let _ = settle_outcome(Ok(Landed::OnClipboard), false, stale);
+        assert!(
+            !take_delivered_on_clipboard(),
+            "a user-cancelled divert armed it"
+        );
+        let o = settle_outcome(Ok(Landed::NothingWritten), true, live).unwrap();
         assert!(o.landed && o.diverted);
         assert!(
             take_delivered_on_clipboard(),
@@ -1612,9 +1650,35 @@ mod tests {
             (Ok(Landed::NothingWritten), false),
             (Err("boom".to_string()), true),
         ] {
-            let _ = settle_outcome(res, recovered);
+            let _ = settle_outcome(res, recovered, live);
             assert!(!take_delivered_on_clipboard(), "armed without a divert");
         }
         clear_paste_target();
+    }
+
+    /// A chord whose main key does not map (Shift + Insert on macOS, or any unmapped key) falls
+    /// back to the WHOLE platform paste chord. Keeping its modifiers sent Shift+V, typing a
+    /// literal 'V' while reporting a paste.
+    #[test]
+    fn unmapped_paste_key_falls_back_to_the_whole_paste_chord() {
+        use super::{paste_chord_keys, Key};
+        let paste_mod = if cfg!(target_os = "macos") {
+            Key::Meta
+        } else {
+            Key::Control
+        };
+        let chord = |codes: &[&str]| codes.iter().map(|c| c.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            paste_chord_keys(&chord(&["ShiftLeft", "F13"])),
+            (vec![paste_mod], Key::Unicode('v'))
+        );
+        assert_eq!(
+            paste_chord_keys(&chord(&["ControlLeft", "ShiftLeft", "KeyV"])),
+            (vec![paste_mod, Key::Shift], Key::Unicode('v'))
+        );
+        assert_eq!(
+            paste_chord_keys(&chord(&[])),
+            (vec![paste_mod], Key::Unicode('v'))
+        );
     }
 }

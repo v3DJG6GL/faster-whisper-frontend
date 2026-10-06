@@ -688,7 +688,9 @@ mod imp {
                 // it commits them.
                 //
                 // `NothingWritten` is the truthful answer and makes the caller's re-send safe:
-                // no key has been synthesized yet.
+                // no key has been synthesized yet. For a PASTE job the caller has already written
+                // the transcript to the clipboard, so `text.rs` turns this answer into an
+                // on-clipboard divert rather than a landed paste.
                 if own_window_focused(app) {
                     tracing::info!("[wayland-inject] skipped before typing: our own window holds focus");
                     return Ok(crate::inject::Landed::NothingWritten);
