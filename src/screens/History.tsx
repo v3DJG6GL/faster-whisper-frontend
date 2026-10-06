@@ -71,13 +71,14 @@ const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
 
 type Haystack = { name: string; appId: string; text: string };
 
-/** Search haystacks keyed by record identity. upsertRecord reuses untouched
- *  record objects and every writer replaces a changed one, so an upsert only
- *  re-derives the record it changed — not every entry's 20 000-char text. */
-const haystackCache = new WeakMap<TranscriptRecord, Haystack>();
-
-function haystackOf(r: TranscriptRecord): Haystack {
-  const hit = haystackCache.get(r);
+/** A record's search haystack, memoised in `cache` by record identity.
+ *  upsertRecord reuses untouched record objects and every writer replaces a
+ *  changed one, so an upsert only re-derives the record it changed — not every
+ *  entry's 20 000-char text. The cache is owned by the mounted History screen
+ *  (not this module), so the lowercased copies die with the page instead of
+ *  living as long as the app-lifetime history store's records. */
+function haystackOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, Haystack>): Haystack {
+  const hit = cache.get(r);
   if (hit) return hit;
   // The translated text a session injected, and a file/link/text run's batch
   // translations, are shown and copied, so they are searchable too —
@@ -96,7 +97,7 @@ function haystackOf(r: TranscriptRecord): Haystack {
     appId: (r.appId ?? "").toLowerCase(),
     text: (recordText(r, 20_000) + translated + fileTr).toLowerCase(),
   };
-  haystackCache.set(r, h);
+  cache.set(r, h);
   return h;
 }
 
@@ -335,22 +336,21 @@ export default function History() {
     };
   }, []);
 
-  // Pre-compute search haystacks once per record set — this avoids re-deriving
-  // every record's full text (up to 20 000 chars) on every keystroke.
-  const haystacks = useMemo(() => records.map(haystackOf), [records]);
+  // Search haystacks are built lazily on the first search and cached per
+  // record for this mount — no keystroke re-derives a record's full text (up
+  // to 20 000 chars), and browsing without searching builds none at all.
+  const [haystackCache] = useState(() => new WeakMap<TranscriptRecord, Haystack>());
 
   // Search first (global — both kinds, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
   const searched = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return records;
-    return records.filter(
-      (_r, i) =>
-        haystacks[i].name.includes(q) ||
-        haystacks[i].appId.includes(q) ||
-        haystacks[i].text.includes(q),
-    );
-  }, [records, query, haystacks]);
+    return records.filter((r) => {
+      const h = haystackOf(r, haystackCache);
+      return h.name.includes(q) || h.appId.includes(q) || h.text.includes(q);
+    });
+  }, [records, query, haystackCache]);
 
   const fileMatches = useMemo(
     () => searched.filter((r) => !isDictation(r) && r.kind !== "url" && r.kind !== "text"),
@@ -479,8 +479,9 @@ export default function History() {
     }
     if (!path) return;
     try {
-      // The viewer's tracks in the viewer's order (a dragged order included), site tracks
-      // named from the link — the same files the export panel writes. Inside the try: an
+      // EVERY track the record has (not the viewer's visible pick — the export panel writes
+      // that), in the viewer's order (a dragged order included), site tracks named from the
+      // link. Inside the try: an
       // on-disk record is unvalidated, and a throw here must land in the row's export note
       // rather than escape the fire-and-forget `void quickExport(rec)` as a rejection.
       const result = withTrackSites(recordEditedResult(rec), rec.sourcePath);
