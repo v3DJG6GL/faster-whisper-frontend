@@ -73,7 +73,7 @@ export function VideoBranchRow({
           </span>
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
             <span className={tone}>{word}</span>
-            {elapsed > 0 || terminal ? ` · ${fmtElapsed(elapsed)}` : ""}
+            {dlStart && (elapsed > 0 || terminal) ? ` · ${fmtElapsed(elapsed)}` : ""}
           </span>
         </div>
         {!terminal && (

@@ -7,7 +7,7 @@
 //
 //   running  → the newest such row takes the rail back (reattachRun) and is polled
 //              once a second through GET /v1/jobs/{id}; any older running row is
-//              watched headless and lands in History when it finishes.
+//              watched headless (every 5 s) and lands in History when it finishes.
 //   done     → the result is fetched and ingested exactly like the POST path.
 //   failed / cancelled / unknown → a failed record with the reason.
 //   server unreachable → try again every 30 s for ten minutes, then leave the rows
@@ -37,6 +37,9 @@ export const GAVE_UP_ERROR = "Gave up waiting for the server.";
 const RETRY_MS = 30_000;
 const MAX_RETRIES = 20;
 const POLL_MS = 1_000;
+/** A headless watcher folds no progress — it only waits for the terminal state, which
+ *  is not worth a round trip a second for hours (it keeps polling in the tray too). */
+const HEADLESS_POLL_MS = 5_000;
 const MAX_BACKOFF_MS = 30_000;
 
 let started = false;
@@ -46,6 +49,10 @@ let retryTimer: ReturnType<typeof setTimeout> | undefined;
 /** Job ids a watcher is polling right now (→ its stop): a retry pass re-reads the live
  *  ledger, where a watched row stays until it settles, and must not start a second watcher. */
 const watching = new Map<string, () => void>();
+/** Job ids a watchOrphan watcher is polling (→ the file's path): the queue row that
+ *  names the job can be rebuilt without it (a History record opened, the workbench
+ *  closed), so a re-run of the path finds the watcher by path, not by row. */
+const orphans = new Map<string, string>();
 /** When this launch's reconcile started. Rows the pump persists from then on are its
  *  own live requests, never something to reconcile. */
 let launchedAt = Infinity;
@@ -109,6 +116,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     stopped = true;
     clearTimeout(timer);
     watching.delete(row.jobId);
+    orphans.delete(row.jobId);
   };
   watching.set(row.jobId, stop);
   // The rail's stop hook (abandonActiveRun): the user moved on, so the row goes too.
@@ -118,6 +126,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     void forgetRow(row.jobId);
   };
   if (opts.attached) setReattachStop(abandon);
+  const base = opts.attached ? POLL_MS : HEADLESS_POLL_MS;
   const tick = async () => {
     if (stopped) return;
     if (opts.attached && useTranscribeRun.getState().epoch !== opts.epoch) {
@@ -134,13 +143,13 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     }
     if (busy) return;
     busy = true;
-    let delay = POLL_MS;
+    let delay = base;
     try {
       const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
       if (stopped) return;
       if (r.kind === "error") {
         failures += 1;
-        delay = Math.min(POLL_MS * 2 ** failures, MAX_BACKOFF_MS);
+        delay = Math.min(base * 2 ** failures, MAX_BACKOFF_MS);
         return;
       }
       if (r.kind === "not_found" || r.kind === "disabled") {
@@ -167,11 +176,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
         // Back off like a status error (failures is not reset on "done", so a result
         // that keeps failing slows down to MAX_BACKOFF_MS instead of 1 s for 72 h).
         failures += 1;
-        delay = Math.min(POLL_MS * 2 ** failures, MAX_BACKOFF_MS);
-        if (opts.attached && useTranscribeRun.getState().epoch !== opts.epoch) {
-          // The rail moved on during the fetch; the hook slot is someone else's now.
-          stop();
-        }
+        delay = Math.min(base * 2 ** failures, MAX_BACKOFF_MS);
         return;
       }
       stop();
@@ -192,7 +197,9 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
 export function watchOrphan(jobId: string): void {
   if (watching.has(jobId)) return;
   const row = ledgerRows().find((r) => r.jobId === jobId);
-  if (row) watchJob(row, { attached: false });
+  if (!row) return;
+  orphans.set(jobId, row.path);
+  watchJob(row, { attached: false });
 }
 setOrphanWatch(watchOrphan);
 
@@ -206,7 +213,11 @@ export function stopOrphan(jobId: string): void {
   void forgetRow(jobId);
   void deleteJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId }).catch(() => {});
 }
-setOrphanStop(stopOrphan);
+/** The pump's hook (retryFile, startRun): stop every lost request's watcher whose file
+ *  the user is about to run again. */
+setOrphanStop((paths) => {
+  for (const [jobId, path] of [...orphans]) if (paths.includes(path)) stopOrphan(jobId);
+});
 
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
  *  cannot be reached. */
@@ -302,5 +313,6 @@ export function _resetReconcileForTests(): void {
   clearTimeout(retryTimer);
   retryTimer = undefined;
   watching.clear();
+  orphans.clear();
   launchedAt = Infinity;
 }

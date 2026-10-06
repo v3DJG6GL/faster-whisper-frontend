@@ -22,7 +22,7 @@ vi.mock("./api", async (importOriginal) => {
 import {
   activeRailIndex, axisLayout, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
-  railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
+  linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
@@ -94,6 +94,17 @@ describe("railStages", () => {
       "downloading", "separating", "transcribing", "diarizing", "translating",
     ]);
     expect(railStages({ translateTo: [] })).toEqual(["transcribing"]);
+  });
+  it("a link whose site tracks cover every target drops the translating stage", () => {
+    const site = { fetch: ["de"], transcriptTrackId: null, mtTargets: [] as string[] };
+    const opts = { translateTo: ["de"] };
+    const to = linkTranslateTo(opts, { siteSubs: site });
+    expect(to).toEqual([]);
+    expect(railStages({ ...opts, translateTo: to }, true, false)).not.toContain("translating");
+    // The site lacks a target the run did not ask for itself: still translated.
+    expect(linkTranslateTo({}, { siteSubs: { ...site, mtTargets: ["fr"] } })).toEqual(["fr"]);
+    // No site plan: the run's own targets.
+    expect(linkTranslateTo(opts, {})).toEqual(["de"]);
   });
   it("text sources run the translating stage alone", () => {
     expect(railStages(undefined, false, true)).toEqual(["translating"]);
@@ -1017,6 +1028,8 @@ describe("a ledgered file whose request lost contact", () => {
     expect(watch).toHaveBeenCalledWith(pid);
     expect(rows.map((r) => r.jobId)).toEqual([pid]);
     expect(records.map((r) => [r.id, r.status])).toEqual([[pid, "failed"]]);
+    // Stamped with the request start, the createdAt the watcher's ingest upserts with.
+    expect(records[0].createdAt).toBe(new Date(rows[0].startedAt).toISOString());
   });
 
   it("a server answer (HTTP 500) still forgets the row and is never watched", async () => {

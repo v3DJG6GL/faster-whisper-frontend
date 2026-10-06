@@ -14,6 +14,7 @@ import { LangTag } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { fmtTimestamp, plural } from "@/lib/format";
 import { trackChipLabel } from "@/lib/transcript/exportTracks";
+import { hasOwn, ownProp } from "@/lib/own";
 import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
@@ -212,7 +213,7 @@ export function SubtitleList({
   displayName: (label: string) => string;
   colorOf: (label: string) => string;
 }) {
-  const lanes = tracks.some((t) => grid.own[t]);
+  const lanes = tracks.some((t) => hasOwn(grid.own, t));
   const layout = useMemo(() => {
     const limitOf = (track: string) => trackLimits(result, cues, track);
     const maxDur = limitOf("orig")?.maxDur ?? 7;
@@ -249,7 +250,7 @@ export function SubtitleList({
         heads: tracks.map((t) => trackChipLabel(result, t)),
         rows: grid.cues.map((c, i) =>
           rowOf(`${i}`, i + 1, c, i === 0 || grid.cues[i - 1].seg !== c.seg,
-            tracks.map((t) => [t, t === "orig" ? c.text : (c.tr[t] ?? "")])),
+            tracks.map((t) => [t, t === "orig" ? c.text : (ownProp(c.tr, t) ?? "")])),
         ),
         lanes: [],
         idLane: 0,

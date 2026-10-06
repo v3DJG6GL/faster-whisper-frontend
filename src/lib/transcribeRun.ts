@@ -26,7 +26,7 @@ import type {
 } from "./types";
 import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath, siteDisplayName } from "./transcript/mediaExport";
-import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
+import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
 import { trText } from "./transcript/cueSplit";
 import { newProgressId } from "./ids";
@@ -1068,6 +1068,10 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
         error: rec.error,
         tookMs: rec.tookMs,
         mediaPath: rec.mediaPath,
+        // A lost request's record (its id is the job id) whose job a watcher may still
+        // finish: the row settles when it lands, like the pump's own failed row.
+        ...(rec.status === "failed" && ledgerRows().some((r) => r.jobId === rec.id)
+          ? { orphanJobId: rec.id } : {}),
       },
     ],
     selectedPath: rec.sourcePath,
@@ -1392,9 +1396,11 @@ export function setOrphanWatch(fn: ((jobId: string) => void) | null): void {
   orphanWatch = fn;
 }
 
-/** Stops a watchOrphan watcher and forgets its row (retryFile). Set by jobsReconcile. */
-let orphanStop: ((jobId: string) => void) | null = null;
-export function setOrphanStop(fn: ((jobId: string) => void) | null): void {
+/** Stops the watchOrphan watchers of these source paths and forgets their rows
+ *  (retryFile, startRun). Keyed by path: the queue row that named the job may be gone
+ *  (closeRecord, openHistoryRecord). Set by jobsReconcile. */
+let orphanStop: ((paths: string[]) => void) | null = null;
+export function setOrphanStop(fn: ((paths: string[]) => void) | null): void {
   orphanStop = fn;
 }
 
@@ -1480,7 +1486,12 @@ export function failJob(row: LedgerRow, error: string, opts: { attached: boolean
     title: row.title,
     touchQueue: opts.attached,
   };
-  if (opts.attached) patchItem(row.path, { status: "failed", error });
+  if (opts.attached) {
+    patchItem(row.path, { status: "failed", error });
+  } else if (get().queue.some((it) => it.path === row.path && it.orphanJobId === row.jobId && it.status === "failed")) {
+    // The lost request's row still shows the transport error: name the server's reason.
+    patchItem(row.path, { error, orphanJobId: undefined });
+  }
   const rec = recordRun(row.path, row.ctx, row.options, { status: "failed", error }, extra);
   if (opts.attached) {
     // Not a transport failure (the server lost, refused or cancelled the job, or we
@@ -1681,6 +1692,17 @@ export async function withSiteTracks(
   return attachFetched(res, got, url, meta);
 }
 
+/** The translation targets a link run actually sends: with the site's own tracks in use, only
+ *  the targets the site lacks (`mtTargets`, possibly none); else the run's own. Shared by runLink
+ *  and the run panel's rail, so the rail never shows a Translating stage the run skips. */
+export function linkTranslateTo(
+  opts: TranscribeOptions,
+  meta?: { siteSubs?: SiteSubsRun },
+): string[] | undefined {
+  const site = meta?.siteSubs;
+  return site && (site.mtTargets.length || opts.translateTo) ? site.mtTargets : opts.translateTo;
+}
+
 /** A link run: the link card's spoken language and reused audio, and — when the
  *  card picked them — the site's own subtitles: as the transcript (no transcription;
  *  the audio is still fetched for playback, the video on demand when kept) or next
@@ -1699,7 +1721,7 @@ async function runLink(
   const site = meta?.siteSubs;
   const spoken = meta?.spokenLanguage;
   const opts = common.options ?? {};
-  const translateTo = site && (site.mtTargets.length || opts.translateTo) ? site.mtTargets : opts.translateTo;
+  const translateTo = linkTranslateTo(opts, meta);
   const options: TranscribeOptions = {
     ...opts,
     ...(translateTo ? { translateTo } : {}),
@@ -1962,7 +1984,10 @@ async function pump(
         if (lost && pid && orphanWatch) {
           const error = String(e);
           patchItem(next.path, { status: "failed", error, orphanJobId: pid });
-          recordRun(next.path, ctx, options, { status: "failed", error }, { id: pid });
+          // createdAt = the request start, the same stamp the watcher's ingest upserts
+          // with: the record keeps its place in History when the transcript lands.
+          recordRun(next.path, ctx, options, { status: "failed", error },
+            { id: pid, createdAt: new Date(fileT0).toISOString() });
           orphanWatch(pid);
           handedOff = true;
         } else {
@@ -2019,8 +2044,9 @@ export function startRun(options: TranscribeOptions | undefined,
   // that never reached its `finally`); the epoch bump below orphans it, so
   // stop it before the new run competes with it for the same GPU.
   abandonActiveRun();
-  // The rebuilt queue drops every orphanJobId: stop those watchers first (see retryFile).
-  stopOrphans(s.queue);
+  // A lost request's job for a file this run re-queues would transcribe it twice: stop
+  // those watchers first (see retryFile). Other files' orphans keep landing in History.
+  stopOrphans(s.files);
   const epoch = s.epoch + 1;
   set({
     epoch,
@@ -2084,11 +2110,11 @@ export function reconcileRetryOptions(
   };
 }
 
-/** Stop the headless watchers of failed rows whose lost request was handed off, before those
- *  rows are re-queued: a still-running old job would otherwise land a second record (and the
- *  file is transcribed twice). */
-function stopOrphans(items: QueueItem[]) {
-  for (const it of items) if (it.orphanJobId) orphanStop?.(it.orphanJobId);
+/** Stop the headless watchers of lost requests for these paths before they are re-queued:
+ *  a still-running old job would otherwise land a second record (and the file is
+ *  transcribed twice). */
+function stopOrphans(paths: string[]) {
+  orphanStop?.(paths);
 }
 
 export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverrides) {
@@ -2099,7 +2125,7 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   if (overrides) set({ lastOverrides: overrides });
   // A lost request's job may still be running under a headless watcher: stop it, or
   // the old job lands a second record (and transcribes the file twice).
-  stopOrphans(s.queue.filter((it) => it.path === path));
+  stopOrphans([path]);
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
   void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard), ctx);
 }

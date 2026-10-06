@@ -224,17 +224,23 @@ export function TranscriptViewer({
   // The <audio>'s ref: keeps audioRef (playhead loop, watchdog, seek) and
   // empties the element when React lets go of it — the key change (blob →
   // WAV → path), audioBroken and unmount all detach it, and a detached
-  // element otherwise keeps its decoded source alive. Stable on purpose: an
-  // inline arrow would detach and re-attach (and so release) every render.
+  // element otherwise keeps its decoded source alive. It also clears the
+  // play state: the pause a detached element fires never reaches React's
+  // root listeners, so onPause would leave Pause showing and the playhead
+  // loop spinning. Stable on purpose: an inline arrow would detach and
+  // re-attach (and so release) every render.
+  const [playing, setPlaying] = useState(false);
   const attachAudio = useCallback((el: HTMLAudioElement | null) => {
     audioRef.current = el;
     if (!el) return;
     return () => {
-      if (audioRef.current === el) audioRef.current = null;
+      if (audioRef.current === el) {
+        audioRef.current = null;
+        setPlaying(false);
+      }
       releaseDetachedMedia(el);
     };
   }, []);
-  const [playing, setPlaying] = useState(false);
   // Coarse playhead for the readout + scrubber (~4 Hz is plenty for a time
   // label); the word/segment highlight advances at frame rate via the rAF
   // loop below, so they are separate state.
@@ -1925,7 +1931,7 @@ export function TranscriptViewer({
                 title="Rename or recolor this speaker"
                 onClick={() => {
                   setEditingSpeaker(label);
-                  setRenameDraft(fileRenames[label] ?? "");
+                  setRenameDraft(ownProp(fileRenames, label) ?? "");
                 }}
                 className="ring-signal inline-flex items-center gap-1.5 rounded-pill py-0.5 pl-2 pr-2.5 text-[12px] font-medium"
                 style={chipStyle(color)}

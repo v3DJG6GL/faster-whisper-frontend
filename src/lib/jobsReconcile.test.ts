@@ -34,12 +34,14 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
-const { _resetReconcileForTests, initJobReconcile, reconcileJobs, watchOrphan, NOT_FOUND_ERROR } =
+const { _resetReconcileForTests, initJobReconcile, reconcileJobs, stopOrphan, watchOrphan, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
-const { useTranscribeRun, forgetRecord, cancelRun, retryFile, startRun } = await import("./transcribeRun");
+const { useTranscribeRun, forgetRecord, cancelRun, closeRecord, openHistoryRecord, retryFile, startRun } =
+  await import("./transcribeRun");
 const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
 const { useApp } = await import("./store");
 type LedgerRow = import("./jobsLedger").LedgerRow;
+type TranscriptRecord = import("./transcript/transcriptHistory").TranscriptRecord;
 
 const T0 = 1_800_000_000_000;
 const JOB_A = "a".repeat(32);
@@ -207,16 +209,17 @@ describe("reconcileJobs", () => {
     getJob.mockImplementation(async ({ jobId }) => ok({ jobId, state: "running" }));
     await reconcileJobs();
     expect(useTranscribeRun.getState().queue[0].path).toBe("/bb.mp3");
-    // Both are polled.
+    // Both are polled: the rail's every second, the headless one every 5 s.
     getJob.mockClear();
-    await vi.advanceTimersByTimeAsync(1_000);
-    const polled = getJob.mock.calls.map((c) => c[0].jobId).sort();
-    expect(polled).toEqual([JOB_A, JOB_B]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    const polled = getJob.mock.calls.map((c) => c[0].jobId);
+    expect(polled.filter((id) => id === JOB_A)).toHaveLength(1);
+    expect(polled.filter((id) => id === JOB_B)).toHaveLength(5);
     // The older one finishing lands in History only.
     getJob.mockImplementation(async ({ jobId }) =>
       ok(jobId === JOB_A ? { jobId, state: "done", resultAvailable: true } : { jobId, state: "running" }));
     getJobResult.mockResolvedValue(ok(RESULT));
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(records().map((r) => r.id)).toEqual([JOB_A]);
     expect(useTranscribeRun.getState().running).toBe(true);
@@ -236,7 +239,7 @@ describe("reconcileJobs", () => {
     // Done: the record lands in History; the workbench is left alone.
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
     getJobResult.mockResolvedValue(ok(RESULT));
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(5_000);
     await vi.advanceTimersByTimeAsync(0);
     expect(records().map((r) => r.id)).toEqual([JOB_A]);
     s = useTranscribeRun.getState();
@@ -480,6 +483,79 @@ describe("reconcileJobs", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+  });
+
+  it("a lost request opened from History settles its row and a retry stops its watcher", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    expect(openHistoryRecord(rec)).toBe(true);
+    // The rebuilt row still names the job, so the watcher's ingest would settle it.
+    expect(useTranscribeRun.getState().queue[0].orphanJobId).toBe(JOB_A);
+    deleteJob.mockClear();
+    retryFile(r.path, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(records().some((x) => x.id === JOB_A && x.status === "done")).toBe(false);
+  });
+
+  it("a lost request's watcher is stopped by a re-run of its file after the workbench was closed", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    closeRecord();
+    expect(useTranscribeRun.getState().queue).toEqual([]);
+    useTranscribeRun.setState({ files: [r.path] });
+    deleteJob.mockClear();
+    startRun(undefined, {}, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+  });
+
+  it("a new run of OTHER files leaves a removed file's lost request watched", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    // removeFile kept the settled failed row, but the file is no longer in the list.
+    useTranscribeRun.setState({ files: ["/other.mp3"], running: false,
+      queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    deleteJob.mockClear();
+    startRun(undefined, {}, r.ctx);
+    expect(deleteJob).not.toHaveBeenCalled();
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toHaveLength(1);
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(true);
+    stopOrphan(JOB_A);
+  });
+
+  it("a lost request whose job then fails on the server names the server's reason on its row", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "failed", error: "CUDA out of memory" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    const it0 = useTranscribeRun.getState().queue[0];
+    expect([it0.status, it0.error, it0.orphanJobId]).toEqual(["failed", "CUDA out of memory", undefined]);
+    expect(records().find((x) => x.id === JOB_A)?.error).toBe("CUDA out of memory");
+    expect(ledgerRows()).toEqual([]);
   });
 
   it("initJobReconcile loads the persisted ledger after configReady, once", async () => {

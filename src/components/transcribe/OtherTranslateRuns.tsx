@@ -1,5 +1,5 @@
 import { useApp } from "@/lib/store";
-import { Button } from "@/components/ui";
+import { Button, MicroLabel } from "@/components/ui";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { openHistoryRecord } from "@/lib/transcribeRun";
@@ -17,9 +17,7 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
   if (entries.length === 0) return null;
   return (
     <div className="mt-3 rounded-xl border border-line bg-surface-2/60 px-3.5 py-2.5">
-      <div className="mb-1.5 font-mono text-[10.5px] uppercase tracking-label text-faint">
-        translating elsewhere
-      </div>
+      <MicroLabel>translating elsewhere</MicroLabel>
       {entries.map(([key, { run }]) => {
         // Runs key by record id (or, before one exists, by source path).
         const rec = records.find((r) => r.id === key || r.sourcePath === key);

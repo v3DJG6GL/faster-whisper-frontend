@@ -42,9 +42,9 @@ import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl,
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
-import { closeRecord, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
+import { closeRecord, linkTranslateTo, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
-import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
 import { withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
@@ -527,8 +527,16 @@ export default function Transcribe() {
     const forUrl = files.some((p) => isSourceUrl(p));
     const forText = files.every((p) => !isSourceUrl(p) && isTextSourcePath(p));
     // The same gating `run()` applies, so we never ask the server to warm a
-    // stage this run would not actually request.
-    const t2t = translationAvailable && translateTo.length > 0;
+    // stage this run would not actually request — including a link whose site
+    // tracks already cover every target (runLink then sends no translateTo).
+    const t2t =
+      translationAvailable &&
+      translateTo.length > 0 &&
+      files.some((p) => {
+        if (!isSourceUrl(p)) return true;
+        const site = urlMeta[p]?.siteSubs;
+        return !site || site.mtTargets.length > 0;
+      });
     const stages = railStages(
       {
         ...(t2t ? { translateTo } : {}),
@@ -565,6 +573,7 @@ export default function Transcribe() {
     effBgm,
     separationModel,
     model,
+    urlMeta,
   ]);
 
   // Debounced (500 ms) link preview. Add waits for it (urlPreviewLoading also covers the debounce),
@@ -1177,7 +1186,11 @@ export default function Transcribe() {
           </div>
           {urlDraft.trim() !== "" && !draftUrl && (
             <div className="mt-2 text-[12px] text-warn">
-              Include http:// or https:// at the start of the link.
+              {/* normalizeMediaUrl also rejects links that DO carry the scheme
+                  (over 2,048 characters, unparsable host) — don't tell those to add it. */}
+              {isSourceUrl(stripUrlNoise(urlDraft))
+                ? "This isn't a valid web address (links over 2,048 characters aren't supported)."
+                : "Include http:// or https:// at the start of the link."}
             </div>
           )}
           {urlPreviewLoading && (
@@ -1271,8 +1284,11 @@ export default function Transcribe() {
                             chosen={chosen}
                             onChange={(r) => {
                               setLinkVideoFormat(r.format_id ?? null);
-                              // The id decides; no cap on top of it.
-                              setLinkVideoHeight(null);
+                              // The format id decides when present (no cap on top of it); else
+                              // the rung's height caps the pick. Rust's bound_rung nulls ids failing
+                              // is_format_id, so with no id and no cap pickRung would snap back to
+                              // rungs[0].
+                              setLinkVideoHeight(r.format_id ? null : (r.height ?? null));
                             }}
                           />
                         )}
@@ -1728,7 +1744,7 @@ export default function Transcribe() {
             locked={server.locked}
             ignored={server.ignored}
             known={server.known}
-            languagePinned={namedLanguage(language)}
+            languagePinned={namedLanguage(language || String(decodeDefaults?.language?.value ?? ""))}
             inheritWord="Default"
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
@@ -1800,10 +1816,18 @@ export default function Transcribe() {
         // Text sources run the translation stage alone — per item, so audio
         // files in the same run keep the full pipeline rail.
         const forText = panelKind === "text";
-        const stages = railStages(lastOptions, forUrl, forText);
+        const panelUrlMeta = panelItem ? urlMeta[panelItem.path] : undefined;
+        // A link whose site tracks are used translates only to the targets the site
+        // lacks (runLink's per-link rewrite, shared via linkTranslateTo): with every target
+        // covered there is no Translating stage, so the rail must not show one and paint it done.
+        const panelOptions =
+          forUrl && panelUrlMeta?.siteSubs && lastOptions
+            ? { ...lastOptions, translateTo: linkTranslateTo(lastOptions, panelUrlMeta) }
+            : lastOptions;
+        const stages = railStages(panelOptions, forUrl, forText);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
-        const skipped = skippedStages({ progress, stageTimes, lastOptions, forUrl, forText });
+        const skipped = skippedStages({ progress, stageTimes, lastOptions: panelOptions, forUrl, forText });
         const active = complete
           ? stages.length
           : activeRailIndex(progress, stageTimes, stages, skipped);
@@ -1833,7 +1857,6 @@ export default function Transcribe() {
         const shownAudio = complete && multi && totals.audioSec > 0 ? totals.audioSec : audioDur;
         const overallRt =
           complete && shownAudio && shownElapsed > 0 ? shownAudio / (shownElapsed / 1000) : null;
-        const panelUrlMeta = panelItem ? urlMeta[panelItem.path] : undefined;
         const extractorLabel = panelUrlMeta?.extractor
           ? panelUrlMeta.extractor === "Generic"
             ? "direct link"
@@ -1900,6 +1923,8 @@ export default function Transcribe() {
                 <Check className="size-[18px] shrink-0 text-ok" />
               ) : forUrl ? (
                 <Link2 className="size-[18px] shrink-0 text-accent" />
+              ) : forText ? (
+                <FileText className="size-[18px] shrink-0 text-accent" />
               ) : (
                 <FileAudio className="size-[18px] shrink-0 text-accent" />
               )}
