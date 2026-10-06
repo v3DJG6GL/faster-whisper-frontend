@@ -17,6 +17,9 @@ import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
 import { isActiveDictation } from "./dictationVisual";
 import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
+import { DEFAULT_SETTINGS } from "../defaults";
+
+const REC_DEFAULTS = DEFAULT_SETTINGS.recording;
 
 /** How many translation targets the chip spells out before the rest become "+N". Two, not
  *  `routeParts`' three: the chip's identity row shares one line with the live transcript,
@@ -252,18 +255,19 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     accentHue: state.settings.accentHue,
     accentMotion: state.settings.accentMotion,
     // Overlay-chip behaviour (persistent dock / edge-peek / quick-launch). The ?? fallbacks
-    // mirror the store defaults (hydrate fills missing fields, so they're belt-and-braces).
-    persistentDock: rec.persistentDock ?? true,
-    overlayPeek: rec.overlayPeek ?? true,
-    peekTimeoutSec: rec.peekTimeoutSec ?? 5,
-    peekWhileActive: rec.peekWhileActive ?? false,
-    dimAfterSec: rec.dimAfterSec ?? 2.5,
-    hoverRevealMs: rec.hoverRevealMs ?? 500,
+    // read the store defaults (hydrate fills missing fields, so they're belt-and-braces).
+    persistentDock: rec.persistentDock ?? REC_DEFAULTS.persistentDock,
+    overlayPeek: rec.overlayPeek ?? REC_DEFAULTS.overlayPeek,
+    peekTimeoutSec: rec.peekTimeoutSec ?? REC_DEFAULTS.peekTimeoutSec,
+    peekWhileActive: rec.peekWhileActive ?? REC_DEFAULTS.peekWhileActive,
+    dimAfterSec: rec.dimAfterSec ?? REC_DEFAULTS.dimAfterSec,
+    hoverRevealMs: rec.hoverRevealMs ?? REC_DEFAULTS.hoverRevealMs,
     // Sizes. chipScale is applied by Rust (webview zoom); the chip only needs it to notice a
     // change and come out of hiding. dotScale is the chip's own CSS (minimized dot only).
-    chipScale: rec.chipScale ?? 1,
-    dotScale: rec.dotScale ?? 1,
-    quickLaunch: rec.quickLaunch ?? [],
+    chipScale: rec.chipScale ?? REC_DEFAULTS.chipScale,
+    dotScale: rec.dotScale ?? REC_DEFAULTS.dotScale,
+    // The shared default array is only serialized here, never mutated.
+    quickLaunch: rec.quickLaunch ?? REC_DEFAULTS.quickLaunch,
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",

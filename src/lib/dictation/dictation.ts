@@ -396,8 +396,10 @@ export function runOverlayAction(kind: string): void {
     // Only meaningful when idle/standby — never reshuffle a running session, INCLUDING one
     // mid-start: status is still "idle" through the ~1s prologue, so without isStarting() a chip
     // cycle in that window would overwrite the starting session's activeProfile + persist a new
-    // homeProfileId (the same mislabel the START path guards). Mirrors dictate()'s start gate.
-    if (s.status !== "idle" || isStarting()) return;
+    // homeProfileId (the same mislabel the START path guards). Same for the target picker: it
+    // has already stamped activeProfile, so a cycle while it is open would mislabel the pick
+    // and the commit/abort would stamp the old Profile back. Mirrors dictate()'s start gate.
+    if (s.status !== "idle" || isStarting() || pickerOpen) return;
     const enabled = s.profiles.filter((p) => p.enabled);
     if (enabled.length === 0) return;
     const cur = homeTargetProfile(s.profiles, s.settings.homeProfileId);

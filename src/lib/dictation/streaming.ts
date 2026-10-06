@@ -271,13 +271,16 @@ let clipBaseline = "";
 /** The session accumulators as they stood before the current clipboard window's first
  *  booking. The clipboard is REPLACED per window, and every final inside one quiet window
  *  re-copies the whole window — so each booking replaces the window's earlier one instead of
- *  appending "A", then "A B". Null = nothing booked in this window yet. */
+ *  appending "A", then "A B". Null = nothing booked in this window yet. Reset to null (window
+ *  closed) in the inject queue, alongside `flushClipByLang` — see `clipByLang`. */
 let clipBooked: { text: string | null; ctxLen: number } | null = null;
 /** The per-language tracks for the current clipboard window.  Each final in a clipboard-live
  *  window re-translates the GROWING window, so `accumulateByLang` must receive the LAST
  *  (complete) translation only — not every growing prefix. This buffer replaces on each
- *  final; `flushClipByLang` books it into `sessionByLang` once, from `bumpPhraseEnd`,
- *  `clearPhraseEnd` and `settleIdle`. */
+ *  final; `flushClipByLang` books it into `sessionByLang` once, from `clearPhraseEnd` and
+ *  `settleIdle` and — for a pause or a hard break — from a link IN the inject queue (queued by
+ *  `bumpPhraseEnd`'s timer and the `stream://boundary` handler), so the window closes only
+ *  after every phrase task queued inside it has booked, translate await included. */
 let clipByLang: Record<string, string> | undefined;
 // Insertion config captured at dictation start.
 interface InsertCfg {
@@ -1082,19 +1085,41 @@ function bumpPhraseEnd(deferred = false): void {
       phraseDirty = false;
       enqueueAutoEnter();
     }
-    // Restore the user's clipboard now the phrase's paste has long since landed (the quiet gap
-    // guarantees it) — so between phrases the clipboard is theirs, not the transcript. The
-    // snapshot survives in Rust, so the next pasted phrase restores again.
-    if (clipDirty && beganInjection) {
-      clipDirty = false;
-      clipHoldsOurs = false; // the restore below puts the user's clipboard back
-      enqueueRestoreSnapshot();
-    }
     // You paused → end the current clipboard-only phrase, so the next utterance copies fresh and
-    // "Clipboard only" holds just your latest phrase instead of the whole hard-break window.
+    // "Clipboard only" holds just your latest phrase instead of the whole hard-break window. The
+    // baseline moves NOW: it is read synchronously at enqueue, so a final arriving after this
+    // pause already belongs to the next window.
     clipBaseline = committedDoc;
-    clipBooked = null;
-    flushClipByLang();
+    // Everything else is decided IN the queue, after the Enter above and after every phrase
+    // task enqueued before this pause has landed. Those tasks set clipDirty and book the window
+    // only after an awaited translate + inject — on a cold model that outlasts this 1.2 s — so
+    // a synchronous read here saw clipDirty still false (no restore; the transcript then sat on
+    // the user's clipboard through the pause) and closed the window before its booking (the
+    // late booking then left a stale clipBooked that the next window rolled back over, losing
+    // this window's translation, context and per-language tracks). Chained directly rather than
+    // via enqueueInject so the flood cap can never drop the window close; the session token
+    // guards a cancel-then-restart (both reset all of this themselves).
+    {
+      const cfg = insertCfg;
+      injectChain = injectChain.then(async () => {
+        if (insertCfg !== cfg) return;
+        // Restore the user's clipboard now the phrase's paste has landed — so between phrases
+        // the clipboard is theirs, not the transcript. The snapshot survives in Rust, so the
+        // next pasted phrase restores again.
+        if (clipDirty && beganInjection) {
+          clipDirty = false;
+          clipHoldsOurs = false; // the restore below puts the user's clipboard back
+          try {
+            await restoreClipboardSnapshot();
+          } catch (e) {
+            console.error("restore clipboard snapshot failed:", e);
+          }
+        }
+        if (insertCfg !== cfg) return;
+        clipBooked = null;
+        flushClipByLang();
+      });
+    }
   }, PHRASE_END_QUIET_MS);
 }
 
@@ -1635,13 +1660,19 @@ function armStuckWatchdog(): void {
       // those two recovery paths. Live mode injected per-phrase already → "". endInjection (chained by
       // cancelLive) is a no-op in stop mode (nothing snapshotted), so there's no clobber race, and
       // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
+      // The recovery copy WAITS for cancelLive, though: its cancelStream(true) bumps Rust's
+      // user-cancel injection epoch from spawn_blocking, and nothing orders that IPC against
+      // ours — a bump landing between inject_text's epoch capture and its cancel check skips the
+      // write yet still answers `landed: true`, promising a clipboard that never got the text.
+      // Awaited, the bump is in before inject_text reads its epoch.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
       // Captured BEFORE cancelLive() below, which nulls insertCfg — by the time the async
       // recovery runs there is no session left to read the target from.
       const pendingAppId = insertCfg?.targetApp?.appId ?? null;
-      void cancelLive();
+      const cancelled = cancelLive().catch((e) => console.error("stuck-finalize cancel failed:", e));
       if (pending) {
         void (async () => {
+          await cancelled;
           let onClipboard = false;
           try {
             // Believe the ANSWER, not the attempt: `inject_text`'s own-window guard sits above the
@@ -2329,7 +2360,9 @@ async function ensureListeners(): Promise<void> {
     const docAtBreak = committedDoc.replace(/^\s+/, "");
     committedDoc = "";
     clipBaseline = "";
-    clipBooked = null;
+    // clipBooked / clipByLang are closed in the link below, not here: a clipboard phrase
+    // enqueued before this break books its window only after an awaited translate, so a
+    // synchronous close let that late booking survive into the next document's window.
     seenDoc = "";
     // A new document: utterance text restarts at 0, and no release final reaches back across
     // a break (the server sends them before it).
@@ -2353,6 +2386,11 @@ async function ensureListeners(): Promise<void> {
       const cfg = insertCfg;
       injectChain = injectChain.then(() => {
         if (insertCfg !== cfg) return;
+        // The clipboard window ends with the document — after every phrase queued before the
+        // break has booked into it (see bumpPhraseEnd's queued close, which this timer-cancel
+        // pre-empts).
+        clipBooked = null;
+        flushClipByLang();
         if (cfg?.live) {
           noteDivergence("boundary", injectedText, docAtBreak, null);
           // trimEnd only: when part of this document WAS typed, the remainder's leading space is

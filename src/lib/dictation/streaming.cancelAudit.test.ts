@@ -258,3 +258,42 @@ describe("insertion gates the re-derivations must keep", () => {
     }
   });
 });
+
+describe("work that must wait for the queue or the cancel", () => {
+  // Ordering rules no unit test can reach without Tauri: each one used to run synchronously
+  // against an IPC or a queued task it raced, so pin the order in the source.
+  const fns = topLevelFunctions(streamingSrc);
+
+  it("the stuck-finalize recovery copy waits for cancelLive before injecting", () => {
+    // cancelLive's cancelStream(true) bumps Rust's user-cancel injection epoch; landing between
+    // inject_text's epoch capture and its cancel check, it skips the write yet answers landed.
+    const body = mask(fns.armStuckWatchdog);
+    expect(body).not.toMatch(/void cancelLive\(\)/);
+    const wait = body.indexOf("await cancelled");
+    expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
+    expect(body.indexOf("injectText(")).toBeGreaterThan(wait);
+  });
+
+  it("the phrase-end timer decides restore and closes the clipboard window in the queue", () => {
+    // Both depend on clipDirty / the window booking, which the queued phrase task sets only after
+    // an awaited translate + inject — routinely longer than the 1.2 s quiet gap.
+    const timer = mask(fns.bumpPhraseEnd);
+    const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
+    for (const step of ["clipDirty && beganInjection", "restoreClipboardSnapshot(", "clipBooked = null", "flushClipByLang("]) {
+      expect(link, `${step} must run inside the queued link`).toContain(step);
+    }
+    // Only the link may touch them; the baseline stays synchronous (read at enqueue).
+    expect(timer.split("clipBooked = null").length).toBe(2);
+    expect(timer.split("flushClipByLang(").length).toBe(2);
+    expect(timer).not.toContain("enqueueRestoreSnapshot(");
+    expect(timer.indexOf("clipBaseline = committedDoc")).toBeLessThan(timer.indexOf("injectChain = injectChain.then("));
+  });
+
+  it("a hard break closes the clipboard window in its chained link, not synchronously", () => {
+    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
+    const link = mask(bodyAfter(boundary, "injectChain = injectChain.then(() =>"));
+    expect(link).toContain("clipBooked = null");
+    expect(link).toContain("flushClipByLang(");
+    expect(mask(boundary).split("clipBooked = null").length, "only the link may close the window").toBe(2);
+  });
+});
