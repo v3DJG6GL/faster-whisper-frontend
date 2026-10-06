@@ -279,6 +279,18 @@ fn on_server(id: &DeviceId) -> bool {
     }
 }
 
+/// Is the sound server held after a timeout (so a server pin can't be looked up right now)?
+fn server_hold() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        super::pulse::held()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
 /// Is this saved value a cpal device id (vs a pre-ids display-name pin)?
 fn parse_pin(pin: &str) -> Option<DeviceId> {
     DeviceId::from_str(pin)
@@ -301,6 +313,21 @@ pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
                 device,
                 fallback: None,
                 watch_source,
+            });
+        }
+        // The sound server is held after a timeout and the probe did not answer: the pin was
+        // looked up on raw ALSA, where a server source can't be found. It isn't unplugged — record
+        // through the default input for now, without the "not connected" notice.
+        if id.as_ref().is_some_and(on_server) && server_hold() {
+            tracing::warn!(
+                "[audio] sound server not answering; recording '{pin}' through the default input for now"
+            );
+            let device =
+                host::default_input().ok_or_else(|| "no default input device".to_string())?;
+            return Ok(Resolved {
+                device,
+                fallback: None,
+                watch_source: None,
             });
         }
         tracing::warn!("[audio] microphone '{pin}' is not connected; using the default input");

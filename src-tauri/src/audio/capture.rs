@@ -160,8 +160,8 @@ fn run(
     clip: Arc<Mutex<MicClip>>,
     ready: &SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
-    // Reset the shared clip BEFORE the fallible device open below. Otherwise a failed pick_device /
-    // default_input_config (busy/unplugged/denied mic) leaves the PREVIOUS successful test's samples
+    // Reset the shared clip BEFORE the fallible device open below. Otherwise a failed resolve_input /
+    // input_config / build_input_stream (busy/unplugged/denied mic) leaves the PREVIOUS successful test's samples
     // in place, and stop_mic_test then reads the stale rate/len and auto-replays that old audio as if
     // freshly captured on the now-broken device. sample_rate=0 makes stop_mic_test's `sample_rate > 0`
     // guard false → it returns 0s → the frontend correctly skips the replay. Safe from a torn write:

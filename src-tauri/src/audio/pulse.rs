@@ -238,6 +238,11 @@ fn client() -> Option<Arc<pulseaudio::Client>> {
     if let Some(c) = slot.as_ref() {
         return Some(c.clone());
     }
+    // Queued on this lock behind a connect or query that just timed out: don't park a second
+    // helper beside it (and wait another 2 s). The admitted post-back-off retry goes through.
+    if stuck().is_some_and(|st| st.helper != RETRYING) {
+        return None;
+    }
     let (tx, rx) = mpsc::channel();
     let id = HELPER_SEQ.fetch_add(1, Ordering::Relaxed);
     let live = LiveHelper::new();
@@ -462,6 +467,13 @@ mod tests {
             helper: 7,
         });
         assert!(held());
+        // A caller queued behind the timed-out call must not park another connect helper.
+        let no_client = CLIENT.lock().map(|c| c.is_none()).unwrap_or(false);
+        if no_client {
+            let seq = HELPER_SEQ.load(Ordering::SeqCst);
+            assert!(client().is_none());
+            assert_eq!(HELPER_SEQ.load(Ordering::SeqCst), seq, "no helper spawned");
+        }
         clear_stuck(8);
         assert!(held(), "another helper's return must not lift the hold");
         clear_stuck(7);
