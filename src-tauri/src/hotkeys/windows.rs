@@ -1189,10 +1189,12 @@ mod imp {
     /// empty held-set to clear stale first strikes.
     const RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
-    /// While a remote-desktop client has focus, how long a held key must go without a down or
-    /// autorepeat before an OS "up" reading may release it. Well over the default typematic
-    /// delay (≤1 s), so a physically held key always proves itself alive within the window.
-    const RDP_LIVENESS: std::time::Duration = std::time::Duration::from_millis(1500);
+    /// While a remote-desktop client has focus, how long the WHOLE held-set must go without a
+    /// down or autorepeat before an OS "up" reading may release any of it. Typematic repeats
+    /// only the most recently pressed key, so a held chord proves itself alive through that one
+    /// key; the window outlasts both the typematic delay (≤1 s) and a hook re-arm gap (≤3 s in
+    /// steady state, see the module header), during which mstsc's hook swallows the repeats too.
+    const RDP_LIVENESS: std::time::Duration = std::time::Duration::from_secs(4);
 
     /// Release every key the held-set still carries that the OS says is UP — the repair for a
     /// key-up neither feed ever saw (see the module header for how that happens).
@@ -1214,8 +1216,10 @@ mod imp {
     /// While a remote-desktop client has focus the OS reading alone is not enough: its capture
     /// hook swallows the keys it forwards, so the async state reads a held chord UP and two
     /// polls would cut every push-to-talk hold. Our re-armed hook sits above it and still sees
-    /// the autorepeat downs of a physically held key, so there a key is released only when it
-    /// ALSO sent no down/autorepeat for RDP_LIVENESS (`last_down`, stamped by the worker). That
+    /// the autorepeat downs of the last-pressed held key, so there nothing is released while ANY
+    /// held key sent a down/autorepeat within RDP_LIVENESS (`last_down`, stamped by the worker) —
+    /// per held-set, not per key, because an earlier chord key stops repeating once the next one
+    /// goes down. That
     /// keeps the repair for the RDP case the module header names first — a release swallowed
     /// in a re-arm gap — instead of stranding the key until focus leaves the client.
     #[allow(clippy::too_many_arguments)]
@@ -1238,14 +1242,16 @@ mod imp {
         // Retain-then-swap: only keys up on BOTH polls are acted on.
         let mut confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
         *up_once = up_now;
-        // Under RDP a key still repeating is held, whatever the OS says; it keeps its strike
-        // and is asked again next poll.
-        if !confirmed.is_empty() && crate::inject::rdp_client::focus_is_remote_desktop_client() {
-            confirmed.retain(|id| {
-                last_down
-                    .get(id)
-                    .is_none_or(|&t| now.saturating_duration_since(t) >= RDP_LIVENESS)
-            });
+        // Under RDP a held-set that is still repeating is held, whatever the OS says about its
+        // earlier keys (only the last-pressed key repeats); every key keeps its strike and is
+        // asked again next poll.
+        if !confirmed.is_empty()
+            && crate::inject::rdp_client::focus_is_remote_desktop_client()
+            && last_down
+                .values()
+                .any(|&t| now.saturating_duration_since(t) < RDP_LIVENESS)
+        {
+            confirmed.clear();
         }
         for id in confirmed {
             up_once.remove(&id);

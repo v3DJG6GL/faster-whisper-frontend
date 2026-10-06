@@ -14,11 +14,12 @@
 //! another helper (the mic watch and the Settings device poll ask every few seconds). That hold is
 //! time-bounded: a timeout also drops the wedged client, and after BACKOFF one fresh attempt goes
 //! through on a new connection — so a single wedged connection (a lost reply, a half-dead socket
-//! after resume) recovers while the server itself is fine, and at most one helper is parked per
-//! back-off period.
+//! after resume) recovers while the server itself is fine. Each parked helper keeps its connection
+//! open, so retries stop once MAX_PARKED helpers are parked: a server that stays wedged costs a
+//! fixed handful of threads and sockets, not one more per back-off for the life of the process.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -26,6 +27,26 @@ use std::time::{Duration, Instant};
 const TIMEOUT: Duration = Duration::from_secs(2);
 /// How long a timed-out call holds off further attempts before one fresh one may go through.
 const BACKOFF: Duration = Duration::from_secs(30);
+/// No post-back-off retry while this many helpers are still parked on the server.
+const MAX_PARKED: usize = 3;
+
+/// Helper threads still running (a parked one never returns while the server stays wedged).
+static LIVE_HELPERS: AtomicUsize = AtomicUsize::new(0);
+
+/// Counts one helper thread for as long as it lives; moved into the thread's closure, so it is
+/// dropped when the helper returns (or at once, when the spawn itself fails).
+struct LiveHelper;
+impl LiveHelper {
+    fn new() -> Self {
+        LIVE_HELPERS.fetch_add(1, Ordering::SeqCst);
+        LiveHelper
+    }
+}
+impl Drop for LiveHelper {
+    fn drop(&mut self) {
+        LIVE_HELPERS.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PulseSource {
@@ -83,12 +104,14 @@ fn clear_stuck(helper: u64) {
 
 /// May a call go to the server now? None = a helper is parked and the back-off is still running.
 /// Once it ran out, the first caller is let through (Some(true)) and the hold is restamped, so
-/// concurrent callers keep waiting while that one attempt runs.
+/// concurrent callers keep waiting while that one attempt runs — unless MAX_PARKED helpers are
+/// already parked, then the hold stays until one of them returns.
 fn admit() -> Option<bool> {
     let mut s = stuck();
     match *s {
         None => Some(false),
         Some(st) if st.since.elapsed() < BACKOFF => None,
+        Some(_) if LIVE_HELPERS.load(Ordering::SeqCst) >= MAX_PARKED => None,
         Some(_) => {
             *s = Some(Stuck {
                 since: Instant::now(),
@@ -191,9 +214,11 @@ fn client() -> Option<Arc<pulseaudio::Client>> {
     }
     let (tx, rx) = mpsc::channel();
     let id = HELPER_SEQ.fetch_add(1, Ordering::Relaxed);
+    let live = LiveHelper::new();
     std::thread::Builder::new()
         .name("pulse-connect".into())
         .spawn(move || {
+            let _live = live;
             let _ = tx.send(pulseaudio::Client::from_env(c"faster-whisper-frontend"));
             clear_stuck(id);
         })
@@ -218,9 +243,11 @@ fn client() -> Option<Arc<pulseaudio::Client>> {
 fn query(client: Arc<pulseaudio::Client>) -> Result<Snapshot, QueryFail> {
     let (tx, rx) = mpsc::channel();
     let id = HELPER_SEQ.fetch_add(1, Ordering::Relaxed);
+    let live = LiveHelper::new();
     std::thread::Builder::new()
         .name("pulse-query".into())
         .spawn(move || {
+            let _live = live;
             let res = futures_executor::block_on(async {
                 let info = client.server_info().await?;
                 let sources = client.list_sources().await?;
