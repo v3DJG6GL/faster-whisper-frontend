@@ -99,11 +99,7 @@ pub async fn read_backend_keys(
 pub async fn export_settings_file(path: String, envelope: serde_json::Value) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         let path = PathBuf::from(path);
-        let tmp = {
-            let mut t = path.as_os_str().to_owned();
-            t.push(".tmp");
-            PathBuf::from(t)
-        };
+        let tmp = crate::transport::media::tmp_sibling(&path);
         let text = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
         // Owner-only, and never leave the tmp behind: with "include API keys" ticked this envelope
         // holds the raw keyring secrets, and it lands wherever the user pointed the save dialog.

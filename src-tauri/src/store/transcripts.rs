@@ -37,29 +37,36 @@ pub(crate) fn legacy_media_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("media"))
 }
 
+fn audio_base(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
+    crate::commands::resolve_audio_base(app, custom)
+        .ok_or_else(|| "could not resolve the audio folder".into())
+}
+
 /// Audio copies of file-transcription inputs: `<base>/files/<id>.<ext>`.
 /// `custom` is the audio-base preference from settings (None = default).
 /// Same opaque contract as the records: Rust never reads the audio.
 pub(crate) fn files_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    crate::commands::resolve_audio_base(app, custom)
-        .map(|b| b.join(crate::commands::AUDIO_SUBDIRS[1]))
-        .ok_or_else(|| "could not resolve the audio folder".into())
+    audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[1]))
 }
 
 /// Downloaded audio of link transcriptions: `<base>/links/<id>.<ext>` — the
 /// only playable source for those records.
 pub(crate) fn links_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    crate::commands::resolve_audio_base(app, custom)
-        .map(|b| b.join(crate::commands::AUDIO_SUBDIRS[2]))
-        .ok_or_else(|| "could not resolve the audio folder".into())
+    audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[2]))
 }
 
 /// Downloaded VIDEO of link transcriptions: `<base>/video/<id>.<ext>` — kept
 /// for export (no in-app video playback yet).
 pub(crate) fn video_media_dir(app: &AppHandle, custom: Option<String>) -> Result<PathBuf, String> {
-    crate::commands::resolve_audio_base(app, custom)
-        .map(|b| b.join(crate::commands::AUDIO_SUBDIRS[3]))
-        .ok_or_else(|| "could not resolve the audio folder".into())
+    audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[3]))
+}
+
+/// Every record media folder — files/, links/, video/ — from one base resolution. The
+/// single list cleanup and the storage readout share, so a new media kind cannot be
+/// left out of one of them.
+fn all_media_dirs(app: &AppHandle, custom: Option<String>) -> Result<[PathBuf; 3], String> {
+    let base = audio_base(app, custom)?;
+    Ok([1, 2, 3].map(|i| base.join(crate::commands::AUDIO_SUBDIRS[i])))
 }
 
 /// The media paths one file/url record names (`sourcePath`, `mediaPath`,
@@ -138,7 +145,7 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            if write_record_atomic(&path, &out).is_ok() {
+            if crate::config::write_private_atomic(&path, &out).is_ok() {
                 rewritten += 1;
             }
         }
@@ -146,23 +153,6 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
     if rewritten > 0 {
         tracing::info!("[transcripts] rewrote media paths in {rewritten} record(s) after move");
     }
-}
-
-/// Replace one record file atomically (tmp + rename), owner-only, tmp cleaned up on
-/// either failure path. `read_records_into` silently skips a file that fails to parse,
-/// so no record may ever be written in place: a crash between truncate and write would
-/// make it vanish from History.
-fn write_record_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
-    let tmp = path.with_extension("json.tmp");
-    if let Err(e) = crate::config::write_private(&tmp, contents) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    if let Err(e) = std::fs::rename(&tmp, path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-    Ok(())
 }
 
 /// Repair records whose stored audio path no longer exists but whose file
@@ -229,7 +219,7 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            if write_record_atomic(&path, &out).is_ok() {
+            if crate::config::write_private_atomic(&path, &out).is_ok() {
                 healed += 1;
             }
         }
@@ -347,7 +337,9 @@ pub fn save_transcript_record(
     crate::audio::create_dir_private(&dir)
         .map_err(|e| format!("could not create the transcripts folder: {e}"))?;
     let path = dir.join(format!("{id}.json"));
-    write_record_atomic(&path, &record).map_err(|e| e.to_string())
+    // Never in place: `read_records_into` silently skips a file that fails to parse, so a crash
+    // between truncate and write would make the record vanish from History.
+    crate::config::write_private_atomic(&path, &record).map_err(|e| e.to_string())
 }
 
 /// All history records, parsed but uninterpreted. Unreadable or unparseable
@@ -355,7 +347,8 @@ pub fn save_transcript_record(
 /// is the frontend's job (records carry their own createdAt).
 /// async + spawn_blocking: reading and parsing every record is the heaviest read the app does,
 /// and a sync command would stall the main thread (every window) for its duration. Safe to run
-/// beside writes: `write_record_atomic` renames into place, so a read sees old or new, never half.
+/// beside writes: `config::write_private_atomic` renames into place, so a read sees old or new,
+/// never half.
 #[tauri::command]
 pub async fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
     let transcripts = transcripts_dir(&app)?;
@@ -407,15 +400,10 @@ pub fn delete_transcript_record(
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    for dir in [
-        files_media_dir(&app, audio_base.clone()),
-        links_media_dir(&app, audio_base.clone()),
-        video_media_dir(&app, audio_base),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        remove_media_for(&dir, &id);
+    if let Ok(dirs) = all_media_dirs(&app, audio_base) {
+        for dir in dirs {
+            remove_media_for(&dir, &id);
+        }
     }
     let name = format!("{id}.json");
     let file_path = transcripts_dir(&app)?.join(&name);
@@ -520,12 +508,10 @@ pub fn transcript_store_stats(
             })
             .unwrap_or(0)
     }
-    let (file_bytes, file_files) =
-        owned_dir_bytes(&files_media_dir(&app, audio_base.clone())?, is_own_media);
-    let (link_bytes, link_files) =
-        owned_dir_bytes(&links_media_dir(&app, audio_base.clone())?, is_own_media);
-    let (video_bytes, video_files) =
-        owned_dir_bytes(&video_media_dir(&app, audio_base.clone())?, is_own_media);
+    let [files, links, video] = all_media_dirs(&app, audio_base.clone())?;
+    let (file_bytes, file_files) = owned_dir_bytes(&files, is_own_media);
+    let (link_bytes, link_files) = owned_dir_bytes(&links, is_own_media);
+    let (video_bytes, video_files) = owned_dir_bytes(&video, is_own_media);
     let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
         .map(|d| {
             owned_dir_bytes(&d, |p| {
@@ -590,7 +576,8 @@ pub fn clear_file_transcriptions(
 }
 
 /// "Delete audio from file/link transcriptions": empties one media subfolder
-/// (`kind` "file" → files/, "url" → links/; None → both). Transcripts stay.
+/// (`kind` "file" → files/, "url" → links/, "video" → video/; None → all three).
+/// Transcripts stay.
 #[tauri::command]
 pub fn remove_transcript_media(
     app: AppHandle,
@@ -602,11 +589,7 @@ pub fn remove_transcript_media(
         Some("file") => dirs.push(files_media_dir(&app, audio_base)?),
         Some("url") => dirs.push(links_media_dir(&app, audio_base)?),
         Some("video") => dirs.push(video_media_dir(&app, audio_base)?),
-        _ => {
-            dirs.push(files_media_dir(&app, audio_base.clone())?);
-            dirs.push(links_media_dir(&app, audio_base.clone())?);
-            dirs.push(video_media_dir(&app, audio_base)?);
-        }
+        _ => dirs.extend(all_media_dirs(&app, audio_base)?),
     }
     let mut removed = 0u32;
     for dir in dirs {
@@ -643,24 +626,20 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     let Ok(records) = transcripts_dir(app) else {
         return;
     };
+    let Ok(dirs) = all_media_dirs(app, audio_base) else {
+        return;
+    };
     let mut removed = 0;
-    for dir in [
-        files_media_dir(app, audio_base.clone()),
-        links_media_dir(app, audio_base.clone()),
-        video_media_dir(app, audio_base),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for dir in dirs {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
         };
         for entry in entries.flatten() {
             let path = entry.path();
             // An in-progress copy (`<id>.<ext>.tmp`, written on a blocking thread for up
-            // to 2 GB) is not an orphan: this sweep runs on every config save, and
-            // unlinking the tmp under the writer made its final rename fail — the record
-            // then silently lost its only playable audio.
+            // to MAX_MEDIA_BYTES = 10 GiB) is not an orphan: this sweep runs on every
+            // config save, and unlinking the tmp under the writer made its final rename
+            // fail — the record then silently lost its only playable audio.
             if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
                 continue;
             }
@@ -774,13 +753,18 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let path = dir.join("r.json");
         std::fs::write(&path, "{\"a\":1}").unwrap();
-        write_record_atomic(&path, "{\"a\":2}").unwrap();
+        crate::config::write_private_atomic(&path, "{\"a\":2}").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{\"a\":2}");
         assert!(!dir.join("r.json.tmp").exists());
-        // A missing parent fails without touching anything and leaves no tmp behind.
+        // A missing parent fails before anything is written.
         let bad = dir.join("missing").join("r.json");
-        assert!(write_record_atomic(&bad, "{}").is_err());
+        assert!(crate::config::write_private_atomic(&bad, "{}").is_err());
         assert!(!dir.join("missing").exists());
+        // A rename that fails AFTER the full tmp write (target is a non-empty directory)
+        // must clean the tmp up.
+        std::fs::create_dir_all(dir.join("occ.json").join("x")).unwrap();
+        assert!(crate::config::write_private_atomic(&dir.join("occ.json"), "{}").is_err());
+        assert!(!dir.join("occ.json.tmp").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

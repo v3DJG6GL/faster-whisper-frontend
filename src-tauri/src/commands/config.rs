@@ -71,14 +71,24 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
     let _ = if enabled { mgr.enable() } else { mgr.disable() };
 }
 
+// Keyring writes can park behind a locked-wallet prompt; off the main thread so the app does
+// not freeze meanwhile (same reason as `read_backend_keys`).
 #[tauri::command]
-pub fn set_backend_key(backend_id: String, key: String) -> Result<(), String> {
-    config::keys::set(&backend_id, &key).map_err(|e| e.to_string())
+pub async fn set_backend_key(backend_id: String, key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        config::keys::set(&backend_id, &key).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-pub fn delete_backend_key(backend_id: String) -> Result<(), String> {
-    config::keys::delete(&backend_id).map_err(|e| e.to_string())
+pub async fn delete_backend_key(backend_id: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        config::keys::delete(&backend_id).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]

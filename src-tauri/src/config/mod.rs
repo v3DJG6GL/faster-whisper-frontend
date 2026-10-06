@@ -47,6 +47,25 @@ pub fn write_private(path: &Path, contents: &str) -> std::io::Result<()> {
     f.sync_all()
 }
 
+/// Replace `path` atomically: write `<path>.json.tmp` owner-only (`write_private`), then rename it
+/// into place, so a reader sees the old file or the new one, never half of it. Don't leave the
+/// tmp behind when the write OR the rename fails (a full volume — write_private fails AFTER
+/// creating and truncating the file — a Windows AV/indexer lock, which the config reader already
+/// retries for, a read-only or cross-device app-data dir). The settings-export sibling cleans up
+/// on both paths too.
+pub fn write_private_atomic(path: &Path, contents: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("json.tmp");
+    if let Err(e) = write_private(&tmp, contents) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum EndpointKind {
@@ -1050,20 +1069,8 @@ pub fn load(dir: &Path) -> Config {
 pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let path = config_path(dir);
-    let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string_pretty(config)?;
-    // Don't leave the tmp behind when the write OR the rename fails (a full volume — write_private
-    // fails AFTER creating and truncating the file — a Windows AV/indexer lock, which the config
-    // reader already retries for, a read-only or cross-device app-data dir). The settings-export
-    // sibling cleans up on both paths.
-    if let Err(e) = write_private(&tmp, &text) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
+    write_private_atomic(&path, &text)?;
     Ok(())
 }
 

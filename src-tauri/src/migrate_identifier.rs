@@ -133,7 +133,9 @@ pub fn run() {
         tracing::warn!("[migrate] a build with the old identifier is running; moving its data on a later launch");
         return;
     }
-    for root in roots() {
+    let roots = roots();
+    let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    for root in &roots {
         let old = root.base.join(LEGACY_ID);
         let new = root.base.join(NEW_ID);
         let outcome = migrate_dir(&old, &new, root.disposable);
@@ -141,7 +143,8 @@ pub fn run() {
             Outcome::Absent | Outcome::AlreadyDone => {}
             Outcome::Moved => {
                 tracing::info!("[migrate] moved {} -> {}", old.display(), new.display());
-                after_move(&old, &new);
+                after_move(&new);
+                moved.push((old, new));
             }
             Outcome::Conflict => tracing::warn!(
                 "[migrate] {} already has data; leaving {} where it is",
@@ -149,6 +152,23 @@ pub fn run() {
                 old.display()
             ),
             Outcome::Failed => tracing::warn!("[migrate] could not move {}", old.display()),
+        }
+    }
+    if moved.is_empty() {
+        return;
+    }
+    // config.json lives in ONE root (config dir) while a custom audio/log folder may sit inside
+    // ANOTHER (Linux data dir, Windows LocalAppData) — so every config.json is checked against
+    // every move, not just its own root's.
+    for root in &roots {
+        let config = root.base.join(NEW_ID).join("config.json");
+        if !config.is_file() {
+            continue;
+        }
+        // A custom audio base that moved carries its own heal stamp; drop it so the setup heal
+        // re-points the records' absolute media paths there too (see `after_move`).
+        for base in rewrite_config_paths(&config, &moved) {
+            let _ = std::fs::remove_file(base.join(".heal-v1"));
         }
     }
 }
@@ -221,26 +241,29 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Fix what still points INTO the old folder after a move.
-fn after_move(old: &Path, new: &Path) {
+/// Fix what still points INTO the old folder after a move. (Settings that name a folder
+/// inside it are re-pointed once all roots moved, in `run`.)
+fn after_move(new: &Path) {
     // Transcript records store absolute media paths. Removing the heal stamp makes
     // `commands::ensure_audio_layout` (setup) run `store::transcripts::heal_media_paths`, which
     // re-finds every no-longer-existing path by file name under the audio base — the same
     // repair an audio-folder move uses. A custom audio folder elsewhere never moved, so its
     // paths are still valid and heal leaves them alone.
     let _ = std::fs::remove_file(new.join("audio").join(".heal-v1"));
-    rewrite_config_paths(&new.join("config.json"), old, new);
 }
 
-/// A custom audio/log folder the user placed INSIDE the old app folder moved with it; point
-/// the setting at where it is now. Edits the raw JSON rather than going through
-/// `config::load`, whose recovery path may rewrite a config it cannot parse.
-fn rewrite_config_paths(config: &Path, old: &Path, new: &Path) {
+/// A custom audio/log folder the user placed INSIDE an old app folder moved with it; point
+/// the setting at where it is now. `moved` holds every (old, new) pair that moved this launch.
+/// Edits the raw JSON rather than going through `config::load`, whose recovery path may
+/// rewrite a config it cannot parse. Returns the re-pointed audio base folders
+/// (`audioBaseDir` / `recordingsDir`, not `logDir`).
+fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
+    let mut audio_bases = Vec::new();
     let Ok(text) = std::fs::read_to_string(config) else {
-        return;
+        return audio_bases;
     };
     let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return;
+        return audio_bases;
     };
     let mut changed = false;
     for (section, key) in [
@@ -258,9 +281,17 @@ fn rewrite_config_paths(config: &Path, old: &Path, new: &Path) {
         let Some(current) = slot.as_str() else {
             continue;
         };
-        if let Ok(rest) = Path::new(current).strip_prefix(old) {
-            *slot = serde_json::Value::String(new.join(rest).to_string_lossy().into_owned());
-            changed = true;
+        let current = Path::new(current);
+        let Some(target) = moved
+            .iter()
+            .find_map(|(old, new)| current.strip_prefix(old).ok().map(|rest| new.join(rest)))
+        else {
+            continue;
+        };
+        *slot = serde_json::Value::String(target.to_string_lossy().into_owned());
+        changed = true;
+        if section == "recording" {
+            audio_bases.push(target);
         }
     }
     if changed {
@@ -268,6 +299,7 @@ fn rewrite_config_paths(config: &Path, old: &Path, new: &Path) {
             let _ = crate::config::write_private(config, &out);
         }
     }
+    audio_bases
 }
 
 #[cfg(test)]
@@ -384,7 +416,8 @@ mod tests {
             "logging": { "logDir": null },
         }});
         std::fs::write(new.join("config.json"), cfg.to_string()).unwrap();
-        rewrite_config_paths(&new.join("config.json"), &old, &new);
+        let rebased = rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]);
+        assert_eq!(rebased, vec![new.join("my-audio")]);
         let out: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(new.join("config.json")).unwrap())
                 .unwrap();
@@ -395,6 +428,37 @@ mod tests {
         assert_eq!(
             out["settings"]["recording"]["recordingsDir"],
             serde_json::json!(elsewhere)
+        );
+    }
+
+    #[test]
+    fn a_custom_folder_in_another_root_follows_its_move() {
+        // Linux: config.json under ~/.config, the audio folder under ~/.local/share.
+        let (cfg_root, data_root) = (scratch("cfg-root"), scratch("data-root"));
+        let cfg_new = cfg_root.join(NEW_ID);
+        let (data_old, data_new) = (data_root.join(LEGACY_ID), data_root.join(NEW_ID));
+        std::fs::create_dir_all(&cfg_new).unwrap();
+        let cfg = serde_json::json!({ "settings": {
+            "recording": { "audioBaseDir": data_old.join("audio-x") },
+            "logging": { "logDir": data_old.join("logs") },
+        }});
+        std::fs::write(cfg_new.join("config.json"), cfg.to_string()).unwrap();
+        let moved = [
+            (cfg_root.join(LEGACY_ID), cfg_new.clone()),
+            (data_old, data_new.clone()),
+        ];
+        let rebased = rewrite_config_paths(&cfg_new.join("config.json"), &moved);
+        assert_eq!(rebased, vec![data_new.join("audio-x")]);
+        let out: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(cfg_new.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            out["settings"]["recording"]["audioBaseDir"],
+            serde_json::json!(data_new.join("audio-x"))
+        );
+        assert_eq!(
+            out["settings"]["logging"]["logDir"],
+            serde_json::json!(data_new.join("logs"))
         );
     }
 }
