@@ -263,9 +263,12 @@ export const SegmentRow = memo(function SegmentRow({
         let trPassed = -1;
         if (trWords && range) {
           const n = range[1] - range[0];
-          const pos = activeWordIdx >= 0 ? activeWordIdx - range[0] : passedWordIdx + 1 - range[0];
+          // The playhead can make this row active while the active word is still
+          // the previous segment's last (its end grace): that is not ours to follow.
+          const cur = activeWordIdx >= range[0] && activeWordIdx < range[1];
+          const pos = cur ? activeWordIdx - range[0] : passedWordIdx + 1 - range[0];
           const frac = Math.min(1, Math.max(0, pos / n));
-          trCur = activeWordIdx >= 0
+          trCur = cur
             ? Math.min(trWords.length - 1, Math.floor(frac * trWords.length))
             : -1;
           // `frac * len` is a COUNT of translated words passed; the last passed index is

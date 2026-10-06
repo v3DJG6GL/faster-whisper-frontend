@@ -2,6 +2,7 @@
 // processing card: music separation, diarization) — what the stage will run with, so its
 // settings panel can stay closed. Pure, for the tests.
 
+import { plural } from "./format";
 import { shortModelName } from "./inherit";
 
 /** A stage model as the summary names it: the run's pick, else the server's default
@@ -13,7 +14,7 @@ export function stageModelText(picked: string | undefined, defaultName: string):
 /** The speaker count as words: "Auto speakers", "3 speakers", "2–5 speakers". */
 export function speakersText(mode: "auto" | "count" | "range", count: number, min: number, max: number): string {
   if (mode === "count") return count === 1 ? "1 speaker" : `${count} speakers`;
-  if (mode === "range") return min === max ? `${min} ${min === 1 ? "speaker" : "speakers"}` : `${min}–${max} speakers`;
+  if (mode === "range") return min === max ? plural(min, "speaker") : `${min}–${max} speakers`;
   return "Auto speakers";
 }
 

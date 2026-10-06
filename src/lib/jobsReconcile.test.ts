@@ -200,6 +200,20 @@ describe("reconcileJobs", () => {
     expect(ledgerRows()).toHaveLength(1);
   });
 
+  it("one unreachable server costs one status call per pass, not one per row", async () => {
+    const other = { ...row(JOB_C, T0 + 2), serverUrl: "http://other:8000" };
+    await seed(row(JOB_A, T0), row(JOB_B, T0 + 1), other);
+    getJob.mockImplementation(({ jobId }) => Promise.resolve(jobId === JOB_C
+      ? { kind: "not_found" } : { kind: "error", message: "timed out" }));
+    await reconcileJobs();
+    expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A, JOB_C]);
+    // The skipped row is kept and asked on the next pass.
+    expect(ledgerRows().map((r) => r.jobId)).toEqual([JOB_A, JOB_B]);
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A]);
+  });
+
   it("drops a row whose backend no longer exists, without a record", async () => {
     await seed({ ...row(JOB_A, T0), backendId: "gone" });
     await reconcileJobs();
@@ -518,6 +532,46 @@ describe("reconcileJobs", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
+  });
+
+  /** Watch JOB_A as a lost request, then push it out of the ledger with 20 newer rows
+   *  (a big lost batch): only the watcher still knows the job. */
+  async function watchEvicted() {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    for (let i = 0; i < 20; i++) await persistRow({ ...row((i + 16).toString(16).repeat(16), Date.now()), path: `/n${i}.mp3` });
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    deleteJob.mockClear();
+    return r;
+  }
+
+  it("a retry stops a lost request's watcher after the ledger evicted its row", async () => {
+    const r = await watchEvicted();
+    useTranscribeRun.setState({ files: [r.path], running: false, lastOptions: undefined,
+      queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    retryFile(r.path, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
+  });
+
+  it("deleting a lost request's record stops its watcher after the ledger evicted its row", async () => {
+    await watchEvicted();
+    forgetRecord(JOB_A);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
     expect(records().some((x) => x.id === JOB_A)).toBe(false);
   });
 

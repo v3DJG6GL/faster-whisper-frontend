@@ -29,6 +29,7 @@ import { isVideoSourcePath, siteDisplayName } from "./transcript/mediaExport";
 import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
 import { trText } from "./transcript/cueSplit";
+import { joinSegmentTexts } from "./transcript/transcriptFormats";
 import { newProgressId } from "./ids";
 import { ownProp } from "./own";
 import {
@@ -141,13 +142,17 @@ export function stagePick(
 /** The stages of a run in server order — transcribe always, the optional
  *  stages only when the run switched them on, and (URL items) the leading
  *  server-side download. Text sources (subtitle/txt files) run the
- *  translating stage alone — no audio ever exists for them. */
+ *  translating stage alone — no audio ever exists for them. A link whose
+ *  transcript is the site's own subtitle track (`siteTranscript`) downloads
+ *  that track and translates it — no separating, transcribing or diarizing. */
 export function railStages(
   opts: TranscribeOptions | undefined,
   forUrl?: boolean,
   forText?: boolean,
+  siteTranscript?: boolean,
 ): RailStage[] {
   if (forText) return ["translating"];
+  if (siteTranscript) return ["downloading", ...(opts?.translateTo?.length ? (["translating"] as const) : [])];
   return [
     ...(forUrl ? (["downloading"] as const) : []),
     ...(opts?.separateBgm ? (["separating"] as const) : []),
@@ -223,9 +228,10 @@ export function skippedStages(s: {
   lastOptions?: TranscribeOptions;
   forUrl?: boolean;
   forText?: boolean;
+  siteTranscript?: boolean;
 }): Set<RailStage> {
   const out = new Set<RailStage>();
-  const stages = railStages(s.lastOptions, s.forUrl, s.forText);
+  const stages = railStages(s.lastOptions, s.forUrl, s.forText, s.siteTranscript);
   // The server plan names its skipped stages outright.
   if (s.progress?.plan?.length) {
     for (const p of s.progress.plan) {
@@ -680,6 +686,15 @@ export function closeRecord() {
   }));
 }
 
+/** The warning a link run whose site transcript track could not be fetched carries: it ran the
+ *  whole audio pipeline instead. */
+export const SITE_TRANSCRIPT_FALLBACK = "The audio was transcribed instead of using the site's subtitles.";
+
+/** Does this link's run use the site's own subtitle track as its transcript (no audio stages)? */
+export function linkUsesSiteTranscript(meta: TranscribeRunState["urlMeta"][string] | undefined): boolean {
+  return !!meta?.siteSubs?.transcriptTrackId;
+}
+
 export function setUrlMeta(url: string, meta: TranscribeRunState["urlMeta"][string]) {
   set((s) => ({ urlMeta: { ...s.urlMeta, [url]: { ...s.urlMeta[url], ...meta } } }));
 }
@@ -764,7 +779,9 @@ export function forgetRecord(id: string | null): void {
   registeredIds.delete(id);
   // A lost request's failed record carries its job id: deleting it must also stop the
   // headless watcher and drop the ledger row, or the finished job re-adds the record.
-  if (ledgerRows().some((r) => r.jobId === id)) orphanForget?.(id);
+  // Unconditional: the ledger evicts a watched row after 20 newer requests, and the
+  // stop is a no-op for an id nothing watches or ledgers.
+  orphanForget?.(id);
   // By value, not via the record's sourcePath: deleteRecord calls this before the mirror
   // drops the record, but nothing guarantees the mirror still has it.
   for (const [p, v] of Object.entries(idByPath)) if (v === id) delete idByPath[p];
@@ -782,22 +799,35 @@ setRecordForgetHook(forgetRecord);
 function schedulePersistEdits(key: string) {
   if (!registered(key)) return;
   window.clearTimeout(persistTimers.get(key));
-  persistTimers.set(key, window.setTimeout(() => {
-    persistTimers.delete(key);
-    const rec = registered(key);
-    if (!rec) return;
-    const s = get();
-    const updated: TranscriptRecord = {
-      ...rec,
-      renames: s.renames[key],
-      speakerColors: s.speakerColors[key],
-      edits: s.edits[key],
-      speakerEdits: s.speakerEdits[key],
-      translationsStale: s.translationsStale[key],
-    };
-    registerRecord(updated);
-    upsertRecord(updated);
-  }, 800));
+  persistTimers.set(key, window.setTimeout(() => persistEditsNow(key), 800));
+}
+
+/** The debounced write itself: drop the key's timer entry first, then re-save the record's
+ *  latest copy with the current overlays. */
+function persistEditsNow(key: string) {
+  persistTimers.delete(key);
+  const rec = registered(key);
+  if (!rec) return;
+  const s = get();
+  const updated: TranscriptRecord = {
+    ...rec,
+    renames: s.renames[key],
+    speakerColors: s.speakerColors[key],
+    edits: s.edits[key],
+    speakerEdits: s.speakerEdits[key],
+    translationsStale: s.translationsStale[key],
+  };
+  registerRecord(updated);
+  upsertRecord(updated);
+}
+
+/** Run every pending edit write now (quit / reload / session end). Synchronous: it only hands
+ *  the records to upsertRecord, so a following `flushRecordWrites()` lands them on disk. */
+export function flushPersistEdits(): void {
+  for (const [key, t] of [...persistTimers]) {
+    window.clearTimeout(t);
+    persistEditsNow(key);
+  }
 }
 
 /** Every settled run — success or failure — becomes a history record the
@@ -1011,7 +1041,7 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
 }
 
 /** The video height a link downloads at: the link card's pick, else the Settings default. */
-function videoMaxHeightOf(url: string): number | null {
+export function videoMaxHeightOf(url: string): number | null {
   const meta = get().urlMeta[url];
   return meta?.videoMaxHeight !== undefined
     ? meta.videoMaxHeight
@@ -1566,7 +1596,7 @@ async function translateTextSource(
  *  `options.translateTo` → a BatchResult the viewer, history and exports consume
  *  like any other. Shared by text sources and links whose transcript is the
  *  site's own subtitle track. */
-async function translateParsed(
+export async function translateParsed(
   parsed: ImportedText,
   options: TranscribeOptions,
   ctx: RunContext,
@@ -1614,17 +1644,15 @@ async function translateParsed(
   }
   const segments = assembleTranslatedSegments(parsed.segments, results, keptAll);
   return {
-    text: parsed.segments.map((seg) => seg.text).join(" "),
+    // Joined like the plain TXT export joins edited segments: no seam space inside CJK.
+    text: joinSegmentTexts(parsed.segments.map((seg) => seg.text.trim())),
     language: parsed.language ?? source ?? undefined,
     segments,
     warnings: warnings.length ? warnings : undefined,
     translations: Object.fromEntries(
       targets.map((lang) => [
         lang,
-        segments
-          .map((seg) => trText(seg, lang))
-          .filter(Boolean)
-          .join(" "),
+        joinSegmentTexts(segments.map((seg) => trText(seg, lang)).filter((t): t is string => !!t)),
       ]),
     ),
     ...(targets.length
@@ -1689,7 +1717,7 @@ async function fetchSiteSubs(
     warnings.push(`The site's subtitles could not be downloaded: ${errorText(e)}`);
   }
   const transcript = parsed.find((p) => p.id === site.transcriptTrackId);
-  if (site.transcriptTrackId && !transcript) warnings.push("The audio was transcribed instead of using the site's subtitles.");
+  if (site.transcriptTrackId && !transcript) warnings.push(SITE_TRANSCRIPT_FALLBACK);
   return { transcript, others: parsed.filter((p) => p !== transcript), warnings };
 }
 
@@ -1935,7 +1963,7 @@ async function pump(
         // so does a link whose transcript is the site's own subtitle track
         // (no server job) — unless that track fails and the link falls back
         // to a transcription: runLink ledgers it right before that request.
-        const siteTranscript = isUrl && !!get().urlMeta[next.path]?.siteSubs?.transcriptTrackId;
+        const siteTranscript = isUrl && linkUsesSiteTranscript(get().urlMeta[next.path]);
         const ledgerRow = async () => {
           try {
             // The run-level options, not itemOptions: a re-attached run's

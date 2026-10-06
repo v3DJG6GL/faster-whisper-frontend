@@ -42,7 +42,9 @@ import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl,
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
-import { closeRecord, linkTranslateTo, openHistoryRecord, retryRunVideo } from "@/lib/transcribeRun";
+import {
+  closeRecord, linkTranslateTo, linkUsesSiteTranscript, openHistoryRecord, retryRunVideo, SITE_TRANSCRIPT_FALLBACK,
+} from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
 import { withBackendChips } from "@/lib/backendChipLabels";
@@ -545,6 +547,9 @@ export default function Transcribe() {
     const warmTargets = translationAvailable ? files.map(targetsOf).find((t) => t.length > 0) : undefined;
     // A text source only runs the translation stage, and the pump fails it without targets.
     if (forText && !warmTargets) return;
+    // Links answered by the site's own transcript track run no audio stage: warm only the
+    // translation model (a mixed queue keeps the full set).
+    const allSiteT = forUrl && files.every((p) => isSourceUrl(p) && linkUsesSiteTranscript(urlMeta[p]));
     const stages = railStages(
       {
         ...(warmTargets ? { translateTo: warmTargets } : {}),
@@ -553,6 +558,7 @@ export default function Transcribe() {
       },
       forUrl,
       forText,
+      allSiteT,
     );
     const plan = preloadPlanFor({
       stages,
@@ -707,6 +713,19 @@ export default function Transcribe() {
     wideEnough && (layoutPref === "studio" || (layoutPref !== "stacked" && !!result));
 
   const persistOptions = patchTranscribe;
+  // The picker and backend-switch prunes see the source of THAT moment; a server's
+  // DEFAULT_LANGUAGE arrives later (decode defaults load async), so re-prune when the known
+  // source settles — else a chip equal to it survives hidden and runs a source→source no-op.
+  // Not while the site-subtitle panel owns the chips: translateTo must stay its mirror.
+  useEffect(() => {
+    if (!knownSource || busy || siteChips) return;
+    const next = pruneTargets(translateTo, knownSource);
+    if (next.length !== translateTo.length) {
+      setTranslateTo(next);
+      persistOptions({ translateTo: next });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters; translateTo is read, not watched
+  }, [knownSource, busy]);
 
   // The studio splitter: the rail width lives in the transcribe settings (local, never
   // synced); while a drag is in flight the live value is local state, persisted on release.
@@ -1834,10 +1853,18 @@ export default function Transcribe() {
           forUrl && panelUrlMeta?.siteSubs && lastOptions
             ? { ...lastOptions, translateTo: linkTranslateTo(lastOptions, panelUrlMeta) }
             : lastOptions;
-        const stages = railStages(panelOptions, forUrl, forText);
+        // A link answered by the site's own transcript track runs no audio stage — unless the
+        // track couldn't be fetched and the run fell back to transcribing the audio.
+        const siteT =
+          forUrl &&
+          linkUsesSiteTranscript(panelUrlMeta) &&
+          !(panelItem?.result?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
+        const stages = railStages(panelOptions, forUrl, forText, siteT);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
-        const skipped = skippedStages({ progress, stageTimes, lastOptions: panelOptions, forUrl, forText });
+        const skipped = skippedStages({
+          progress, stageTimes, lastOptions: panelOptions, forUrl, forText, siteTranscript: siteT,
+        });
         const active = complete
           ? stages.length
           : activeRailIndex(progress, stageTimes, stages, skipped);
@@ -2736,7 +2763,7 @@ export default function Transcribe() {
                       {it.result.language ? ` · ${it.result.language}` : ""}
                       {(() => {
                         const spk = speakersOf(it.result).length;
-                        return spk ? ` · ${spk} ${spk === 1 ? "speaker" : "speakers"}` : "";
+                        return spk ? ` · ${plural(spk, "speaker")}` : "";
                       })()}
                     </span>
                   )}

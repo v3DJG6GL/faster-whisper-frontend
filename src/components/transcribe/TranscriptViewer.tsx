@@ -176,7 +176,18 @@ export function TranscriptViewer({
   const { showTs, showNames, colorize, setShowTs, setShowNames, setColorize } = useDisplayToggles();
   /** Subtitle length + translation timing: read from the saved settings
    *  (Standard unless changed), like History's quick export. */
-  const cueOpts = useMemo(() => cueOptionsOf(settings.transcribe), [settings.transcribe]);
+  // Keyed on the three fields it reads: every display-toggle patch replaces
+  // settings.transcribe, and a fresh cueOpts would re-split the subtitle grid.
+  const tSet = settings.transcribe;
+  const cueOpts = useMemo(
+    () =>
+      cueOptionsOf({
+        subtitleLength: tSet?.subtitleLength,
+        subtitleCustom: tSet?.subtitleCustom,
+        translationTiming: tSet?.translationTiming,
+      }),
+    [tSet?.subtitleLength, tSet?.subtitleCustom, tSet?.translationTiming],
+  );
   // Read shows the transcript as Whisper's segments or as the subtitles an
   // SRT/VTT export writes; Edit always works on segments.
   const [view, setView] = useState<"segments" | "subtitles">("segments");
@@ -314,6 +325,9 @@ export function TranscriptViewer({
   const origLang = useMemo(() => safeDisplayText(result.language ?? "??", 16), [result.language]);
   // Overlay slot: the record id when known, else the path (see overlayKey).
   const okey = overlayKey ?? path;
+  // The record on screen NOW — a run's completion must not fold another record's panel.
+  const okeyRef = useRef(okey);
+  okeyRef.current = okey;
   const fileRenames = useMemo(() => renames[okey] ?? {}, [renames, okey]);
   const fileColors = useMemo(() => speakerColors[okey] ?? {}, [speakerColors, okey]);
   const displayName = useCallback(
@@ -661,7 +675,9 @@ export function TranscriptViewer({
         isCancelled: () => ctl.cancelled,
       });
       if (!ctl.cancelled) {
-        setShowTranslate(false);
+        // The viewer is reused across records: only fold the panel if this
+        // run's record is still the one shown.
+        if (okeyRef.current === okey) setShowTranslate(false);
         setTrRun((s) =>
           s ? { ...s, phase: "done", pct: 1, done: s.total, frontierIdx: -1, endedAt: Date.now() } : s,
         );
@@ -1359,6 +1375,8 @@ export function TranscriptViewer({
       )
         return;
       if (!audioSrc || audioBroken) return;
+      // Export: no list to step through, so leave the arrows to native scrolling.
+      if (!reading && e.key !== " ") return;
       if (e.key === " ") {
         e.preventDefault();
         togglePlay();

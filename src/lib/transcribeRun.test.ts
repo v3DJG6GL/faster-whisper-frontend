@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
 // Unset = the real outside-Tauri command; the lost-request tests make it reject.
 const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribeFile>[0]) => Promise<never>>();
+// Unset = the real outside-Tauri command; the text-source join test answers it.
+const translateText = vi.fn<(args: Parameters<typeof import("./api").translateText>[0]) => Promise<import("./api").TextTranslationResult>>();
 vi.mock("./api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./api")>();
   return {
@@ -16,16 +18,18 @@ vi.mock("./api", async (importOriginal) => {
     saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
     transcribeFile: (a: Parameters<typeof orig.transcribeFile>[0]) =>
       transcribeFile.getMockImplementation() ? transcribeFile(a) : orig.transcribeFile(a),
+    translateText: (a: Parameters<typeof orig.translateText>[0]) =>
+      translateText.getMockImplementation() ? translateText(a) : orig.translateText(a),
   };
 });
 
 import {
-  activeRailIndex, axisLayout, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
+  activeRailIndex, axisLayout, flushPersistEdits, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
   linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, lostContact, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, lostContact, translateParsed, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
@@ -109,6 +113,19 @@ describe("railStages", () => {
   it("text sources run the translating stage alone", () => {
     expect(railStages(undefined, false, true)).toEqual(["translating"]);
     expect(railStages({ separateBgm: true, translateTo: ["de"] }, true, true)).toEqual(["translating"]);
+  });
+  it("a link answered by the site's transcript track downloads and translates only", () => {
+    const opts = { translateTo: ["de"], diarize: true, separateBgm: true };
+    expect(railStages(opts, true, false, true)).toEqual(["downloading", "translating"]);
+    expect(railStages({ diarize: true, separateBgm: true }, true, false, true)).toEqual(["downloading"]);
+    const skipped = skippedStages({
+      progress: { stage: "translating", plan: [{ stage: "translating", state: "done" }] },
+      stageTimes: {},
+      lastOptions: opts,
+      forUrl: true,
+      siteTranscript: true,
+    });
+    expect([...skipped]).toEqual([]);
   });
 });
 
@@ -822,6 +839,24 @@ describe("one current copy per record (the registries hold ids, never copies)", 
     expect(last.result?.sourceVideoMediaId).toBe("srv-video");
   });
 
+  it("flushPersistEdits lands a pending edit without waiting out the debounce", async () => {
+    const { currentRecord, flushRecordWrites } = await import("./transcript/transcriptHistory");
+    openHistoryRecord(rec);
+    setRename(rec.id, "SPEAKER_00", "Kate"); // parked in the 800 ms persist debounce
+    expect(currentRecord(rec.id)?.renames).toBeUndefined();
+    flushPersistEdits(); // the quit / reload / session-end path; no timer advanced
+    expect(currentRecord(rec.id)?.renames).toEqual({ SPEAKER_00: "Kate" });
+    await flushRecordWrites();
+    const all = saves();
+    expect(all.length).toBeGreaterThan(0);
+    const last = JSON.parse(String(all[all.length - 1][1])) as TranscriptRecord;
+    expect(last.renames).toEqual({ SPEAKER_00: "Kate" });
+    // The debounce was consumed: its timer firing later writes nothing more.
+    saveTranscriptRecord.mockClear();
+    vi.advanceTimersByTime(900);
+    expect(saves()).toEqual([]);
+  });
+
   it("a record deleted during the edit debounce is not re-saved", async () => {
     const { currentRecord } = await import("./transcript/transcriptHistory");
     openHistoryRecord(rec);
@@ -1061,5 +1096,27 @@ describe("lostContact (which failures leave a job the server may still finish)",
     ["upload_too_large:300000000:200000000", false],
   ])("%s → %s", (msg, lost) => {
     expect(lostContact(new Error(msg))).toBe(lost);
+  });
+});
+
+describe("translateParsed joins a text source like the TXT export", () => {
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+  afterEach(() => translateText.mockReset());
+
+  it("no seam space inside CJK, one space between Latin cues", async () => {
+    const ja = await translateParsed({ segments: [{ text: "こんにちは。" }, { text: " 元気ですか。" }] }, {}, ctx);
+    expect(ja.text).toBe("こんにちは。元気ですか。");
+    const en = await translateParsed({ segments: [{ text: "Hello." }, { text: "How are you?" }] }, {}, ctx);
+    expect(en.text).toBe("Hello. How are you?");
+  });
+
+  it("the per-target translations join the same way", async () => {
+    translateText.mockImplementation(() =>
+      Promise.resolve({ results: [{ ja: "やあ。", de: "Hallo." }, { ja: "元気？", de: "Wie geht's?" }] }),
+    );
+    const r = await translateParsed(
+      { segments: [{ text: "Hi." }, { text: "How are you?" }] }, { translateTo: ["ja", "de"] }, ctx,
+    );
+    expect(r.translations).toEqual({ ja: "やあ。元気？", de: "Hallo. Wie geht's?" });
   });
 });

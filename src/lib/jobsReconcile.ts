@@ -11,8 +11,9 @@
 //   done     → the result is fetched and ingested exactly like the POST path.
 //   failed / cancelled / unknown → a failed record with the reason.
 //   server unreachable → try again every 30 s for ten minutes, then leave the rows
-//              for the next launch (nothing is lost — the server holds them for its
-//              jobs TTL, caps.jobs.ttl_s, 72 h by default).
+//              for the next launch (nothing is lost — the server holds a job for its
+//              jobs TTL, caps.jobs.ttl_s, 72 h by default, from its start and again
+//              from its finish).
 //
 // Every ingest is idempotent: the record id IS the job id, so a second pass upserts
 // the same record; the row is forgotten only after the record was written.
@@ -53,6 +54,10 @@ const watching = new Map<string, () => void>();
  *  names the job can be rebuilt without it (a History record opened, the workbench
  *  closed), so a re-run of the path finds the watcher by path, not by row. */
 const orphans = new Map<string, string>();
+/** Job ids a watcher is polling (→ the row it captured): the ledger evicts rows on its own
+ *  (the newest-20 cap on every new request), so a big lost batch can drop a watched row
+ *  while its job still runs — stopOrphan must still reach that job's server. */
+const watchedRows = new Map<string, LedgerRow>();
 /** The job the rail's reattached watcher polls: never torn down by a record delete. */
 let attachedId: string | null = null;
 /** When this launch's reconcile started. Rows the pump persists from then on are its
@@ -118,10 +123,12 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     stopped = true;
     clearTimeout(timer);
     watching.delete(row.jobId);
+    watchedRows.delete(row.jobId);
     orphans.delete(row.jobId);
     if (attachedId === row.jobId) attachedId = null;
   };
   watching.set(row.jobId, stop);
+  watchedRows.set(row.jobId, row);
   if (opts.attached) attachedId = row.jobId;
   // The rail's stop hook (abandonActiveRun): the user moved on, so the row goes too.
   const abandon = () => {
@@ -216,22 +223,27 @@ const stopped = new Set<string>();
  *  watcher and forget its row, so the old job can't land a second record (and re-point
  *  the file's latest transcript) after the retry's; best-effort, the server stops it. */
 export function stopOrphan(jobId: string): void {
+  // Before the watcher's stop, which drops its captured row (an evicted one is only there).
+  const row = ledgerRows().find((r) => r.jobId === jobId) ?? watchedRows.get(jobId);
   stopped.add(jobId);
   watching.get(jobId)?.();
-  const row = ledgerRows().find((r) => r.jobId === jobId);
   if (!row) return;
   void forgetRow(jobId);
   void deleteJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId }).catch(() => {});
 }
 /** The pump's hook (retryFile, startRun): stop every lost request whose file the user is
- *  about to run again — a watched one, and an earlier launch's row reconcile could not
- *  reach yet (server unreachable: no watcher, but a retry pass would still land it). The
- *  rail's reattached watcher and this launch's own requests are left alone. */
+ *  about to run again — a watched one (found by path in `orphans`: the ledger may have
+ *  evicted its row), and an earlier launch's row reconcile could not reach yet (server
+ *  unreachable: no watcher, but a retry pass would still land it). The rail's reattached
+ *  watcher and this launch's own requests are left alone. */
 setOrphanStop((paths) => {
-  for (const r of [...ledgerRows()]) {
+  const ids = new Set<string>();
+  for (const [jobId, p] of orphans) if (paths.includes(p)) ids.add(jobId);
+  for (const r of ledgerRows()) {
     if (!r.path || !paths.includes(r.path)) continue;
-    if (orphans.has(r.jobId) || (r.startedAt < launchedAt && !watching.has(r.jobId))) stopOrphan(r.jobId);
+    if (orphans.has(r.jobId) || (r.startedAt < launchedAt && !watching.has(r.jobId))) ids.add(r.jobId);
   }
+  for (const id of ids) stopOrphan(id);
 });
 
 /** The user deleted the failed record of a lost request (its id is the job id): stop the
@@ -251,9 +263,16 @@ export async function reconcileJobs(): Promise<void> {
     const app = useApp.getState();
     const rows = [...ledgerRows()].sort((a, b) => a.startedAt - b.startedAt);
     const running: LedgerRow[] = [];
+    // Servers that failed to answer this pass: a dead host costs the status call's full
+    // timeout per row, so its other rows wait for the next pass instead.
+    const unreachable = new Set<string>();
     for (const row of rows) {
       // Already polled by a watcher, or a request this session's pump posted itself.
       if (watching.has(row.jobId) || row.startedAt >= launchedAt) continue;
+      if (unreachable.has(row.serverUrl)) {
+        retry = true;
+        continue;
+      }
       // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
       // server still holds the run for its TTL, but the app has no way to reach it.
       if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
@@ -265,6 +284,7 @@ export async function reconcileJobs(): Promise<void> {
       if (stopped.has(row.jobId)) continue;
       switch (r.kind) {
         case "error":
+          unreachable.add(row.serverUrl);
           retry = true;
           continue;
         case "disabled":
@@ -344,6 +364,7 @@ export function _resetReconcileForTests(): void {
   clearTimeout(retryTimer);
   retryTimer = undefined;
   watching.clear();
+  watchedRows.clear();
   orphans.clear();
   stopped.clear();
   attachedId = null;

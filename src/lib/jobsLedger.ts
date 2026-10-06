@@ -45,6 +45,8 @@ export const EMPTY_LEDGER: Ledger = { v: 1, rows: [] };
 
 /** Bound on rows — a run per file, so a big multi-file drop is the realistic ceiling. */
 export const MAX_ROWS = 20;
+/** Mirrors src-tauri/src/store/jobs_ledger.rs MAX_LEDGER_BYTES — a save over it is refused whole. */
+export const MAX_LEDGER_BYTES = 256 * 1024;
 /** The TTL assumed when the server did not announce `jobs.ttl_s` (the server's own
  *  default), and the ceiling on one it did: a 10-year TTL must not pin a row forever. */
 const DEFAULT_TTL_S = 72 * 3600;
@@ -59,11 +61,14 @@ export function clampJobsTtl(ttlS: unknown): number | undefined {
   return Math.min(ttlS, MAX_TTL_S);
 }
 
-/** A row older than ITS server's TTL (frozen into the row's context at post time) plus
- *  slack names a job the server has already swept — nothing to ask about. Re-clamped
- *  here because the row came back from disk. */
+/** A row older than twice ITS server's TTL (frozen into the row's context at post time)
+ *  plus slack names a job the server has already swept — nothing to ask about. Twice:
+ *  the server keeps a running job a TTL from its start and re-stamps a TTL at its
+ *  finish, so a finished result can live up to two TTLs after the request left (a row
+ *  past the real horizon costs one 404). Re-clamped here because the row came back
+ *  from disk. */
 export function maxAgeMs(row: LedgerRow): number {
-  return (clampJobsTtl(row.ctx.jobsTtlS) ?? DEFAULT_TTL_S) * 1000 + SLACK_MS;
+  return 2 * (clampJobsTtl(row.ctx.jobsTtlS) ?? DEFAULT_TTL_S) * 1000 + SLACK_MS;
 }
 
 const JOB_ID_RE = /^[0-9a-f]{8,64}$/;
@@ -102,11 +107,16 @@ export function pruneLedger(l: Ledger, now: number): Ledger {
   return rows.length === l.rows.length ? l : { v: 1, rows };
 }
 
-/** Append (replacing a row of the same id), prune, keep the newest MAX_ROWS. */
+/** Append (replacing a row of the same id), prune, keep the newest MAX_ROWS — and within
+ *  MAX_LEDGER_BYTES: a row's options carry user text verbatim (the glossary), and Rust refuses
+ *  an oversized save whole, which froze the disk copy. The oldest rows go first, never the new one. */
 export function addRow(l: Ledger, row: LedgerRow, now: number): Ledger {
-  const rows = pruneLedger(l, now).rows.filter((r) => r.jobId !== row.jobId);
+  let rows = pruneLedger(l, now).rows.filter((r) => r.jobId !== row.jobId);
   rows.push(row);
-  return { v: 1, rows: rows.length > MAX_ROWS ? rows.slice(rows.length - MAX_ROWS) : rows };
+  if (rows.length > MAX_ROWS) rows = rows.slice(rows.length - MAX_ROWS);
+  const enc = new TextEncoder();
+  while (rows.length > 1 && enc.encode(JSON.stringify({ v: 1, rows })).length > MAX_LEDGER_BYTES) rows = rows.slice(1);
+  return { v: 1, rows };
 }
 
 export function removeRow(l: Ledger, jobId: string): Ledger {
