@@ -116,6 +116,9 @@ export default function Settings() {
     setConfirming(null);
     setStoreMsg(null);
   }, [tab]);
+  // An action that resolves after the user left the tab must not re-set what the reset above cleared.
+  const tabRef = useRef(tab);
+  tabRef.current = tab;
   const runStoreAction = (kind: "dict" | "files" | "links" | "video" | "clear") => {
     if (dirBusyRef.current) return;
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
@@ -126,8 +129,10 @@ export default function Settings() {
     if (kind === "dict" || kind === "clear") dropPendingWrites();
     if (kind === "clear") forgetRecord(null);
     const done = (n: number, what: string) => {
-      setStoreMsg({ text: `Removed ${n} ${what}.` });
-      setConfirming(null);
+      if (tabRef.current === "Recording & history") {
+        setStoreMsg({ text: `Removed ${n} ${what}.` });
+        setConfirming(null);
+      }
       refreshStoreStats();
       void loadHistory(true).catch(() => {});
     };
@@ -221,7 +226,14 @@ export default function Settings() {
           // A coalesced record write captured BEFORE the move would land after it and put
           // the pre-move paths straight back on disk — drop it, don't flush it.
           dropPendingWrites();
-          await moveAudioBase(basePref, picked);
+          try {
+            await moveAudioBase(basePref, picked);
+          } catch (e) {
+            // A partial move already rewrote the records that did move: reload either way.
+            forgetRecord(null);
+            void loadHistory(true).catch(() => {});
+            throw e;
+          }
           updateRecording({ audioBaseDir: picked });
           refreshStoreStats(picked);
           // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
@@ -247,7 +259,12 @@ export default function Settings() {
         forgetRecord(null);
         void loadHistory(true).catch(() => {});
       })
-      .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }))
+      .catch((e) => {
+        // A partial move already rewrote the records that did move: reload either way.
+        forgetRecord(null);
+        void loadHistory(true).catch(() => {});
+        setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true });
+      })
       .finally(() => { dirBusyRef.current = false; setDirBusy(false); });
   };
 
@@ -690,7 +707,7 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title={SETTING.transcriptionRetention.label}
-              desc="Files and links alike — transcript, corrections, speaker names and the audio copy leave together. Link audio removed this way can't be re-downloaded."
+              desc="Files, links and text translations alike — transcript, corrections, speaker names and the audio copy leave together. Link audio removed this way can't be re-downloaded."
             >
               <Select
                 value={String(s.transcribe?.historyRetentionDays ?? 0)}
@@ -783,7 +800,7 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Delete all transcriptions"
-              desc={`Removes all ${storeStats?.fileCount ?? 0} file and link transcriptions, with their corrections, speaker names and stored audio.`}
+              desc={`Removes all ${storeStats?.fileCount ?? 0} file, link and text transcriptions, with their corrections, speaker names and stored audio.`}
               last
             >
               {confirming === "clear" ? (

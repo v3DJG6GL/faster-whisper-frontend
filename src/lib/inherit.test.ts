@@ -157,6 +157,13 @@ describe("serverInherited", () => {
     expect(s.values.suppress_chars).toBe("none");
     expect(Object.keys(s.values)).not.toContain("some_newer_server_key");
   });
+  it("reads an empty server text value as none, not as unknown", () => {
+    const entry = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
+    const s = serverInherited(dd({ settings: { output_prefix: entry(""), suppress_chars: entry("") } as DecodeDefaults["settings"] }));
+    expect(s.values.output_prefix).toBe("none");
+    expect(s.sources.output_prefix).toBeDefined();
+    expect(s.values.suppress_chars).toBe("none");
+  });
   it("is empty without server data", () => {
     const s = serverInherited(null, { beam_size: 2 });
     expect(s.values).toEqual({ beam_size: 2 });

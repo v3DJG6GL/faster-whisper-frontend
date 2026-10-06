@@ -221,6 +221,7 @@ export function DecodeFields({
         title={spec.env}
         desc={envDesc(spec.env)}
         overridden={overridden && !fixed}
+        resettable={overridden}
         lockReason={fixed ? title : undefined}
         describedById={title ? descId(k) : undefined}
         describedText={title}

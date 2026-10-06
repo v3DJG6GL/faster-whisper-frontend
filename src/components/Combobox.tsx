@@ -8,14 +8,15 @@
 //     separate, conditionally-rendered node. DOM focus stays on the input the
 //     whole time; the highlighted option is tracked via `aria-activedescendant`
 //     (the WAI-ARIA combobox pattern), not by moving focus.
-//  2. No clipping — the popover is PORTALED to <body> and fixed-positioned under
-//     the input, so the RuleCard's `overflow-hidden` can't crop it.
+//  2. No clipping — the popover is PORTALED to <body> and fixed-positioned at
+//     the input (popoverBox, shared with ListPicker), so the RuleCard's
+//     `overflow-hidden` can't crop it; it opens upward when the room below is short.
 
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import { TextInput } from "@/components/ui";
-import { useAnchoredRect } from "@/lib/useAnchoredRect";
+import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 
 const MAX_SHOWN = 50; // popover DOM cap (the source list is already server-capped)
 
@@ -107,8 +108,12 @@ export function Combobox({
   const candidates = disabled ? [] : rank(suggestions, query);
   const showPopover = open && candidates.length > 0;
 
-  // Position the portaled popover under the input; track scroll/resize while open.
+  // Position the portaled popover at the input; track scroll/resize while open.
   const rect = useAnchoredRect(inputRef, showPopover);
+  // Below the input, or above it when the room below is short — the list shrinks to fit either way
+  // (32 px of the room is the footer; never under 96 px, never over the old 14rem).
+  const box = rect ? popoverBox(rect, { minWidth: rect.width, minRoom: 260 }) : null;
+  const listMax = box ? Math.max(96, Math.min(224, box.room - 32)) : 224;
 
   // Keep `active` in range, and scroll the highlighted option into view.
   useEffect(() => {
@@ -199,15 +204,23 @@ export function Combobox({
         onBlur={() => { setOpen(false); setActive(-1); setTyped(false); }}
         onKeyDown={onKeyDown}
       />
-      {showPopover && rect &&
+      {showPopover && box &&
         createPortal(
           <div
             // Keep the input focused for any mouse interaction inside the popover.
             onMouseDown={(e) => e.preventDefault()}
-            style={{ position: "fixed", left: rect.left, top: rect.bottom + 4, minWidth: rect.width, zIndex: 60 }}
+            // At least the input's width, growing for a long suggestion as before, but never past the
+            // viewport's right edge (popoverBox's own width would truncate every wider row).
+            style={{
+              ...box.style,
+              width: "max-content",
+              minWidth: box.style.width,
+              maxWidth: window.innerWidth - 8 - Number(box.style.left),
+              zIndex: 60,
+            }}
             className="animate-combobox-pop overflow-hidden rounded-xl border border-line-strong bg-surface-2 shadow-[0_12px_32px_-8px_rgba(0,0,0,0.55)]"
           >
-            <ul id={listId} role="listbox" className="max-h-[14rem] overflow-auto py-1">
+            <ul id={listId} role="listbox" style={{ maxHeight: listMax }} className="overflow-auto py-1">
               {candidates.map((w, i) => (
                 <li
                   // Positional, not the word itself: the suggestion pool is server-supplied and a

@@ -13,7 +13,7 @@ import { useEffect, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { Combobox } from "@/components/Combobox";
 import { Badge } from "@/components/ui";
-import { deviceChip } from "@/lib/backendChipLabels";
+import { deviceChip, WHISPER_ALIAS } from "@/lib/backendChipLabels";
 import type { ServerModel } from "@/lib/types";
 
 export function ModelPicker({
@@ -56,8 +56,9 @@ export function ModelPicker({
     const d = deviceChip(m.device);
     return d ? [[m.id, d] as const] : [];
   }));
-  // Only claim "custom" when there IS a list to be absent from.
-  const isCustom = value !== "" && ids.length > 0 && !ids.includes(value);
+  // Only claim "custom" when there IS a list to be absent from. The OpenAI alias is the
+  // server's default model, which it does not list.
+  const isCustom = value !== "" && value !== WHISPER_ALIAS && ids.length > 0 && !ids.includes(value);
 
   return (
     <div

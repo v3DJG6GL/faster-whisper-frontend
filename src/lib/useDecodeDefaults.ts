@@ -36,9 +36,12 @@ export function useDecodeDefaults(args: {
   const profileName = settledTarget === target ? settledProfile : rawProfile;
   const [dd, setDd] = useState<DecodeDefaults | undefined>(undefined);
 
+  // Only "standard" matters: the kind flips full ⇄ unknown while an address is typed or a test
+  // runs, and each flip would blank the labels and refetch the same thing.
+  const standard = serverKind === "standard";
   useEffect(() => {
     setDd(undefined);
-    if (serverKind === "standard" || !backendId) return;
+    if (standard || !backendId) return;
     let cancelled = false;
     void getDecodeDefaults({ serverUrl, backendId, apiKey, model, overrideProfile: profileName })
       .catch(() => null)
@@ -48,7 +51,7 @@ export function useDecodeDefaults(args: {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, backendId, apiKey, model, profileName, serverKind]);
+  }, [serverUrl, backendId, apiKey, model, profileName, standard]);
 
   return dd;
 }

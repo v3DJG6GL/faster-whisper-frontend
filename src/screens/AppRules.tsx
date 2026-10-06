@@ -109,6 +109,7 @@ function Editor({
           name: !x.name?.trim() || x.name === lastAutoName.current ? autoLabel : x.name,
         }));
         lastAutoName.current = autoLabel;
+        setSaveError(null); // the id it complained about is filled in now
       } else {
         setCaptureMsg(DETECT_FAILED_MSG);
       }

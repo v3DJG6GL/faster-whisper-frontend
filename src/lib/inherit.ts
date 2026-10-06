@@ -59,6 +59,8 @@ function shownValue(key: DecodeKey, v: DecodeDefault["value"] | undefined): stri
   if (BOOL_KEYS.has(key)) return typeof v === "boolean" ? v : undefined;
   if (v === null) return NULL_TEXT[key];
   if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
+  // An empty text value is the server sending nothing (OUTPUT_PREFIX=""), not an unknown value.
+  if (v === "" && keySpec(key).kind === "text") return NULL_TEXT[key] ?? "none";
   if (typeof v === "string") return (keySpec(key).multiline ? v !== "" : v.trim()) ? v : undefined;
   return undefined;
 }

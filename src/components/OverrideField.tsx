@@ -23,6 +23,7 @@ export function OverrideHeader({
   desc,
   hint,
   overridden = false,
+  resettable,
   lockReason,
   describedById,
   describedText,
@@ -47,6 +48,9 @@ export function OverrideHeader({
   hint?: string;
   /** The field holds an override (empty or not): the accent dot, and the reset. */
   overridden?: boolean;
+  /** Offer the reset even when the dot is hidden (a locked/pinned key still holding a stored
+   *  value); defaults to `overridden`. */
+  resettable?: boolean;
   /** Set when an admin locked the key: the lock icon, and its reason for screen readers. */
   lockReason?: string;
   /** The id the control's `aria-describedby` names; the lock reason (else `describedText`) is
@@ -75,7 +79,7 @@ export function OverrideHeader({
   children: ReactNode;
 }) {
   const showClear = !!onClear && canClear && !disabled && !lockReason;
-  const showReset = !!onReset && overridden && !disabled;
+  const showReset = !!onReset && (resettable ?? overridden) && !disabled;
   return (
     <div
       title={disabled ? disabledTitle : undefined}

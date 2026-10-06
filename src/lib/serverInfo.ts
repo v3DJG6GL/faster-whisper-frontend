@@ -3,7 +3,7 @@
 // acts on these; it only says what the server does. A leaf the server did not send has no row.
 
 import type { ServerInfo } from "./types";
-import { fmtBytes, fmtDuration } from "./format";
+import { fmtBytes, fmtDuration, plural } from "./format";
 
 /** The row's dot: `bad` = audio leaves your control (captures on), `warn` = kept for a while,
  *  `ok` = not kept / not sent, `none` = forever or not applicable. */
@@ -85,8 +85,8 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
       env: "LOG_BACKUP_COUNT",
       value:
         log.max_bytes !== undefined
-          ? `${log.backup_count} files · ~${fmtBytes(log.max_bytes * (log.backup_count + 1))}`
-          : `${log.backup_count} files`,
+          ? `${plural(log.backup_count, "file")} · ~${fmtBytes(log.max_bytes * (log.backup_count + 1))}`
+          : plural(log.backup_count, "file"),
       tone: "warn",
     });
   const rt = k.recent_transcriptions;

@@ -81,6 +81,10 @@ export function useHotkeyCapture(opts: {
   // (which would re-add listeners + re-suspend hotkeys on every render).
   const ref = useRef(opts);
   ref.current = opts;
+  // Owners already taken over for the parked chord: a chord can clash with several bindings at
+  // once, and the caller's take-over state update has not re-rendered `others` yet, so the next
+  // clash check filters these out by id.
+  const takenRef = useRef<string[]>([]);
 
   useEffect(() => {
     if (!capturing) {
@@ -89,6 +93,7 @@ export function useHotkeyCapture(opts: {
       return;
     }
     setPending(null); // a new capture replaces an unanswered clash
+    takenRef.current = [];
     const me = { cancel: () => ref.current.onCancel() };
     const prev = activeCapture;
     activeCapture = me;
@@ -241,10 +246,32 @@ export function useHotkeyCapture(opts: {
   const acceptPending = () => {
     if (!pending) return;
     ref.current.onTakeOver(pending.otherId);
+    takenRef.current = [...takenRef.current, pending.otherId];
+    // findChordConflict reports only the first owner: if another binding clashes too, name it
+    // next instead of committing a set the save gate would refuse.
+    const next = findChordConflict(
+      pending.codes,
+      ref.current.others.filter((o) => !takenRef.current.includes(o.id)),
+      !ref.current.lowLevelActive,
+      ref.current.selfKind,
+    );
+    if (next) {
+      setPending({
+        codes: pending.codes,
+        otherId: next.id,
+        otherName: safeDisplayText(next.name, 60) || "another profile",
+        kind: next.kind,
+      });
+      return;
+    }
+    takenRef.current = [];
     ref.current.onCommit(pending.codes);
     setPending(null);
   };
-  const dismissPending = () => setPending(null);
+  const dismissPending = () => {
+    takenRef.current = [];
+    setPending(null);
+  };
 
   return { heldCodes, warn, pending, acceptPending, dismissPending };
 }

@@ -3,9 +3,10 @@
 // The trigger is the caller's (renderTrigger), so a chip row's "+ language", a form field and a
 // table's "Add language" row can all open the same list. Inside, focus never leaves the search
 // field: ↑↓ / PageUp / PageDown / Home / End move the highlighted row (aria-activedescendant),
-// Enter picks it and closes, Space ticks it in a multi-select list (only while the search is
-// empty — a space can be part of a name), Esc closes back to the trigger, Tab and a click outside
-// just close. ↑↓ on the closed trigger opens it. A short list (`search={false}`, ui/form.tsx's Select)
+// Enter picks it and closes (on a row a multi-select list already has ticked it just closes),
+// Space ticks it in a multi-select list (only while the search is empty — a space can be part of
+// a name), Esc closes back to the trigger, Tab and a click outside just close. ↑↓ on the closed
+// trigger opens it. A short list (`search={false}`, ui/form.tsx's Select)
 // has no search field: the listbox itself takes focus and the same keys, Space included.
 //
 // The popover is PORTALED to <body> and fixed-positioned at the trigger (useAnchoredRect, shared
@@ -256,7 +257,9 @@ export function ListPicker<R>({
       e.preventDefault();
       const r = flat[act];
       if (r) {
-        onPick(r);
+        // Enter ticks and closes: on a row a multi list already has ticked (where show() parks
+        // the highlight) it just closes — toggling would drop that choice.
+        if (!multi || !isSelected(r)) onPick(r);
         close(true);
       }
     } else if (e.key === " " && (multi || !search) && !query) {

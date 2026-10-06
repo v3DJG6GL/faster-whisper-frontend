@@ -819,8 +819,23 @@ export default function Dictionary() {
 
   const role = fetchRes?.state?.role;
 
-  /** Save; `false` when nothing was saved, so the leave guard keeps the user on-screen. */
-  async function save(): Promise<boolean> {
+  // The save in flight, if any. The sticky Save is disabled while saving, but `dirty` stays true until
+  // the reload lands, so "Save and leave" from the leave dialog could start a second PATCH with the
+  // same (now stale) fingerprints — and the first one's finally would unfreeze the editor under it.
+  const saveInFlight = useRef<Promise<boolean> | null>(null);
+
+  /** Save; `false` when nothing was saved, so the leave guard keeps the user on-screen. A call while a
+   *  save is already running joins that one instead of sending another. */
+  function save(): Promise<boolean> {
+    if (saveInFlight.current) return saveInFlight.current;
+    const p = runSave().finally(() => {
+      saveInFlight.current = null;
+    });
+    saveInFlight.current = p;
+    return p;
+  }
+
+  async function runSave(): Promise<boolean> {
     if (!backend || dirty.length === 0) return false;
     const rules_patch: Record<string, Record<string, unknown>> = {};
     const fingerprints: Record<string, string> = {};

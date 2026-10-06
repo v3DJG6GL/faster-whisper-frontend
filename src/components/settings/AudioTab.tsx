@@ -293,7 +293,11 @@ export function AudioTab() {
             advanced={advanced}
             onAdvancedChange={setAdvanced}
             onPick={(id) =>
-              updateSettings({ microphoneId: id, microphoneLabel: id ? labelForPick(inv, id) : null })
+              updateSettings({
+                microphoneId: id,
+                // Re-picking the unplugged pin finds no live device to name it — keep its saved label.
+                microphoneLabel: id ? (labelForPick(inv, id) ?? (id === microphoneId ? microphoneLabel : null)) : null,
+              })
             }
             className="w-56"
             // Locked during a test: switching the device mid-test re-runs the capture effect,

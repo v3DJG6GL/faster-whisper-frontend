@@ -161,7 +161,7 @@ export function LiveDictationFields({
               value={str(own(k))}
               onChange={(s) => patch({ [k]: s })}
               // The server's "" is a real value: nothing is typed at a hard break.
-              inherited={str(i) ?? (known ? "nothing" : undefined)}
+              inherited={i === "" ? "nothing" : str(i) ?? (known ? "nothing" : undefined)}
               title="\n = a line break, \t = a tab"
               disabled={off}
             />

@@ -37,6 +37,10 @@ describe("keepRows", () => {
     expect(rows.find((r) => r.env === "LOG_BACKUP_COUNT")?.value).toBe("10 files · ~110.0 MB");
     expect(rows.find((r) => r.env === "USAGE_RETENTION_DAYS")?.value).toBe("0 · forever");
   });
+  it("counts a single log backup in the singular", () => {
+    const one: ServerInfo = { keeps: { server_log: { max_bytes: 10_000_000, backup_count: 1 } } };
+    expect(keepRows(one, true).find((r) => r.env === "LOG_BACKUP_COUNT")?.value).toBe("1 file · ~20.0 MB");
+  });
   it("says whether the per-app rollup applies to you", () => {
     const you = (report: boolean) => keepRows(info, report).find((r) => r.env === "USAGE_APP_RETENTION_DAYS");
     expect(you(true)?.you).toMatch(/^Applies to you/);
