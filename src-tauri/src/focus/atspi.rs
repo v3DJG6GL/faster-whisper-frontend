@@ -156,7 +156,7 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     // the LATEST focus. Why: resolving one focus is several sequential D-Bus round-trips
     // serviced on the *target app's* UI thread, so a busy window (a terminal streaming
     // output, the dev server) can take >1s. Doing it inline made the loop await each
-    // resolve serially — under load every resolve timed out, `update_snapshot` never ran,
+    // resolve serially — under load every resolve timed out, `set_current` never ran,
     // and the snapshot FROZE on the last app that did resolve. That looked like "every
     // window is Firefox and it stopped typing": the stale `editable=Some(false)` then
     // coerced injection to clipboard, so nothing was typed. (Confirmed from the debug log:

@@ -203,9 +203,9 @@ pub fn focused_app_now(g: &AtspiGuard) -> Option<FocusedApp> {
     let snap = g.snapshot.lock();
     // Prefer the app focused RIGHT NOW. Only when our own window (or the shell) holds
     // focus — e.g. clicking "use current", or triggering dictation from our UI — fall
-    // back to the app focused just before us. This (with update_snapshot setting
-    // last_other only at the transition into our window) is what stops detection from
-    // sticking on a stale app.
+    // back to the app focused just before us. This (with `atspi::set_current` (Linux) /
+    // `windows::fold_foreground` (Windows) setting last_other only at the transition into
+    // our window) is what stops detection from sticking on a stale app.
     match &snap.current {
         Some(c) if !is_noise(&c.app_id) => Some(c.clone()),
         _ => snap.last_other.clone(),
