@@ -52,7 +52,7 @@ const TIME_FMT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit
 const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
 
 /** "Today" / "Yesterday" / a local date — the bucket a record sorts under.
- *  `todayStart` is `startOfDay(new Date())`, computed once per pass. */
+ *  `todayStart` is `startOfDay(new Date())`, refreshed at local midnight. */
 function dayBucket(iso: string, todayStart: number): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Earlier";
@@ -68,6 +68,28 @@ function timeOf(iso: string): string {
 }
 
 const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
+
+type Haystack = { name: string; appId: string; text: string };
+
+/** Search haystacks keyed by record identity. upsertRecord reuses untouched
+ *  record objects and every writer replaces a changed one, so an upsert only
+ *  re-derives the record it changed — not every entry's 20 000-char text. */
+const haystackCache = new WeakMap<TranscriptRecord, Haystack>();
+
+function haystackOf(r: TranscriptRecord): Haystack {
+  const hit = haystackCache.get(r);
+  if (hit) return hit;
+  // The translated text a session injected is shown and copied, so it is
+  // searchable too — type-guarded and bounded, the file is not validated on load.
+  const translated = typeof r.translatedText === "string" ? "\n" + r.translatedText.slice(0, 20_000) : "";
+  const h: Haystack = {
+    name: r.sourceName.toLowerCase(),
+    appId: (r.appId ?? "").toLowerCase(),
+    text: (recordText(r, 20_000) + translated).toLowerCase(),
+  };
+  haystackCache.set(r, h);
+  return h;
+}
 
 type Segment = "all" | "file" | "url" | "text" | "dictation";
 
@@ -247,6 +269,18 @@ export default function History() {
   const [exportError, setExportError] = useState<{ id: string; msg: string } | null>(null);
   const copyTimer = useRef<number | undefined>(undefined);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  // Local midnight of today, re-read when midnight passes so a History left
+  // open overnight moves yesterday's entries out of "Today".
+  const [todayStart, setTodayStart] = useState(() => startOfDay(new Date()));
+  useEffect(() => {
+    const next = new Date(todayStart);
+    next.setDate(next.getDate() + 1);
+    const t = window.setTimeout(
+      () => setTodayStart(startOfDay(new Date())),
+      Math.max(0, next.getTime() - Date.now()) + 1000,
+    );
+    return () => window.clearTimeout(t);
+  }, [todayStart]);
 
   useEffect(() => {
     void loadHistory();
@@ -275,15 +309,7 @@ export default function History() {
 
   // Pre-compute search haystacks once per record set — this avoids re-deriving
   // every record's full text (up to 20 000 chars) on every keystroke.
-  const haystacks = useMemo(
-    () =>
-      records.map((r) => ({
-        name: r.sourceName.toLowerCase(),
-        appId: (r.appId ?? "").toLowerCase(),
-        text: recordText(r, 20_000).toLowerCase(),
-      })),
-    [records],
-  );
+  const haystacks = useMemo(() => records.map(haystackOf), [records]);
 
   // Search first (global — both kinds, names AND text), THEN the segment/app
   // facets, so hidden matches can be counted and surfaced.
@@ -341,7 +367,6 @@ export default function History() {
 
   const buckets = useMemo(() => {
     const out: { label: string; items: TranscriptRecord[] }[] = [];
-    const todayStart = startOfDay(new Date());
     for (const rec of visible) {
       const label = dayBucket(rec.createdAt, todayStart);
       const last = out[out.length - 1];
@@ -349,7 +374,7 @@ export default function History() {
       else out.push({ label, items: [rec] });
     }
     return out;
-  }, [visible]);
+  }, [visible, todayStart]);
 
   const dictationOff = settings.transcribe?.keepDictationHistory === false;
 
@@ -937,7 +962,7 @@ export default function History() {
         </Card>
       )}
 
-      {hiddenMatches > 0 && (
+      {hiddenMatches > 0 && visible.length > 0 && (
         <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-accent/25 bg-accent-soft/40 px-4 py-2.5 text-[12.5px] text-dim">
           <Search className="size-3.5 shrink-0 text-accent" />
           <span className="flex-1">
@@ -961,7 +986,7 @@ export default function History() {
             ? `No ${segment === "all" ? "entries" : segLabel} match "${safeDisplayText(query, 80)}".`
             : `No ${segment === "all" ? "entries" : segLabel}${appFilter ? " for this app" : ""} yet.`}
           <div className="mt-3 flex items-center justify-center gap-2">
-            {query.trim() && segment !== "all" && searched.length > visible.length && (
+            {hiddenMatches > 0 && (
               <Button variant="default" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
                 Show all types · {searched.length}
               </Button>
