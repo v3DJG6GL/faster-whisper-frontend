@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   getPendingConflict,
   getPendingReview,
@@ -9,6 +9,19 @@ import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
 import type { Backend } from "../types";
+import type { SyncState } from "./syncTypes";
+
+/** Record what the engine writes to sync-state.json (outside Tauri the real call no-ops). */
+const saved = vi.hoisted(() => ({ last: null as null | SyncState }));
+vi.mock("../api", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("../api")>();
+  return {
+    ...orig,
+    saveSyncState: async (st: SyncState) => {
+      saved.last = st;
+    },
+  };
+});
 
 function backend(over: Partial<Backend> = {}): Backend {
   return {
@@ -79,5 +92,16 @@ describe("resolveSyncConflicts", () => {
     raiseConflictForTests({ remoteDevice: "laptop-b" });
     await resolveSyncConflicts({ general: "remote" });
     expect(useApp.getState().lastSyncDevice).toBe("laptop-b");
+  });
+
+  it("adopting a resolution persists the server's timestamp for the adopted version", async () => {
+    // initSync restores "Last synced" only from a truthy `updatedAt`; a null one read as "Not
+    // synced yet." after every restart, and an all-remote resolution never pushes to re-stamp it.
+    saved.last = null;
+    raiseConflictForTests({ remoteVersion: 4, remoteUpdatedAt: 1700000000, remoteDevice: "laptop-b" });
+    await resolveSyncConflicts({ general: "remote" });
+    const last = saved.last as SyncState | null; // written by the mock, not visible to narrowing
+    expect(last?.version).toBe(4);
+    expect(last?.updatedAt).toBe(1700000000);
   });
 });

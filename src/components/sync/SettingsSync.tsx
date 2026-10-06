@@ -18,7 +18,7 @@ import {
   StatusDot,
   Toggle,
 } from "@/components/ui";
-import { evdevStatus, importSettingsFile, pickImportFile, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
+import { evdevStatus, pickAndImportSettings, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
 import { applyImport, exportToFile } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/sync/SyncSettingsList";
 import {
@@ -42,7 +42,7 @@ import {
 import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { relTime } from "@/lib/format";
-import { conflicts as chordConflicts, quickAddPeer } from "@/lib/hotkeyConflicts";
+import { conflicts as chordConflicts, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, SyncCategory } from "@/lib/types";
@@ -91,6 +91,25 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   { key: "logging", title: "Logging", desc: "Log level, file retention, sidebar visibility. Log files themselves never sync." },
 ];
 
+
+/** What a selection would overwrite on this device, for the two preview dialogs' replace
+ *  warning: a selected category the blob carries AND the device already has data for. */
+function replacedNames(
+  sel: Record<SyncCategory, boolean>,
+  blob: SyncBlob,
+  st: ReturnType<typeof useApp.getState>,
+): string[] {
+  return [
+    sel.backends && blob.backends && st.backends.length > 0 && "backends",
+    sel.profiles && blob.profiles && st.profiles.length > 0 && "profiles",
+    sel.appRules && blob.appRules && st.appRules.length > 0 && "app rules for this OS",
+  ].filter((n): n is string => typeof n === "string");
+}
+
+/** "a", "a and b", "a, b and c". */
+function joinNames(names: string[]): string {
+  return names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
 
 /** Initial per-category selection for the two preview dialogs: every category
  *  present in the blob starts checked. */
@@ -172,10 +191,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     sel.dictionary && rawQa !== undefined
       ? (isCodeList(rawQa) ? rawQa : [])
       : st.settings.general.quickAddHotkey;
-  const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
-    0,
-    MAX_PREVIEW_PEERS,
-  );
+  const peers = withQuickAddPeer(wouldProfiles, wouldQa).slice(0, MAX_PREVIEW_PEERS);
   const predictedConflicts =
     chordConflicts(peers, !lowLevelActive).length > 0;
 
@@ -186,11 +202,8 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         )
       : [];
 
-  // Same condition `RestoreFromServer` computes for its own replace warning — see the notice below.
-  const replaces =
-    (sel.backends && categories.backends && st.backends.length > 0) ||
-    (sel.profiles && categories.profiles && st.profiles.length > 0) ||
-    (sel.appRules && categories.appRules && st.appRules.length > 0);
+  // Same helper `RestoreFromServer` uses for its own replace warning — see the notice below.
+  const replaced = replacedNames(sel, categories, st);
 
   const apply = async () => {
     setApplying(true);
@@ -251,10 +264,10 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
             block (it returns null on an empty list) and no missing-key warning, and on Import
             deletes every configured backend, nulls every profile's backendId and takes the keyring
             association with it. Nothing in the dialog said the selection replaces rather than adds. */}
-        {replaces && (
+        {replaced.length > 0 && (
           <Notice tone="warn">
-            Selected categories replace what&apos;s on this device — your current backends and
-            profiles are overwritten.
+            Selected categories replace what&apos;s on this device — your current{" "}
+            {joinNames(replaced)} are overwritten.
           </Notice>
         )}
         {result.hasSecrets && sel.backends && (
@@ -354,15 +367,9 @@ export function RestoreFromServer({
     sel.dictionary && rawQa !== undefined
       ? (isCodeList(rawQa) ? rawQa : [])
       : st.settings.general.quickAddHotkey;
-  const peers = (wouldQa.length > 0 ? [...wouldProfiles, quickAddPeer(wouldQa)] : wouldProfiles).slice(
-    0,
-    MAX_PREVIEW_PEERS,
-  );
+  const peers = withQuickAddPeer(wouldProfiles, wouldQa).slice(0, MAX_PREVIEW_PEERS);
   const predictedConflicts = chordConflicts(peers, !lowLevelActive).length > 0;
-  const replaces =
-    (sel.backends && blob.backends && st.backends.length > 0) ||
-    (sel.profiles && blob.profiles && st.profiles.length > 0) ||
-    (sel.appRules && blob.appRules && st.appRules.length > 0);
+  const replaced = replacedNames(sel, blob, st);
 
   const apply = async () => {
     // Re-check right before applying: applyBlob silently DEFERS while dictating
@@ -421,10 +428,10 @@ export function RestoreFromServer({
       </div>
 
       <div className="mt-3 flex flex-col gap-2">
-        {replaces && (
+        {replaced.length > 0 && (
           <Notice tone="warn">
-            Selected categories replace what&apos;s on this device — your current backends and
-            profiles are overwritten.
+            Selected categories replace what&apos;s on this device — your current{" "}
+            {joinNames(replaced)} are overwritten.
           </Notice>
         )}
         {sel.backends && blob.backends && <IncomingAddresses list={blob.backends.list} />}
@@ -711,7 +718,9 @@ export function SyncTab() {
 
   const doExport = async () => {
     try {
-      const stamp = new Date().toISOString().slice(0, 10);
+      // Local date: toISOString() is UTC, so near midnight it named yesterday's or tomorrow's file.
+      const d = new Date();
+      const stamp = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
       const path = await pickSavePath(`faster-whisper-settings-${stamp}.json`);
       if (!path) return;
       setExportState("busy");
@@ -726,17 +735,10 @@ export function SyncTab() {
 
   const doImport = async () => {
     setImportError(null);
-    try {
-      const path = await pickImportFile();
-      if (!path) return;
-      setImportResult(await importSettingsFile(path));
-    } catch (e) {
-      // `import_settings_file`'s serde errors echo the offending input VERBATIM and untruncated
-      // (the config enums are plain unit variants, so `unknown_variant` quotes whatever the file
-      // said). That is attacker-authored text from a file that never passed validation, i.e. with
-      // no consent step in front of it. Defang it the way the `warnings` channel beside it is.
-      setImportError(safeDisplayText(String(e), 300));
-    }
+    const r = await pickAndImportSettings();
+    if (!r) return;
+    if ("error" in r) setImportError(r.error);
+    else setImportResult(r.result);
   };
 
   const doDeleteServerCopy = async () => {

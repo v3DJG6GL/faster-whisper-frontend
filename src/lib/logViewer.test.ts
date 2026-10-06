@@ -41,7 +41,20 @@ vi.mock("./api", () => ({
   },
 }));
 
-const { attachLogStream, clearView, visibleLines } = await import("./logViewer");
+const vis = vi.hoisted(() => ({ hidden: false, listeners: new Set<(h: boolean) => void>() }));
+vi.mock("./windowVisibility", () => ({
+  isWindowHidden: () => vis.hidden,
+  onWindowHiddenChange: (fn: (h: boolean) => void) => {
+    vis.listeners.add(fn);
+    return () => void vis.listeners.delete(fn);
+  },
+}));
+function setHidden(h: boolean) {
+  vis.hidden = h;
+  for (const fn of [...vis.listeners]) fn(h);
+}
+
+const { attachLogStream, clearView, visibleLines, useLogs } = await import("./logViewer");
 
 describe("visibleLines", () => {
   it("hands back a fresh array on every version bump, so memos keyed on it invalidate", async () => {
@@ -91,5 +104,32 @@ describe("attachLogStream ownership", () => {
     expect(emit).toBeNull(); // unlisten ran
     emit?.({ lines: [line(9)] });
     expect(visibleLines().length).toBe(before);
+  });
+});
+
+describe("attachLogStream while the window is hidden", () => {
+  it("holds batches without bumping the version, then replays them in order on show", async () => {
+    const detach = await attachLogStream();
+    const before = visibleLines().length;
+    // Well past anything earlier cases appended (append drops already-seen seqs).
+    const lastSeq = 100;
+    const version = useLogs.getState().version;
+
+    setHidden(true);
+    emit?.({ lines: [line(lastSeq + 1)] });
+    emit?.({ lines: [line(lastSeq + 2)] });
+    expect(useLogs.getState().version).toBe(version);
+    expect(visibleLines()).toHaveLength(before);
+
+    setHidden(false);
+    const shown = visibleLines();
+    expect(shown.slice(before).map((l) => l.seq)).toEqual([lastSeq + 1, lastSeq + 2]);
+
+    // Live again once shown.
+    emit?.({ lines: [line(lastSeq + 3)] });
+    expect(visibleLines()).toHaveLength(before + 3);
+
+    detach();
+    expect(vis.listeners.size).toBe(0);
   });
 });

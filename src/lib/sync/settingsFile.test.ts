@@ -19,7 +19,7 @@ vi.mock("./sync", async (importOriginal) => {
   const mod = await importOriginal<typeof import("./sync")>();
   return {
     ...mod,
-    applyBlob: vi.fn(async () => {}),
+    applyBlob: vi.fn(async () => true),
     migrateBlob: vi.fn(mod.migrateBlob),
   };
 });
@@ -139,5 +139,15 @@ describe("applyImport", () => {
     expect(passedSel).toEqual(sel);
     expect(retries).toBe(2);
     expect(opts).toEqual({ ignoreGates: true });
+  });
+
+  // The preview dialog shows an error on false — a deferred apply or exhausted
+  // retries — so the boolean is part of the contract, not a pass-through detail.
+  it("reports whether the apply landed", async () => {
+    const { applyBlob } = await import("./sync");
+    const { applyImport } = await import("./settingsFile");
+    await expect(applyImport(allOff(), emptyResult())).resolves.toBe(true);
+    vi.mocked(applyBlob).mockResolvedValueOnce(false);
+    await expect(applyImport(allOff(), emptyResult())).resolves.toBe(false);
   });
 });

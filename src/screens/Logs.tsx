@@ -85,8 +85,13 @@ function LineCells({ l, wrap, chip }: { l: LogLine; wrap: boolean; chip?: ReactN
         className={cn(
           "min-w-0",
           wrap ? "whitespace-pre-wrap break-words" : "whitespace-pre",
-          l.level === "error" ? "text-rec" : l.level === "warn" ? "text-warn" : "text-text/85",
-          (l.level === "debug" || l.level === "trace") && "text-faint",
+          l.level === "error"
+            ? "text-rec"
+            : l.level === "warn"
+              ? "text-warn"
+              : l.level === "debug" || l.level === "trace"
+                ? "text-faint"
+                : "text-text/85",
         )}
       >
         {stripControlChars(l.msg)}
@@ -182,6 +187,12 @@ export default function Logs() {
   // Attach the stream for the screen's lifetime; badge clears on open & close.
   useEffect(() => {
     markLogsViewed();
+    // Lines arriving while the page is open are being read: keep the baseline in
+    // step so the sidebar badge does not count them. markLogsViewed writes only
+    // `baseline`, so the status guard cannot loop.
+    const unsubBadge = useLogs.subscribe((s, p) => {
+      if (s.status !== p.status) markLogsViewed();
+    });
     // The bug-report header names the last recorded run; a launch straight into Logs (a
     // failure doorway's own destination) has not loaded history yet. Idempotent.
     void loadHistory();
@@ -196,6 +207,7 @@ export default function Logs() {
     return () => {
       cancelled = true;
       detach?.();
+      unsubBadge();
       markLogsViewed();
     };
   }, []);
@@ -204,6 +216,9 @@ export default function Logs() {
   // `version` is bumped by every append and by Clear view — the only writes to
   // the ring or the clear floor — so the full-buffer scan need not repeat per keystroke.
   const cleared = useMemo(() => clearedCount(), [version]);
+  // Clear view empties `all` itself (the floor sits past every line), so an empty
+  // `all` with a floor is a cleared view; lines that exist but match nothing are a filter miss.
+  const emptyKind = all.length > 0 ? "filtered" : cleared > 0 ? "cleared" : "none";
   // Union with the SELECTED tags: a tag whose lines have left the buffer (Clear view,
   // roll-over) still filters, so its chip must stay on-screen to be switchable off.
   const chips = useMemo(() => [...new Set([...collectTags(all), ...tags])], [all, tags]);
@@ -417,14 +432,18 @@ export default function Logs() {
           {rows.length === 0 ? (
             <div className="flex h-full flex-col items-center justify-center gap-1.5 text-center">
               <span className="text-[13.5px] font-medium text-dim">
-                {all.length === 0 ? "Nothing logged yet this session" : cleared > 0 ? "View cleared" : "No lines match the filters"}
+                {emptyKind === "filtered"
+                  ? "No lines match the filters"
+                  : emptyKind === "cleared"
+                    ? "View cleared"
+                    : "Nothing logged yet this session"}
               </span>
               <span className="max-w-[380px] text-[12.5px] text-faint">
-                {all.length === 0
-                  ? "Lines appear here as you dictate or transcribe. Earlier sessions live in the log folder."
-                  : cleared > 0
-                    ? `${cleared} earlier lines hidden. New lines will appear as they arrive.`
-                    : "Loosen the level, tags, or text filter to see more."}
+                {emptyKind === "filtered"
+                  ? "Loosen the level, tags, or text filter to see more."
+                  : emptyKind === "cleared"
+                    ? `${cleared.toLocaleString()} earlier lines hidden. New lines will appear as they arrive.`
+                    : "Lines appear here as you dictate or transcribe. Earlier sessions live in the log folder."}
               </span>
             </div>
           ) : (

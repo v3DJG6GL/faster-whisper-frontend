@@ -36,8 +36,8 @@ import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
 import { sanitizeCueLimits } from "../transcript/cueSplit";
-import { normalizeAppId, safeDisplayText } from "../sanitize";
-import { conflicts, quickAddPeer, QUICK_ADD_PEER_ID } from "../hotkeyConflicts";
+import { appRuleKey, normalizeAppId, safeDisplayText } from "../sanitize";
+import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflicts";
 import { LEGACY_HANDSFREE } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
 import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "../decodeKeys";
@@ -745,11 +745,9 @@ function isReservedBackendId(id: unknown): boolean {
   return typeof id === "string" && id.startsWith("__") && id.endsWith("__");
 }
 
-/** Inbound `profiles.list` / `backends.list` are typed only by assertion: the FILE import path
- *  gets a real serde parse in Rust, the sync path does not. An element missing a required field
- *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
- *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
- *  entries here so both paths share the same floor. */
+/** TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server. */
+const CONTEXT_SEGMENTS_MAX = 10;
+
 /** The `translationOverrides` leaf, shared by the profile and backend sanitizers. Rust holds it as
  *  opaque JSON and forwards `contextSegments` into an `Option<u32>` IPC field on every dictation
  *  translation, so a fractional or negative value would fail that call — it is an integer 0–10
@@ -770,9 +768,11 @@ export function clampTranslationOverrides(v: unknown): TranslationOverrides | un
   };
 }
 
-/** TRANSLATION_CONTEXT_SEGMENTS' upper bound on the server. */
-const CONTEXT_SEGMENTS_MAX = 10;
-
+/** Inbound `profiles.list` / `backends.list` are typed only by assertion: the FILE import path
+ *  gets a real serde parse in Rust, the sync path does not. An element missing a required field
+ *  reaches consumers that deref it unguarded (`p.hotkey.length`, `deriveChipTag(p.name)`), and
+ *  with no error boundary in the tree a throw during render unmounts the window. Drop malformed
+ *  entries here so both paths share the same floor. */
 export function sanitizeProfiles(list: unknown): Profile[] {
   if (!Array.isArray(list)) return [];
   return dedupeById(list
@@ -928,7 +928,7 @@ function disableConflictingProfiles(
    *  the chord is remote-authored and the list is this device's own — see below. */
   profilesAreInbound: boolean,
 ): { profiles: Profile[]; rejectQuickAddHotkey: boolean } {
-  const peers = quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
+  const peers = withQuickAddPeer(profiles, quickAddHotkey);
   const order = new Map(peers.map((p, i) => [p.id, i]));
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
@@ -1302,7 +1302,7 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
         const ids = new Set<string>();
         const appIds = new Set<string>();
         return (r: AppRule) => {
-          const key = r.appId.trim().toLowerCase();
+          const key = appRuleKey(r.appId);
           if (ids.has(r.id) || appIds.has(key)) return false;
           ids.add(r.id);
           appIds.add(key);
@@ -1696,8 +1696,13 @@ export async function applyBlob(
         throw STALE;
       }
     }
-    if (cats.profiles && isPlainObject(blob.profiles)) {
-      nextProfiles = sanitizeProfiles(blob.profiles.list);
+    // One verdict for "profiles arrive in this apply", shared by the arm below and the chord
+    // collision pass after it: a truthy NON-object container (a string, an array) skips the arm,
+    // so it must not count as inbound there either — or a remote quick-add chord would disable
+    // this device's own, unchanged profiles to make room for itself.
+    const inboundProfiles = cats.profiles && isPlainObject(blob.profiles) ? blob.profiles : null;
+    if (inboundProfiles) {
+      nextProfiles = sanitizeProfiles(inboundProfiles.list);
       // "Profile shortcuts" sub-toggle OFF: chords are per-machine — re-pin each profile this
       // device already knows to ITS chord (the recordingsDir precedent, per list element). A
       // profile new to this device keeps the inbound chord: there is no local value, and
@@ -1732,8 +1737,8 @@ export async function applyBlob(
         ...nextSettings,
         homeProfileId: !gates.homeProfile
           ? settings.homeProfileId ?? null
-          : typeof blob.profiles.homeProfileId === "string"
-            ? blob.profiles.homeProfileId
+          : typeof inboundProfiles.homeProfileId === "string"
+            ? inboundProfiles.homeProfileId
             : null,
       };
     }
@@ -1815,7 +1820,7 @@ export async function applyBlob(
     const resolved = disableConflictingProfiles(
       nextProfiles,
       nextSettings.general.quickAddHotkey,
-      !!(cats.profiles && blob.profiles),
+      inboundProfiles !== null,
     );
     nextProfiles = resolved.profiles;
     if (resolved.rejectQuickAddHotkey) {
@@ -1918,6 +1923,9 @@ interface PendingConflict {
   remote: SyncBlob;
   remoteVersion: number;
   remoteDevice: string | null;
+  /** The server's `updated_ts` for `remoteVersion` — what an adopt persists as `updatedAt`, so a
+   *  restart still restores "Last synced" (initSync skips a null one). */
+  remoteUpdatedAt: number | null;
 }
 let pendingConflict: PendingConflict | null = null;
 /** Monotonic identity for the CURRENT pending conflict: the dialog keys its
@@ -2177,6 +2185,8 @@ export async function pullNow(manual = false): Promise<void> {
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
+    // Superseded while in the keyring: neither read the server nor stamp "ok" over the new epoch.
+    if (myGen !== gen) return;
     const pullUrl = liveSyncTarget(backend);
     if (pullUrl === null) {
       // The target moved while we were in the keyring. Don't read the abandoned host — the next
@@ -2278,6 +2288,9 @@ export async function pushNow(manual = false): Promise<void> {
       return;
     }
     for (let attempt = 0; attempt < 3; attempt++) {
+      // Superseded while composing (the keyring read can park up to 10 s) — sync turned off or
+      // the server copy deleted meanwhile: never send. inFlight was already reset by supersede().
+      if (myGen !== gen) return;
       // Re-asked per ATTEMPT, not once before the loop: a conflict retry re-composes and re-sends,
       // so the address can go stale between attempts too. This is the request that carries every
       // backend's plaintext key, so it is the one that must not go to an abandoned host.
@@ -2323,7 +2336,8 @@ export async function pushNow(manual = false): Promise<void> {
         const { merged, conflicts } = mergeBlobs(state.snapshot, blob, remoteBlob);
         if (conflicts.length > 0) {
           raiseConflict({ categories: conflicts, merged, local: blob, remote: remoteBlob,
-            remoteVersion: remote.version, remoteDevice: remote.device ?? null });
+            remoteVersion: remote.version, remoteDevice: remote.device ?? null,
+            remoteUpdatedAt: remote.updated_ts ?? null });
           return;
         }
         // Auto-merged: adopt the merge locally, then retry on the new base. Honour the user's
@@ -2335,7 +2349,7 @@ export async function pushNow(manual = false): Promise<void> {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           raiseReview({
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
-            version: remote.version, updatedAt: null, device: remote.device ?? null,
+            version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true,
           });
           return;
@@ -2379,7 +2393,8 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   const { merged, conflicts } = mergeBlobs(state.snapshot, local, remoteBlob);
   if (conflicts.length > 0) {
     raiseConflict({ categories: conflicts, merged, local, remote: remoteBlob,
-      remoteVersion: remote.version, remoteDevice: remote.device ?? null });
+      remoteVersion: remote.version, remoteDevice: remote.device ?? null,
+      remoteUpdatedAt: remote.updated_ts ?? null });
     return;
   }
   // This pull is unattended (startup + every window focus). If it would repoint a backend or
@@ -2794,6 +2809,7 @@ export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void
     remote: {},
     merged: {},
     remoteVersion: 0,
+    remoteUpdatedAt: null,
     ...over,
   } as unknown as PendingConflict);
 }
@@ -2840,7 +2856,7 @@ export async function resolveSyncConflicts(
       cats: applyCats,
       remote: c.remote,
       version: c.remoteVersion,
-      updatedAt: null,
+      updatedAt: c.remoteUpdatedAt ?? null,
       device: c.remoteDevice ?? null,
       pushAfter: true,
     });
@@ -2858,8 +2874,9 @@ export async function resolveSyncConflicts(
   await persistState({
     version: c.remoteVersion,
     // The writer of the version being adopted, like the two sibling adopt sites — otherwise
-    // "Last synced just now · from X" kept naming the PREVIOUS sync's device.
-    updatedAt: null,
+    // "Last synced just now · from X" kept naming the PREVIOUS sync's device. Its `updatedAt`
+    // too: a null one makes initSync restore "Not synced yet." after a restart.
+    updatedAt: c.remoteUpdatedAt ?? null,
     device: c.remoteDevice ?? null,
     hash: hashBlob(c.remote),
     snapshot: c.remote,

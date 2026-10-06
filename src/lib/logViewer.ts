@@ -16,6 +16,7 @@ import {
   type LogLine,
 } from "./api";
 import type { LevelThreshold } from "./logFilter";
+import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 
 export const LOG_BUFFER_CAP = 10_000;
 
@@ -174,10 +175,24 @@ export async function attachLogStream(): Promise<() => void> {
   // Park early batches; hydration goes in first, then they replay in order.
   let hydrated = false;
   let parked: LogLine[] = [];
+  // Closed to the tray on this page, every batch would still bump `version` and re-run
+  // the screen's filter/fold over up to LOG_BUFFER_CAP lines for nobody. Hold post-hydration
+  // batches while hidden and replay them on show; the stream itself stays on, so no
+  // re-hydration (and none of its ordering hazard) is needed.
+  let hiddenParked: LogLine[] = [];
   const unlisten = await onLogLines((p) => {
     if (cancelled) return;
-    if (hydrated) append(p.lines);
-    else parked.push(...p.lines);
+    if (!hydrated) parked.push(...p.lines);
+    else if (isWindowHidden()) {
+      hiddenParked.push(...p.lines);
+      if (hiddenParked.length > LOG_BUFFER_CAP) hiddenParked = hiddenParked.slice(-LOG_BUFFER_CAP);
+    } else append(p.lines);
+  });
+  const unsubHidden = onWindowHiddenChange((hidden) => {
+    if (hidden || cancelled || !hydrated || hiddenParked.length === 0) return;
+    const held = hiddenParked;
+    hiddenParked = [];
+    append(held);
   });
   // Stream first-gate AFTER the listener exists, then hydrate the gap —
   // set_log_stream(true) marks "emit from now", so hydration covers the past.
@@ -201,12 +216,14 @@ export async function attachLogStream(): Promise<() => void> {
     if (!ok) {
       cancelled = true;
       unlisten();
+      unsubHidden();
       if (gen === attachGen) void setLogStream(false);
     }
   }
   return () => {
     cancelled = true;
     unlisten();
+    unsubHidden();
     if (gen === attachGen) void setLogStream(false);
   };
 }

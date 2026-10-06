@@ -660,6 +660,20 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(after.settings.quickAddList).toEqual(before.settings.quickAddList);
   });
 
+  it("a malformed profiles container does not count as inbound for the quick-add collision", async () => {
+    // The profiles arm skips a truthy non-object, so the list is still THIS device's own — a
+    // remote chord colliding with it must be dropped, not switch the local profile off.
+    useApp.setState({ profiles: [profile({ hotkey: ["ControlLeft", "KeyX"] })] });
+    const before = useApp.getState().settings.general.quickAddHotkey;
+    await applyBlob(
+      { profiles: "x" as never, dictionary: { quickAddHotkey: ["ControlLeft"] } as never },
+      CATS_ALL,
+    );
+    const after = useApp.getState();
+    expect(after.profiles[0].enabled).toBe(true);
+    expect(after.settings.general.quickAddHotkey).toEqual(before);
+  });
+
   it("a store edit made while the keyring wait is parked is not hydrated away", async () => {
     // Everything applyBlob computes is derived from a PRE-wait snapshot, and hydrate replaces
     // the slices wholesale — so the staleness check must cover `backends` too, not just
