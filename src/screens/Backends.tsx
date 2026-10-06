@@ -873,8 +873,17 @@ function RestoreOffer({
     // backend was minted, so the common case (the restore brought one for the same server)
     // ended with sync enabled against a backend this device held no credential for.
     if (keyTyped) {
+      // A key written over an EXISTING keyed backend is a rotation upsertBackend can't see
+      // (key presence is unchanged), so the old caller's caps/usage/connection would stand.
+      const rotated = !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
       try {
         await setBackendKey(match.id, keyTyped);
+        // Drop them as Editor.doSave does; the verdict tested with this key is re-installed
+        // below (forcing a caps refresh), otherwise readers re-probe.
+        if (rotated) {
+          forgetCaps(match.id);
+          useApp.getState().forgetBackendCaches(match.id);
+        }
         if (!match.hasApiKey) {
           const withKey = { ...match, hasApiKey: true };
           s.upsertBackend(withKey);
@@ -889,7 +898,7 @@ function RestoreOffer({
     }
     // Cache the connect step's verdict only if the backend really routes to the address it
     // was tested against: a per-device URL override can send every request to host B while
-    // the canonical address is host A (the invariant handleTest / onSave already keep).
+    // the canonical address is host A (the invariant handleTest / Editor.doSave already keep).
     if (normalizeUrl(effectiveServerUrl(match, useApp.getState().settings)) === target) {
       useApp.getState().setConnection(match.id, info);
     }

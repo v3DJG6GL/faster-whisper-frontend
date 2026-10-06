@@ -135,19 +135,22 @@ export default function Settings() {
     },
     [basePref],
   );
-  useEffect(() => {
-    if (tab === "Recording & history") refreshStoreStats();
-  }, [tab, refreshStoreStats]);
-  // Inline two-step confirmation for the destructive store actions — the
-  // confirm names the exact count/size (never a bare "are you sure").
-  const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "video" | "clear">(null);
-  const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const dirBusy = useSyncExternalStore(subscribeBusy, () => busy.dir);
   // One store action in flight (`busy.store`): the confirm stays mounted until it settles, and a
   // second click re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
   // Its rendered mirror disables the folder buttons while a wipe runs (a move would walk the
   // folder the wipe is deleting from).
   const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
+  // Re-read on the busy true->false edge too: a wipe or move outlives the screen, so the mount
+  // that started it may be gone when it settles — this effect refreshes whichever mount is live
+  // (a wipe or a failed move leaves basePref unchanged, so nothing else would re-run it).
+  useEffect(() => {
+    if (tab === "Recording & history" && !dirBusy && !storeBusy) refreshStoreStats();
+  }, [tab, refreshStoreStats, dirBusy, storeBusy]);
+  // Inline two-step confirmation for the destructive store actions — the
+  // confirm names the exact count/size (never a bare "are you sure").
+  const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "video" | "clear">(null);
+  const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   // Both die with the tab that owns them: an armed "Delete 214 dictations" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
   useEffect(() => {
@@ -171,7 +174,6 @@ export default function Settings() {
         setStoreMsg({ text: `Removed ${n} ${what}.` });
         setConfirming(null);
       }
-      refreshStoreStats();
       void loadHistory(true).catch(() => {});
     };
     const fail = (e: unknown) => {
@@ -273,7 +275,6 @@ export default function Settings() {
             // A partial move already rewrote the records that did move: reload either way.
             forgetRecord(null);
             void loadHistory(true).catch(() => {});
-            refreshStoreStats();
             throw e;
           }
           updateRecording({ audioBaseDir: picked });
@@ -303,7 +304,6 @@ export default function Settings() {
         // A partial move already rewrote the records that did move: reload either way.
         forgetRecord(null);
         void loadHistory(true).catch(() => {});
-        refreshStoreStats();
         setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true });
       })
       .finally(() => setBusy("dir", false));
@@ -391,7 +391,7 @@ export default function Settings() {
             <SectionLabel className="mb-1 mt-4">Insertion</SectionLabel>
             <SettingRow
               title={SETTING.typeAsISpeak.label}
-              desc="Insert each phrase as you talk, instead of the whole transcript when the session ends. Only applies to hands-free profiles on a streaming backend — push-to-talk always inserts on release, and batch after transcribing. A profile can override this."
+              desc="Insert each phrase as you talk, instead of the whole transcript when the session ends. Streaming backends only (batch inserts after transcribing). Push-to-talk inserts on release unless the insert method is Clipboard only, which types nothing and refreshes the clipboard per phrase. A profile can override this."
             >
               <Toggle
                 checked={s.general.typeAsISpeak}

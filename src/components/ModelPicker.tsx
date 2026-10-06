@@ -71,6 +71,15 @@ export function ModelPicker({
         // Enter on a highlighted suggestion is handled (and preventDefault'ed)
         // by the Combobox; a plain Enter commits the typed text.
         if (e.key === "Enter" && !e.defaultPrevented) commit(draft);
+        // An Escape the Combobox didn't consume (its popover was closed) would reach the
+        // editor's window handler while the typed model is still only a local draft — the
+        // editor looks clean and closes without the unsaved prompt. Commit and stop here
+        // instead; the next Escape then sees the dirty editor. (Committing and letting this
+        // same event bubble wouldn't help: the window listener holds the pre-commit state.)
+        if (e.key === "Escape" && draft.trim() !== value) {
+          commit(draft);
+          e.stopPropagation();
+        }
       }}
     >
       <Combobox

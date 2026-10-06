@@ -181,7 +181,7 @@ function Editor({
   // Capture checks a chord only against the activation it was recorded under; flipping
   // Activation afterwards can turn a designed hold⊂hands-free nesting into a real shadow
   // that, once saved, pauses every config save. Re-check the committed chord here
-  // (display only — the user fixes it by changing the shortcut or the activation).
+  // (display only — the user fixes it by changing the shortcut, or the activation for a shadow).
   const liveClash =
     !capturing && !capture.pending && p.enabled && p.hotkey.length > 0
       ? findChordConflict(p.hotkey, peers, !lowLevelActive, selfKind)
@@ -292,9 +292,19 @@ function Editor({
       </div>
       {liveClash && (
         <Notice tone="warn" className="mt-3">
-          Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60) || "another profile"}” as{" "}
-          {ACTIVATION[p.activation].label} — saving would pause all settings saves. Change the shortcut or the
-          activation.
+          {/* A duplicate clashes before any nesting exemption, so no activation change clears it. */}
+          {liveClash.kind === "duplicate" ? (
+            <>
+              Same shortcut as “{safeDisplayText(liveClash.name, 60) || "another profile"}” — saving would pause
+              all settings saves. Change the shortcut.
+            </>
+          ) : (
+            <>
+              Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60) || "another profile"}” as{" "}
+              {ACTIVATION[p.activation].label} — saving would pause all settings saves. Change the shortcut or the
+              activation.
+            </>
+          )}
         </Notice>
       )}
 

@@ -31,6 +31,7 @@ import {
   securityChanges,
 } from "./sync/sync";
 import { useApp } from "./store";
+import { configuredRouteTargets } from "./dictation/chipController";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { DEFAULT_SETTING_SYNC } from "./settingsManifest";
 import type { Backend, DecodeOverrides, Profile } from "./types";
@@ -319,6 +320,17 @@ describe("translation overrides through settings sync", () => {
     const [b] = sanitizeBackends([backend({ translationOverrides: t as never })]);
     expect(p.translationOverrides).toEqual({ ...t, contextSegments: 4 });
     expect(b.translationOverrides).toEqual(p.translationOverrides);
+  });
+
+  it("an absent key stays absent, so an inheriting Profile keeps the Backend's targets", () => {
+    expect("translateTo" in clampTranslationOverrides({ mode: "faithful" })!).toBe(false);
+    expect(clampTranslationOverrides({ glossary: "", includeOriginal: false })).toEqual({ glossary: "", includeOriginal: false });
+    expect(
+      configuredRouteTargets(
+        { translationOverrides: clampTranslationOverrides({ mode: "faithful" }) },
+        { translationOverrides: { translateTo: ["fr"] } },
+      ),
+    ).toEqual(["fr"]);
   });
 });
 

@@ -1020,7 +1020,7 @@ export default function Dictionary() {
 
       {guard.asking && (
         <ConfirmLeave
-          what="dictionary rules"
+          what="dictionary"
           onSaveAndLeave={() => guard.saveAndLeave(save)}
           onDiscard={() => {
             discardAll();
@@ -1040,7 +1040,12 @@ export default function Dictionary() {
           <Loader2 className="size-4 animate-spin" /> Loading rules…
         </div>
       ) : fetchRes && !fetchRes.ok ? (
-        <FetchError fetch={fetchRes} backendName={safeDisplayText(backend?.name, 80) || "the server"} onRetry={() => backend && load(backend)} />
+        <Stack gap={4}>
+          {/* A save that went through, then lost its follow-up reload: keep its notice above the error
+              (runSave sets `result` after load(); Retry's load() clears it). */}
+          {result && <SaveBanner result={result} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
+          <FetchError fetch={fetchRes} backendName={safeDisplayText(backend?.name, 80) || "the server"} onRetry={() => backend && load(backend)} />
+        </Stack>
       ) : rules.length === 0 ? (
         <EmptyCard
           title="No rules to manage"
@@ -1204,12 +1209,23 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
   // value would make a plain `.length` produce a bogus count. Coerce to an array first — mirrors
   // the `errors` sibling above and the GET-path rule coercion (ruleListOf).
   const conflicts = (Array.isArray(result.conflicts) ? result.conflicts : []).length;
+  // Same opaque-JSON coercion: rules an environment variable pins on the server were skipped.
+  const pinned = (Array.isArray(result.env_pinned_ignored) ? result.env_pinned_ignored : [])
+    .filter((s): s is string => typeof s === "string")
+    .slice(0, 16);
   return (
     <div className="space-y-2">
       {result.saved.length > 0 && (
         <Notice tone="ok">
-          Saved {result.saved.length} {result.saved.length === 1 ? "rule" : "rules"}.
+          Saved {plural(result.saved.length, "rule")}.
           {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
+        </Notice>
+      )}
+      {pinned.length > 0 && (
+        <Notice>
+          The server's environment pins {pinned.map((n) => safeDisplayText(n, 64)).join(", ")} — the change to{" "}
+          {pinned.length === 1 ? "this rule" : "these rules"} was not applied and won't take effect until the
+          operator unsets that variable.
         </Notice>
       )}
       {conflicts > 0 && (
