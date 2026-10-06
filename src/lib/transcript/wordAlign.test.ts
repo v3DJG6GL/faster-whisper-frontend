@@ -123,6 +123,22 @@ describe("applyTextEdits", () => {
     expect(words.slice(8)).toEqual(result.words!.slice(8));
   });
 
+  it("a word appended at a shared boundary stays in its own segment", () => {
+    const r: BatchResult = {
+      text: "",
+      segments: [
+        { start: 0, end: 1, text: "Hello there" },
+        { start: 1, end: 2, text: "How are you" },
+      ],
+      words: [w("Hello", 0, 0.4), w("there", 0.5, 1), w("How", 1, 1.3), w("are", 1.35, 1.6), w("you", 1.65, 2)],
+    };
+    const words = applyTextEdits(r, { 0: "Hello there friend." });
+    expect(segmentWordRanges(r.segments!, words)).toEqual([[0, 3], [3, 6]]);
+    expect(words[2].word).toBe(" friend.");
+    expect(words[2].start).toBeLessThan(1);
+    expect(words.slice(3)).toEqual(r.words!.slice(2));
+  });
+
   it("returns the original array when no edit applies", () => {
     expect(applyTextEdits(result, {})).toBe(result.words);
     expect(applyTextEdits(result, undefined)).toBe(result.words);

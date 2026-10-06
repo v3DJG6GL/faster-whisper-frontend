@@ -206,6 +206,9 @@ export function TranscriptExport({
     ? `SRT — ${formatPick.toUpperCase()} can't ride with a video`
     : null;
   const mp4Why = effMedia === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
+  /** The container this export can honour: an MP4 pick this server or video can't do
+   *  saves as MKV. Derived, never persisted, like `effSubtitleMode` — the pick stays. */
+  const effContainer: MediaContainer = mp4Why ? "mkv" : container;
   // Codec facts for the MP4 verdict, fetched once the panel wants them. `streams` is a
   // dep: a record switch nulls it AFTER this ran with the predecessor's facts.
   useEffect(() => {
@@ -253,17 +256,26 @@ export function TranscriptExport({
     toggles: { showTs, showNames, colorize, wordTs }, cues: cueOpts, tracks: effTracks,
   }), [exportFormat, fileRenames, colorize, showNames, showTs, fileColors, speakers, wordTs, effTracks, cueOpts]);
   const subs = isSubtitleFormat(exportFormat);
+  /** The tracks the one subtitle grid below covers: every exported track, and
+   *  ALWAYS the original — buildCues skips the original's split when it is
+   *  absent under own timing, and the summary counts the original's cues. */
+  const gridTracks = useMemo(() => ["orig", ...effTracks.filter((t) => t !== "orig")], [effTracks]);
+  /** One cue split shared by the summary, the reading-speed scan and the
+   *  preview, rather than each re-splitting the whole transcript. Cue
+   *  splitting does not depend on srt vs vtt. Null unless a subtitle format
+   *  shows in an open panel. */
+  const subGrid = useMemo(
+    () => (open && subs ? cueGrid(editedResult, { ...exportOptions, format: "srt" }, gridTracks) : null),
+    [open, subs, editedResult, exportOptions, gridTracks],
+  );
   /** The original track's cues — the preview's slice and the summary's
    *  count; null when the file has no split subtitles. */
-  const grid = useMemo(
-    () => (open && subs && cueOpts ? cueGrid(editedResult, exportOptions, ["orig"]) : null),
-    [open, subs, cueOpts, editedResult, exportOptions],
-  );
+  const grid = cueOpts ? subGrid : null;
   /** Reading-speed scan over every cue the file carries — memoized so the
    *  summary in JSX doesn't re-walk the transcript at playhead cadence. */
   const cpsWarn = useMemo(
-    () => (open && subs ? cpsWarnings(editedResult, { ...exportOptions, tracks: effTracks }) : []),
-    [open, subs, editedResult, effTracks, exportOptions],
+    () => (open && subs ? cpsWarnings(editedResult, { ...exportOptions, tracks: effTracks }, subGrid ?? undefined) : []),
+    [open, subs, editedResult, effTracks, exportOptions, subGrid],
   );
   const origIncluded = !effTracks.length || effTracks.includes("orig");
   const content = contentStates({
@@ -282,14 +294,14 @@ export function TranscriptExport({
    *  from the panel's current choices — Save, the preview tabs and the names
    *  all read this one plan. */
   const plan = useMemo(() => mediaExportPlan({
-    choice: effMedia, container, subtitleMode: effSubtitleMode, format: exportFormat,
+    choice: effMedia, container: effContainer, subtitleMode: effSubtitleMode, format: exportFormat,
     textFileNames: exportFileNames(exportOptions, editedResult),
     audioExt,
     tracks: videoTracks,
     result: editedResult,
     hasVideoSource,
     copyExt,
-  }), [effMedia, container, effSubtitleMode, exportFormat, exportOptions, editedResult, audioExt, videoTracks,
+  }), [effMedia, effContainer, effSubtitleMode, exportFormat, exportOptions, editedResult, audioExt, videoTracks,
     hasVideoSource, copyExt]);
   const videoPlan = plan.primary.kind === "video";
   /** The sidecar files' names, one per video track (null = the tracks ride inside only). */
@@ -323,10 +335,15 @@ export function TranscriptExport({
    *  while the panel shows it. */
   const exportPreview = useMemo(() => {
     if (!open || !editedResult.segments?.length || !previewFile) return null;
+    // The shared grid serves only a subtitle file whose tracks it covers.
+    const shared = subGrid && isSubtitleFormat(previewFile.format)
+      && (previewFile.tracks ?? ["orig"]).every((t) => gridTracks.includes(t))
+      ? subGrid
+      : undefined;
     return previewExport(
-      editedResult, { ...exportOptions, format: previewFile.format, tracks: previewFile.tracks }, PREVIEW_CUES,
+      editedResult, { ...exportOptions, format: previewFile.format, tracks: previewFile.tracks }, PREVIEW_CUES, shared,
     );
-  }, [open, editedResult, exportOptions, previewFile]);
+  }, [open, editedResult, exportOptions, previewFile, subGrid, gridTracks]);
 
   /** A local copy under way: the footer shows "copying…" until it settles. */
   const copying = async <T,>(job: Promise<T>): Promise<T> => {
@@ -458,7 +475,7 @@ export function TranscriptExport({
           const out = await packageMedia({
             serverUrl, backendId: trBackend.id, jobId,
             ...source,
-            container, subtitles, defaultTrack, originalTrack,
+            container: effContainer, subtitles, defaultTrack, originalTrack,
             audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
             destPath: dest, filename: fileStem(dest),
             maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
@@ -481,19 +498,17 @@ export function TranscriptExport({
       if (mine()) setMediaError({ kind: "cancelled", msg: "Export cancelled." });
       return false;
     }
-    if (outcome.kind === "ok") {
-      // An uploaded file's server copy is reusable for a while: remember it
-      // so "Save as MKV" or a second export skips the upload.
-      if (fromFile && outcome.mediaId) {
-        const mediaId = outcome.mediaId;
-        const expiresAt = outcome.expiresAt ?? uploadedExpiry ?? undefined;
-        patchRecord(rec.id, (r) => ({
-          ...r,
-          result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
-        }));
-      }
-      return true;
+    // An uploaded file's server copy is reusable for a while: remember it — after a
+    // failed package too — so "Save as MKV" or a second export skips the upload.
+    if (fromFile && outcome.mediaId && outcome.kind !== "expired" && outcome.kind !== "cancelled") {
+      const mediaId = outcome.mediaId;
+      const expiresAt = outcome.expiresAt ?? uploadedExpiry ?? undefined;
+      patchRecord(rec.id, (r) => ({
+        ...r,
+        result: { ...(r.result ?? { text: "" }), sourceMediaId: mediaId, sourceMediaExpiresAt: expiresAt },
+      }));
     }
+    if (outcome.kind === "ok") return true;
     if (outcome.kind === "expired") {
       // The server dropped it: forget the id; a local copy carries on. Judged
       // against the id actually sent (an on-demand fetch's, or a busy retry's)
@@ -510,7 +525,9 @@ export function TranscriptExport({
       });
       const msg = localVideo
         ? "The server no longer has this video — save again to upload the local copy."
-        : "The server no longer has this video — save again to fetch it from the link.";
+        : urlVideoOnDemand
+          ? "The server no longer has this video — save again to fetch it from the link."
+          : "The server no longer has this video, and this server can't fetch it again from the link.";
       if (mine()) setMediaError({ kind: "expired", msg });
       else late(msg);
       return false;
@@ -639,7 +656,7 @@ export function TranscriptExport({
     cpsLimit: cpsLimits.size === 1 ? `${[...cpsLimits][0]} chars/s` : "each language's limit",
     editCount,
     // A plain copy's container is the source's own (plan.primaryExt), not the chip's.
-    media: showMedia ? { choice: effMedia, container: videoPlan ? plan.primaryExt : container, subtitleMode: effSubtitleMode, audioExt } : null,
+    media: showMedia ? { choice: effMedia, container: videoPlan ? plan.primaryExt : effContainer, subtitleMode: effSubtitleMode, audioExt } : null,
   });
   const phaseText =
     ownJob?.phase === "fetching" ? "fetching the video from the link…"
@@ -734,7 +751,7 @@ export function TranscriptExport({
               {(["mkv", "mp4"] as const).map((c) => {
                 const off = copyLock ? c !== copyExt : c === "mp4" && !!mp4Why;
                 return (
-                  <ChipToggle key={c} on={copyLock ? c === copyExt : container === c} disabled={off} size="xs"
+                  <ChipToggle key={c} on={copyLock ? c === copyExt : effContainer === c} disabled={off} size="xs"
                     className="font-mono font-medium"
                     title={copyLock ? "a plain copy keeps the original container" : c === "mp4" && mp4Why ? mp4Why : undefined}
                     onClick={() => { if (!off) { setContainer(c); patchTranscribe({ exportContainer: c }); } }}>

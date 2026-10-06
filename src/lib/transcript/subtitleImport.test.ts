@@ -100,6 +100,20 @@ describe("plain text + errors", () => {
     // `null` parses fine, then the property read on it threw a raw TypeError.
     expect(() => parseImportedText("json", "null")).toThrow(/No text found/);
   });
+  it("json language is trimmed and a blank one dropped, with or without segments", () => {
+    const seg = (language: string) =>
+      parseImportedText("json", JSON.stringify({ language, segments: [{ start: 0, end: 1, text: "Hallo" }] })).language;
+    const plain = (language: string) => parseImportedText("json", JSON.stringify({ language, text: "Hallo" })).language;
+    expect([seg(" de "), plain(" de ")]).toEqual(["de", "de"]);
+    expect([seg("  "), plain("  ")]).toEqual([undefined, undefined]);
+  });
+  it("lrc: a text-less timestamp line ends the line before it (instrumental break)", () => {
+    const back = parseImportedText("lrc", "[00:10.00]Hello\n[00:13.00]\n[00:40.00]World\n[00:44.00]");
+    expect(back.segments).toEqual([
+      { start: 10, end: 13, text: "Hello", speaker: undefined },
+      { start: 40, end: 44, text: "World", speaker: undefined },
+    ]);
+  });
 });
 
 // The picker's dialog filter and the drag-and-drop accept test read ONE list;
@@ -223,6 +237,14 @@ describe("site subtitle cleanup", () => {
     expect(parseImportedText("vtt", vtt).segments.map((s) => s.text).join(" ")).toBe("Hi Hello");
   });
   it("a single classed voice tag still carries the speaker", () => {
+    const dashed = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n- <v Alice>Hi there</v>\n- <v Bob>Hello</v>\n";
+    expect(parseImportedText("vtt", dashed).segments).toEqual([
+      { start: 1, end: 3, text: "Hi there", speaker: "Alice" },
+      { start: 1, end: 3, text: "Hello", speaker: "Bob" },
+    ]);
+    // Only a dash right before a voice tag goes: an interruption keeps its own.
+    const cut = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alice>I was going to—</v>\n<v Bob>Go on</v>\n";
+    expect(parseImportedText("vtt", cut).segments.map((s) => s.text)).toEqual(["I was going to—", "Go on"]);
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v.loud Alice>Hi\n";
     expect(parseImportedText("vtt", vtt).segments).toEqual([{ start: 1, end: 2, text: "Hi", speaker: "Alice" }]);
   });

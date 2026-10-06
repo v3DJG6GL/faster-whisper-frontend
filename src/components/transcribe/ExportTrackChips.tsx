@@ -82,8 +82,11 @@ export function ExportTrackChips({
     const els = d.kind === "lang"
       ? groups.map((g) => chipEls.current.get(g.lang))
       : (groups.find((g) => g.tracks.includes(d.id))?.tracks ?? []).map((t) => partEls.current.get(t));
-    d.slot = slotAt(els, e.clientX, e.clientY);
-    setShown({ kind: d.kind, id: d.id, slot: d.slot });
+    const slot = slotAt(els, e.clientX, e.clientY);
+    d.slot = slot;
+    const { kind, id } = d;
+    // Same slot: keep the state object, so the row doesn't re-render at pointer rate.
+    setShown((s) => (s && s.kind === kind && s.id === id && s.slot === slot ? s : { kind, id, slot }));
   };
   const release = () => {
     const d = drag.current;

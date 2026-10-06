@@ -259,6 +259,12 @@ describe("wrapLines", () => {
     const w = "x".repeat(50);
     expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a", "x".repeat(25), "x".repeat(25)]);
   });
+  it("a long CJK run before a Latin word wraps per character too, not only a trailing one", () => {
+    const t = "我们今天要讨论的是如何使用大型语言模型来处理数据和文本 AI 工具";
+    const lines = wrapLines(t, 16, 2);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(16);
+    expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+  });
 });
 
 describe("cutByShare", () => {
@@ -272,6 +278,10 @@ describe("cutByShare", () => {
     const parts = cutByShare("今日🎉楽しい", [3, 4]);
     expect(parts.join("")).toBe("今日🎉楽しい");
     expect(parts.every(wellFormed)).toBe(true);
+  });
+  it("still avoids a cut right after an article past the bounded look-back", () => {
+    const text = "Understandably everyone waited for the announcement";
+    expect(cutByShare(text, [1, 1]).every((p) => !/\bthe$/.test(p))).toBe(true);
   });
 });
 

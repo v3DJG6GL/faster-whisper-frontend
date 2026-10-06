@@ -144,6 +144,7 @@ const CONJ = new Set([
   "y", "pero", "porque", "cuando", "e", "ma", "perché", "quando", "che",
   "en", "maar", "omdat", "dat", "mas", "porque", "quando",
 ]);
+// Every entry is shorter than 9 characters — cutByShare's bounded look-back relies on it.
 const NOBREAK = new Set([
   "the", "a", "an", "of", "to", "in", "on", "at", "for", "with", "from", "by", "my", "your", "its",
   "his", "her", "our", "their", "this", "these", "that's", "every", "each", "some", "no", "mr.", "mrs.", "dr.",
@@ -335,7 +336,11 @@ export function cutByShare(text: string, shares: number[]): string[] {
     for (const i of cand) {
       if (i <= prev) continue;
       const ch = text[i - 1];
-      const prevWord = text.slice(text.lastIndexOf(" ", i - 1) + 1, i).toLowerCase();
+      // Bounded look-back (NOBREAK words are under 9 chars): unspaced CJK text
+      // used to slice and fold the whole prefix per candidate.
+      const back = text.slice(Math.max(0, i - 9), i);
+      const sp = back.lastIndexOf(" ");
+      const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase() : "";
       const s =
         -Math.abs(i - target) +
         (/[.?!。？！]/.test(ch) ? 16 : /[,;:，；、]/.test(ch) ? 9 : 0) -
@@ -420,7 +425,11 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
         bi = i;
       }
     }
-    out.push(join(lo, bi));
+    if (bi === lo + 1 && width(lo, bi) + reserve > cpl && Array.from(toks[lo]).length >= 2) {
+      // One over-long token on its own line (a CJK run before a Latin word): it
+      // wraps per character too, not just a trailing one.
+      out.push(...wrapTokens(Array.from(toks[lo]), false, cpl, toks[lo].length + reserve, reserve));
+    } else out.push(join(lo, bi));
     lo = bi;
     reserve = 0;
     len = width(lo, T);
@@ -447,17 +456,19 @@ export function buildCues(
   const segs = result.segments ?? [];
   const words = result.words ?? [];
   const ranges = o && words.length && !result.timingSynthesized ? segmentWordRanges(segs, words) : null;
-  const L = o ? limitsFor(o, result.language) : null;
+  const L = trackLimits(result, o, "orig");
   const timedIds = new Set((result.timedTracks ?? []).map((t) => t.id));
   const mtLangs = tracks.filter((t) => t !== "orig" && !timedIds.has(t));
   const own: Record<string, Cue[]> = {};
   const ownMt = !!o && o.timing === "own";
   if (ownMt) for (const l of mtLangs) own[l] = [];
+  // Own-timed translations never read the original's split: skip it unless it is exported.
+  const needMine = tracks.includes("orig") || !ownMt;
   const cues: Cue[] = [];
 
   segs.forEach((seg, si) => {
     const toks = ranges && L ? tokensOf(seg.text, words.slice(ranges[si][0], ranges[si][1])) : null;
-    const pieces = toks && L
+    const pieces = toks && L && needMine
       ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg) })
       : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
     const mine: Cue[] = pieces.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} }));
@@ -465,7 +476,7 @@ export function buildCues(
       const t = trText(seg, lang);
       if (t === null) continue;
       if (ownMt) {
-        const LL = { ...limitsFor(o!, lang), reserve: reserve(seg) };
+        const LL = { ...trackLimits(result, o, lang)!, reserve: reserve(seg) };
         const parts = toks ? timedPieces(t, spreadTokens(t, seg.start, seg.end), seg.start, seg.end, LL) : [
           { start: seg.start, end: seg.end, text: t },
         ];

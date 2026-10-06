@@ -183,12 +183,16 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
     // run the lazy group to the end and credit both lines to the first voice.
     const tags = (joined.match(/<v[\s.]/g) ?? []).length;
     if (tags > 1) {
-      const first = joined.search(/<v[\s.]/);
-      const spans = [...joined.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?=<v[\s.]|$)/g)];
+      // A dialogue dash before a voice tag ("- <v Alice>Hi</v> - <v Bob>Hello</v>") marks the
+      // turn the tag already marks: dropped, or it imports as a "-" line and a trailing dash.
+      // Only a dash right before a tag goes — an interrupted "I was going to—" keeps its own.
+      const dj = joined.replace(/(^|\s)[-–—]\s*(?=<v[\s.])/g, "$1");
+      const first = dj.search(/<v[\s.]/);
+      const spans = [...dj.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?=<v[\s.]|$)/g)];
       // A tag the span regex rejects (a name over 40 characters) would drop its text: take
       // the whole cue as plain text instead, as the single-voice path does.
       if (spans.length === tags) {
-        const lead = cueText([joined.slice(0, first)]);
+        const lead = cueText([dj.slice(0, first)]);
         if (lead.text) segments.push({ start, end, text: lead.text, speaker: lead.speaker });
         for (const m of spans) {
           const text = stripMarkup(m[2]);
@@ -240,6 +244,8 @@ function parseVtt(body: string): ImportedText {
 function parseLrc(body: string): ImportedText {
   const segments: ImportedText["segments"] = [];
   const tagRe = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
+  /** Text-less timestamp lines: LRC's end-of-line marks (an instrumental break). */
+  const stops: number[] = [];
   for (const line of body.split(/\r?\n/)) {
     const trimmed = line.trim();
     // Match all leading [mm:ss.xx] timestamp tags. LRC's most common compression
@@ -259,12 +265,21 @@ function parseLrc(body: string): ImportedText {
     const { text, speaker } = cueText([trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, " ")]);
     if (text) {
       for (const start of starts) segments.push({ start, text, speaker });
-    }
+    } else stops.push(...starts);
   }
   // Multi-tag lines scatter segments out of source order — sort by time.
   segments.sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
-  // Ends: next segment's start (open-ended last line stays end-less).
-  for (let i = 0; i < segments.length - 1; i++) segments[i].end = segments[i + 1].start;
+  stops.sort((a, b) => a - b);
+  // Ends: the next segment's start or an earlier stop mark, whichever comes first
+  // (a last line with neither stays end-less).
+  for (let i = 0, k = 0; i < segments.length; i++) {
+    const start = segments[i].start ?? 0;
+    while (k < stops.length && stops[k] <= start) k++; // both sorted: one pass
+    const stop = stops[k];
+    const next = segments[i + 1]?.start;
+    const end = stop === undefined ? next : next === undefined ? stop : Math.min(stop, next);
+    if (end !== undefined) segments[i].end = end;
+  }
   return { segments };
 }
 
@@ -321,18 +336,13 @@ function parseJsonExport(body: string): ImportedText {
       });
     }
   }
+  // Bounded like Rust bounds a server's `language` (LANGUAGE_MAX = 64): this one comes
+  // from a locally parsed file and otherwise reached the meta line and track chips raw.
+  // Trimmed, blank = none — one rule for both shapes below.
+  const language = safeDisplayText(obj.language, 64).trim() || undefined;
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
     // Decoded by JSON.parse after the control-char pass, like the segment text above.
-    const plain = parsePlainText(stripControlChars(obj.text));
-    if (typeof obj.language === "string" && obj.language.trim()) {
-      (plain as { language?: string }).language = safeDisplayText(obj.language, 64) || undefined;
-    }
-    return plain;
+    return { ...parsePlainText(stripControlChars(obj.text)), language };
   }
-  return {
-    segments,
-    // Bounded like Rust bounds a server's `language` (LANGUAGE_MAX = 64): this one comes
-    // from a locally parsed file and otherwise reached the meta line and track chips raw.
-    language: typeof obj.language === "string" ? safeDisplayText(obj.language, 64) || undefined : undefined,
-  };
+  return { segments, language };
 }

@@ -5,7 +5,8 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, wrapLines, type CueOptions,
+  buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, wrapLines, type CueGrid,
+  type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { codeSlug, stripControlChars } from "../sanitize";
@@ -735,17 +736,35 @@ export function exportFileGroups(
   return groups.sort((a, b) => tracks.indexOf(a.tracks![0]) - tracks.indexOf(b.tracks![0]));
 }
 
+/** The part of `text` the first `until` segments make up. The plain TXT export
+ *  writes result.text verbatim, so a space-joined sample showed spaces unspaced
+ *  (CJK) text never had; the join stays the fallback when a segment isn't found. */
+function textPrefix(text: string, segs: TranscriptSegment[], until: number): string {
+  if (until >= segs.length) return text;
+  let cur = 0;
+  for (const s of segs.slice(0, until)) {
+    const t = s.text.trim();
+    const at = text.indexOf(t, cur);
+    if (at < 0) return segs.slice(0, until).map((x) => x.text.trim()).join(" ");
+    cur = at + t.length;
+  }
+  return text.slice(0, cur);
+}
+
 /** The start of one file (`opts.tracks` = the tracks it carries): its first
  *  `n` subtitles — or segments, for a format without them — as the file
- *  would write them, `count` of its `total`. The export panel's preview. */
+ *  would write them, `count` of its `total`. The export panel's preview.
+ *  `grid` = a cueGrid the caller already built over (at least) these tracks
+ *  with the same cue options — the split is shared rather than redone. */
 export function previewExport(
   result: BatchResult,
   opts: ExportOptions,
   n: number,
+  grid?: CueGrid,
 ): { text: string; count: number; total: number } {
   const tracks = tracksOf(opts);
   const segs = result.segments ?? [];
-  const grid = cueGrid(result, opts, tracks);
+  grid ??= cueGrid(result, opts, tracks);
   const list = tracks.length === 1
     ? trackCues(grid, tracks[0])
     : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : c.tr[t])));
@@ -758,7 +777,7 @@ export function previewExport(
     ...result,
     segments: segs.slice(0, until),
     words: result.words?.filter((w) => w.start < end),
-    text: segs.slice(0, until).map((s) => s.text.trim()).join(" "),
+    text: textPrefix(result.text ?? "", segs, until),
     timedTracks: result.timedTracks?.map((t) => ({ ...t, cues: t.cues.filter((c) => c.start < end) })),
   };
   return {
@@ -804,15 +823,17 @@ export function exportStemSuffix(tracks?: string[]): string {
 
 /** Subtitles that read faster than their language's limit (limitsFor; 20
  *  chars/sec without cue options), over the cues the export writes — the
- *  original included. Flagged, never reflowed. `index` = source segment. */
+ *  original included. Flagged, never reflowed. `index` = source segment.
+ *  `grid` = the caller's subtitle cueGrid over (at least) these tracks, reused. */
 export function cpsWarnings(
   result: BatchResult,
   opts: Omit<ExportOptions, "format">,
+  grid?: CueGrid,
 ): { lang: string; index: number; cps: number }[] {
   // Synthesized 1 s clocks (plain-text source) would flag every line over 20 chars.
   if (result.timingSynthesized) return [];
   const tracks = opts.tracks?.length ? opts.tracks : ["orig"];
-  const grid = cueGrid(result, { ...opts, format: "srt" }, tracks);
+  grid ??= cueGrid(result, { ...opts, format: "srt" }, tracks);
   const out: { lang: string; index: number; cps: number }[] = [];
   for (const track of tracks) {
     const limit = trackCps(result, opts.cues, track);

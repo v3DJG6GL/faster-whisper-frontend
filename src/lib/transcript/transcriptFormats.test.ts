@@ -742,6 +742,23 @@ describe("subtitle cues", () => {
     expect([txt.count, txt.total]).toEqual([1, 1]);
   });
 
+  it("the TXT preview keeps the text's own spacing (CJK has none between sentences)", () => {
+    const zh: BatchResult = {
+      text: "你好。世界。",
+      language: "zh",
+      segments: [{ start: 0, end: 1, text: "你好。" }, { start: 1, end: 2, text: "世界。" }],
+    };
+    expect(previewExport(zh, { format: "txt" }, 12).text).toBe(generateExport(zh, { format: "txt" }));
+    expect(previewExport(zh, { format: "txt" }, 1).text).toBe("你好。\n");
+  });
+
+  it("preview and cps reuse a grid the caller already built", () => {
+    const opts: ExportOptions = { format: "srt", tracks: ["orig"], cues: STANDARD };
+    const grid = cueGrid(CUED, opts, ["orig"]);
+    expect(previewExport(CUED, opts, 2, grid)).toEqual(previewExport(CUED, opts, 2));
+    expect(cpsWarnings(CUED, opts, grid)).toEqual(cpsWarnings(CUED, opts));
+  });
+
   it("json strips control characters from timed tracks", () => {
     const evil: BatchResult = {
       ...RESULT,

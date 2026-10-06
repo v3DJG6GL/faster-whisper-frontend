@@ -156,8 +156,20 @@ export function applyTextEdits(
     const [from, to] = ranges[i];
     if (from > wi) out.push(...words.slice(wi, from)); // words between segments
     wi = Math.max(wi, to);
-    if (edited.has(i)) out.push(...alignSegmentWords(words.slice(from, to), edits[i]));
-    else out.push(...words.slice(from, to));
+    if (edited.has(i)) {
+      // A word appended at the tail starts at the last word's end — at or past
+      // the next segment's start when they share a boundary, so segmentWordRanges
+      // would hand it to the next line. Clamp such a word just inside this one.
+      const next = segs[i + 1];
+      const s = next ? Math.max(segs[i].start, next.start - 0.001) : 0;
+      out.push(
+        ...alignSegmentWords(words.slice(from, to), edits[i]).map((w) =>
+          next && w.start >= next.start
+            ? { ...w, start: s, end: Math.max(s, Math.min(w.end, next.start)) }
+            : w,
+        ),
+      );
+    } else out.push(...words.slice(from, to));
   });
   out.push(...words.slice(wi));
   return out;
