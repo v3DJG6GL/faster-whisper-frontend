@@ -1,6 +1,6 @@
-//! Microphone capture: device enumeration + a capture engine that emits live
-//! RMS levels (`audio://level`). Resampling to 16 kHz / s16le for streaming
-//! lands in M3, where it is actually consumed.
+//! Audio I/O: device inventory and pin resolution, mic capture with live level metering
+//! (`audio://level`, `stream://level`), 16 kHz resampling, cue and mic-test playback, the
+//! playback-fallback decode cache, and the saved-recording helpers.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

@@ -2,7 +2,7 @@
 
 use crate::audio::{self, AudioState, MicPlayback, MicTestClip};
 use std::sync::atomic::Ordering;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 /// The microphone picker's list. Async + spawn_blocking: it asks the sound server (≤2 s timeout)
 /// and, with `include_paths`, walks ALSA's device hints — never on the UI thread.
@@ -34,41 +34,55 @@ pub struct LegacyMic {
     label: String,
 }
 
+/// Start the mic test. Async + spawn_blocking: it waits for cpal's device open (a Bluetooth mic
+/// stalls ~1-2 s switching profile) so a mic that fails to open rejects here and the Settings test
+/// ends, and that wait must not sit on the UI thread. State is resolved inside the closure (a
+/// State<'_> can't cross into spawn_blocking); the AudioState mutex serializes start/stop.
 #[tauri::command]
-pub fn start_mic_test(
-    app: AppHandle,
-    state: State<AudioState>,
-    clip: State<MicTestClip>,
-    playback: State<MicPlayback>,
-    device_id: Option<String>,
-) -> Result<(), String> {
-    // Starting a fresh test silences any lingering replay (the bump makes the
-    // playback thread see a newer generation and stop).
-    playback.0.fetch_add(1, Ordering::SeqCst);
-    let mut guard = state.0.lock().map_err(|_| "audio state poisoned")?;
-    // Stop any previous capture FIRST — dropping the handle joins its thread, so its cpal
-    // callback can't still be appending the old device's samples while the new capture clears +
-    // re-stamps the shared clip (which would interleave two devices' audio under one rate stamp,
-    // garbling the replay). Mirrors start_stream/start_record's stop-old-before-start-new order.
-    *guard = None;
-    let handle = audio::capture::start_level_meter(app, device_id, clip.0.clone())?;
-    *guard = Some(handle);
-    Ok(())
+pub async fn start_mic_test(app: AppHandle, device_id: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        // Starting a fresh test silences any lingering replay (the bump makes the
+        // playback thread see a newer generation and stop).
+        app.state::<MicPlayback>().0.fetch_add(1, Ordering::SeqCst);
+        let state = app.state::<AudioState>();
+        let mut guard = state.0.lock().map_err(|_| "audio state poisoned")?;
+        // Stop any previous capture FIRST — dropping the handle joins its thread, so its cpal
+        // callback can't still be appending the old device's samples while the new capture clears +
+        // re-stamps the shared clip (which would interleave two devices' audio under one rate stamp,
+        // garbling the replay). Mirrors start_stream/start_record's stop-old-before-start-new order.
+        *guard = None;
+        let clip = app.state::<MicTestClip>().0.clone();
+        let handle = audio::capture::start_level_meter(app.clone(), device_id, clip)?;
+        *guard = Some(handle);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Stop the mic test and return the number of seconds captured (so the UI can
 /// decide whether there's anything worth replaying). Dropping the handle joins the
 /// capture thread, so the recorded clip is final by the time we read its length.
+/// Async + spawn_blocking like start_mic_test: a stop that lands while a start is still waiting
+/// on the device open queues on the AudioState mutex off the UI thread.
 #[tauri::command]
-pub fn stop_mic_test(state: State<AudioState>, clip: State<MicTestClip>) -> Result<f32, String> {
-    *state.0.lock().map_err(|_| "audio state poisoned")? = None;
-    let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
-    let secs = if c.sample_rate > 0 {
-        c.samples.len() as f32 / c.sample_rate as f32
-    } else {
-        0.0
-    };
-    Ok(secs)
+pub async fn stop_mic_test(app: AppHandle) -> Result<f32, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        *app.state::<AudioState>()
+            .0
+            .lock()
+            .map_err(|_| "audio state poisoned")? = None;
+        let clip = app.state::<MicTestClip>();
+        let c = clip.0.lock().map_err(|_| "mic clip poisoned")?;
+        let secs = if c.sample_rate > 0 {
+            c.samples.len() as f32 / c.sample_rate as f32
+        } else {
+            0.0
+        };
+        Ok(secs)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Replay the most recent mic-test capture on the default output device. Returns

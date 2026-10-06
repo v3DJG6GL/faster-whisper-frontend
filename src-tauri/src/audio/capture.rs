@@ -6,18 +6,26 @@
 //! The `cpal::Stream` is not `Send`, so it lives entirely on a dedicated capture
 //! thread; the [`CaptureHandle`] only carries a stop flag + join handle (both
 //! `Send`), so it can sit in Tauri state. Dropping the handle stops capture.
+//!
+//! [`start_level_meter`] waits (bounded) until the device is open and playing, so a busy,
+//! denied or failing mic comes back as an error the mic test can end on, not a silent meter.
 
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{SampleFormat, StreamConfig};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::mpsc::{self, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use tauri::AppHandle;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 
 use crate::audio::MicClip;
 
 /// Keep at most this many seconds of the most recent capture for replay.
 const MAX_CLIP_SECS: usize = 30;
+/// How long [`start_level_meter`] waits for the device to open before handing back the handle
+/// anyway (a slow open then still meters once it lands, or logs its failure).
+const OPEN_WAIT: Duration = Duration::from_secs(5);
 
 pub struct CaptureHandle {
     stop: Arc<AtomicBool>,
@@ -101,7 +109,8 @@ fn analyze<T: Copy>(
 }
 
 /// Start capturing on the given device (or the default), emitting `audio://level`
-/// and recording mono audio into `clip` for replay.
+/// and recording mono audio into `clip` for replay. Blocks until the stream is playing (or
+/// [`OPEN_WAIT`] passed) and returns the open failure, if any, as the error.
 pub fn start_level_meter(
     app: AppHandle,
     device_id: Option<String>,
@@ -109,18 +118,31 @@ pub fn start_level_meter(
 ) -> Result<CaptureHandle, String> {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_thread = stop.clone();
+    // run() reports Ok once the stream plays; every Err it returns comes before that, so the
+    // channel carries exactly one message and the one-slot buffer never blocks the sender.
+    let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
     let join = std::thread::Builder::new()
         .name("mic-capture".into())
         .spawn(move || {
-            if let Err(e) = run(app, device_id, stop_thread, clip) {
+            if let Err(e) = run(app, device_id, stop_thread, clip, &ready_tx) {
                 tracing::warn!("[audio] capture ended: {e}");
+                let _ = ready_tx.send(Err(e));
             }
         })
         .map_err(|e| e.to_string())?;
-    Ok(CaptureHandle {
+    let mut handle = CaptureHandle {
         stop,
         join: Some(join),
-    })
+    };
+    // Playing, still opening after OPEN_WAIT, or gone (Drop joins it): hand the handle back.
+    if let Ok(Err(e)) = ready_rx.recv_timeout(OPEN_WAIT) {
+        // The open failed and the thread is on its way out; join it before reporting.
+        if let Some(j) = handle.join.take() {
+            let _ = j.join();
+        }
+        return Err(e);
+    }
+    Ok(handle)
 }
 
 fn run(
@@ -128,6 +150,7 @@ fn run(
     device_id: Option<String>,
     stop: Arc<AtomicBool>,
     clip: Arc<Mutex<MicClip>>,
+    ready: &SyncSender<Result<(), String>>,
 ) -> Result<(), String> {
     // Reset the shared clip BEFORE the fallible device open below. Otherwise a failed pick_device /
     // default_input_config (busy/unplugged/denied mic) leaves the PREVIOUS successful test's samples
@@ -156,6 +179,15 @@ fn run(
     }
 
     let level_bits = Arc::new(AtomicU32::new(0));
+    // A lost device (or an error storm) ends the test: zero the meter and stop publishing, which
+    // drops the stream. The clip recorded so far stays replayable.
+    let on_terminal = || {
+        let (s, l) = (stop.clone(), level_bits.clone());
+        move || {
+            l.store(0f32.to_bits(), Ordering::Relaxed);
+            s.store(true, Ordering::SeqCst);
+        }
+    };
 
     let stream = match sample_format {
         SampleFormat::F32 => {
@@ -171,7 +203,7 @@ fn run(
                     meter.push(analyze(data, channels, |s| s, &mut mono));
                     rec.push(&mono);
                 },
-                super::stream_errors::error_callback("audio", || {}),
+                super::stream_errors::error_callback("audio", on_terminal()),
                 None,
             )
         }
@@ -188,7 +220,7 @@ fn run(
                     meter.push(analyze(data, channels, |s| s as f32 / 32768.0, &mut mono));
                     rec.push(&mono);
                 },
-                super::stream_errors::error_callback("audio", || {}),
+                super::stream_errors::error_callback("audio", on_terminal()),
                 None,
             )
         }
@@ -210,7 +242,7 @@ fn run(
                     ));
                     rec.push(&mono);
                 },
-                super::stream_errors::error_callback("audio", || {}),
+                super::stream_errors::error_callback("audio", on_terminal()),
                 None,
             )
         }
@@ -219,8 +251,12 @@ fn run(
     .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
+    let _ = ready.send(Ok(()));
 
     super::publish_levels_with_live(&app, "audio://level", &level_bits, &stop, None);
+    // Leave the meter at rest: after a device loss its last live-looking level would otherwise
+    // stay on screen (after a user stop the listener is already gone, so this is a no-op).
+    let _ = app.emit("audio://level", 0f32);
     // `stream` is dropped here, on the capture thread, stopping the device.
     Ok(())
 }

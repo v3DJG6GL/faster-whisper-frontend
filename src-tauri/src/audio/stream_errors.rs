@@ -11,6 +11,8 @@
 //!   number suppressed at most every [`LOG_EVERY`].
 //! - An error storm (more than [`STORM_PER_SEC`] errors in each of [`STORM_SECS`] consecutive
 //!   seconds) is treated as terminal too — no healthy stream reports errors at that rate.
+//! - Terminal latches: once the gate has said so, every later error is Terminal again without
+//!   another log line, so the errors cpal reports before the caller drops the stream stay quiet.
 
 use cpal::ErrorKind;
 use std::time::{Duration, Instant};
@@ -34,6 +36,7 @@ pub struct ErrorGate {
     sec_start: Option<Instant>,
     sec_count: u32,
     hot_secs: u32,
+    tripped: bool,
 }
 
 impl ErrorGate {
@@ -45,24 +48,31 @@ impl ErrorGate {
             sec_start: None,
             sec_count: 0,
             hot_secs: 0,
+            tripped: false,
         }
     }
 
     pub fn on_error(&mut self, kind: ErrorKind, msg: &str, now: Instant) -> Verdict {
+        if self.tripped {
+            return Verdict::Terminal;
+        }
         if matches!(
             kind,
             ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated
         ) {
             tracing::warn!("[{}] device lost ({kind:?}): {msg}", self.tag);
+            self.tripped = true;
             return Verdict::Terminal;
         }
 
-        // Per-second buckets for the storm breaker.
+        // Per-second buckets for the storm breaker. A hot bucket only counts toward a storm when
+        // the next one follows straight on; a quiet gap in between resets the streak.
         match self.sec_start {
             Some(start) if now.duration_since(start) < Duration::from_secs(1) => {}
             _ => {
-                if self.sec_start.is_some() {
-                    if self.sec_count > STORM_PER_SEC {
+                if let Some(start) = self.sec_start {
+                    let adjacent = now.duration_since(start) < Duration::from_secs(2);
+                    if self.sec_count > STORM_PER_SEC && adjacent {
                         self.hot_secs += 1;
                     } else {
                         self.hot_secs = 0;
@@ -78,6 +88,7 @@ impl ErrorGate {
                 "[{}] error storm ({kind:?}, >{STORM_PER_SEC}/s for {STORM_SECS}s, last: {msg}); stopping the stream",
                 self.tag
             );
+            self.tripped = true;
             return Verdict::Terminal;
         }
 
@@ -127,10 +138,47 @@ mod tests {
             g.on_error(ErrorKind::DeviceNotAvailable, "gone", t0),
             Verdict::Terminal
         );
-        assert_eq!(
-            g.on_error(ErrorKind::StreamInvalidated, "gone", t0),
-            Verdict::Terminal
-        );
+        // Latched: a later error of any kind stays terminal.
+        assert_eq!(g.on_error(ErrorKind::Xrun, "x", t0), Verdict::Terminal);
+    }
+
+    #[test]
+    fn a_tripped_storm_stays_terminal_without_counting() {
+        let mut g = ErrorGate::new("t");
+        let t0 = Instant::now();
+        let mut i = 0u64;
+        loop {
+            let now = t0 + Duration::from_millis(i);
+            if g.on_error(ErrorKind::BackendError, "pollerr", now) == Verdict::Terminal {
+                break;
+            }
+            i += 1;
+        }
+        let (count, suppressed) = (g.sec_count, g.suppressed);
+        for j in 1..100u64 {
+            let now = t0 + Duration::from_millis(i + j);
+            assert_eq!(
+                g.on_error(ErrorKind::BackendError, "pollerr", now),
+                Verdict::Terminal
+            );
+        }
+        assert_eq!((g.sec_count, g.suppressed), (count, suppressed));
+    }
+
+    #[test]
+    fn hot_seconds_a_minute_apart_are_not_a_storm() {
+        let mut g = ErrorGate::new("t");
+        let t0 = Instant::now();
+        // 300 errors in the first half second: one hot bucket.
+        for i in 0..300u64 {
+            let now = t0 + Duration::from_micros(i * 1_600);
+            assert_eq!(g.on_error(ErrorKind::Xrun, "x", now), Verdict::Continue);
+        }
+        // Nothing until t = 60 s, then 1000/s for 1.5 s: only one more hot second follows on.
+        for i in 0..1_500u64 {
+            let now = t0 + Duration::from_secs(60) + Duration::from_millis(i);
+            assert_eq!(g.on_error(ErrorKind::Xrun, "x", now), Verdict::Continue);
+        }
     }
 
     #[test]

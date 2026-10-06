@@ -42,12 +42,15 @@ pub fn play_mono(samples: Vec<f32>, rate: u32, cancelled: impl Fn() -> bool) -> 
 
     let duration = Duration::from_secs_f64(samples.len() as f64 / rate as f64);
     let done = Arc::new(AtomicBool::new(false));
+    // Set by the error gate once the output device is lost or storming.
+    let failed = Arc::new(AtomicBool::new(false));
     let pcm: Arc<[f32]> = samples.into();
+    let (d, f) = (done.clone(), failed.clone());
     let stream = match format {
-        SampleFormat::F32 => build::<f32>(&device, config, pcm, rate, done.clone()),
-        SampleFormat::I16 => build::<i16>(&device, config, pcm, rate, done.clone()),
-        SampleFormat::I32 => build::<i32>(&device, config, pcm, rate, done.clone()),
-        SampleFormat::U16 => build::<u16>(&device, config, pcm, rate, done.clone()),
+        SampleFormat::F32 => build::<f32>(&device, config, pcm, rate, d, f),
+        SampleFormat::I16 => build::<i16>(&device, config, pcm, rate, d, f),
+        SampleFormat::I32 => build::<i32>(&device, config, pcm, rate, d, f),
+        SampleFormat::U16 => build::<u16>(&device, config, pcm, rate, d, f),
         other => return Err(format!("unsupported output sample format: {other:?}")),
     }?;
     stream.play().map_err(|e| e.to_string())?;
@@ -56,6 +59,10 @@ pub fn play_mono(samples: Vec<f32>, rate: u32, cancelled: impl Fn() -> bool) -> 
     // own length.
     let deadline = Instant::now() + duration + Duration::from_secs(2);
     while !done.load(Ordering::Relaxed) {
+        if failed.load(Ordering::Relaxed) {
+            // The device went away mid-clip: stop waiting for a drain that will never come.
+            return Err("output device lost".into());
+        }
         if cancelled() || Instant::now() >= deadline {
             return Ok(()); // dropping `stream` stops it
         }
@@ -79,10 +86,10 @@ fn build<T: SizedSample + FromSample<f32>>(
     pcm: Arc<[f32]>,
     src_rate: u32,
     done: Arc<AtomicBool>,
+    failed: Arc<AtomicBool>,
 ) -> Result<cpal::Stream, String> {
     let channels = config.channels as usize;
     let mut cursor = Cursor::new(src_rate, config.sample_rate);
-    let mut gate = super::stream_errors::ErrorGate::new("playback");
     device
         .build_output_stream(
             config,
@@ -91,10 +98,9 @@ fn build<T: SizedSample + FromSample<f32>>(
                     done.store(true, Ordering::Relaxed);
                 }
             },
-            move |e| {
-                let msg = e.to_string();
-                let _ = gate.on_error(e.kind(), &msg, Instant::now());
-            },
+            super::stream_errors::error_callback("playback", move || {
+                failed.store(true, Ordering::Relaxed)
+            }),
             None,
         )
         .map_err(|e| e.to_string())
