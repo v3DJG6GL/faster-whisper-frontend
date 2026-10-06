@@ -294,8 +294,9 @@ export interface PackageOutcome {
   kind: PackageOutcomeKind;
   detail: string;
   bytes: number;
-  /** "ok": the packaged server copy. "busy": the copy to retry with — a local
-   *  file was already uploaded, so the retry skips the upload. */
+  /** "ok": the packaged server copy. "busy" or any other failed package after a
+   *  local file was uploaded: that upload's server copy, so a retry (or "Save as
+   *  MKV") skips the upload. */
   mediaId: string | null;
   expiresAt: number | null;
   reason: string | null;
@@ -1519,7 +1520,7 @@ export async function removeTranscriptMedia(
   return await invoke<number>("remove_transcript_media", { kind, audioBase });
 }
 
-/** Relocate the whole audio store (all three subfolders) to a new base.
+/** Relocate the whole audio store (dictations/, files/, links/, video/) to a new base.
  *  Call BEFORE saving the setting; only persist on success. */
 export async function moveAudioBase(
   current: string | null,

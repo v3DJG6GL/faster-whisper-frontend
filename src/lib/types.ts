@@ -233,11 +233,16 @@ export type IndicatorPosition = "top" | "bottom" | "off";
 /** "auto" follows the OS scheme (prefers-color-scheme); see lib/theme.ts. */
 export type ThemeName = "dark" | "light" | "auto";
 
-/** See AppSettings.accentMotion; the engine's own copy lives in theme.ts. */
+/** See AppSettings.accentMotion. */
 export interface AccentMotion {
+  /** Seconds per full turn of the wheel (or per breath, for an arc). 0 = Still. */
   period: number;
   range: "wheel" | "arc";
+  /** The near end of the arc, when `range` is "arc". Absent (older blobs, whose arc started
+   *  from `accentHue`) = the preset nearest the Signal colour other than `arcHue`
+   *  (`nearestPreset`, lib/theme.ts), the same stand-in the Settings palette shows. */
   arcFrom?: number;
+  /** The far end of the arc, when `range` is "arc". Absent = the Rose preset. */
   arcHue?: number;
 }
 /** Which usage figure the chip's optional readout shows (today's value). */
@@ -289,7 +294,7 @@ export interface RecordingSettings {
   indicatorPosition: IndicatorPosition;
   saveRecordings: boolean;
   recordingsDir: string | null; // LEGACY custom folder for saved .wav files; acts as audioBaseDir fallback
-  audioBaseDir: string | null; // one base folder for ALL stored audio (dictations/, files/, links/); null = default app-data location
+  audioBaseDir: string | null; // one base folder for ALL stored audio (dictations/, files/, links/, video/); null = default app-data location
   trimSilence: boolean; // when saving: keep only spoken spans (drop silence) in the .wav
   recordingsRetentionDays: number; // delete saved recordings older than N days (0 = keep forever)
   muteSystemAudio: boolean;
@@ -985,8 +990,9 @@ export interface UsageRange {
   first_day: number | null;
   /** "jobs" when a `with=` stage filter recomputed the document from the jobs table. */
   source: "rollups" | "jobs";
-  /** How far back the jobs table reaches (the stage-filter disclosure). */
-  jobs_retention_days: number;
+  /** How far back the jobs table reaches (the stage-filter disclosure).
+   *  0 = forever (never pruned); absent on older servers. */
+  jobs_retention_days?: number;
 }
 
 /** The caller's own usage document — the Home strip and the chip read a fixed 30-day
@@ -1245,7 +1251,6 @@ export interface VideoProgress {
   error?: string | null;
 }
 
-/** Result of a batch transcription. */
 /** One server job row (`GET /v1/jobs/{id}`) — a batch run the server keeps
  *  after the connection that carried it is gone. Mirrors Rust
  *  `transport::jobs::JobStatus` (camelCase over the IPC). */
@@ -1279,6 +1284,7 @@ export type JobOutcome<T> =
   | { kind: "disabled" }
   | { kind: "error"; message: string };
 
+/** Result of a batch transcription. */
 export interface BatchResult {
   text: string;
   language?: string;

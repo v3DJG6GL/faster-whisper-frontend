@@ -110,8 +110,10 @@ describe("migrateInsertTiming", () => {
   });
 
   it("still migrates a config that predates the version stamp", () => {
-    useApp.getState().hydrate({ settings: settingsWith("live"), backends: [], profiles: [profile()] });
-    expect(useApp.getState().settings.general.typeAsISpeak).toBe(true);
-    expect(useApp.getState().profiles[0].typeAsISpeak).toBe(true);
+    // "stop", not "live": the defaults already carry typeAsISpeak=true, so a "live" config
+    // would pass the general assertion even if the migration never ran.
+    useApp.getState().hydrate({ settings: settingsWith("stop"), backends: [], profiles: [profile()] });
+    expect(useApp.getState().settings.general.typeAsISpeak).toBe(false);
+    expect(useApp.getState().profiles[0].typeAsISpeak).toBe(false);
   });
 });

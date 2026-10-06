@@ -145,10 +145,13 @@ export async function initConfig(): Promise<void> {
       saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: CONFIG_VERSION })
         .then(
           () => {
-            // The write landed — clear any prior failure banner, THEN re-register. Re-registration
-            // has its OWN catch: a reregister failure is NOT data loss (the config was persisted
-            // fine), so it must never raise the "couldn't save your settings" banner below.
-            useApp.getState().setSaveError(null);
+            // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
+            // notice (settings reset from a corrupt file / failed to load) is not a save failure:
+            // it stays until the user dismisses it, so the first edit can't silently erase where
+            // the backup went or the "saving may overwrite" warning. Re-registration has its OWN
+            // catch: a reregister failure is NOT data loss (the config was persisted fine), so it
+            // must never raise the "couldn't save your settings" banner below.
+            if (useApp.getState().saveErrorKind !== "load") useApp.getState().setSaveError(null);
             // Use the capture-aware variant: a debounced save left pending by an edit just before the
             // user enters chord-capture can resolve DURING the capture window, and a plain reregister
             // would re-arm the hotkeys mid-capture (the next keypress would both rebind AND fire
