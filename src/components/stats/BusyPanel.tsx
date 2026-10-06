@@ -15,6 +15,13 @@ import { CellTip, LevelLegend } from "@/components/stats/heatGrid";
 import { CELL_HOT, CELL_HOVER, LEVEL_BG, useCellTip, useRovingGrid } from "@/components/stats/heatGridKit";
 import { Panel } from "@/components/stats/primitives";
 
+/** The rule behind the busy phrase, per rhythm, as lib/usageDerive.ts rhythmPhrase applies it. */
+function phraseRule(rhythm: Rhythm, measure: string): string {
+  if (rhythm === "months") return `the top month holding 40 %+, else the top two holding 50 %+ of the ${measure}`;
+  if (rhythm === "hours") return `one slot holding 50 %+, else the smallest group holding 60 %+ of the ${measure}`;
+  return `the smallest group holding 60 %+ of the ${measure}`;
+}
+
 /** The busy panel (D40 R1 / D41 N1): one grid, three rhythms — weekday × hour, day of month ×
  *  hour (the backend's geometry, D42 A2), year × month — for the page's measure, with side
  *  bars against a flat distribution (D43 M1), a peak line (D44 P1) and per-kind tooltips
@@ -128,7 +135,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
             Peak {L.cellName(peak.row * L.cols + peak.col)} · <b className="font-semibold text-text">{metricText(metric, peak.value)}</b>
             {peakOcc > 1 && ` · ≈ ${metricText(metric, peak.value / peakOcc, true)} per ${model.occWord(peak)}`}
             {` · ${metricText(comp, peak.companion)}`}
-            {model.phrase && <> · <span className="text-accent" title={`the smallest group holding 60 %+ of the ${label.toLowerCase()}`}>{model.phrase}</span></>}
+            {model.phrase && <> · <span className="text-accent" title={phraseRule(rhythm, label.toLowerCase())}>{model.phrase}</span></>}
           </>
         ) : (
           `No ${label.toLowerCase()} in this range`

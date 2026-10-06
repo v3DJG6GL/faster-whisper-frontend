@@ -16,7 +16,7 @@ import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
-import { langCode, languageLabel } from "@/lib/languages";
+import { langCode } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
 import type { Backend, Profile } from "@/lib/types";
 
@@ -50,10 +50,10 @@ const TRANSCRIPT_LINGER_MS = 10000;
 /** The next dictation's route for one profile, resolved as the chip's and the session's
  *  are: the profile's language over the bound backend's, the backend's translation
  *  defaults under the profile's overrides. Both halves are peer-authored (a sync pull can
- *  land them), so they go through `languageLabel` + routeParts' bounds. */
+ *  land them), so they go through routeParts' labelling and bounds. */
 function profileRoute(p: Profile | undefined, backend: Backend | undefined): string {
   const lang = p?.language?.trim() ? p.language : (backend?.language ?? "auto");
-  const route = routeParts(languageLabel(lang), configuredRouteTargets(p, backend));
+  const route = routeParts(lang, configuredRouteTargets(p, backend));
   return (route.source || "auto") + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
 }
 

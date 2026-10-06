@@ -126,6 +126,7 @@ export function FilterBar({
   firstDay,
   retentionDays,
   stale,
+  failed,
 }: {
   scope: UsageScope;
   onScope: (s: UsageScope) => void;
@@ -137,6 +138,8 @@ export function FilterBar({
   firstDay: number | null | undefined;
   retentionDays: number | undefined;
   stale: boolean;
+  /** The fetch for this query failed: the older document stays up, and the rail says so. */
+  failed: boolean;
 }) {
   const [custom, setCustom] = useState(false);
   const [sentinelRef, stuck] = useStuck();
@@ -279,7 +282,7 @@ export function FilterBar({
         </RailChip>
       )}
       <RailChip label="Measure" accent onClick={toggleBar}>{METRIC_LABEL[metric]}</RailChip>
-      {stale && <Pill>updating…</Pill>}
+      {failed ? <Pill>couldn’t load · older data</Pill> : stale && <Pill>updating…</Pill>}
       {/* Top-right: the resolved span (the full bar's Range row shows it while open, so the
           rail drops it then) and the one button that opens / closes the full bar. Clear
           lives in the full bar only. */}

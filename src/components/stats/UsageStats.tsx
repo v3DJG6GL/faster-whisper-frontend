@@ -33,7 +33,7 @@ import {
   fmtDuration,
   localTodayDay,
 } from "@/lib/format";
-import { TREND_DAYS, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
+import { TREND_DAYS, sameViewSource, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
 import { effectiveServerUrl } from "@/lib/backends";
 import {
   KINDS,
@@ -429,11 +429,16 @@ export function StatisticsView({
   // usable) and says so, instead of an "updating…" that never resolves; the next poll retries.
   const fresh = !!sig && view?.sig === sig && !view.failed && !!view.stats;
   const failed = !!sig && view?.sig === sig && !!view.failed;
-  const stats = fresh ? view!.stats : (view?.stats ?? base);
-  const win = useMemo(
-    () => (fresh && stats?.range ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, stats?.range?.first_day)),
-    [fresh, stats, query, today, view],
-  );
+  // Only a document from this backend + target may stand in while this one loads (another
+  // server's numbers would read as this one's under its chip); else the backend's own poll document.
+  const stats = fresh ? view!.stats : ((sameViewSource(view?.sig, sig) ? view!.stats : null) ?? base);
+  const win = useMemo(() => {
+    // An older server without the v2 range echo deserialises a zeroed window (day 0 = 1970);
+    // a real echo always spans at least one day, so anything else resolves locally.
+    const r = stats?.range;
+    const echoed = fresh && !!r && r.days > 0 && r.to > 0 && r.to >= r.from;
+    return echoed ? { from: r!.from, to: r!.to, days: r!.days } : resolveWindow(query, today, r?.first_day);
+  }, [fresh, stats, query, today, view]);
   const dense = useMemo(
     () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], win.days, win.to).filter((p) => p.day >= win.from && p.day <= win.to) : []),
     [stats, win],
@@ -445,8 +450,10 @@ export function StatisticsView({
   const year = useApp((s) => s.usageYear);
   const yearQ = yearPageQuery(query);
   const yearSig = yearQ && viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), yearQ, viewerTimeZone()) : null;
-  const yearFresh = !yearQ ? fresh : !!yearSig && year?.sig === yearSig;
-  const yearStats = !yearQ ? stats : (year?.stats ?? null);
+  // A failed year fetch is still loading (the carried same-source year shows dimmed), not an empty year.
+  const yearFresh = !yearQ ? fresh : !!yearSig && year?.sig === yearSig && !year.failed && !!year.stats;
+  // yearSig shares sig's backend + target, so the same-source check against sig holds for it.
+  const yearStats = !yearQ ? stats : (year && sameViewSource(year.sig, sig) ? year.stats : null);
   const yearWin = { from: today - 364, to: today };
   const yearDense = useMemo(
     () => (yearStats ? densifyKinds(Array.isArray(yearStats.series) ? yearStats.series : [], 365, today).filter((p) => p.day >= yearWin.from && p.day <= yearWin.to) : []),
@@ -482,6 +489,7 @@ export function StatisticsView({
         firstDay={stats.range?.first_day}
         retentionDays={stats.range?.jobs_retention_days}
         stale={!fresh}
+        failed={failed}
       />
       <div className={cn("grid grid-cols-4 gap-3 max-[860px]:grid-cols-2", !fresh && "opacity-70")}>
         {tiles.map((t) => (

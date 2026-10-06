@@ -19,7 +19,7 @@ vi.mock("./windowVisibility", () => ({
 }));
 
 import { useApp } from "./store";
-import { initUsageController, openStatisticsPage, TREND_DAYS } from "./usage";
+import { initUsageController, openStatisticsPage, sameViewSource, TREND_DAYS } from "./usage";
 
 const setHidden = (h: boolean) => {
   vis.hidden = h;
@@ -127,5 +127,22 @@ describe("the Statistics page document on a failed fetch", () => {
       useApp.getState().setUsageView(next, null);
       expect(useApp.getState().usageView).toEqual({ sig: next, stats: null, failed: true });
     }
+  });
+});
+
+describe("sameViewSource", () => {
+  const sig = (backendId: string, target: string, range: string) => JSON.stringify([backendId, target, { range }]);
+
+  it("matches on backend + target whatever the query", () => {
+    expect(sameViewSource(sig("a", "http://a", "30"), sig("a", "http://a", "365"))).toBe(true);
+    expect(sameViewSource(sig("a", "http://a", "30"), sig("b", "http://a", "30"))).toBe(false);
+    expect(sameViewSource(sig("a", "http://a", "30"), sig("a", "http://other", "30"))).toBe(false);
+  });
+
+  it("never matches a missing or malformed signature", () => {
+    expect(sameViewSource(null, null)).toBe(false);
+    expect(sameViewSource("not json", "not json")).toBe(false);
+    expect(sameViewSource("[1]", "[1]")).toBe(false);
+    expect(sameViewSource(undefined, sig("a", "http://a", "30"))).toBe(false);
   });
 });

@@ -100,6 +100,22 @@ export function viewSignature(backend: Backend, target: string, q: UsagePageQuer
   return JSON.stringify([backend.id, target, toUsageQuery(q, tz)]);
 }
 
+/** Whether two view signatures name the same backend + target (whatever their queries): only
+ *  such a document may stand in for another while it loads. False for any malformed signature. */
+export function sameViewSource(a: string | null | undefined, b: string | null | undefined): boolean {
+  const src = (sig: string | null | undefined) => {
+    if (!sig) return null;
+    try {
+      const v: unknown = JSON.parse(sig);
+      return Array.isArray(v) && v.length >= 2 ? JSON.stringify(v.slice(0, 2)) : null;
+    } catch {
+      return null;
+    }
+  };
+  const x = src(a);
+  return x !== null && x === src(b);
+}
+
 /** The calendar's query for a page query: the last 365 days under the same stage filter.
  *  Null when the page's own document already spans a year (the 365 / All presets). */
 export function yearPageQuery(q: UsagePageQuery): UsagePageQuery | null {
@@ -118,7 +134,7 @@ async function refreshYear(force = false): Promise<void> {
   const target = effectiveServerUrl(backend, s.settings);
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, q, tz);
-  if (s.usageYear?.sig === sig && s.usageYear.stats && !pollingAll && !force) return; // the poll refreshes it; a filter change reuses it
+  if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !pollingAll && !force) return; // the poll refreshes it; a filter change reuses it (a failed, carried year is retried)
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
