@@ -16,7 +16,10 @@ use tauri::{AppHandle, Manager};
 /// sweeps run on a background thread (`save_config`), so without it a save could rename a fresh
 /// record into place between the sweep's mtime check and its `remove_file`, and the just-saved
 /// record would be deleted. Held per entry, never for a whole sweep, so a save waits at most one
-/// stat + unlink.
+/// stat + unlink. The media-path rewriters (`rewrite_media_paths`, `heal_media_paths`) hold it
+/// per record across their read-parse-rewrite too: an audio-base move runs them on a blocking
+/// thread while saves and sweeps stay live, so an unlocked rewrite could overwrite a newer save
+/// with the stale copy it read, or resurrect a record a sweep just removed.
 static RECORD_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn record_io_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -147,6 +150,9 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
+            // Held to the end of this record (read, parse, stat, rewrite) — see `RECORD_IO`.
+            // A record a sweep removed first is unreadable here and skipped, not resurrected.
+            let _io = record_io_lock();
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -172,7 +178,8 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            let mtime = entry.metadata().and_then(|m| m.modified()).ok();
+            // Re-stat under the lock: the DirEntry's metadata may predate a save.
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             if rewrite_record_keep_mtime(&path, &out, mtime) {
                 rewritten += 1;
             }
@@ -212,6 +219,8 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
             {
                 continue;
             }
+            // Held to the end of this record, as in `rewrite_media_paths`.
+            let _io = record_io_lock();
             let Ok(text) = std::fs::read_to_string(&path) else {
                 continue;
             };
@@ -247,7 +256,8 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            let mtime = entry.metadata().and_then(|m| m.modified()).ok();
+            // Re-stat under the lock: the DirEntry's metadata may predate a save.
+            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             if rewrite_record_keep_mtime(&path, &out, mtime) {
                 healed += 1;
             }

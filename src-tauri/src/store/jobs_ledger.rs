@@ -11,8 +11,10 @@
 use std::path::{Path, PathBuf};
 
 /// Hard cap on the file, both ways. A row carries the run's resolved options and
-/// context (~2 KB); the TS side keeps at most 20 rows, so 256 KiB is many times a
-/// legitimately full ledger. Anything past this is a runaway, not a ledger.
+/// context — usually ~2 KB, but the options carry user text verbatim (e.g. the
+/// translation glossary), so a row can be much larger. The TS side keeps at most 20
+/// rows AND trims the oldest rows to this byte budget (`MAX_LEDGER_BYTES` in
+/// `lib/jobsLedger.ts` mirrors it), because a save over the cap is refused whole.
 pub const MAX_LEDGER_BYTES: usize = 256 * 1024;
 
 fn ledger_path(dir: &Path) -> PathBuf {
