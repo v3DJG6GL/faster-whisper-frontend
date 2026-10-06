@@ -226,6 +226,13 @@ fn note_hold(profile_id: &str, active: bool) {
     }
 }
 
+/// Whether a plugin Hold chord is held right now — a registration teardown would end it. Read by
+/// the Linux evdev re-scan (a keyboard arriving while evdev fell back to the plugin).
+#[cfg(target_os = "linux")]
+pub fn any_hold_active() -> bool {
+    ACTIVE_HOLDS.lock().map(|h| !h.is_empty()).unwrap_or(false)
+}
+
 /// Emit "stop" for every plugin Hold chord still held, then clear the set. Called from the
 /// registration teardowns (unregister_all / register_from_config) so a session held across a
 /// rebind/suspend isn't left wedged "listening". No-op when nothing is held (the common case).

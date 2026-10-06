@@ -274,7 +274,7 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
         .unwrap_or(false);
     let step = rescan_step(
         wanted,
-        crate::hotkeys::evdev::any_hold_active(),
+        crate::hotkeys::evdev::any_hold_active() || crate::hotkeys::triggers::any_hold_active(),
         reader_lost,
         || {
             nodes
@@ -289,6 +289,9 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
         RescanStep::Skip => nodes.pending.clear(),
         RescanStep::Apply => {
             nodes.pending.clear();
+            if reader_lost {
+                nodes.note_loss_apply();
+            }
             tracing::info!(
                 "[evdev] {}; re-scanning keyboards",
                 if reader_lost {
@@ -307,7 +310,7 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
 enum RescanStep {
     /// Nothing to gain (evdev not wanted, or no new node is a keyboard): drop what was pending.
     Skip,
-    /// A push-to-talk hold is active and a restart would end it: keep it pending.
+    /// A push-to-talk hold (evdev or plugin) is active and a restart would end it: keep it pending.
     Defer,
     /// Re-apply the bindings.
     Apply,
@@ -336,14 +339,24 @@ fn rescan_step(
 /// Debounces "an input device appeared / a keyboard was lost" for evdev's re-scan. Neither is acted
 /// on the tick it is first seen (udev may not have set the new node's ACL yet, so opening it would
 /// fail and the keyboard stay missed); a re-scan is due on a tick whose node set equals the previous
-/// one. `pending` = nodes that appeared since the last decision and still exist.
+/// one. `pending` = nodes that appeared since the last decision and still exist. A loss that
+/// survives its own re-apply (a keyboard whose reads fail right after every open) backs off
+/// exponentially instead of restarting evdev every other tick.
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct InputNodeWatch {
     prev: Option<std::collections::BTreeSet<String>>,
     pending: std::collections::BTreeSet<String>,
     lost_seen: bool,
+    /// Ticks the next loss-triggered re-apply waits; doubles per consecutive one, reset once a
+    /// tick sees no loss (the re-apply's readers stayed up).
+    loss_backoff: u32,
+    loss_wait: u32,
 }
+
+/// Cap on `InputNodeWatch::loss_backoff`, in ticks (~2 min at the 2 s tick).
+#[cfg(target_os = "linux")]
+const LOSS_BACKOFF_MAX: u32 = 64;
 
 #[cfg(target_os = "linux")]
 impl InputNodeWatch {
@@ -362,7 +375,14 @@ impl InputNodeWatch {
         self.prev = Some(now);
         // A loss already seen on an earlier tick: its keyboard may have come straight back under
         // the same name, so it gets the same one-tick grace as a new node.
-        let lost_due = lost && self.lost_seen;
+        if !lost {
+            self.loss_backoff = 0;
+            self.loss_wait = 0;
+        }
+        let lost_due = lost && self.lost_seen && self.loss_wait == 0;
+        if lost && self.loss_wait > 0 {
+            self.loss_wait -= 1;
+        }
         self.lost_seen = lost;
         if !settled {
             None
@@ -373,6 +393,12 @@ impl InputNodeWatch {
         } else {
             None
         }
+    }
+
+    /// A loss-triggered re-apply ran: if the loss is still there afterwards, wait longer each time.
+    fn note_loss_apply(&mut self) {
+        self.loss_backoff = (self.loss_backoff * 2).clamp(1, LOSS_BACKOFF_MAX);
+        self.loss_wait = self.loss_backoff;
     }
 
     /// An apply just enumerated: what was pending is covered; re-baseline on `now`.
@@ -634,6 +660,28 @@ mod tests {
         assert_eq!(w.observe(set(&["event0", "event5"]), true), Some(true));
         // The apply bumps evdev's generation, so the flag reads false afterwards.
         assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
+    }
+
+    #[test]
+    fn input_node_watch_backs_off_a_loss_that_survives_its_reapply() {
+        // A keyboard whose reads fail right after every open: the flag stays up across applies.
+        let mut w = InputNodeWatch::default();
+        let s = || set(&["event0", "event5"]);
+        w.observe(s(), false);
+        assert_eq!(w.observe(s(), true), None, "grace tick");
+        let mut applied_at = Vec::new();
+        for tick in 0..40 {
+            if w.observe(s(), true) == Some(true) {
+                applied_at.push(tick);
+                w.note_loss_apply();
+            }
+        }
+        // Waits of 1, 2, 4, 8, 16 ticks between re-applies, not one every tick.
+        assert_eq!(applied_at, vec![0, 2, 5, 10, 19, 36]);
+        // Once the readers stay up the backoff resets: the next loss is acted on after its grace.
+        assert_eq!(w.observe(s(), false), None);
+        assert_eq!(w.observe(s(), true), None, "grace tick");
+        assert_eq!(w.observe(s(), true), Some(true));
     }
 
     #[test]
