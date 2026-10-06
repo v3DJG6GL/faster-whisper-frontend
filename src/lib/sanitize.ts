@@ -44,6 +44,12 @@ function isDeceptiveFormatChar(code: number): boolean {
   // corrupt ordinary Arabic and Syriac text.
 }
 
+/** The Unicode Cc set, matching Rust `char::is_control`: C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F.
+ *  One predicate for every caller so the text views never disagree on what they strip. */
+function isCc(code: number): boolean {
+  return code < 0x20 || (code >= 0x7f && code <= 0x9f);
+}
+
 /** A server- or peer-authored string on its way into the UI: control characters and the
  *  deceptive-format set removed, length bounded.
  *
@@ -58,7 +64,7 @@ export function safeDisplayText(s: unknown, max = 200): string {
   const out: string[] = [];
   for (const ch of s) {
     const code = ch.codePointAt(0) ?? 0;
-    if (code < 0x20 || (code >= 0x7f && code <= 0x9f)) continue;
+    if (isCc(code)) continue;
     // U+2028/U+2029 now live in the shared denylist above (they belong to both callers, not
     // just this one): Zl/Zp, so the Cc range test misses them, yet both are UAX#14 mandatory
     // breaks that no CSS collapses. In a label capped at 60 code points that is up to 60
@@ -180,7 +186,7 @@ export function safeIdentityText(s: unknown, max = 80): string {
     .map((ch) => {
       const code = ch.codePointAt(0) ?? 0;
       if (/\s/.test(ch) || isInvisibleKeyChar(code)) return " ";
-      if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || isDeceptiveFormatChar(code)) return "";
+      if (isCc(code) || isDeceptiveFormatChar(code)) return "";
       return ch;
     })
     .join("");
@@ -230,9 +236,8 @@ export function stripControlChars(text: string, max = Infinity): string {
       prevCR = false;
     }
     const code = ch.codePointAt(0) ?? 0;
-    // Drop the Unicode Cc set (matches Rust char::is_control): C0 0x00-0x1F, DEL 0x7F, C1 0x80-0x9F.
-    // Keep Tab (0x09) and LF (0x0A) — legitimate text/keystrokes.
-    const isControl = code < 0x20 || (code >= 0x7f && code <= 0x9f);
+    // Drop the Unicode Cc set. Keep Tab (0x09) and LF (0x0A) — legitimate text/keystrokes.
+    const isControl = isCc(code);
     if (isControl && code !== 0x09 && code !== 0x0a) continue;
     if (isDeceptiveFormatChar(code)) continue;
     // Never split a surrogate pair to hit the bound exactly.

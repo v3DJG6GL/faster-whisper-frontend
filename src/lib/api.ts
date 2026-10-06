@@ -485,7 +485,7 @@ export async function urlLanguageCheck(args: ServerTarget & {
 }
 
 /** Pull the server-retained audio of a finished URL run into the local media
- *  store (media/<recordId>.<ext>). Returns the local path, or null when the
+ *  store (<base>/links/<recordId>.<ext>). Returns the local path, or null when the
  *  server no longer has the file (retention expired) — the transcript stays
  *  usable, only playback is gone. */
 export async function fetchUrlMedia(args: ServerTarget & {
@@ -771,8 +771,9 @@ export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
   return subscribe<unknown>("audio://test-play-ended", () => cb());
 }
 
-/** Fires when the mic test ended on its own (`"device-lost"`: the mic vanished or kept
- *  erroring) rather than by a stop call. Returns an unlisten fn. */
+/** Fires when the mic test ended on its own rather than by a stop call: `"device-lost"` (the mic
+ *  vanished or kept erroring) or `"open-failed"` (a slow open failed after the start already
+ *  resolved). Returns an unlisten fn. */
 export async function onMicTestEnded(cb: (reason: string) => void): Promise<() => void> {
   return subscribe<string>("audio://test-ended", (reason) => cb(reason));
 }
@@ -973,10 +974,20 @@ export async function retireSessionEpoch(): Promise<void> {
   await invoke("retire_session_epoch");
 }
 
+// Suspend/re-register run on Rust's blocking pool and meet on the non-FIFO APPLY_LOCK, so two in
+// flight could apply out of order — a suspend landing after its paired re-register would leave
+// capture suspension on with every hotkey dead. Issue each only once the previous one settled.
+let shortcutChain: Promise<unknown> = Promise.resolve();
+function inShortcutOrder<T>(op: () => Promise<T>): Promise<T> {
+  const run = shortcutChain.then(op);
+  shortcutChain = run.catch(() => {});
+  return run;
+}
+
 /** Re-register global hotkeys after the bindings change (or to restore them). */
 export async function reregisterShortcuts(): Promise<void> {
   if (!isTauri) return;
-  await invoke("reregister_shortcuts");
+  await inShortcutOrder(() => invoke("reregister_shortcuts"));
 }
 
 /** Like reregisterShortcuts, but a no-op while a binding capture is in progress — used by
@@ -984,14 +995,14 @@ export async function reregisterShortcuts(): Promise<void> {
  *  hotkeys (and clear the capture suspension) mid-capture. */
 export async function reregisterShortcutsUnlessCapturing(): Promise<void> {
   if (!isTauri) return;
-  await invoke("reregister_shortcuts_unless_capturing");
+  await inShortcutOrder(() => invoke("reregister_shortcuts_unless_capturing"));
 }
 
 /** Suspend all global hotkeys while capturing a new binding (so a keypress only
  *  rebinds and doesn't also trigger dictation). Restore with reregisterShortcuts. */
 export async function suspendShortcuts(): Promise<void> {
   if (!isTauri) return;
-  await invoke("suspend_shortcuts");
+  await inShortcutOrder(() => invoke("suspend_shortcuts"));
 }
 
 /** Whether a code-list chord (["ControlLeft","KeyH"]) can be registered via the
@@ -1379,7 +1390,7 @@ export async function exportSettingsFile(path: string, envelope: ExportEnvelope)
 
 /** Read + validate a settings-export file. Throws (string) with a clear message
  *  on not-an-export / newer formatVersion / structurally-broken lists. */
-export async function importSettingsFile(path: string): Promise<ImportResult> {
+async function importSettingsFile(path: string): Promise<ImportResult> {
   if (!isTauri) throw new Error("Not running in the desktop app.");
   return invoke<ImportResult>("import_settings_file", { path });
 }
@@ -1557,7 +1568,7 @@ export async function openSourceUrl(url: string): Promise<void> {
 }
 
 /** Native "open file" dialog for a settings export → absolute path (or null). */
-export async function pickImportFile(): Promise<string | null> {
+async function pickImportFile(): Promise<string | null> {
   if (!isTauri) return null;
   const { open } = await import("@tauri-apps/plugin-dialog");
   const selected = await open({

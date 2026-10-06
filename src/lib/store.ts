@@ -427,8 +427,10 @@ interface AppState {
   usageView: { sig: string; stats: UsageStats | null; failed?: boolean } | null;
   /** The Statistics calendar's own document: the last 365 days under the page's stage
    *  filter, whatever range the page shows, so the calendar is always a year (the page's
-   *  own document is used instead when its range already covers one). Runtime-only. */
-  usageYear: { sig: string; stats: UsageStats | null } | null;
+   *  own document is used instead when its range already covers one). `failed` marks a
+   *  fetch for `sig` that failed — `stats` is then the last good year from the same backend +
+   *  target (or null), shown as stale, as usageView does. Runtime-only. */
+  usageYear: { sig: string; stats: UsageStats | null; failed?: boolean } | null;
   /** What the Statistics page asked for (range preset or custom span, stage filter).
    *  Per-device view state — never synced, never persisted. */
   usageViewQuery: UsagePageQuery;
@@ -601,7 +603,7 @@ function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
 
 /** The backend + target part of a usage-view signature (lib/usage.ts viewSignature's
  *  `[backendId, target, query]`), or null for a signature not in that shape. */
-export function viewSource(sig: string): string | null {
+function viewSource(sig: string): string | null {
   try {
     const a: unknown = JSON.parse(sig);
     return Array.isArray(a) && a.length >= 2 ? JSON.stringify(a.slice(0, 2)) : null;
@@ -842,7 +844,8 @@ export const useApp = create<AppState>((set) => ({
         // would read as this one's); otherwise null, and the page falls back to the backend's own
         // poll document.
         const prev = s.usageView;
-        const carry = prev && viewSource(prev.sig) !== null && viewSource(prev.sig) === viewSource(sig) ? prev.stats : null;
+        const src = viewSource(sig);
+        const carry = prev && src !== null && viewSource(prev.sig) === src ? prev.stats : null;
         return { usageView: { sig, stats: carry, failed: true } };
       }
       // Same stability rule as setUsage: the 30 s poll re-answers the same query with an
@@ -852,7 +855,15 @@ export const useApp = create<AppState>((set) => ({
     }),
   setUsageYear: (sig, stats) =>
     set((s) => {
-      if (s.usageYear && s.usageYear.sig === sig && JSON.stringify(s.usageYear.stats) === JSON.stringify(stats)) return {};
+      if (stats === null) {
+        if (s.usageYear?.sig === sig && s.usageYear.failed) return {};
+        // Same carry rule as setUsageView: only a year from the same backend + target stands in.
+        const prev = s.usageYear;
+        const src = viewSource(sig);
+        const carry = prev && src !== null && viewSource(prev.sig) === src ? prev.stats : null;
+        return { usageYear: { sig, stats: carry, failed: true } };
+      }
+      if (s.usageYear && s.usageYear.sig === sig && !s.usageYear.failed && JSON.stringify(s.usageYear.stats) === JSON.stringify(stats)) return {};
       return { usageYear: { sig, stats } };
     }),
   setUsageViewQuery: (q) => set({ usageViewQuery: q }),

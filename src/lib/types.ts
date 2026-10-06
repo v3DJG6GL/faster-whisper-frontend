@@ -1144,7 +1144,6 @@ export interface TranscribeOptions {
   mediaMaxBytes?: number;
 }
 
-/** Live progress of an in-flight file transcription. */
 /** One translation target inside the run plan's translating stage. */
 export interface PlanUnit {
   target: string;
@@ -1177,6 +1176,7 @@ export interface PlanStage {
   units?: PlanUnit[] | null;
 }
 
+/** Live progress of an in-flight file transcription. */
 export interface BatchProgress {
   /** waiting | resolving | downloading | separating | analyzing |
    *  transcribing | diarizing | unknown */

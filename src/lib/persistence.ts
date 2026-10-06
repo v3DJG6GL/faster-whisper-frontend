@@ -94,12 +94,15 @@ export async function initConfig(): Promise<void> {
       return;
     }
     // Re-apply bindings when the profiles' chords change OR the evdev backend is
-    // toggled (which owner — plugin vs evdev — must switch). reregister runs after
-    // the save resolves, so the Rust side reads the just-persisted config (no race).
+    // toggled (which owner — plugin vs evdev — must switch), or when a quick-add list is
+    // designated or cleared (apply_bindings arms the quick-add chord only while one is set).
+    // reregister runs after the save resolves, so the Rust side reads the just-persisted
+    // config (no race).
     if (
       state.profiles !== prev.profiles ||
       state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled ||
-      state.settings.general.quickAddHotkey !== prev.settings.general.quickAddHotkey
+      state.settings.general.quickAddHotkey !== prev.settings.general.quickAddHotkey ||
+      (state.settings.quickAddList == null) !== (prev.settings.quickAddList == null)
     ) {
       pendingBindingChange = true;
     }
