@@ -10,6 +10,7 @@
 use std::collections::VecDeque;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -215,7 +216,7 @@ static ENV_OVERRIDE: OnceLock<bool> = OnceLock::new();
 
 fn env_filter() -> tracing_subscriber::EnvFilter {
     tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| "faster_whisper_frontend_lib=info,info".into())
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level_directive(LogLevel::Info)))
 }
 
 /// Install the subscriber stack: reloadable filter → ring → console → file.
@@ -365,23 +366,47 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
     });
 }
 
-/// Config-save side effect (also run once in setup): reload the level, move
-/// the session file if the folder changed, and prune old files.
+/// The previous `apply_log_settings` call's "reset nobody has saved over" state. `save_config`
+/// writes `config.json` BEFORE calling in, so this is the state the save started from.
+static UNCONFIRMED_BEFORE: AtomicBool = AtomicBool::new(false);
+
+/// Whether log pruning waits — the same hold as the retention sweeps: the config is a reset
+/// nobody has saved over (this session's, or an earlier launch's), or this call is the save
+/// made over one. The defaults' `keep_days` would otherwise delete logs the user's real
+/// (backed-up or unreadable) settings kept — the very logs that explain the reset.
+fn pruning_held(app: &AppHandle) -> bool {
+    // (`reset_this_session` is sticky, so folding it into the swapped flag changes nothing.)
+    let held = app
+        .path()
+        .app_config_dir()
+        .is_ok_and(|dir| crate::config::retention_held(&dir));
+    let before = UNCONFIRMED_BEFORE.swap(held, Ordering::SeqCst);
+    crate::config::reset_this_session() || held || before
+}
+
+/// Config-save side effect (also run once in setup, after the config load): reload the level,
+/// move the session file if the folder changed, and prune old files (unless `pruning_held`).
 pub fn apply_log_settings(app: &AppHandle, config: &Config) {
     apply_log_level(config.settings.logging.log_level);
     let Some(dir) = log_dir(app, config) else {
         return;
     };
+    let prune = !pruning_held(app);
+    if !prune {
+        tracing::info!("[logging] settings were reset and not saved since; log pruning skipped");
+    }
     let writer = app.state::<SwapWriter>();
     let ring = app.state::<LogRing>();
     let current = writer.0.lock().ok().and_then(|i| i.dir.clone());
     if current.as_deref() != Some(dir.as_path()) {
         open_session_file(&writer, &ring, &dir);
-        if let Some(old) = current.as_deref() {
+        if let Some(old) = current.as_deref().filter(|_| prune) {
             prune_log_files(old, config.settings.logging.keep_days);
         }
     }
-    prune_log_files(&dir, config.settings.logging.keep_days);
+    if prune {
+        prune_log_files(&dir, config.settings.logging.keep_days);
+    }
     // The pre-viewer builds wrote `%LOCALAPPDATA%\faster-whisper-frontend\logs`; the
     // legacy pair there was never reached by the prune above.
     #[cfg(windows)]
@@ -540,6 +565,11 @@ mod tests {
         assert_eq!(
             level_directive(LogLevel::Debug),
             "faster_whisper_frontend_lib=debug,info"
+        );
+        // The launch filter (no RUST_LOG) is the Info directive.
+        assert_eq!(
+            level_directive(LogLevel::Info),
+            "faster_whisper_frontend_lib=info,info"
         );
     }
 

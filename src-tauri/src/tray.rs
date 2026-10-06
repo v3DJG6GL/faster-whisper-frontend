@@ -80,13 +80,9 @@ fn run_menu_action(app: &AppHandle, id: &str) {
     match parse_action(id) {
         Some(MenuAction::Show) => show_main(app),
         Some(MenuAction::Screen(screen)) => show_main_at_screen(app.clone(), screen.to_string()),
-        Some(MenuAction::Quit) => {
-            // Drop any live dictation first: app.exit ends the process without running
-            // managed-state destructors, so a mute_system session would otherwise leave
-            // the user's system audio muted after we're gone.
-            crate::session::cleanup_for_exit(app);
-            app.exit(0)
-        }
+        // Lets the main window land its coalesced writes, then runs the exit sequence (drop
+        // any live dictation so a mute_system session can't leave the system muted, then exit).
+        Some(MenuAction::Quit) => crate::quit::request_quit(app),
         None => {}
     }
 }

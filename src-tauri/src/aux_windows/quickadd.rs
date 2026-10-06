@@ -516,6 +516,20 @@ pub(crate) mod win_seed {
         false
     }
 
+    /// Put the user's snapshot back WITH the history/cloud exclusion hints — every clipboard
+    /// RESTORE carries them (see `inject::serve_clipboard_blocking`): the snapshot lost whatever
+    /// flags its source set (a password manager marks its copies), so a plain `set_text` would
+    /// re-publish it to clipboard history / cloud sync.
+    #[cfg(windows)]
+    fn restore_excluded(cb: &mut arboard::Clipboard, text: &str) {
+        use arboard::SetExtWindows;
+        let _ = cb
+            .set()
+            .exclude_from_history()
+            .exclude_from_cloud()
+            .text(text.to_string());
+    }
+
     /// Signals `quickadd::show`'s "safe to show the window now" rendezvous exactly once —
     /// explicitly, right after the copy chord is injected (the last point where focus must
     /// still be on the source app), or implicitly on drop, so every early-return / panic
@@ -804,9 +818,7 @@ pub(crate) mod win_seed {
                     Ok(text) if text.is_empty() => {
                         if Instant::now() >= deadline || superseded() {
                             match prev {
-                                Some(p) => {
-                                    let _ = cb.set_text(p);
-                                }
+                                Some(p) => restore_excluded(&mut cb, &p),
                                 None => {
                                     let _ = cb.clear();
                                 }
@@ -822,9 +834,7 @@ pub(crate) mod win_seed {
                             // detector had to read that as "no selection") — and the
                             // clipboard already holds it, so there's nothing to restore.
                             Some(p) if *p == text => {}
-                            Some(p) => {
-                                let _ = cb.set_text(p.clone()); // put the user's clipboard back
-                            }
+                            Some(p) => restore_excluded(&mut cb, p), // put the user's clipboard back
                             // Nothing text-shaped to put back — but the grab still LEFT the
                             // user's selection sitting in the global clipboard, readable by every
                             // process and captured by clipboard history / cloud sync, after the
@@ -842,9 +852,8 @@ pub(crate) mod win_seed {
                         // restore the user's clipboard exactly like the deadline path.
                         if Instant::now() >= deadline || superseded() {
                             match prev {
-                                Some(p) => {
-                                    let _ = cb.set_text(p); // copied content is non-text — restore
-                                }
+                                // Copied content is non-text — restore.
+                                Some(p) => restore_excluded(&mut cb, &p),
                                 // Same residue as above, on the read-failure path.
                                 None => {
                                     let _ = cb.clear();

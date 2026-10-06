@@ -23,6 +23,7 @@ mod inject;
 mod logging;
 mod memwatch;
 mod migrate_identifier;
+mod quit;
 mod session;
 mod store;
 mod transport;
@@ -103,8 +104,8 @@ pub fn run() {
                     api.prevent_close();
                     if window.label() == "main" && tray::tray_missing() {
                         use tauri::Manager;
-                        crate::session::cleanup_for_exit(window.app_handle());
-                        window.app_handle().exit(0);
+                        // Exits after the main window lands its pending writes (bounded wait).
+                        crate::quit::request_quit(window.app_handle());
                         return;
                     }
                     let _ = window.hide();
@@ -138,14 +139,15 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
-            let (cfg, cfg_recovered) = app
-                .path()
-                .app_config_dir()
-                .map(|dir| config::load_outcome(&dir))
-                .unwrap_or_default();
+            let cfg_dir = app.path().app_config_dir().ok();
+            let cfg = cfg_dir.as_deref().map(config::load).unwrap_or_default();
+            // A reset nobody has saved over (this launch's — the load above sets it — or an
+            // earlier one's): the retention sweeps below and the log pruning wait on it.
+            // (No config dir means no load ran, so no reset this session either.)
+            let retention_held = cfg_dir.as_deref().is_some_and(config::retention_held);
             // Apply the saved log level, open this session's log file (ring
-            // replayed in, so it's complete from launch), prune old ones, and
-            // start the batched log stream for the Logs screen.
+            // replayed in, so it's complete from launch), prune old ones (not
+            // while `retention_held`), and start the batched log stream for the Logs screen.
             logging::apply_log_settings(app.handle(), &cfg);
             logging::spawn_emit_pump(app.handle().clone());
             // "Keep dictated text out of clipboard history" — a process-wide switch every
@@ -184,11 +186,7 @@ pub fn run() {
             // config is a reset nobody has saved over (this launch, or an earlier one): the
             // defaults' 7-day window would otherwise delete history the user's real (backed-up
             // or unreadable) settings said to keep.
-            let reset_unconfirmed = app
-                .path()
-                .app_config_dir()
-                .is_ok_and(|dir| config::reset_unconfirmed(&dir));
-            if cfg_recovered || config::backup_failed() || reset_unconfirmed {
+            if retention_held {
                 tracing::info!(
                     "[config] settings were reset and not saved since; retention sweeps skipped"
                 );
@@ -292,6 +290,7 @@ pub fn run() {
             commands::stop_record,
             commands::cancel_record,
             commands::retire_session_epoch,
+            commands::quit_ready,
             commands::audio_dir_path,  // audio base folder (display path)
             commands::open_audio_dir,  // open the audio base folder
             commands::move_audio_base, // relocate the whole audio store

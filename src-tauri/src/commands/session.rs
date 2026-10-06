@@ -297,3 +297,10 @@ pub fn retire_session_epoch() {
     // asked for it to go away, and the stop-mode path already offers the same recovery.
     crate::inject::abort_injection_for_error();
 }
+
+/// The quit handshake's reply: the main window has landed its pending writes after
+/// `app://before-quit`, so the waiting exit may go ahead (see `quit::request_quit`).
+#[tauri::command]
+pub fn quit_ready() {
+    crate::quit::signal_ready();
+}
