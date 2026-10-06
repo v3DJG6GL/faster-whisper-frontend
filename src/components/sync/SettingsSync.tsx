@@ -72,12 +72,12 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   {
     key: "recording",
     title: "Dictation",
-    desc: "Save dictation audio, silence trim, the dictation history & retention clock, system-audio mute, hands-free auto-stop.",
+    desc: "Save dictation audio, silence trim, the dictation history & retention clock, reporting the app you dictate into, system-audio mute, hands-free auto-stop.",
   },
   {
     key: "fileTranscriptions",
     title: "File transcriptions",
-    desc: "History retention and audio copies.",
+    desc: "History retention, audio copies, and video downloads for links.",
   },
   {
     key: "transcription",
@@ -122,10 +122,11 @@ function createdLabel(createdAt: string | undefined): string {
 }
 
 /** Initial per-category selection for the two preview dialogs: every category
- *  present in the blob starts checked. */
+ *  present in the blob starts checked. "Present" is applyBlob's own arm test (a plain
+ *  object), so a `null` section the file loader accepts never reads as importable. */
 function presentSel(blob: SyncBlob): Record<SyncCategory, boolean> {
   return Object.fromEntries(
-    ALL_CATEGORIES.map((c) => [c, blob[c] !== undefined]),
+    ALL_CATEGORIES.map((c) => [c, isPlainObject(blob[c])]),
   ) as Record<SyncCategory, boolean>;
 }
 
@@ -165,7 +166,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // `applyImport` migrates again on apply (idempotent), so preview and apply
   // read the same shape.
   const categories = useMemo(() => migrateBlob(result.categories), [result.categories]);
-  const present = (c: SyncCategory) => categories[c] !== undefined;
+  const present = (c: SyncCategory) => isPlainObject(categories[c]);
   const [sel, setSel] = useState<Record<SyncCategory, boolean>>(() => presentSel(categories));
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -353,7 +354,7 @@ export function RestoreFromServer({
   const dictating = useApp((st) => st.status !== "idle");
   // Normalize a pre-split server blob for the preview AND the apply below.
   const blob = useMemo(() => migrateBlob((state.blob ?? {}) as SyncBlob), [state.blob]);
-  const present = (c: SyncCategory) => blob[c] !== undefined;
+  const present = (c: SyncCategory) => isPlainObject(blob[c]);
   const [sel, setSel] = useState<Record<SyncCategory, boolean>>(() => presentSel(blob));
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);

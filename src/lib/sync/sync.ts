@@ -167,6 +167,7 @@ const OTHER_BUCKET: "linux" | "windows" = IS_WINDOWS ? "linux" : "windows";
 // ── canonical hash ──────────────────────────────────────────────────────────
 
 import { stableStringify } from "../stable";
+import { forgetCaps } from "../capabilities";
 
 /** FNV-1a over the canonical string — a compact change-detection token (NOT
  *  crypto; it only gates "did anything sync-relevant change?"). */
@@ -757,7 +758,7 @@ const CONTEXT_SEGMENTS_MAX = 10;
 export function clampTranslationOverrides(v: unknown): TranslationOverrides | undefined {
   if (!isPlainObject(v)) return undefined;
   const cs = v.contextSegments;
-  return {
+  const out: TranslationOverrides = {
     translateTo: Array.isArray(v.translateTo)
       ? v.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, TRANSLATION_MAX_TARGETS)
       : undefined,
@@ -768,6 +769,11 @@ export function clampTranslationOverrides(v: unknown): TranslationOverrides | un
     mode: v.mode === "fluent" || v.mode === "faithful" ? v.mode : undefined,
     includeOriginal: v.includeOriginal == null ? undefined : v.includeOriginal === true,
   };
+  // An absent key must stay ABSENT, not `undefined`: the per-field spreads that layer a Profile
+  // over its Backend would let an own `undefined` overwrite the inherited value (an inheriting
+  // Profile stops translating). Explicit false and "" are values and stay.
+  for (const k of Object.keys(out) as (keyof TranslationOverrides)[]) if (out[k] === undefined) delete out[k];
+  return out;
 }
 
 /** Inbound `profiles.list` / `backends.list` are typed only by assertion: the FILE import path
@@ -1318,14 +1324,16 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
 /** Write incoming secrets to the keyring, then re-derive every backend's
  *  hasApiKey from KEYRING TRUTH (imported key present, or one already stored
  *  on this machine) — so a synced "hasApiKey: true" can't claim a key that
- *  isn't actually available here. */
+ *  isn't actually available here. `rotated` = backends this device already knew
+ *  whose stored key the apply REPLACED with a different one: their caps and
+ *  connection state were measured as the old caller, so the caller evicts them. */
 async function reconcileBackendSecrets(
   list: Backend[],
   secrets: Record<string, string> | undefined,
   // Superseded apply (sync off / server switch): stop writing the abandoned blob's keys into
   // the keyring. The caller's own `gen !== myGen` check after the await still drops the apply.
   aborted: () => boolean = () => false,
-): Promise<Backend[]> {
+): Promise<{ backends: Backend[]; rotated: string[] }> {
   // Only ids that are actually in the list: composeBlob reads keys for exactly the backends it
   // ships, so a secret for an unknown id can't come from a legitimate peer — but it WOULD be
   // written into the OS keyring under a name the sender chose.
@@ -1336,11 +1344,30 @@ async function reconcileBackendSecrets(
   // the pull that runs unattended at startup and on every window focus. Reading by id instead is
   // O(backends), can never drop a legitimate key, and makes the lookup own-property at the same
   // time (`secrets.constructor` is a truthy function otherwise — the class already fixed below).
-  for (const b of list) {
-    if (aborted()) return list;
-    const id = b.id;
+  const incoming = (id: string): string | undefined => {
     const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
-    if (typeof key === "string" && key) {
+    return typeof key === "string" && key ? key : undefined;
+  };
+  // A key rotated on another device: read what this device stores BEFORE overwriting it, for
+  // the backends it already runs. An unchanged rewritten key evicts nothing, and neither does a
+  // degraded read (locked wallet, timed out) — the next connection test re-measures anyway.
+  const known = new Set(useApp.getState().backends.map((b) => b.id));
+  const candidates = list.map((b) => b.id).filter((id) => known.has(id) && incoming(id) !== undefined);
+  const prior = candidates.length
+    ? await withTimeout(readBackendKeys(candidates), 10_000, null as Record<string, string> | null)
+    : null;
+  const rotated =
+    prior === null
+      ? []
+      : candidates.filter((id) => {
+          const old = ownProp(prior as Record<string, unknown>, id);
+          return typeof old === "string" && old !== "" && old !== incoming(id);
+        });
+  for (const b of list) {
+    if (aborted()) return { backends: list, rotated: [] };
+    const id = b.id;
+    const key = incoming(id);
+    if (key) {
       // Same locked-wallet hazard as composeBlob's read: a parked prompt must
       // not wedge the apply. A skipped write surfaces as hasApiKey=false below.
       await withTimeout(
@@ -1350,7 +1377,7 @@ async function reconcileBackendSecrets(
       );
     }
   }
-  if (aborted()) return list;
+  if (aborted()) return { backends: list, rotated: [] };
   const present = await withTimeout(
     readBackendKeys(list.map((b) => b.id)),
     10_000,
@@ -1368,10 +1395,11 @@ async function reconcileBackendSecrets(
   // nothing in the keyring — defeating the exact promise this function makes. Downstream that
   // phantom also makes `composeBlob`'s erase guard fire forever on a device holding no real keys,
   // silently dropping the backends category from every push.
-  return list.map((b) => {
+  const backends = list.map((b) => {
     const held = present === null ? (localFlag.get(b.id) ?? false) : hasOwn(present, b.id);
     return b.hasApiKey === held ? b : { ...b, hasApiKey: held };
   });
+  return { backends, rotated };
 }
 
 /**
@@ -1435,6 +1463,8 @@ export async function applyBlob(
     if (!opts.ignoreGates) blob = gateScalars(blob, gates);
     let nextSettings: AppSettings = settings;
     let nextBackends = st.backends;
+    // Known backends whose API key this apply replaced with a different one (see below).
+    let rotatedKeys: string[] = [];
     let nextProfiles = st.profiles;
     let nextAppRules = st.appRules;
 
@@ -1662,12 +1692,14 @@ export async function applyBlob(
         inboundBackends = repinElementFields(inboundBackends, st.backends, ["serverUrl"]);
       if (!gates.modelDecodeDefaults)
         inboundBackends = repinElementFields(inboundBackends, st.backends, BACKEND_DEFAULTS_FIELDS, true);
-      nextBackends = await reconcileBackendSecrets(
+      const reconciled = await reconcileBackendSecrets(
         inboundBackends,
         // API-keys gate off: inbound secrets never touch this device's keyring.
         gates.apiKeys ? blob.backends.secrets : undefined,
         () => gen !== myGen,
       );
+      nextBackends = reconciled.backends;
+      rotatedKeys = reconciled.rotated;
       // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
       // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
       // entries against a locked keyring park here for a long time. Everything above was
@@ -1870,6 +1902,12 @@ export async function applyBlob(
     } finally {
       applyingRemote = false;
     }
+    // A key rotated on another device keeps this device's serverUrl and hasApiKey, so hydrate's
+    // own eviction misses it: drop the caps and connection state measured as the OLD caller.
+    for (const id of rotatedKeys) {
+      forgetCaps(id);
+      useApp.getState().forgetBackendCaches(id);
+    }
 
     // Side effects hydrate() doesn't cover: deep-field detection is pushed to
     // Rust imperatively by its Settings toggle, so mirror that here. (Autostart
@@ -1949,7 +1987,8 @@ let pendingConflict: PendingConflict | null = null;
 /** Monotonic identity for the CURRENT pending conflict: the dialog keys its
  *  body on it so a later conflict remounts with fresh picks — a retained
  *  "remote" pick from the previous conflict would otherwise silently hand the
- *  peer a category with no second prompt. */
+ *  peer a category with no second prompt. A re-raise of the SAME conflict keeps
+ *  it (see raiseConflict). */
 let conflictSeq = 0;
 let pendingConflictId = 0;
 /** The Sync tab reads the pending conflict through this (set into the store
@@ -2217,6 +2256,33 @@ async function ensureStateFor(backendId: string): Promise<void> {
 
 // ── pull / push ─────────────────────────────────────────────────────────────
 
+/** Compose this device as it is NOW (live store, gates, sub-settings, keyring). Every raiser and
+ *  every consent re-judge goes through this one call: a re-judge is only sound if it composes
+ *  exactly as the raisers do. */
+function composeLive(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
+  const s = useApp.getState();
+  return composeBlob(
+    { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
+    cats,
+    state.snapshot,
+    { includeSecrets: true, sub: subSettings(), gates: settingGates() },
+  );
+}
+
+/** Take the engine's `inFlight` lock for a user-driven apply (review approval, conflict
+ *  resolution), WAITING for a running pull/push instead of dropping the click. Those applies
+ *  park in the keyring for seconds; a focus pull racing them re-raised the review/conflict over
+ *  an approval that had already landed. False when a supersede happened while waiting. */
+async function takeSyncLock(myGen: number): Promise<boolean> {
+  while (inFlight) {
+    await new Promise((r) => setTimeout(r, 50));
+    if (myGen !== gen) return false;
+  }
+  if (myGen !== gen) return false;
+  inFlight = true;
+  return true;
+}
+
 /** Pull the server blob and reconcile it into the running app. `manual` also
  *  re-applies when the version hasn't moved (a "make it so" button press). */
 export async function pullNow(manual = false): Promise<void> {
@@ -2305,14 +2371,8 @@ export async function pushNow(manual = false): Promise<void> {
     // Superseded (sync turned off, server copy deleted) while an await parked: no status write
     // below may land over the reset state. inFlight was already reset by supersede().
     if (myGen !== gen) return;
-    const s = useApp.getState();
     const cats = syncCats();
-    let blob = await composeBlob(
-      { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
-      cats,
-      state.snapshot,
-      { includeSecrets: true, sub: subSettings(), gates: settingGates() },
-    );
+    let blob = await composeLive(cats);
     // The keyring read in composeBlob can park up to 10 s — superseded meanwhile (sync turned
     // off, server copy deleted): never send. inFlight was already reset by supersede().
     if (myGen !== gen) return;
@@ -2411,7 +2471,7 @@ export async function pushNow(manual = false): Promise<void> {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
-            changes: riskyPush, blob: merged, local: blob, cats: pushCats, remote: remoteBlob,
+            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
           });
@@ -2448,14 +2508,8 @@ export async function pushNow(manual = false): Promise<void> {
  *  `myGen` is the caller's sync epoch — bail before mutating anything if a
  *  supersede happened while the transport call was in flight. */
 async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<void> {
-  const s = useApp.getState();
   const cats = syncCats();
-  const local = await composeBlob(
-    { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
-    cats,
-    state.snapshot,
-    { includeSecrets: true, sub: subSettings(), gates: settingGates() },
-  );
+  const local = await composeLive(cats);
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
   const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
@@ -2481,7 +2535,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     await applyBlob(merged, heldBack(applyCats, risky));
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, local, cats: applyCats, remote: remoteBlob,
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
     });
@@ -2852,9 +2906,6 @@ export function securityChanges(
 interface PendingReview {
   changes: SecurityChange[];
   blob: SyncBlob;
-  /** The local side the changes were judged against, so the approval can re-judge `blob` under
-   *  the gates as they are THEN (see approvePendingReview). */
-  local: SyncBlob;
   cats: Record<SyncCategory, boolean>;
   remote: SyncBlob;
   version: number;
@@ -2909,21 +2960,33 @@ export async function approvePendingReview(): Promise<void> {
   // keyring wait (sync off, server switched, server copy deleted) dropped this review on
   // purpose — never revive it, and never adopt the old server's version into the new state.
   const myGen = gen;
+  // Hold the engine lock across the compose + apply: a focus pull landing in the keyring waits
+  // would re-raise this review over the approval (or stamp "ok" while it is still pending).
+  if (!(await takeSyncLock(myGen))) return;
+  let pushAfter = false;
+  try {
+    // The wait may have let a pull replace or clear the review, or a dictation start.
+    if (pendingReview !== r || useApp.getState().status !== "idle") return;
+    pushAfter = await approveLocked(r, myGen);
+  } finally {
+    if (myGen === gen) inFlight = false;
+  }
+  // After the release: the push takes the lock itself.
+  if (pushAfter) schedulePush(0);
+}
+
+/** approvePendingReview's body, run under the engine lock. True when the caller should push. */
+async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> {
   // applyBlob reads the gates LIVE, but the list was judged under the gates at raise time: with
   // "Server addresses" / "API keys" off then, a repoint or key swap was left off the list (the
   // apply would strip it). Turning the gate on since does not supersede the review, so approving
   // as shown would land a change the user never saw. Re-judge under today's gates and, if
-  // anything new appears, show the new list instead of applying. `r.local` is no use for that: it
-  // was composed under the raise-time gates, which substitute a gated-off address / key with the
-  // snapshot's — the peer's own value, so the repoint compares equal. Compose this device afresh.
-  const s = useApp.getState();
-  let localNow = await composeBlob(
-    { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
-    r.cats,
-    state.snapshot,
-    { includeSecrets: true, sub: subSettings(), gates: settingGates() },
-  );
-  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return;
+  // anything new appears, show the new list instead of applying. The raise-time compose is no
+  // use for that: it ran under the raise-time gates, which substitute a gated-off address / key
+  // with the snapshot's — the peer's own value, so the repoint compares equal. Compose this
+  // device afresh.
+  let localNow = await composeLive(r.cats);
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return false;
   // A degraded keyring re-sends the snapshot's backends category (the peer's view, again): judge
   // against the live list with no keys instead, so every incoming address / key still raises.
   if (backendsDegraded(localNow, r.cats)) {
@@ -2932,21 +2995,21 @@ export async function approvePendingReview(): Promise<void> {
   const now = gatedSecurityCheck(r.blob, localNow, r.cats);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
-    raiseReview({ ...r, changes: now, local: localNow, relisted: true });
-    return;
+    raiseReview({ ...r, changes: now, relisted: true });
+    return false;
   }
   pendingReview = null;
   const applied = await applyBlob(r.blob, r.cats);
-  if (myGen !== gen) return;
+  if (myGen !== gen) return false;
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it): put
     // the review back so the approval isn't consumed by an apply that never happened.
     pendingReview = r;
-    return;
+    return false;
   }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
   // it left the backends category alone, or the next unlocked push reverts the peer's change.
-  if (r.degraded && degradedBaseWithheld(r.remote)) return;
+  if (r.degraded && degradedBaseWithheld(r.remote)) return false;
   await persistState({
     version: r.version,
     updatedAt: r.updatedAt,
@@ -2954,9 +3017,9 @@ export async function approvePendingReview(): Promise<void> {
     hash: hashBlob(r.remote),
     snapshot: r.remote,
   });
-  if (myGen !== gen) return;
+  if (myGen !== gen) return false;
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: r.device });
-  if (r.pushAfter && hashBlob(r.blob) !== hashBlob(r.remote)) schedulePush(0);
+  return r.pushAfter && hashBlob(r.blob) !== hashBlob(r.remote);
 }
 
 /** Reject the held-back pull. Nothing is applied and NO base is adopted, so the next pull
@@ -2992,7 +3055,16 @@ export function hasPendingApplyForTests(): boolean {
 }
 
 function raiseConflict(c: PendingConflict): void {
-  pendingConflictId = ++conflictSeq;
+  // A pending conflict adopts no base, so every focus pull / 409 re-raises it: keep the id when it
+  // is the SAME conflict (same server version, writer and categories — so the same remote
+  // content, and a retained "remote" pick hands over nothing unseen), or the dialog remounts
+  // and resets the user's half-made picks on every window switch.
+  const same =
+    pendingConflict !== null &&
+    pendingConflict.remoteVersion === c.remoteVersion &&
+    pendingConflict.remoteDevice === c.remoteDevice &&
+    pendingConflict.categories.join() === c.categories.join();
+  if (!same) pendingConflictId = ++conflictSeq;
   pendingConflict = c;
   setRuntime({
     syncStatus: "error",
@@ -3005,24 +3077,62 @@ function raiseConflict(c: PendingConflict): void {
 export async function resolveSyncConflicts(
   choices: Record<string, "local" | "remote">,
 ): Promise<void> {
-  const c = pendingConflict;
-  if (!c) return;
+  if (!pendingConflict) return;
   if (useApp.getState().status !== "idle") return; // same rule as approvePendingReview
   const myGen = gen; // same epoch rule as approvePendingReview
+  // The conflict the user picked on. Same lock rule as approvePendingReview; a pull during the
+  // wait may re-raise it, which keeps the id only when it is the same conflict (raiseConflict),
+  // so the picks still apply to it.
+  const id = pendingConflictId;
+  if (!(await takeSyncLock(myGen))) return;
+  let pushAfter = false;
+  try {
+    const c = pendingConflict;
+    if (!c || pendingConflictId !== id || useApp.getState().status !== "idle") return;
+    pushAfter = await resolveLocked(c, choices, myGen);
+  } finally {
+    if (myGen === gen) inFlight = false;
+  }
+  // After the release, or pushNow would no-op on the lock this call held.
+  if (pushAfter) void pushNow(true);
+}
+
+/** resolveSyncConflicts' body, run under the engine lock. True when the caller should push. */
+async function resolveLocked(
+  c: PendingConflict,
+  choices: Record<string, "local" | "remote">,
+  myGen: number,
+): Promise<boolean> {
+  // `c.local` was composed under the raise-time gates: with "Server addresses" / "API keys" off
+  // then, a gated-off address / key was substituted with the snapshot's — the peer's own value.
+  // The gates may be on now (turning one on does not supersede the conflict) and applyBlob reads
+  // them live, so both the "local" picks and the security judgement below must use this device
+  // as it is NOW, or a "keep mine" lands the peer's repoint with no review row. Same rule as
+  // approvePendingReview.
+  const syncedCats = syncCats();
+  const localNow = await composeLive(syncedCats);
+  if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return false;
   pendingConflict = null;
   const final: SyncBlob = { ...c.merged };
   for (const cat of c.categories) {
-    const src = choices[cat] === "remote" ? c.remote : c.local;
+    const src = choices[cat] === "remote" ? c.remote : localNow;
     const val = src[cat];
     if (val === undefined) delete final[cat];
     else (final as Record<string, unknown>)[cat] = val;
   }
-  // Degraded keyring (see `backendsDegraded`): `c.local` carries the base's backends category, not
-  // this device's list, so `final` holds the remote/base list whichever side won — applying it
-  // deleted every backend added here. Hold the category out, as the two sibling adopt sites do.
-  const syncedCats = syncCats();
-  const degraded = backendsDegraded(c.local, syncedCats);
+  // Degraded keyring (see `backendsDegraded`): a degraded compose carries the base's backends
+  // category, not this device's list, so `final` holds the remote/base list whichever side won —
+  // applying it deleted every backend added here. Hold the category out, as the two sibling adopt
+  // sites do. Either compose counts: `c.merged` was merged against `c.local`, a "local" pick
+  // comes from `localNow`.
+  const degradedNow = backendsDegraded(localNow, syncedCats);
+  const degraded = backendsDegraded(c.local, syncedCats) || degradedNow;
   const applyCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
+  // Judged against the live list with no keys when degraded, as approvePendingReview does, so
+  // every incoming address / key still raises.
+  const judgeLocal = degradedNow
+    ? { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } }
+    : localNow;
   // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
   // `c.merged`, which already contains every NON-conflicting category auto-resolved in the
   // server's favour — so a peer that also touches some category the user happened to edit
@@ -3030,14 +3140,13 @@ export async function resolveSyncConflicts(
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
   // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
   // persist no base so a rejection is re-offered on the next pull.
-  const risky = gatedSecurityCheck(final, c.local, applyCats);
+  const risky = gatedSecurityCheck(final, judgeLocal, applyCats);
   if (risky.length > 0) {
     await applyBlob(final, heldBack(applyCats, risky));
-    if (myGen !== gen) return;
+    if (myGen !== gen) return false;
     raiseReview({
       changes: risky,
       blob: final,
-      local: c.local,
       cats: applyCats,
       remote: c.remote,
       version: c.remoteVersion,
@@ -3046,17 +3155,17 @@ export async function resolveSyncConflicts(
       pushAfter: true,
       degraded,
     });
-    return;
+    return false;
   }
   const applied = await applyBlob(final, applyCats);
-  if (myGen !== gen) return;
+  if (myGen !== gen) return false;
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it):
     // restore the conflict so the picks are re-offered, not a base that never landed.
     pendingConflict = c;
-    return;
+    return false;
   }
-  if (degraded && degradedBaseWithheld(c.remote)) return;
+  if (degraded && degradedBaseWithheld(c.remote)) return false;
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.
@@ -3070,11 +3179,11 @@ export async function resolveSyncConflicts(
     hash: hashBlob(c.remote),
     snapshot: c.remote,
   });
-  if (myGen !== gen) return;
+  if (myGen !== gen) return false;
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: c.remoteDevice ?? null });
   // The resolved doc differs from what the server holds unless "remote" won
   // everywhere — push it (base = the server version the conflict reported).
-  if (hashBlob(final) !== hashBlob(c.remote)) void pushNow(true);
+  return hashBlob(final) !== hashBlob(c.remote);
 }
 
 export function dismissSyncConflict(): void {

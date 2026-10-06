@@ -37,10 +37,22 @@ describe("pending-conflict identity", () => {
   it("each raised conflict gets a distinct id", () => {
     raiseConflictForTests();
     const first = getPendingConflict();
-    raiseConflictForTests();
+    raiseConflictForTests({ remoteVersion: 1 });
     const second = getPendingConflict();
     expect(first?.id).toBeTypeOf("number");
     expect(second?.id).not.toBe(first?.id);
+  });
+
+  it("re-raising the same conflict keeps its id", () => {
+    // Every focus pull re-raises a pending conflict (it adopts no base); a fresh id each time
+    // remounted the dialog and reset the user's half-made picks on every window switch.
+    raiseConflictForTests({ remoteVersion: 7, remoteDevice: "laptop-b" });
+    const first = getPendingConflict();
+    raiseConflictForTests({ remoteVersion: 7, remoteDevice: "laptop-b" });
+    expect(getPendingConflict()?.id).toBe(first?.id);
+    // A different category set is a different conflict.
+    raiseConflictForTests({ remoteVersion: 7, remoteDevice: "laptop-b", categories: ["general", "chip"] });
+    expect(getPendingConflict()?.id).not.toBe(first?.id);
   });
 });
 
@@ -143,6 +155,38 @@ describe("resolveSyncConflicts", () => {
     setServerAddresses(true);
     await approvePendingReview();
     expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("server-url");
+    expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://10.0.0.2:8000");
+  });
+
+  it("resolving after 'Server addresses' was turned on judges against this device as it is now", async () => {
+    // The conflict's `local` was composed with the gate off (the peer's address substituted for
+    // b1's). Turning the gate on does not supersede the conflict, and applyBlob reads it live —
+    // judged against the stale compose, the merged repoint compared equal and landed unreviewed.
+    const setServerAddresses = (on: boolean) => {
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+      useApp.setState({ settings });
+    };
+    const evil = { backends: { list: [backend({ serverUrl: "http://evil:9" })] } };
+    setServerAddresses(false);
+    raiseConflictForTests({ categories: ["general"], local: evil, remote: evil, merged: evil });
+    setServerAddresses(true);
+    await resolveSyncConflicts({ general: "remote" });
+    expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("server-url");
+    expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://10.0.0.2:8000");
+  });
+
+  it("a 'keep mine' pick keeps this device's live value, not the raise-time compose", async () => {
+    const setServerAddresses = (on: boolean) => {
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+      useApp.setState({ settings });
+    };
+    const evil = { backends: { list: [backend({ serverUrl: "http://evil:9" })] } };
+    setServerAddresses(false);
+    raiseConflictForTests({ categories: ["backends"], local: evil, remote: evil, merged: evil });
+    setServerAddresses(true);
+    await resolveSyncConflicts({ backends: "local" });
     expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://10.0.0.2:8000");
   });
 });

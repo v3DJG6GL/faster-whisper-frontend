@@ -2,18 +2,19 @@
 
 import type { Backend } from "../types";
 
-/** A minimal faster-whisper Backend ("b1" on a LAN address, no API key), with `over` on top. */
+/** A minimal full-server Backend ("b1" on a LAN address, no API key), with `over` on top. */
 export function backend(over: Partial<Backend> = {}): Backend {
-  return {
+  const b: Backend = {
     id: "b1",
     name: "local",
     serverUrl: "http://10.0.0.2:8000",
     hasApiKey: false,
     model: "large-v3",
-    endpoint: "transcriptions",
+    endpoint: "batch",
     language: "auto",
+    prompt: "",
     responseFormat: "verbose_json",
-    kind: "faster-whisper",
-    ...over,
-  } as Backend;
+    kind: "full",
+  };
+  return { ...b, ...over };
 }

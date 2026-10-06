@@ -23,13 +23,18 @@ import type { AppSettings, Backend, Profile, SyncSubSettings } from "../types";
 import { backend } from "./syncTestFixtures";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
- *  parked, the store is live and the user can keep editing. Default is passthrough. */
-const keyring = vi.hoisted(() => ({ park: null as null | Promise<Record<string, string>> }));
+ *  parked, the store is live and the user can keep editing. Default is passthrough; `keys`
+ *  answers an unparked read (what this device's keyring holds). */
+const keyring = vi.hoisted(() => ({
+  park: null as null | Promise<Record<string, string>>,
+  keys: null as null | Record<string, string>,
+}));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
   return {
     ...orig,
-    readBackendKeys: (ids: string[]) => keyring.park ?? orig.readBackendKeys(ids),
+    readBackendKeys: (ids: string[]) =>
+      keyring.park ?? (keyring.keys ? Promise.resolve(keyring.keys) : orig.readBackendKeys(ids)),
   };
 });
 
@@ -863,5 +868,44 @@ describe("applyBlob keep-local (baseline)", () => {
     const b1 = useApp.getState().backends.find((b) => b.id === "b1")!;
     expect(b1.name).toBe("from-peer"); // the blob landed
     expect(b1.hasApiKey).toBe(true); // but the degraded read did not demote the flag
+  });
+});
+
+// A key rotated on another device keeps the backend's serverUrl and hasApiKey, so hydrate's own
+// eviction never fired: the caps and connection measured as the OLD caller stayed live.
+describe("applyBlob evicts a backend whose API key the pull rotated", () => {
+  const caps = { b1: { kind: "full" } } as never;
+  const pull = (secret: string) =>
+    applyBlob({ backends: { list: [backend({ hasApiKey: true })], secrets: { b1: secret } } }, CATS_ALL);
+
+  beforeEach(() => {
+    useApp.setState({
+      settings: settings(),
+      backends: [backend({ hasApiKey: true })],
+      profiles: [profile()],
+      appRules: [],
+      status: "idle",
+      caps,
+    });
+  });
+
+  it("a different key drops the cached caps", async () => {
+    keyring.keys = { b1: "sk-old" };
+    try {
+      expect(await pull("sk-new")).toBe(true);
+    } finally {
+      keyring.keys = null;
+    }
+    expect(useApp.getState().caps.b1).toBeUndefined();
+  });
+
+  it("the same key rewritten keeps them", async () => {
+    keyring.keys = { b1: "sk-old" };
+    try {
+      expect(await pull("sk-old")).toBe(true);
+    } finally {
+      keyring.keys = null;
+    }
+    expect(useApp.getState().caps.b1).toBeDefined();
   });
 });
