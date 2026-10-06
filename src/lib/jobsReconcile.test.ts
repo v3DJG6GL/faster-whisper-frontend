@@ -147,6 +147,22 @@ describe("reconcileJobs", () => {
     expect(ledgerRows()).toEqual([]);
   });
 
+  it("a done row the ledger evicts while its result is in flight still lands", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    let land: (v: JobOutcome<BatchResult>) => void = () => {};
+    getJobResult.mockImplementation(() => new Promise((res) => { land = res; }));
+    const pass = reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    // New requests push the oldest row past the newest-20 cap: not a stop.
+    for (let i = 0; i < 20; i++) await persistRow(row(i.toString(16).padStart(32, "0"), T0 + 1 + i));
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    land(ok(RESULT));
+    await pass;
+    expect(records().some((x) => x.id === JOB_A)).toBe(true);
+  });
+
   it("not_found writes a failed record with the not-found reason and forgets the row", async () => {
     await seed(row(JOB_A, T0, "url"));
     getJob.mockResolvedValue({ kind: "not_found" });

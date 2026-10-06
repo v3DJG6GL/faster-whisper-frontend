@@ -263,9 +263,10 @@ function parseLrc(body: string): ImportedText {
     }
     if (starts.length === 0) continue; // metadata tags ([ti:…]) and blanks
     // Enhanced-LRC inline <mm:ss.xx> word tags reduce to plain text: a space,
-    // except between two unspaced (CJK) characters or CJK punctuation — the same
-    // predicate our own export joins those words without one by, and "<t>word<t>word"
-    // files elsewhere still get theirs.
+    // except between two unspaced (CJK) characters or CJK punctuation — our export's
+    // per-seam rule, so "<t>word<t>word" files elsewhere still get theirs. (The export
+    // also joins every word of a whitespace-free segment, e.g. Thai or CJK with digits;
+    // a tag-only line can't tell that apart from a foreign file, so those gain spaces.)
     const { text, speaker } = cueText([
       trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
         unspacedChar(s[off - 1] ?? "") && unspacedChar(s[off + m.length] ?? "") ? "" : " "),

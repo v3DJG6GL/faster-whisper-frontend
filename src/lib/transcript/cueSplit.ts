@@ -232,6 +232,8 @@ const MIXED_TOKEN = new RegExp(
   "gu",
 );
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
+/** One code point of whitespace-free text, with any opening brackets before it. */
+const OPENED_CHAR = new RegExp(`[${OPEN_PUNCT}]*\\S`, "gu");
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
@@ -241,7 +243,8 @@ function spreadTokens(text: string, a: number, b: number): Tok[] {
   if (/\s/.test(text.trim())) {
     for (const m of text.matchAll(MIXED_TOKEN)) spans.push([m.index!, m.index! + m[0].length]);
   } else {
-    for (const m of text.matchAll(/\S/gu)) spans.push([m.index!, m.index! + m[0].length]);
+    // An opening bracket rides with the code point it opens.
+    for (const m of text.matchAll(OPENED_CHAR)) spans.push([m.index!, m.index! + m[0].length]);
   }
   const tot = spans.reduce((n, [f, t]) => n + t - f + 1, 0) || 1;
   let c = a;
@@ -340,12 +343,14 @@ export function cutByShare(text: string, shares: number[]): string[] {
   // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may
   // still hold a CJK run (one Latin word in a Japanese line): it cuts between
   // its characters too — a lone surrogate is never UNSPACED, so no pair splits.
+  // Never right after an opening bracket: the cut goes before it instead.
   const cand: number[] = [];
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
+    if (OPENER.test(text[i - 1])) continue;
     if (
       spaced
-        ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && !OPENER.test(text[i - 1]) && UNSPACED.test(text[i]))
+        ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && (UNSPACED.test(text[i]) || OPENER.test(text[i])))
         : c < 0xdc00 || c > 0xdfff
     ) cand.push(i);
   }

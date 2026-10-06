@@ -547,13 +547,14 @@ function Editor({
           {(() => {
             const effEndpoint = p.endpoint ?? backend?.endpoint;
             const batch = effEndpoint === "batch";
-            const hold =
-              p.activation === "hold" &&
-              (!!p.askTranslationTargets || (p.insertionOverrides?.insertMethod ?? globalInsertMethod) !== "clipboard");
+            const clipboardOnly = (p.insertionOverrides?.insertMethod ?? globalInsertMethod) === "clipboard";
+            const hold = p.activation === "hold" && (!!p.askTranslationTargets || !clipboardOnly);
             const why = batch
               ? "Not available with a Batch endpoint: the audio is sent once, after you stop, so there are no live phrases to insert. Switch this profile's endpoint to Streaming to enable it."
               : hold
-                ? "Push-to-talk holds the chord for the whole dictation, so injected keys would fold into it — these profiles always insert on release. The Home button and the chip's quick-launch run any profile hands-free, and this setting applies there."
+                ? clipboardOnly
+                  ? "Push-to-talk asks for its target languages after you release the shortcut, so it inserts on release. The Home button and the chip's quick-launch run it hands-free, and this setting applies there."
+                  : "Push-to-talk holds the chord for the whole dictation, so injected keys would fold into it — these profiles always insert on release. The Home button and the chip's quick-launch run any profile hands-free, and this setting applies there."
                 : undefined;
             // The same four controls as App Rules — one component, so the labels and the
             // option order can't drift apart. Settings → Dictation keeps its own two-state rows.

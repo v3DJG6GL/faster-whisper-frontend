@@ -207,10 +207,16 @@ export function watchOrphan(jobId: string): void {
 }
 setOrphanWatch(watchOrphan);
 
+/** Jobs the user stopped this session (stopOrphan). A reconcile pass checks this, not ledger
+ *  membership: the ledger also evicts rows on its own (age, the newest-20 cap on every new
+ *  request), and a finished result must still land then. */
+const stopped = new Set<string>();
+
 /** The user retried a file whose lost request was handed to watchOrphan: stop that
  *  watcher and forget its row, so the old job can't land a second record (and re-point
  *  the file's latest transcript) after the retry's; best-effort, the server stops it. */
 export function stopOrphan(jobId: string): void {
+  stopped.add(jobId);
   watching.get(jobId)?.();
   const row = ledgerRows().find((r) => r.jobId === jobId);
   if (!row) return;
@@ -255,9 +261,8 @@ export async function reconcileJobs(): Promise<void> {
         continue;
       }
       const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
-      // Stopped meanwhile (a retry of its file, a delete of its record): forgetRow already
-      // dropped it from the in-memory ledger.
-      if (!ledgerRows().some((x) => x.jobId === row.jobId)) continue;
+      // Stopped meanwhile (a retry of its file, a delete of its record).
+      if (stopped.has(row.jobId)) continue;
       switch (r.kind) {
         case "error":
           retry = true;
@@ -282,9 +287,8 @@ export async function reconcileJobs(): Promise<void> {
         running.push(row);
       } else if (status.state === "done") {
         // Not watched, so stopOrphan (a retry of its file, a delete of its record) cannot
-        // reach this ingest: re-check the ledger after each of its awaits instead.
-        const gone = () => !ledgerRows().some((x) => x.jobId === row.jobId);
-        if (!(await ingestDone(row, status, false, undefined, gone))) retry = true;
+        // reach this ingest: re-check after each of its awaits instead.
+        if (!(await ingestDone(row, status, false, undefined, () => stopped.has(row.jobId)))) retry = true;
       } else {
         failJob(row, failedText(status), { attached: false });
         await forgetRow(row.jobId);
@@ -295,7 +299,7 @@ export async function reconcileJobs(): Promise<void> {
     // after launch, and reattachRun replaces all of them); every other running row,
     // or the newest one then, is watched headless and still lands in History.
     // A row stopped during a later row's await (forgotten) is neither reattached nor watched.
-    const live = running.filter((row) => ledgerRows().some((x) => x.jobId === row.jobId));
+    const live = running.filter((row) => !stopped.has(row.jobId));
     const newest = live[live.length - 1];
     const s = useTranscribeRun.getState();
     const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
@@ -341,6 +345,7 @@ export function _resetReconcileForTests(): void {
   retryTimer = undefined;
   watching.clear();
   orphans.clear();
+  stopped.clear();
   attachedId = null;
   launchedAt = Infinity;
 }

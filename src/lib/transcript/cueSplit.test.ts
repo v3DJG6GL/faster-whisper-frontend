@@ -197,6 +197,15 @@ describe("buildCues", () => {
     expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
   });
 
+  it("own timing: an opening bracket stays with its character in space-free text too", () => {
+    const ja = "彼は「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
+    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+    const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
+    expect(grid.own.ja.length).toBeGreaterThan(1);
+    expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
+    expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
+  });
+
   it("site tracks always keep their own timing", () => {
     const r: BatchResult = {
       ...seg1("Hello there.", 0, 2),
@@ -349,10 +358,20 @@ describe("cutByShare", () => {
     expect(parts.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
   });
   it("never cuts right after an opening bracket", () => {
-    const text = "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」について";
-    for (let k = 1; k < 20; k++) {
-      expect(cutByShare(text, [k, 20 - k]).every((p) => !/[「（]$/.test(p))).toBe(true);
+    for (const text of [
+      "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」について",
+      "彼は「新機能」と「新しい画面」と「便利な設定」と「速い通信」について説明します",
+    ]) {
+      for (let k = 1; k < 20; k++) {
+        expect(cutByShare(text, [k, 20 - k]).every((p) => !/[「（]$/.test(p))).toBe(true);
+      }
     }
+  });
+  it("may cut right before an opening bracket in spaced text", () => {
+    const text = "iPhone の新機能と「新しい画面」";
+    const cuts = new Set<string>();
+    for (let k = 1; k < 20; k++) cuts.add(cutByShare(text, [k, 20 - k])[0]);
+    expect(cuts.has("iPhone の新機能と")).toBe(true);
   });
   it("still avoids a cut right after an article past the bounded look-back", () => {
     const text = "Understandably everyone waited for the announcement";
