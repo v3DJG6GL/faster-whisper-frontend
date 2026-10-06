@@ -411,6 +411,13 @@ export function Stepper({
   const pow = 10 ** decimals;
   const round = (n: number) => Math.round(n * pow) / pow;
   const clamp = (n: number) => Math.min(max, Math.max(min, n));
+  const parse = (s: string) => (decimals > 0 ? parseFloat(s) : parseInt(s, 10));
+  // What −/+ step from: the typed text while focused, else the committed value. stepBy and the
+  // buttons' disabled bounds share it so they can't disagree about where a bound is.
+  const stepBase = (t: string, f: boolean, v: number) => {
+    const n = parse(t);
+    return f && Number.isFinite(n) ? round(clamp(n)) : v;
+  };
 
   function stopRepeat() {
     if (delayRef.current) clearTimeout(delayRef.current);
@@ -419,9 +426,7 @@ export function Stepper({
     repeatRef.current = null;
   }
   const stepBy = (d: number) => {
-    const typed = decimals > 0 ? parseFloat(textRef.current) : parseInt(textRef.current, 10);
-    const base =
-      focusedRef.current && Number.isFinite(typed) ? round(clamp(typed)) : valueRef.current;
+    const base = stepBase(textRef.current, focusedRef.current, valueRef.current);
     const next = round(clamp(base + d));
     if (next === base) {
       // Hit a bound — still commit a typed number that differs, then stop repeating.
@@ -457,7 +462,7 @@ export function Stepper({
   useEffect(() => stopRepeat, []); // stop any running repeat on unmount
 
   const commit = () => {
-    const n = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
+    const n = parse(text);
     // Focusing and leaving an inheriting field changes nothing, nor does emptying it or leaving
     // a lone "-" / ".": only a typed number overrides.
     const unchanged = inherited !== undefined ? text === String(value) : !editedRef.current;
@@ -480,8 +485,7 @@ export function Stepper({
   };
 
   // −/+ step from the typed text while focused (stepBy), so their bounds must too.
-  const typedNow = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
-  const cur = focused && Number.isFinite(typedNow) ? round(clamp(typedNow)) : value;
+  const cur = stepBase(text, focused, value);
   const showZero = !focused && zeroLabel != null && value === 0;
   const showInheritedText = !focused && inheriting && inherited === undefined && inheritedText != null;
   const btn =
@@ -530,8 +534,13 @@ export function Stepper({
             requestAnimationFrame(() => el.select());
           }}
           onChange={(e) => {
-            editedRef.current = true;
-            setText(filter(e.target.value));
+            // A keystroke the filter drops entirely (a letter after the "0" placeholder) leaves
+            // the text as it was and isn't an edit; one it keeps verbatim is, even when it
+            // retypes the same text (typing the minimum over the selected placeholder).
+            const raw = e.target.value;
+            const t = filter(raw);
+            if (t !== text || t === raw) editedRef.current = true;
+            setText(t);
           }}
           onBlur={() => {
             setFocused(false);
