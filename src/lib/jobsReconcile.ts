@@ -22,7 +22,8 @@ import { configReady } from "./persistence";
 import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
 import {
-  failJob, foldProgress, ingestJobResult, reattachRun, setReattachStop, useTranscribeRun, withSiteTracks,
+  failJob, foldProgress, ingestJobResult, reattachRun, setOrphanWatch, setReattachStop, useTranscribeRun,
+  withSiteTracks,
 } from "./transcribeRun";
 import type { JobStatus } from "./types";
 
@@ -183,6 +184,16 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
   };
   void tick();
 }
+
+/** A live request lost contact with the server (the pump's wait ran out, or the
+ *  connection dropped) while its job may still run there: watch the job headless,
+ *  so a transcript the server finishes still lands in History. */
+export function watchOrphan(jobId: string): void {
+  if (watching.has(jobId)) return;
+  const row = ledgerRows().find((r) => r.jobId === jobId);
+  if (row) watchJob(row, { attached: false });
+}
+setOrphanWatch(watchOrphan);
 
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
  *  cannot be reached. */

@@ -3,6 +3,7 @@ import { fmtBytes } from "@/lib/format";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import { type VideoProgress } from "@/lib/types";
+import { videoTerminal } from "@/lib/transcribeRun";
 import { aboutLeft, fmtElapsed, STAGE_COLORS } from "@/components/transcribe/railTheme";
 
 /** The Video row: the kept copy's own download, hanging off the Audio
@@ -23,7 +24,7 @@ export function VideoBranchRow({
   now: number;
   onRetry?: () => void;
 }) {
-  const terminal = v.state === "done" || v.state === "failed" || v.state === "cancelled";
+  const terminal = videoTerminal(v.state);
   // A finished copy's clock stops at its end, not at the still-running transcription's now.
   const elapsed = dlStart ? Math.max(0, (terminal && dlEnd ? dlEnd : now) - dlStart) : 0;
   const total = v.totalBytes ?? null;

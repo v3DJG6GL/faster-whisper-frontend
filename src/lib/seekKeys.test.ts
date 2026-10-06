@@ -17,6 +17,12 @@ describe("seekKeyTarget", () => {
     expect(seekKeyTarget(" ", 0, 100, false)).toBe("toggle");
     expect(seekKeyTarget("Tab", 0, 100, false)).toBeNull();
   });
+  it("an unknown length (0) does not pin forward steps to the start", () => {
+    expect(seekKeyTarget("ArrowRight", 10, 0, false)).toBe(15);
+    expect(seekKeyTarget("PageUp", 10, 0, false)).toBe(40);
+    expect(seekKeyTarget("End", 10, 0, false)).toBeNull();
+    expect(seekKeyTarget("ArrowLeft", 2, 0, false)).toBe(0);
+  });
 });
 
 describe("lastStartedAt", () => {

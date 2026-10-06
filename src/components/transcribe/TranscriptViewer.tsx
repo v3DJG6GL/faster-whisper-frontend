@@ -477,7 +477,7 @@ export function TranscriptViewer({
     [backends, historyBackendId],
   );
   const trServerKind = trBackend
-    ? effectiveServerKind(trBackend, connections[trBackend.id])
+    ? effectiveServerKind(trBackend, ownProp(connections, trBackend.id))
     : "unknown";
   // The record's backend's capabilities gate the panel's model/language
   // lists (and, when known, translation availability itself). Best-effort:
@@ -543,9 +543,9 @@ export function TranscriptViewer({
   // when openRecordId swaps/nulls while the same transcript stays on screen
   // (same-URL records) — a run started under the path key (no record id yet)
   // must stay visible after the id lands, so fall back to the path slot.
-  const trRunsAll = useApp((s) => s.trRuns);
-  const trKey = trRunsAll[okey] ? okey : path && trRunsAll[path] ? path : okey;
-  const trEntry = trRunsAll[trKey];
+  // Narrow selectors: the whole map changes on every poll of ANY record's run.
+  const trKey = useApp((s) => (s.trRuns[okey] ? okey : path && s.trRuns[path] ? path : okey));
+  const trEntry = useApp((s) => s.trRuns[trKey]);
   const trRun = trEntry?.run ?? null;
   const trRunMode = trEntry?.mode;
   const setTrRun = useCallback(

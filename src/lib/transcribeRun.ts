@@ -12,7 +12,7 @@ import {
   fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
 } from "./api";
-import { errorText, transportErrorDoorway, uploadTooLargeText } from "./errors";
+import { errorText, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
@@ -30,6 +30,7 @@ import { forgetRow, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
 import { trText } from "./transcript/cueSplit";
 import { newProgressId } from "./ids";
+import { ownProp } from "./own";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./transcript/siteSubtitles";
@@ -108,7 +109,7 @@ export interface StageMeta {
 }
 
 /** A secondary video fetch state that ends its clock. */
-function videoTerminal(st: VideoProgress["state"] | undefined): boolean {
+export function videoTerminal(st: VideoProgress["state"] | undefined): boolean {
   return st === "done" || st === "failed" || st === "cancelled";
 }
 
@@ -919,15 +920,25 @@ function awaitRunUrlVideo(
 ) {
   const startedAt = Date.now();
   let inFlight = false;
+  // An unreachable server backs the poll off (2, 4, … up to 30 s between
+  // tries) instead of failing once a second until the deadline; a short
+  // sleep still resumes the fetch.
+  let failures = 0;
+  let skip = 0;
   const timer = window.setInterval(() => {
     if (inFlight) return;
     if (Date.now() - startedAt > 2 * 60 * 60 * 1000) {
       window.clearInterval(timer);
       return;
     }
+    if (skip > 0) {
+      skip -= 1;
+      return;
+    }
     inFlight = true;
     getTranscribeProgress({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid })
       .then((p) => {
+        failures = 0;
         if (p.stage === "unknown" || !p.stage) {
           // Entry gone without a terminal state: the fetch is lost to us
           // (the export panel can still fetch on demand).
@@ -936,18 +947,14 @@ function awaitRunUrlVideo(
             return;
           }
         }
-        if (p.video && epoch === get().epoch) {
+        // The epoch stays the same across the files of one run: only the link
+        // the rail is showing may take this video's progress.
+        const video = p.video;
+        if (video && epoch === get().epoch && get().lastRunPath === rec.sourcePath) {
           set((s) => ({
             stageMeta: {
               ...s.stageMeta,
-              downloading: {
-                ...s.stageMeta.downloading,
-                video: p.video ?? undefined,
-                videoDlStart: s.stageMeta.downloading?.videoDlStart ?? Date.now(),
-                videoDlEnd: videoTerminal(p.video?.state)
-                  ? (s.stageMeta.downloading?.videoDlEnd ?? Date.now())
-                  : undefined,
-              },
+              downloading: foldVideo(s.stageMeta.downloading, video, Date.now()),
             },
           }));
         }
@@ -957,7 +964,10 @@ function awaitRunUrlVideo(
           if (st === "done" && p.video?.mediaId) fetchRunUrlVideo(rec, ctx, p.video.mediaId);
         }
       })
-      .catch(() => {})
+      .catch(() => {
+        failures += 1;
+        skip = Math.min(2 ** failures, 30) - 1;
+      })
       .finally(() => { inFlight = false; });
   }, 1000);
 }
@@ -982,7 +992,8 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
         ...st2.stageMeta.downloading,
         video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "queued",
                  progress: null, downloadedBytes: null, error: null },
-        videoDlStart: Date.now(),
+        // Started by the first "downloading" poll: queue time is not transfer time.
+        videoDlStart: undefined,
         videoDlEnd: undefined,
       },
     },
@@ -1010,7 +1021,7 @@ function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: nu
     formatId: get().urlMeta[url]?.videoFormat ?? null,
     progressId: pid,
   }).catch((e) => {
-    if (epoch !== get().epoch) return;
+    if (epoch !== get().epoch || get().lastRunPath !== url) return;
     set((st2) => ({
       stageMeta: {
         ...st2.stageMeta,
@@ -1062,6 +1073,9 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     stageTimes: {},
     stageMeta: {},
     lastOptions: rec.options ?? s.lastOptions,
+    // The record stores no decode overrides: an earlier run's set must not ride along
+    // into a retry (or the rail's VAD line).
+    lastOverrides: {},
     // Overlay slots keyed by record ID — the path can't do it, two records
     // of the same URL share theirs (edits used to bleed between them).
     renames: { ...s.renames, [rec.id]: rec.renames ?? {} },
@@ -1207,6 +1221,18 @@ export function mergeSegmentTranslations(
   }
 }
 
+/** Fold a video sub-object into the download row's meta: its clock starts at
+ *  the first "downloading" state (queue time is not transfer time) and stops
+ *  at the first terminal one. Shared by the run poll and awaitRunUrlVideo. */
+function foldVideo(dl: StageMeta | undefined, video: VideoProgress, now: number): StageMeta {
+  return {
+    ...dl,
+    video,
+    videoDlStart: dl?.videoDlStart ?? (video.state === "downloading" ? now : undefined),
+    videoDlEnd: videoTerminal(video.state) ? (dl?.videoDlEnd ?? now) : undefined,
+  };
+}
+
 /** Fold a progress poll into the store. "unknown" is the server saying "no
  *  such entry" — before the handler registers the id, and again after the
  *  response pops it — so it never overwrites a real stage (that flashed the
@@ -1300,25 +1326,13 @@ export function foldProgress(p: BatchProgress) {
     // `video` sub-object on every poll (also after the transcript returned,
     // via awaitRunUrlVideo). It never reopens the download row's clock.
     if (p.video) {
-      stageMeta = {
-        ...stageMeta,
-        downloading: {
-          ...stageMeta.downloading,
-          video: p.video,
-          videoDlStart:
-            stageMeta.downloading?.videoDlStart ??
-            (p.video.state === "downloading" ? now : undefined),
-          videoDlEnd: videoTerminal(p.video.state)
-            ? (stageMeta.downloading?.videoDlEnd ?? now)
-            : undefined,
-        },
-      };
+      stageMeta = { ...stageMeta, downloading: foldVideo(stageMeta.downloading, p.video, now) };
     }
     // Per-unit clock (a translation target, a diarization step): the first
     // poll naming it starts its ledger line's elapsed ticker (the server's
     // elapsed_s only moves per poll).
     if (p.target && (cur === "translating" || cur === "diarizing") &&
-        !stageMeta[cur]?.unitStarts?.[p.target]) {
+        !ownProp(stageMeta[cur]?.unitStarts, p.target)) {
       stageMeta = {
         ...stageMeta,
         [cur]: {
@@ -1365,6 +1379,14 @@ function abandonActiveRun(): void {
 let reattachStop: (() => void) | null = null;
 export function setReattachStop(fn: (() => void) | null): void {
   reattachStop = fn;
+}
+
+/** Hands a ledgered job whose request lost contact (timed out, connection
+ *  dropped) to a headless watcher, so a transcript the server still finishes
+ *  lands in History. Set by jobsReconcile; unset, the pump forgets the row. */
+let orphanWatch: ((jobId: string) => void) | null = null;
+export function setOrphanWatch(fn: ((jobId: string) => void) | null): void {
+  orphanWatch = fn;
 }
 
 /** Take over the rail for a run the server is still working on (found in
@@ -1424,8 +1446,10 @@ export function ingestJobResult(
     if (res.sourceMediaId) fetchRunUrlMedia(row.path, rec, row.ctx, res.sourceMediaId);
     if (res.sourceVideoMediaId) {
       fetchRunUrlVideo(rec, row.ctx, res.sourceVideoMediaId);
-    } else if (res.sourceVideoPending && opts.attached) {
-      awaitRunUrlVideo(rec, row.ctx, row.jobId, get().epoch);
+    } else if (res.sourceVideoPending) {
+      // Headless: -1 never equals the store epoch, so the poll never paints
+      // the rail — it only waits for the video and pulls it.
+      awaitRunUrlVideo(rec, row.ctx, row.jobId, opts.attached ? get().epoch : -1);
     }
   } else {
     copyRunMedia(row.path, rec);
@@ -1791,6 +1815,10 @@ async function pump(
       // loaded backend) would rewind the stage clocks.
       let pollSeq = 0;
       let pollInFlight = false;
+      // The file's ledger row is on disk (the server holds a job under pid),
+      // and — after a lost connection — a headless watcher took it over.
+      let ledgered = false;
+      let handedOff = false;
       const poller = pid
         ? window.setInterval(() => {
             if (pollInFlight) return; // don't stack concurrent polls
@@ -1849,6 +1877,10 @@ async function pump(
         const siteTranscript = isUrl && !!get().urlMeta[next.path]?.siteSubs?.transcriptTrackId;
         const ledgerRow = async () => {
           try {
+            // The run-level options, not itemOptions: a re-attached run's
+            // lastOptions (and every retry from its record) comes from here,
+            // and the per-item keepVideo/retainMedia flags are re-derived from
+            // the link card and Settings on each run.
             await persistRow({
               v: 1,
               jobId: pid!,
@@ -1857,12 +1889,13 @@ async function pump(
               path: next.path,
               kind: isUrl ? "url" : "file",
               title: next.title,
-              options: itemOptions,
+              options,
               ctx,
               urlMeta: get().urlMeta[next.path],
               overrides: get().lastOverrides,
               startedAt: fileT0,
             });
+            ledgered = true;
           } catch (e) {
             console.error("jobs ledger write failed:", e);
           }
@@ -1907,7 +1940,22 @@ async function pump(
         }
       } catch (e) {
         if (epoch !== get().epoch) return;
-        failFile(next.path, uploadTooLargeText(e) ?? String(e));
+        // Our end lost contact (the client-side wait ran out, or the
+        // connection dropped) — the server's job may still be running and
+        // finish. Record the failure under the job id, so the transcript a
+        // headless watcher picks up later replaces it instead of adding a
+        // second record, and keep the ledger row for that watcher.
+        const cause = shortCause(e);
+        const lost = ledgered && (cause === "timed out" || cause === "could not connect") && !uploadTooLarge(e);
+        if (lost && pid && orphanWatch) {
+          const error = String(e);
+          patchItem(next.path, { status: "failed", error });
+          recordRun(next.path, ctx, options, { status: "failed", error }, { id: pid });
+          orphanWatch(pid);
+          handedOff = true;
+        } else {
+          failFile(next.path, uploadTooLargeText(e) ?? String(e));
+        }
         // Failure doorway banner → Logs screen (pre-filtered to Warn+). The
         // queue item keeps the raw error; the doorway gets the truthful
         // template (cause + backend + one fix). A text source only ran the
@@ -1923,8 +1971,9 @@ async function pump(
         if (poller !== undefined) window.clearInterval(poller);
         // Settled (done, failed, or our end dropped by a cancel): the row
         // has done its job. A cancelled run's server row lands `cancelled`
-        // on its own; nothing to re-attach to.
-        if (pid) void forgetRow(pid);
+        // on its own; nothing to re-attach to. A lost connection's row
+        // belongs to its headless watcher now, which forgets it on settle.
+        if (pid && !handedOff) void forgetRow(pid);
         if (epoch === get().epoch) {
           if (get().queue.some((it) => it.status === "queued")) {
             set({ progress: null, stageTimes: {}, stageMeta: {} });
@@ -2006,6 +2055,21 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
   return { tookMs, audioSec };
 }
 
+/** A retry replays the last run's options, but a failed row survives a backend switch, so
+ *  the wire-shaping keys follow the server the retry goes to: `standard` (how an "auto"
+ *  language goes out) and, for Whisper's translate task, the endpoint it is routed to. */
+export function reconcileRetryOptions(
+  opts: TranscribeOptions | undefined,
+  standard: boolean,
+): TranscribeOptions | undefined {
+  if (!opts) return standard ? { standard: true } : undefined;
+  return {
+    ...opts,
+    standard: standard || undefined,
+    ...(opts.task === "translate" ? { useTranslationsEndpoint: standard } : {}),
+  };
+}
+
 export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverrides) {
   const s = get();
   if (s.running) return;
@@ -2013,7 +2077,7 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // line reads the store, so the store must learn them too.
   if (overrides) set({ lastOverrides: overrides });
   patchItem(path, { status: "queued", error: undefined });
-  void pump(s.epoch, s.lastOptions, ctx);
+  void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard), ctx);
 }
 
 export function cancelRun() {

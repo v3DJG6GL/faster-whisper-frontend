@@ -1,6 +1,8 @@
 /** Keyboard contract of the transcript seek slider: arrows step (Shift = coarse),
  *  Page keys jump, Home/End clamp, Space toggles playback. Pure so it is testable
- *  without a DOM; returns the clamped target time, "toggle", or null (not ours). */
+ *  without a DOM; returns the clamped target time, "toggle", or null (not ours).
+ *  A non-positive audioLen means the length is unknown (e.g. a WebM whose
+ *  duration is still Infinity): forward steps are not clamped and End is a no-op. */
 export function seekKeyTarget(
   key: string,
   curTime: number,
@@ -14,10 +16,13 @@ export function seekKeyTarget(
   else if (key === "PageDown") next = curTime - 30;
   else if (key === "PageUp") next = curTime + 30;
   else if (key === "Home") next = 0;
-  else if (key === "End") next = audioLen;
+  else if (key === "End") {
+    if (!(audioLen > 0)) return null;
+    next = audioLen;
+  }
   else if (key === " ") return "toggle";
   if (next === null) return null;
-  return Math.min(audioLen, Math.max(0, next));
+  return Math.max(0, audioLen > 0 ? Math.min(audioLen, next) : next);
 }
 
 /** Index of the last item whose `start` is <= t, or -1 when none has started.

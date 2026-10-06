@@ -255,9 +255,12 @@ export function SubtitleList({
         idLane: 0,
       };
     }
-    // The lane carrying the segments' row ids: the first one keyed to segments.
-    // A site track's cues have none (seg -1), and a dragged order can put one first.
-    const idLane = Math.max(0, tracks.findIndex((t) => !timedTrack(result, t)));
+    // The lane carrying the segments' row ids. The original lane covers every
+    // segment; a translation lane can have gaps (untranslated or kept-original
+    // segments) and a site track has none (seg -1), and a dragged order can put
+    // either first — so prefer the original, else the first segment-keyed lane.
+    const oi = tracks.indexOf("orig");
+    const idLane = oi >= 0 ? oi : Math.max(0, tracks.findIndex((t) => !timedTrack(result, t)));
     return {
       heads: [],
       rows: [],

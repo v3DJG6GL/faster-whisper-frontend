@@ -3,7 +3,7 @@
 
 import { type RailStage } from "@/lib/transcribeRun";
 
-/** m:ss-style elapsed time for the rail's stage rows. */
+/** Compact elapsed time for the rail's stage rows: "45s", "1m 05s", "1h 02m". */
 export function fmtElapsed(ms: number): string {
   const s = Math.max(0, Math.floor(ms / 1000));
   if (s < 60) return `${s}s`;

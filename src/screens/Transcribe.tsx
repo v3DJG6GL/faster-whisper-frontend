@@ -421,6 +421,10 @@ export default function Transcribe() {
   const vadBaseline = inheritedBaseline.vad_filter;
   const vadInherited = typeof vadBaseline === "boolean" ? vadBaseline : undefined;
   const vadLocked = server.locked.has("vad_filter");
+  // Same gate as the Skip-silence row: a server that pins vad_filter (or takes no decode
+  // overrides) would ignore vad_filter=false, so a "retry without skipping" re-runs the
+  // whole file for the same result.
+  const vadRetryable = !vadLocked && caps?.can_request_decode_overrides !== false;
   // "Multiple languages" is this run's `multilingual` decode override (not persisted, like the
   // rest of runOverrides), offered where the server would honour it.
   const multiOffered = offersMultilingual({
@@ -568,7 +572,7 @@ export default function Transcribe() {
   // click in that window used to add the link without them. A failed probe shows its reason and
   // unlocks Add: the run itself is the authority.
   useEffect(() => {
-    const url = normalizeMediaUrl(urlDraft);
+    const url = draftUrl;
     setUrlPreviewData(null);
     setUrlPreviewErr(null);
     setLinkKeepVideo(null);
@@ -599,7 +603,7 @@ export default function Transcribe() {
     }, 500);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [urlDraft, urlAvailable, backend?.id]);
+  }, [draftUrl, urlAvailable, backend?.id]);
 
   const addLink = () => {
     const url = draftUrl;
@@ -862,11 +866,13 @@ export default function Transcribe() {
    *  Skip-silence row + decode editor, since it's the same key) and re-run
    *  the file with the otherwise-unchanged run settings. */
   const retryWithoutVad = (path: string) => {
-    if (busy) return;
+    if (busy || !vadRetryable) return;
     // The run's own settings (the store's), like retry() — the screen's runOverrides is
     // unpersisted state that a remount resets and later panel edits change.
     const next: DecodeOverrides = { ...useTranscribeRun.getState().lastOverrides, vad_filter: false };
-    setRunOverrides(next);
+    // The panel keeps the user's later edits and only flips the switch; the retry itself
+    // replays the run's own settings.
+    setRunOverrides((prev) => ({ ...prev, vad_filter: false }));
     const ctx = buildCtx(next);
     if (ctx) retryFile(path, ctx, next);
   };
@@ -2313,7 +2319,7 @@ export default function Transcribe() {
                       {state === "active" && units && units.length > 0 && (
                         <div className="mt-2 grid grid-cols-[auto_1fr_auto] items-center gap-x-3 gap-y-1 font-mono text-[11px] tabular-nums">
                           {units.map((u) => {
-                            const started = meta?.unitStarts?.[u.target];
+                            const started = ownProp(meta?.unitStarts, u.target);
                             const uElapsed =
                               u.state === "running"
                                 ? started ? now - started : (u.elapsedS ?? 0) * 1000
@@ -2337,7 +2343,7 @@ export default function Transcribe() {
                                 >
                                   {st === "diarizing" ? (
                                     <>
-                                      {UNIT_LABELS[u.target] ?? safeDisplayText(u.target, 16)}
+                                      {ownProp(UNIT_LABELS, u.target) ?? safeDisplayText(u.target, 16)}
                                       <span className="ml-1.5 text-faint">{safeDisplayText(u.target, 16)}</span>
                                     </>
                                   ) : (
@@ -2783,17 +2789,22 @@ export default function Transcribe() {
             <div className="font-medium">Silence skipping removed most of this file</div>
             <div className="mt-0.5">
               Only {fmtDurationExact(result.durationAfterVad)} of {fmtDurationExact(result.duration)} was
-              treated as speech. If words are missing, run it again without the filter.
+              treated as speech.{" "}
+              {vadRetryable
+                ? "If words are missing, run it again without the filter."
+                : "This server keeps silence skipping on (set by the server admin), so it can't be turned off for a run."}
             </div>
             <div className="mt-2 flex items-center gap-2">
-              <Button
-                variant="default"
-                size="sm"
-                disabled={busy}
-                onClick={() => retryWithoutVad(selected.path)}
-              >
-                Retry without skipping
-              </Button>
+              {vadRetryable && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => retryWithoutVad(selected.path)}
+                >
+                  Retry without skipping
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"

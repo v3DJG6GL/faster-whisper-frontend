@@ -7,18 +7,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // workbench must NOT re-save has to be observable. The rest of api.ts is no-op outside
 // Tauri (each command guards on `isTauri`), so the original module is kept.
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
-vi.mock("./api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./api")>()),
-  saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
-}));
+// Unset = the real outside-Tauri command; the lost-request tests make it reject.
+const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribeFile>[0]) => Promise<never>>();
+vi.mock("./api", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("./api")>();
+  return {
+    ...orig,
+    saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
+    transcribeFile: (a: Parameters<typeof orig.transcribeFile>[0]) =>
+      transcribeFile.getMockImplementation() ? transcribeFile(a) : orig.transcribeFile(a),
+  };
+});
 
 import {
-  activeRailIndex, axisLayout, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
+  activeRailIndex, axisLayout, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
   railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
@@ -500,6 +507,12 @@ describe("selectPath keeps a same-path open record", () => {
     selectPath(null);
     expect(useTranscribeRun.getState().openRecordId).toBeNull();
   });
+
+  it("opening a record drops an earlier run's decode overrides (the record stores none)", () => {
+    useTranscribeRun.setState({ lastOverrides: { beam_size: 1 } });
+    openHistoryRecord(recOf("rec-5", "/c.mp3"));
+    expect(useTranscribeRun.getState().lastOverrides).toEqual({});
+  });
 });
 
 describe("mergeSegmentTranslations kept-original marks", () => {
@@ -651,6 +664,24 @@ describe("retryFile carries new decode overrides into the store", () => {
     );
     expect(useTranscribeRun.getState().lastOverrides.vad_filter).toBe(false);
     cancelRun();
+  });
+});
+
+describe("reconcileRetryOptions (a retry after a backend switch)", () => {
+  it("the wire-shaping keys follow the server the retry goes to", () => {
+    // Last run on a standard server, retry on a full one: auto must not go out the standard way.
+    expect(reconcileRetryOptions({ standard: true, task: "translate", useTranslationsEndpoint: true }, false))
+      .toEqual({ task: "translate", useTranslationsEndpoint: false });
+    // Last run on a full server, retry on a standard one.
+    expect(reconcileRetryOptions({ task: "translate", useTranslationsEndpoint: false, diarize: true }, true))
+      .toEqual({ standard: true, task: "translate", useTranslationsEndpoint: true, diarize: true });
+    // No translate task: no endpoint key appears.
+    expect(reconcileRetryOptions({ diarize: true }, true)).toEqual({ standard: true, diarize: true });
+  });
+
+  it("no last options: a standard server still gets its flag", () => {
+    expect(reconcileRetryOptions(undefined, true)).toEqual({ standard: true });
+    expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
   });
 });
 
@@ -886,7 +917,9 @@ describe("an on-demand video that fails outright shows on the Video row", () => 
         schemaVersion: 1, kind: "url", id: "rec-v", createdAt: "2026-10-05T12:00:00Z",
         sourcePath: url, sourceName: "Talk", status: "done",
       });
-      useTranscribeRun.setState({ stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      // The settled panel is the link the run ran last.
+      useTranscribeRun.setState({ lastRunPath: url,
+        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
       retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
       // Outside Tauri the request rejects at once — the run used to only log that.
@@ -946,5 +979,51 @@ describe("SKIPPED_EXPLANATIONS", () => {
       expect(SKIPPED_EXPLANATIONS[st].length).toBeGreaterThan(0);
     }
     expect(SKIPPED_EXPLANATIONS.translating).not.toBe(SKIPPED_EXPLANATIONS.diarizing);
+  });
+});
+
+describe("a ledgered file whose request lost contact", () => {
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false, jobsEnabled: true };
+  async function run(error: string) {
+    const { ledgerRows, _resetLedgerForTests } = await import("./jobsLedger");
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    _resetLedgerForTests();
+    useTranscriptHistory.setState({ records: [], loaded: true });
+    let pid: string | undefined;
+    transcribeFile.mockImplementation(async (a) => {
+      pid = a.options?.progressId;
+      throw new Error(error);
+    });
+    const watch = vi.fn();
+    setOrphanWatch(watch);
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    try {
+      useTranscribeRun.setState({ files: ["/lost.mp3"], queue: [], running: false, stageMeta: {}, stageTimes: {} });
+      startRun(undefined, {}, ctx);
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      await Promise.resolve();
+      return { pid: pid!, watch, rows: ledgerRows(), records: useTranscriptHistory.getState().records };
+    } finally {
+      vi.unstubAllGlobals();
+      setOrphanWatch(null);
+      transcribeFile.mockReset();
+      useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {} });
+    }
+  }
+
+  it("a timeout keeps the ledger row for a headless watcher and records under the job id", async () => {
+    const { pid, watch, rows, records } = await run("Timed out waiting for the server.");
+    expect(pid).toMatch(/^[0-9a-f]+$/);
+    expect(watch).toHaveBeenCalledWith(pid);
+    expect(rows.map((r) => r.jobId)).toEqual([pid]);
+    expect(records.map((r) => [r.id, r.status])).toEqual([[pid, "failed"]]);
+  });
+
+  it("a server answer (HTTP 500) still forgets the row and is never watched", async () => {
+    const { pid, watch, rows, records } = await run("HTTP 500: boom");
+    expect(watch).not.toHaveBeenCalled();
+    expect(rows).toEqual([]);
+    expect(records).toHaveLength(1);
+    expect(records[0].id).not.toBe(pid);
   });
 });

@@ -11,6 +11,8 @@ const loadJobsLedger = vi.fn<() => Promise<unknown>>(() => Promise.resolve(null)
 const saveJobsLedger = vi.fn<(l: unknown) => Promise<void>>(() => Promise.resolve());
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
 const cancelBackendTranscription = vi.fn(() => Promise.resolve());
+const getTranscribeProgress = vi.fn<(args: { progressId: string }) => Promise<unknown>>(
+  () => Promise.resolve({ stage: "unknown" }));
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   // The reconcile runs only inside the desktop app.
@@ -21,6 +23,7 @@ vi.mock("./api", async (importOriginal) => ({
   saveJobsLedger: (l: unknown) => saveJobsLedger(l),
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
   cancelBackendTranscription: () => cancelBackendTranscription(),
+  getTranscribeProgress: (a: { progressId: string }) => getTranscribeProgress(a),
   // Media copies are best-effort side effects; keep them inert here.
   saveTranscriptMedia: () => Promise.resolve(null),
   fetchUrlMedia: () => Promise.resolve(null),
@@ -29,7 +32,7 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
-const { _resetReconcileForTests, initJobReconcile, reconcileJobs, NOT_FOUND_ERROR } =
+const { _resetReconcileForTests, initJobReconcile, reconcileJobs, watchOrphan, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun } = await import("./transcribeRun");
 const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
@@ -78,6 +81,7 @@ beforeEach(() => {
     backends: [{ id: "b1", name: "Local", serverUrl: "http://localhost:8000" } as never] });
   getJob.mockReset();
   getJobResult.mockReset();
+  getTranscribeProgress.mockClear();
   saveTranscriptRecord.mockClear();
   saveJobsLedger.mockClear();
   loadJobsLedger.mockImplementation(() => Promise.resolve(null));
@@ -394,6 +398,32 @@ describe("reconcileJobs", () => {
     const polled = getJob.mock.calls.map((c) => c[0].jobId);
     expect(polled.filter((id) => id === JOB_B).length).toBeGreaterThanOrEqual(2);
     expect(polled).not.toContain(JOB_C);
+  });
+
+  it("a headless done link whose video was still downloading polls for it under the job id", async () => {
+    await seed(row(JOB_A, T0, "url"));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceVideoPending: true }));
+    await reconcileJobs();
+    expect(records()[0].id).toBe(JOB_A);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getTranscribeProgress).toHaveBeenCalledWith(expect.objectContaining({ progressId: JOB_A }));
+    // Headless: the poll never paints the rail.
+    expect(useTranscribeRun.getState().stageMeta).toEqual({});
+  });
+
+  it("a lost request's job is watched headless and its transcript lands under the job id", async () => {
+    await persistRow(row(JOB_A, Date.now()));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    watchOrphan(JOB_A);
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJob).toHaveBeenCalledTimes(1);
+    expect(records().map((r) => [r.id, r.status])).toEqual([[JOB_A, "done"]]);
+    expect(ledgerRows()).toEqual([]);
+    // Headless: the rail was not touched.
+    expect(useTranscribeRun.getState().queue).toEqual([]);
   });
 
   it("initJobReconcile loads the persisted ledger after configReady, once", async () => {
