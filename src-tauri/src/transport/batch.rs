@@ -654,6 +654,15 @@ fn fin_frac(v: Option<f64>) -> Option<f64> {
     v.filter(|x| x.is_finite()).map(|x| x.clamp(0.0, 1.0))
 }
 
+/// Bound a server notice list (warnings, ignored overrides): at most `MAX_NOTICES`
+/// entries, each capped like an error text. Shared with the text-translate reply.
+pub(crate) fn bound_notices(v: &[String]) -> Vec<String> {
+    v.iter()
+        .take(super::MAX_NOTICES)
+        .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
+        .collect()
+}
+
 /// Bound every server string and number in a plan: the webview renders these
 /// as labels and bar widths, and a hostile server must not get a 100 KB stage
 /// name or an infinite estimate through.
@@ -1307,18 +1316,8 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
             .take(MAX_SPEAKERS_LISTED)
             .map(|s| super::bounded_server_text(s, SPEAKER_MAX))
             .collect(),
-        warnings: parsed
-            .warnings
-            .iter()
-            .take(super::MAX_NOTICES)
-            .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
-            .collect(),
-        overrides_ignored: parsed
-            .overrides_ignored
-            .iter()
-            .take(super::MAX_NOTICES)
-            .map(|s| super::bounded_server_text(s, super::MAX_ERROR_TEXT))
-            .collect(),
+        warnings: bound_notices(&parsed.warnings),
+        overrides_ignored: bound_notices(&parsed.overrides_ignored),
         // Opaque 32-hex id from OUR backend; screened like a progress id so a
         // hostile server can't plant a path-traversing value the media fetch
         // would interpolate into a URL path.

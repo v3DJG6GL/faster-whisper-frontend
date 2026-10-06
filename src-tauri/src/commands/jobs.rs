@@ -1,5 +1,10 @@
 //! The server job resource (`/v1/jobs*`) and the on-disk in-flight jobs ledger that
 //! lets a run re-attach after a restart.
+//!
+//! The job commands are deliberately NOT wrapped in `transcribe::until_file_epoch_bumps`:
+//! that epoch is one global counter any cancel bumps, and a late result ingest must
+//! survive an unrelated cancel. Callers switch on the typed outcome (`JobOutcome`), not
+//! an Err.
 
 use super::resolve_key_async;
 use crate::transport;

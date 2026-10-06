@@ -226,10 +226,12 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     }
 }
 
-/// Relocate the whole audio store: move the three subfolders from the current
-/// base to the next one and fix the records' stored paths. The caller (the
-/// Settings screen) persists the new setting only after this returns Ok —
-/// never save-then-hope.
+/// Relocate the whole audio store: move every media subfolder (`AUDIO_SUBDIRS`:
+/// dictations, files, links, video) from the current base to the next one and fix
+/// the records' stored paths. The caller (the Settings screen) persists the new
+/// setting only after this returns Ok — never save-then-hope. On Err the records
+/// that DID move are already rewritten on disk, so the caller must reload history
+/// either way, or its mirror writes the pre-move paths back on the next edit.
 #[tauri::command]
 pub async fn move_audio_base(
     app: AppHandle,
@@ -258,9 +260,8 @@ pub async fn move_audio_base(
         // Move the heal stamp so the new base is stamped and the old one is clean.
         // Without this the old base keeps a stray stamp and the new one
         // re-runs the full heal scan on the next launch.
-        let stamp_name = HEAL_STAMP;
-        let old_stamp = from.join(stamp_name);
-        let new_stamp = to.join(stamp_name);
+        let old_stamp = from.join(HEAL_STAMP);
+        let new_stamp = to.join(HEAL_STAMP);
         if old_stamp.exists() {
             let _ = std::fs::rename(&old_stamp, &new_stamp);
         } else {

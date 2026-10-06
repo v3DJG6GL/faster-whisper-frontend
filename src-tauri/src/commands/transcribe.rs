@@ -513,6 +513,7 @@ pub async fn package_media(
     let dest_for_cleanup = dest.clone();
     let fut = async {
         let mut uploaded_expiry: Option<i64> = None;
+        let mut uploaded = false;
         let mid = match (media_id, path) {
             (Some(id), _) => id,
             (None, Some(p)) => {
@@ -529,6 +530,7 @@ pub async fn package_media(
                         media_id,
                         expires_at,
                     } => {
+                        uploaded = true;
                         uploaded_expiry = expires_at;
                         media_id
                     }
@@ -564,9 +566,13 @@ pub async fn package_media(
         if out.kind == "ok" && out.expires_at.is_none() {
             out.expires_at = uploaded_expiry;
         }
-        // Busy (the user's export slot is taken elsewhere): name the server copy so the
-        // webview's retry packages it without uploading the file again.
-        if out.kind == "busy" {
+        // Busy (the user's export slot is taken elsewhere), or any other failed package
+        // after this call uploaded a local file (e.g. mp4_incompatible): name the server
+        // copy so the webview's retry (or "Save as MKV") packages it without uploading the
+        // file again. "expired" means that copy is gone, so it is never named.
+        if out.kind == "busy"
+            || (uploaded && out.media_id.is_none() && out.kind != "ok" && out.kind != "expired")
+        {
             out.media_id = Some(mid);
             out.expires_at = uploaded_expiry;
         }
@@ -617,10 +623,11 @@ impl Drop for NoClobberClaim {
 }
 
 /// Claim `dest` for a no-clobber copy: an exclusive create (fails if anything is there, a
-/// dangling symlink included), recorded as in flight. None = the name is taken. A `<dest>.tmp`
-/// that no live copy here owns is a DEAD copy's leftover (crash, quit, kill mid-copy) — with
-/// no `dest`, or with the 0-byte placeholder that copy claimed, both are reclaimed instead of
-/// blocking the name forever. A tmp beside a real (non-empty) file stays put: name taken.
+/// dangling symlink included), recorded as in flight. None = the name is taken. Only a DEAD
+/// no-clobber copy's exact signature is reclaimed (crash, quit, kill mid-copy): a regular-file
+/// `<dest>.tmp` no live copy here owns beside the regular 0-byte placeholder that copy claimed
+/// first. Any other tmp — no `dest` (a plain copy or package export streaming to the same tmp
+/// name, or the user's own file), a non-file tmp, a non-empty `dest` — stays put: name taken.
 fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobberClaim>> {
     let mut guard = NO_CLOBBER_IN_FLIGHT
         .lock()
@@ -629,13 +636,14 @@ fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobber
     if set.contains(dest) {
         return Ok(None);
     }
-    if std::fs::symlink_metadata(tmp).is_ok() {
-        match std::fs::symlink_metadata(dest) {
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Ok(m) if m.is_file() && m.len() == 0 => std::fs::remove_file(dest)?,
-            _ => return Ok(None),
+    if let Ok(t) = std::fs::symlink_metadata(tmp) {
+        let dead_copy = t.is_file()
+            && std::fs::symlink_metadata(dest)
+                .map(|m| m.is_file() && m.len() == 0)
+                .unwrap_or(false);
+        if !dead_copy || std::fs::remove_file(tmp).is_err() || std::fs::remove_file(dest).is_err() {
+            return Ok(None);
         }
-        std::fs::remove_file(tmp)?;
     }
     match std::fs::OpenOptions::new()
         .write(true)
@@ -773,11 +781,6 @@ pub async fn get_transcribe_progress(
         .map_err(|e| format!("{e:#}"))
 }
 
-// ── Server jobs: re-attach to a run the app lost the connection to ─────────
-// Deliberately NOT wrapped in `until_file_epoch_bumps`: that epoch is one global
-// counter any cancel bumps, and a late result ingest must survive an unrelated
-// cancel. The typed outcome (not an Err) is what the reconcile step switches on.
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -809,9 +812,27 @@ mod tests {
         assert!(tmp.exists(), "a live copy's tmp is left alone");
         drop(claim);
         std::fs::remove_file(&dest).unwrap();
-        // A tmp with no dest and no live copy: reclaimed.
-        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_some());
-        assert!(!tmp.exists());
+        // A tmp with no dest: another writer's (a plain copy, a package export) or the
+        // user's own file — never deleted, the name counts as taken.
+        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_none());
+        assert!(
+            tmp.exists(),
+            "a tmp without the placeholder is not a dead copy's"
+        );
+        assert!(!dest.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_non_file_tmp_is_not_reclaimed() {
+        let dir = scratch("tmpdir");
+        let dest = dir.join("talk.mp4");
+        let tmp = transport::media::tmp_sibling(&dest);
+        std::fs::write(&dest, b"").unwrap();
+        std::fs::create_dir(&tmp).unwrap();
+        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_none());
+        assert!(tmp.is_dir());
+        assert!(dest.is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -2,9 +2,7 @@
 //! out. Serves dictation settle-time translation, the viewer's re-translate,
 //! retro-translation from History, and subtitle/text-file sources.
 
-use super::{
-    base_url, bounded_server_text, client, friendly_err, json_capped, with_auth, MAX_ERROR_TEXT,
-};
+use super::{base_url, bounded_server_text, client, friendly_err, json_capped, with_auth};
 use anyhow::bail;
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -263,12 +261,7 @@ pub async fn translate_texts(
             .as_ref()
             .and_then(|t| t.source.as_deref())
             .map(|s| bounded_server_text(s, 16)),
-        warnings: parsed
-            .warnings
-            .iter()
-            .take(super::MAX_NOTICES)
-            .map(|w| bounded_server_text(w, MAX_ERROR_TEXT))
-            .collect(),
+        warnings: super::batch::bound_notices(&parsed.warnings),
         plan: parsed.plan.map(super::batch::bound_plan),
     })
 }

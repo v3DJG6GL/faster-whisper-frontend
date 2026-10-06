@@ -240,7 +240,7 @@ mod wire_field_tests {
             "state": "done",
             "created_at": -5.0,
             "finished_at": 1757200042.7,
-            "expires_at": f64::NAN,
+            "expires_at": -1.0,
             "model": "m".repeat(300),
             "source_kind": "file",
             "source_name": "n".repeat(500),
@@ -264,6 +264,14 @@ mod wire_field_tests {
         );
         assert_eq!(b.result_bytes, Some(42));
         assert!(b.progress.is_none());
+        // json! turns NaN into null, so feed non-finite stamps directly.
+        let nan = bound_job_status(JobStatus {
+            expires_at: Some(f64::NAN),
+            finished_at: Some(f64::INFINITY),
+            ..Default::default()
+        });
+        assert_eq!(nan.expires_at, None);
+        assert_eq!(nan.finished_at, None);
         // A clean id survives; camelCase on the way out.
         let s: JobStatus =
             serde_json::from_value(serde_json::json!({"job_id": "cafe".repeat(8)})).unwrap();
