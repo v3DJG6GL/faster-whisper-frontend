@@ -103,8 +103,8 @@ pub fn injection_cancelled(epoch: u64) -> bool {
 /// (a restore the frontend queued before an error abort can still run after the recovery write),
 /// and `end_injection` takes it.
 ///
-/// Armed at all three recovery writes (the two in the paste path and the mid-function divert
-/// arm), and consumed at the top of `end_injection` — unconditionally,
+/// Armed at all four recovery writes (the two in the paste path, the mid-function divert arm and
+/// the entry clipboard-only arm), and consumed at the top of `end_injection` — unconditionally,
 /// above its snapshot test, so a session that never took a snapshot still clears it — or by
 /// `discard_injection_snapshot`, the other way a session ends. Those two are the only session
 /// teardowns, so the flag cannot outlive the session that armed it, which is what makes it safe
@@ -175,11 +175,14 @@ pub fn is_own_injected(text: &str) -> bool {
 /// INTO an RDP window (skipping a restore the local paste was owed) or OUT of one (restoring over
 /// the transcript a still-pending remote fetch has not collected yet — the delayed-rendering hazard
 /// this skip exists for). What decides whether a restore is safe is where the paste WENT, so that
-/// is what gets recorded: set by `inject_text` for every non-empty paste once `remote_target` is
-/// resolved at the sink, cleared by the two session teardowns.
+/// is what gets recorded: set by `inject_text`'s paste sinks once the transcript reached the
+/// clipboard (a phrase that bailed before its write leaves the previous paste's target in place;
+/// an outcome that may or may not have written records only `true`, the safe side), cleared by the
+/// two session teardowns.
 static LAST_PASTE_REMOTE: AtomicBool = AtomicBool::new(false);
 
-/// Record where the paste that is about to happen goes (see `LAST_PASTE_REMOTE`).
+/// Record where the paste whose transcript just reached the clipboard goes (see
+/// `LAST_PASTE_REMOTE`).
 pub fn note_paste_target(remote: bool) {
     LAST_PASTE_REMOTE.store(remote, Ordering::SeqCst);
 }
@@ -727,12 +730,17 @@ pub fn read_primary_selection() -> Option<String> {
 /// protocol (GNOME) runs on, through XWayland — CLEAR the selection when the `Clipboard` drops
 /// instead of handing it to the clipboard manager, so a plain set could be gone before the
 /// portal's Ctrl+V reads it.
-pub fn set_clipboard(text: &str) -> Result<(), String> {
+///
+/// `Ok(true)` when the write went through that live owner (so it sticks and the caller need not
+/// re-serve it), `Ok(false)` after a plain write that may not outlive this call.
+pub fn set_clipboard(text: &str) -> Result<bool, String> {
     if cfg!(target_os = "linux") && clipboard_privacy() {
-        return persist_transcript(text);
+        return persist_transcript(text).map(|()| true);
     }
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    write_transcript(&mut cb, text).map_err(|e| e.to_string())
+    write_transcript(&mut cb, text)
+        .map(|()| false)
+        .map_err(|e| e.to_string())
 }
 
 /// The plain (non-owner) transcript write, shared by `set_clipboard`, `paste` and the Windows
@@ -879,7 +887,7 @@ fn persist_transcript(text: &str) -> Result<(), String> {
             let _ = tx.send(Err("a clipboard read is still stuck".to_string()));
             return;
         }
-        serve_clipboard_blocking(text, "clipboard-only set", exclude, Some(tx))
+        serve_clipboard_blocking(text, "transcript write", exclude, Some(tx))
     });
     // Normally sub-millisecond: this waits for a local connect, not for a paste. The bound exists
     // so a wedged compositor cannot park an injection, and it is long enough that a slow one still

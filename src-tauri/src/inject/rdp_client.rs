@@ -1,8 +1,10 @@
 //! Remote-desktop / VDI client detection, shared by every place that has to treat such a
 //! target differently: the paste path (`inject::text` — longer settle, no restore, the
 //! delayed-rendering clipboard owner on Windows), the per-app rule editor
-//! (`commands::remote_desktop_auto_detected`, which shows what "Auto" would decide) and the
-//! Quick-Add copy-chord grab (`aux_windows::quickadd::win_seed`, which holds its window for the copy to cross).
+//! (`commands::remote_desktop_auto_detected`, which shows what "Auto" would decide), the
+//! Quick-Add copy-chord grab (`aux_windows::quickadd::win_seed`, which holds its window for the
+//! copy to cross) and the Windows push-to-talk liveness gate (`hotkeys::windows`, which keeps a
+//! held chord alive while a client's capture hook swallows the keys).
 //!
 //! Two independent detectors, because neither is complete on its own:
 //!   * **by app id** ([`is_remote_desktop_app`]) — the focused app's exe basename (Windows) or
@@ -10,6 +12,9 @@
 //!   * **by window class** ([`focus_is_remote_desktop_client`], Windows only) — the RDP ActiveX
 //!     control keeps its window classes wherever it is hosted, so this also catches RDCMan,
 //!     mRemoteNG and other hosts whose exe name says nothing about RDP.
+//!
+//! [`focus_is_remote_desktop`] composes the two; the paste path keeps them apart only because
+//! its log names which one fired.
 //!
 //! A per-app rule can override both ("Remote desktop: On / Off"); `inject_text` logs which
 //! detector fired and whether the rule overrode it, so a support log answers "why was this
@@ -128,9 +133,27 @@ pub fn focus_is_remote_desktop_client() -> bool {
     false
 }
 
+/// Is focus on a remote-desktop / VDI client, by EITHER detector (they are only complete
+/// together): the window class (mstsc, and the RDP control hosted by RDCMan & co.) or the
+/// focused app id (VirtualBox, VMware, Citrix, AnyDesk… — clients whose window class says
+/// nothing). The class check runs first, being a few Win32 calls; `app_id` (a focus-snapshot
+/// read behind a lock) is called only when it misses.
+pub fn focus_is_remote_desktop(app_id: impl FnOnce() -> Option<String>) -> bool {
+    focus_is_remote_desktop_client() || app_id().is_some_and(|id| is_remote_desktop_app(&id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{is_remote_desktop_app, is_remote_window_class};
+
+    #[cfg(not(windows))]
+    #[test]
+    fn composed_detector_falls_back_to_the_app_id() {
+        use super::focus_is_remote_desktop;
+        assert!(focus_is_remote_desktop(|| Some("VirtualBoxVM".into())));
+        assert!(!focus_is_remote_desktop(|| Some("firefox".into())));
+        assert!(!focus_is_remote_desktop(|| None));
+    }
 
     #[test]
     fn remote_desktop_app_ids() {

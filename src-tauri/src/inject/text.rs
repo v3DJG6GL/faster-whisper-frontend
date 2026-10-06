@@ -138,6 +138,14 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
+            // A recovery write too when an error abort fell through the gate above: arm the
+            // session-restore guard, as the mid-function divert below does, so the error
+            // teardown's `end_injection` does not serve the session snapshot over the transcript.
+            if crate::inject::injection_cancelled(epoch)
+                && crate::inject::cancel_wants_recovery(epoch)
+            {
+                crate::inject::note_recovery_on_clipboard();
+            }
         }
         return Ok(InjectOutcome {
             landed: true,
@@ -329,10 +337,10 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
-            // Third recovery write: an error abort that fell through the gate above has just put the
-            // transcript on the clipboard; arm the session-restore guard like the two paste-path
-            // writes so end_injection does not serve `prev` over it. Not armed on a plain divert —
-            // that session is still live.
+            // Another recovery write: an error abort that fell through the gate above has just put
+            // the transcript on the clipboard; arm the session-restore guard like the two
+            // paste-path writes so end_injection does not serve `prev` over it. Not armed on a
+            // plain divert — that session is still live.
             if crate::inject::injection_cancelled(epoch)
                 && crate::inject::cancel_wants_recovery(epoch)
             {
@@ -378,10 +386,11 @@ pub(crate) async fn inject_text(
         };
     // Where this paste goes decides the SESSION-level restores later (end_injection /
     // restore_clipboard_snapshot), which run after focus may have moved — see LAST_PASTE_REMOTE.
-    // A bare auto-Enter carries no transcript and touches no clipboard, so it does not count.
-    if method != "direct" && !text.is_empty() {
-        crate::inject::note_paste_target(remote_target);
-    }
+    // Recorded by each paste sink once the transcript reached the clipboard, NOT here: several
+    // sinks still bail with nothing written, and a skipped phrase must not overwrite the target
+    // of the paste before it. A bare auto-Enter carries no transcript and touches no clipboard,
+    // so it does not count either.
+    let is_paste = method != "direct";
 
     // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
     let recovery_text = text.clone();
@@ -423,7 +432,17 @@ pub(crate) async fn inject_text(
             .await
             {
                 Ok(landed) => {
-                    tracing::info!("[inject] typed via virtual keyboard");
+                    // By outcome: the backend also answers Ok when it typed nothing (our own
+                    // window held focus) or was stopped by a cancel.
+                    match landed {
+                        crate::inject::Landed::NothingWritten => tracing::info!(
+                            "[inject] virtual keyboard: nothing typed (our own window holds focus)"
+                        ),
+                        _ if crate::inject::injection_cancelled(epoch) => {
+                            tracing::info!("[inject] virtual keyboard: stopped by cancel")
+                        }
+                        _ => tracing::info!("[inject] typed via virtual keyboard"),
+                    }
                     Ok(landed)
                 }
                 // Fall back to the portal ONLY when the VK failed before transmitting any key (protocol
@@ -568,12 +587,27 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
-            let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
-                .await
-                .map_err(|e| e.to_string())?;
+            // A remote-desktop client fetches the clipboard only AFTER the forwarded chord, so its
+            // write goes straight to the persistent owner: the plain `set_clipboard` write is
+            // dropped when it returns (privacy off, no data-control — GNOME through XWayland),
+            // leaving the remote nothing to fetch. Same rule the X11 twin's remote write follows.
+            // (`set_clipboard_persistent`'s own pending-restore take is a no-op: `requeue` holds
+            // it.) `persisted` says the transcript is already on a live owner, so the two re-sets
+            // below need not serve it a second time.
+            let set_res = if remote_target {
+                persist_off_runtime(clip).await.map(|()| true)
+            } else {
+                tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
             // Propagate a set_text failure (the guard puts the pending restore back); prev was
             // captured (time-bounded) above.
-            set_res?;
+            let persisted = set_res?;
+            // The transcript is on the clipboard now, so this is where the paste went — see
+            // LAST_PASTE_REMOTE. Recorded only here, past every bail above, so a phrase that
+            // skipped without writing does not overwrite the previous paste's target.
+            crate::inject::note_paste_target(remote_target);
             // Written: the pending restore taken above becomes this paste's own `prev` when this
             // paste has none (its read came back empty/timeout or as our own previous transcript —
             // exactly what it reads inside that restore window), else it is superseded.
@@ -606,22 +640,25 @@ pub(crate) async fn inject_text(
                 tracing::info!("[clip] paste: cancelled during the settle — not pasting");
             } else if own_window_focused(&app) {
                 tracing::info!("[inject] skipped at the paste chord: our own window took focus");
-                // Re-set through the PERSISTENT owner first. The write above used the plain
-                // `set_clipboard`, which does not stick on Wayland once the setter returns — so
-                // reporting the divert without this promises a clipboard that no longer holds the
-                // text, and the caller has already advanced past that phrase. Same rule the X11
-                // twin follows at its own chord guard.
+                // Re-set through the PERSISTENT owner first, unless the write above already went
+                // through it (`persisted`). Otherwise it was the plain `set_clipboard`, which does
+                // not stick on Wayland once the setter returns — so reporting the divert without
+                // this promises a clipboard that no longer holds the text, and the caller has
+                // already advanced past that phrase. Same rule the X11 twin follows at its own
+                // chord guard.
                 // With an answer available, the comment above becomes enforceable rather than
                 // aspirational: if the persistent re-set fails, the plain `set_clipboard` above is
                 // exactly the write that does not stick, so promising a divert would be the false
                 // confirmation this arm was added to avoid. No chord was pressed, so the caller's
                 // re-send is safe.
-                if let Err(e) = persist_off_runtime(text.clone()).await {
-                    tracing::warn!("[inject] divert at the paste chord failed: {e}");
-                    return Ok(InjectOutcome {
-                        landed: false,
-                        diverted: false,
-                    });
+                if !persisted {
+                    if let Err(e) = persist_off_runtime(text.clone()).await {
+                        tracing::warn!("[inject] divert at the paste chord failed: {e}");
+                        return Ok(InjectOutcome {
+                            landed: false,
+                            diverted: false,
+                        });
+                    }
                 }
                 return Ok(InjectOutcome {
                     landed: true,
@@ -655,7 +692,7 @@ pub(crate) async fn inject_text(
                     && crate::inject::cancel_wants_recovery(epoch))
             {
                 crate::inject::restore_clipboard_later(prev);
-            } else if r.is_err() {
+            } else if r.is_err() && !persisted {
                 // The transcript stays on the clipboard to paste manually — but the write above
                 // was the plain `set_clipboard`, which does not stick on Wayland once its setter
                 // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does.
@@ -678,7 +715,7 @@ pub(crate) async fn inject_text(
         // the main thread whichever thread asks. No deadlock: this command runs on the async
         // runtime, so the main thread is never waiting on us.
         let own_focused_probe = own_focused_probe.clone();
-        tokio::task::spawn_blocking(move || {
+        let x11_res = tokio::task::spawn_blocking(move || {
             crate::inject::inject(
                 &text,
                 &method,
@@ -691,7 +728,29 @@ pub(crate) async fn inject_text(
             )
         })
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+        // The X11/Windows paste sink's LAST_PASTE_REMOTE record (the Wayland arm records its own
+        // right after its write). `OnClipboard`, and `Yes` outside a cancel, mean the transcript
+        // was written; `NothingWritten` means it was not. An Err, or a `Yes` from a cancel (which
+        // `paste` also returns when it bailed before the write), may or may not have written, so
+        // it may only ever record a REMOTE target — the safe side, which skips a restore rather
+        // than serving one over a fetch the remote has not made yet.
+        if is_paste && !recovery_text.is_empty() {
+            let cancelled = crate::inject::injection_cancelled(epoch);
+            match &x11_res {
+                Ok(crate::inject::Landed::OnClipboard) => {
+                    crate::inject::note_paste_target(remote_target)
+                }
+                Ok(crate::inject::Landed::Yes) if !cancelled => {
+                    crate::inject::note_paste_target(remote_target)
+                }
+                Ok(crate::inject::Landed::Yes) | Err(_) if remote_target => {
+                    crate::inject::note_paste_target(true)
+                }
+                _ => {}
+            }
+        }
+        x11_res
     };
     if let Err(ref e) = res {
         tracing::warn!("[inject] FAILED: {e}");

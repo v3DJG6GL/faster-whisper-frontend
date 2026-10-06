@@ -164,6 +164,11 @@ pub async fn get_focused_app(
     // truthfully instead of letting AT-SPI report whatever was focused before us. The
     // click-through "overlay" chip never holds focus; exclude it.
     if own_window_focused(&app) {
+        // Through the same change-only dedup as the line below, so a return to the app focused
+        // before this window (Konsole → this app → Konsole) still logs that it left and came back.
+        if focus_log_changed(Some(("self".into(), Some(false)))) {
+            tracing::info!("[focused-app] self");
+        }
         return Ok(Some(crate::focus::FocusedApp {
             app_id: "self".into(),
             title: "this app".into(),
@@ -177,10 +182,23 @@ pub async fn get_focused_app(
     // log only app_id + editable there; the full record (incl. title) goes to `debug` (off by default).
     // The `info` line fires only when app_id/editable CHANGE: at the ~700ms poll an unconditional
     // line floods the log ring and file over a long session, pushing out the diagnostics that matter.
-    static LAST_FOCUS_LOG: std::sync::Mutex<Option<(String, Option<bool>)>> =
-        std::sync::Mutex::new(None);
-    let key = focused.as_ref().map(|f| (f.app_id.clone(), f.editable));
-    let changed = match LAST_FOCUS_LOG.lock() {
+    if focus_log_changed(focused.as_ref().map(|f| (f.app_id.clone(), f.editable))) {
+        match &focused {
+            Some(f) => tracing::info!("[focused-app] id={} editable={:?}", f.app_id, f.editable),
+            None => tracing::info!("[focused-app] none"),
+        }
+    }
+    tracing::debug!("[focused-app] {focused:?}");
+    Ok(focused)
+}
+
+/// The last app_id + editable `get_focused_app` logged at `info`, own-window "self" included.
+static LAST_FOCUS_LOG: std::sync::Mutex<Option<(String, Option<bool>)>> =
+    std::sync::Mutex::new(None);
+
+/// Record `key` as the last logged focus; true when it differs from the previous one (log it).
+fn focus_log_changed(key: Option<(String, Option<bool>)>) -> bool {
+    match LAST_FOCUS_LOG.lock() {
         Ok(mut last) => {
             let changed = *last != key;
             if changed {
@@ -190,15 +208,7 @@ pub async fn get_focused_app(
         }
         // A poisoned lock only costs dedup: keep logging rather than go silent.
         Err(_) => true,
-    };
-    if changed {
-        match &focused {
-            Some(f) => tracing::info!("[focused-app] id={} editable={:?}", f.app_id, f.editable),
-            None => tracing::info!("[focused-app] none"),
-        }
     }
-    tracing::debug!("[focused-app] {focused:?}");
-    Ok(focused)
 }
 
 /// Like `get_focused_app` but WITHOUT the own-window self short-circuit: returns the
@@ -332,7 +342,7 @@ pub async fn get_focused_selection(
         .await
         .ok()
         .flatten()
-        .map(bounded_selection);
+        .map(crate::focus::bounded_selection);
         tracing::info!(
             "[quickadd-close] windows re-grab -> {} bytes",
             sel.as_deref().map_or(0, str::len)
@@ -346,7 +356,9 @@ pub async fn get_focused_selection(
         Ok(match crate::focus::focused_selection(guard.inner()).await {
             // `Text` is already capped at its own read; the PRIMARY fallback is only TIME-bounded.
             SelRead::Text(s) => Some(s),
-            SelRead::Opaque => read_primary_now().await.map(bounded_selection),
+            SelRead::Opaque => read_primary_now()
+                .await
+                .map(crate::focus::bounded_selection),
             SelRead::Empty | SelRead::Unavailable => None,
         })
     }
@@ -357,21 +369,6 @@ pub async fn get_focused_selection(
 #[cfg_attr(windows, allow(dead_code))] // PRIMARY is a Linux concept; Windows seeds via win_seed
 async fn read_primary_now() -> Option<String> {
     read_selection_bounded(crate::inject::read_primary_selection).await
-}
-
-/// Cap a selection read at `SEL_MAX`, the way the AT-SPI Text read already does at its own source.
-///
-/// That bound was applied "at the READ, so every consumer inherits it" — but only for the one
-/// path that had a read to bind it to. Two siblings feed the SAME command and got nothing:
-/// `read_primary_now`, which is TIME-bounded (400ms) and not SIZE-bounded, and the Windows
-/// clipboard re-grab. Both hand the string straight across the IPC into the QuickAdd webview.
-/// Truncation cannot change the outcome downstream: the value is only compared against a mapping
-/// key that `sanitize_seed` already limits to a single line of ≤100 characters.
-fn bounded_selection(s: String) -> String {
-    match s.char_indices().nth(crate::focus::SEL_MAX) {
-        Some((i, _)) => s[..i].to_string(),
-        None => s,
-    }
 }
 
 /// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept
