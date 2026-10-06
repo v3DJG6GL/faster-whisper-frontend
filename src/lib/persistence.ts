@@ -140,8 +140,8 @@ export async function initConfig(): Promise<void> {
       // screen hinting why. Keep pendingBindingChange so the fix triggers a reregister.
       // Include the quick-add chord as a synthetic peer (mirrors the capture-time check in
       // Profiles.tsx / the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row)). It shares the same chord namespace as profile
-      // chords in BOTH hotkey backends (evdev drops a dup, the plugin last-wins clobbers), but the
-      // enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
+      // chords in every hotkey backend (evdev / Windows hook / plugin each keep the first in config
+      // order and drop the later duplicate), but the enable toggle bypasses capture — so an enabled profile could silently collide with quick-add
       // unless the save-gate sees it too.
       const qa = s.settings.general.quickAddHotkey;
       const conflictPeers = withQuickAddPeer(s.profiles, qa);

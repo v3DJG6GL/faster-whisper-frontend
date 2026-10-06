@@ -484,6 +484,9 @@ interface AppState {
   setUrlOverride: (backendId: string, url: string | null) => void;
 
   upsertBackend: (b: Backend) => void;
+  /** Drop a backend's cached connection + usage + caps (what upsertBackend evicts on a URL or
+   *  key-presence change) — for a key rotation the store can't see. */
+  forgetBackendCaches: (id: string) => void;
   removeBackend: (id: string) => void;
   duplicateBackend: (id: string) => void;
   moveBackend: (id: string, dir: "up" | "down") => void;
@@ -733,6 +736,7 @@ export const useApp = create<AppState>((set) => ({
       }
       return { backends };
     }),
+  forgetBackendCaches: (id) => set((s) => evictBackendCaches(s, id)),
   removeBackend: (id) =>
     set((s) => {
       // Drop the removed backend's cached connection + usage + caps too, so a re-added backend

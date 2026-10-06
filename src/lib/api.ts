@@ -302,7 +302,6 @@ export interface PackageOutcome {
   mediaId: string | null;
   expiresAt: number | null;
   reason: string | null;
-  streams: MediaStreams | null;
 }
 
 /** Package a retained (or local) video with subtitle tracks straight to
@@ -1308,6 +1307,18 @@ export async function onOverlayAction(cb: (kind: string) => void): Promise<() =>
  *  Returns an unlisten fn. */
 export async function onAppNavigate(cb: (screen: string) => void): Promise<() => void> {
   return subscribe<string>("app://navigate", cb);
+}
+
+/** Subscribe (in the main window) to the quit handshake: tray Quit / the trayless close emit
+ *  `app://before-quit` and wait (bounded) for `quitReady` before exiting. Returns an unlisten fn. */
+export async function onBeforeQuit(cb: () => void): Promise<() => void> {
+  return subscribe<unknown>("app://before-quit", () => cb());
+}
+
+/** Tell the quit handshake this window has landed its pending writes; the app exits now. */
+export async function quitReady(): Promise<void> {
+  if (!isTauri) return;
+  await invoke("quit_ready");
 }
 
 /** Native "open files" dialog → absolute paths ([] if cancelled / not in Tauri). */
