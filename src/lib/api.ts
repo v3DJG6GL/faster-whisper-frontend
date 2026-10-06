@@ -353,9 +353,7 @@ export async function cancelMediaExport(): Promise<void> {
 export async function onMediaExportProgress(
   cb: (p: MediaExportProgress) => void,
 ): Promise<() => void> {
-  if (!isTauri) return () => {};
-  const { listen } = await import("@tauri-apps/api/event");
-  return listen<MediaExportProgress>("media://export-progress", (e) => cb(e.payload));
+  return subscribe<MediaExportProgress>("media://export-progress", cb);
 }
 
 /** Codec facts for a retained file; null when the server no longer has it. */
@@ -1105,6 +1103,15 @@ export async function injectText(args: {
   });
 }
 
+/** Put a stop-mode transcript the session could not deliver on the clipboard for the user to
+ *  paste, and say whether the write succeeded. Unlike `injectText` with the clipboard method, no
+ *  own-window guard: these recoveries fire exactly while one of our windows may hold focus, and
+ *  the user is told the text is on the clipboard. */
+export async function recoverTextToClipboard(text: string): Promise<boolean> {
+  if (!isTauri) return false;
+  return await invoke<boolean>("recover_to_clipboard", { text });
+}
+
 /** The focused app's id + title + (when deep detection is on) editability, via AT-SPI.
  *  null when nothing is known yet (no a11y bridge / cold listener). */
 export async function getFocusedApp(): Promise<FocusedApp | null> {
@@ -1115,7 +1122,8 @@ export async function getFocusedApp(): Promise<FocusedApp | null> {
 /** Whether ALL of this chord's modifier keys are physically held right now, per the
  *  low-level hotkey backends' shared HeldKeys signal (hotkeys::evdev / hotkeys::windows; always false
  *  when only the plugin backend runs, or when the chord has no modifiers — non-modifier
- *  keys aren't observable). Consumer: the queued fast re-press start — fire only while
+ *  members are ignored, projected onto the modifier subset for cross-backend parity
+ *  (held_keys::modifier_code)). Consumer: the queued fast re-press start — fire only while
  *  the pressed chord itself is still down. */
 export async function shortcutModsHeld(codes: string[]): Promise<boolean> {
   if (!isTauri) return false;
