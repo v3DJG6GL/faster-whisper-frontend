@@ -577,6 +577,12 @@ function SecurityReviewDialog() {
         dictation is sent, which key is used, or what is kept on this device. Everything else was
         applied already — only these are waiting.
       </div>
+      {pending.relisted && (
+        <Notice tone="warn" className="mt-3">
+          Your sync switches changed since this was listed — it now includes changes that were
+          hidden before. Review them again before applying.
+        </Notice>
+      )}
       <div className="mt-4 flex flex-col gap-2">
         {shown.map((c, i) => {
           const auth = c.url ? authorityOf(c.url) : null;
@@ -660,8 +666,9 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
   // resolveSyncConflicts returns silently while a session runs (same rule as the review's
   // approve) — the button says so instead of doing nothing.
   const dictating = useApp((st) => st.status !== "idle");
+  const [busy, setBusy] = useState(false);
   return (
-    <Modal onClose={dismissSyncConflict}>
+    <Modal onClose={busy ? () => {} : dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
         These settings changed both here and on {safeText(pending.remoteDevice, 60) || "another device"}. Pick which
@@ -693,17 +700,21 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
         <Notice className="mt-3">Stop dictation before resolving — nothing is queued while a session runs.</Notice>
       )}
       <div className="mt-5 flex justify-end gap-2">
-        <Button variant="ghost" onClick={dismissSyncConflict}>
+        <Button variant="ghost" disabled={busy} onClick={dismissSyncConflict}>
           Later
         </Button>
+        {/* Same window as SecurityReviewDialog's: resolve nulls the pending conflict and only
+            then awaits applyBlob, so a click on Later (or the backdrop) during that await shows
+            the conflict as deferred while the picks are still applied and pushed. */}
         <Button
-          disabled={dictating}
+          disabled={busy || dictating}
           onClick={() => {
             const chosen = Object.fromEntries(pending.categories.map((c) => [c, picks[c] ?? "local"]));
-            void resolveSyncConflicts(chosen);
+            setBusy(true);
+            void resolveSyncConflicts(chosen).finally(() => setBusy(false));
           }}
         >
-          Apply
+          {busy ? "Applying…" : "Apply"}
         </Button>
       </div>
     </Modal>

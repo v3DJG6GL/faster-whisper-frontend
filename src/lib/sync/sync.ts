@@ -2864,12 +2864,21 @@ interface PendingReview {
   /** Raised over a degraded-keyring compose (`backendsDegraded`): `cats` already holds backends
    *  out, and the approval may adopt the remote as base only under `degradedBaseWithheld`. */
   degraded?: boolean;
+  /** Re-raised by an approval that found rows the first list did not show (the gates changed
+   *  since): the dialog says so, or a second click consents to rows nobody read. */
+  relisted?: boolean;
 }
 let pendingReview: PendingReview | null = null;
 
 /** The Sync tab reads the held-back pull through this (the blobs stay out of the store). */
-export function getPendingReview(): { changes: SecurityChange[]; device: string | null } | null {
-  return pendingReview ? { changes: pendingReview.changes, device: pendingReview.device } : null;
+export function getPendingReview(): {
+  changes: SecurityChange[];
+  device: string | null;
+  relisted: boolean;
+} | null {
+  return pendingReview
+    ? { changes: pendingReview.changes, device: pendingReview.device, relisted: pendingReview.relisted === true }
+    : null;
 }
 
 function raiseReview(r: PendingReview): void {
@@ -2895,21 +2904,36 @@ export async function approvePendingReview(): Promise<void> {
   // after the user changed their mind and pressed Reject. Leave the review up instead; the
   // dialog says why.
   if (useApp.getState().status !== "idle") return;
+  // The epoch this approval belongs to: a supersede during the compose below or the apply's
+  // keyring wait (sync off, server switched, server copy deleted) dropped this review on
+  // purpose — never revive it, and never adopt the old server's version into the new state.
+  const myGen = gen;
   // applyBlob reads the gates LIVE, but the list was judged under the gates at raise time: with
   // "Server addresses" / "API keys" off then, a repoint or key swap was left off the list (the
   // apply would strip it). Turning the gate on since does not supersede the review, so approving
   // as shown would land a change the user never saw. Re-judge under today's gates and, if
-  // anything new appears, show the new list instead of applying.
-  const now = gatedSecurityCheck(r.blob, r.local, r.cats);
+  // anything new appears, show the new list instead of applying. `r.local` is no use for that: it
+  // was composed under the raise-time gates, which substitute a gated-off address / key with the
+  // snapshot's — the peer's own value, so the repoint compares equal. Compose this device afresh.
+  const s = useApp.getState();
+  let localNow = await composeBlob(
+    { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
+    r.cats,
+    state.snapshot,
+    { includeSecrets: true, sub: subSettings(), gates: settingGates() },
+  );
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return;
+  // A degraded keyring re-sends the snapshot's backends category (the peer's view, again): judge
+  // against the live list with no keys instead, so every incoming address / key still raises.
+  if (backendsDegraded(localNow, r.cats)) {
+    localNow = { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } };
+  }
+  const now = gatedSecurityCheck(r.blob, localNow, r.cats);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
-    raiseReview({ ...r, changes: now });
+    raiseReview({ ...r, changes: now, local: localNow, relisted: true });
     return;
   }
-  // The epoch this approval belongs to: a supersede during the apply's keyring wait (sync off,
-  // server switched, server copy deleted) dropped this review on purpose — never revive it, and
-  // never adopt the old server's version into the new state.
-  const myGen = gen;
   pendingReview = null;
   const applied = await applyBlob(r.blob, r.cats);
   if (myGen !== gen) return;

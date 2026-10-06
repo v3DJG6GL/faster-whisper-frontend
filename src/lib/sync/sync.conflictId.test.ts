@@ -112,10 +112,37 @@ describe("resolveSyncConflicts", () => {
     setServerAddresses(true);
     await approvePendingReview();
     expect(getPendingReview()?.changes.map((c) => c.kind).sort()).toEqual(["new-backend", "server-url"]);
+    // The dialog has to say WHY the list grew, or a second click consents to rows nobody read.
+    expect(getPendingReview()?.relisted).toBe(true);
     expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://10.0.0.2:8000");
     // Approving the list as now shown applies it.
     await approvePendingReview();
     expect(getPendingReview()).toBeNull();
     expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://evil:9");
+  });
+
+  it("the re-judge compares against this device as it is now, not the raise-time compose", async () => {
+    // Every raiser composes `local` under the raise-time gates, and with "Server addresses" off
+    // composeBlob substitutes the snapshot's (the peer's) address for b1's live one. Re-judging
+    // against that stale compose saw no repoint, so approving landed it with no consent row.
+    const setServerAddresses = (on: boolean) => {
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+      useApp.setState({ settings });
+    };
+    setServerAddresses(false);
+    const incoming = { backends: { list: [backend({ serverUrl: "http://evil:9" }), backend({ id: "b2", serverUrl: "http://peer:9" })] } };
+    raiseConflictForTests({
+      categories: ["backends"],
+      local: { backends: { list: [backend({ serverUrl: "http://evil:9" })] } },
+      remote: incoming,
+      merged: incoming,
+    });
+    await resolveSyncConflicts({ backends: "remote" });
+    expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["new-backend"]);
+    setServerAddresses(true);
+    await approvePendingReview();
+    expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("server-url");
+    expect(useApp.getState().backends.find((b) => b.id === "b1")?.serverUrl).toBe("http://10.0.0.2:8000");
   });
 });
