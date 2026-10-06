@@ -428,14 +428,14 @@ pub fn merge_pending_restore(
         None => previous,
         Some(p) if eligible && previous.is_none() => {
             tracing::info!(
-                "[clip] paste: adopting the restore still pending from the previous paste ({} chars)",
+                "[clip] paste: adopting the restore still pending from the previous paste ({} bytes)",
                 p.len()
             );
             Some(p)
         }
         Some(p) => {
             tracing::info!(
-                "[clip] a pending restore ({} chars) was superseded by this write",
+                "[clip] a pending restore ({} bytes) was superseded by this write",
                 p.len()
             );
             previous
@@ -445,7 +445,7 @@ pub fn merge_pending_restore(
 
 /// Re-schedules a pending restore this paste took but never got to supersede (it bailed before
 /// writing, on any path including `?`). Emptied (`.0.take()`) once the write happened.
-struct RequeueRestore(Option<String>);
+pub(crate) struct RequeueRestore(pub(crate) Option<String>);
 
 impl Drop for RequeueRestore {
     fn drop(&mut self) {
@@ -721,13 +721,20 @@ pub fn set_clipboard(text: &str) -> Result<(), String> {
         return persist_transcript(text);
     }
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
+    write_transcript(&mut cb, text).map_err(|e| e.to_string())
+}
+
+/// The plain (non-owner) transcript write, shared by `set_clipboard`, `paste` and the Windows
+/// legacy remote write: CRLF on Windows, the user's history/cloud setting, and `note_injected`
+/// once the write succeeded, so a later capture does not adopt this transcript as the user's
+/// clipboard (`is_own_injected`).
+fn write_transcript(cb: &mut arboard::Clipboard, text: &str) -> Result<(), arboard::Error> {
     set_text_ext(
-        &mut cb,
+        cb,
         &clipboard_newlines(text, cfg!(windows)),
         clipboard_privacy(),
         false,
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     note_injected(text);
     Ok(())
 }
@@ -890,18 +897,23 @@ pub fn restore_clipboard_later(prev: Option<String>) {
     };
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(400));
+        // A read still stuck on the clipboard would fight this write (and on Windows block it).
+        // Skipping loses only the restore; the transcript stays, which is the documented fallback.
+        // Waited out BEFORE the slot is claimed: the slot stays cancellable during the wait, so a
+        // paste that starts meanwhile takes (and adopts) it instead of racing this write inside
+        // its own settle.
+        if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
+            // Drop the entry only if it is still ours — a newer schedule must keep its own.
+            let _ = RESTORE.lock().ok().and_then(|mut s| s.take_if_current(gen));
+            tracing::warn!("[clip] restore skipped: a clipboard read is still stuck");
+            return;
+        }
         let Some(prev) = RESTORE.lock().ok().and_then(|mut s| s.take_if_current(gen)) else {
             tracing::info!(
                 "[clip] restore superseded by a newer clipboard write or restore — skipped"
             );
             return;
         };
-        // A read still stuck on the clipboard would fight this write (and on Windows block it).
-        // Skipping loses only the restore; the transcript stays, which is the documented fallback.
-        if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
-            tracing::warn!("[clip] restore skipped: a clipboard read is still stuck");
-            return;
-        }
         // No report channel: nothing user-facing rests on a RESTORE succeeding (the ledger
         // verified all four call sites), and this already runs detached behind a 400ms sleep.
         // Always excluded from history/cloud — see `serve_clipboard_blocking`.
@@ -918,14 +930,8 @@ fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
     use crate::inject::windows_clipboard::{self, Mode, OfferError};
     let exclude = clipboard_privacy();
     let legacy = || -> Result<Option<u64>, Landed> {
-        let crlf = clipboard_newlines(text, true);
-        match arboard::Clipboard::new()
-            .and_then(|mut cb| set_text_ext(&mut cb, &crlf, exclude, false))
-        {
-            Ok(()) => {
-                note_injected(text);
-                Ok(None)
-            }
+        match arboard::Clipboard::new().and_then(|mut cb| write_transcript(&mut cb, text)) {
+            Ok(()) => Ok(None),
             Err(e) => {
                 tracing::warn!(
                     "[clip] paste: remote write failed — nothing written, the caller re-sends: {e}"
@@ -1011,8 +1017,8 @@ fn paste(
     // A cancel that landed during `Enigo::new` / `Clipboard::new` / the un-timed `get_text()` above
     // must not still clobber the user's clipboard with the transcript they discarded. Bailing here
     // is clean: nothing has been written yet and `previous` was only read, never replaced. The
-    // caller (`inject`) returns `Ok(())` into `inject_text`'s `res`, so the error-abort recovery
-    // block at the end of that function still runs and a died session keeps its text.
+    // caller (`inject`) returns `Ok(Landed::Yes)` into `inject_text`'s `res`, so the error-abort
+    // recovery block at the end of that function still runs and a died session keeps its text.
     if injection_cancelled(epoch) {
         tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
         return Ok(Landed::Yes);
@@ -1066,14 +1072,7 @@ fn paste(
         persist_transcript(text)?;
         true
     } else {
-        set_text_ext(
-            &mut clipboard,
-            &clipboard_newlines(text, cfg!(windows)),
-            clipboard_privacy(),
-            false,
-        )
-        .map_err(|e| e.to_string())?;
-        note_injected(text);
+        write_transcript(&mut clipboard, text).map_err(|e| e.to_string())?;
         false
     };
     // Written: the pending restore is now either this paste's own "previous" or superseded.

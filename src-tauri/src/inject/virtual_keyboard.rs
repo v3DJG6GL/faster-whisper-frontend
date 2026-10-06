@@ -251,16 +251,17 @@ mod imp {
             epoch: u64,
             own_window_focused: &(dyn Fn() -> bool + Send + Sync),
         ) -> Result<crate::inject::Landed, VkError> {
-            // Helper: an error raised BEFORE any key was transmitted (keymap upload, limit, the
-            // pre-key roundtrip) is safe to fall back to the portal. `before` builds those.
+            // Helper: an error raised BEFORE any key was transmitted (the size limit below) is safe
+            // to fall back to the portal. `before` builds those; the per-batch keymap upload
+            // decides by `emitted` instead.
             let before = |e: String| VkError {
                 message: e,
                 after_typing: false,
             };
             // Bound the input BEFORE the per-character allocation below. `order` is one heap
             // `String` per input character, ~50-60 bytes each against 1 byte of ASCII input — so
-            // a transcript at the 32 MiB body cap becomes ~1.8 GB here, and the distinct-symbol
-            // ceiling further down never catches it because plain text has few distinct symbols.
+            // a transcript at the 32 MiB body cap becomes ~1.8 GB here, and the per-keymap
+            // distinct-symbol batching further down does not bound it.
             // The portal path holds the same text as one `String`, so this amplification is
             // specific to this backend, not inherent to the input. `before(...)` carries
             // `after_typing: false`, so this cleanly falls back to the portal path, which types
@@ -300,101 +301,110 @@ mod imp {
                 tracing::info!("[vkbd] skipped before typing: our own window holds focus");
                 return Ok(crate::inject::Landed::NothingWritten);
             }
-            // Distinct symbols, in first-seen order → one keycode each (xkb = idx + 8).
-            let mut unique: Vec<String> = Vec::new();
-            let mut idx_of: HashMap<String, u32> = HashMap::new();
-            for name in &order {
-                if !idx_of.contains_key(name) {
-                    idx_of.insert(name.clone(), unique.len() as u32);
-                    unique.push(name.clone());
-                }
-            }
-            // xkb keycodes top out at 255 (8 + 247); far beyond any real dictation.
-            if unique.len() > 248 {
-                return Err(before(format!(
-                    "{} distinct symbols exceeds the keymap limit",
-                    unique.len()
-                )));
-            }
-
-            let keymap = build_keymap(&unique);
-            let (mfd, size) = keymap_fd(&keymap).map_err(before)?;
-            self.vk.keymap(
-                1, /* WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 */
-                mfd.as_file().as_fd(),
-                size,
-            );
-            // Ensure the compositor has read + compiled the keymap before we send keys.
-            self.queue
-                .roundtrip(&mut self.state)
-                .map_err(|e| before(e.to_string()))?;
-            drop(mfd);
-
-            // Zero our own modifier state. Belt-and-suspenders: on wlroots this clears any
-            // Caps the seat adopted from us; on KWin the seat keeps the physical Caps, so
-            // the real Caps-immunity comes from the keymap's Lock-consuming key type.
-            self.vk.modifiers(0, 0, 0, 0);
-
             // Once the FIRST press-flush succeeds, key events have been transmitted — a later flush
             // failure (compositor crash mid-typing) leaves an already-landed prefix, so the portal
             // must NOT re-type the whole text (it would duplicate it). Track that with `emitted`.
             let mut emitted = false;
             let last = order.len() - 1;
-            for (i, name) in order.iter().enumerate() {
-                // Follow focus while typing, not only before the job. This loop runs at ~8ms per
-                // key, so a long transcript occupies it for seconds and a click into one of our
-                // own windows part-way through otherwise lands every remaining key there. Probed
-                // every 64 keys (~0.5s, the cadence the X11/Windows twin gets from its 512-char
-                // chunks) rather than per key, because each probe is a round trip to the UI thread
-                // and that coupling is the accepted cost of this mechanism.
-                //
-                // Also probed immediately before the FINAL key of an auto-Enter job whatever the
-                // count: Return is the one keystroke that ACTS rather than inserts, so firing it
-                // into our own window presses whatever button holds focus (Q31).
-                let probe_here = (i > 0 && i % 64 == 0) || (auto_enter && i == last);
-                if probe_here && own_window_focused() {
-                    tracing::info!("[vkbd] stopped: our own window took focus ({i} keys in)");
-                    // The prefix already on screen stays — re-sending it would duplicate text
-                    // (hazard P16) — so the tail is dropped and this reports as landed, the same
-                    // trade Q32 settled for the mid-typing cancel below. With nothing emitted yet
-                    // the truthful answer is `NothingWritten`, which makes a re-send safe.
-                    return Ok(if emitted {
-                        crate::inject::Landed::Yes
-                    } else {
-                        crate::inject::Landed::NothingWritten
-                    });
-                }
-                // Same mid-typing cancellation as the portal path: this loop sleeps between every
-                // key, so a long transcript otherwise keeps going long after the user stopped.
-                // `Ok(Landed::Yes)` whether or not a key went out: Ok never reaches the portal
-                // fallback in inject/text.rs (only an Err with `after_typing: false` does), so the
-                // landed prefix is never re-typed; and a user cancel is not a transport failure,
-                // so run_thread must not tear the connection down for it (inject/mod.rs /
-                // wayland.rs report the same event the same way). The keymap build, the
-                // memfd write and the compositor roundtrip sit between the pre-loop check and
-                // here, so this also covers a bare auto-Enter job (`order == ["Return"]`)
-                // cancelled in that gap — nothing is synthesized.
-                if crate::inject::injection_cancelled(epoch) {
-                    tracing::info!("[vkbd] cancelled mid-typing — stopping");
-                    return Ok(crate::inject::Landed::Yes);
-                }
-                let code = idx_of[name];
-                let t = self.start.elapsed().as_millis() as u32;
-                self.vk.key(t, code, 1); // pressed
-                                         // A failed press-flush BEFORE the first success transmitted nothing → safe fallback.
-                self.conn.flush().map_err(|e| VkError {
-                    message: e.to_string(),
+            // xkb keycodes top out at 255 (8 + 247), so one keymap holds at most 248 distinct
+            // symbols. That cap is per keymap UPLOAD, not per job: a long CJK dictation easily has
+            // more, and rejecting it outright sent it to the portal, which skips every character
+            // the layout cannot produce (or is unavailable on wlroots). So the job is typed in
+            // consecutive batches, each with its own keymap.
+            for batch in split_batches(&order, MAX_KEYMAP_SYMBOLS) {
+                // A keymap failure is only "nothing typed yet" for the first batch; after that, a
+                // prefix has landed and the portal must not re-type the whole text.
+                let fail = |message: String| VkError {
+                    message,
                     after_typing: emitted,
-                })?;
-                emitted = true; // a key-down was transmitted (the char likely registered on key-down)
-                std::thread::sleep(Duration::from_millis(3));
-                let t = self.start.elapsed().as_millis() as u32;
-                self.vk.key(t, code, 0); // released
-                self.conn.flush().map_err(|e| VkError {
-                    message: e.to_string(),
-                    after_typing: true,
-                })?;
-                std::thread::sleep(Duration::from_millis(5));
+                };
+                // Distinct symbols, in first-seen order → one keycode each (xkb = idx + 8).
+                let mut unique: Vec<String> = Vec::new();
+                let mut idx_of: HashMap<&str, u32> = HashMap::new();
+                for name in &order[batch.clone()] {
+                    if !idx_of.contains_key(name.as_str()) {
+                        idx_of.insert(name, unique.len() as u32);
+                        unique.push(name.clone());
+                    }
+                }
+
+                let keymap = build_keymap(&unique);
+                let (mfd, size) = keymap_fd(&keymap).map_err(fail)?;
+                self.vk.keymap(
+                    1, /* WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 */
+                    mfd.as_file().as_fd(),
+                    size,
+                );
+                // Ensure the compositor has read + compiled the keymap before we send keys.
+                self.queue
+                    .roundtrip(&mut self.state)
+                    .map_err(|e| fail(e.to_string()))?;
+                drop(mfd);
+
+                // Zero our own modifier state. Belt-and-suspenders: on wlroots this clears any
+                // Caps the seat adopted from us; on KWin the seat keeps the physical Caps, so
+                // the real Caps-immunity comes from the keymap's Lock-consuming key type.
+                self.vk.modifiers(0, 0, 0, 0);
+
+                for (i, name) in order.iter().enumerate().take(batch.end).skip(batch.start) {
+                    // Follow focus while typing, not only before the job. This loop runs at ~8ms
+                    // per key, so a long transcript occupies it for seconds and a click into one
+                    // of our own windows part-way through otherwise lands every remaining key
+                    // there. Probed every 64 keys (~0.5s, the cadence the X11/Windows twin gets
+                    // from its 512-char chunks) rather than per key, because each probe is a round
+                    // trip to the UI thread and that coupling is the accepted cost of this
+                    // mechanism.
+                    //
+                    // Also probed immediately before the FINAL key of an auto-Enter job whatever
+                    // the count: Return is the one keystroke that ACTS rather than inserts, so
+                    // firing it into our own window presses whatever button holds focus (Q31).
+                    let probe_here = (i > 0 && i % 64 == 0) || (auto_enter && i == last);
+                    if probe_here && own_window_focused() {
+                        tracing::info!("[vkbd] stopped: our own window took focus ({i} keys in)");
+                        // The prefix already on screen stays — re-sending it would duplicate text
+                        // (hazard P16) — so the tail is dropped and this reports as landed, the
+                        // same trade Q32 settled for the mid-typing cancel below. With nothing
+                        // emitted yet the truthful answer is `NothingWritten`, which makes a
+                        // re-send safe.
+                        return Ok(if emitted {
+                            crate::inject::Landed::Yes
+                        } else {
+                            crate::inject::Landed::NothingWritten
+                        });
+                    }
+                    // Same mid-typing cancellation as the portal path: this loop sleeps between
+                    // every key, so a long transcript otherwise keeps going long after the user
+                    // stopped. `Ok(Landed::Yes)` whether or not a key went out: Ok never reaches
+                    // the portal fallback in inject/text.rs (only an Err with `after_typing:
+                    // false` does), so the landed prefix is never re-typed; and a user cancel is
+                    // not a transport failure, so run_thread must not tear the connection down
+                    // for it (inject/mod.rs / wayland.rs report the same event the same way). The
+                    // keymap build, the memfd write and the compositor roundtrip sit between the
+                    // pre-loop check and here, so this also covers a bare auto-Enter job
+                    // (`order == ["Return"]`) cancelled in that gap — nothing is synthesized.
+                    if crate::inject::injection_cancelled(epoch) {
+                        tracing::info!("[vkbd] cancelled mid-typing — stopping");
+                        return Ok(crate::inject::Landed::Yes);
+                    }
+                    let code = idx_of[name.as_str()];
+                    let t = self.start.elapsed().as_millis() as u32;
+                    // Pressed. A failed press-flush BEFORE the first success transmitted nothing →
+                    // safe fallback.
+                    self.vk.key(t, code, 1);
+                    self.conn.flush().map_err(|e| VkError {
+                        message: e.to_string(),
+                        after_typing: emitted,
+                    })?;
+                    emitted = true; // a key-down was transmitted (the char likely registered on key-down)
+                    std::thread::sleep(Duration::from_millis(3));
+                    let t = self.start.elapsed().as_millis() as u32;
+                    self.vk.key(t, code, 0); // released
+                    self.conn.flush().map_err(|e| VkError {
+                        message: e.to_string(),
+                        after_typing: true,
+                    })?;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
             }
             // Drain so the compositor has processed everything before we report done.
             self.queue.roundtrip(&mut self.state).map_err(|e| VkError {
@@ -403,6 +413,31 @@ mod imp {
             })?;
             Ok(crate::inject::Landed::Yes)
         }
+    }
+
+    /// Distinct symbols one uploaded keymap can hold: xkb keycodes run 8..=255.
+    const MAX_KEYMAP_SYMBOLS: usize = 248;
+
+    /// Split `order` into consecutive ranges, each with at most `cap` distinct names, so each can
+    /// be typed under its own keymap. The ranges are contiguous, in order, and cover `order`.
+    fn split_batches(order: &[String], cap: usize) -> Vec<std::ops::Range<usize>> {
+        let mut batches = Vec::new();
+        let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut start = 0;
+        for (i, name) in order.iter().enumerate() {
+            if !seen.contains(name.as_str()) {
+                if seen.len() == cap {
+                    batches.push(start..i);
+                    start = i;
+                    seen.clear();
+                }
+                seen.insert(name);
+            }
+        }
+        if start < order.len() {
+            batches.push(start..order.len());
+        }
+        batches
     }
 
     /// Character → XKB keysym name. Enter/Tab use named keysyms; other control chars
@@ -481,8 +516,35 @@ mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::{build_keymap, keysym_name};
+        use super::{build_keymap, keysym_name, split_batches, MAX_KEYMAP_SYMBOLS};
         use xkbcommon::xkb;
+
+        // A job with more distinct symbols than one keymap holds (a long CJK dictation) is typed
+        // in batches instead of being rejected: each batch fits the keymap cap, and together they
+        // cover the input in order.
+        #[test]
+        fn split_batches_caps_distinct_symbols_per_batch() {
+            let order: Vec<String> = (0..300u32)
+                .map(|i| keysym_name(char::from_u32(0x4e00 + i).unwrap()).unwrap())
+                .collect();
+            let batches = split_batches(&order, MAX_KEYMAP_SYMBOLS);
+            assert_eq!(batches.len(), 2);
+            let mut joined: Vec<String> = Vec::new();
+            for b in &batches {
+                let distinct: std::collections::HashSet<&String> =
+                    order[b.clone()].iter().collect();
+                assert!(distinct.len() <= MAX_KEYMAP_SYMBOLS);
+                joined.extend_from_slice(&order[b.clone()]);
+            }
+            assert_eq!(joined, order);
+
+            // Repeats of already-seen symbols never start a new batch.
+            let mut small = vec!["a".to_string(), "b".to_string(), "a".to_string()];
+            assert_eq!(split_batches(&small, 2), vec![0..3]);
+            small.push("c".to_string());
+            assert_eq!(split_batches(&small, 2), vec![0..3, 3..4]);
+            assert!(split_batches(&[], 2).is_empty());
+        }
 
         // The virtual-keyboard path only runs on compositors that advertise the
         // protocol (wlroots: sway/Hyprland) — never on the dev machine (KWin), so the

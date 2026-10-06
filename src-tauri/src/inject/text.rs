@@ -80,7 +80,7 @@ pub(crate) async fn inject_text(
     // the post-cancel generation and never saw itself as cancelled.
     let epoch = crate::inject::injection_epoch();
     tracing::info!(
-        "[inject] {} chars via {} (auto_enter={})",
+        "[inject] {} bytes via {} (auto_enter={})",
         text.len(),
         method,
         auto_enter
@@ -220,9 +220,9 @@ pub(crate) async fn inject_text(
     // PREVIOUS app — which still matches `expect_app_id`, so the mismatch arm never fires. Only
     // the authoritative webview-focus check sees it, so re-run exactly that.
     //
-    // `return Ok(())`, deliberately NOT a degrade to "clipboard": the entry guard was moved above
-    // the clipboard-only branch precisely so our own window holding focus can never clobber the
-    // user's clipboard for an insert they cannot see land. Skipping is safe — `streaming.ts`
+    // Returning `landed: false`, deliberately NOT a degrade to "clipboard": the entry guard was
+    // moved above the clipboard-only branch precisely so our own window holding focus can never
+    // clobber the user's clipboard for an insert they cannot see land. Skipping is safe — `streaming.ts`
     // leaves `injectedText` un-advanced on a skip, so the text goes out with the next insert.
     if own_window_focused(&app) {
         tracing::info!("[inject] skipped at the sink: our own window took focus mid-injection");
@@ -446,6 +446,15 @@ pub(crate) async fn inject_text(
             // Read prev separately (400ms cap; None on timeout → skip the restore), then set the
             // clipboard so the set_text still lands regardless of the prev-read result.
             // remote_target skips the capture entirely — see its resolution above.
+            //
+            // A restore the previous paste scheduled and that has not fired yet (see
+            // inject::RestoreSlot) is taken FIRST, before the read, as the X11/Windows twin does:
+            // left in the slot, it could fire during the up-to-400ms read, which then reads back our
+            // own previous transcript (no `prev`) and this paste overwrites the restored clipboard
+            // with nothing scheduled to bring it back. If this paste bails before it writes — on
+            // any path, `?` included — the guard re-schedules it; once the write happened it is
+            // adopted or dropped below.
+            let mut requeue = crate::inject::RequeueRestore(crate::inject::take_pending_restore());
             let prev = if restore_clipboard && !remote_target {
                 match read_selection_bounded(|| {
                     arboard::Clipboard::new()
@@ -520,6 +529,10 @@ pub(crate) async fn inject_text(
                     // Arm the session-restore guard ONLY if the recovery actually landed. Arming
                     // it on a failed write would suppress the restore of the user's own clipboard
                     // to protect a transcript that is not there — losing both.
+                    //
+                    // The pending restore taken above is dropped, not re-queued: served 400ms
+                    // later, it would erase the recovered transcript.
+                    let _ = requeue.0.take();
                     if let Err(e) = crate::inject::set_clipboard_persistent(&recovery_text) {
                         tracing::warn!(
                             "[inject] recovery to clipboard failed at the write guard: {e}"
@@ -545,21 +558,17 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
-            // A restore the previous paste scheduled and that has not fired yet would land on top
-            // of this write (see inject::RestoreSlot): take it now. It becomes this paste's own
-            // `prev` when this paste has none (its read came back empty/timeout or as our own
-            // previous transcript — exactly what it reads inside that restore window), else it is
-            // superseded. If the write fails, the original restore is put back.
-            let pending = crate::inject::take_pending_restore();
-            let prev = crate::inject::merge_pending_restore(prev, pending.clone(), !remote_target);
             let set_res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                 .await
                 .map_err(|e| e.to_string())?;
-            if set_res.is_err() {
-                crate::inject::restore_clipboard_later(pending);
-            }
-            set_res?; // propagate a set_text failure; prev was captured (time-bounded) above
-                      // Longer settle for a remote-desktop target (content must cross the network first).
+            // Propagate a set_text failure (the guard puts the pending restore back); prev was
+            // captured (time-bounded) above.
+            set_res?;
+            // Written: the pending restore taken above becomes this paste's own `prev` when this
+            // paste has none (its read came back empty/timeout or as our own previous transcript —
+            // exactly what it reads inside that restore window), else it is superseded.
+            let prev = crate::inject::merge_pending_restore(prev, requeue.0.take(), !remote_target);
+            // Longer settle for a remote-desktop target (content must cross the network first).
             tokio::time::sleep(std::time::Duration::from_millis(if remote_target {
                 300
             } else {
@@ -619,6 +628,15 @@ pub(crate) async fn inject_text(
                     && crate::inject::cancel_wants_recovery(epoch))
             {
                 crate::inject::restore_clipboard_later(prev);
+            } else if r.is_err() {
+                // The transcript stays on the clipboard to paste manually — but the write above
+                // was the plain `set_clipboard`, which does not stick on Wayland once its setter
+                // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does.
+                if let Err(e) = crate::inject::set_clipboard_persistent(&text) {
+                    tracing::warn!(
+                        "[inject] paste failed and the clipboard hand-off failed too: {e}"
+                    );
+                }
             }
             r
         };

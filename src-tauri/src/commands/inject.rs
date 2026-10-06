@@ -34,7 +34,7 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
             tracing::info!("[clip] begin_injection: clipboard holds our own transcript — keeping prior snapshot");
         }
         Some(text) => {
-            tracing::info!("[clip] begin_injection: snapshot {} chars", text.len());
+            tracing::info!("[clip] begin_injection: snapshot {} bytes", text.len());
             if let Ok(mut g) = snap.0.lock() {
                 *g = Some(text);
             }
@@ -81,7 +81,7 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
             return;
         }
         tracing::info!(
-            "[clip] end_injection: restore {} chars (delayed)",
+            "[clip] end_injection: restore {} bytes (delayed)",
             prev.len()
         );
         // Persist on Wayland: a plain set_text that drops immediately doesn't stick, which
@@ -110,7 +110,7 @@ pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
             return;
         }
         tracing::info!(
-            "[clip] restore_clipboard_snapshot: {} chars (delayed)",
+            "[clip] restore_clipboard_snapshot: {} bytes (delayed)",
             prev.len()
         );
         // Serve after the same ~400ms margin as end_injection / the paste path (via
@@ -251,7 +251,7 @@ pub async fn get_quickadd_seed(
             SelRead::Text(s) => {
                 let seed = sanitize_seed(&s);
                 tracing::info!(
-                    "[quickadd-seed] atspi selection {} chars -> seed {} chars",
+                    "[quickadd-seed] atspi selection {} bytes -> seed {} bytes",
                     s.len(),
                     seed.as_deref().map_or(0, str::len)
                 );
@@ -269,7 +269,7 @@ pub async fn get_quickadd_seed(
                 };
                 let seed = sanitize_seed(&raw);
                 tracing::info!(
-                    "[quickadd-seed] primary fallback {} chars -> seed {} chars",
+                    "[quickadd-seed] primary fallback {} bytes -> seed {} bytes",
                     raw.len(),
                     seed.as_deref().map_or(0, str::len)
                 );
@@ -307,7 +307,7 @@ pub async fn get_focused_selection(
         .flatten()
         .map(bounded_selection);
         tracing::info!(
-            "[quickadd-close] windows re-grab -> {} chars",
+            "[quickadd-close] windows re-grab -> {} bytes",
             sel.as_deref().map_or(0, str::len)
         );
         Ok(sel)

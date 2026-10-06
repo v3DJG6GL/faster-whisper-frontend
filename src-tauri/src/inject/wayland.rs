@@ -610,7 +610,19 @@ mod imp {
             // session stays open, so this adds no consent re-prompt. It resolves the ACTIVE XKB
             // group per job (active_xkb_group), so a multi-layout `us,de` with group 1 active types
             // correctly too — the group snapshot is re-read here every job alongside the rebuild.
-            let charmap = match build_charmap() {
+            // A bare auto-Enter job (no text, no chord) presses only the constant KEY_ENTER and never
+            // reads the map, so it skips the rebuild — and with it a keymap failure that would
+            // otherwise fail an Enter that needs no keymap. Built on the blocking pool: setxkbmap,
+            // XOpenDisplay and the xkb compile must not stall a runtime worker.
+            let charmap = if !job.paste && job.text.is_empty() {
+                Some(HashMap::new())
+            } else {
+                tokio::task::spawn_blocking(build_charmap)
+                    .await
+                    .ok()
+                    .flatten()
+            };
+            let charmap = match charmap {
                 Some(m) => m,
                 None => {
                     let _ = job
@@ -770,14 +782,15 @@ mod imp {
                         return Ok(crate::inject::Landed::Yes);
                     }
                     // Counted HERE, the moment this character is committed to being typed — not at
-                    // the bottom of the body. The `spec.lock` branch below (a capital reachable only
-                    // via a Caps Lock bracket: Swiss-German Ü/Ä/Ö, French È/É/À) ends in its own
-                    // `continue`, which jumped past a bottom-of-body increment — so those characters
-                    // cost ~38ms each, MORE than a normal one, while counting zero. The transcript
-                    // is remote and untrusted, so that is attacker-controllable rather than a
-                    // cadence wobble: an all-lock-capital transcript held the counter at 0, the
-                    // `typed > 0` term never became true, and the focus probe below never fired once
-                    // for the whole job — leaving exactly the sink this guard was added to close.
+                    // the bottom of the body. The `spec.lock` case below (a capital reachable only
+                    // via a Caps Lock bracket: Swiss-German Ü/Ä/Ö, French È/É/À) once had its own
+                    // branch ending in a `continue`, which jumped past a bottom-of-body increment —
+                    // so those characters cost ~38ms each, MORE than a normal one, while counting
+                    // zero. The transcript is remote and untrusted, so that is attacker-controllable
+                    // rather than a cadence wobble: an all-lock-capital transcript held the counter
+                    // at 0, the `typed > 0` term never became true, and the focus probe below never
+                    // fired once for the whole job — leaving exactly the sink this guard was added
+                    // to close.
                     typed += 1;
 
                     // Capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À): press the
@@ -785,75 +798,42 @@ mod imp {
                     // keysym. If Caps is currently OFF, bracket the press with a Caps Lock tap to
                     // flip it on and back (leaving the user's Caps state unchanged); if it's already
                     // ON, the press alone yields the capital. Shift/AltGr still apply (È = Lock+Shift).
-                    if spec.lock {
-                        let flip = !caps;
-                        if flip {
-                            press!(KEY_CAPSLOCK);
-                            // Caps Lock toggles on the PRESS, so mark it flipped here — before the
-                            // release. If the release errors and bails the block, the cleanup tap
-                            // below must still run, else Caps is left inverted system-wide.
-                            caps_flipped = true;
-                            release!(KEY_CAPSLOCK);
-                            tokio::time::sleep(Duration::from_millis(6)).await;
-                        }
-                        if spec.shift {
-                            press!(KEY_LEFTSHIFT);
-                            tokio::time::sleep(Duration::from_millis(4)).await;
-                        }
-                        if spec.altgr {
-                            press!(KEY_RIGHTALT);
-                            tokio::time::sleep(Duration::from_millis(4)).await;
-                        }
-                        press!(spec.keycode);
-                        tokio::time::sleep(Duration::from_millis(4)).await;
-                        release!(spec.keycode);
-                        if spec.altgr {
-                            tokio::time::sleep(Duration::from_millis(4)).await;
-                            release!(KEY_RIGHTALT);
-                        }
-                        if spec.shift {
-                            tokio::time::sleep(Duration::from_millis(4)).await;
-                            release!(KEY_LEFTSHIFT);
-                        }
-                        if flip {
-                            tokio::time::sleep(Duration::from_millis(6)).await;
-                            press!(KEY_CAPSLOCK);
-                            // Symmetric to the opening tap: this PRESS toggles Caps back to the
-                            // user's original state, so clear the flag here — before the release.
-                            // Otherwise a failing release leaves caps_flipped set and the cleanup
-                            // tap would re-invert Caps.
-                            caps_flipped = false;
-                            release!(KEY_CAPSLOCK);
-                        }
-                        tokio::time::sleep(Duration::from_millis(6)).await;
-                        continue;
-                    }
-
-                    // A live Caps Lock capitalizes alphabetic output. On a normal case-pair key the
-                    // XOR below cancels it by pressing Shift; on a non-caps-safe FOUR_LEVEL key
-                    // (Swiss-German ü, whose Shift gives è) pressing Shift would select the WRONG
-                    // glyph, so flip Caps OFF for the press and use the glyph's own modifiers, then
-                    // flip it back — symmetric to the lock path above (which flips it ON for a capital).
-                    // Gate on whether Caps actually case-FOLDS this char to a different single char —
-                    // not merely is_alphabetic(), which is also true for caseless-script letters and for
-                    // lowercase letters whose uppercase is multi-char (German 'ß' → "SS"). Caps doesn't
-                    // change those glyphs, so the XOR-Shift below would wrongly select their shift-level
-                    // keysym (e.g. German Shift+ß = '?', turning "Straße" into "Stra?e").
-                    let caps_affects = caps && {
-                        let lo: Vec<char> = c.to_lowercase().collect();
-                        let up: Vec<char> = c.to_uppercase().collect();
-                        lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
+                    //
+                    // Otherwise: a live Caps Lock capitalizes alphabetic output. On a normal
+                    // case-pair key the XOR below cancels it by pressing Shift; on a non-caps-safe
+                    // FOUR_LEVEL key (Swiss-German ü, whose Shift gives è) pressing Shift would
+                    // select the WRONG glyph, so flip Caps OFF for the press and use the glyph's own
+                    // modifiers, then flip it back — symmetric to the lock case (which flips it ON
+                    // for a capital). Gate on whether Caps actually case-FOLDS this char to a
+                    // different single char — not merely is_alphabetic(), which is also true for
+                    // caseless-script letters and for lowercase letters whose uppercase is
+                    // multi-char (German 'ß' → "SS"). Caps doesn't change those glyphs, so the
+                    // XOR-Shift below would wrongly select their shift-level keysym (e.g. German
+                    // Shift+ß = '?', turning "Straße" into "Stra?e").
+                    //
+                    // Both cases press the same sequence and differ only in this pair.
+                    let (flip_caps, needs_shift) = if spec.lock {
+                        (!caps, spec.shift)
+                    } else {
+                        let caps_affects = caps && {
+                            let lo: Vec<char> = c.to_lowercase().collect();
+                            let up: Vec<char> = c.to_uppercase().collect();
+                            lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
+                        };
+                        (
+                            caps_affects && !spec.caps_safe,
+                            spec.shift ^ (caps_affects && spec.caps_safe),
+                        )
                     };
-                    let flip_caps_off = caps_affects && !spec.caps_safe;
-                    if flip_caps_off {
+                    if flip_caps {
                         press!(KEY_CAPSLOCK);
-                        // Toggles OFF on press — mark flipped before the release so the cleanup tap
-                        // restores Caps even if the release errors out mid-char.
+                        // Caps Lock toggles on the PRESS, so mark it flipped here — before the
+                        // release. If the release errors and bails the block, the cleanup tap
+                        // below must still run, else Caps is left inverted system-wide.
                         caps_flipped = true;
                         release!(KEY_CAPSLOCK);
                         tokio::time::sleep(Duration::from_millis(6)).await;
                     }
-                    let needs_shift = spec.shift ^ (caps_affects && spec.caps_safe);
                     if needs_shift {
                         press!(KEY_LEFTSHIFT);
                         tokio::time::sleep(Duration::from_millis(4)).await;
@@ -873,11 +853,13 @@ mod imp {
                         tokio::time::sleep(Duration::from_millis(4)).await;
                         release!(KEY_LEFTSHIFT);
                     }
-                    if flip_caps_off {
+                    if flip_caps {
                         tokio::time::sleep(Duration::from_millis(6)).await;
                         press!(KEY_CAPSLOCK);
-                        // Toggles Caps back ON — clear the flag before the release (symmetric to the
-                        // opening tap) so the cleanup tap doesn't re-invert it.
+                        // Symmetric to the opening tap: this PRESS toggles Caps back to the
+                        // user's original state, so clear the flag here — before the release.
+                        // Otherwise a failing release leaves caps_flipped set and the cleanup
+                        // tap would re-invert Caps.
                         caps_flipped = false;
                         release!(KEY_CAPSLOCK);
                     }
