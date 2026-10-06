@@ -15,8 +15,8 @@
 //!
 //! So the main window is subclassed: query → 1, end → the same cleanup every other exit
 //! path runs, then `exit(0)`. Windows gives an app ~5 s here; `cleanup_for_exit` is bounded
-//! at ~2 s (the system-audio unmute flush). Drop this module once the app builds against
-//! tao >= 0.37.
+//! at ~2.5 s (the 2 s system-audio unmute flush plus the 500 ms clipboard-owner
+//! render-for-exit). Drop this module once the app builds against tao >= 0.37.
 //!
 //! Message-only windows (the raw-input hotkey window) never receive these broadcasts, and
 //! `WM_CLOSE` is not sent at session end — so close-to-tray's `prevent_close` plays no part.

@@ -195,6 +195,66 @@ fn fn_vk(f: &str) -> Option<u16> {
     }
 }
 
+/// Set-1 NON-extended scan code at a US letter position → that letter's VK. Bindings
+/// store the PHYSICAL `event.code` ("KeyZ" = the key at the US Z position), but the
+/// VK both feeds report is layout-translated (QWERTZ reports VK_Z from the US Y
+/// position) — so letters are re-keyed by scan code, matching evdev's physical
+/// keycodes. Only meaningful with the extended flag CLEAR: E0 0x10/0x19/0x20/0x22/
+/// 0x24/0x2E/0x30/0x32 are media keys.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn letter_vk_from_scan(scan: u16) -> Option<u16> {
+    let letter = match scan {
+        0x10 => b'Q',
+        0x11 => b'W',
+        0x12 => b'E',
+        0x13 => b'R',
+        0x14 => b'T',
+        0x15 => b'Y',
+        0x16 => b'U',
+        0x17 => b'I',
+        0x18 => b'O',
+        0x19 => b'P',
+        0x1E => b'A',
+        0x1F => b'S',
+        0x20 => b'D',
+        0x21 => b'F',
+        0x22 => b'G',
+        0x23 => b'H',
+        0x24 => b'J',
+        0x25 => b'K',
+        0x26 => b'L',
+        0x2C => b'Z',
+        0x2D => b'X',
+        0x2E => b'C',
+        0x2F => b'V',
+        0x30 => b'B',
+        0x31 => b'N',
+        0x32 => b'M',
+        _ => return None,
+    };
+    Some(u16::from(letter)) // VK_A..VK_Z equal their ASCII capitals
+}
+
+/// The decoders' fallback arm for a VK with no special handling: re-key letters by
+/// physical position (see `letter_vk_from_scan`). A layout letter on a NON-letter
+/// position (AZERTY's M on the US Semicolon key) becomes an id no chord can contain
+/// (`0x8000 | scan`), so it can't fire a physical-letter chord either. Extended keys
+/// and scan 0 (VK-only third-party SendInput, which the capture UI's `key` fallback
+/// records layout-relative) keep the plain VK.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn physical_key_id(vk: u16, scan: u16, extended: bool) -> u16 {
+    if scan == 0 || extended {
+        return vk;
+    }
+    if let Some(letter) = letter_vk_from_scan(scan) {
+        return letter;
+    }
+    if (0x41..=0x5A).contains(&vk) {
+        return 0x8000 | scan;
+    }
+    vk
+}
+
 /// Hook-event key id → the evdev keycode the shared inject gate speaks
 /// (`held_keys::SHORTCUT_MOD_CODES`). Only the eight shortcut modifiers are
 /// mirrored into HeldKeys — they're all the gate ever reads.
@@ -215,7 +275,9 @@ fn vk_to_evdev_mod(vk: u16) -> Option<u16> {
 
 #[cfg(windows)]
 mod imp {
-    use super::{code_to_vk, vk_to_evdev_mod, Running, WinHookState, NUMPAD_ENTER};
+    use super::{
+        code_to_vk, physical_key_id, vk_to_evdev_mod, Running, WinHookState, NUMPAD_ENTER,
+    };
     use crate::config::{ActivationType, Profile};
     use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
     use crate::hotkeys::triggers::TriggerPayload;
@@ -736,7 +798,8 @@ mod imp {
                     0x0D
                 }
             }
-            other => other,
+            // Letters by physical position (layout-independent, evdev parity).
+            other => physical_key_id(other, scan as u16, extended),
         })
     }
 
@@ -834,7 +897,8 @@ mod imp {
             // nav VKey: a saved Numpad-digit chord (the capture UI records the physical
             // "Numpad4" regardless of NumLock) is then inert until NumLock comes back on.
             0x0C | 0x21..=0x28 | 0x2D | 0x2E if !e0 && numlock_on() => numpad_from_scan(make_code)?,
-            other => other,
+            // Letters by physical position (layout-independent, evdev parity).
+            other => physical_key_id(other, make_code, e0),
         })
     }
 
@@ -1288,6 +1352,38 @@ mod tests {
                 "bindable code {code:?} has no Windows VK mapping — its hotkey would silently never fire on Windows"
             );
         }
+    }
+
+    // Letters are re-keyed by physical scan position: the table must be injective
+    // and cover exactly code_to_vk(KeyA..KeyZ), or a letter binding would fire from
+    // no key (or from two).
+    #[test]
+    fn letter_scan_table_covers_exactly_the_letter_vks() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for scan in 0..=0xFFu16 {
+            if let Some(vk) = super::letter_vk_from_scan(scan) {
+                assert!(seen.insert(vk), "VK {vk:#x} reached from two scan codes");
+            }
+        }
+        let want: HashSet<u16> = (b'A'..=b'Z')
+            .map(|c| super::code_to_vk(&format!("Key{}", c as char)).unwrap())
+            .collect();
+        assert_eq!(seen, want);
+    }
+
+    // QWERTZ: the US-Y position reports VK_Z but must read as KeyY; AZERTY's M on
+    // the US-Semicolon position must match no letter chord; E0 media keys and
+    // scan-less injected VKs keep their VK.
+    #[test]
+    fn physical_key_id_rekeys_letters_by_position() {
+        assert_eq!(super::physical_key_id(0x5A, 0x15, false), 0x59); // VK_Z at Y → VK_Y
+        assert_eq!(super::physical_key_id(0x59, 0x2C, false), 0x5A); // VK_Y at Z → VK_Z
+        assert_eq!(super::physical_key_id(0x4D, 0x27, false), 0x8027); // AZERTY M
+        assert_eq!(super::physical_key_id(0xBA, 0x27, false), 0xBA); // US ';' untouched
+        assert_eq!(super::physical_key_id(0xB0, 0x19, true), 0xB0); // E0 next-track
+        assert_eq!(super::physical_key_id(0x5A, 0, false), 0x5A); // VK-only SendInput
+        assert_eq!(super::physical_key_id(0x20, 0x39, false), 0x20); // Space untouched
     }
 
     // The ids must stay distinct per code (e.g. Enter vs NumpadEnter via the

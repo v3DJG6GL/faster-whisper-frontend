@@ -219,14 +219,11 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
             ev = stream.next() => {
                 let Some(ev) = ev else { break Ok(()) }; // stream ended → reconnect
                 let Ok(ev) = ev else { continue };
-                // Pull out the source + whether to read editability. Element focus
-                // (state-changed:focused / focus) carries a real field; window:activate
-                // (Alt-Tab / clicking another window) carries the frame, so we skip
-                // editability there — but it's ESSENTIAL: without it, switching windows
-                // without changing the focused element wouldn't update detection.
                 // Route the event to its slot: element focus (carries a real field),
                 // window:activate (marks foreground), window:deactivate (clears it). Separate
-                // slots so a burst can't coalesce away the activate/deactivate.
+                // slots so a burst can't coalesce away the activate/deactivate. window:activate
+                // is ESSENTIAL: without it, switching windows without changing the focused
+                // element wouldn't update detection.
                 let routed = {
                     let mut p = pending.lock();
                     match ev {

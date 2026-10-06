@@ -284,14 +284,24 @@ pub fn unregister_all(app: &AppHandle) {
     // gone before the release) — emit it now so the session isn't left wedged "listening".
     stop_held_sessions(app);
     let gs = app.global_shortcut();
-    let registry = app.state::<ShortcutRegistry>();
-    let Ok(mut map) = registry.0.lock() else {
-        return;
-    };
-    for sc in map.keys() {
+    for sc in take_registrations(app).keys() {
         let _ = gs.unregister(*sc);
     }
-    map.clear();
+}
+
+/// Empty the registry and hand back what it held, with the lock already released.
+///
+/// The registry lock must never be held across a `gs.register`/`gs.unregister` call: on X11 those
+/// block on the global-hotkey event thread, and that same thread delivers key events into
+/// `handle_shortcut`, which takes this lock. A chord pressed or released mid-re-register would
+/// otherwise deadlock the two and freeze the app. Meanwhile `handle_shortcut` sees an empty map and
+/// ignores the event (held stops are already flushed by `stop_held_sessions`).
+fn take_registrations(app: &AppHandle) -> HashMap<Shortcut, ShortcutTarget> {
+    app.state::<ShortcutRegistry>()
+        .0
+        .lock()
+        .map(|mut m| std::mem::take(&mut *m))
+        .unwrap_or_default()
 }
 
 /// (Re)register global shortcuts for the enabled Profiles. Unregisterable hotkeys
@@ -302,15 +312,12 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
     // would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's stop_held_sessions.
     stop_held_sessions(app);
     let gs = app.global_shortcut();
-    let registry = app.state::<ShortcutRegistry>();
-    let Ok(mut map) = registry.0.lock() else {
-        return;
-    };
-    for sc in map.keys() {
+    for sc in take_registrations(app).keys() {
         let _ = gs.unregister(*sc);
     }
-    map.clear();
 
+    // Built unlocked and stored in one short lock at the end (see take_registrations).
+    let mut map = HashMap::new();
     for p in profiles {
         if !p.enabled {
             continue;
@@ -393,5 +400,9 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                 quick_add_hotkey
             ),
         }
+    }
+
+    if let Ok(mut m) = app.state::<ShortcutRegistry>().0.lock() {
+        *m = map;
     }
 }

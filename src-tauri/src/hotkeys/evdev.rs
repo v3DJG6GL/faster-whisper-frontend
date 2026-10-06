@@ -238,11 +238,16 @@ mod imp {
             Ok(g) => g,
             Err(_) => return,
         };
-        *g = None; // drop + abort any previous readers, under the lock
-                   // Fresh start: drop any held-key counts left over from a previous run so the
-                   // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
-                   // (a reader whose stream ends past the abort point still runs its post-loop; see
-                   // HeldKeys::clear). One writer per start, cloned into every reader.
+        // Drop + abort any previous readers, under the lock.
+        *g = None;
+        // The abort skips their post-loop "stop" for a PTT chord held across this restart, so
+        // emit it now — AFTER the abort, so no reader can start a hold this drain misses (see
+        // commands::apply_bindings). Also covers the no-chords early return below.
+        stop_held_sessions(app);
+        // Fresh start: drop any held-key counts left over from a previous run so the
+        // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
+        // (a reader whose stream ends past the abort point still runs its post-loop; see
+        // HeldKeys::clear). One writer per start, cloned into every reader.
         let held_keys = app.state::<crate::hotkeys::held_keys::HeldKeys>();
         held_keys.clear();
         let held_keys = held_keys.writer();
@@ -343,8 +348,9 @@ mod imp {
     /// **Blocking I/O**: `evdev::enumerate()` opens and ioctls every `/dev/input/event*` node —
     /// a slow USB/bluetooth HID device or a wedged udev node can stall. Callers must not run
     /// this on the main/GTK thread (the Windows twin, `GetAsyncKeyState`, has no I/O at all).
-    /// `stop_held_sessions` runs from `commands::suspend_shortcuts`, which is a sync Tauri
-    /// command on the GTK thread — if this proves problematic, move it to `spawn_blocking`.
+    /// `stop_held_sessions` runs from `commands::suspend_shortcuts` and `apply_bindings`, which
+    /// run off the main thread (`async` commands, the suspend-watch thread) — except setup's
+    /// one apply_bindings at startup, when no hold can exist yet and the drain is empty.
     fn chord_mod_still_down(codes: &[u16]) -> bool {
         if codes.is_empty() {
             return false;
@@ -563,12 +569,11 @@ mod imp {
         // rising-edge, so their dangling state dies with the task — only Hold leaks.
         for pid in engine.active_holds() {
             // CLAIM the hold before manufacturing its stop. `stop_held_sessions` drains the same
-            // registry, arms the latch and emits the same stop — and `apply_bindings` calls it
-            // BEFORE `permitted()`'s full /dev/input enumeration and evdev's abort, while
-            // `suspend_shortcuts` calls `stop()` and `stop_held_sessions` as separate steps. A
-            // reader whose stream errors in that window (unplug, dock event, suspend/resume —
-            // itself an `apply_bindings` trigger) runs this post-loop synchronously past the abort
-            // point and emitted a SECOND stop for the same profile plus a SECOND `arm_chord_lost`:
+            // registry, arms the latch and emits the same stop — and `apply_bindings` (via
+            // `start`, or after `stop()`) and `suspend_shortcuts` call it right after evdev's
+            // abort, as a separate step from it. A reader whose stream errors around that abort
+            // (unplug, dock event, suspend/resume — itself an `apply_bindings` trigger) runs this
+            // post-loop synchronously past the abort point and emitted a SECOND stop for the same profile plus a SECOND `arm_chord_lost`:
             // a stop delivered onto a session the user re-triggered in between, and an extra
             // process-global loss latch that the next typing injection drains, silently diverting
             // that phrase to the clipboard. The Windows arm has had this guard since `take_hold`
