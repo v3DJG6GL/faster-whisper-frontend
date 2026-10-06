@@ -1,6 +1,21 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+const { getCapabilities } = vi.hoisted(() => ({
+  getCapabilities: vi.fn<(args: { serverUrl: string; backendId: string }) => Promise<unknown>>(),
+}));
+vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), getCapabilities }));
+
 import { targetCap } from "./languages";
-import { maxTranslationTargets, translationLanguages, translationTargetInfo, translationWarm } from "./capabilities";
+import { useApp } from "./store";
+import { newBackendDraft } from "./backends";
+import {
+  forgetCaps,
+  maxTranslationTargets,
+  refreshCaps,
+  translationLanguages,
+  translationTargetInfo,
+  translationWarm,
+} from "./capabilities";
 import type { Capabilities } from "./types";
 
 function caps(patch: Partial<Capabilities>): Capabilities {
@@ -120,5 +135,26 @@ describe("maxTranslationTargets", () => {
     expect(at(3)).toBe(3);
     expect(at(10)).toBe(8);
     expect(at(3.7)).toBe(3);
+  });
+});
+
+describe("forgetCaps", () => {
+  it("drops an in-flight fetch made with a rotated key and lets the next reader re-probe", async () => {
+    const b = { ...newBackendDraft(), hasApiKey: true };
+    useApp.setState({ backends: [b], connections: {}, caps: {} });
+    let resolveOld!: (c: unknown) => void;
+    getCapabilities.mockImplementationOnce(() => new Promise((r) => (resolveOld = r)));
+    const old = refreshCaps(b);
+    // Key rotated: same address, same key presence — only the generation tells them apart.
+    forgetCaps(b.id);
+    const fresh = { server_info: { version: "new" } };
+    getCapabilities.mockImplementationOnce(async () => fresh);
+    // Not coalesced onto the old request, not swallowed by the min-interval floor.
+    await refreshCaps(b);
+    expect(getCapabilities).toHaveBeenCalledTimes(2);
+    expect(useApp.getState().caps[b.id]).toBe(fresh);
+    resolveOld({ server_info: { version: "old" } });
+    await old;
+    expect(useApp.getState().caps[b.id]).toBe(fresh);
   });
 });

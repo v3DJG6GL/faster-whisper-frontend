@@ -25,6 +25,20 @@ const MIN_INTERVAL_MS = 2_000;
 
 const lastFetchAt = new Map<string, number>();
 const inFlight = new Map<string, Promise<void>>();
+/** Bumped by `forgetCaps`: a fetch that started under an older generation was sent with a
+ *  credential that is no longer this Backend's, so its answer must not land in the store. */
+const generation = new Map<string, number>();
+
+/** Drop this module's bookkeeping for a Backend whose credential changed without its address or
+ *  key presence changing (a rotated API key). /v1/me is per-caller, so an in-flight fetch made
+ *  with the OLD key must not re-install that caller's caps, and neither the min-interval floor
+ *  nor in-flight coalescing may hand the next reader that stale request. The store side
+ *  (dropping the cached caps) is the caller's job. */
+export function forgetCaps(id: string): void {
+  generation.set(id, (generation.get(id) ?? 0) + 1);
+  inFlight.delete(id);
+  lastFetchAt.delete(id);
+}
 
 /** Refresh a Backend's cached capabilities. Best-effort and never throws: a
  *  standard/old server stores null ("fetched and unsupported"); a transient error
@@ -54,10 +68,14 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
 
   const target = effectiveServerUrl(backend, useApp.getState().settings);
   lastFetchAt.set(backend.id, now);
+  const gen = generation.get(backend.id) ?? 0;
   const run = (async () => {
     const fetched = await getCapabilities({ serverUrl: target, backendId: backend.id }).catch(
       () => null,
     );
+    // Asked with a key that has since been rotated (forgetCaps): same address, same key
+    // presence, so the guards below cannot tell — the generation can.
+    if ((generation.get(backend.id) ?? 0) !== gen) return;
     // Verbatim from usage.ts: a slow fetch against the OLD server can resolve AFTER
     // the user edited this backend's URL/key (the store dropped the stale caps) or
     // removed it. Bail unless the backend still exists with the same target — else
@@ -75,7 +93,8 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
   try {
     await run;
   } finally {
-    inFlight.delete(backend.id);
+    // Only our own entry: after forgetCaps a newer run may already own the slot.
+    if (inFlight.get(backend.id) === run) inFlight.delete(backend.id);
   }
 }
 

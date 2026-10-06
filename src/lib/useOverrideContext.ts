@@ -91,5 +91,8 @@ export function useOverrideContext(args: {
     };
   }, [serverUrl, apiKey, backendId, standard, full]);
 
-  return { caps: live ? liveCaps : caps };
+  // A known-standard target has no /v1/me: the store entry belongs to whatever the SAVED
+  // backend last pointed at (the Backends editor may have retyped it to a plain server), so it
+  // must not lend that server's limits or privacy panel to this one.
+  return { caps: standard ? null : live ? liveCaps : caps };
 }

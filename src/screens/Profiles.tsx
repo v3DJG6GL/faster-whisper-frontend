@@ -162,12 +162,14 @@ function Editor({
     promptLocked || backendPromptOverride !== undefined || decodeDefaults ? inheritedPrompt || "no prompt" : undefined;
   const promptOverridden = p.prompt !== undefined; // "" = explicit clear, value = set
 
+  // A binding whose keys this edit already took no longer clashes.
+  const peers = others.map((o) => (takeovers.includes(o.id) ? { ...o, hotkey: [] } : o));
+  const selfKind = p.activation === "handsfree" ? "handsfree" : "hold";
   const capture = useHotkeyCapture({
     capturing,
     lowLevelActive,
-    // A binding whose keys this edit already took no longer clashes.
-    others: others.map((o) => (takeovers.includes(o.id) ? { ...o, hotkey: [] } : o)),
-    selfKind: p.activation === "handsfree" ? "handsfree" : "hold",
+    others: peers,
+    selfKind,
     onCommit: (codes) => {
       set({ hotkey: codes });
       setCapturing(false);
@@ -175,6 +177,15 @@ function Editor({
     onCancel: () => setCapturing(false),
     onTakeOver: (id) => setTakeovers((t) => (t.includes(id) ? t : [...t, id])),
   });
+
+  // Capture checks a chord only against the activation it was recorded under; flipping
+  // Activation afterwards can turn a designed hold⊂hands-free nesting into a real shadow
+  // that, once saved, pauses every config save. Re-check the committed chord here
+  // (display only — the user fixes it by changing the shortcut or the activation).
+  const liveClash =
+    !capturing && !capture.pending && p.enabled && p.hotkey.length > 0
+      ? findChordConflict(p.hotkey, peers, !lowLevelActive, selfKind)
+      : null;
 
   const Glyph = ACTIVATION[p.activation].icon;
 
@@ -279,6 +290,13 @@ function Editor({
           />
         </div>
       </div>
+      {liveClash && (
+        <Notice tone="warn" className="mt-3">
+          Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60) || "another profile"}” as{" "}
+          {ACTIVATION[p.activation].label} — saving would pause all settings saves. Change the shortcut or the
+          activation.
+        </Notice>
+      )}
 
       {/* What the platform's hotkey backend can bind: right under the trigger tile, across the
           full width (in the narrow name column it took several lines). */}
@@ -522,11 +540,13 @@ function Editor({
               combinations say why (tooltip) rather than silently doing nothing. The gate is on
               the PROFILE's activation for display only — the runtime value is what liveAllowed
               tests, because the Home button and the chip's quick-launch both start a hold
-              profile hands-free. */}
+              profile hands-free. A clipboard-only hold profile injects no keys, so liveAllowed
+              lets it run live and it gets no on-release note (same as the Translation row). */}
           {(() => {
             const effEndpoint = p.endpoint ?? backend?.endpoint;
             const batch = effEndpoint === "batch";
-            const hold = p.activation === "hold";
+            const hold =
+              p.activation === "hold" && (p.insertionOverrides?.insertMethod ?? globalInsertMethod) !== "clipboard";
             const why = batch
               ? "Not available with a Batch endpoint: the audio is sent once, after you stop, so there are no live phrases to insert. Switch this profile's endpoint to Streaming to enable it."
               : hold

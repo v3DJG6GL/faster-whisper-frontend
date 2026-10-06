@@ -32,7 +32,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, in
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { refreshCaps } from "@/lib/capabilities";
+import { forgetCaps, refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer } from "@/components/sync/SettingsSync";
@@ -157,12 +157,15 @@ function Editor({
   if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
   const hookKind = hookKindRef.current;
   // Caller capabilities, for gating the decode editor.
-  const { caps } = useOverrideContext({
+  const { caps: ctxCaps } = useOverrideContext({
     serverUrl: debouncedUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
     serverKind: hookKind,
   });
+  // The hook reads a blank address as "the saved one" (right for its other callers), but here a
+  // cleared field is "no address yet": don't keep the old server's limits and privacy panel.
+  const caps = effUrl.trim() ? ctxCaps : null;
   // The model is typed too: debounce it like the address so typing doesn't fetch per character.
   const debouncedModel = useDebounced(b.model ?? "", 400);
   // What the server gives this backend's requests (its model + override profile) — the values
@@ -274,6 +277,8 @@ function Editor({
     const cur = latestB.current;
     const verdict = latestResult.current;
     const savedUrl = liveTarget.current.url;
+    // Before onSave: a NEW key on a backend that already exists is a rotation the store can't see.
+    const existed = useApp.getState().backends.some((x) => x.id === cur.id);
     // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
     // the override-profile name → undefined when blank — so stray whitespace isn't persisted, sent to
     // the server (a padded value never matches a real profile), or shown as a blank card.
@@ -288,6 +293,14 @@ function Editor({
       model: cur.model.trim(),
       overrideProfile: cur.overrideProfile?.trim() ? cur.overrideProfile.trim() : undefined,
     });
+    // upsertBackend evicts only when the URL or key PRESENCE changes; a rotated key keeps
+    // hasApiKey true, so the old caller's connection, caps and usage (/v1/me is per-caller)
+    // would stand for the session. Drop them as upsertBackend does — a verdict tested with the
+    // new key is re-installed below (and forces a caps refresh); otherwise readers re-probe.
+    if (key && existed) {
+      forgetCaps(cur.id);
+      useApp.getState().forgetBackendCaches(cur.id);
+    }
     // Now that the target is persisted (upsertBackend's eviction has run inside onSave, and a
     // typed key reached the keyring above), cache the in-editor verdict — only if it still
     // describes the address + key that were just saved.

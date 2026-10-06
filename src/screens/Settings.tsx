@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Mic, Check, FolderOpen, Settings as SettingsIcon } from "lucide-react";
 import { useApp } from "@/lib/store";
@@ -87,6 +87,23 @@ const AUDIO_STORE_TYPES = [
 }[];
 type Tab = (typeof TABS)[number];
 
+// The folder-move and store-wipe guards live at module scope, not in the screen: Settings is a
+// plain route that unmounts on navigation while the IPC keeps running (a move can take
+// minutes), and per-mount flags came back false on return — re-enabling Change…/Reset over
+// a move still in flight. The flags outlive the screen exactly as long as the IPC does.
+const busy = { dir: false, store: false };
+const busySubs = new Set<() => void>();
+function setBusy(k: "dir" | "store", v: boolean) {
+  busy[k] = v;
+  busySubs.forEach((f) => f());
+}
+const subscribeBusy = (f: () => void) => {
+  busySubs.add(f);
+  return () => {
+    busySubs.delete(f);
+  };
+};
+
 
 
 
@@ -125,14 +142,12 @@ export default function Settings() {
   // confirm names the exact count/size (never a bare "are you sure").
   const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "video" | "clear">(null);
   const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
-  const [dirBusy, setDirBusy] = useState(false);
-  const dirBusyRef = useRef(false);
-  // One store action in flight: the confirm stays mounted until it settles, and a second click
-  // re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
-  const storeBusyRef = useRef(false);
-  // Its state mirror disables the folder buttons while a wipe runs (a move would walk the folder
-  // the wipe is deleting from).
-  const [storeBusy, setStoreBusy] = useState(false);
+  const dirBusy = useSyncExternalStore(subscribeBusy, () => busy.dir);
+  // One store action in flight (`busy.store`): the confirm stays mounted until it settles, and a
+  // second click re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
+  // Its rendered mirror disables the folder buttons while a wipe runs (a move would walk the
+  // folder the wipe is deleting from).
+  const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
   // Both die with the tab that owns them: an armed "Delete 214 dictations" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
   useEffect(() => {
@@ -143,7 +158,7 @@ export default function Settings() {
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const runStoreAction = (kind: "dict" | "files" | "links" | "video" | "clear") => {
-    if (dirBusyRef.current || storeBusyRef.current) return;
+    if (busy.dir || busy.store) return;
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
     // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
     // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
@@ -165,8 +180,7 @@ export default function Settings() {
         setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
       } else console.error("store action failed:", e);
     };
-    storeBusyRef.current = true; // set with the IPC, so nothing above can leave it stuck
-    setStoreBusy(true);
+    setBusy("store", true); // set with the IPC, so nothing above can leave it stuck
     const [op, what]: [Promise<number>, string] =
       kind === "dict"
         ? [deleteAllDictations(basePref), "dictation file(s)"]
@@ -181,8 +195,7 @@ export default function Settings() {
       .then((n) => done(n, what))
       .catch(fail)
       .finally(() => {
-        storeBusyRef.current = false;
-        setStoreBusy(false);
+        setBusy("store", false);
       });
   };
   // One dictation clock for text AND audio: display the stricter of the two
@@ -239,18 +252,17 @@ export default function Settings() {
   // `dirBusy` gates every folder button while a move runs: the move walks every audio
   // file and can take minutes, and a second click (Reset during a Change) started a
   // concurrent move over the same folders with the same stale `current`. A store wipe in flight
-  // (storeBusyRef) refuses a move too: it deletes from the very folder the move would walk.
+  // (`busy.store`) refuses a move too: it deletes from the very folder the move would walk.
   const changeRecDir = () =>
     void pickRecordingsDir()
       .then(async (picked) => {
-        if (!picked || dirBusyRef.current) return;
+        if (!picked || busy.dir) return;
         // The buttons are disabled during a wipe, but the native picker may have opened before it.
-        if (storeBusyRef.current) {
+        if (busy.store) {
           setStoreMsg({ text: "A cleanup is still running — try the move again when it finishes.", error: true });
           return;
         }
-        dirBusyRef.current = true;
-        setDirBusy(true);
+        setBusy("dir", true);
         try {
           // A coalesced record write captured BEFORE the move would land after it and put
           // the pre-move paths straight back on disk — drop it, don't flush it.
@@ -272,15 +284,13 @@ export default function Settings() {
           forgetRecord(null);
           void loadHistory(true).catch(() => {});
         } finally {
-          dirBusyRef.current = false;
-          setDirBusy(false);
+          setBusy("dir", false);
         }
       })
       .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }));
   const resetRecDir = () => {
-    if (dirBusyRef.current || storeBusyRef.current) return;
-    dirBusyRef.current = true;
-    setDirBusy(true);
+    if (busy.dir || busy.store) return;
+    setBusy("dir", true);
     dropPendingWrites();
     void moveAudioBase(basePref, null)
       .then(() => {
@@ -296,7 +306,7 @@ export default function Settings() {
         refreshStoreStats();
         setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true });
       })
-      .finally(() => { dirBusyRef.current = false; setDirBusy(false); });
+      .finally(() => setBusy("dir", false));
   };
 
   const runEvdevSetup = () => {

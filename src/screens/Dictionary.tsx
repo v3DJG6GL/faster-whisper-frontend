@@ -689,12 +689,23 @@ export default function Dictionary() {
         serverUrl: effectiveServerUrl(b, useApp.getState().settings),
         backendId: b.id,
       });
-    } catch {
+    } catch (err) {
       // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
       // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
       // Refresh / FetchError-retry / SaveBanner-reload callers, which call load() without a .catch).
-      // Clear loading unless a newer load() superseded us — mirrors the load-on-change effect's .catch.
-      if (myGen === loadGen.current) setLoading(false);
+      // Mirrors the load-on-change effect's .catch: reset the document and surface a status-0 fetch
+      // error. Clearing only `loading` left the pre-save edits/base/_fp on screen after a save whose
+      // follow-up reload failed — the saved rules read as unsaved, and a second Save sent stale
+      // fingerprints. If the backend switched, only clear loading (unless a newer load() won).
+      if (myGen !== loadGen.current) return;
+      if (b.id === selectedIdRef.current) {
+        setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
+        setRules([]);
+        setEdits({});
+        setBase({});
+        setExpanded(new Set());
+      }
+      setLoading(false);
       return;
     }
     if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return; // backend switched OR a newer load() won

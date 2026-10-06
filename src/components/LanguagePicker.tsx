@@ -169,9 +169,10 @@ export function TargetLanguagePicker({
   renderTrigger?: (p: TriggerProps) => ReactNode;
 }) {
   const { recent, use, flush } = useRecent("recentTranslationTargets");
-  // At the server's cap the "+ language" button rests: remove a chip to pick another.
+  // At the cap the "+ language" button rests: remove a chip to pick another. The cap is the
+  // server's or the app's own ceiling (targetCap), so the wording names neither.
   const full = value.length >= max;
-  const fullTitle = `This server translates into at most ${max} languages`;
+  const fullTitle = `At most ${max} target languages per run`;
   return (
     <ListPicker<LangRow>
       label={ariaLabel}
