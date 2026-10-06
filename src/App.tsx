@@ -79,13 +79,19 @@ function NavigationBridge() {
   // navigation and opening a drop window.
   const navRef = useRef(navigate);
   navRef.current = navigate;
+  // Same ref idiom for the current path: a request for the screen already shown skips the
+  // guard (navigating to the same path keeps a dirty editor open, so "Discard" would lie).
+  // The window itself is still shown/focused by show_main_at_screen on the Rust side.
+  const { pathname } = useLocation();
+  const locRef = useRef(pathname);
+  locRef.current = pathname;
   useTauriListener(
     () =>
       onAppNavigate((screen) => {
         const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
         // Same unsaved-work guard the sidebar runs: the overlay chip can fire
         // this while a list editor is open.
-        if (path) {
+        if (path && path !== locRef.current) {
           const go = () => navRef.current(path);
           if (tryNavigate(go)) go();
         }

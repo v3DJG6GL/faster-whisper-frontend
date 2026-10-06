@@ -415,7 +415,7 @@ export default function QuickAdd() {
     const original = originalSelectionRef.current;
     const corrected = original ? applyMap(original, rowsRef.current) : null;
     originalSelectionRef.current = null; // one-shot — don't re-correct on a later close
-    void hideQuickAdd();
+    void hideQuickAdd().catch((e) => console.error("quick-add hide failed:", e));
     if (original && corrected && corrected !== original && generalRef.current) {
       void replaceSelectionAfterClose(original, corrected, generalRef.current, appRulesRef.current).catch((e) =>
         console.error("correct-on-close paste failed:", e),
@@ -503,8 +503,10 @@ export default function QuickAdd() {
               variant="default"
               size="sm"
               onClick={() => {
-                void showMainAtScreen("dictionary");
-                void hideQuickAdd();
+                void showMainAtScreen("dictionary").catch((e) =>
+                  console.error("quick-add open dictionary failed:", e),
+                );
+                void hideQuickAdd().catch((e) => console.error("quick-add hide failed:", e));
               }}
             >
               <BookA className="size-3.5" /> Open Dictionary

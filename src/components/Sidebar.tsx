@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { tryNavigate } from "@/lib/navGuard";
 import { Settings as SettingsIcon, Moon, Sun, SunMoon } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -26,12 +26,15 @@ function TranscribeRunBadge() {
 
 /** Live percentage of in-flight retro-translate run(s) — same pill idiom as
  *  the transcribe badge, in the translate accent, so a run started from the
- *  viewer stays visible from every tab. Max pct across runs when several. */
+ *  viewer stays visible from every tab. Max pct across in-flight runs; a lone
+ *  finished run shows its 100% receipt. */
 function TranslateRunBadge() {
   const runs = useApp((s) => s.trRuns);
   const entries = Object.values(runs);
   if (entries.length === 0) return null;
-  const pct = Math.max(...entries.map((e) => e.run.pct));
+  // A finished run lingers at 100% for a few seconds — it must not mask one still going.
+  const live = entries.filter((e) => e.run.phase !== "done");
+  const pct = Math.max(...(live.length ? live : entries).map((e) => e.run.pct));
   return (
     <span className="font-mono text-[10.5px] tabular-nums text-translate">
       {Math.round(pct * 100)}%
@@ -132,8 +135,13 @@ export function Sidebar() {
   // An open editor holds unsaved work in local state, so leaving the screen
   // discards it. Ask first: the guard runs the navigation itself if the user
   // says to go. With no editor open (or a clean one) this is a straight pass.
+  // A click on the screen already shown leaves nothing (an editor in local state stays
+  // open — Discard would navigate to the same path and change nothing), so it skips the
+  // guard: the NavLink to the current path is a no-op.
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const guardedNav = (path: string) => (e: React.MouseEvent) => {
+    if (path === pathname) return;
     if (!tryNavigate(() => navigate(path))) e.preventDefault();
   };
 

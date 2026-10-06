@@ -15,7 +15,13 @@ import {
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { asServerWork } from "@/lib/types";
+import { DEFAULT_SETTINGS } from "@/lib/defaults";
 import type { AccentMotion, DictationPhase, DictationStatus, ServerWork, ThemeName, OverlayQuickAction } from "@/lib/types";
+
+/** The chip-behaviour defaults (store recording block): the placeholder and every absent-field
+ *  fallback read them from here, so the chip can never disagree with what Settings shows.
+ *  Read-only — `quickLaunch` is a shared array. */
+const REC = DEFAULT_SETTINGS.recording;
 
 /** Value identity for an AccentMotion — see `prevMotionRef` below. */
 function motionKey(m: AccentMotion | undefined): string {
@@ -198,15 +204,15 @@ export default function Overlay() {
     dictationError: "",
     position: "top",
     theme: "dark",
-    persistentDock: true,
-    overlayPeek: true,
-    peekTimeoutSec: 5,
-    peekWhileActive: false,
-    dimAfterSec: 2.5,
-    hoverRevealMs: 500,
-    chipScale: 1,
-    dotScale: 1,
-    quickLaunch: [],
+    persistentDock: REC.persistentDock,
+    overlayPeek: REC.overlayPeek,
+    peekTimeoutSec: REC.peekTimeoutSec,
+    peekWhileActive: REC.peekWhileActive,
+    dimAfterSec: REC.dimAfterSec,
+    hoverRevealMs: REC.hoverRevealMs,
+    chipScale: REC.chipScale,
+    dotScale: REC.dotScale,
+    quickLaunch: REC.quickLaunch,
   });
 
   // Track the last-applied accent/theme so the ~30 Hz level stream does not
@@ -249,16 +255,15 @@ export default function Overlay() {
             phase: e.payload.phase ?? null,
             position: e.payload.position ?? "top",
             theme,
-            persistentDock: e.payload.persistentDock ?? true,
-            overlayPeek: e.payload.overlayPeek ?? true,
-            // Absent-field fallbacks mirror defaults.ts (recording block).
-            peekTimeoutSec: e.payload.peekTimeoutSec ?? 5,
-            peekWhileActive: e.payload.peekWhileActive ?? false,
-            dimAfterSec: e.payload.dimAfterSec ?? 2.5,
-            hoverRevealMs: e.payload.hoverRevealMs ?? 500,
-            chipScale: e.payload.chipScale ?? 1,
-            dotScale: e.payload.dotScale ?? 1,
-            quickLaunch: e.payload.quickLaunch ?? [],
+            persistentDock: e.payload.persistentDock ?? REC.persistentDock,
+            overlayPeek: e.payload.overlayPeek ?? REC.overlayPeek,
+            peekTimeoutSec: e.payload.peekTimeoutSec ?? REC.peekTimeoutSec,
+            peekWhileActive: e.payload.peekWhileActive ?? REC.peekWhileActive,
+            dimAfterSec: e.payload.dimAfterSec ?? REC.dimAfterSec,
+            hoverRevealMs: e.payload.hoverRevealMs ?? REC.hoverRevealMs,
+            chipScale: e.payload.chipScale ?? REC.chipScale,
+            dotScale: e.payload.dotScale ?? REC.dotScale,
+            quickLaunch: e.payload.quickLaunch ?? REC.quickLaunch,
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
             targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
@@ -452,12 +457,12 @@ export default function Overlay() {
   // period, at full opacity — otherwise the user would be resizing something tucked away or
   // dimmed to 40%. The nudge counter re-arms the peek and dim timers below.
   const [sizeNudge, setSizeNudge] = useState(0);
-  const sizeSeen = useRef(false);
+  // Compare against the last-seen VALUE, not a "mounted" flag: StrictMode's dev re-run keeps
+  // refs, so a flag reads the replayed mount as an adjustment (grace + nudge at launch).
+  const lastChipScale = useRef(state.chipScale);
   useEffect(() => {
-    if (!sizeSeen.current) {
-      sizeSeen.current = true; // mount, not an adjustment
-      return;
-    }
+    if (lastChipScale.current === state.chipScale) return; // mount / replay, not an adjustment
+    lastChipScale.current = state.chipScale;
     peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
     setPeeked(false);
     setSizeNudge((n) => n + 1);
@@ -467,12 +472,10 @@ export default function Overlay() {
   // change); a resting one that may tuck does so at once instead of waiting out the timeout,
   // so the result is visible while the slider moves.
   const tuckNow = useRef(false);
-  const dotSeen = useRef(false);
+  const lastDotScale = useRef(state.dotScale);
   useEffect(() => {
-    if (!dotSeen.current) {
-      dotSeen.current = true; // mount, not an adjustment
-      return;
-    }
+    if (lastDotScale.current === state.dotScale) return; // mount / replay, not an adjustment
+    lastDotScale.current = state.dotScale;
     tuckNow.current = true;
     peekGraceUntil.current = 0;
     setSizeNudge((n) => n + 1);
@@ -878,8 +881,10 @@ export default function Overlay() {
         : state.status === "idle"
           ? ""
           : vis.label;
+  // The states whose dot colour comes from the tone map rather than the armed/standby tokens.
+  const toneOwnsDot = vis.state === "error" || vis.state === "speaking" || vis.state === "processing";
   const dotColorClass =
-    vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
+    toneOwnsDot
       ? TONE_BG[vis.tone]
       : peeked
         ? standby
@@ -898,10 +903,10 @@ export default function Overlay() {
   // the largest case (3× at 0.75 zoom = 40px) still fits the 42px pill.
   const chipZoom = Math.min(2, Math.max(0.75, state.chipScale));
   const dotK = peeked ? Math.min(3, Math.max(1, state.dotScale)) / chipZoom : 1;
-  // Same gate as dotColorClass above, deliberately: whenever the fill comes from the
-  // tone map, so does the glow.
+  // toneOwnsDot gates both fill and glow: whenever the fill comes from the tone map, so
+  // does the glow.
   const baseDotGlow =
-    vis.state === "error" || vis.state === "speaking" || vis.state === "processing"
+    toneOwnsDot
       ? TONE_GLOW[vis.tone]
       : peeked
         ? standby
@@ -980,7 +985,9 @@ export default function Overlay() {
   // words clipped (the bug); letting the flexbox keep the child's end at the container's right edge
   // is timing-independent. This effect only drives the cosmetic left-fade: show it when the text
   // actually overflows its box (the span is wider than the clip).
-  // Mirrors the JSX gate on the transcript slot below (phase row, then pulse/note, then words).
+  // Mirrors the JSX gate on the transcript SLOT only (phase row, then pulse/note, then words) —
+  // not the full mount condition: the body wrapper's `!peeked` gate and the error branch sit
+  // above it, and are tracked as their own deps below.
   const transcriptMounted = !phaseRow && pulse !== "untranslated" && !note && partialShown;
   const textRef = useRef<HTMLDivElement>(null);
   const [faded, setFaded] = useState(false);
@@ -999,7 +1006,10 @@ export default function Overlay() {
     // the reveal flips, so the observer must (re)attach then — else the left-fade never measures.
     // transcriptMounted: likewise when the phase row / pulse / note gives the slot back with the
     // words unchanged (a translate finishing) — the node remounts and must be observed again.
-  }, [state.partial, expanded, hoverReveal, state.previewOnHover, transcriptMounted]);
+    // peeked/status: the body wrapper's `!peeked` gate and the error branch also remount the
+    // node — the tuck releases on hoverReveal, so the reveal render still has peeked=true and
+    // the body only mounts on the NEXT render, when none of the deps above change.
+  }, [state.partial, expanded, hoverReveal, state.previewOnHover, transcriptMounted, peeked, state.status]);
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
