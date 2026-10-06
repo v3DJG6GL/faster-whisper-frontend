@@ -51,6 +51,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [backendId, setBackendId] = useState<string | null>(null);
   const [pull, setPull] = useState<SyncPullResult | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  // The restore offer's disclosure chips. Migrate the raw blob (once per pull, not per
+  // category per render) so pre-split categories (chip, dictionary,
+  // recording/fileTranscriptions) show.
+  const pulledCategories = useMemo(() => {
+    const b = pull?.state?.blob;
+    if (!b) return [];
+    const m = migrateBlob(b);
+    return ALL_CATEGORIES.filter((c) => m[c] !== undefined);
+  }, [pull]);
 
   // Every exit marks setup handled so the gate never re-opens; later gaps
   // (deleted backends, skipped steps) fall to the Home checklist instead.
@@ -290,9 +299,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 {pull.state.updated_ts ? ` · ${relTime(pull.state.updated_ts * 1000)}` : ""}
               </div>
               <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {/* Migrate the raw blob so pre-split categories (chip, dictionary,
-                    recording/fileTranscriptions) show in the disclosure chips. */}
-                {ALL_CATEGORIES.filter((c) => (pull.state?.blob ? migrateBlob(pull.state.blob) : {})[c] !== undefined).map((c) => (
+                {pulledCategories.map((c) => (
                   <span key={c} className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim">
                     {c === "appRules" ? "app rules" : c}
                   </span>

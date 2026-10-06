@@ -7,7 +7,7 @@
 // timestamps → karaoke). Search is global; when the active segment hides
 // matches, a banner names them (NN/g scoped-search guidance).
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useNavigate } from "react-router-dom";
 import { Check, ChevronUp, Copy, Download, ExternalLink, FileAudio, FileText, Film, Link2, Mic, MicOff, Pause, Play, RotateCcw, Search, Trash2, X, History as HistoryIcon } from "lucide-react";
@@ -34,6 +34,7 @@ import {
   type ExportFormat,
 } from "@/lib/transcript/transcriptFormats";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { shortModelName } from "@/lib/inherit";
 import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
@@ -43,23 +44,27 @@ import { displayToggles, patchTranscribe } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
 import { releaseDetachedMedia } from "@/lib/mediaElement";
 
-/** "Today" / "Yesterday" / a local date — the bucket a record sorts under. */
-function dayBucket(iso: string): string {
+// Hoisted formatters: toLocale*String with options builds a fresh
+// Intl.DateTimeFormat per call, and these run per record on every keystroke.
+const DAY_FMT = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" });
+const TIME_FMT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
+
+const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+
+/** "Today" / "Yesterday" / a local date — the bucket a record sorts under.
+ *  `todayStart` is `startOfDay(new Date())`, computed once per pass. */
+function dayBucket(iso: string, todayStart: number): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Earlier";
-  const today = new Date();
-  const startOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOf(today) - startOf(d)) / 86_400_000);
+  const diffDays = Math.round((todayStart - startOfDay(d)) / 86_400_000);
   if (diffDays <= 0) return "Today";
   if (diffDays === 1) return "Yesterday";
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+  return DAY_FMT.format(d);
 }
 
 function timeOf(iso: string): string {
   const d = new Date(iso);
-  return Number.isNaN(d.getTime())
-    ? ""
-    : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return Number.isNaN(d.getTime()) ? "" : TIME_FMT.format(d);
 }
 
 const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
@@ -256,8 +261,11 @@ export default function History() {
   }, [query, segment, appFilter]);
   // …and the scroll position of the app's <main> is restored on mount and
   // captured on unmount (the container itself persists across routes, so
-  // without this the list opened wherever the previous page left it).
-  useEffect(() => {
+  // without this the list opened wherever the previous page left it). A
+  // layout effect: its cleanup runs before the route's DOM is swapped — a
+  // passive cleanup would read scrollTop already clamped to the (possibly
+  // shorter) next page.
+  useLayoutEffect(() => {
     const main = rootRef.current?.closest("main");
     if (main) main.scrollTop = viewMemory.scrollTop;
     return () => {
@@ -333,8 +341,9 @@ export default function History() {
 
   const buckets = useMemo(() => {
     const out: { label: string; items: TranscriptRecord[] }[] = [];
+    const todayStart = startOfDay(new Date());
     for (const rec of visible) {
-      const label = dayBucket(rec.createdAt);
+      const label = dayBucket(rec.createdAt, todayStart);
       const last = out[out.length - 1];
       if (last && last.label === label) last.items.push(rec);
       else out.push({ label, items: [rec] });
@@ -490,7 +499,7 @@ export default function History() {
     const parts = [
       timeOf(rec.createdAt),
       rec.result?.duration ? fmtDuration(rec.result.duration) : "",
-      rec.wordCount ? `${rec.wordCount} words` : "",
+      rec.wordCount ? `${rec.wordCount} word${rec.wordCount === 1 ? "" : "s"}` : "",
       rec.language && rec.language !== "auto" ? safeDisplayText(rec.language, 12) : "",
       rec.insertMethod === "clipboard"
         ? "clipboard only"
@@ -652,7 +661,7 @@ export default function History() {
           )}
           {rec.model && (
             <span className="font-mono text-[11px] text-faint">
-              model <span className="text-dim">{safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}</span>
+              model <span className="text-dim">{shortModelName(rec.model, 40) ?? ""}</span>
             </span>
           )}
           {rec.insertMethod && rec.insertMethod !== "none" && (
@@ -756,7 +765,7 @@ export default function History() {
               {rec.result?.translation?.targets?.length
                 ? ` · ${rec.result.translation.targets.map((t) => safeDisplayText(t, 8)).join("+")}`
                 : ""}
-              {rec.model ? ` · ${safeDisplayText(rec.model.split("/").pop() ?? rec.model, 40)}` : ""}
+              {rec.model ? ` · ${shortModelName(rec.model, 40) ?? ""}` : ""}
             </span>
             {edited && <span className="shrink-0 font-mono text-[11px] text-accent">· edited</span>}
           </div>
@@ -783,7 +792,7 @@ export default function History() {
             <FileAudio className="size-3.5" />
           </Button>
         )}
-        {ok && (rec.kind === "url" || (rec.kind !== "dictation" && rec.kind !== "text" && isVideoSourcePath(rec.sourcePath))) && (
+        {ok && (rec.kind === "url" || (rec.kind !== "text" && isVideoSourcePath(rec.sourcePath))) && (
           <Button
             variant="ghost"
             size="sm"
@@ -806,7 +815,11 @@ export default function History() {
           title={
             running
               ? "Wait for the current run to finish"
-              : "Transcribe this file again with your current settings"
+              : rec.kind === "url"
+                ? "Transcribe this link again with your current settings"
+                : rec.kind === "text"
+                  ? "Translate this file again with your current settings"
+                  : "Transcribe this file again with your current settings"
           }
           onClick={() => retry(rec)}
         >
