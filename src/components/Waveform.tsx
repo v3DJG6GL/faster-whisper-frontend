@@ -48,6 +48,18 @@ function buildRainbow(ctx: CanvasRenderingContext2D, h: number): CanvasGradient 
   return g;
 }
 
+// Bar colour per dictation tone. "faint" (off/idle) shares "dim"'s grey: there is no hollow
+// bar. "armed" is the fixed amber state token (--c-armed), not the accent.
+const TONE_TEXT: Record<DictationTone, string> = {
+  rec: "text-rec",
+  live: "text-live",
+  think: "text-think",
+  translate: "text-translate",
+  dim: "text-faint",
+  faint: "text-faint",
+  armed: "text-armed",
+};
+
 export function Waveform({
   level,
   active,
@@ -66,11 +78,8 @@ export function Waveform({
   processing?: boolean;
   bars?: number;
   variant?: "bars" | "dots";
-  // DictationTone minus "faint" (callers map that to "dim"): the chip and Home hand
-  // `dictationVisual().tone` straight through, so a tone added there must get a class
-  // below or the bars fall back to amber "ready" beside a working dot.
-  // "armed" is the fixed amber state token (--c-armed), not the accent.
-  tone?: Exclude<DictationTone, "faint">;
+  // Keyed through TONE_TEXT, so a new DictationTone is a compile error until styled there.
+  tone?: DictationTone;
   /** Reveal the Pride flag through the bars while hovered (see component note). */
   pride?: boolean;
   className?: string;
@@ -299,20 +308,7 @@ export function Waveform({
             }
           : undefined
       }
-      className={cn(
-        tone === "rec"
-          ? "text-rec"
-          : tone === "live"
-            ? "text-live"
-            : tone === "think"
-              ? "text-think"
-              : tone === "translate"
-                ? "text-translate"
-                : tone === "dim"
-                ? "text-faint"
-                : "text-armed",
-        className,
-      )}
+      className={cn(TONE_TEXT[tone], className)}
     />
   );
 }

@@ -43,9 +43,13 @@ export function useAnchoredRect(ref: RefObject<HTMLElement | null>, open: boolea
     return () => {
       window.removeEventListener("scroll", onScroll, true);
       window.removeEventListener("resize", onResize);
+      // Drop the old box, so a reopen renders unplaced until the re-measure above lands
+      // (before paint) instead of briefly working from where the anchor used to be.
+      setRect(null);
     };
   }, [open, place]);
-  return rect;
+  // The close commit itself already reports null (the cleanup's reset lands one render later).
+  return open ? rect : null;
 }
 
 /**
