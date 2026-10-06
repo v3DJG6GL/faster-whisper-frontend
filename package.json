@@ -4,7 +4,7 @@
   "version": "0.1.122",
   "type": "module",
   "license": "AGPL-3.0-or-later",
-  "packageManager": "pnpm@12.9.0",
+  "packageManager": "pnpm@12.9.1",
   "scripts": {
     "dev": "vite",
     "build": "tsc && tsc -p tsconfig.node.json --noEmit && vite build",
