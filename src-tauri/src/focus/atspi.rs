@@ -457,6 +457,12 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
         if end <= start {
             return super::SelRead::Empty;
         }
+        // Clamp the REQUEST too, not just the reply: the range is the focused app's choice, so a
+        // select-all in a huge document would otherwise ship it all over D-Bus inside the 800 ms
+        // budget below. Consumers only compare for equality or take a short seed, so the clamp
+        // changes nothing they see; `bounded_selection` stays the backstop (some toolkits count
+        // offsets in UTF-16 units, not chars).
+        let end = end.min(start.saturating_add(super::SEL_MAX as i32));
         match text.get_text(start, end).await {
             // Rich text (Thunderbird/Joplin links, images, formatting anchors) comes back with
             // U+FFFC object-replacement chars in place of the words. That's not usable plain

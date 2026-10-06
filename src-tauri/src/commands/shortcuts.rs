@@ -201,9 +201,23 @@ pub fn spawn_suspend_watch(app: AppHandle) {
         .name("suspend-watch".into())
         .spawn(move || {
             let mut clock = SleepClock::new();
+            #[cfg(target_os = "linux")]
+            let mut nodes = InputNodeWatch::default();
             loop {
                 std::thread::sleep(TICK);
                 let Some(slept) = clock.tick() else {
+                    // evdev enumerates only on an apply, so a keyboard plugged in (or re-attached)
+                    // later has dead chords until something re-applies; a new /dev/input node is
+                    // that something. Only while evdev runs — the plugin backend needs no devices.
+                    #[cfg(target_os = "linux")]
+                    if nodes.observe(input_event_nodes())
+                        && crate::hotkeys::evdev::is_running(
+                            &app.state::<crate::hotkeys::evdev::EvdevState>(),
+                        )
+                    {
+                        tracing::info!("[evdev] input device added; re-scanning keyboards");
+                        apply_bindings_unless_capturing(&app);
+                    }
                     continue;
                 };
                 tracing::info!(
@@ -225,9 +239,58 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 // sure the chip did not come back underneath something.
                 #[cfg(windows)]
                 crate::aux_windows::overlay::repair_topmost(&app);
+                // Keep the node set current across the resume. The apply above just enumerated, so
+                // a due re-scan is moot here; a keyboard that re-attaches AFTER it still shows up
+                // as a new node and is picked up once the set settles on a later tick.
+                #[cfg(target_os = "linux")]
+                nodes.observe(input_event_nodes());
                 let _ = app.emit("system://resumed", ());
             }
         });
+}
+
+/// The `/dev/input/event*` node names (no device is opened). Empty when the directory can't be
+/// read, which only ever reads as removals — and removals never trigger a re-scan.
+#[cfg(target_os = "linux")]
+fn input_event_nodes() -> std::collections::BTreeSet<String> {
+    std::fs::read_dir("/dev/input")
+        .map(|rd| {
+            rd.filter_map(|e| e.ok())
+                .filter_map(|e| e.file_name().into_string().ok())
+                .filter(|n| n.starts_with("event"))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Debounces "an input device appeared" for evdev's re-scan. A new node is NOT acted on the tick it
+/// appears (udev may not have set its ACL yet, so opening it would fail and the keyboard stay
+/// missed); the re-scan is due on the next tick whose set equals the previous one.
+#[cfg(target_os = "linux")]
+#[derive(Default)]
+struct InputNodeWatch {
+    prev: Option<std::collections::BTreeSet<String>>,
+    pending: bool,
+}
+
+#[cfg(target_os = "linux")]
+impl InputNodeWatch {
+    /// Feed this tick's node set; true when a re-scan is due.
+    fn observe(&mut self, now: std::collections::BTreeSet<String>) -> bool {
+        // The first look is the baseline, not an arrival.
+        let (added, settled) = match &self.prev {
+            Some(prev) => (now.iter().any(|n| !prev.contains(n)), now == *prev),
+            None => (false, false),
+        };
+        self.prev = Some(now);
+        if added {
+            self.pending = true;
+        } else if settled && self.pending {
+            self.pending = false;
+            return true;
+        }
+        false
+    }
 }
 
 /// Linux: the time spent suspended, measured directly. CLOCK_BOOTTIME counts suspend and
@@ -387,5 +450,42 @@ mod tests {
         let mut clock = SleepClock::new();
         assert_eq!(clock.tick(), None);
         assert_eq!(clock.tick(), None);
+    }
+
+    fn set(names: &[&str]) -> std::collections::BTreeSet<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    #[test]
+    fn input_node_watch_rescans_once_after_a_new_node_settles() {
+        let mut w = InputNodeWatch::default();
+        assert!(!w.observe(set(&["event0", "event1"])), "baseline");
+        assert!(!w.observe(set(&["event0", "event1"])), "nothing new");
+        assert!(
+            !w.observe(set(&["event0", "event1", "event5"])),
+            "appeared: wait a tick"
+        );
+        assert!(
+            !w.observe(set(&["event0", "event1", "event5", "event6"])),
+            "still settling"
+        );
+        assert!(
+            w.observe(set(&["event0", "event1", "event5", "event6"])),
+            "settled: re-scan"
+        );
+        assert!(
+            !w.observe(set(&["event0", "event1", "event5", "event6"])),
+            "only once"
+        );
+    }
+
+    #[test]
+    fn input_node_watch_ignores_removals() {
+        let mut w = InputNodeWatch::default();
+        assert!(!w.observe(set(&["event0", "event1"])));
+        assert!(!w.observe(set(&["event0"])));
+        assert!(!w.observe(set(&["event0"])));
+        assert!(!w.observe(set(&[])), "unreadable dir reads as removals");
+        assert!(!w.observe(set(&[])));
     }
 }

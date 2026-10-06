@@ -37,6 +37,13 @@ pub fn stop(state: &EvdevState) {
     }
 }
 
+/// Whether the evdev reader is live (a `start` stored its tasks and no `stop` has dropped
+/// them). False on a poisoned lock — the caller only uses it to decide on a re-scan.
+#[cfg(target_os = "linux")]
+pub fn is_running(state: &EvdevState) -> bool {
+    state.0.lock().map(|g| g.is_some()).unwrap_or(false)
+}
+
 #[cfg(target_os = "linux")]
 pub use imp::{permitted, setup, start, stop_held_sessions};
 
@@ -551,6 +558,11 @@ mod imp {
                 commit(&app, &held_keys, &mut held, &mut engine, k, d, false);
             }
         }
+        // Nothing re-enumerates on its own; the suspend watch's /dev/input poll re-scans when a
+        // node appears (see `commands::shortcuts::InputNodeWatch`), so say why its chords went quiet.
+        tracing::info!(
+            "[evdev] keyboard stream ended (unplugged / read error); its chords stop until it re-attaches"
+        );
         // The device stream ended (unplugged / read error). First commit every release still
         // parked in the debouncer — those keys ARE released, and a hold whose release is parked
         // would otherwise still read as active below and get a manufactured stop with the loss

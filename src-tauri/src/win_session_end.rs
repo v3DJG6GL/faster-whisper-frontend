@@ -18,12 +18,20 @@
 //! at ~2.5 s (the 2 s system-audio unmute flush plus the 500 ms clipboard-owner
 //! render-for-exit). Drop this module once the app builds against tao >= 0.37.
 //!
+//! The query also asks the main window (`app://session-ending`, fire-and-forget) to land its
+//! pending writes early — the debounced History edits, the coalesced History writes and the
+//! debounced config save — which the quit handshake (quit.rs) lands on every other exit. It is
+//! not `app://before-quit`: that handler answers `quit_ready`, which latches the handshake for
+//! good, so a cancelled shutdown would make a later tray Quit skip its wait. Landing them is
+//! idempotent and harmless if the user cancels, and best-effort: the writes are sync commands
+//! that need the main thread between the query and `WM_ENDSESSION`, and nothing waits for them.
+//!
 //! Message-only windows (the raw-input hotkey window) never receive these broadcasts, and
 //! `WM_CLOSE` is not sent at session end — so close-to-tray's `prevent_close` plays no part.
 
 use std::sync::OnceLock;
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows_sys::Win32::UI::WindowsAndMessaging::{WM_ENDSESSION, WM_QUERYENDSESSION};
@@ -42,9 +50,15 @@ unsafe extern "system" fn subclass_proc(
     _data: usize,
 ) -> LRESULT {
     match msg {
-        // Never veto, and answer without doing any work: the query is not the place for
-        // cleanup (the user can still cancel the shutdown after it).
-        WM_QUERYENDSESSION => 1,
+        // Never veto, and answer at once: the query is not the place for cleanup (the user can
+        // still cancel the shutdown after it). It only asks the main window to land its pending
+        // writes early (see the module doc) — queued, never waited for.
+        WM_QUERYENDSESSION => {
+            if let Some(app) = APP.get() {
+                let _ = app.emit_to("main", "app://session-ending", ());
+            }
+            1
+        }
         // wParam != 0: the session really is ending. Idempotent with the RunEvent::Exit
         // path in lib.rs, which may or may not get to run first — either order is safe.
         WM_ENDSESSION if wparam != 0 => {

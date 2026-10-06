@@ -316,17 +316,19 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
     // Built unlocked and stored in one short lock at the end (see take_registrations).
     let mut map = HashMap::new();
     for p in profiles {
-        if !p.enabled {
+        // An empty hotkey is unbound (as in evdev's `chords_from` and the quick-add block below),
+        // not an unregisterable chord — skip it before the None arm misdiagnoses it.
+        if !p.enabled || p.hotkey.is_empty() {
             continue;
         }
-        // Code list → plugin accelerator (None = modifier-only / AltGr → evdev/CLI only).
+        // Code list → plugin accelerator (None = modifier-only / AltGr / multi-key → evdev/CLI only).
         let accel = match crate::config::codes_to_accelerator(&p.hotkey) {
             Some(a) => a,
             None => {
                 // Same defang, same file, same reason — `p.id` here is the sync blob's.
                 let id_log = crate::transport::bounded_server_text(&p.id, 120);
                 tracing::info!(
-                    "[hotkey] {} {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use a desktop shortcut → `app --profile {} --action toggle`, or the evdev backend",
+                    "[hotkey] {} {:?} isn't a global-shortcut chord (modifier-only / AltGr / multi-key) — use a desktop shortcut → `app --profile {} --action toggle`, or the evdev backend",
                     id_log, p.hotkey, id_log
                 );
                 continue;
@@ -393,7 +395,7 @@ pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hot
                 }
             }
             None => tracing::info!(
-                "[hotkey] quick-add chord {:?} isn't a global-shortcut chord (modifier-only / AltGr) — use the evdev backend or a desktop shortcut → `app --quick-add`",
+                "[hotkey] quick-add chord {:?} isn't a global-shortcut chord (modifier-only / AltGr / multi-key) — use the evdev backend or a desktop shortcut → `app --quick-add`",
                 quick_add_hotkey
             ),
         }
