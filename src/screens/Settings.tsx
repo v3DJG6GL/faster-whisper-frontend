@@ -159,7 +159,8 @@ export default function Settings() {
   };
   // One dictation clock for text AND audio: display the stricter of the two
   // legacy values (the keys keep syncing separately for older builds), write
-  // both on change.
+  // both on change. Rust enforces the same value on both sweeps
+  // (AppSettings::effective_dictation_days) — keep the two in step.
   const dictDaysA = s.recording.recordingsRetentionDays ?? 0;
   const dictDaysB = s.transcribe?.dictationRetentionDays ?? 7;
   const dictDays =

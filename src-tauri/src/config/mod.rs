@@ -796,6 +796,22 @@ impl AppSettings {
             .unwrap_or(true)
     }
 
+    /// The ONE dictation clock Settings shows ("Delete dictations after"): the stricter
+    /// non-zero of the audio window (`recording.recordingsRetentionDays`) and the record
+    /// window (`dictationRetentionDays`), mirroring Settings.tsx's `dictDays`. The row writes
+    /// both keys, but a never-touched install has audio 0 + record 7 — the row reads 7 days
+    /// while the audio sweep kept every recording forever. Both sweeps use this value, so
+    /// text and audio leave together as the row promises. 0 = keep forever.
+    pub fn effective_dictation_days(&self) -> u32 {
+        match (
+            self.recording.recordings_retention_days,
+            self.dictation_retention_days(),
+        ) {
+            (0, d) | (d, 0) => d,
+            (audio, record) => audio.min(record),
+        }
+    }
+
     fn transcribe_days(&self, key: &str, default: u32) -> u32 {
         self.transcribe
             .as_ref()
@@ -1183,6 +1199,22 @@ pub mod keys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_dictation_clock_is_the_stricter_non_zero_window() {
+        let clock = |audio: u32, record: Option<u32>| {
+            let mut s = Config::default().settings;
+            s.recording.recordings_retention_days = audio;
+            s.transcribe = record.map(|r| serde_json::json!({ "dictationRetentionDays": r }));
+            s.effective_dictation_days()
+        };
+        assert_eq!(clock(0, None), 7); // never touched: the row reads 7, audio follows
+        assert_eq!(clock(0, Some(30)), 30);
+        assert_eq!(clock(14, Some(0)), 14);
+        assert_eq!(clock(3, Some(7)), 3);
+        assert_eq!(clock(30, Some(7)), 7);
+        assert_eq!(clock(0, Some(0)), 0); // forever
+    }
 
     #[test]
     fn only_platform_failures_are_retried() {

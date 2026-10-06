@@ -713,7 +713,7 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
         if !config.settings.keep_dictation_history() {
             wipe_records(&dir);
         } else {
-            let ddays = config.settings.dictation_retention_days();
+            let ddays = config.settings.effective_dictation_days();
             if ddays > 0 {
                 prune_transcripts(&dir, ddays);
             }
