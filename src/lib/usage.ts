@@ -42,6 +42,7 @@ let pollingAll = false;
 let rerunRequested = false; // a refresh asked for mid-pass → run one more pass with the latest backends
 let statsPagesOpen = 0; // mounted Statistics pages; their documents are fetched only while > 0
 let skippedTicks = 0; // poll ticks passed over while hidden
+let pageMissed = false; // a hidden pass ran with a Statistics page open, skipping its documents
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
 function statsPageShown(): boolean {
@@ -264,12 +265,15 @@ export function initUsageController(): void {
   setInterval(() => {
     if (isWindowHidden() && ++skippedTicks < HIDDEN_EVERY) return;
     skippedTicks = 0;
+    pageMissed = pageMissed || (isWindowHidden() && statsPagesOpen > 0);
     void refreshAll();
   }, POLL_MS);
-  // Shown again after ticks were passed over: catch up now, not on the next tick.
+  // Shown again after ticks were passed over — or right after a hidden pass that skipped the
+  // open page's documents (skippedTicks is 0 then): catch up now, not on the next tick.
   onWindowHiddenChange((hidden) => {
-    if (hidden || skippedTicks === 0) return;
+    if (hidden || (skippedTicks === 0 && !pageMissed)) return;
     skippedTicks = 0;
+    pageMissed = false;
     void refreshAll();
   });
 

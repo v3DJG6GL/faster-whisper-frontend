@@ -5,6 +5,7 @@
 // vitest covers it without a webview. The charts in components/stats/ only
 // lay these numbers out.
 
+import { dayToDate } from "@/lib/format";
 import type {
   UsageHourCell,
   UsageKind,
@@ -214,7 +215,7 @@ export const DEFAULT_PAGE_QUERY: Readonly<UsagePageQuery> = Object.freeze({ rang
 /** Longest span the server accepts (10 years). */
 export const MAX_SPAN_DAYS = 3650;
 
-function isDay(v: unknown): v is number {
+export function isDay(v: unknown): v is number {
   return typeof v === "number" && Number.isSafeInteger(v) && v >= 0 && v < 1e7;
 }
 
@@ -301,9 +302,7 @@ export function dowOf(day: number): number {
   return (((day + 3) % 7) + 7) % 7;
 }
 /** UTC-midnight Date for a day-since-epoch (the day numbers are local calendar days). */
-export function dayDate(day: number): Date {
-  return new Date(day * DAY_MS);
-}
+export const dayDate = dayToDate;
 /** `YYYY-MM-DD` ↔ day-since-epoch, for the custom-span date inputs. */
 export function dayToIso(day: number): string {
   return dayDate(day).toISOString().slice(0, 10);
@@ -560,7 +559,8 @@ export interface RhythmCell extends KindSplit {
   level: Level;
   /** The scoped companion measure (companionMetric). */
   companion: number;
-  /** False for a day-of-month column a one-month window does not reach (never rendered). */
+  /** False for a day-of-month column a one-month window does not reach, or a month the
+   *  window does not touch (months); rendered hatched, never levelled or counted. */
   inWindow: boolean;
 }
 
@@ -769,15 +769,20 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
     const slots = (rhythm === "hours" ? src.hours : src.dom_hours) ?? [];
     if (slots.length > 0 && !slots.some((h) => h && typeof h[metric] === "object" && h[metric] !== null)) sent = "no-measure";
   }
+  // Months: a month the window does not touch (ten of a 30-day window's year row) is out of
+  // the window, not a zero month — hatched, unlevelled, and left out of the flat average.
+  const monthIn = (row: number, col: number) =>
+    Date.UTC(L.y0 + row, col, 1) / DAY_MS <= t && Date.UTC(L.y0 + row, col + 1, 0) / DAY_MS >= f;
   const cells: RhythmCell[] = [];
   for (let i = 0; i < N; i++) {
     const kinds = grid[i] ?? zeroKinds();
+    const row = Math.floor(i / L.cols);
     const col = i % L.cols;
     cells.push({
-      row: Math.floor(i / L.cols), col, kinds, level: 0,
+      row, col, kinds, level: 0,
       value: metricValue(kinds[scope], metric),
       companion: metricValue(kinds[scope], comp),
-      inWindow: L.colOcc ? L.colOcc[col] > 0 : true,
+      inWindow: L.colOcc ? L.colOcc[col] > 0 : rhythm === "months" ? monthIn(row, col) : true,
     });
   }
   const active = cells.filter((c) => c.inWindow);
@@ -794,9 +799,14 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   const rowTotals = new Array<number>(L.rows).fill(0);
   for (const c of cells) { colTotals[c.col] += c.value; rowTotals[c.row] += c.value; }
   const sum = colTotals.reduce((a, v) => a + v, 0);
-  const liveCols = L.colOcc ? L.colOcc.filter((n) => n > 0).length || L.cols : L.cols;
+  const liveOf = (n: number, at: (c: RhythmCell) => number) => {
+    const live = new Set(active.map(at)).size;
+    return live || n;
+  };
+  const liveCols = L.colOcc ? L.colOcc.filter((n) => n > 0).length || L.cols : rhythm === "months" ? liveOf(L.cols, (c) => c.col) : L.cols;
+  const liveRows = rhythm === "months" ? liveOf(L.rows, (c) => c.row) : L.rows;
   const colIndex = colTotals.map((v) => (sum > 0 ? v / (sum / liveCols) : 0));
-  const rowIndex = rowTotals.map((v) => (sum > 0 ? v / (sum / L.rows) : 0));
+  const rowIndex = rowTotals.map((v) => (sum > 0 ? v / (sum / liveRows) : 0));
   const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
   const { y0: _y0, ...layout } = L;
   return {

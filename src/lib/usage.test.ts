@@ -102,6 +102,19 @@ describe("usage poll gates", () => {
     close();
     setHidden(false);
   });
+
+  it("shown right after a hidden pass, the open page still catches up", async () => {
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(10 * 30_000); // the 10th tick runs a pass without the page
+    await settle();
+    getUsageStats.mockClear();
+    setHidden(false); // no tick passed over since, yet the page's documents are stale
+    await settle();
+    expect(calls().page).toBe(2);
+    close();
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

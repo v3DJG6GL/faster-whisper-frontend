@@ -47,6 +47,7 @@ import {
   translationRows,
   findStage,
   fmtTimeSaved,
+  isDay,
   isFiltered,
   orderedStageRows,
   pct,
@@ -55,7 +56,6 @@ import {
   safeTotals,
   stageAppliesToScope,
   targetShares,
-  timeSavedS,
   zeroKinds,
   type ChartMetric,
   type FacetRow,
@@ -352,7 +352,8 @@ export function HomeUsageStrip() {
   const tiles = tileSpecs(stats, dense, "all", false, "30 days", TREND_DAYS).filter((t) => HOME_TILES.has(t.key));
   const last30 = dense.slice(-30);
   const max = Math.max(0, ...last30.flatMap((p) => KINDS.map((k) => safeTotals(p[k]).words)));
-  const saved = last30.reduce((s, p) => s + timeSavedS(safeTotals(p.dictation).words, safeTotals(p.dictation).audio_s), 0);
+  // The server's window-clamped figure — the same one the Statistics tile shows for 30 days.
+  const saved = Number.isFinite(stats.time_saved_s) ? Math.max(0, stats.time_saved_s) : 0;
   return (
     <section className="mt-8">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
@@ -436,7 +437,8 @@ export function StatisticsView({
     // An older server without the v2 range echo deserialises a zeroed window (day 0 = 1970);
     // a real echo always spans at least one day, so anything else resolves locally.
     const r = stats?.range;
-    const echoed = fresh && !!r && r.days > 0 && r.to > 0 && r.to >= r.from;
+    // An out-of-range day would throw in the date formatters, so the echo must be whole.
+    const echoed = fresh && !!r && isDay(r.from) && isDay(r.to) && r.to > 0 && r.to >= r.from && r.days === r.to - r.from + 1;
     return echoed ? { from: r!.from, to: r!.to, days: r!.days } : resolveWindow(query, today, r?.first_day);
   }, [fresh, stats, query, today, view]);
   const dense = useMemo(

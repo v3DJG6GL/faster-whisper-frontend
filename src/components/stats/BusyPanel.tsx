@@ -59,7 +59,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
     if (i < N) {
       const c = model.cells[i];
       if (!c) return null;
-      if (!c.inWindow) return { title: L.cellName(i), kinds: c.kinds, total: 0, quarter: undefined, extra: [], out: `the ${ordinal(c.col + 1)} does not occur between ${fmtDateFull(from)} and ${fmtDateFull(to)}` };
+      if (!c.inWindow) return { title: L.cellName(i), kinds: c.kinds, total: 0, quarter: undefined, extra: [], out: rhythm === "months" ? `${L.cellName(i)} is outside ${fmtDateFull(from)} – ${fmtDateFull(to)}` : `the ${ordinal(c.col + 1)} does not occur between ${fmtDateFull(from)} and ${fmtDateFull(to)}` };
       const occ = model.occOf(c);
       const extra: [string, string][] = [];
       if (c.value > 0 && occ > 1) extra.push([`≈ ${metricText(metric, c.value / occ, true)} per ${model.occWord(c)}`, `${fmtFull(occ)} ${rhythm === "hours" ? `${model.occWord(c)}s` : "months"} in range`]);
@@ -129,7 +129,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
       title={`Busy ${rhythm} · ${title}${kindWord}`}
       right={<Segmented value={rhythm} onChange={onRhythm} ariaLabel="Rhythm — weekday × hour, day of month × hour, or year × month" options={RHYTHMS.map((r) => ({ value: r, label: r }))} />}
     >
-      <div className="mb-2.5 truncate font-mono text-[11.5px] text-dim" title={peak ? `${metricText(metric, peak.value)} in the busiest ${rhythm === "hours" ? "slot" : rhythm.slice(0, -1)}, ${L.cellName(peak.row * L.cols + peak.col)}${peakOcc > 1 ? `, summed over ${fmtFull(peakOcc)} ${rhythm === "hours" ? `${model.occWord(peak)}s` : "months"} in the range` : ""}` : undefined}>
+      <div className="mb-2.5 truncate font-mono text-[11.5px] text-dim" title={peak ? `${metricText(metric, peak.value)} in the busiest ${rhythm === "months" ? "month" : "slot"}, ${L.cellName(peak.row * L.cols + peak.col)}${peakOcc > 1 ? `, summed over ${fmtFull(peakOcc)} ${rhythm === "hours" ? `${model.occWord(peak)}s` : "months"} in the range` : ""}` : undefined}>
         {peak ? (
           <>
             Peak {L.cellName(peak.row * L.cols + peak.col)} · <b className="font-semibold text-text">{metricText(metric, peak.value)}</b>

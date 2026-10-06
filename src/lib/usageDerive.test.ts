@@ -274,6 +274,20 @@ describe("usageDerive", () => {
     expect(sumKinds(m.cells).all.words).toBe(450);
   });
 
+  it("rhythmModel months: months the window does not touch are out of the window, not zero months", () => {
+    // 15 Aug – 13 Sep 2026 (30 days): two live months, ten unreachable ones in the 2026 row.
+    const aug15 = 20_680, sep13 = 20_709;
+    const m = rhythmModel("months", { series: [pt(aug15, 100), pt(20_700, 100)] }, "all", "words", aug15, sep13);
+    expect(m.layout.rows).toBe(1);
+    expect(m.cells.filter((c) => !c.inWindow)).toHaveLength(10);
+    expect(m.cells[7].inWindow && m.cells[8].inWindow).toBe(true);
+    expect(m.counts.reduce((a, n) => a + n, 0)).toBe(2);
+    // An even split reads as two average months, not 6× a flat year.
+    expect(m.colIndex[7]).toBeCloseTo(1);
+    expect(m.colIndex[8]).toBeCloseTo(1);
+    expect(m.rowIndex[0]).toBeCloseTo(1);
+  });
+
   it("bucketing: days ≤ 120, ISO weeks ≤ 730, months beyond; sums per bucket", () => {
     expect(bucketMode(30)).toBe("day");
     expect(bucketMode(120)).toBe("day");

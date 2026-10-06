@@ -251,7 +251,12 @@ export function FilterBar({
       )}
       {query.with.length > 0 && (
         <div className="mt-2 text-[11.5px] text-faint">
-          Stage filters cover the last {fmtFull(retentionDays || 365)} days: every number on this page now counts only sessions that were{" "}
+          {retentionDays === 0 ? (
+            <>Stage filters cover every day the server kept:</>
+          ) : (
+            <>Stage filters cover the last {fmtFull(retentionDays ?? 365)} days:</>
+          )}{" "}
+          every number on this page now counts only sessions that were{" "}
           {query.with.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" and ")}.
         </div>
       )}

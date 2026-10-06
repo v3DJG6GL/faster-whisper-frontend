@@ -1,15 +1,15 @@
 // The usage charts' shared non-component helpers: date and measure formatters, the line
 // path, the width hook, the kind fills. Their shared components live in primitives.tsx.
 import { useLayoutEffect, useRef, useState } from "react";
-import { fmtFull, fmtCompact, fmtDuration, fmtDurationAxis } from "@/lib/format";
+import { dayToDate, fmtFull, fmtCompact, fmtDuration, fmtDurationAxis } from "@/lib/format";
 import { KIND_VAR, METRIC_UNIT, isDurationMetric, type BucketMode, type ChartMetric } from "@/lib/usageDerive";
 import type { UsageKind } from "@/lib/types";
 
 const _spanDate = new Intl.DateTimeFormat("de-CH", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "numeric", timeZone: "UTC" });
 /** `1. Aug. 2026`, for the range pill and the custom-span popover. */
-export const fmtSpanDate = (day: number) => _spanDate.format(new Date(day * 86_400_000));
-export const fmtMonthYear = (day: number) => _monthYear.format(new Date(day * 86_400_000));
+export const fmtSpanDate = (day: number) => _spanDate.format(dayToDate(day));
+export const fmtMonthYear = (day: number) => _monthYear.format(dayToDate(day));
 export const fmtDateRange = (from: number, to: number) => `${fmtSpanDate(from)} – ${fmtSpanDate(to)}`;
 
 /* ── the measure's formatters: the two `_s` measures are durations, the rest counts ── */
@@ -18,7 +18,12 @@ export const metricTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? 
 export function metricText(m: ChartMetric, v: number, compact = false): string {
   if (isDurationMetric(m)) return fmtDuration(v);
   const u = METRIC_UNIT[m] ?? ["", ""];
-  return `${compact ? fmtCompact(v) : fmtFull(v)} ${Math.round(v) === 1 ? u[0] : u[1]}`;
+  // Compact (an average): small values keep one decimal so 0.38 reads "0.4", not "0".
+  const n = compact
+    ? v > 0 && v < 10 ? (Math.round(v * 10) / 10).toLocaleString("en-US") : fmtCompact(v)
+    : fmtFull(v);
+  const one = compact ? n === "1" : Math.round(v) === 1;
+  return `${n} ${one ? u[0] : u[1]}`;
 }
 
 /* ── shared bits ─────────────────────────────────────────────────────────── */
