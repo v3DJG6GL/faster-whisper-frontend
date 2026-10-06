@@ -1148,7 +1148,7 @@ async fn post(
         form = form.text("task", "translate");
     }
     if let Some(d) = opts.diarize {
-        form = form.text("diarize", if d { "true" } else { "false" });
+        form = form.text("diarize", d.to_string());
     }
     if let Some(n) = opts.num_speakers {
         form = form.text("num_speakers", n.to_string());
@@ -1160,7 +1160,7 @@ async fn post(
         form = form.text("max_speakers", n.to_string());
     }
     if let Some(s) = opts.separate_bgm {
-        form = form.text("separate_bgm", if s { "true" } else { "false" });
+        form = form.text("separate_bgm", s.to_string());
     }
     // T2T targets as a CSV of screened language codes. When present, the
     // whisper `task` field is never sent (T2T wins over translate-to-EN —
@@ -1202,7 +1202,7 @@ async fn post(
         }
     }
     if let Some(r) = opts.retain_media {
-        form = form.text("retain_media", if r { "true" } else { "false" });
+        form = form.text("retain_media", r.to_string());
     }
     if let Some(m) = opts
         .prefetched_media_id
@@ -1212,7 +1212,7 @@ async fn post(
         form = form.text("prefetched_media_id", m.to_string());
     }
     if let Some(k) = opts.keep_video {
-        form = form.text("keep_video", if k { "true" } else { "false" });
+        form = form.text("keep_video", k.to_string());
         // The height cap rides only with keep_video, and only in the range the
         // server accepts (it clamps too — this keeps nonsense off the wire).
         if let Some(h) = opts.video_max_height.filter(|h| REQUEST_HEIGHT.contains(h)) {

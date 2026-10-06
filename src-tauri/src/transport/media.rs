@@ -134,7 +134,6 @@ pub struct PackageOutcome {
     pub media_id: Option<String>,
     pub expires_at: Option<i64>,
     pub reason: Option<String>,
-    pub streams: Option<MediaStreams>,
 }
 
 impl PackageOutcome {
@@ -146,7 +145,6 @@ impl PackageOutcome {
             media_id: None,
             expires_at: None,
             reason: None,
-            streams: None,
         }
     }
 }
@@ -420,7 +418,6 @@ pub async fn package_to_path(
         media_id: Some(media_id.to_string()),
         expires_at: None,
         reason: None,
-        streams: None,
     })
 }
 

@@ -495,6 +495,10 @@ pub async fn run<F>(
     const KEEPALIVE: Duration = Duration::from_secs(10);
     let mut keepalive = tokio::time::interval(KEEPALIVE);
     keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Set by a live-phase write that FAILED (not timed out): the reader may not have queued its
+    // terminal message yet, so the post-loop check below waits briefly for it and surfaces the
+    // loss itself when the reader has nothing to say.
+    let mut write_failed: Option<String> = None;
 
     while !draining {
         tokio::select! {
@@ -529,8 +533,10 @@ pub async fn run<F>(
                                     bytes_sent += n;
                                 }
                                 Ok(Err(e)) => {
-                                    // socket closed/errored → finish + Closed
+                                    // socket closed/errored → finish; the post-loop check
+                                    // surfaces it unless the reader already did.
                                     tracing::warn!("[stream] audio send failed: {e}");
+                                    write_failed = Some(e.to_string());
                                     break;
                                 }
                                 Err(_) => {
@@ -566,8 +572,10 @@ pub async fn run<F>(
                 match tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::<u8>::new().into()))).await {
                     Ok(Ok(())) => {}
                     Ok(Err(e)) => {
-                        // socket closed/errored → finish + Closed (reader surfaces it)
+                        // socket closed/errored → finish; the post-loop check surfaces it
+                        // unless the reader already did.
                         tracing::warn!("[stream] keepalive send failed: {e}");
+                        write_failed = Some(e.to_string());
                         break;
                     }
                     Err(_) => {
@@ -693,6 +701,45 @@ pub async fn run<F>(
                 "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
                 if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
             );
+        }
+    }
+
+    // A live-phase write failed: the reader's read-side error may not be queued yet, and the
+    // non-blocking drain below + the reader abort would then end the session with a bare
+    // `Closed` — which the UI treats as a normal server close, hiding the lost connection.
+    // Give the reader a short bounded wait for its terminal message; emit the error ourselves
+    // only when it neither reported one nor closed cleanly (a server Close frame followed by a
+    // failed write stays the quiet server-initiated close the live `Closed` arm keeps).
+    if let Some(msg) = write_failed {
+        const WRITE_FAIL_GRACE: Duration = Duration::from_millis(500);
+        let deadline = tokio::time::Instant::now() + WRITE_FAIL_GRACE;
+        let mut saw_error = false;
+        let mut reader_closed = false;
+        while let Ok(from) = tokio::time::timeout_at(deadline, evt_rx.recv()).await {
+            match from {
+                Some(FromReader::Event(e)) => {
+                    saw_error |= matches!(e, StreamEvent::Error(_));
+                    forward_saved(
+                        e,
+                        save_dir,
+                        &mut saved,
+                        &mut clips,
+                        &mut transcript_docs,
+                        &mut transcript_cur,
+                        &on_event,
+                    );
+                }
+                Some(FromReader::Closed) | None => {
+                    reader_closed = true;
+                    break;
+                }
+            }
+        }
+        if !saw_error && !reader_closed {
+            on_event(StreamEvent::Error(super::bounded_server_text(
+                &format!("stream connection lost ({msg})"),
+                super::MAX_ERROR_TEXT,
+            )));
         }
     }
 
