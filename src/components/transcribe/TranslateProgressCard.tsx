@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { fmtBytes } from "@/lib/format";
 import { type TranslateRunUi } from "@/lib/retroTranslate";
 import { safeDisplayText } from "@/lib/sanitize";
+import { shortModelName } from "@/lib/inherit";
 import { cn } from "@/lib/cn";
 
 /** m:ss (h:mm:ss beyond an hour) for the progress card's running clock. */
@@ -66,7 +67,7 @@ export function TranslateProgressCard({
     if (secs >= 2 && got > 0) dlChips.push(`${fmtBytes(got / secs)}/s`);
   }
   const chips: string[] = [
-    ...(run.model ? [safeDisplayText(run.model.split("/").pop() ?? "", 40)] : []),
+    ...(run.model ? [shortModelName(run.model, 40) ?? ""] : []),
     ...(run.device ? [safeDisplayText(run.device, 16)] : []),
     ...(modeLabel ? [modeLabel] : []),
     ...dlChips,

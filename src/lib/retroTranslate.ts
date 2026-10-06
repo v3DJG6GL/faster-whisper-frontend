@@ -72,6 +72,10 @@ export interface TranslateRunUi {
   /** Segment indexes of the in-flight chunk (may be sparse — stale rows);
    *  polls map the server's within-chunk fraction onto this list. */
   chunkIdxs?: number[];
+  /** ms epoch when the in-flight chunk's request left (beginChunk). The poller shares one
+   *  progress id across chunks, so a poll SENT before this belongs to the previous chunk and
+   *  must not scale onto this one's frame. */
+  chunkAt?: number;
   /** ms epoch when the run started (the "running m:ss" clock). */
   startedAt: number;
   /** ms epoch when the run finished — stamped with phase "done", so the receipt's
@@ -126,6 +130,7 @@ export function beginChunk(
   s: TranslateRunUi,
   chunkIdxs: number[],
   done: number,
+  now: number = Date.now(),
 ): TranslateRunUi {
   return {
     ...s,
@@ -137,6 +142,7 @@ export function beginChunk(
     done,
     chunkLen: chunkIdxs.length,
     chunkIdxs,
+    chunkAt: now,
     frontierIdx: chunkIdxs.length ? chunkIdxs[0] : -1,
     pct: clamp01(done / s.total),
   };
@@ -165,11 +171,14 @@ function frontierAt(s: TranslateRunUi, progress: number, targetProgress?: number
 /** Fold one progress poll into the card state. Defensive throughout: the
  *  backend counterpart is being built in parallel, so EVERY field may be
  *  absent — an empty poll changes nothing but still returns a fresh object
- *  (the card's clock re-renders off it). Terminal phases are sticky. */
+ *  (the card's clock re-renders off it). Terminal phases are sticky.
+ *  `sentAt` = when the poll's request left; a poll sent before the current chunk began
+ *  (a late answer about the previous chunk) leaves the chunk-relative pct/frontier alone. */
 export function foldTranslatePoll(
   s: TranslateRunUi,
   p: BatchProgress,
   now: number = Date.now(),
+  sentAt?: number,
 ): TranslateRunUi {
   if (s.phase === "done") return s;
   const next: TranslateRunUi = { ...s };
@@ -189,7 +198,8 @@ export function foldTranslatePoll(
     case "translating":
       next.phase = "translating";
       if (next.modelPhaseSeen) next.modelPct = 1;
-      if (typeof p.progress === "number") {
+      const stale = sentAt !== undefined && s.chunkAt !== undefined && sentAt < s.chunkAt;
+      if (typeof p.progress === "number" && !stale) {
         next.pct = clamp01((s.done + clamp01(p.progress) * s.chunkLen) / s.total);
         next.frontierIdx = frontierAt(s, p.progress, p.targetProgress);
       }

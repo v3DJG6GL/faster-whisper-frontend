@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
+import { ownProp } from "@/lib/own";
 import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
@@ -31,11 +32,14 @@ import {
 import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
+import { seedTargets } from "@/lib/translationTargets";
+import { maxTranslationTargets } from "@/lib/capabilities";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
 } from "@/lib/transcribeRun";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { shortModelName } from "@/lib/inherit";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
 } from "@/lib/transcript/transcriptFormats";
@@ -80,7 +84,7 @@ function mediaMime(path: string): string {
     wma: "audio/x-ms-wma", mp4: "video/mp4", mkv: "video/x-matroska",
     webm: "video/webm", mov: "video/quicktime",
   };
-  return Object.prototype.hasOwnProperty.call(map, ext) ? map[ext] : "application/octet-stream";
+  return ownProp(map, ext) ?? "application/octet-stream";
 }
 
 /** How much of a returned transcript to lay out before the user asks for the rest.
@@ -246,6 +250,12 @@ export function TranscriptViewer({
    *  already spoken (dimmed), so the reading position survives across lines. */
   const [passedSegIdx, setPassedSegIdx] = useState(-1);
   const [audioLen, setAudioLen] = useState(0);
+  /** The element's length once known: a header-less WebM reports Infinity until
+   *  it is played through (durationchange) — the stored length meanwhile. */
+  const takeDuration = (el: HTMLMediaElement) => {
+    const d = el.duration;
+    setAudioLen(Number.isFinite(d) && d > 0 ? d : (result.duration ?? 0));
+  };
   const [rate, setRate] = useState(1);
   const [follow, setFollow] = useState(true);
   /** The segment list's own scroll container — follow scrolls THIS, not the
@@ -492,18 +502,17 @@ export function TranscriptViewer({
   );
   const [trModel, setTrModel] = useState(() => trBackend?.translationOverrides?.model ?? "");
   // Prefill: Backend Translation defaults → the caller's server-side default
-  // → English; never the known source (a source→source track is a no-op).
-  const seededTargets = useMemo(() => {
-    const src = result.language;
-    const seed = (
-      trBackend?.translationOverrides?.translateTo?.length
-        ? trBackend.translationOverrides.translateTo
-        : trCaps?.translate_to_default?.length
-          ? trCaps.translate_to_default
-          : ["en"]
-    ).filter((c) => c !== src);
-    return seed.length ? seed : [src === "en" ? "de" : "en"];
-  }, [trBackend, trCaps, result.language]);
+  // → English; never the known source (a source→source track is a no-op), within the cap.
+  const seededTargets = useMemo(
+    () =>
+      seedTargets({
+        backendTargets: trBackend?.translationOverrides?.translateTo,
+        serverDefault: trCaps?.translate_to_default,
+        source: result.language,
+        max: maxTranslationTargets(trCaps),
+      }),
+    [trBackend, trCaps, result.language],
+  );
   const effTargets = trTargets ?? seededTargets;
 
   // Warm the translation model while the panel is open, so the run doesn't start
@@ -592,9 +601,12 @@ export function TranscriptViewer({
     // current state; a NETWORK failure flips it to "reconnecting" — the
     // chunk request itself is still in flight on its own long timeout.
     const pollTimer = window.setInterval(() => {
+      // Stamped before the request: a poll sent before the current chunk began must not
+      // scale its (previous-chunk) progress onto the new chunk's frame.
+      const sentAt = Date.now();
       getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
         .then((p) => {
-          if (trCtls.get(okey) === ctl) setTrRun((s) => (s ? foldTranslatePoll(s, p) : s));
+          if (trCtls.get(okey) === ctl) setTrRun((s) => (s ? foldTranslatePoll(s, p, Date.now(), sentAt) : s));
         })
         .catch((e) => {
           if (trCtls.get(okey) !== ctl) return;
@@ -1310,7 +1322,7 @@ export function TranscriptViewer({
       // it focused, and Esc (as its title says) must still leave focus mode. Only a popup
       // owner (an open list/menu) keeps them — there Esc closes the popup.
       const inPopup = t?.closest(
-        '[role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [aria-expanded="true"]',
+        '[role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [aria-haspopup][aria-expanded="true"]',
       );
       if (e.key === "Escape" && !inPopup) {
         if (focus) {
@@ -1589,9 +1601,10 @@ export function TranscriptViewer({
             src={blobSrc ?? audioSrc}
             preload="metadata"
             onLoadedMetadata={(e) => {
-              setAudioLen(e.currentTarget.duration || 0);
+              takeDuration(e.currentTarget);
               e.currentTarget.playbackRate = rate;
             }}
+            onDurationChange={(e) => takeDuration(e.currentTarget)}
             // Coarse fallback only — while playing, the rAF loop above owns
             // the playhead (timeupdate ticks every 250-500 ms on WebKitGTK).
             onTimeUpdate={(e) => {
@@ -1733,7 +1746,7 @@ export function TranscriptViewer({
           )}
           {result.translation?.model && (
             <span className="text-[11px] text-faint">
-              MT · {safeDisplayText(result.translation.model.split("/").pop() ?? "", 40)}
+              MT · {shortModelName(result.translation.model, 40) ?? ""}
             </span>
           )}
           {/* The way back into a half-translated transcript: a cancelled or interrupted

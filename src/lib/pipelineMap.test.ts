@@ -2,7 +2,7 @@
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
-import { collapseCounts, mapRowsFromRule, ruleListOf } from "./pipelineMap";
+import { collapseCounts, mapBodyFromRows, mapRowsFromRule, ruleListOf } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule } from "./types";
 
 function fetchWith(rules: unknown): PipelineFetch {
@@ -47,6 +47,19 @@ describe("mapRowsFromRule", () => {
     );
     const rows = mapRowsFromRule(rule as PipelineRule);
     expect(rows.map((r) => r.k)).toEqual(["newest", "middle", "old", "unstamped", "bogus"]);
+  });
+});
+
+describe("mapBodyFromRows", () => {
+  it("keeps a '__proto__' phrase as an own key, newest row winning, key-sorted", () => {
+    const body = mapBodyFromRows([
+      { id: 1, k: "__proto__", v: "new" },
+      { id: 2, k: "b", v: "2" },
+      { id: 3, k: "__proto__", v: "old" },
+      { id: 4, k: "  ", v: "blank" },
+      { id: 5, k: "A", v: "1" },
+    ]);
+    expect(JSON.stringify(body.map)).toBe('{"A":"1","__proto__":"new","b":"2"}');
   });
 });
 

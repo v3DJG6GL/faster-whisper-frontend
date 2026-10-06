@@ -2,11 +2,12 @@
 // processing card: music separation, diarization) — what the stage will run with, so its
 // settings panel can stay closed. Pure, for the tests.
 
+import { shortModelName } from "./inherit";
+
 /** A stage model as the summary names it: the run's pick, else the server's default
  *  ("Default · speaker-diarization-community-1"). Both already short. */
 export function stageModelText(picked: string | undefined, defaultName: string): string {
-  const p = picked?.trim();
-  return p ? (p.split("/").pop() || p) : `Default · ${defaultName}`;
+  return shortModelName(picked) ?? `Default · ${defaultName}`;
 }
 
 /** The speaker count as words: "Auto speakers", "3 speakers", "2–5 speakers". */

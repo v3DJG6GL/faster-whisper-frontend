@@ -209,6 +209,16 @@ describe("translate progress state machine", () => {
     expect(s.frontierIdx).toBe(17);
   });
 
+  it("a poll sent before the current chunk began does not scale onto it", () => {
+    const s = beginChunk({ ...start(), targets: ["en"] }, idxs(400, 400), 400, 10);
+    const late = foldTranslatePoll(s, { stage: "translating", progress: 0.95 }, 12, 9);
+    expect(late.pct).toBe(s.pct);
+    expect(late.frontierIdx).toBe(s.frontierIdx);
+    const fresh = foldTranslatePoll(s, { stage: "translating", progress: 0.95 }, 12, 11);
+    expect(fresh.pct).toBeGreaterThan(s.pct);
+    expect(fresh.frontierIdx).not.toBe(s.frontierIdx);
+  });
+
   it("terminal phases are sticky against late polls", () => {
     const done: TranslateRunUi = { ...start(), phase: "done", pct: 1 };
     expect(foldTranslatePoll(done, { stage: "translating", progress: 0.1 })).toBe(done);

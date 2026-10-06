@@ -16,7 +16,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
-import { pruneTargets, translationRunOptions } from "@/lib/translationTargets";
+import { pruneTargets, seedTargets, translationRunOptions } from "@/lib/translationTargets";
 import {
   inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName,
   withDefaultModel,
@@ -31,7 +31,7 @@ import { speakerOrder as speakersOf } from "@/lib/transcript/transcriptFormats";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { fmtBytes, fmtDurationExact, fmtTimestamp } from "@/lib/format";
+import { fmtBytes, fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
   activeRailIndex, addFiles, axisLayout, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
@@ -97,7 +97,7 @@ function recentMeta(rec: TranscriptRecord): string {
   const spk = rec.result ? speakersOf(rec.result).length : 0;
   if (spk > 1) parts.push(`${spk} speakers`);
   const trLangs = rec.result?.translation?.targets?.length ?? 0;
-  if (trLangs > 0) parts.push(`${trLangs} translation${trLangs === 1 ? "" : "s"}`);
+  if (trLangs > 0) parts.push(plural(trLangs, "translation"));
   return parts.join(" · ");
 }
 
@@ -627,6 +627,20 @@ export default function Transcribe() {
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
         siteSubs: siteView?.run ? frozenSiteRun(siteView.run, siteInput?.tracks ?? [], translationAvailable) : undefined,
       });
+    } else {
+      // Same "always written" rule with no preview (probe failed / unavailable): this card showed
+      // none of these picks, so a re-added link must not run with an earlier add's choices. The
+      // name fields stay so the queue row keeps its title.
+      setUrlMeta(url, {
+        keepVideo: undefined,
+        videoMaxHeight: undefined,
+        videoFormat: undefined,
+        videoLadder: undefined,
+        spokenLanguage: undefined,
+        spokenMultiInherited: undefined,
+        prefetchMediaId: undefined,
+        siteSubs: undefined,
+      });
     }
     addFiles([url]);
     setUrlDraft("");
@@ -849,7 +863,9 @@ export default function Transcribe() {
    *  the file with the otherwise-unchanged run settings. */
   const retryWithoutVad = (path: string) => {
     if (busy) return;
-    const next: DecodeOverrides = { ...runOverrides, vad_filter: false };
+    // The run's own settings (the store's), like retry() — the screen's runOverrides is
+    // unpersisted state that a remount resets and later panel edits change.
+    const next: DecodeOverrides = { ...useTranscribeRun.getState().lastOverrides, vad_filter: false };
     setRunOverrides(next);
     const ctx = buildCtx(next);
     if (ctx) retryFile(path, ctx, next);
@@ -1183,8 +1199,7 @@ export default function Transcribe() {
               )}
               <div className="min-w-0 flex-1">
                 <div className="line-clamp-2 text-[13.5px] font-medium text-text">
-                  {safeDisplayText(urlPreviewData.title, 120) ||
-                    displayLabel(draftUrl ?? urlDraft)}
+                  {displayLabel(draftUrl ?? urlDraft, urlPreviewData.title)}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3.5 gap-y-1 text-[12px] text-dim">
                   {urlPreviewData.uploader && (
@@ -1647,17 +1662,14 @@ export default function Transcribe() {
                         if (v) {
                           // Seed: Backend Translation defaults → the caller's
                           // server-side default → English; never the known
-                          // source (en→en would be a no-op stage).
-                          const src = language !== "auto" ? language : undefined;
-                          const seed = (
-                            backend?.translationOverrides?.translateTo?.length
-                              ? backend.translationOverrides.translateTo
-                              : caps?.translate_to_default?.length
-                                ? caps.translate_to_default
-                                : ["en"]
-                          ).filter((c) => c !== src);
-                          // Within the server's target cap, as the picker is.
-                          const next = (seed.length ? seed : [src === "en" ? "de" : "en"]).slice(0, maxTranslationTargets(caps));
+                          // source (en→en would be a no-op stage), and within
+                          // the server's target cap, as the picker is.
+                          const next = seedTargets({
+                            backendTargets: backend?.translationOverrides?.translateTo,
+                            serverDefault: caps?.translate_to_default,
+                            source: language !== "auto" ? language : undefined,
+                            max: maxTranslationTargets(caps),
+                          });
                           setTranslateTo(next);
                           if (translate) {
                             setTranslate(false);

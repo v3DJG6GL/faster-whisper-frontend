@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chipCodes, pruneTargets, pruneTranslationOverrides, translationRunOptions } from "./translationTargets";
+import { chipCodes, pruneTargets, pruneTranslationOverrides, seedTargets, translationRunOptions } from "./translationTargets";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the
 // sanitizers; the chip renderer is the last line of defence (mirrors dictation/chipController.test.ts).
@@ -14,6 +14,25 @@ describe("chipCodes", () => {
   });
   it("returns nothing for a non-array", () => {
     expect(chipCodes("fr")).toEqual([]);
+  });
+});
+
+describe("seedTargets", () => {
+  it("prefers the Backend defaults, then the server's, then English", () => {
+    expect(seedTargets({ backendTargets: ["fr", "it"], serverDefault: ["es"], max: 8 })).toEqual(["fr", "it"]);
+    expect(seedTargets({ backendTargets: [], serverDefault: ["es"], max: 8 })).toEqual(["es"]);
+    expect(seedTargets({ max: 8 })).toEqual(["en"]);
+  });
+  it("never seeds the known source, falling back to German for an English source", () => {
+    expect(seedTargets({ backendTargets: ["de", "fr"], source: "de", max: 8 })).toEqual(["fr"]);
+    expect(seedTargets({ source: "en", max: 8 })).toEqual(["de"]);
+    expect(seedTargets({ backendTargets: ["fr"], source: "fr", max: 8 })).toEqual(["en"]);
+  });
+  it("stays within the server's target cap", () => {
+    expect(seedTargets({ backendTargets: ["fr", "it", "es", "pt"], max: 2 })).toEqual(["fr", "it"]);
+  });
+  it("drops non-string entries a peer synced in", () => {
+    expect(seedTargets({ backendTargets: [123, null], serverDefault: ["es"], max: 8 })).toEqual(["es"]);
   });
 });
 

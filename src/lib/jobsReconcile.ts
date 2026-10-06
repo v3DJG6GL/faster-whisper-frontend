@@ -233,11 +233,15 @@ export async function reconcileJobs(): Promise<void> {
         await forgetRow(row.jobId);
       }
     }
-    // The newest running row takes the rail back — unless the user already started
-    // something; every other running row is watched headless.
+    // The newest running row takes the rail back — only from an untouched workbench
+    // (no run, no picked files, no queue, no open record: a retry pass can come long
+    // after launch, and reattachRun replaces all of them); every other running row,
+    // or the newest one then, is watched headless and still lands in History.
     const newest = running[running.length - 1];
+    const s = useTranscribeRun.getState();
+    const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
     for (const row of running) {
-      if (row === newest && !useTranscribeRun.getState().running) {
+      if (row === newest && idle) {
         const epoch = reattachRun(row);
         watchJob(row, { attached: true, epoch });
       } else {

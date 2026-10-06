@@ -218,6 +218,28 @@ describe("reconcileJobs", () => {
     cancelRun();
   });
 
+  it("a running row is watched headless when the user already picked files", async () => {
+    await seed(row(JOB_A, T0));
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    let s = useTranscribeRun.getState();
+    expect(s.files).toEqual(["/picked.wav"]);
+    expect(s.queue).toEqual([]);
+    expect(s.running).toBe(false);
+    // Done: the record lands in History; the workbench is left alone.
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(records().map((r) => r.id)).toEqual([JOB_A]);
+    s = useTranscribeRun.getState();
+    expect(s.files).toEqual(["/picked.wav"]);
+    expect(s.queue).toEqual([]);
+    expect(s.openRecordId).toBeNull();
+    expect(ledgerRows()).toEqual([]);
+  });
+
   it("cancelling a re-attached run stops the watcher, tells the server, forgets the row", async () => {
     await seed(row(JOB_A, T0));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));

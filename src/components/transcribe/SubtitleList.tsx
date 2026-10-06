@@ -18,7 +18,7 @@ import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
 import {
-  trackCps, trackCues, trackLimits, wrapLines, type CueGrid, type CueOptions,
+  timedTrack, trackCps, trackCues, trackLimits, wrapLines, type CueGrid, type CueOptions,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
 import type { BatchResult } from "@/lib/types";
@@ -252,26 +252,31 @@ export function SubtitleList({
             tracks.map((t) => [t, t === "orig" ? c.text : (c.tr[t] ?? "")])),
         ),
         lanes: [],
+        idLane: 0,
       };
     }
+    // The lane carrying the segments' row ids: the first one keyed to segments.
+    // A site track's cues have none (seg -1), and a dragged order can put one first.
+    const idLane = Math.max(0, tracks.findIndex((t) => !timedTrack(result, t)));
     return {
       heads: [],
       rows: [],
+      idLane,
       lanes: tracks.map((t, li) => {
         const list = t === "orig" ? grid.cues : trackCues(grid, t);
         return {
           track: t,
           code: trackChipLabel(result, t),
           rows: list.map((c, i) =>
-            rowOf(`${t}-${i}`, i + 1, c, li === 0 && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text]])),
+            rowOf(`${t}-${i}`, i + 1, c, li === idLane && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text]])),
         };
       }),
     };
   }, [result, grid, tracks, cues, lanes, showNames, colorize, displayName, colorOf]);
-  /** Segment → the row carrying its id (the table, or the first lane). */
+  /** Segment → the row carrying its id (the table, or the segment-keyed lane). */
   const firstOf = useMemo(() => {
     const m = new Map<number, number>();
-    (lanes ? (layout.lanes[0]?.rows ?? []) : layout.rows).forEach((r, i) => r.first && m.set(r.seg, i));
+    (lanes ? (layout.lanes[layout.idLane]?.rows ?? []) : layout.rows).forEach((r, i) => r.first && m.set(r.seg, i));
     return m;
   }, [layout, lanes]);
   const pin = firstOf.get(activeSeg) ?? -1;
@@ -312,7 +317,7 @@ export function SubtitleList({
                   {plural(ln.rows.length, "subtitle")}
                 </span>
               </div>
-              <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === 0 ? pin : -1} lane scrollRef={scrollRef}
+              <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === layout.idLane ? pin : -1} lane scrollRef={scrollRef}
                 canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} />
             </div>
           ))}

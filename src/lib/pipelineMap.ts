@@ -3,7 +3,7 @@
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
 import type { PipelineFetch, PipelineRule } from "./types";
-import { hasOwn, ownProp } from "./own";
+import { ownProp } from "./own";
 
 /** The pipeline `rules` as PipelineRule[]. Rust forwards the server's payload opaque
  *  (#[serde(default)] serde_json::Value), so a buggy/old/proxied server can deliver a non-array
@@ -97,17 +97,16 @@ export function mapRowsFromRule(rule: PipelineRule): MapRow[] {
  *  whitespace-only edit invisible to the dirty diff (no Save offered). We only
  *  skip rows the user never filled in (blank/whitespace-only key). */
 export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> } {
-  const map: Record<string, string> = {};
   // Rows are newest-first; keep the FIRST occurrence of a duplicate key so the newest-shown mapping
   // wins — adding a new mapping for a phrase that already has one now takes effect, instead of being
-  // silently overridden by the older (further-down) entry. hasOwnProperty (not `in`) so a key like
-  // "toString" isn't falsely treated as already-present.
+  // silently overridden by the older (further-down) entry. A Map (not a plain object) so a key like
+  // "toString" isn't falsely treated as already-present and "__proto__" isn't swallowed by the
+  // inherited setter; Object.fromEntries then defines every key as an own property.
+  const m = new Map<string, string>();
   for (const r of rows) {
-    if (r.k.trim() && !hasOwn(map, r.k)) map[r.k] = r.v;
+    if (r.k.trim() && !m.has(r.k)) m.set(r.k, r.v);
   }
-  const sorted: Record<string, string> = {};
-  for (const k of Object.keys(map).sort()) sorted[k] = map[k];
-  return { map: sorted };
+  return { map: Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) };
 }
 
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
@@ -123,13 +122,14 @@ export function applyMap(text: string, rows: MapRow[]): string {
   for (const r of rows) if (r.k.trim() && !map.has(r.k)) map.set(r.k, r.v); // newest-shown row wins on a dup
   if (map.size === 0) return text;
   const keys = [...map.keys()].sort((a, b) => b.length - a.length); // longest first → phrases win
+  // Each key's lowercase form is loop-invariant — compute it once, not once per text position.
+  const lowered = keys.map((k) => [k, k.toLowerCase()] as const);
 
   let out = "";
   let i = 0;
   while (i < text.length) {
     let hit = "";
-    for (const key of keys) {
-      const kl = key.toLowerCase();
+    for (const [key, kl] of lowered) {
       // Compare the slice at the CURRENT position rather than a once-lowercased whole string:
       // a char whose lowercase changes length (e.g. Turkish "İ" → "i̇") would otherwise desync the
       // original-case index `i` from a precomputed lowercased string and silently miss every later key.

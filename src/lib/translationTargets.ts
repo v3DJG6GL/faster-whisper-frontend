@@ -20,6 +20,23 @@ export function pruneTargets(targets: string[], source: string): string[] {
  *  the code). Removal still filters the ORIGINAL array, so nothing is lost by rendering less. */
 export const chipCodes = (v: unknown, max = 32) => cleanCodes(v, { max, bound: 12 });
 
+/** The targets a translation run starts from before the user touches the chips: the Backend's
+ *  Translation defaults → the server's default list → English, never the known source (a
+ *  source→source stage is a no-op), and within the server's target cap as the picker is.
+ *  `backendTargets` / `serverDefault` are synced or server-sent, so only their renderable
+ *  codes count. */
+export function seedTargets(o: {
+  backendTargets?: unknown;
+  serverDefault?: unknown;
+  source?: string | null;
+  max: number;
+}): string[] {
+  const own = chipCodes(o.backendTargets);
+  const server = chipCodes(o.serverDefault);
+  const list = (own.length ? own : server.length ? server : ["en"]).filter((c) => c !== o.source);
+  return (list.length ? list : [o.source === "en" ? "de" : "en"]).slice(0, o.max);
+}
+
 /** Store-shape for a `TranslationOverrides` draft: drop the keys that are "inherit"
  *  so an all-inherit object stores as `undefined` (the `decodeOverrides` idiom), and
  *  KEEP the ones that are an explicit empty override.

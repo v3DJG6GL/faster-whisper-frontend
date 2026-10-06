@@ -20,8 +20,9 @@ export function StageSwitch({
 }) {
   const def = typeof serverDefault?.value === "boolean" ? serverDefault.value : undefined;
   // A server-locked stage runs as the server says whatever the request asks: show its
-  // value, not the user's pick (which stays stored for a server without the lock).
-  const locked = serverDefault?.locked === true;
+  // value, not the user's pick (which stays stored for a server without the lock). An
+  // unavailable (disabled) stage never runs: it keeps the caller's forced value.
+  const locked = !disabled && serverDefault?.locked === true;
   return (
     <Segmented
       ariaLabel={ariaLabel}

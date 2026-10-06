@@ -7,7 +7,7 @@
  *  Clearing `src` and calling load() is the spec's way to empty the element.
  *  Never throws: this runs from ref cleanups, where an exception would abort
  *  the commit. */
-export function releaseMedia(el: HTMLMediaElement): void {
+function releaseMedia(el: HTMLMediaElement): void {
   try {
     el.pause();
     el.removeAttribute("src");

@@ -16,6 +16,8 @@ describe("stageModelText", () => {
     expect(stageModelText("pyannote/speaker-diarization-3.1", "x")).toBe("speaker-diarization-3.1");
     expect(stageModelText("", "speaker-diarization-community-1")).toBe("Default · speaker-diarization-community-1");
     expect(stageModelText(undefined, "UVR")).toBe("Default · UVR");
+    // A trailing slash leaves no last part — fall back to the whole id, never a blank chip.
+    expect(stageModelText("org/model/", "x")).toBe("org/model/");
   });
 });
 

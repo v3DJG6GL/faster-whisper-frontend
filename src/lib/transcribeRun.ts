@@ -16,6 +16,7 @@ import { errorText, transportErrorDoorway, uploadTooLargeText } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
+import { safeDisplayText } from "./sanitize";
 import {
   currentRecord, patchRecord, setRecordForgetHook, upsertRecord, type TranscriptRecord,
 } from "./transcript/transcriptHistory";
@@ -812,7 +813,7 @@ function recordRun(
   const title = extra.title ?? s.urlMeta[path]?.title;
   const rec: TranscriptRecord = {
     schemaVersion: 1,
-    kind: isUrl ? "url" : isTextSourcePath(path) ? "text" : "file",
+    kind: itemSourceKind({ path }),
     title: isUrl ? title : undefined,
     id: extra.id ?? crypto.randomUUID(),
     createdAt: extra.createdAt ?? new Date().toISOString(),
@@ -951,7 +952,7 @@ function awaitRunUrlVideo(
           }));
         }
         const st = p.video?.state;
-        if (st === "done" || st === "failed" || st === "cancelled") {
+        if (videoTerminal(st)) {
           window.clearInterval(timer);
           if (st === "done" && p.video?.mediaId) fetchRunUrlVideo(rec, ctx, p.video.mediaId);
         }
@@ -1045,11 +1046,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     queue: [
       {
         path: rec.sourcePath,
-        kind: recIsUrl
-          ? ("url" as const)
-          : isTextSourcePath(rec.sourcePath)
-            ? ("text" as const)
-            : ("file" as const),
+        kind: itemSourceKind({ path: rec.sourcePath }),
         title: rec.title,
         createdAt: rec.createdAt,
         status: rec.status,
@@ -1439,7 +1436,7 @@ export function ingestJobResult(
 
 /** The re-attached run failed (server error, cancelled, or the server no
  *  longer knows it): a failed record, and — when it owns the rail — the
- *  queue row settles with the reason, the doorway banner points at Logs. */
+ *  queue row settles with the reason, the doorway banner names it. */
 export function failJob(row: LedgerRow, error: string, opts: { attached: boolean }): TranscriptRecord {
   const extra = {
     id: row.jobId,
@@ -1450,9 +1447,14 @@ export function failJob(row: LedgerRow, error: string, opts: { attached: boolean
   if (opts.attached) patchItem(row.path, { status: "failed", error });
   const rec = recordRun(row.path, row.ctx, row.options, { status: "failed", error }, extra);
   if (opts.attached) {
-    const backendName =
-      useApp.getState().backends.find((b) => b.id === row.backendId)?.name ?? "the backend";
-    useApp.getState().setLogsDoorway(transportErrorDoorway("transcribe", error, backendName));
+    // Not a transport failure (the server lost, refused or cancelled the job, or we
+    // gave up): name the reason itself — nothing was logged, so no Logs button.
+    const backendName = useApp.getState().backends.find((b) => b.id === row.backendId)?.name;
+    const label = safeDisplayText(backendName, 80) || "the backend";
+    useApp.getState().setLogsDoorway({
+      msg: `The run on ${label} did not finish: ${safeDisplayText(error, 200)}`,
+      showLogs: false,
+    });
     settleReattached();
   }
   return rec;
@@ -1653,6 +1655,9 @@ async function runLink(
   ctx: RunContext,
   pid: string | null,
   epoch: number,
+  // Writes the in-flight ledger row for a planned site transcript that falls
+  // back to a server transcription (the pump skipped it: no job was expected).
+  ledger?: () => Promise<void>,
 ): Promise<{ res: BatchResult; videoPid?: string }> {
   const meta = get().urlMeta[url];
   const site = meta?.siteSubs;
@@ -1672,7 +1677,14 @@ async function runLink(
   };
   if (!site?.fetch.length) return { res: await transcribeUrl({ ...req, sourceUrl: url, options }) };
   const got = await fetchSiteSubs(url, site, ctx);
+  // A cancel during the subtitle download must not still post the request
+  // (the pump's catch drops it silently on the epoch mismatch).
+  if (epoch !== get().epoch) throw new Error("cancelled");
   if (!got.transcript) {
+    if (ledger) {
+      await ledger();
+      if (epoch !== get().epoch) throw new Error("cancelled");
+    }
     const res = await transcribeUrl({ ...req, sourceUrl: url, options });
     return { res: attachFetched(res, got, url, meta) };
   }
@@ -1831,13 +1843,15 @@ async function pump(
         // second must still find the run at the next launch. Text sources
         // post N chunk requests under one id (translateTextSource) — a
         // server job row is one chunk, not the run — so they stay out, and
-        // so does a link whose transcript is the site's own subtitle track.
+        // so does a link whose transcript is the site's own subtitle track
+        // (no server job) — unless that track fails and the link falls back
+        // to a transcription: runLink ledgers it right before that request.
         const siteTranscript = isUrl && !!get().urlMeta[next.path]?.siteSubs?.transcriptTrackId;
-        if (pid && ctx.jobsEnabled && !isText && !siteTranscript) {
+        const ledgerRow = async () => {
           try {
             await persistRow({
               v: 1,
-              jobId: pid,
+              jobId: pid!,
               backendId: ctx.backendId,
               serverUrl: ctx.serverUrl,
               path: next.path,
@@ -1852,13 +1866,17 @@ async function pump(
           } catch (e) {
             console.error("jobs ledger write failed:", e);
           }
-        }
+        };
+        if (pid && ctx.jobsEnabled && !isText && !siteTranscript) await ledgerRow();
+        // A cancel during the ledger write must not still post the request.
+        if (epoch !== get().epoch) return;
         let videoPid: string | undefined;
         let res: BatchResult;
         if (isText) {
           res = await translateTextSource(next.path, options!, ctx, pid, epoch);
         } else if (isUrl) {
-          ({ res, videoPid } = await runLink(next.path, common, ctx, pid, epoch));
+          const fallbackLedger = pid && ctx.jobsEnabled && siteTranscript ? ledgerRow : undefined;
+          ({ res, videoPid } = await runLink(next.path, common, ctx, pid, epoch, fallbackLedger));
         } else {
           // The limit rides as an option, not a pre-check here: Rust reads the size from the
           // file it is about to stream, so the two can't disagree.
@@ -1947,7 +1965,7 @@ export function startRun(options: TranscribeOptions | undefined,
     queue: s.files.map((path): QueueItem => ({
       path,
       status: "queued",
-      kind: isSourceUrl(path) ? "url" : isTextSourcePath(path) ? "text" : "file",
+      kind: itemSourceKind({ path }),
       title: s.urlMeta[path]?.title,
     })),
     lastOptions: options,
