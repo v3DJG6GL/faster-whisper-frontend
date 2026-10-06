@@ -95,11 +95,11 @@
   --c-diarize: #c68fb4;  /* speaker diarization */
   --c-download: #d9a45b; /* fetching a URL's media */
   /* Usage-chart categorical palette, one colour per job kind (validated 2026-09-01 for
-     both themes against the surface and each other). Dictation is the accent's CHART
-     step — a deeper cut of the Signal colour, re-derived by theme.ts for a custom hue
-     so it retints with the rest; files and links are fixed hues no stage uses; text
-     imports are the faint neutral, hatched, because they are rare and never a volume
-     story. Text on these surfaces always uses the text tokens, never a series colour. */
+     both themes against the surface and each other). Dictation is a deeper cut of the
+     stock amber, FIXED like the other kind colours — theme.ts never restamps it, so a
+     custom Signal colour cannot make two series alike; files and links are fixed hues
+     no stage uses; text imports are the faint neutral, hatched, because they are rare
+     and never a volume story. Text on these surfaces always uses the text tokens, never a series colour. */
   --c-chart-dict: #cf7b00;
   --c-chart-file: #3e96ea;
   --c-chart-link: #d76797;

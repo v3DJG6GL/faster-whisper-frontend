@@ -20,7 +20,7 @@ import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
-import { normalizeAppId, safeDisplayText } from "@/lib/sanitize";
+import { safeDisplayText, wellFormedAppRules } from "@/lib/sanitize";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
@@ -36,20 +36,6 @@ import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/t
 // hotkey — a huge list would wedge it (and, on Linux, the renderer it shares with the chip).
 const MAX_SHOWN_ROWS = 500;
 const MAX_RECENT_WORDS = 500;
-
-/** This window has no store, so it never passes through `wellFormedAppRules` — it reads
- *  `cfg.appRules` straight off `loadConfig()` and hands it to the SAME shared
- *  `resolveInjectionTarget` the main window uses. Apply the same key normalization here, or the
- *  two injecting windows disagree about which rules match: a rule whose stored `appId` carries an
- *  invisible character is enforced in the main window (which normalizes on hydrate) and silently
- *  inert here, so correct-on-close would type into an app the user marked "never type here".
- *  Hydration's normalization is in-memory only — the persistence subscriber returns early unless
- *  `appRules` changed — so a rule that landed on disk before that fix keeps its raw key. */
-function normalizedAppRules(rules: AppRule[] | undefined | null): AppRule[] {
-  return (rules ?? [])
-    .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
-    .filter((r) => r.appId.length > 0);
-}
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
@@ -180,7 +166,9 @@ export default function QuickAdd() {
       themeRef.current = cfg.settings.theme;
       applyAccentAndTheme(cfg.settings.accentHue, cfg.settings.accentMotion, cfg.settings.theme);
       generalRef.current = cfg.settings.general;
-      appRulesRef.current = normalizedAppRules(cfg.appRules);
+      // No store in this window: apply the same appRules floor as hydration (wellFormedAppRules)
+      // so both injecting windows agree on which rules match.
+      appRulesRef.current = wellFormedAppRules(cfg.appRules);
     } catch (e) {
       // loadConfig() is a bare IPC invoke; a plumbing failure must not be an unhandled
       // rejection on a hotkey-summoned window (the refs keep their last good read).
@@ -197,7 +185,7 @@ export default function QuickAdd() {
         themeRef.current = cfg.settings.theme;
         applyAccentAndTheme(cfg.settings.accentHue, cfg.settings.accentMotion, cfg.settings.theme);
         generalRef.current = cfg.settings.general;
-        appRulesRef.current = normalizedAppRules(cfg.appRules);
+        appRulesRef.current = wellFormedAppRules(cfg.appRules);
       }
       const pin = cfg?.settings.quickAddList ?? null;
       const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
@@ -239,7 +227,8 @@ export default function QuickAdd() {
       // re-throw. The main app guards the same call in initConfig — this is the parallel path.
       if (gen !== loadGen.current) return;
       console.error("quick-add refresh failed:", e);
-      setFetchErr({ ok: false, status: 0, error: "Couldn’t load the quick-add configuration — try again." });
+      // status -1: a LOCAL failure, not a network one — 0 would title it "Couldn't reach the server".
+      setFetchErr({ ok: false, status: -1, error: "Couldn’t load the quick-add configuration — try again." });
       setPhase("error");
     }
   }, [fetchRecent]);
@@ -701,6 +690,8 @@ async function replaceSelectionAfterClose(
 
 function errTitle(f: PipelineFetch | null): string {
   switch (f?.status) {
+    case -1:
+      return "Couldn't load the configuration";
     case 0:
       return "Couldn't reach the server";
     case 401:

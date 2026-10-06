@@ -441,7 +441,10 @@ export function motionCostNote(period: number): { tone: "warn" | "note"; text: s
   const rate = 1000 / driftTickMs(period);
   if (rate < 1) return null;
   const n = Math.round(rate);
-  const words = rate < 2 ? "about once a second" : n === 2 ? "twice a second" : `${n} times a second`;
+  const words =
+    rate < 2
+      ? n <= 1 ? "about once a second" : "nearly twice a second"
+      : n === 2 ? "twice a second" : `${n} times a second`;
   return {
     tone: rate < 2 ? "note" : "warn",
     text: `Updates the colour ${words} in every open window, which keeps the CPU busy.`,

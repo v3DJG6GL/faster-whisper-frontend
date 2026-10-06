@@ -217,7 +217,7 @@ export default function Overlay() {
   // deserialised object on every tick and a reference compare never blocks (which quietly
   // defeated this guard for the motion term).
   const prevMotionRef = useRef<string>("");
-  const prevThemeRef = useRef<string>("auto");
+  const prevThemeRef = useRef<ThemeName>("auto");
 
   // Live updates from the Rust core when running under Tauri.
   useEffect(() => {
@@ -302,7 +302,9 @@ export default function Overlay() {
   // and would otherwise only pick the change up on its next dictation://update.
   // The chip's own drift clock: same wall-clock arithmetic as the main window, no message needed.
   useEffect(() => startAccentDrift(), []);
-  useEffect(() => watchSystemTheme(() => state.theme), [state.theme]);
+  // Read the APPLIED theme (prevThemeRef, "auto" like main.tsx's first stamp) — not
+  // state.theme, whose placeholder is "dark" until the first update — and subscribe once.
+  useEffect(() => watchSystemTheme(() => prevThemeRef.current), []);
 
   // Standalone demo animation (browser preview only).
   const raf = useRef(0);
@@ -359,15 +361,21 @@ export default function Overlay() {
     setSpeaking((prev) => (prev === sp ? prev : sp));
   }, [state.level, state.status]);
 
+  // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
+  // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
+  // layers its own presentation on top (see dotColorClass below).
+  const vis = dictationVisual(state.status, speaking, state.warming, state.serverWork);
+
   // Is the SERVER working behind a "listening" status? (a cold model load; or it holds / is
-  // decoding the last phrase while the user is silent — speech wins, exactly as in
-  // dictationVisual, which paints this blue). Everything that treats "listening + silent" as a
-  // calm, resting chip — the dim timer, the bar tone, the quick-launch row — must not during it.
-  const srvBusy =
-    state.status === "listening" &&
-    !state.warming &&
-    (state.serverWork === "loading" ||
-      (!speaking && (state.serverWork === "open" || state.serverWork === "decoding")));
+  // decoding the last phrase while the user is silent.) Read off the shared mapping above —
+  // which paints exactly this blue — rather than re-deriving it, so a new server-work state
+  // can't turn the dot blue while the chip still dims as if idle. Everything that treats
+  // "listening + silent" as a calm, resting chip — the dim timer, the bar tone, the
+  // quick-launch row — must not during it.
+  const srvBusy = state.status === "listening" && !state.warming && vis.state === "processing";
+  // The chip at rest: an armed-but-silent session with no server work behind it, or a docked
+  // standby dot. One predicate for the dim timer and the quick-launch row, so they agree.
+  const restingIdle = (state.status === "listening" && !speaking && !srvBusy) || state.status === "idle";
 
   const [expanded, setExpanded] = useState(false);
 
@@ -722,36 +730,14 @@ export default function Overlay() {
   const [dimmed, setDimmed] = useState(false);
   useEffect(() => {
     setDimmed(false);
-    // NOT calm while the server is working on the last phrase (srvBusy): fading a chip that is
-    // about to type would read as "done, nothing coming".
-    const restingCalm = (state.status === "listening" && !speaking && !srvBusy) || state.status === "idle";
-    if (expanded || hovering || !restingCalm || state.dimAfterSec <= 0) return;
+    // NOT calm while the server is working on the last phrase (srvBusy, folded into
+    // restingIdle): fading a chip that is about to type would read as "done, nothing coming".
+    if (expanded || hovering || !restingIdle || state.dimAfterSec <= 0) return;
     const t = setTimeout(() => setDimmed(true), state.dimAfterSec * 1000);
     return () => clearTimeout(t);
-  }, [expanded, hovering, state.status, speaking, srvBusy, state.dimAfterSec, sizeNudge]);
-
-  // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
-  // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
-  // race. Measuring scrollWidth on fast-updating text on WebKitGTK ran short and left the newest
-  // words clipped (the bug); letting the flexbox keep the child's end at the container's right edge
-  // is timing-independent. This effect only drives the cosmetic left-fade: show it when the text
-  // actually overflows its box (the span is wider than the clip).
-  const textRef = useRef<HTMLDivElement>(null);
-  const [faded, setFaded] = useState(false);
-  useLayoutEffect(() => {
-    const el = textRef.current;
-    if (!el) return;
-    const measure = () => {
-      const span = el.firstElementChild as HTMLElement | null;
-      setFaded(!!span && span.offsetWidth - el.clientWidth > 2);
-    };
-    measure();
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-    return () => ro.disconnect();
-    // hoverReveal/previewOnHover: in preview-on-hover mode the transcript element isn't mounted until
-    // the reveal flips, so the observer must (re)attach then — else the left-fade never measures.
-  }, [state.partial, expanded, hoverReveal, state.previewOnHover]);
+    // state.status / speaking stay deps although restingIdle covers them: a move between two
+    // resting states (silent listening → idle) is still a state change and restarts the timer.
+  }, [expanded, hovering, restingIdle, state.status, speaking, srvBusy, state.dimAfterSec, sizeNudge]);
 
   // Post-speech "working" phase: the server is finalizing the transcript and/or it's
   // being written out to the focused field. There's no audio to react to, so the chip
@@ -865,13 +851,11 @@ export default function Overlay() {
     }
   }, [state.sessionNote]);
 
-  // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
-  // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
-  // layers its own presentation on top: a tucked (peeked) dot is SOLID so its visible
-  // half reads (a hollow standby ring would all but vanish at half-size), and the
+  // Status dot colour: `vis` (the shared dictationVisual() mapping, computed above next to
+  // srvBusy). The chip layers its own presentation on top: a tucked (peeked) dot is SOLID so
+  // its visible half reads (a hollow standby ring would all but vanish at half-size), and the
   // docked standby dot at rest is a hollow ring. Active states (error / speaking /
   // finishing) keep their tone even while tucked.
-  const vis = dictationVisual(state.status, speaking, state.warming, state.serverWork);
   // The pill's status WORD comes from the SAME SSOT as the dot, so it can't drift from the dot / Home.
   // idle (post-session linger) → "" placeholder, never a stale "listening". Error's vis.label is unused
   // (the error branch renders dictationError instead).
@@ -936,18 +920,17 @@ export default function Overlay() {
   // working dot, or blue next to the teal translating one). Mirrors Home's waveTone derivation.
   // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
   // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
-  const barTone =
-    state.warming || processing || srvBusy
-      ? // "faint" can't actually reach here (it is the off/idle tone), but Waveform has no
-        // hollow-grey bar tone, so fold it to "dim" exactly as Home's waveTone does.
-        vis.tone === "faint"
-        ? "dim"
-        : vis.tone
-      : speaking
-        ? "live"
-        : state.status === "listening"
-          ? "armed"
-          : "dim";
+  const barTone = working
+    ? // "faint" can't actually reach here (it is the off/idle tone), but Waveform has no
+      // hollow-grey bar tone, so fold it to "dim" exactly as Home's waveTone does.
+      vis.tone === "faint"
+      ? "dim"
+      : vis.tone
+    : speaking
+      ? "live"
+      : state.status === "listening"
+        ? "armed"
+        : "dim";
 
   // The ✕'s meaning depends on the stage: a cancellable translate SKIPS the translation
   // (the original text still lands — what the failure toast already promises), where the
@@ -990,6 +973,33 @@ export default function Overlay() {
         </div>
       </div>
     ) : null;
+
+  // The NEWEST words are pinned to the RIGHT purely by LAYOUT — a flex justify-end row with a
+  // non-shrinking text child (see the transcript markup below) — so there's NO scrollLeft math to
+  // race. Measuring scrollWidth on fast-updating text on WebKitGTK ran short and left the newest
+  // words clipped (the bug); letting the flexbox keep the child's end at the container's right edge
+  // is timing-independent. This effect only drives the cosmetic left-fade: show it when the text
+  // actually overflows its box (the span is wider than the clip).
+  // Mirrors the JSX gate on the transcript slot below (phase row, then pulse/note, then words).
+  const transcriptMounted = !phaseRow && pulse !== "untranslated" && !note && partialShown;
+  const textRef = useRef<HTMLDivElement>(null);
+  const [faded, setFaded] = useState(false);
+  useLayoutEffect(() => {
+    const el = textRef.current;
+    if (!el) return;
+    const measure = () => {
+      const span = el.firstElementChild as HTMLElement | null;
+      setFaded(!!span && span.offsetWidth - el.clientWidth > 2);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+    // hoverReveal/previewOnHover: in preview-on-hover mode the transcript element isn't mounted until
+    // the reveal flips, so the observer must (re)attach then — else the left-fade never measures.
+    // transcriptMounted: likewise when the phase row / pulse / note gives the slot back with the
+    // words unchanged (a translate finishing) — the node remounts and must be observed again.
+  }, [state.partial, expanded, hoverReveal, state.previewOnHover, transcriptMounted]);
 
   // Deep-idle edge-peek driver: after the chip sits undisturbed for peekTimeoutSec, tuck it to
   // the edge; ANY activity — a status change (e.g. dictation starting), speech, finishing, a
@@ -1071,7 +1081,6 @@ export default function Overlay() {
   // peeked, speaking, finishing, or in error). Screen entries focus + navigate the main
   // window; action entries run a dictation action (routed through the main window).
   const hasQuickLaunch = state.quickLaunch.length > 0;
-  const restingIdle = (state.status === "listening" && !speaking && !srvBusy) || standby;
   // Gate quick-launch on the SAME delayed hover-intent as the language/mode detail (not raw
   // `hovering`), so the chip reveals everything in one step after the dwell — never expanding
   // abruptly under the cursor right as you reach for a button.

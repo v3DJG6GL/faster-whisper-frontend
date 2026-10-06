@@ -429,7 +429,14 @@ describe("motionCostNote", () => {
       expect(motionCostNote(p)).toMatchObject({ tone: "warn" });
       expect(motionCostNote(p)?.text).toContain("twice a second");
     }
-    for (const p of [181, 300, 360]) {
+    // 1.5–2 updates a second: still a note, but the words say what it is.
+    for (const p of [181, 239]) {
+      expect(motionCostNote(p)).toEqual({
+        tone: "note",
+        text: "Updates the colour nearly twice a second in every open window, which keeps the CPU busy.",
+      });
+    }
+    for (const p of [240, 300, 360]) {
       expect(motionCostNote(p)).toEqual({
         tone: "note",
         text: "Updates the colour about once a second in every open window, which keeps the CPU busy.",

@@ -92,7 +92,10 @@ function defaultDeps(): VisibilityDeps {
     doc: document,
     tauri: inTauri
       ? {
-          listen: async (event, cb) => (await import("@tauri-apps/api/event")).listen(event, cb),
+          // Scoped to THIS webview window: the global listen() targets Any, which every
+          // emit_to(label) matches, so one window's show/hide would flip all four.
+          listen: async (event, cb) =>
+            (await import("@tauri-apps/api/webviewWindow")).getCurrentWebviewWindow().listen(event, cb),
           isVisible: async () => (await import("@tauri-apps/api/window")).getCurrentWindow().isVisible(),
         }
       : undefined,
