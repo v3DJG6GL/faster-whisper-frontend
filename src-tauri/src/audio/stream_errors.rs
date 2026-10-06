@@ -234,5 +234,9 @@ mod tests {
             let now = t0 + Duration::from_millis(3_000) + Duration::from_micros(i * 900);
             assert_eq!(g.on_error(ErrorKind::Xrun, "x", now), Verdict::Continue);
         }
+        // Close the second hot bucket, so the quiet second's reset is actually exercised: without
+        // it the two separate bursts would count as a storm.
+        let after = t0 + Duration::from_millis(4_500);
+        assert_eq!(g.on_error(ErrorKind::Xrun, "x", after), Verdict::Continue);
     }
 }

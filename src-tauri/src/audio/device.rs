@@ -315,10 +315,12 @@ pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
                 watch_source,
             });
         }
-        // The sound server is held after a timeout and the probe did not answer: the pin was
-        // looked up on raw ALSA, where a server source can't be found. It isn't unplugged — record
-        // through the default input for now, without the "not connected" notice.
-        if id.as_ref().is_some_and(on_server) && server_hold() {
+        // The sound server is held after a timeout and the probe did not answer: a server pin, or a
+        // legacy name the held server could not map, was looked up on raw ALSA, where a server
+        // source can't be found. It isn't unplugged — record through the default input for now,
+        // without the "not connected" notice. (`id` is None only for a legacy name that resolved to
+        // nothing; ALSA id pins keep the notice.)
+        if server_hold() && id.as_ref().is_none_or(on_server) {
             tracing::warn!(
                 "[audio] sound server not answering; recording '{pin}' through the default input for now"
             );
@@ -351,7 +353,9 @@ pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
 }
 
 /// The config to capture with: the device's default, unless that sample format is one the capture
-/// loops don't convert (they take F32 / I16 / U16) — then F32 at the same rate, if offered.
+/// loops don't convert (they take F32 / I16 / U16) — then F32, I16 or U16 at the same rate and
+/// channel count, if offered (cpal ranks I32/I24 above I16, so a raw hw: path offering S16_LE and
+/// S32_LE defaults to I32).
 pub fn input_config(device: &Device) -> Result<cpal::SupportedStreamConfig, String> {
     let def = device.default_input_config().map_err(|e| e.to_string())?;
     if matches!(
@@ -360,14 +364,24 @@ pub fn input_config(device: &Device) -> Result<cpal::SupportedStreamConfig, Stri
     ) {
         return Ok(def);
     }
-    let f32_at_rate = device.supported_input_configs().ok().and_then(|mut it| {
-        it.find_map(|r| {
-            (r.sample_format() == cpal::SampleFormat::F32 && r.channels() == def.channels())
+    let ranges: Vec<_> = device
+        .supported_input_configs()
+        .map(|it| it.collect())
+        .unwrap_or_default();
+    let usable = [
+        cpal::SampleFormat::F32,
+        cpal::SampleFormat::I16,
+        cpal::SampleFormat::U16,
+    ]
+    .into_iter()
+    .find_map(|fmt| {
+        ranges.iter().find_map(|r| {
+            (r.sample_format() == fmt && r.channels() == def.channels())
                 .then(|| r.try_with_sample_rate(def.sample_rate()))
                 .flatten()
         })
     });
-    Ok(f32_at_rate.unwrap_or(def))
+    Ok(usable.unwrap_or(def))
 }
 
 /// The stream config for `supported`. Through the sound server, ask for ~20 ms callbacks: left at
