@@ -354,6 +354,7 @@ export function Stepper({
   unit,
   zeroLabel,
   ariaLabel,
+  describedBy,
   disabled,
   inherited,
   inheritNote,
@@ -370,6 +371,8 @@ export function Stepper({
   unit?: string;
   zeroLabel?: string;
   ariaLabel?: string;
+  /** `aria-describedby` for the inner input (e.g. the row's inherited-source note). */
+  describedBy?: string;
   disabled?: boolean;
   /** What an unset value inherits (shown greyed); unknown = `min`. */
   inherited?: number;
@@ -398,6 +401,10 @@ export function Stepper({
   focusedRef.current = focused;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // Whether the user typed since focusing: with no numeric inherited value the field shows
+  // `min` as a placeholder, so "text still equals value" can't tell focus-and-leave apart
+  // from deliberately typing the minimum.
+  const editedRef = useRef(false);
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const repeatRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -453,7 +460,8 @@ export function Stepper({
     const n = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
     // Focusing and leaving an inheriting field changes nothing, nor does emptying it or leaving
     // a lone "-" / ".": only a typed number overrides.
-    if (inheriting && (text === String(value) || !Number.isFinite(n))) {
+    const unchanged = inherited !== undefined ? text === String(value) : !editedRef.current;
+    if (inheriting && (unchanged || !Number.isFinite(n))) {
       setText(String(value));
       return;
     }
@@ -471,6 +479,9 @@ export function Stepper({
     return neg + (i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""));
   };
 
+  // −/+ step from the typed text while focused (stepBy), so their bounds must too.
+  const typedNow = decimals > 0 ? parseFloat(text) : parseInt(text, 10);
+  const cur = focused && Number.isFinite(typedNow) ? round(clamp(typedNow)) : value;
   const showZero = !focused && zeroLabel != null && value === 0;
   const showInheritedText = !focused && inheriting && inherited === undefined && inheritedText != null;
   const btn =
@@ -487,7 +498,7 @@ export function Stepper({
       <button
         type="button"
         aria-label={`Decrease${ariaLabel ? ` ${ariaLabel}` : ""}`}
-        disabled={disabled || value <= min}
+        disabled={disabled || cur <= min}
         onPointerDown={(e) => {
           if (e.button === 0) press(-step);
         }}
@@ -509,14 +520,19 @@ export function Stepper({
           value={showZero ? zeroLabel : showInheritedText ? inheritedText : text}
           inputMode={decimals > 0 ? "decimal" : "numeric"}
           aria-label={ariaLabel}
+          aria-describedby={describedBy}
           disabled={disabled}
           onFocus={(e) => {
             setFocused(true);
+            editedRef.current = false;
             setText(String(value));
             const el = e.currentTarget;
             requestAnimationFrame(() => el.select());
           }}
-          onChange={(e) => setText(filter(e.target.value))}
+          onChange={(e) => {
+            editedRef.current = true;
+            setText(filter(e.target.value));
+          }}
           onBlur={() => {
             setFocused(false);
             commit();
@@ -544,7 +560,7 @@ export function Stepper({
       <button
         type="button"
         aria-label={`Increase${ariaLabel ? ` ${ariaLabel}` : ""}`}
-        disabled={disabled || value >= max}
+        disabled={disabled || cur >= max}
         onPointerDown={(e) => {
           if (e.button === 0) press(step);
         }}

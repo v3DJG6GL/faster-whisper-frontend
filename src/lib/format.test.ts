@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fmtBytes, fmtTimestamp, plural, relTime } from "./format";
+import { fmtBitrate, fmtBytes, fmtTimestamp, plural, relTime } from "./format";
 
 describe("fmtTimestamp", () => {
   it("never renders 60.0 seconds — rounds to the tenth before splitting", () => {
@@ -54,5 +54,14 @@ describe("plural", () => {
     expect(plural(0, "subtitle")).toBe("0 subtitles");
     expect(plural(1240, "line")).toBe("1,240 lines");
     expect(plural(2, "switch", "switches")).toBe("2 switches");
+  });
+});
+
+describe("fmtBitrate", () => {
+  it("classifies on the rounded value — never \"1000 kbit/s\"", () => {
+    expect(fmtBitrate(999.4)).toBe("999 kbit/s");
+    expect(fmtBitrate(999.6)).toBe("1.0 Mbit/s");
+    expect(fmtBitrate(1500)).toBe("1.5 Mbit/s");
+    expect(fmtBitrate(0)).toBe("");
   });
 });
