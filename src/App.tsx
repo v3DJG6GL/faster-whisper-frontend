@@ -3,7 +3,7 @@ import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
 import { useApp } from "@/lib/store";
-import { initConfig } from "@/lib/persistence";
+import { flushConfigSave, initConfig } from "@/lib/persistence";
 import { migrateLegacyMicPin } from "@/lib/micMigration";
 import { initSync } from "@/lib/sync/sync";
 import { initOverlayController } from "@/lib/dictation/chipController";
@@ -11,7 +11,7 @@ import { initUsageController } from "@/lib/usage";
 import { initCapsController } from "@/lib/capabilities";
 import { initJobReconcile } from "@/lib/jobsReconcile";
 import {
-  noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate, onBeforeQuit, quitReady,
+  noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate, onBeforeQuit, onSessionEnding, quitReady,
 } from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/dictation/streaming";
@@ -19,6 +19,7 @@ import { SCREEN_PATH } from "@/lib/screenRegistry";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
 import { flushRecordWrites } from "@/lib/transcript/transcriptHistory";
+import { flushPersistEdits } from "@/lib/transcribeRun";
 import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
@@ -253,24 +254,44 @@ export default function App() {
     void migrateLegacyMicPin();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
-    // History coalesces rapid record writes (chunked translate); land them on a reload. A real
-    // quit never fires beforeunload — that goes through the `app://before-quit` handshake below.
-    window.addEventListener("beforeunload", flushRecordWrites);
-    return () => window.removeEventListener("beforeunload", flushRecordWrites);
+    // History coalesces rapid record writes (chunked translate) and debounces edits; land both on
+    // a reload. A real quit never fires beforeunload — that goes through the `app://before-quit`
+    // handshake below.
+    const onUnload = () => {
+      flushPersistEdits();
+      void flushRecordWrites();
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
   }, []);
 
-  // Quit handshake (tray Quit / the trayless close): land the coalesced History writes, then
-  // let Rust exit. It waits at most ~1.5 s for this, so a slow or failed save can't block quit.
+  // Quit handshake (tray Quit / the trayless close): land the debounced History edits, the
+  // coalesced History writes and the debounced config save, then let Rust exit. It waits at most
+  // ~1.5 s for this, so a slow or failed save can't block quit.
   useTauriListener(
     () =>
       onBeforeQuit(() => {
         void (async () => {
           try {
-            await flushRecordWrites();
+            flushPersistEdits();
+            await Promise.allSettled([flushRecordWrites(), flushConfigSave()]);
           } finally {
             void quitReady().catch(() => {});
           }
         })();
+      }),
+    [],
+  );
+
+  // Windows session end (shutdown / logoff): Rust asks for the same writes early, on
+  // WM_QUERYENDSESSION, without waiting for them. No quitReady here — the user may still cancel
+  // the shutdown, and quit_ready latches the quit handshake as answered for good.
+  useTauriListener(
+    () =>
+      onSessionEnding(() => {
+        flushPersistEdits();
+        void flushRecordWrites();
+        void flushConfigSave();
       }),
     [],
   );

@@ -934,15 +934,11 @@ export default function Overlay() {
     dotK === 1 ? baseDotGlow : baseDotGlow.replace(/(\d+)px/g, (_, n: string) => `${Number(n) * dotK}px`);
   // Match the dot + transcript during the post-speech working phase: take the tone from the
   // SAME dictationVisual() call the dot uses (else the bars would glow amber "ready" next to a
-  // working dot, or blue next to the teal translating one). Mirrors Home's waveTone derivation.
+  // working dot, or blue next to the teal translating one) — Home's waveTone is that tone too.
   // Armed-amber only while actually listening; idle (the post-session expand-linger) reads neutral
   // grey like the hollow idle dot + every other surface (off/idle = grey), not the amber "ready" tone.
   const barTone = working
-    ? // "faint" can't actually reach here (it is the off/idle tone), but Waveform has no
-      // hollow-grey bar tone, so fold it to "dim" exactly as Home's waveTone does.
-      vis.tone === "faint"
-      ? "dim"
-      : vis.tone
+    ? vis.tone
     : speaking
       ? "live"
       : state.status === "listening"

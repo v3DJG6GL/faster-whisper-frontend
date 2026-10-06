@@ -1,5 +1,6 @@
-// The editor half of the unsaved-work guard: registers with navGuard, covers
-// quitting the app, and hands the screen the state its confirm dialog needs.
+// The editor half of the unsaved-work guard: registers with navGuard, prompts
+// before a webview reload while dirty, and hands the screen the state its
+// confirm dialog needs.
 //
 // Lives in the EDITOR component (not the list screen) because only the editor
 // holds the draft and knows how to save it — "Save and leave" has to be able to
@@ -70,9 +71,11 @@ export function useUnsavedGuard(dirty: boolean): UnsavedGuard {
     [],
   );
 
-  // Quitting the app (or a reload in `pnpm dev`) isn't a route change, so it
-  // needs the platform's own prompt. Registered only while dirty — an
-  // always-on handler makes every quit sticky.
+  // A webview reload (`pnpm dev` / Ctrl+R) isn't a route change, so it needs
+  // the platform's own prompt. A real quit (tray Quit / trayless close) goes
+  // through app.exit, which never fires beforeunload (quit.rs), so an open
+  // draft is NOT guarded on quit. Registered only while dirty — an always-on
+  // handler makes every reload sticky.
   useEffect(() => {
     if (!dirty) return;
     const onBeforeUnload = (e: BeforeUnloadEvent) => e.preventDefault();
