@@ -245,7 +245,9 @@ describe("insertion gates the re-derivations must keep", () => {
   it("applyReclassify keeps startLiveInner's insertTiming-off term on its live recompute", () => {
     // The closed handler's off-drop only runs when `live` is false, so an "off" session that a
     // hold→hands-free upgrade flipped live would type every phrase.
-    expect(fns.startLiveInner).toContain('g.insertTiming !== "off" && liveAllowed(');
+    // (startLiveInner's extra `!askTargetsAtSettle` term is deliberately start-only: an armed
+    // push-to-talk picker's session shape never upgrades in place — see sessionShape.ts.)
+    expect(fns.startLiveInner).toContain('g.insertTiming !== "off" && !askTargetsAtSettle && liveAllowed(');
     expect(fns.applyReclassify).toContain('insertCfg.timing !== "off" && liveAllowed(');
   });
 
@@ -274,14 +276,14 @@ describe("work that must wait for the queue or the cancel", () => {
   // against an IPC or a queued task it raced, so pin the order in the source.
   const fns = topLevelFunctions(streamingSrc);
 
-  it("the stuck-finalize recovery copy waits for cancelLive before injecting", () => {
-    // cancelLive's cancelStream(true) bumps Rust's user-cancel injection epoch; landing between
-    // inject_text's epoch capture and its cancel check, it skips the write yet answers landed.
+  it("the stuck-finalize recovery copy waits for cancelLive before copying", () => {
+    // The copy must be the session's last clipboard write: cancelLive's teardown
+    // (cancelStream(true), endInjection) settles first.
     const body = mask(fns.armStuckWatchdog);
     expect(body).not.toMatch(/void cancelLive\(\)/);
     const wait = body.indexOf("await cancelled");
     expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
-    expect(body.indexOf("injectText(")).toBeGreaterThan(wait);
+    expect(body.indexOf("recoverTextToClipboard(")).toBeGreaterThan(wait);
   });
 
   it("the stuck-finalize recovery stands down for a session started while it awaited", () => {

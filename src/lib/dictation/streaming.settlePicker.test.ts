@@ -73,6 +73,14 @@ describe("the settle picker is armed for exactly one session", () => {
     expect(disarm).toBeGreaterThanOrEqual(0);
     expect(handsFree).toBeGreaterThan(disarm);
   });
+
+  it("an armed picker keeps the session off the live path", () => {
+    // Only the non-live branch of the closed handler asks; a hold session inserting via
+    // clipboard-only may otherwise go live, and the armed picker would never open.
+    const body = mask(bodyAfter(streamingSrc, "async function startLiveInner("));
+    const live = body.slice(body.indexOf("live:"), body.indexOf("liveAllowed(", body.indexOf("live:")));
+    expect(live).toContain("!askTargetsAtSettle");
+  });
 });
 
 describe("the session route dies with the session", () => {

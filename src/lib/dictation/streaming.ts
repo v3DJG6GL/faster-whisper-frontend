@@ -47,6 +47,7 @@ import {
   cancelRecord,
   retireSessionEpoch,
   injectText,
+  recoverTextToClipboard,
   beginInjection,
   endInjection,
   restoreClipboardSnapshot,
@@ -1347,6 +1348,22 @@ function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>
   });
 }
 
+/** The recovery copy after a failed or sink-skipped insert: copyForTarget, keeping only whether
+ *  the text really landed on the clipboard. A rejected copy is logged and answers `false`, so the
+ *  caller flashes the honest "Couldn't insert" instead of promising a clipboard recovery. */
+async function recoverToClipboard(
+  text: string,
+  t: Awaited<ReturnType<typeof resolveTarget>>,
+  what: string,
+): Promise<boolean> {
+  try {
+    return (await copyForTarget(text, t)).landed;
+  } catch (e) {
+    console.error(`clipboard fallback after ${what} failed:`, e);
+    return false;
+  }
+}
+
 /** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
  *  skip hint reflect the CURRENT focus. getFocusedApp returns a fresh object each call, so compare
  *  by value to avoid churning a cross-window emit + chip re-render on every poll tick. */
@@ -1422,8 +1439,8 @@ function consumePendingHoldStart(): void {
   const run = pendingStartRunner;
   if (!pending || !run) return;
   if (performance.now() - pending.at > PENDING_START_MAX_AGE_MS) return;
-  // Check THE PRESSED PROFILE's chord (its modifier subset — non-modifier keys aren't
-  // observable, and a modifier-less chord reads false = never auto-start). Testing the
+  // Check THE PRESSED PROFILE's chord (its modifier subset — non-modifier keys are ignored
+  // for cross-backend parity, and a modifier-less chord reads false = never auto-start). Testing the
   // specific chord, not "any modifier", keeps an unrelated held Shift from starting a
   // hold session whose release would never come.
   const chord = useApp.getState().profiles.find((p) => p.id === pending.profileId)?.hotkey ?? [];
@@ -1647,33 +1664,21 @@ function armStuckWatchdog(): void {
       // those two recovery paths. Live mode injected per-phrase already → "". endInjection (chained by
       // cancelLive) is a no-op in stop mode (nothing snapshotted), so there's no clobber race, and
       // cancelLive sets status "idle" synchronously and never re-touches it, so the flashError wins.
-      // The recovery copy WAITS for cancelLive, though: its cancelStream(true) bumps Rust's
-      // user-cancel injection epoch from spawn_blocking, and nothing orders that IPC against
-      // ours — a bump landing between inject_text's epoch capture and its cancel check skips the
-      // write yet still answers `landed: true`, promising a clipboard that never got the text.
-      // Awaited, the bump is in before inject_text reads its epoch.
+      // The recovery copy WAITS for cancelLive, though, so the copy is the session's last clipboard
+      // write: cancelLive's teardown (cancelStream(true), endInjection) has settled before it.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
-      // Captured BEFORE cancelLive() below, which nulls insertCfg — by the time the async
-      // recovery runs there is no session left to read the target from.
-      const pendingAppId = insertCfg?.targetApp?.appId ?? null;
       const cancelled = cancelLive().catch((e) => console.error("stuck-finalize cancel failed:", e));
       if (pending) {
         void (async () => {
           await cancelled;
           let onClipboard = false;
           try {
-            // Believe the ANSWER, not the attempt: `inject_text`'s own-window guard sits above the
-            // clipboard branch and returns `landed: false` having written nothing, so a promise of
-            // "it's on the clipboard" made on "the invoke didn't throw" can be false — and these
-            // recovery paths fire exactly when the user is most likely looking at (or clicking
-            // into) our own window. No re-send is introduced, so this cannot duplicate text.
-            //
-            // `expectAppId` is passed for uniformity only: on a clipboard-method call Rust
-            // returns from its clipboard arm BEFORE the per-app sink re-check that reads it, so
-            // the argument is inert here (and at every other clipboard-method site). The guard
-            // that CAN answer `landed: false` on this call is inject_text's own-window ENTRY
-            // check — which is what the "believe the answer" logic above relies on.
-            ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], expectAppId: pendingAppId, remoteDesktop: null }));
+            // Not `inject_text` with the clipboard method: its own-window entry guard writes
+            // nothing while one of our windows holds focus — exactly when these recovery paths
+            // fire (the user is most likely looking at, or clicking into, our own window).
+            // `recover_to_clipboard` has no such guard; it types nothing, so it cannot duplicate
+            // text. The answer is the clipboard write's own result: false = nothing was written.
+            onClipboard = await recoverTextToClipboard(pending);
           } catch (err) {
             console.error("clipboard recovery after stuck-finalize failed:", err);
           }
@@ -2154,42 +2159,32 @@ async function ensureListeners(): Promise<void> {
               // A cancel / fresh session landed during the await — this reject is the DISCARDED
               // session's, so don't recover/flash/teardown the freshly-started session B.
               if (insertCfg !== cfg) return;
-              if (t.method === "direct") {
-                // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
-                try {
-                  const copied = await copyForTarget(typeOut, t);
-                  flashError(
-                    copied.landed
-                      ? "Couldn’t type the text — it’s on the clipboard to paste manually."
-                      : "Couldn’t insert the text.",
-                  );
-                } catch (e2) {
-                  console.error("clipboard fallback after failed live insert failed:", e2);
-                  flashError("Couldn’t insert the text.");
-                }
-              } else {
-                // Paste failed, but the Rust paste path leaves the transcript on the clipboard on
-                // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
-                // WITHOUT restoring, so it should still be recoverable — ASK, don't assert.
-                //
-                // The comment that used to sit here claimed `inject_text` returns `landed: true`
-                // unconditionally for the clipboard method, so asking was pointless. That stopped
-                // being true: `set_clipboard_persistent` now returns a Result and the clipboard
-                // branch reports `landed: false` on a write failure. Asserting therefore promised
-                // a clipboard recovery in exactly the broken-clipboard environment where there
-                // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
-                let recoverable = false;
-                try {
-                  ({ landed: recoverable } = await copyForTarget(typeOut, t));
-                } catch (e2) {
-                  console.error("clipboard fallback after failed paste failed:", e2);
-                }
-                flashError(
-                  recoverable
-                    ? "Couldn’t paste the text — it’s on the clipboard to paste manually."
-                    : "Couldn’t insert the text.",
-                );
-              }
+              // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
+              // A failed paste: the Rust paste path leaves the transcript on the clipboard on
+              // failure (skip-restore-on-failed-paste) AND the teardown below drops the snapshot
+              // WITHOUT restoring, so it should still be recoverable — ASK, don't assert.
+              //
+              // The comment that used to sit here claimed `inject_text` returns `landed: true`
+              // unconditionally for the clipboard method, so asking was pointless. That stopped
+              // being true: `set_clipboard_persistent` now returns a Result and the clipboard
+              // branch reports `landed: false` on a write failure. Asserting therefore promised
+              // a clipboard recovery in exactly the broken-clipboard environment where there
+              // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
+              const recoverable = await recoverToClipboard(
+                typeOut,
+                t,
+                t.method === "direct" ? "failed live insert" : "failed paste",
+              );
+              // The recovery copy is another await — a cancel / fresh session landing during it
+              // must not get the discarded session's error flash or teardown either.
+              if (insertCfg !== cfg) return;
+              flashError(
+                recoverable
+                  ? t.method === "direct"
+                    ? "Couldn’t type the text — it’s on the clipboard to paste manually."
+                    : "Couldn’t paste the text — it’s on the clipboard to paste manually."
+                  : "Couldn’t insert the text.",
+              );
               teardownAfterFatalInject();
               return;
             }
@@ -2531,6 +2526,10 @@ async function ensureListeners(): Promise<void> {
             console.error("restore clipboard snapshot failed:", e);
           }
         }
+        // Re-check after the awaited restore (as bumpPhraseEnd's link does): cancelLive swaps in a
+        // fresh injectChain, so a new session's first paste can set clipDirty meanwhile — clearing
+        // it here would drop that session's restore debt.
+        if (insertCfg !== cfg) return;
         clipDirty = false;
       });
     }
@@ -2787,12 +2786,10 @@ async function ensureListeners(): Promise<void> {
             // write failure, so the assertion promised a recovery that may not exist. Asking costs
             // one extra clipboard write on a path that has already failed, and cannot duplicate
             // text (nothing was inserted).
-            let onClipboard = false;
-            try {
-              ({ landed: onClipboard } = await copyForTarget(outText, t));
-            } catch (e2) {
-              console.error("clipboard fallback after failed insert failed:", e2);
-            }
+            const onClipboard = await recoverToClipboard(outText, t, "failed insert");
+            // The recovery copy is another await — re-check, or a cancel / fresh session landing
+            // during it gets this discarded session's error (and flashError's warm-lease release).
+            if (insertCfg !== cfg) return;
             flashError(
               onClipboard
                 ? "Couldn’t insert the text — it’s on the clipboard to paste manually."
@@ -2829,12 +2826,9 @@ async function ensureListeners(): Promise<void> {
             // Claiming a clipboard recovery there would be the false confirmation this whole fix
             // removes. `outText`, not `text`: the translated transcript is what was being inserted,
             // and history has already booked it as the delivered translation.
-            let onClipboard = false;
-            try {
-              onClipboard = (await copyForTarget(outText, t)).landed;
-            } catch (e2) {
-              console.error("clipboard fallback after a sink-skipped insert failed:", e2);
-            }
+            const onClipboard = await recoverToClipboard(outText, t, "a sink-skipped insert");
+            // Same post-await re-check as the failed-insert recovery above.
+            if (insertCfg !== cfg) return;
             if (onClipboard) {
               sessionClipboard = true;
               // A clipboard-method skip has two possible causes (see sinkSkipMessage): no focus claim there.
@@ -2895,8 +2889,8 @@ async function ensureListeners(): Promise<void> {
       void (async () => {
         let onClipboard = false;
         try {
-          // Same as the stuck-finalize sibling: `landed: false` means nothing was written.
-          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], remoteDesktop: null }));
+          // Same as the stuck-finalize sibling: no own-window guard; false means nothing was written.
+          onClipboard = await recoverTextToClipboard(pending);
         } catch (err) {
           console.error("clipboard recovery after stream error failed:", err);
         }
@@ -3323,7 +3317,10 @@ async function startLiveInner(
     // that slips past the "off"→"stop" remap, or a race with a local migration): the
     // `closed` handler's `cfg.timing === "off"` guard drops the whole insert, but only
     // when `live` is false — otherwise phrases are injected live and that guard never runs.
-    live: g.insertTiming !== "off" && liveAllowed({ wants: pov?.typeAsISpeak ?? g.typeAsISpeak, endpoint, activation, method }),
+    // `!askTargetsAtSettle`: a push-to-talk session that asks for its targets answers at the
+    // one-shot insert, which a live session never reaches (clipboard-only would otherwise go
+    // live here, and the picker would never open).
+    live: g.insertTiming !== "off" && !askTargetsAtSettle && liveAllowed({ wants: pov?.typeAsISpeak ?? g.typeAsISpeak, endpoint, activation, method }),
   };
   // Freeze the history-capture metadata for this session (see sessionMeta).
   // The profile was stamped into the store synchronously before startLive.
@@ -3660,8 +3657,8 @@ export async function stopLive(): Promise<void> {
       void (async () => {
         let onClipboard = false;
         try {
-          // Same as the stuck-finalize sibling: `landed: false` means nothing was written.
-          ({ landed: onClipboard } = await injectText({ text: pending, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: [], remoteDesktop: null }));
+          // Same as the stuck-finalize sibling: no own-window guard; false means nothing was written.
+          onClipboard = await recoverTextToClipboard(pending);
         } catch (err) {
           console.error("clipboard recovery after stop reject failed:", err);
         }

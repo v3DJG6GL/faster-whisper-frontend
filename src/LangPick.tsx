@@ -242,7 +242,17 @@ export default function LangPick() {
           </>
         ) : (
           chosen.map((c) => (
-            <CodeChip key={c} code={c} size="md" onRemove={() => toggle(c)} />
+            <CodeChip
+              key={c}
+              code={c}
+              size="md"
+              // A mouse click focuses the chip, which then unmounts and drops
+              // focus to body, where letters never reach the filter.
+              onRemove={() => {
+                toggle(c);
+                inputRef.current?.focus();
+              }}
+            />
           ))
         )}
       </div>
