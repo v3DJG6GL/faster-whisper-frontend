@@ -336,6 +336,10 @@ mod imp {
     struct KeyEv {
         id: u16,
         down: bool,
+        /// Third-party SendInput (`LLKHF_INJECTED`, hook feed only — the raw feed drops
+        /// injected input). Such a key sends one down and never autorepeats, so the RDP
+        /// liveness rule in `resync_held` cannot vouch for it.
+        injected: bool,
     }
 
     /// The receiver→worker channel. `wndproc` is a bare `extern "system"` fn with no
@@ -769,7 +773,11 @@ mod imp {
                     let down = wparam == WM_KEYDOWN as usize || wparam == WM_SYSKEYDOWN as usize;
                     if let Ok(g) = TX.lock() {
                         if let Some(tx) = g.as_ref() {
-                            let _ = tx.send(KeyEv { id, down });
+                            let _ = tx.send(KeyEv {
+                                id,
+                                down,
+                                injected: kb.flags & LLKHF_INJECTED != 0,
+                            });
                         }
                     }
                 }
@@ -862,7 +870,11 @@ mod imp {
                         let down = kb.Flags as u32 & RI_KEY_BREAK == 0;
                         if let Ok(g) = TX.lock() {
                             if let Some(tx) = g.as_ref() {
-                                let _ = tx.send(KeyEv { id, down });
+                                let _ = tx.send(KeyEv {
+                                    id,
+                                    down,
+                                    injected: false,
+                                });
                             }
                         }
                     }
@@ -1016,8 +1028,16 @@ mod imp {
     /// phrase to the clipboard, silently, on a control that is designed never to produce a false
     /// positive. A chord with ONE modifier still down IS that situation (a staggered release),
     /// so the predicate fails toward arming.
+    ///
+    /// While a remote-desktop client has focus the OS reading is blind (its capture hook
+    /// swallows the keys it forwards, so a held chord reads UP — see `resync_held`), so there a
+    /// chord with any modifier arms the latch regardless: a false arm diverts one phrase to the
+    /// clipboard, a missed one types it into Ctrl/Shift still held on the remote.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
         if chord_mod_still_down(keys) {
+            crate::hotkeys::held_keys::arm_chord_lost();
+        } else if keys.iter().any(|&k| vk_to_evdev_mod(k).is_some()) && focus_is_remote(app) {
+            tracing::info!("[winhook] teardown stop with a remote-desktop client focused (OS key state blind there); arming the loss latch");
             crate::hotkeys::held_keys::arm_chord_lost();
         } else {
             tracing::info!("[winhook] teardown stop for a chord the OS reports released; not arming the loss latch");
@@ -1183,6 +1203,15 @@ mod imp {
         vk_down(layout_vk as u16) || (id & 0x8000 == 0 && vk_down(id))
     }
 
+    /// Is focus on a remote-desktop / VDI client, by EITHER `inject::rdp_client` detector (see
+    /// `rdp_client::focus_is_remote_desktop`); the app id is read only when the class misses.
+    fn focus_is_remote(app: &AppHandle) -> bool {
+        crate::inject::rdp_client::focus_is_remote_desktop(|| {
+            crate::focus::focused_app_now(app.state::<crate::focus::AtspiGuard>().inner())
+                .map(|f| f.app_id)
+        })
+    }
+
     /// How often the worker re-asks the OS about the keys it believes are held. Only
     /// *scheduled* while the held-set is non-empty — an idle worker blocks in `rx.recv()` with
     /// no deadline and polls nothing; a wake-up past the deadline still calls it once with an
@@ -1222,6 +1251,13 @@ mod imp {
     /// goes down. That
     /// keeps the repair for the RDP case the module header names first — a release swallowed
     /// in a re-arm gap — instead of stranding the key until focus leaves the client.
+    ///
+    /// Liveness cannot vouch for THIRD-PARTY INJECTED keys (`injected_held`: SpeechMike-style
+    /// companion apps, foot pedals, AutoHotkey — VK-only SendInput sends one down and never
+    /// autorepeats), so under RDP nothing is released while any of them is held: the
+    /// pre-liveness rule, scoped to those keys. Their lost release strands until focus leaves the
+    /// client. Known gap on the physical side: tapping another key during a hold stops the chord
+    /// key's typematic, so a hold with such a tap can be cut after RDP_LIVENESS.
     #[allow(clippy::too_many_arguments)]
     fn resync_held(
         app: &AppHandle,
@@ -1231,9 +1267,11 @@ mod imp {
         up_once: &mut HashSet<u16>,
         deb: &mut crate::hotkeys::debounce::Debouncer,
         last_down: &mut HashMap<u16, std::time::Instant>,
+        injected_held: &mut HashSet<u16>,
         now: std::time::Instant,
     ) {
         last_down.retain(|id, _| held.contains(id));
+        injected_held.retain(|id| held.contains(id));
         let up_now: HashSet<u16> = held
             .iter()
             .copied()
@@ -1244,12 +1282,14 @@ mod imp {
         *up_once = up_now;
         // Under RDP a held-set that is still repeating is held, whatever the OS says about its
         // earlier keys (only the last-pressed key repeats); every key keeps its strike and is
-        // asked again next poll.
+        // asked again next poll. An injected key never repeats, so while one is held the
+        // set counts as alive. Both detectors (focus_is_remote), read only when a release is pending.
         if !confirmed.is_empty()
-            && crate::inject::rdp_client::focus_is_remote_desktop_client()
-            && last_down
-                .values()
-                .any(|&t| now.saturating_duration_since(t) < RDP_LIVENESS)
+            && focus_is_remote(app)
+            && (!injected_held.is_empty()
+                || last_down
+                    .values()
+                    .any(|&t| now.saturating_duration_since(t) < RDP_LIVENESS))
         {
             confirmed.clear();
         }
@@ -1298,6 +1338,9 @@ mod imp {
         // When each held key last sent a down or autorepeat — the liveness signal resync_held
         // trusts under RDP, where the OS async state reads swallowed keys UP.
         let mut last_down: HashMap<u16, std::time::Instant> = HashMap::new();
+        // Held keys whose latest down was third-party SendInput — no autorepeat to prove them
+        // alive under RDP (see resync_held).
+        let mut injected_held: HashSet<u16> = HashSet::new();
         let mut next_resync = std::time::Instant::now() + RESYNC_INTERVAL;
 
         loop {
@@ -1345,12 +1388,18 @@ mod imp {
                     &mut up_once,
                     &mut deb,
                     &mut last_down,
+                    &mut injected_held,
                     now,
                 );
             }
             if let Some(ev) = ev {
                 if ev.down {
                     last_down.insert(ev.id, now);
+                }
+                if ev.down && ev.injected {
+                    injected_held.insert(ev.id);
+                } else {
+                    injected_held.remove(&ev.id);
                 }
                 if let Some((k, d)) = deb.on_event(ev.id, ev.down, held.contains(&ev.id), now) {
                     commit(&app, &held_keys, &mut held, &mut engine, k, d, false);

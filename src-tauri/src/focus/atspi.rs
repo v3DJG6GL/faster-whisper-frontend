@@ -131,6 +131,11 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Single-flight guard for the periodic deep-detection poke (see the ticker arm below).
     let poke_busy = Arc::new(AtomicBool::new(false));
+    // window:activate/deactivate events were lost while disconnected (`run` reuses this
+    // snapshot across reconnects), so a kept foreground mark may name an app the user has
+    // since left — and note_focus would reject every focus from the app actually in front.
+    // Fail open until the next window:activate, like "the moment after a switch".
+    snapshot.lock().active_app = None;
     tracing::info!("[atspi] focus listener started");
 
     // Resolve focus OFF the event loop, in a single COALESCING task that always works on
@@ -451,10 +456,7 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
             // bounds it via `sanitize_seed`, but `get_focused_selection` hands it straight
             // across the IPC into the QuickAdd webview, where it is only ever compared for
             // equality. SEL_MAX is far above any real selection, so the cap costs nothing.
-            Ok(s) => super::SelRead::Text(match s.char_indices().nth(crate::focus::SEL_MAX) {
-                Some((i, _)) => s[..i].to_string(),
-                None => s,
-            }),
+            Ok(s) => super::SelRead::Text(super::bounded_selection(s)),
             Err(_) => super::SelRead::Unavailable,
         }
     };

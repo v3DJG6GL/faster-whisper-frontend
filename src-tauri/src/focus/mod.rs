@@ -28,10 +28,21 @@ use std::sync::Arc;
 /// "org.gnome.Nautilus"); this is loose enough that no existing app rule stops matching.
 const APP_ID_MAX: usize = 200;
 
-/// Ceiling on an AT-SPI selection reply. The focused app picks the offsets, so it picks the
-/// length; this is the read-side bound so both consumers inherit it.
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // selection reads are AT-SPI (Linux)
+/// Ceiling on a selection read, from every source (the AT-SPI Text read, the PRIMARY fallback,
+/// the Windows clipboard re-grab). The focused app picks the offsets, so it picks the length;
+/// this is the read-side bound so every consumer inherits it.
 pub(crate) const SEL_MAX: usize = 64 * 1024;
+
+/// Cap a selection read at `SEL_MAX` (on a char boundary). The one helper every selection
+/// source applies at its read, so the bound cannot drift between them. Truncation cannot change
+/// the outcome downstream: the value is only compared for equality / against a mapping key that
+/// `sanitize_seed` already limits to a single line of <=100 characters.
+pub(crate) fn bounded_selection(s: String) -> String {
+    match s.char_indices().nth(SEL_MAX) {
+        Some((i, _)) => s[..i].to_string(),
+        None => s,
+    }
+}
 
 /// The focused application + (when known) whether its focused element is editable.
 /// Serialised camelCase for the frontend (`{ appId, title, editable, isSelf }`).
@@ -274,5 +285,15 @@ mod tests {
         assert!(should_log(30));
         assert!(!should_log(31));
         assert!(should_log(60));
+    }
+
+    #[test]
+    fn selection_reads_are_capped_at_sel_max_chars_on_a_char_boundary() {
+        let short = "hello wörld".to_string();
+        assert_eq!(super::bounded_selection(short.clone()), short);
+        let long = "ä".repeat(super::SEL_MAX + 5);
+        let capped = super::bounded_selection(long);
+        assert_eq!(capped.chars().count(), super::SEL_MAX);
+        assert!(capped.chars().all(|c| c == 'ä'));
     }
 }

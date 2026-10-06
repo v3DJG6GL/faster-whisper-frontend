@@ -60,7 +60,8 @@ fn suspend_shortcuts_blocking(app: &AppHandle) {
 /// the low-level backends' shared HeldKeys signal (evdev on Linux, hotkeys::windows on
 /// Windows; always false when only the plugin backend runs — it can't see raw key
 /// state). `codes` is the binding's `event.code` list; non-modifier members are
-/// unobservable and ignored, and a chord with NO modifiers answers false.
+/// ignored (projected onto the modifier subset for cross-backend parity; see
+/// held_keys::modifier_code), and a chord with NO modifiers answers false.
 /// Consumer: the frontend's queued-start path — a PTT press that landed during
 /// "finalizing…" auto-starts once the session settles, but only while ITS chord is
 /// still down. Checking the chord's own modifiers (not "any modifier") keeps an
