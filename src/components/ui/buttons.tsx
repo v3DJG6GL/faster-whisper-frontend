@@ -111,7 +111,7 @@ export function SplitButton({
   const placed = open && rect !== null;
   // Roving focus: the active row holds it while the menu is up.
   useEffect(() => {
-    if (placed) document.getElementById(`${menuId}-${active}`)?.focus({ preventScroll: true });
+    if (placed) document.getElementById(itemId(active))?.focus({ preventScroll: true });
   }, [placed, active, menuId]);
   useOutsidePress([menuRef, chevronRef], open, () => setOpen(false));
 

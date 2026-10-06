@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronDown, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/buttons";
-import { Select, Toggle } from "@/components/ui/form";
+import { Segmented, Select, Toggle } from "@/components/ui/form";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {
@@ -388,13 +388,14 @@ export function SettingRow({
    *  unit instead of the panel floating between two rows. */
   expand?: ReactNode;
 }) {
-  // A bare role="switch" Toggle or an unlabeled <select> has no accessible name (the title is a
-  // sibling <div>, not a <label htmlFor>). Auto-label a direct Toggle OR Select child with the row
-  // title so a screen reader announces what it controls; respects an explicit ariaLabel and leaves
+  // A bare role="switch" Toggle, an unlabeled <select> or a role="group" Segmented has no accessible
+  // name (the title is a sibling <div>, not a <label htmlFor>). Auto-label a direct Toggle, Select
+  // or Segmented child with the row title so a screen reader announces what it controls; respects an explicit ariaLabel and leaves
   // other control types untouched. (A control wrapped in its own <div> — e.g. the mic select with its
   // Refresh button — isn't a direct child, so those pass ariaLabel at the call site instead.)
   const control =
-    isValidElement(children) && (children.type === Toggle || children.type === Select)
+    isValidElement(children) &&
+    (children.type === Toggle || children.type === Select || children.type === Segmented)
       ? cloneElement(children as ReactElement<{ ariaLabel?: string }>, {
           ariaLabel: (children.props as { ariaLabel?: string }).ariaLabel ?? title,
         })

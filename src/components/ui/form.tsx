@@ -390,6 +390,12 @@ export function Stepper({
   // setInterval closure would otherwise capture a stale value and only ever move one step.
   const valueRef = useRef(value);
   valueRef.current = value;
+  // …and from the typed-but-uncommitted text while focused: an Arrow key or −/+ press after
+  // typing steps from what's in the field, not from the last committed value.
+  const textRef = useRef(text);
+  textRef.current = text;
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
   const delayRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -406,14 +412,25 @@ export function Stepper({
     repeatRef.current = null;
   }
   const stepBy = (d: number) => {
-    const next = round(clamp(valueRef.current + d));
-    if (next === valueRef.current) {
-      stopRepeat(); // hit a bound — stop repeating
+    const typed = decimals > 0 ? parseFloat(textRef.current) : parseInt(textRef.current, 10);
+    const base =
+      focusedRef.current && Number.isFinite(typed) ? round(clamp(typed)) : valueRef.current;
+    const next = round(clamp(base + d));
+    if (next === base) {
+      // Hit a bound — still commit a typed number that differs, then stop repeating.
+      if (base !== valueRef.current) {
+        onChangeRef.current(base);
+        textRef.current = String(base);
+        setText(String(base));
+      }
+      stopRepeat();
       return;
     }
     onChangeRef.current(next);
     // The resync effect skips a focused field, so follow the step here — else the blur commit
     // would re-commit the pre-step text and undo an Arrow-key or −/+ step made while focused.
+    // The ref too: a held repeat ticks before the re-render and must step from `next`.
+    textRef.current = String(next);
     setText(String(next));
   };
   // Press-and-hold: one step immediately, then repeat after a short delay (held mouse/touch).
