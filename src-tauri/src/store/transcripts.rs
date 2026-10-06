@@ -12,6 +12,17 @@
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
+/// Serialises a record write against the retention sweep's per-entry stat-then-unlink. The
+/// sweeps run on a background thread (`save_config`), so without it a save could rename a fresh
+/// record into place between the sweep's mtime check and its `remove_file`, and the just-saved
+/// record would be deleted. Held per entry, never for a whole sweep, so a save waits at most one
+/// stat + unlink.
+static RECORD_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn record_io_lock() -> std::sync::MutexGuard<'static, ()> {
+    RECORD_IO.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Sanity cap per record — a transcript with word timestamps of an hours-long
 /// file is single-digit MB; anything past this is not ours.
 const MAX_RECORD_BYTES: u64 = 32 * 1024 * 1024;
@@ -357,6 +368,7 @@ pub fn save_transcript_record(
     let path = dir.join(format!("{id}.json"));
     // Never in place: `read_records_into` silently skips a file that fails to parse, so a crash
     // between truncate and write would make the record vanish from History.
+    let _io = record_io_lock();
     crate::config::write_private_atomic(&path, &record).map_err(|e| e.to_string())
 }
 
@@ -678,14 +690,36 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     }
 }
 
-/// Delete records older than `days` (0 = keep forever), through the same clamped mtime sweep
-/// as `audio::prune_recordings` (`audio::prune_older_than`).
+/// Delete records older than `days` (0 = keep forever), with the same clamped mtime window as
+/// `audio::prune_older_than`. Its own loop rather than that helper: each entry is re-stat'd and
+/// unlinked under [`RECORD_IO`], so a record `save_transcript_record` just renamed into place
+/// (fresh mtime) is never deleted on the strength of the old file's age.
 pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
-    let removed = crate::audio::prune_older_than(dir, days, |e| {
-        e.path().extension().and_then(|x| x.to_str()) == Some("json")
-    });
+    if days == 0 {
+        return 0;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let effective = days.min(crate::audio::MAX_RETENTION_DAYS);
+    let cutoff = std::time::SystemTime::now()
+        - std::time::Duration::from_secs(u64::from(effective) * 86_400);
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|x| x.to_str()) != Some("json") {
+            continue;
+        }
+        let _io = record_io_lock();
+        let old = std::fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .map(|t| t < cutoff)
+            .unwrap_or(false);
+        if old && std::fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
     if removed > 0 {
-        let effective = days.min(crate::audio::MAX_RETENTION_DAYS);
         tracing::info!(
             "[transcripts] retention: removed {removed} record(s) older than {effective}d"
         );
@@ -730,9 +764,11 @@ fn wipe_records(dir: &Path) -> usize {
     let mut removed = 0;
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) == Some("json")
-            && std::fs::remove_file(&path).is_ok()
-        {
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let _io = record_io_lock();
+        if std::fs::remove_file(&path).is_ok() {
             removed += 1;
         }
     }

@@ -1050,14 +1050,28 @@ pub fn reset_unconfirmed(dir: &Path) -> bool {
     !path.exists() && path.with_extension("json.bak").exists()
 }
 
+/// Retention sweeps and log pruning must not run on a reset nobody has saved over (this
+/// session's, or an earlier launch's still-unconfirmed one).
+pub fn retention_held(dir: &Path) -> bool {
+    reset_this_session() || reset_unconfirmed(dir)
+}
+
 /// Where to stash a config backup: `config.json.bak`, after moving an existing `.bak` aside to
 /// a timestamped `config.json.bak.<secs>` sibling — a second reset in a later session must not
 /// replace the backup of the user's original settings with the post-reset file. When the old
-/// `.bak` can't be moved, the new backup takes the timestamped name instead.
+/// `.bak` can't be moved, the new backup takes the timestamped name instead. An existing `.bak`
+/// byte-identical to the file being backed up is reused as is: a locked corrupt config that
+/// `backup_unreadable` could only copy stays in place, and every later load this session (and
+/// every launch) would otherwise move yet another identical copy aside.
 fn bak_target(path: &Path) -> PathBuf {
     let bak = path.with_extension("json.bak");
     if !bak.exists() {
         return bak;
+    }
+    if let (Ok(old), Ok(new)) = (std::fs::read(&bak), std::fs::read(path)) {
+        if old == new {
+            return bak;
+        }
     }
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -1378,6 +1392,34 @@ mod tests {
             .collect();
         assert_eq!(aside.len(), 1);
         assert_eq!(std::fs::read(aside[0].path()).unwrap(), b"first");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_config_left_in_place_is_not_backed_up_again_and_again() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-bak3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(backup_unreadable(&path));
+        // The copy fallback leaves the corrupt original in place: put it back and back it up again.
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(backup_unreadable(&path));
+        assert_eq!(
+            std::fs::read(dir.join("config.json.bak")).unwrap(),
+            b"{not json"
+        );
+        let aside = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("config.json.bak.")
+            })
+            .count();
+        assert_eq!(aside, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

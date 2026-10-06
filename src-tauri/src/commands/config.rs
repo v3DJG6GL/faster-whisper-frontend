@@ -43,7 +43,7 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
     // A save over a reset (this session, or one nobody has saved over yet) carries the defaults'
     // retention windows, not the backed-up settings' — its sweeps must not delete that history.
-    let reset = config::reset_this_session() || config::reset_unconfirmed(&dir);
+    let reset = config::retention_held(&dir);
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart(&app, config.settings.general.open_at_login);
     // The retention sweeps are O(history) filesystem work; a sync command runs on the main
