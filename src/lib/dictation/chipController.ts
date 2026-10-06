@@ -86,6 +86,26 @@ export function chipRoutePending(
   return "";
 }
 
+/** The chip's whole route slot: the pending stand-in (`chipRoutePending`) plus the targets
+ *  and overflow count. An "ask" preview sends NO targets — the configured list is only the
+ *  picker's preselection, so showing it would promise a route the user has not chosen yet.
+ *  Pure, so that pairing is unit-tested rather than living only inside `chipPayload`. */
+export function chipRoute(
+  sessionTargets: string[] | null,
+  configured: string[] | undefined,
+  routePending: "undecided" | "choosing" | "original" | null,
+  status: string,
+  profileAsks: boolean | undefined,
+): { routePending: "" | "ask" | "undecided" | "choosing" | "original"; translateTo: string[]; translateMore: number } {
+  const rp = chipRoutePending(routePending, status, profileAsks);
+  if (rp === "ask") return { routePending: rp, translateTo: [], translateMore: 0 };
+  return {
+    routePending: rp,
+    translateTo: chipRouteTargets(sessionTargets, configured),
+    translateMore: chipRouteMore(sessionTargets, configured),
+  };
+}
+
 function validRouteTargets(sessionTargets: string[] | null, profileTargets: string[] | undefined): string[] {
   return (sessionTargets ?? profileTargets ?? []).filter(
     (t): t is string => typeof t === "string" && t.trim().length > 0,
@@ -188,10 +208,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // An ask-Profile's standby preview sends NO targets: its configured list is only the
     // picker's preselection, and "→ FR IT" on the dock promised a route the next chord press
     // would first ask about — the false promise this field replaces.
-    chip.routePending = chipRoutePending(state.routePending, state.status, chipProfile?.askTranslationTargets);
-    const previewHidden = chip.routePending === "ask";
-    chip.translateTo = previewHidden ? [] : chipRouteTargets(state.sessionTargets, configured);
-    chip.translateMore = previewHidden ? 0 : chipRouteMore(state.sessionTargets, configured);
+    Object.assign(
+      chip,
+      chipRoute(state.sessionTargets, configured, state.routePending, state.status, chipProfile?.askTranslationTargets),
+    );
   }
   // P28: a tiny usage readout (today's words/minutes) for the chip, gated by the
   // setting. Scoped to the same backend the stats controller tracks; omitted when
@@ -399,6 +419,7 @@ export async function initOverlayController(): Promise<void> {
     // Shown while a session is active, OR always (as a standby dot) when the dock is on.
     if (pos !== "off" && (active || persistent)) {
       clearTimeout(hideTimer);
+      hideTimer = undefined;
       // (Re)place the window on first show, on session start, or when the edge changes. The
       // window is anchored flush against that edge and never moves again for the peek — the
       // edge-peek tuck is a pure CSS transform in the chip (Overlay.tsx), so it animates
@@ -421,7 +442,22 @@ export async function initOverlayController(): Promise<void> {
     // status reaches "listening", or a late drain error after the chip already hid) — neither active
     // nor persistent, so the show gate above skipped it. Show it here first so the error linger below
     // actually displays it, then let it tear down as usual (the 2400ms error linger is preserved).
-    if (visible || (pos !== "off" && state.status === "error")) {
+    // Only an error EDGE (a new error status or message) does that: the store keeps "error" for
+    // ERROR_LINGER_MS, longer than the linger, so any unrelated write in that gap would re-show the
+    // error the chip had just hidden.
+    const errorEdge =
+      state.status === "error" && (prev.status !== "error" || state.dictationError !== prev.dictationError);
+    if (visible || (pos !== "off" && errorEdge)) {
+      // The linger is already armed with the right delay: an unrelated write (a document
+      // translation's 1 s progress tick, the level meter) must not re-arm it, or the chip
+      // never hides while that runs. Re-arm only on a status, error or position change.
+      if (
+        hideTimer !== undefined &&
+        state.status === prev.status &&
+        state.dictationError === prev.dictationError &&
+        pos === prev.settings.recording.indicatorPosition
+      )
+        return;
       clearTimeout(hideTimer);
       if (!visible && pos !== "off") {
         void showOverlay(pos, scale).catch((e) => console.error("showOverlay failed:", e));
@@ -431,6 +467,7 @@ export async function initOverlayController(): Promise<void> {
       }
       const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 1800;
       hideTimer = setTimeout(() => {
+        hideTimer = undefined;
         visible = false;
         shownPos = undefined; // force a re-place (and re-anchor) on the next show
         void hideOverlay().catch((e) => console.error("hideOverlay failed:", e));

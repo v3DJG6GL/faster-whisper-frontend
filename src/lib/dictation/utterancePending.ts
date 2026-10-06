@@ -23,8 +23,6 @@
  *    teardown) cannot latch the UI. Every real exit clears it long before.
  */
 
-export type UtteranceFrameState = "open" | "decoding" | "dropped";
-
 export const OPEN_STALE_MS = 3000;
 export const DECODING_MAX_MS = 30_000;
 /** Once the working state has been painted, keep it this long. A decode can finish in well

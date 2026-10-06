@@ -70,7 +70,7 @@ import { newCaptureIdBook } from "./captureIds";
 import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork } from "../types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
-import { normalizeAppId } from "../sanitize";
+import { appRuleKey } from "../sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
 import { newProgressId } from "../ids";
 
@@ -276,7 +276,8 @@ let clipBooked: { text: string | null; ctxLen: number } | null = null;
 /** The per-language tracks for the current clipboard window.  Each final in a clipboard-live
  *  window re-translates the GROWING window, so `accumulateByLang` must receive the LAST
  *  (complete) translation only — not every growing prefix. This buffer replaces on each
- *  final; `bumpPhraseEnd` / `clearPhraseEnd` flush it into `sessionByLang` once. */
+ *  final; `flushClipByLang` books it into `sessionByLang` once, from `bumpPhraseEnd`,
+ *  `clearPhraseEnd` and `settleIdle`. */
 let clipByLang: Record<string, string> | undefined;
 // Insertion config captured at dictation start.
 interface InsertCfg {
@@ -488,6 +489,15 @@ function accumulateByLang(byLang: Record<string, string> | undefined): void {
   }
 }
 
+/** Book the current clipboard window's buffered tracks (see clipByLang) exactly once, then
+ *  clear the buffer — a missed reset would book the window's translations twice. */
+function flushClipByLang(): void {
+  if (clipByLang) {
+    accumulateByLang(clipByLang);
+    clipByLang = undefined;
+  }
+}
+
 /** The session's tracks as finished strings, or undefined when empty. */
 function sessionTracks(): Record<string, string> | undefined {
   const out: Record<string, string> = {};
@@ -578,7 +588,8 @@ const PHRASE_GAP = "\n\n\n";
 // Same stages as the retro-translate card (its labels are shorter — it sits under
 // a translate-only heading). BatchProgress.stage is a plain
 // string, so an unknown stage (no entry yet — the request hasn't registered the
-// id) is absent here and keeps what we show.
+// id) is absent here and keeps what we show — read through ownProp, so a server stage
+// named like an inherited key ("constructor") is unknown too, not a function label.
 const TRANSLATE_PHASE_LABEL: Partial<Record<string, string>> = {
   downloading: "Downloading the translation model…",
   loading: "Loading the translation model…",
@@ -587,7 +598,7 @@ const TRANSLATE_PHASE_LABEL: Partial<Record<string, string>> = {
 function foldTranslatePhase(p: BatchProgress): void {
   const cur = useApp.getState().dictationPhase;
   if (!cur) return; // the phase was cleared (settled/cancelled) — a late poll adds nothing
-  const label = p.stage ? TRANSLATE_PHASE_LABEL[p.stage] : undefined;
+  const label = p.stage ? ownProp(TRANSLATE_PHASE_LABEL, p.stage) : undefined;
   if (!label) return;
   // No fraction exists for a GGUF load — leave the bar indeterminate rather
   // than inventing one from the elapsed time.
@@ -965,24 +976,30 @@ let injectChain: Promise<void> = Promise.resolve();
  *  on Linux: tens of milliseconds. Each queued closure retains its `target` and `phraseClip`, so
  *  the backlog holds up to two 4 MiB strings per link in the shared WebKitGTK renderer, and every
  *  link is also one more AT-SPI query amplified from one frame. `bankedDoc` was given an 8 MiB
- *  budget for exactly this shape; the queue that holds a full copy of each document had none. */
-let injectDepth = 0;
+ *  budget for exactly this shape; the queue that holds a full copy of each document had none.
+ *
+ *  One counter object per chain generation: startLiveInner / cancelLive swap in a fresh one
+ *  alongside the fresh `injectChain`, and each link decrements the counter it incremented. A
+ *  shared number reset to 0 would let the abandoned chain's finallys drive the new session's
+ *  depth negative — and the depth is read as `queuedAtEnqueue`, the translate ceiling's slack. */
+let injectDepth = { n: 0 };
 /** Far above any legitimate backlog — real speech produces finals seconds apart and the queue
  *  drains in tens of ms, so a depth this large means the server is emitting faster than the
  *  machine can inject, which is the flood and not a user. Dropping the newest rather than the
  *  oldest keeps the text already committed to the queue intact. */
 const MAX_INJECT_DEPTH = 64;
 function enqueueInject(fn: () => Promise<void>): void {
-  if (injectDepth >= MAX_INJECT_DEPTH) {
-    console.warn(`inject queue at ${injectDepth} — dropping this insert (server outpacing injection)`);
+  const d = injectDepth;
+  if (d.n >= MAX_INJECT_DEPTH) {
+    console.warn(`inject queue at ${d.n} — dropping this insert (server outpacing injection)`);
     return;
   }
-  injectDepth++;
+  d.n++;
   injectChain = injectChain
     .then(fn)
     .catch((e) => console.error("inject failed:", e))
     .finally(() => {
-      injectDepth--;
+      d.n--;
     });
 }
 
@@ -1077,7 +1094,7 @@ function bumpPhraseEnd(deferred = false): void {
     // "Clipboard only" holds just your latest phrase instead of the whole hard-break window.
     clipBaseline = committedDoc;
     clipBooked = null;
-    if (clipByLang) { accumulateByLang(clipByLang); clipByLang = undefined; }
+    flushClipByLang();
   }, PHRASE_END_QUIET_MS);
 }
 
@@ -1098,7 +1115,7 @@ function clearPhraseEnd(): void {
   clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
   clipBooked = null;
-  if (clipByLang) { accumulateByLang(clipByLang); clipByLang = undefined; }
+  flushClipByLang();
 }
 
 /** Must this injection go to the CLIPBOARD rather than the keyboard?
@@ -1216,10 +1233,10 @@ export function resolveInjectionTarget(
   //
   // Both injecting windows route through this function, so this covers the main window and QuickAdd
   // in one place. `expectAppId` still crosses to Rust raw, so the sink re-check is unchanged.
-  const liveId = targetApp ? normalizeAppId(targetApp.appId).toLowerCase() : null;
+  const liveId = targetApp ? appRuleKey(targetApp.appId) : null;
   const rule =
     liveId !== null
-      ? appRules.find((r) => normalizeAppId(r.appId).toLowerCase() === liveId)
+      ? appRules.find((r) => appRuleKey(r.appId) === liveId)
       : undefined;
   const notEditable = !!(
     g.deepFieldDetection && !rule?.block && !rule?.insertMethod && targetApp?.editable === false
@@ -1297,6 +1314,25 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
     isSelf,
     appId: targetApp?.appId ?? null,
   };
+}
+
+/** Copy `text` to the clipboard for a RESOLVED target — the clipboard-only phrase path and the
+ *  recovery copies after a failed or sink-skipped insert. `expectAppId` is passed for
+ *  uniformity only: on a clipboard-method call Rust returns from its clipboard arm BEFORE the
+ *  per-app sink re-check that reads it, so it is inert here. The guard that CAN answer
+ *  `landed: false` is inject_text's own-window ENTRY check (or a failed clipboard write) —
+ *  callers believe that answer rather than the attempt. The target-less recovery copies
+ *  (stuck-finalize, stream://error, stopLive reject) have no `t` and stay spelled out. */
+function copyForTarget(text: string, t: Awaited<ReturnType<typeof resolveTarget>>) {
+  return injectText({
+    text,
+    method: "clipboard",
+    autoEnter: false,
+    restoreClipboard: false,
+    pasteShortcut: t.pasteShortcut,
+    expectAppId: t.appId,
+    remoteDesktop: t.remoteDesktop,
+  });
 }
 
 /** Push the resolved injection target into the store (deduped) so the chip's "→ app" readout +
@@ -1411,7 +1447,7 @@ function settleIdle(keepError = false): void {
   // are the ones that abandon work mid-flight, and they all cancel.
   //
   // Flush any buffered clipboard-window translations before capture reads them.
-  if (clipByLang) { accumulateByLang(clipByLang); clipByLang = undefined; }
+  flushClipByLang();
   // Before the state flip: the capture reads the session docs (reset only by
   // the NEXT startLiveInner / cancelLive) and must run while they're intact.
   const saved = captureDictationHistory();
@@ -1578,7 +1614,17 @@ function armStuckWatchdog(): void {
   if (activeEndpoint !== "stream") return;
   stuckTimer = setTimeout(() => {
     stuckTimer = null;
-    if (useApp.getState().status === "transcribing") {
+    const st = useApp.getState().status;
+    // A post-stop phrase translating right now flipped "transcribing" to "translating" and
+    // translatePhrase's finally flips it back — without re-arming. Firing into that window
+    // must not spend the one-shot backstop, or a dead socket behind a slow translate leaves
+    // the chip on "finalizing…" for good. Re-arming is bounded by the translate ceiling, and
+    // `closed` / cancel still clear it.
+    if (st === "translating" && !isCapturing()) {
+      armStuckWatchdog();
+      return;
+    }
+    if (st === "transcribing") {
       console.warn(
         `[dictation] no stream close within ${STUCK_FINALIZE_MS}ms — forcing idle (connection lost?)`,
       );
@@ -1793,10 +1839,11 @@ async function ensureListeners(): Promise<void> {
   // missing ordinal is what identifies it here.
   type FinalFrame = { committed: string; tail: string; last: boolean; utterance: number | null };
   await reg<FinalFrame>("stream://final", (e) => {
-    // A cancelled/errored session's detached drain can still emit a late `final` on the
-    // un-advanced epoch (cancelLive/stopRecord don't bump ACTIVE_EPOCH, so emit_if_active
-    // still passes). Don't let it resurrect the preview / re-inject after the cancel cleared
-    // everything: only fold in a final while genuinely busy. Mirrors the partial handler's
+    // An errored session's draining stop (or a stop_record detached POST) can still emit a late
+    // `final` on the un-advanced epoch before retire_session_epoch lands, so emit_if_active
+    // still passes. cancel_stream/cancel_record retire the epoch themselves; this guard is the
+    // client-side backstop for those. Don't let a late final resurrect the preview / re-inject
+    // after the cancel cleared everything: only fold in a final while genuinely busy. Mirrors the partial handler's
     // `capturing` discriminator — a legitimate post-stop drain runs while transcribing/
     // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
     // (idle) and post-error (error) late emits are dropped.
@@ -1866,7 +1913,7 @@ async function ensureListeners(): Promise<void> {
       // retyped later. Translating before the diff (in a separate serial
       // translate queue, say) would advance the typed baseline at diff time and
       // lose skip-and-retype.
-      const queuedAtEnqueue = injectDepth;
+      const queuedAtEnqueue = injectDepth.n;
       // The server's ordinal for THIS utterance, captured synchronously with
       // everything else the queued task needs. It is how the phrase finds its
       // own capture id (and so its own held log receipt) instead of taking
@@ -1905,7 +1952,7 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             let landed = true;
             try {
-              ({ landed } = await injectText({ text: clipOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
+              ({ landed } = await copyForTarget(clipOut, t));
             } catch (e) {
               // A live phrase's clipboard copy failed: surface it AND tear the session down. Once
               // flashError sets status "error" no further phrase reaches this catch (the old "just
@@ -2057,7 +2104,7 @@ async function ensureListeners(): Promise<void> {
               if (t.method === "direct") {
                 // Direct typing never touches the clipboard → copy the phrase so it's recoverable.
                 try {
-                  const copied = await injectText({ text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+                  const copied = await copyForTarget(typeOut, t);
                   flashError(
                     copied.landed
                       ? "Couldn’t type the text — it’s on the clipboard to paste manually."
@@ -2080,10 +2127,7 @@ async function ensureListeners(): Promise<void> {
                 // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
                 let recoverable = false;
                 try {
-                  ({ landed: recoverable } = await injectText({
-                    text: typeOut, method: "clipboard", autoEnter: false, restoreClipboard: false,
-                    pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop,
-                  }));
+                  ({ landed: recoverable } = await copyForTarget(typeOut, t));
                 } catch (e2) {
                   console.error("clipboard fallback after failed paste failed:", e2);
                 }
@@ -2120,7 +2164,11 @@ async function ensureListeners(): Promise<void> {
               clipDirty = false;
               clipHoldsOurs = true;
             } else if (t.method === "paste" && delivered) {
-              clipDirty = true;
+              // The latest paste owns the clipboard, so ITS window's rule decides the restore —
+              // the snapshot gate and the separator path already honor t.restoreClipboard. A
+              // bare `true` re-armed an earlier window's snapshot over a restore-off app's
+              // transcript; `false` here also cancels that earlier window's pending restore.
+              clipDirty = t.restoreClipboard;
               clipHoldsOurs = true;
             }
             // Advance the TYPED baseline + pulse ONLY when the phrase actually landed: leaving it
@@ -2658,7 +2706,7 @@ async function ensureListeners(): Promise<void> {
             // text (nothing was inserted).
             let onClipboard = false;
             try {
-              ({ landed: onClipboard } = await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
+              ({ landed: onClipboard } = await copyForTarget(outText, t));
             } catch (e2) {
               console.error("clipboard fallback after failed insert failed:", e2);
             }
@@ -2700,7 +2748,7 @@ async function ensureListeners(): Promise<void> {
             // and history has already booked it as the delivered translation.
             let onClipboard = false;
             try {
-              onClipboard = (await injectText({ text: outText, method: "clipboard", autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop })).landed;
+              onClipboard = (await copyForTarget(outText, t)).landed;
             } catch (e2) {
               console.error("clipboard fallback after a sink-skipped insert failed:", e2);
             }
@@ -3251,7 +3299,7 @@ async function startLiveInner(
   sessionInsertSkipped = false;
   clearPhraseEnd();
   injectChain = Promise.resolve();
-  injectDepth = 0; // the old chain's finallys may drive it negative; only `>= MAX` reads it
+  injectDepth = { n: 0 }; // a new generation — the old chain's finallys decrement their own counter
   clearStuckWatchdog(); // fresh session — drop any leftover backstop
   resetServerWork(); // …and anything the previous session's server was reported doing
 
@@ -3454,7 +3502,10 @@ function applyReclassify(profile: Profile): void {
       // hold/clipboard term while its comment above claimed it recomputed "exactly as
       // startLiveInner does". Equal only because activation is "handsfree" by now; any term
       // added to the derivation would silently not have applied to an upgraded session.
-      insertCfg.live = liveAllowed({
+      // The `timing !== "off"` term mirrors startLiveInner's `live` too (timing is the frozen
+      // g.insertTiming): an "off" session that went live here would type every phrase, since
+      // the closed handler's off-drop only runs when `live` is false.
+      insertCfg.live = insertCfg.timing !== "off" && liveAllowed({
         wants: profile.typeAsISpeak ?? useApp.getState().settings.general.typeAsISpeak,
         // `activeEndpoint` is null only with no transport open, and this runs on a live
         // session — but "batch" is the safe read either way (it forbids live typing).
@@ -3620,7 +3671,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
-  injectDepth = 0;
+  injectDepth = { n: 0 };
   askTargetsAtSettle = null; // see settleIdle
   routeHint = null;
   useApp

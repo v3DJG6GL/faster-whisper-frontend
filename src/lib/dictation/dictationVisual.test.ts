@@ -167,10 +167,10 @@ describe("the chip's tone maps", () => {
       expect(mapKeys(name).sort()).toEqual([...TONES].sort());
     });
   }
-  it("the sidebar dot's DOT_BG (typed Record<string, string>) covers every DictationTone", () => {
-    // The one map TS cannot check: a tone added to the union would compile and render
-    // an unstyled dot in the sidebar.
-    const m = /const DOT_BG: Record<string, string> = \{([^}]*)\}/.exec(feedbackSrc);
+  it("the sidebar dot's DOT_BG covers every DictationTone", () => {
+    // DOT_BG is keyed by StatusTone (DictationTone ∪ the generic tones), so tsc already
+    // rejects a missing tone; this keeps the check if the map is ever loosened again.
+    const m = /const DOT_BG: Record<\w+, string> = \{([^}]*)\}/.exec(feedbackSrc);
     if (!m) throw new Error("DOT_BG not found in components/ui/feedback.tsx");
     const keys = [...m[1].matchAll(/^\s*([a-z]+):/gm)].map((k) => k[1]);
     for (const t of TONES) expect(keys, `DOT_BG lacks ${t}`).toContain(t);

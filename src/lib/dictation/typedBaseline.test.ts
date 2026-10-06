@@ -13,6 +13,13 @@ describe("commonPrefixLen", () => {
     expect(commonPrefixLen("abc", "abcdef")).toBe(3);
     expect(commonPrefixLen("abcdef", "abc")).toBe(3);
   });
+
+  it("never splits a surrogate pair", () => {
+    // U+1F600 and U+1F601 share their high surrogate; the split backs off to the character start.
+    expect(commonPrefixLen("a\u{1F600}", "a\u{1F601}")).toBe(1);
+    // An equal pair is still kept.
+    expect(commonPrefixLen("a\u{1F600}b", "a\u{1F600}c")).toBe(3);
+  });
 });
 
 describe("untypedRemainder", () => {
@@ -31,6 +38,10 @@ describe("untypedRemainder", () => {
   it("re-sends from a divergence, like the live diff (duplication over loss)", () => {
     expect(untypedRemainder("Er sagte „ja", "Er sagte „ja“ und ging.")).toBe("“ und ging.");
     expect(untypedRemainder("A, B", "A. B und C")).toBe(". B und C");
+  });
+
+  it("re-sends a whole astral character, never a lone low surrogate", () => {
+    expect(untypedRemainder("a\u{1F600}", "a\u{1F601}")).toBe("\u{1F601}");
   });
 });
 

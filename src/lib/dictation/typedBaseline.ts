@@ -16,11 +16,18 @@
  *    class only, never by text (the log ends up in bug reports).
  */
 
-/** Length of the longest common prefix of `a` and `b`, in UTF-16 code units. */
+/** Length of the longest common prefix of `a` and `b`, in UTF-16 code units. The split never
+ *  lands inside a surrogate pair: two astral characters (emoji, CJK Ext-B) can share a high
+ *  surrogate, and splitting there would type a lone low surrogate. Backing off one unit only
+ *  re-types that character (duplication over loss). */
 export function commonPrefixLen(a: string, b: string): number {
   const n = Math.min(a.length, b.length);
   let i = 0;
   while (i < n && a[i] === b[i]) i++;
+  if (i > 0 && i < n) {
+    const c = a.charCodeAt(i - 1);
+    if (c >= 0xd800 && c <= 0xdbff) i--;
+  }
   return i;
 }
 

@@ -227,3 +227,34 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(finalBody).toContain('if (typeof e.payload.utterance === "number" || pending.state === null) endUtterance();');
   });
 });
+
+describe("insertion gates the re-derivations must keep", () => {
+  const fns = topLevelFunctions(streamingSrc);
+  const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+
+  it("applyReclassify keeps startLiveInner's insertTiming-off term on its live recompute", () => {
+    // The closed handler's off-drop only runs when `live` is false, so an "off" session that a
+    // hold→hands-free upgrade flipped live would type every phrase.
+    expect(fns.startLiveInner).toContain('g.insertTiming !== "off" && liveAllowed(');
+    expect(fns.applyReclassify).toContain('insertCfg.timing !== "off" && liveAllowed(');
+  });
+
+  it("a delivered paste owes a restore only when its own window's rule asks for one", () => {
+    // A bare `clipDirty = true` re-armed an earlier window's snapshot over a restore-off app's
+    // transcript.
+    const block = bodyAfter(finalBody, 'else if (t.method === "paste" && delivered)');
+    expect(block).toContain("clipDirty = t.restoreClipboard");
+  });
+
+  it("each inject-chain generation counts its own depth", () => {
+    // A shared number reset to 0 lets the abandoned chain's finallys drive the new session's
+    // depth (the translate ceiling's slack) negative.
+    const enqueue = mask(fns.enqueueInject);
+    expect(enqueue).toContain("const d = injectDepth;");
+    expect(enqueue).toContain("d.n--");
+    expect(enqueue).not.toMatch(/\binjectDepth(\.n)?(\+\+|--)/);
+    for (const name of ["cancelLive", "startLiveInner"]) {
+      expect(mask(fns[name]), `${name} must start a new depth generation`).toMatch(/\binjectDepth = \{ n: 0 \}/);
+    }
+  });
+});

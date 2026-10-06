@@ -2,7 +2,14 @@
 // store or the cross-window payload it normally rides in.
 
 import { describe, expect, it } from "vitest";
-import { chipRouteMore, chipRoutePending, chipRouteTargets, configuredRouteTargets, trayStatus } from "./chipController";
+import {
+  chipRoute,
+  chipRouteMore,
+  chipRoutePending,
+  chipRouteTargets,
+  configuredRouteTargets,
+  trayStatus,
+} from "./chipController";
 
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge.
@@ -88,10 +95,19 @@ describe("chipRoutePending", () => {
   it("says 'ask' on the standby dock for a Profile that asks, and hides the preview", () => {
     // The configured targets are only the picker's preselection; previewing them as the
     // route promised what the next chord press would first ask about.
-    const pending = chipRoutePending(null, "idle", true);
-    expect(pending).toBe("ask");
-    const targets = pending === "ask" ? [] : chipRouteTargets(null, ["it", "es"]);
-    expect(targets).toEqual([]);
+    expect(chipRoute(null, ["it", "es"], null, "idle", true)).toEqual({
+      routePending: "ask",
+      translateTo: [],
+      translateMore: 0,
+    });
+  });
+
+  it("sends the configured route and its overflow when the Profile does not ask", () => {
+    expect(chipRoute(null, ["it", "es", "fr"], null, "idle", false)).toEqual({
+      routePending: "",
+      translateTo: ["it", "es"],
+      translateMore: 1,
+    });
   });
 
   it("previews the configured route for a Profile that does not ask", () => {
