@@ -61,6 +61,10 @@ export interface QueueItem {
   /** Failed row whose lost request was handed to a headless watcher: that server job
    *  id. A retry stops the watcher first; the watcher's ingest settles the row. */
   orphanJobId?: string;
+  /** Link items: the run planned the site's own transcript track but could not fetch it, so
+   *  it is transcribing the audio instead — the run panel shows the full rail from the moment
+   *  that is decided, not only once the result's warning lands. Cleared when the item runs. */
+  siteFallback?: boolean;
 }
 
 /** What a queue item runs as: a link (downloaded and transcribed server-side, even when it ends
@@ -1476,7 +1480,12 @@ export function reattachRun(row: LedgerRow): number {
   set({
     epoch,
     files: [row.path],
-    queue: [{ path: row.path, status: "running", kind: row.kind, title: row.title }],
+    // A link planned on the site's transcript track is ledgered only once it falls back to a
+    // server transcription (runLink): a reattached one is transcribing the audio.
+    queue: [{
+      path: row.path, status: "running", kind: row.kind, title: row.title,
+      ...(isUrl && linkUsesSiteTranscript(row.urlMeta) ? { siteFallback: true } : {}),
+    }],
     selectedPath: null,
     openRecordId: null,
     lastRunPath: row.path,
@@ -1794,6 +1803,8 @@ async function runLink(
   // (the pump's catch drops it silently on the epoch mismatch).
   if (epoch !== get().epoch) throw new Error("cancelled");
   if (!got.transcript) {
+    // Decided now: the server runs the full audio pipeline, so the rail must show it.
+    patchItem(url, { siteFallback: true });
     if (ledger) {
       await ledger();
       if (epoch !== get().epoch) throw new Error("cancelled");
@@ -1870,7 +1881,7 @@ async function pump(
         failFile(next.path, error);
         continue;
       }
-      patchItem(next.path, { status: "running" });
+      patchItem(next.path, { status: "running", siteFallback: undefined });
       // Live progress (full backend only): a fresh hex id per file keys the
       // server-side entry; a 1 s poll paints the rail. Best-effort — a poll
       // error (older backend, standard server) just leaves it indeterminate.

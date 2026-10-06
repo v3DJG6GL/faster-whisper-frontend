@@ -439,7 +439,11 @@ export function StatisticsView({
     const r = stats?.range;
     // An out-of-range day would throw in the date formatters, so the echo must be whole.
     const echoed = fresh && !!r && isDay(r.from) && isDay(r.to) && r.to > 0 && r.to >= r.from && r.days === r.to - r.from + 1;
-    return echoed ? { from: r!.from, to: r!.to, days: r!.days } : resolveWindow(query, today, r?.first_day);
+    if (echoed) return { from: r!.from, to: r!.to, days: r!.days, bounded: true };
+    // "All time" resolves to today..today until the first day is known: a stand-in, not a span.
+    const first = r?.first_day;
+    const bounded = query.range !== "all" || (isDay(first) && first <= today);
+    return { ...resolveWindow(query, today, r?.first_day), bounded };
   }, [fresh, stats, query, today, view]);
   const dense = useMemo(
     () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], win.days, win.to).filter((p) => p.day >= win.from && p.day <= win.to) : []),
@@ -517,7 +521,7 @@ export function StatisticsView({
           stale={!yearFresh}
           failed={yearFailed}
         />
-        <BusyPanel stats={stats} dense={dense} scope={scope} title={word} metric={metric} rhythm={rhythm} onRhythm={onRhythm} from={win.from} to={win.to} />
+        <BusyPanel stats={stats} dense={dense} scope={scope} title={word} metric={metric} rhythm={rhythm} onRhythm={onRhythm} from={win.from} to={win.to} bounded={win.bounded} />
       </div>
     </>
   );

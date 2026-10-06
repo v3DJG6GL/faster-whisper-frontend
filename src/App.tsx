@@ -20,6 +20,7 @@ import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/t
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
 import { flushRecordWrites } from "@/lib/transcript/transcriptHistory";
 import { flushPersistEdits } from "@/lib/transcribeRun";
+import { flushOutcomeSave } from "@/lib/usageOutcome";
 import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
@@ -266,7 +267,8 @@ export default function App() {
   }, []);
 
   // Quit handshake (tray Quit / the trayless close): land the debounced History edits, the
-  // coalesced History writes and the debounced config save, then let Rust exit. It waits at most
+  // coalesced History writes, the debounced config save and the debounced usage-outcome queue
+  // save, then let Rust exit. It waits at most
   // ~1.5 s for this, so a slow or failed save can't block quit.
   useTauriListener(
     () =>
@@ -274,7 +276,7 @@ export default function App() {
         void (async () => {
           try {
             flushPersistEdits();
-            await Promise.allSettled([flushRecordWrites(), flushConfigSave()]);
+            await Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
           } finally {
             void quitReady().catch(() => {});
           }
@@ -292,6 +294,7 @@ export default function App() {
         flushPersistEdits();
         void flushRecordWrites();
         void flushConfigSave();
+        void flushOutcomeSave();
       }),
     [],
   );

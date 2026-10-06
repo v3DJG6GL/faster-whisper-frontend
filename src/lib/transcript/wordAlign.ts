@@ -98,8 +98,8 @@ export function alignSegmentWords(
 ): TranscriptWord[] {
   if (!oldWords.length) return [];
   const trimmed = newText.trim();
-  const newToks =
-    !/\s/.test(trimmed) && UNSPACED_RE.test(trimmed) ? charTokens(oldWords, trimmed) : tokenize(newText);
+  const unspaced = !/\s/.test(trimmed) && UNSPACED_RE.test(trimmed);
+  const newToks = unspaced ? charTokens(oldWords, trimmed) : tokenize(newText);
   if (!newToks.length) return [];
   const a = oldWords.map((w) => norm(w.word));
   const b = newToks.map(norm);
@@ -118,6 +118,11 @@ export function alignSegmentWords(
   // Whisper's verbose_json words usually carry their separating space (" Wort");
   // rebuilt words follow whatever convention the original list uses.
   const spacey = oldWords.some((w) => /^\s/.test(w.word));
+  /** A rebuilt token's leading space. In an unspaced (CJK) line the tokens are pieces of
+   *  one run of text, so only the segment's first token or one standing where an old word
+   *  carried a space (a Latin " AI" inside the line) gets one — never one mid-line. */
+  const lead = (j: number, old?: TranscriptWord) =>
+    !spacey ? "" : !unspaced || j === 0 || (old && /^\s/.test(old.word)) ? " " : "";
   const out: TranscriptWord[] = [];
   /** Emit new tokens [nj0,nj1) over the span of old words [oi0,oi1). */
   const flush = (oi0: number, oi1: number, nj0: number, nj1: number) => {
@@ -141,7 +146,7 @@ export function alignSegmentWords(
     for (let j = nj0; j < nj1; j++) {
       const w = span * (newToks[j].length / (chars || 1));
       out.push({
-        word: (spacey ? " " : "") + newToks[j],
+        word: lead(j, j === nj0 && oi0 < oi1 ? oldWords[oi0] : undefined) + newToks[j],
         start: t,
         end: Math.min(end, t + w) || t,
       });
@@ -162,7 +167,7 @@ export function alignSegmentWords(
       out.push(
         oldWords[i].word.trim() === newToks[j]
           ? oldWords[i]
-          : { ...oldWords[i], word: (spacey ? " " : "") + newToks[j] },
+          : { ...oldWords[i], word: lead(j, oldWords[i]) + newToks[j] },
       );
       i++;
       j++;

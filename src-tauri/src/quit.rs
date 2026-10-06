@@ -1,9 +1,9 @@
 //! The quit handshake. A real exit (`app.exit`) never fires the webview's `beforeunload`, so the
 //! main window's pending writes would be lost on quit: History writes it has coalesced (up to
-//! 2 s), History edits still in their 800 ms debounce, and the 400 ms debounced config save. Tray
-//! "Quit" and the trayless main-window close therefore ask the main window first: emit
-//! `app://before-quit`, wait (bounded) for its `quit_ready` once it has landed all three, then run
-//! the usual exit sequence either way.
+//! 2 s), History edits still in their 800 ms debounce, the 400 ms debounced config save and the
+//! 300 ms debounced usage-outcome queue save. Tray "Quit" and the trayless main-window close
+//! therefore ask the main window first: emit `app://before-quit`, wait (bounded) for its
+//! `quit_ready` once it has landed all four, then run the usual exit sequence either way.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex};

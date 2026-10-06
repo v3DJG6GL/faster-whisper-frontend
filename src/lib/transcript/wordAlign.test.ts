@@ -92,6 +92,25 @@ describe("alignSegmentWords", () => {
     expect(out[2].start).toBe(ja[2].start);
     expect(out[2].end).toBeCloseTo(ja[2].end, 9);
   });
+
+  it("puts no space mid-line on a rebuilt CJK token (only where an old word had one)", () => {
+    const ja: TranscriptWord[] = [
+      { word: " 今日", start: 0, end: 0.4 },
+      { word: "は", start: 0.4, end: 0.6 },
+      { word: "晴れ", start: 0.6, end: 1.1 },
+      { word: "です", start: 1.1, end: 1.5 },
+    ];
+    expect(alignSegmentWords(ja, "今日は雨です").map((x) => x.word)).toEqual([" 今日", "は", "雨", "です"]);
+    // A rebuilt first token keeps the segment's leading space; the piece after it does not.
+    expect(alignSegmentWords(ja, "明日は晴れです").map((x) => x.word)).toEqual([" 明", "日", "は", "晴れ", "です"]);
+    // A Latin word that carried its own space keeps it when corrected.
+    const mixed: TranscriptWord[] = [
+      { word: " 今日", start: 0, end: 0.4 },
+      { word: " AI", start: 0.4, end: 0.8 },
+      { word: "です", start: 0.8, end: 1.2 },
+    ];
+    expect(alignSegmentWords(mixed, "今日MLです").map((x) => x.word)).toEqual([" 今日", " ML", "です"]);
+  });
 });
 
 describe("segmentWordRanges", () => {

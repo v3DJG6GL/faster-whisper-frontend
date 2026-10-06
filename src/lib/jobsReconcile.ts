@@ -58,6 +58,11 @@ const orphans = new Map<string, string>();
  *  (the newest-20 cap on every new request), so a big lost batch can drop a watched row
  *  while its job still runs — stopOrphan must still reach that job's server. */
 const watchedRows = new Map<string, LedgerRow>();
+/** Rows the running reconcile pass still works on (→ the row it snapshotted): the ledger can
+ *  evict one mid-pass (the newest-20 cap, the byte cap) while its status or result is in
+ *  flight, and the path-keyed stop and stopOrphan must still find it — else the pass lands
+ *  an old job beside the user's re-run of its file. Held only for the pass's lifetime. */
+const passRows = new Map<string, LedgerRow>();
 /** The job the rail's reattached watcher polls: never torn down by a record delete. */
 let attachedId: string | null = null;
 /** When this launch's reconcile started. Rows the pump persists from then on are its
@@ -224,7 +229,7 @@ const stopped = new Set<string>();
  *  the file's latest transcript) after the retry's; best-effort, the server stops it. */
 export function stopOrphan(jobId: string): void {
   // Before the watcher's stop, which drops its captured row (an evicted one is only there).
-  const row = ledgerRows().find((r) => r.jobId === jobId) ?? watchedRows.get(jobId);
+  const row = ledgerRows().find((r) => r.jobId === jobId) ?? watchedRows.get(jobId) ?? passRows.get(jobId);
   stopped.add(jobId);
   watching.get(jobId)?.();
   if (!row) return;
@@ -239,6 +244,8 @@ export function stopOrphan(jobId: string): void {
 setOrphanStop((paths) => {
   const ids = new Set<string>();
   for (const [jobId, p] of orphans) if (paths.includes(p)) ids.add(jobId);
+  // A row the reconcile pass is still on, which the ledger may already have evicted.
+  for (const [jobId, r] of passRows) if (r.path && paths.includes(r.path)) ids.add(jobId);
   for (const r of ledgerRows()) {
     if (!r.path || !paths.includes(r.path)) continue;
     if (orphans.has(r.jobId) || (r.startedAt < launchedAt && !watching.has(r.jobId))) ids.add(r.jobId);
@@ -253,6 +260,24 @@ setOrphanForget((jobId) => {
   stopOrphan(jobId);
 });
 
+/** Does a getJob "error" say nothing about the host being reachable? A status the server
+ *  answered (Rust's "HTTP <code>": a revoked key on ONE backend entry, a 500 for one job), an
+ *  over-large or unreadable body, a serde parse failure and a malformed id are per-row; only a
+ *  request that got no answer (connect, timeout, a dropped connection) is per-server. Rust
+ *  carries no kind on the outcome, so this reads its fixed message shapes (transport/jobs.rs,
+ *  transport/mod.rs body_capped_to / json_capped_to); anything unrecognised stays per-server,
+ *  which only costs the skipped rows a retry pass. */
+export function isPerRowJobError(message: string): boolean {
+  return (
+    /^HTTP \d/.test(message) ||
+    message === "malformed job id" ||
+    message.startsWith("The server sent an unreasonably large response") ||
+    message.startsWith("The server sent a response that wasn't valid text") ||
+    / at line \d+ column \d+$/.test(message) ||
+    /^(invalid (type|value|length)|unknown (variant|field)|missing field|duplicate field|expected |EOF while parsing|trailing (characters|comma)|control character|number out of range|key must be|lone leading surrogate|recursion limit exceeded)/.test(message)
+  );
+}
+
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
  *  cannot be reached. */
 export async function reconcileJobs(): Promise<void> {
@@ -266,52 +291,62 @@ export async function reconcileJobs(): Promise<void> {
     // Servers that failed to answer this pass: a dead host costs the status call's full
     // timeout per row, so its other rows wait for the next pass instead.
     const unreachable = new Set<string>();
+    // Already polled by a watcher, or a request this session's pump posted itself.
+    const mine = (row: LedgerRow) => !watching.has(row.jobId) && row.startedAt < launchedAt;
+    for (const row of rows) if (mine(row)) passRows.set(row.jobId, row);
     for (const row of rows) {
-      // Already polled by a watcher, or a request this session's pump posted itself.
-      if (watching.has(row.jobId) || row.startedAt >= launchedAt) continue;
-      if (unreachable.has(row.serverUrl)) {
-        retry = true;
-        continue;
-      }
-      // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
-      // server still holds the run for its TTL, but the app has no way to reach it.
-      if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
-        await forgetRow(row.jobId);
-        continue;
-      }
-      const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
-      // Stopped meanwhile (a retry of its file, a delete of its record).
-      if (stopped.has(row.jobId)) continue;
-      switch (r.kind) {
-        case "error":
-          unreachable.add(row.serverUrl);
+      if (!mine(row)) continue;
+      try {
+        if (unreachable.has(row.serverUrl)) {
           retry = true;
           continue;
-        case "disabled":
-          failJob(row, DISABLED_ERROR, { attached: false });
+        }
+        // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
+        // server still holds the run for its TTL, but the app has no way to reach it.
+        if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
           await forgetRow(row.jobId);
           continue;
-        case "not_found":
-          failJob(row, NOT_FOUND_ERROR, { attached: false });
+        }
+        const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
+        // Stopped meanwhile (a retry of its file, a delete of its record).
+        if (stopped.has(row.jobId)) continue;
+        switch (r.kind) {
+          case "error":
+            // Only a request that got no answer says the host is down; a per-row failure
+            // (one entry's revoked key, one job's 500 or unreadable body) must not hold back
+            // the server's other rows every pass until it ages out.
+            if (!isPerRowJobError(r.message)) unreachable.add(row.serverUrl);
+            retry = true;
+            continue;
+          case "disabled":
+            failJob(row, DISABLED_ERROR, { attached: false });
+            await forgetRow(row.jobId);
+            continue;
+          case "not_found":
+            failJob(row, NOT_FOUND_ERROR, { attached: false });
+            await forgetRow(row.jobId);
+            continue;
+          case "running":
+            // GET /v1/jobs/{id} never answers 409; treat like a transport hiccup.
+            retry = true;
+            continue;
+          case "ok":
+            break;
+        }
+        const status = r.value;
+        if (status.state === "running") {
+          running.push(row);
+        } else if (status.state === "done") {
+          // Not watched, so stopOrphan (a retry of its file, a delete of its record) cannot
+          // reach this ingest: re-check after each of its awaits instead.
+          if (!(await ingestDone(row, status, false, undefined, () => stopped.has(row.jobId)))) retry = true;
+        } else {
+          failJob(row, failedText(status), { attached: false });
           await forgetRow(row.jobId);
-          continue;
-        case "running":
-          // GET /v1/jobs/{id} never answers 409; treat like a transport hiccup.
-          retry = true;
-          continue;
-        case "ok":
-          break;
-      }
-      const status = r.value;
-      if (status.state === "running") {
-        running.push(row);
-      } else if (status.state === "done") {
-        // Not watched, so stopOrphan (a retry of its file, a delete of its record) cannot
-        // reach this ingest: re-check after each of its awaits instead.
-        if (!(await ingestDone(row, status, false, undefined, () => stopped.has(row.jobId)))) retry = true;
-      } else {
-        failJob(row, failedText(status), { attached: false });
-        await forgetRow(row.jobId);
+        }
+      } finally {
+        // Handled (or left for the next pass); a running row stays until it is watched.
+        if (!running.includes(row)) passRows.delete(row.jobId);
       }
     }
     // The newest running row takes the rail back — only from an untouched workbench
@@ -337,6 +372,8 @@ export async function reconcileJobs(): Promise<void> {
   } catch (e) {
     console.error("jobs reconcile failed:", e);
   } finally {
+    // Every row is handled or handed to a watcher (watchedRows holds it from here).
+    passRows.clear();
     inFlight = false;
   }
   if (retry && retries < MAX_RETRIES) {
@@ -365,6 +402,7 @@ export function _resetReconcileForTests(): void {
   retryTimer = undefined;
   watching.clear();
   watchedRows.clear();
+  passRows.clear();
   orphans.clear();
   stopped.clear();
   attachedId = null;

@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
 // The runtime flush posts through these; the pure state machine below never touches them.
-const post = vi.hoisted(() => ({ release: [] as (() => void)[] }));
+const post = vi.hoisted(() => ({ release: [] as (() => void)[], saves: [] as unknown[] }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   isTauri: true,
-  saveUsageOutcomes: async () => {},
+  saveUsageOutcomes: async (q: unknown) => {
+    post.saves.push(q);
+  },
   postUsageOutcomes: () => new Promise((res) => post.release.push(() => res({ ok: true, status: 200 }))),
 }));
 vi.mock("./store", () => ({ useApp: { getState: () => ({ configLoaded: false, configLoadFailed: false, backends: [] }) } }));
@@ -13,6 +15,7 @@ vi.mock("./store", () => ({ useApp: { getState: () => ({ configLoaded: false, co
 import {
   EMPTY_QUEUE,
   enqueueOutcome,
+  flushOutcomeSave,
   flushOutcomes,
   applyPost,
   backoffMs,
@@ -128,5 +131,28 @@ describe("flushOutcomes", () => {
     await second;
     expect(done).toBe(true);
     expect(post.release).toHaveLength(0); // the extra pass found nothing left to post
+  });
+});
+
+// A real exit never fires beforeunload: the quit handshake has to land the 300 ms debounced
+// save itself, or a session enqueued just before Quit never reaches the on-disk retry backlog.
+describe("flushOutcomeSave", () => {
+  it("lands a pending debounced save now, once", async () => {
+    await flushOutcomeSave(); // drain a timer an earlier test left armed
+    vi.useFakeTimers();
+    try {
+      const before = post.saves.length;
+      enqueueOutcome("b", "u", oc(hex(2)));
+      expect(post.saves).toHaveLength(before); // still in its debounce
+      await flushOutcomeSave();
+      expect(post.saves).toHaveLength(before + 1);
+      expect((post.saves[post.saves.length - 1] as { items: { outcome: UsageOutcome }[] }).items.map((i) => i.outcome.job_id)).toContain(hex(2));
+      await flushOutcomeSave(); // nothing pending any more
+      vi.advanceTimersByTime(1000); // and the debounce was consumed
+      expect(post.saves).toHaveLength(before + 1);
+    } finally {
+      vi.useRealTimers();
+      while (post.release.length) post.release.shift()!();
+    }
   });
 });

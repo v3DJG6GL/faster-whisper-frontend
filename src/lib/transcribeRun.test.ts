@@ -11,6 +11,9 @@ const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: bool
 const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribeFile>[0]) => Promise<never>>();
 // Unset = the real outside-Tauri command; the text-source join test answers it.
 const translateText = vi.fn<(args: Parameters<typeof import("./api").translateText>[0]) => Promise<import("./api").TextTranslationResult>>();
+// Unset = the real outside-Tauri commands; the site-transcript fallback test answers them.
+const transcribeUrl = vi.fn<(args: Parameters<typeof import("./api").transcribeUrl>[0]) => Promise<never>>();
+const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUrlSubtitles>[0]) => Promise<never>>();
 vi.mock("./api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./api")>();
   return {
@@ -20,6 +23,10 @@ vi.mock("./api", async (importOriginal) => {
       transcribeFile.getMockImplementation() ? transcribeFile(a) : orig.transcribeFile(a),
     translateText: (a: Parameters<typeof orig.translateText>[0]) =>
       translateText.getMockImplementation() ? translateText(a) : orig.translateText(a),
+    transcribeUrl: (a: Parameters<typeof orig.transcribeUrl>[0]) =>
+      transcribeUrl.getMockImplementation() ? transcribeUrl(a) : orig.transcribeUrl(a),
+    fetchUrlSubtitles: (a: Parameters<typeof orig.fetchUrlSubtitles>[0]) =>
+      fetchUrlSubtitles.getMockImplementation() ? fetchUrlSubtitles(a) : orig.fetchUrlSubtitles(a),
   };
 });
 
@@ -916,6 +923,48 @@ describe("reattachRun: a run found in the ledger takes the rail back", () => {
     cancelRun();
     expect(useTranscribeRun.getState().running).toBe(true); // cancelRun leaves `running` to the pump/watcher
     useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+  });
+
+  it("a reattached link planned on the site's transcript is the fallback transcription", async () => {
+    const { reattachRun } = await import("./transcribeRun");
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+    reattachRun({
+      v: 1, jobId: "d".repeat(32), backendId: "b1", serverUrl: "http://x", path: "https://youtu.be/f",
+      kind: "url", title: "Talk", options: {},
+      ctx: { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false },
+      urlMeta: { title: "Talk", siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } }, startedAt: 1,
+    });
+    expect(useTranscribeRun.getState().queue[0].siteFallback).toBe(true);
+    cancelRun();
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+  });
+});
+
+describe("a link whose site transcript track cannot be fetched", () => {
+  it("marks the RUNNING item as a fallback before the audio transcription is posted", async () => {
+    const url = "https://youtu.be/site";
+    fetchUrlSubtitles.mockImplementation(async () => { throw new Error("HTTP 403"); });
+    let atPost: QueueItem | undefined;
+    transcribeUrl.mockImplementation(async () => {
+      atPost = useTranscribeRun.getState().queue.find((it) => it.path === url);
+      throw new Error("HTTP 500: boom");
+    });
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    try {
+      useTranscribeRun.setState({
+        files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {},
+        urlMeta: { [url]: { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } } },
+      });
+      startRun(undefined, {}, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      expect(atPost?.status).toBe("running");
+      expect(atPost?.siteFallback).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+      fetchUrlSubtitles.mockReset();
+      transcribeUrl.mockReset();
+      useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {}, urlMeta: {} });
+    }
   });
 });
 

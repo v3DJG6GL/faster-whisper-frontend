@@ -230,6 +230,18 @@ describe("usageDerive", () => {
     expect(rhythmModel("hours", { hours }, "all", "words", 20_000, 20_006).cells.every((c) => c.inWindow)).toBe(true);
   });
 
+  it("rhythmModel hours: all time without a known first day hides no weekday", () => {
+    // UsageStats falls back to today..today for "All time" until the server names its first
+    // day: six weekday rows were hatched out, while the all-time document fills every one.
+    const hours: UsageHourCell[] = [0, 1, 2, 3, 4, 5, 6].map((dow) => ({ dow, hour: 9, all: 10, dictation: 10, file: 0, url: 0, text: 0 }));
+    const m = rhythmModel("hours", { hours }, "all", "words", 20_000, 20_000, false);
+    expect(m.cells.every((c) => c.inWindow)).toBe(true);
+    expect(m.occOf(m.cells[0])).toBe(1);
+    // And a span that claims to be real still never hides a row holding data.
+    const d = rhythmModel("hours", { hours }, "all", "words", 20_000, 20_000);
+    expect(d.cells.every((c) => c.inWindow)).toBe(true);
+  });
+
   it("rhythmModel: a words-only server is reported, not shown as zeros", () => {
     const hours: UsageHourCell[] = [{ dow: 0, hour: 8, all: 10, dictation: 10, file: 0, url: 0, text: 0 }];
     expect(rhythmModel("hours", { hours }, "all", "words", 1, 30).sent).toBe("yes");

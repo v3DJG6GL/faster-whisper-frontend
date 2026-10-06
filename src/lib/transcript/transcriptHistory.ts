@@ -403,18 +403,18 @@ export function deleteRecord(id: string): void {
 export function recordText(rec: TranscriptRecord, max = Infinity): string {
   const segs = rec.result?.segments;
   if (!segs?.length) return rec.result?.text ?? "";
-  // Joined as the viewer and the exports join them: no space between two CJK segments.
-  if (max === Infinity) return joinSegmentTexts(segs.map((s, i) => rec.edits?.[i] ?? s.text));
+  // Joined as the viewer and the exports join them — each part trimmed (raw segment text
+  // often leads with a space), no space between two CJK segments.
+  const part = (i: number) => (rec.edits?.[i] ?? segs[i].text).trim();
+  if (max === Infinity) return joinSegmentTexts(segs.map((_, i) => part(i)));
   // Bounded: a History snippet keeps 160 chars, so joining a 900-segment transcript per row
-  // per keystroke defeated the sanitizer's own output bound.
-  const parts: string[] = [];
-  let n = 0;
-  for (let i = 0; i < segs.length && n < max; i++) {
-    const p = rec.edits?.[i] ?? segs[i].text;
-    parts.push(p);
-    n += p.length + 1;
+  // per keystroke defeated the sanitizer's own output bound. Built seam by seam with the
+  // same rule, so the bound tests the real joined length (a CJK seam adds no space).
+  let out = "";
+  for (let i = 0; i < segs.length && out.length < max; i++) {
+    out = i ? joinSegmentTexts([out, part(i)]) : part(i);
   }
-  return joinSegmentTexts(parts).slice(0, max);
+  return out.slice(0, max);
 }
 
 /** The record's language tracks, original first, or null when it has none.

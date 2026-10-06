@@ -21,10 +21,11 @@ const ROLE_MAX: usize = 60;
 const MAX_RECENT_WORDS: usize = 500;
 /// A single dictated word or short phrase.
 const WORD_MAX: usize = 120;
-/// Env-pinned rule names echoed back by a save: a handful at most.
+/// Env-pinned setting names echoed back by a save: a handful at most.
 const MAX_ENV_PINNED: usize = 16;
-/// A rule name ("cb:map", a regex rule's id), never prose.
-const RULE_NAME_MAX: usize = 64;
+/// An env-pinned SETTING name ("PIPELINE_RULES"), never prose and never a rule name: the server
+/// reports which of the settings the save wrote are pinned by its environment.
+const SETTING_NAME_MAX: usize = 64;
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
@@ -65,9 +66,12 @@ pub struct PipelineSave {
     pub saved: Vec<String>,
     pub conflicts: serde_json::Value,
     pub requires_restart: bool,
-    /// Rules the server's environment pins: the PATCH skipped them, so the edit to
-    /// them never takes effect. MUST be declared here or serde drops it on the
-    /// pass-through and the webview shows a plain "Saved".
+    /// The env-pinned SETTING names among those the save wrote (the server's
+    /// `sorted(n for n in written if n in env_pinned)`), not rule names. A rules PATCH
+    /// writes only `PIPELINE_RULES`, so in practice this is `["PIPELINE_RULES"]` or empty:
+    /// when present the environment pins the WHOLE rule list and nothing in this save
+    /// takes effect. MUST be declared here or serde drops it on the pass-through and the
+    /// webview shows a plain "Saved".
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub env_pinned_ignored: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -188,7 +192,7 @@ pub async fn save_pipeline_rules(
                             b.env_pinned_ignored.truncate(MAX_ENV_PINNED);
                             b.env_pinned_ignored
                                 .iter()
-                                .map(|s| super::bounded_server_text(s, RULE_NAME_MAX))
+                                .map(|s| super::bounded_server_text(s, SETTING_NAME_MAX))
                                 .collect()
                         },
                         errors: None,

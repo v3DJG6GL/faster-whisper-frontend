@@ -27,7 +27,7 @@ function phraseRule(rhythm: Rhythm, measure: string): string {
  *  bars against a flat distribution (D43 M1), a peak line (D44 P1) and per-kind tooltips
  *  that pair the measure with sessions (D45 C1). The rhythm is the panel's own state
  *  (`?rhythm=`): it changes this panel, the measure changes every panel. */
-export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from, to }: {
+export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm, from, to, bounded = true }: {
   stats: UsageStats;
   dense: readonly UsageSeriesPoint[];
   scope: UsageScope;
@@ -37,10 +37,12 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
   onRhythm: (r: Rhythm) => void;
   from: number;
   to: number;
+  /** `from`..`to` is the real window, not the all-time stand-in (see rhythmModel). */
+  bounded?: boolean;
 }) {
   const model = useMemo(
-    () => rhythmModel(rhythm, { hours: stats.hours, dom_hours: stats.dom_hours, series: dense }, scope, metric, from, to),
-    [rhythm, stats.hours, stats.dom_hours, dense, scope, metric, from, to],
+    () => rhythmModel(rhythm, { hours: stats.hours, dom_hours: stats.dom_hours, series: dense }, scope, metric, from, to, bounded),
+    [rhythm, stats.hours, stats.dom_hours, dense, scope, metric, from, to, bounded],
   );
   const L = model.layout;
   const N = L.rows * L.cols;

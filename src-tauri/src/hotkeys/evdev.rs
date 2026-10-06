@@ -34,18 +34,15 @@ pub struct EvdevState(pub std::sync::Mutex<Option<Running>>);
 pub fn stop(state: &EvdevState) {
     if let Ok(mut g) = state.0.lock() {
         *g = None;
+        #[cfg(target_os = "linux")]
+        imp::retire_readers();
     }
 }
 
-/// Whether the evdev reader is live (a `start` stored its tasks and no `stop` has dropped
-/// them). False on a poisoned lock — the caller only uses it to decide on a re-scan.
 #[cfg(target_os = "linux")]
-pub fn is_running(state: &EvdevState) -> bool {
-    state.0.lock().map(|g| g.is_some()).unwrap_or(false)
-}
-
-#[cfg(target_os = "linux")]
-pub use imp::{permitted, setup, start, stop_held_sessions};
+pub use imp::{
+    any_hold_active, is_keyboard_node, permitted, reader_lost, setup, start, stop_held_sessions,
+};
 
 #[cfg(not(target_os = "linux"))]
 pub fn permitted() -> bool {
@@ -86,6 +83,39 @@ mod imp {
     /// Can we actually open a keyboard for reading (i.e. are we permitted)?
     pub fn permitted() -> bool {
         evdev::enumerate().any(|(_, d)| is_keyboard(&d))
+    }
+
+    /// Is `/dev/input/<node>` a keyboard we can open — the same test `permitted` and `start` apply,
+    /// so the suspend watch re-applies only for a node `start` would actually read (not a mouse, a
+    /// gamepad or a Bluetooth headset's AVRCP node). `node` is a bare `event*` name from a
+    /// `/dev/input` listing. Blocking open + ioctl: call off the main thread.
+    pub fn is_keyboard_node(node: &str) -> bool {
+        Device::open(std::path::Path::new("/dev/input").join(node)).is_ok_and(|d| is_keyboard(&d))
+    }
+
+    // Reader generations, so the suspend watch can tell "a running keyboard's stream ended" (it
+    // was unplugged and may re-enumerate under the SAME node name, which the node-name watch cannot
+    // see) from "a start/stop aborted the readers" (whose post-loop can still run past the abort
+    // point). Every start/stop bumps GENERATION; a reader whose stream ends records the generation
+    // it was spawned under in LOST_GEN, and `reader_lost` is true only while that is still the
+    // live generation — so the next start (the re-scan itself, or any other apply) clears it.
+    static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    static LOST_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// Start a new reader generation (called under the EvdevState lock by start / stop).
+    pub(super) fn retire_readers() -> u64 {
+        GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+
+    /// Whether a reader of the CURRENT start lost its keyboard (stream ended, not aborted).
+    pub fn reader_lost() -> bool {
+        use std::sync::atomic::Ordering;
+        LOST_GEN.load(Ordering::SeqCst) == GENERATION.load(Ordering::SeqCst)
+    }
+
+    /// Whether a push-to-talk chord is held right now on this backend — a restart would end it.
+    pub fn any_hold_active() -> bool {
+        ACTIVE_HOLDS.lock().map(|h| !h.is_empty()).unwrap_or(false)
     }
 
     /// The login name of the real uid, read from the passwd database.
@@ -245,8 +275,10 @@ mod imp {
             Ok(g) => g,
             Err(_) => return,
         };
-        // Drop + abort any previous readers, under the lock.
+        // Drop + abort any previous readers, under the lock. A new generation: whatever the old
+        // readers' post-loops report after this is not a lost keyboard of THIS start.
         *g = None;
+        let generation = retire_readers();
         // The abort skips their post-loop "stop" for a PTT chord held across this restart, so
         // emit it now — AFTER the abort, so no reader can start a hold this drain misses (see
         // commands::apply_bindings). Also covers the no-chords early return below.
@@ -282,7 +314,7 @@ mod imp {
                         return;
                     }
                 };
-                run_device(app, held_keys, stream, engine).await;
+                run_device(app, held_keys, stream, engine, generation).await;
             }));
         }
         tracing::info!(
@@ -508,6 +540,7 @@ mod imp {
         held_keys: crate::hotkeys::held_keys::HeldKeysWriter,
         mut stream: evdev::EventStream,
         mut engine: Engine,
+        generation: u64,
     ) {
         // `held_keys` mirrors physical key state into the shared signal `inject_text` reads,
         // so we never type into a still-held trigger modifier (see crate::hotkeys::held_keys). It is
@@ -558,10 +591,14 @@ mod imp {
                 commit(&app, &held_keys, &mut held, &mut engine, k, d, false);
             }
         }
-        // Nothing re-enumerates on its own; the suspend watch's /dev/input poll re-scans when a
-        // node appears (see `commands::shortcuts::InputNodeWatch`), so say why its chords went quiet.
+        // Nothing re-enumerates on its own: flag the loss for the suspend watch, which re-scans
+        // once /dev/input settles (see `commands::shortcuts::InputNodeWatch`) — this covers a
+        // keyboard that comes back under the same node name. A reader aborted by a start/stop
+        // carries a retired generation, so its post-loop never flags (see `reader_lost`).
+        // fetch_max: a stale reader's late post-loop must not overwrite a newer loss.
+        LOST_GEN.fetch_max(generation, std::sync::atomic::Ordering::SeqCst);
         tracing::info!(
-            "[evdev] keyboard stream ended (unplugged / read error); its chords stop until it re-attaches"
+            "[evdev] keyboard stream ended (unplugged / read error); re-scanning once /dev/input settles"
         );
         // The device stream ended (unplugged / read error). First commit every release still
         // parked in the debouncer — those keys ARE released, and a hold whose release is parked

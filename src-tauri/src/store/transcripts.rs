@@ -19,7 +19,9 @@ use tauri::{AppHandle, Manager};
 /// stat + unlink. The media-path rewriters (`rewrite_media_paths`, `heal_media_paths`) hold it
 /// per record across their read-parse-rewrite too: an audio-base move runs them on a blocking
 /// thread while saves and sweeps stay live, so an unlocked rewrite could overwrite a newer save
-/// with the stale copy it read, or resurrect a record a sweep just removed.
+/// with the stale copy it read, or resurrect a record a sweep or the user's delete just removed.
+/// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
+/// the two rewriters, and `delete_transcript_record` (across its sourcePath read + unlink).
 static RECORD_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn record_io_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -447,6 +449,9 @@ pub fn delete_transcript_record(
     }
     let name = format!("{id}.json");
     let file_path = transcripts_dir(&app)?.join(&name);
+    // Held across both branches' read + unlink — see `RECORD_IO`: a media-path rewrite that read
+    // this record before the unlink would otherwise rename its copy back into place afterwards.
+    let _io = record_io_lock();
     if file_path.exists() {
         return std::fs::remove_file(file_path).map_err(|e| e.to_string());
     }

@@ -562,6 +562,32 @@ describe("recordText", () => {
     expect(recordText(rec(en), 160)).toBe("Hello there. Bye.");
     expect(recordText(rec(en), 8)).toBe("Hello th");
   });
+
+  it("trims each segment's raw leading space before joining", () => {
+    // faster-whisper's segment.text usually leads with a space.
+    const raw = {
+      text: "",
+      segments: [
+        { id: 0, start: 0, end: 1, text: " 今日は" },
+        { id: 1, start: 1, end: 2, text: " 天気です" },
+      ],
+    };
+    expect(recordText(rec(raw))).toBe("今日は天気です");
+    expect(recordText(rec(raw), 160)).toBe("今日は天気です");
+    const en = { text: "", segments: [{ id: 0, start: 0, end: 1, text: " Hello." }, { id: 1, start: 1, end: 2, text: " Bye." }] };
+    expect(recordText(rec(en))).toBe("Hello. Bye.");
+    expect(recordText(rec(en), 160)).toBe("Hello. Bye.");
+  });
+
+  it("fills the bound with many short CJK segments (no phantom seam spaces counted)", () => {
+    const many = {
+      text: "",
+      segments: Array.from({ length: 300 }, (_, i) => ({ id: i, start: i, end: i + 1, text: "あ。" })),
+    };
+    const out = recordText(rec(many), 200);
+    expect(out).toHaveLength(200);
+    expect(out).toBe("あ。".repeat(100));
+  });
 });
 
 describe("selectRecord (useRecord's selector)", () => {

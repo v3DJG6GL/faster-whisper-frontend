@@ -192,6 +192,16 @@ function persist(): void {
   }, 300);
 }
 
+/** Land a pending debounced save now (the quit handshake / session end: a real exit never
+ *  fires beforeunload, so the timer would die with the process). Resolves at once when no
+ *  save is pending; never rejects. */
+export function flushOutcomeSave(): Promise<void> {
+  if (saveTimer === undefined) return Promise.resolve();
+  clearTimeout(saveTimer);
+  saveTimer = undefined;
+  return saveUsageOutcomes(queue).catch((e) => console.error("usage outcome queue save failed:", e));
+}
+
 /** Load the persisted queue (once) and post whatever is due. */
 export async function initOutcomeQueue(): Promise<void> {
   if (!isTauri || loaded) return;

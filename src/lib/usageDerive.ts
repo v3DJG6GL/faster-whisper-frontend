@@ -730,8 +730,18 @@ function rhythmPhrase(rhythm: Rhythm, values: readonly number[], colTot: readonl
 
 /** One rhythm of the busy panel for the scoped kind and the page's measure: the cells,
  *  levelled by quartiles of the active ones, the peak, the side-bar totals relative to a
- *  flat distribution, occurrences, the phrase, and whether this server sent what it needs. */
-export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope, metric: ChartMetric, from: number, to: number): RhythmModel {
+ *  flat distribution, occurrences, the phrase, and whether this server sent what it needs.
+ *  `bounded` = `from`..`to` is the window the document really covers; false for a stand-in
+ *  (all time before the server named its first day), which must not hatch weekday rows. */
+export function rhythmModel(
+  rhythm: Rhythm,
+  src: RhythmSource,
+  scope: UsageScope,
+  metric: ChartMetric,
+  from: number,
+  to: number,
+  bounded = true,
+): RhythmModel {
   const ok = isDay(from) && isDay(to) && from <= to;
   const f = ok ? from : 0;
   const t = ok ? to : 0;
@@ -777,8 +787,20 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   const monthIn = (row: number, col: number) =>
     Date.UTC(L.y0 + row, col, 1) / DAY_MS <= t && Date.UTC(L.y0 + row, col + 1, 0) / DAY_MS >= f;
   // Hours: likewise a weekday a short custom window never reaches (four of a 3-day span's
-  // seven rows) is out of the window, not a row of zero slots.
-  const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
+  // seven rows) is out of the window, not a row of zero slots. Only for a real window, and
+  // never over data: a row the document fills is in the window whatever the span says
+  // (a stand-in span would otherwise hide it while the column totals still count it).
+  let wd = rhythm === "hours" && bounded ? weekdayCounts(f, t) : null;
+  if (wd) {
+    const occ = wd;
+    for (let i = 0; i < N; i++) {
+      const g = grid[i];
+      if (g && occ[Math.floor(i / L.cols)] === 0 && metricValue(g[scope], metric) > 0) {
+        wd = null;
+        break;
+      }
+    }
+  }
   const cells: RhythmCell[] = [];
   for (let i = 0; i < N; i++) {
     const kinds = grid[i] ?? zeroKinds();

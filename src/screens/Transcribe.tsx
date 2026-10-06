@@ -724,8 +724,9 @@ export default function Transcribe() {
       setTranslateTo(next);
       persistOptions({ translateTo: next });
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters; translateTo is read, not watched
-  }, [knownSource, busy]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters; translateTo is read, not watched;
+    // siteChips as a boolean: the panel releasing the chips re-prunes, its per-render identity does not
+  }, [knownSource, busy, !!siteChips]);
 
   // The studio splitter: the rail width lives in the transcribe settings (local, never
   // synced); while a drag is in flight the live value is local state, persisted on release.
@@ -1854,10 +1855,13 @@ export default function Transcribe() {
             ? { ...lastOptions, translateTo: linkTranslateTo(lastOptions, panelUrlMeta) }
             : lastOptions;
         // A link answered by the site's own transcript track runs no audio stage — unless the
-        // track couldn't be fetched and the run fell back to transcribing the audio.
+        // track couldn't be fetched and the run fell back to transcribing the audio: marked on
+        // the item the moment the run decides it (still running), else by the settled result's
+        // warning (a reopened run).
         const siteT =
           forUrl &&
           linkUsesSiteTranscript(panelUrlMeta) &&
+          !panelItem?.siteFallback &&
           !(panelItem?.result?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
         const stages = railStages(panelOptions, forUrl, forText, siteT);
         // Requested stages the server jumped over (feature disabled there) —

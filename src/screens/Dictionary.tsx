@@ -835,9 +835,9 @@ export default function Dictionary() {
   // same (now stale) fingerprints — and the first one's finally would unfreeze the editor under it.
   const saveInFlight = useRef<Promise<boolean> | null>(null);
 
-  /** Save; `false` when something was not saved (an error, or rules that conflicted on the server), so
-   *  the leave guard keeps the user on-screen. A call while a save is already running joins that one
-   *  instead of sending another. */
+  /** Save; `false` when something was not saved (an error, rules that conflicted on the server, or a
+   *  setting the server's environment pins), so the leave guard keeps the user on-screen. A call while a
+   *  save is already running joins that one instead of sending another. */
   function save(): Promise<boolean> {
     if (saveInFlight.current) return saveInFlight.current;
     const p = runSave().finally(() => {
@@ -881,7 +881,9 @@ export default function Dictionary() {
       // A 2xx with conflicts still dropped those rules' edits (load() replaced them with server truth):
       // report not-saved so "Save and leave" stays on-screen and the banner's conflict notice is seen.
       const conflicted = Array.isArray(res.conflicts) && res.conflicts.length > 0;
-      return res.ok && !conflicted;
+      // Same for a 2xx the server's environment overrode: load() swapped the edit back, and leaving
+      // now would unmount the screen before the pinned notice is ever seen.
+      return res.ok && !conflicted && envPinnedOf(res).length === 0;
     } catch (e) {
       console.error("save pipeline rules failed:", e);
       if (backend.id === selectedIdRef.current) {
@@ -1043,7 +1045,7 @@ export default function Dictionary() {
         <Stack gap={4}>
           {/* A save that went through, then lost its follow-up reload: keep its notice above the error
               (runSave sets `result` after load(); Retry's load() clears it). */}
-          {result && <SaveBanner result={result} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
+          {result && <SaveBanner result={result} reloadFailed reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
           <FetchError fetch={fetchRes} backendName={safeDisplayText(backend?.name, 80) || "the server"} onRetry={() => backend && load(backend)} />
         </Stack>
       ) : rules.length === 0 ? (
@@ -1160,7 +1162,30 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
   }
 }
 
-function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSaveResult; reloadDisabled: boolean; onReload: () => void }) {
+/** The setting names the server's environment pinned, so the save did not change them. `env_pinned_ignored`
+ *  is opaque server JSON: coerce it like `errors`/`conflicts`. In practice it is only ever `PIPELINE_RULES`
+ *  (the WHOLE rule list), never a rule name. */
+function envPinnedOf(result: PipelineSaveResult): string[] {
+  return (Array.isArray(result.env_pinned_ignored) ? result.env_pinned_ignored : [])
+    .filter((s): s is string => typeof s === "string")
+    .slice(0, 16);
+}
+
+/** The setting that holds every rule: pinned, nothing in the save takes effect. */
+const RULE_LIST_SETTING = "PIPELINE_RULES";
+
+function SaveBanner({
+  result,
+  reloadFailed = false,
+  reloadDisabled,
+  onReload,
+}: {
+  result: PipelineSaveResult;
+  /** The save's follow-up reload is what failed (the fetch-error view): never claim it landed. */
+  reloadFailed?: boolean;
+  reloadDisabled: boolean;
+  onReload: () => void;
+}) {
   // Validation failure — keep the user's edits so they can fix them. `errors` is opaque server JSON:
   // a non-array value (e.g. a bare string from a buggy/old/proxied server) passes a plain `.length`
   // truthy check and then crashes `.slice().map()`, white-screening the route. Coerce to an array
@@ -1209,38 +1234,47 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
   // value would make a plain `.length` produce a bogus count. Coerce to an array first — mirrors
   // the `errors` sibling above and the GET-path rule coercion (ruleListOf).
   const conflicts = (Array.isArray(result.conflicts) ? result.conflicts : []).length;
-  // Same opaque-JSON coercion: rules an environment variable pins on the server were skipped.
-  const pinned = (Array.isArray(result.env_pinned_ignored) ? result.env_pinned_ignored : [])
-    .filter((s): s is string => typeof s === "string")
-    .slice(0, 16);
+  // Settings an environment variable pins on the server were skipped. The rule list pinned means the
+  // server ignored the whole save, so there is nothing "Saved" to report.
+  const pinned = envPinnedOf(result);
+  const listPinned = pinned.includes(RULE_LIST_SETTING);
+  const otherPinned = pinned.filter((n) => n !== RULE_LIST_SETTING);
   return (
     <div className="space-y-2">
-      {result.saved.length > 0 && (
+      {result.saved.length > 0 && !listPinned && (
         <Notice tone="ok">
           Saved {plural(result.saved.length, "rule")}.
           {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
         </Notice>
       )}
-      {pinned.length > 0 && (
+      {listPinned && (
+        <Notice>The server's environment pins the rule list — none of these changes take effect.</Notice>
+      )}
+      {otherPinned.length > 0 && (
         <Notice>
-          The server's environment pins {pinned.map((n) => safeDisplayText(n, 64)).join(", ")} — the change to{" "}
-          {pinned.length === 1 ? "this rule" : "these rules"} was not applied and won't take effect until the
-          operator unsets that variable.
+          The server's environment pins {otherPinned.map((n) => safeDisplayText(n, 64)).join(", ")} — the change
+          was not applied and won't take effect until the operator unsets{" "}
+          {otherPinned.length === 1 ? "that variable" : "those variables"}.
         </Notice>
       )}
       {conflicts > 0 && (
         <Notice>
           {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
-          The latest version has been reloaded.{" "}
-          <button
-            type="button"
-            disabled={reloadDisabled}
-            title={reloadDisabled ? "Discard or save your changes first — Reload replaces them with the server's version" : undefined}
-            className="ring-signal underline hover:text-text disabled:no-underline disabled:opacity-40"
-            onClick={onReload}
-          >
-            Reload again
-          </button>
+          {/* In the fetch-error view the reload is what failed: its own Retry is the way back. */}
+          {!reloadFailed && (
+            <>
+              {" "}The latest version has been reloaded.{" "}
+              <button
+                type="button"
+                disabled={reloadDisabled}
+                title={reloadDisabled ? "Discard or save your changes first — Reload replaces them with the server's version" : undefined}
+                className="ring-signal underline hover:text-text disabled:no-underline disabled:opacity-40"
+                onClick={onReload}
+              >
+                Reload again
+              </button>
+            </>
+          )}
         </Notice>
       )}
     </div>

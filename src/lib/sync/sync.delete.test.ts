@@ -29,6 +29,9 @@ const api = vi.hoisted(() => ({
   pulled: null as unknown,
   /** Answered (once each, in order) with a 409 carrying this state instead of a 200. */
   conflicts: [] as unknown[],
+  /** When set, a GET waits on it before answering with `pulled`. */
+  pullPark: null as null | Promise<void>,
+  pullCalled: false,
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -47,7 +50,11 @@ vi.mock("../api", async (importOriginal) => {
       if (conflict) return { ok: false, status: 409, conflict };
       return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 1, device: "me", blob: {} } };
     },
-    syncPull: async () => ({ ok: true, status: 200, state: api.pulled }),
+    syncPull: async () => {
+      api.pullCalled = true;
+      if (api.pullPark) await api.pullPark;
+      return { ok: true, status: 200, state: api.pulled };
+    },
   };
 });
 
@@ -285,6 +292,43 @@ describe("a 409 against a deleted server copy", () => {
     } finally {
       api.keys = null;
       api.conflicts = [];
+    }
+  });
+});
+
+// A review adopts no base, so a pull running when the user clicks Apply re-raises the SAME review
+// as a new object. The approval waits for that pull, then compared by identity and returned
+// silently: the dialog's button came back and nothing was applied.
+describe("approving a review while a pull re-raises it", () => {
+  it("still applies", async () => {
+    await resetSyncState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+    useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+    api.keys = { b1: "sk-secret" };
+    let release: () => void = () => {};
+    try {
+      await pushNow(true);
+      const remote = structuredClone(api.pushed) as SyncBlob;
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
+      api.pullPark = new Promise<void>((r) => (release = r));
+      api.pullCalled = false;
+      const pulling = pullNow(); // a focus pull, parked on the server
+      await vi.waitFor(() => expect(api.pullCalled).toBe(true));
+      const approving = approvePendingReview(); // waits for the pull's lock
+      release();
+      await pulling;
+      await approving;
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
+    } finally {
+      release();
+      api.pullPark = null;
+      api.keys = null;
+      api.pulled = null;
     }
   });
 });

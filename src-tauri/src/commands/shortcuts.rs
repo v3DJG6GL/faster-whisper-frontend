@@ -207,17 +207,10 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 std::thread::sleep(TICK);
                 let Some(slept) = clock.tick() else {
                     // evdev enumerates only on an apply, so a keyboard plugged in (or re-attached)
-                    // later has dead chords until something re-applies; a new /dev/input node is
-                    // that something. Only while evdev runs — the plugin backend needs no devices.
+                    // later has dead chords until something re-applies; a new keyboard node, or a
+                    // running reader losing its keyboard, is that something.
                     #[cfg(target_os = "linux")]
-                    if nodes.observe(input_event_nodes())
-                        && crate::hotkeys::evdev::is_running(
-                            &app.state::<crate::hotkeys::evdev::EvdevState>(),
-                        )
-                    {
-                        tracing::info!("[evdev] input device added; re-scanning keyboards");
-                        apply_bindings_unless_capturing(&app);
-                    }
+                    rescan_input_devices(&app, &mut nodes);
                     continue;
                 };
                 tracing::info!(
@@ -240,10 +233,10 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 #[cfg(windows)]
                 crate::aux_windows::overlay::repair_topmost(&app);
                 // Keep the node set current across the resume. The apply above just enumerated, so
-                // a due re-scan is moot here; a keyboard that re-attaches AFTER it still shows up
+                // what was pending is moot here; a keyboard that re-attaches AFTER it still shows up
                 // as a new node and is picked up once the set settles on a later tick.
                 #[cfg(target_os = "linux")]
-                nodes.observe(input_event_nodes());
+                nodes.after_apply(input_event_nodes());
                 let _ = app.emit("system://resumed", ());
             }
         });
@@ -263,33 +256,130 @@ fn input_event_nodes() -> std::collections::BTreeSet<String> {
         .unwrap_or_default()
 }
 
-/// Debounces "an input device appeared" for evdev's re-scan. A new node is NOT acted on the tick it
-/// appears (udev may not have set its ACL yet, so opening it would fail and the keyboard stay
-/// missed); the re-scan is due on the next tick whose set equals the previous one.
+/// One suspend-watch tick of evdev's device re-scan. A re-apply is a full evdev restart — it aborts
+/// every reader and manufactures a stop for any push-to-talk hold — so it runs only when it can
+/// gain a keyboard: a settled new node that IS a keyboard, or a running reader that lost its own
+/// (which also covers a keyboard re-enumerated under the same node name). Gated on the configured
+/// intent, not on evdev running: a resume apply that found no keyboard yet fell back to the plugin,
+/// and the keyboard arriving later is what switches the backend back to evdev.
+#[cfg(target_os = "linux")]
+fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
+    let Some(reader_lost) =
+        nodes.observe(input_event_nodes(), crate::hotkeys::evdev::reader_lost())
+    else {
+        return;
+    };
+    let wanted = config_dir(app)
+        .map(|dir| config::load(&dir).settings.general.evdev_enabled)
+        .unwrap_or(false);
+    let step = rescan_step(
+        wanted,
+        crate::hotkeys::evdev::any_hold_active(),
+        reader_lost,
+        || {
+            nodes
+                .pending
+                .iter()
+                .any(|n| crate::hotkeys::evdev::is_keyboard_node(n))
+        },
+    );
+    match step {
+        // Kept pending: the next settled tick asks again, once the hold has ended.
+        RescanStep::Defer => {}
+        RescanStep::Skip => nodes.pending.clear(),
+        RescanStep::Apply => {
+            nodes.pending.clear();
+            tracing::info!(
+                "[evdev] {}; re-scanning keyboards",
+                if reader_lost {
+                    "a keyboard stream ended"
+                } else {
+                    "keyboard added"
+                }
+            );
+            apply_bindings_unless_capturing(app);
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum RescanStep {
+    /// Nothing to gain (evdev not wanted, or no new node is a keyboard): drop what was pending.
+    Skip,
+    /// A push-to-talk hold is active and a restart would end it: keep it pending.
+    Defer,
+    /// Re-apply the bindings.
+    Apply,
+}
+
+/// The re-scan decision for a due tick. `new_keyboard` probes the pending nodes (opens devices),
+/// so it runs only when nothing else already decided.
+#[cfg(target_os = "linux")]
+fn rescan_step(
+    evdev_wanted: bool,
+    hold_active: bool,
+    reader_lost: bool,
+    new_keyboard: impl FnOnce() -> bool,
+) -> RescanStep {
+    if !evdev_wanted {
+        RescanStep::Skip
+    } else if hold_active {
+        RescanStep::Defer
+    } else if reader_lost || new_keyboard() {
+        RescanStep::Apply
+    } else {
+        RescanStep::Skip
+    }
+}
+
+/// Debounces "an input device appeared / a keyboard was lost" for evdev's re-scan. Neither is acted
+/// on the tick it is first seen (udev may not have set the new node's ACL yet, so opening it would
+/// fail and the keyboard stay missed); a re-scan is due on a tick whose node set equals the previous
+/// one. `pending` = nodes that appeared since the last decision and still exist.
 #[cfg(target_os = "linux")]
 #[derive(Default)]
 struct InputNodeWatch {
     prev: Option<std::collections::BTreeSet<String>>,
-    pending: bool,
+    pending: std::collections::BTreeSet<String>,
+    lost_seen: bool,
 }
 
 #[cfg(target_os = "linux")]
 impl InputNodeWatch {
-    /// Feed this tick's node set; true when a re-scan is due.
-    fn observe(&mut self, now: std::collections::BTreeSet<String>) -> bool {
+    /// Feed this tick's node set and evdev's reader-lost flag. `Some(reader_lost)` when a re-scan
+    /// decision is due; the caller clears `pending` unless it defers.
+    fn observe(&mut self, now: std::collections::BTreeSet<String>, lost: bool) -> Option<bool> {
         // The first look is the baseline, not an arrival.
-        let (added, settled) = match &self.prev {
-            Some(prev) => (now.iter().any(|n| !prev.contains(n)), now == *prev),
-            None => (false, false),
+        let settled = match &self.prev {
+            Some(prev) => {
+                self.pending.extend(now.difference(prev).cloned());
+                now == *prev
+            }
+            None => false,
         };
+        self.pending.retain(|n| now.contains(n));
         self.prev = Some(now);
-        if added {
-            self.pending = true;
-        } else if settled && self.pending {
-            self.pending = false;
-            return true;
+        // A loss already seen on an earlier tick: its keyboard may have come straight back under
+        // the same name, so it gets the same one-tick grace as a new node.
+        let lost_due = lost && self.lost_seen;
+        self.lost_seen = lost;
+        if !settled {
+            None
+        } else if lost_due {
+            Some(true)
+        } else if !self.pending.is_empty() {
+            Some(false)
+        } else {
+            None
         }
-        false
+    }
+
+    /// An apply just enumerated: what was pending is covered; re-baseline on `now`.
+    fn after_apply(&mut self, now: std::collections::BTreeSet<String>) {
+        self.pending.clear();
+        self.lost_seen = false;
+        let _ = self.observe(now, false);
     }
 }
 
@@ -457,35 +547,140 @@ mod tests {
     }
 
     #[test]
-    fn input_node_watch_rescans_once_after_a_new_node_settles() {
+    fn input_node_watch_is_due_once_a_new_node_settles() {
         let mut w = InputNodeWatch::default();
-        assert!(!w.observe(set(&["event0", "event1"])), "baseline");
-        assert!(!w.observe(set(&["event0", "event1"])), "nothing new");
-        assert!(
-            !w.observe(set(&["event0", "event1", "event5"])),
+        assert_eq!(
+            w.observe(set(&["event0", "event1"]), false),
+            None,
+            "baseline"
+        );
+        assert_eq!(
+            w.observe(set(&["event0", "event1"]), false),
+            None,
+            "nothing new"
+        );
+        assert_eq!(
+            w.observe(set(&["event0", "event1", "event5"]), false),
+            None,
             "appeared: wait a tick"
         );
-        assert!(
-            !w.observe(set(&["event0", "event1", "event5", "event6"])),
+        assert_eq!(
+            w.observe(set(&["event0", "event1", "event5", "event6"]), false),
+            None,
             "still settling"
         );
-        assert!(
-            w.observe(set(&["event0", "event1", "event5", "event6"])),
-            "settled: re-scan"
+        assert_eq!(
+            w.observe(set(&["event0", "event1", "event5", "event6"]), false),
+            Some(false),
+            "settled: decide"
         );
-        assert!(
-            !w.observe(set(&["event0", "event1", "event5", "event6"])),
+        assert_eq!(w.pending, set(&["event5", "event6"]));
+        w.pending.clear();
+        assert_eq!(
+            w.observe(set(&["event0", "event1", "event5", "event6"]), false),
+            None,
             "only once"
         );
     }
 
     #[test]
+    fn input_node_watch_keeps_a_deferred_node_due() {
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0"]), false);
+        w.observe(set(&["event0", "event5"]), false);
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), Some(false));
+        // Deferred (a hold is active): pending is left alone, so the next tick asks again.
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), Some(false));
+    }
+
+    #[test]
     fn input_node_watch_ignores_removals() {
         let mut w = InputNodeWatch::default();
-        assert!(!w.observe(set(&["event0", "event1"])));
-        assert!(!w.observe(set(&["event0"])));
-        assert!(!w.observe(set(&["event0"])));
-        assert!(!w.observe(set(&[])), "unreadable dir reads as removals");
-        assert!(!w.observe(set(&[])));
+        assert_eq!(w.observe(set(&["event0", "event1"]), false), None);
+        assert_eq!(w.observe(set(&["event0"]), false), None);
+        assert_eq!(w.observe(set(&["event0"]), false), None);
+        assert_eq!(
+            w.observe(set(&[]), false),
+            None,
+            "unreadable dir reads as removals"
+        );
+        assert_eq!(w.observe(set(&[]), false), None);
+    }
+
+    #[test]
+    fn input_node_watch_drops_a_node_that_left_before_settling() {
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0"]), false);
+        w.observe(set(&["event0", "event5"]), false);
+        assert_eq!(w.observe(set(&["event0"]), false), None);
+        assert_eq!(
+            w.observe(set(&["event0"]), false),
+            None,
+            "nothing left to probe"
+        );
+    }
+
+    #[test]
+    fn input_node_watch_reports_a_lost_reader_with_the_same_node_set() {
+        // The keyboard came back as the same eventN within one tick: the set never changes, the
+        // reader-lost flag is the only signal. Acted on the tick after it is first seen.
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0", "event5"]), false);
+        assert_eq!(
+            w.observe(set(&["event0", "event5"]), true),
+            None,
+            "grace tick"
+        );
+        assert_eq!(w.observe(set(&["event0", "event5"]), true), Some(true));
+        // The apply bumps evdev's generation, so the flag reads false afterwards.
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
+    }
+
+    #[test]
+    fn input_node_watch_waits_for_a_lost_keyboard_to_settle() {
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0", "event5"]), false);
+        assert_eq!(w.observe(set(&["event0"]), true), None, "removed");
+        assert_eq!(w.observe(set(&["event0", "event5"]), true), None, "back");
+        assert_eq!(w.observe(set(&["event0", "event5"]), true), Some(true));
+    }
+
+    #[test]
+    fn input_node_watch_after_apply_drops_what_was_pending() {
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0"]), false);
+        w.observe(set(&["event0", "event5"]), false);
+        w.after_apply(set(&["event0", "event5"]));
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
+    }
+
+    #[test]
+    fn rescan_step_never_restarts_during_a_hold() {
+        let probe_panics = || -> bool { panic!("must not probe") };
+        assert_eq!(
+            rescan_step(true, true, true, probe_panics),
+            RescanStep::Defer
+        );
+        assert_eq!(
+            rescan_step(true, true, false, probe_panics),
+            RescanStep::Defer
+        );
+    }
+
+    #[test]
+    fn rescan_step_gates_on_intent_and_keyboards() {
+        let probe_panics = || -> bool { panic!("must not probe") };
+        assert_eq!(
+            rescan_step(false, false, true, probe_panics),
+            RescanStep::Skip
+        );
+        assert_eq!(
+            rescan_step(true, false, true, probe_panics),
+            RescanStep::Apply
+        );
+        // A mouse / headset node is not a keyboard: no restart.
+        assert_eq!(rescan_step(true, false, false, || false), RescanStep::Skip);
+        // evdev wanted (running or fallen back to the plugin) and a keyboard arrived.
+        assert_eq!(rescan_step(true, false, false, || true), RescanStep::Apply);
     }
 }

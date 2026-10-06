@@ -34,7 +34,7 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
-const { _resetReconcileForTests, initJobReconcile, reconcileJobs, stopOrphan, watchOrphan, NOT_FOUND_ERROR } =
+const { _resetReconcileForTests, initJobReconcile, isPerRowJobError, reconcileJobs, stopOrphan, watchOrphan, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun, closeRecord, openHistoryRecord, retryFile, startRun } =
   await import("./transcribeRun");
@@ -212,6 +212,59 @@ describe("reconcileJobs", () => {
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
     expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A]);
+  });
+
+  it("a per-row error (an HTTP status, an unreadable body) does not hold back the server's other rows", async () => {
+    // Two Backend entries at one URL: the older row's key was revoked (401), the newer one's works.
+    await seed(row(JOB_A, T0), row(JOB_B, T0 + 1), row(JOB_C, T0 + 2));
+    getJob.mockImplementation(async ({ jobId }) =>
+      jobId === JOB_A
+        ? { kind: "error", message: "HTTP 401" }
+        : jobId === JOB_B
+          ? { kind: "error", message: "missing field `state` at line 1 column 2" }
+          : ok({ jobId, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    await reconcileJobs();
+    expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A, JOB_B, JOB_C]);
+    expect(records().map((r) => r.id)).toEqual([JOB_C]);
+    // The erroring rows are kept for the retry pass.
+    expect(ledgerRows().map((r) => r.jobId)).toEqual([JOB_A, JOB_B]);
+  });
+
+  it("isPerRowJobError: answered statuses and body failures are per-row, no answer is per-server", () => {
+    for (const m of [
+      "HTTP 401", "HTTP 500", "malformed job id",
+      "The server sent an unreasonably large response — ignoring it.",
+      "The server sent a response that wasn't valid text.",
+      "expected value at line 1 column 1", "invalid type: string \"x\", expected f64",
+    ]) expect(isPerRowJobError(m)).toBe(true);
+    for (const m of [
+      "Could not connect — is the server running and the URL correct?",
+      "Timed out waiting for the server.", "error sending request", "error decoding response body",
+    ]) expect(isPerRowJobError(m)).toBe(false);
+  });
+
+  it("a row the ledger evicts mid-pass is still stopped by a re-run of its file", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    let land: (v: JobOutcome<BatchResult>) => void = () => {};
+    getJobResult.mockImplementation(() => new Promise((res) => { land = res; }));
+    const pass = reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    // A run of other files pushes the row past the newest-20 cap…
+    for (let i = 0; i < 20; i++) await persistRow(row(i.toString(16).padStart(32, "0"), T0 + 1 + i));
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    // …then the user re-runs its file: the path-keyed stop must still find it.
+    const path = row(JOB_A, T0).path;
+    useTranscribeRun.setState({ files: [path], running: false, queue: [] });
+    deleteJob.mockClear();
+    startRun(undefined, {}, row(JOB_A, T0).ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    land(ok(RESULT));
+    await pass;
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
+    cancelRun();
   });
 
   it("drops a row whose backend no longer exists, without a record", async () => {

@@ -1363,11 +1363,15 @@ async function reconcileBackendSecrets(
           const old = ownProp(prior as Record<string, unknown>, id);
           return typeof old === "string" && old !== "" && old !== incoming(id);
         });
+  // An abort mid-loop still leaves the keys written so far replaced: report those as rotated.
+  const written = new Set<string>();
+  const landed = () => rotated.filter((id) => written.has(id));
   for (const b of list) {
-    if (aborted()) return { backends: list, rotated: [] };
+    if (aborted()) return { backends: list, rotated: landed() };
     const id = b.id;
     const key = incoming(id);
     if (key) {
+      written.add(id);
       // Same locked-wallet hazard as composeBlob's read: a parked prompt must
       // not wedge the apply. A skipped write surfaces as hasApiKey=false below.
       await withTimeout(
@@ -1377,7 +1381,7 @@ async function reconcileBackendSecrets(
       );
     }
   }
-  if (aborted()) return { backends: list, rotated: [] };
+  if (aborted()) return { backends: list, rotated: landed() };
   const present = await withTimeout(
     readBackendKeys(list.map((b) => b.id)),
     10_000,
@@ -1463,8 +1467,6 @@ export async function applyBlob(
     if (!opts.ignoreGates) blob = gateScalars(blob, gates);
     let nextSettings: AppSettings = settings;
     let nextBackends = st.backends;
-    // Known backends whose API key this apply replaced with a different one (see below).
-    let rotatedKeys: string[] = [];
     let nextProfiles = st.profiles;
     let nextAppRules = st.appRules;
 
@@ -1699,7 +1701,15 @@ export async function applyBlob(
         () => gen !== myGen,
       );
       nextBackends = reconciled.backends;
-      rotatedKeys = reconciled.rotated;
+      // A key rotated on another device keeps this device's serverUrl and hasApiKey, so
+      // hydrate's own eviction misses it: drop the caps and connection state measured as the
+      // OLD caller NOW, while the keyring write is what changed. Waiting for the hydrate lost
+      // the eviction on a STALE restart or a dropped apply: the keyring already holds the new
+      // key, so every later pass reads prior == incoming and finds nothing rotated.
+      for (const id of reconciled.rotated) {
+        forgetCaps(id);
+        useApp.getState().forgetBackendCaches(id);
+      }
       // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
       // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
       // entries against a locked keyring park here for a long time. Everything above was
@@ -1902,13 +1912,6 @@ export async function applyBlob(
     } finally {
       applyingRemote = false;
     }
-    // A key rotated on another device keeps this device's serverUrl and hasApiKey, so hydrate's
-    // own eviction misses it: drop the caps and connection state measured as the OLD caller.
-    for (const id of rotatedKeys) {
-      forgetCaps(id);
-      useApp.getState().forgetBackendCaches(id);
-    }
-
     // Side effects hydrate() doesn't cover: deep-field detection is pushed to
     // Rust imperatively by its Settings toggle, so mirror that here. (Autostart
     // re-syncs via save_config; theme is reactive; hotkeys re-register via the
@@ -2947,6 +2950,15 @@ function changeKey(c: SecurityChange): string {
   return JSON.stringify([c.kind, c.category ?? null, c.backend, c.detail, c.url ?? null]);
 }
 
+/** The same review re-raised: same server version and writer, same rows on the list. */
+function sameReview(a: PendingReview, b: PendingReview): boolean {
+  if (a === b) return true;
+  if (a.version !== b.version || a.device !== b.device) return false;
+  const ka = new Set(a.changes.map(changeKey));
+  const kb = new Set(b.changes.map(changeKey));
+  return ka.size === kb.size && [...ka].every((k) => kb.has(k));
+}
+
 /** Approve the held-back pull: apply it and adopt the server's version as the new base. */
 export async function approvePendingReview(): Promise<void> {
   const r = pendingReview;
@@ -2965,9 +2977,13 @@ export async function approvePendingReview(): Promise<void> {
   if (!(await takeSyncLock(myGen))) return;
   let pushAfter = false;
   try {
-    // The wait may have let a pull replace or clear the review, or a dictation start.
-    if (pendingReview !== r || useApp.getState().status !== "idle") return;
-    pushAfter = await approveLocked(r, myGen);
+    // The wait may have let a pull replace or clear the review, or a dictation start. A review
+    // adopts no base, so the pull it waited for re-raises it as a NEW object: judge it by
+    // content (as resolveSyncConflicts does by id) and go on with the current one when it is
+    // the review the user saw; a different one aborts.
+    const cur = pendingReview;
+    if (!cur || !sameReview(cur, r) || useApp.getState().status !== "idle") return;
+    pushAfter = await approveLocked(cur, myGen);
   } finally {
     if (myGen === gen) inFlight = false;
   }

@@ -582,6 +582,9 @@ export function TranscriptExport({
   };
 
   const doExport = async () => {
+    // Over the embedded-track cap the server refuses the request after the save dialog:
+    // no path (the Save button, the "Save as MKV" retry) may get that far.
+    if (tooManyEmbedded) return;
     // The panel stays mounted across records: what this Save reports after an await
     // lands only while its record still shows.
     const started = owner;
@@ -1081,7 +1084,7 @@ export function TranscriptExport({
             {mediaError && (
               <span className="mt-2 text-[12px] text-warn">
                 {safeDisplayText(mediaError.msg, 300)}
-                {mediaError.kind === "mp4" && (
+                {mediaError.kind === "mp4" && !tooManyEmbedded && (
                   <button type="button" className="ml-2 underline"
                     onClick={() => void doExport()}>
                     Save as MKV

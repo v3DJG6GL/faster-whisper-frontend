@@ -899,6 +899,31 @@ describe("applyBlob evicts a backend whose API key the pull rotated", () => {
     expect(useApp.getState().caps.b1).toBeUndefined();
   });
 
+  it("an apply dropped stale after the key write still drops them", async () => {
+    // The keyring already holds the new key once the write lands, so a STALE restart (or a
+    // dropped apply) reads prior == incoming and finds nothing rotated: evicting only after the
+    // hydrate lost the eviction for good.
+    let release: (v: Record<string, string>) => void = () => {};
+    keyring.park = new Promise((r) => (release = r));
+    try {
+      const applying = applyBlob(
+        { backends: { list: [backend({ hasApiKey: true })], secrets: { b1: "sk-new" } } },
+        CATS_ALL,
+        0,
+      );
+      await Promise.resolve();
+      useApp.getState().upsertBackend(backend({ id: "b2", name: "added-meanwhile" }));
+      keyring.park = null;
+      keyring.keys = { b1: "sk-new" };
+      release({ b1: "sk-old" });
+      expect(await applying).toBe(false); // dropped stale
+    } finally {
+      keyring.park = null;
+      keyring.keys = null;
+    }
+    expect(useApp.getState().caps.b1).toBeUndefined();
+  });
+
   it("the same key rewritten keeps them", async () => {
     keyring.keys = { b1: "sk-old" };
     try {
