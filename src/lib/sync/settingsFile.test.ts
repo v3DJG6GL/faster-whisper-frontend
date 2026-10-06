@@ -141,6 +141,26 @@ describe("applyImport", () => {
     expect(opts).toEqual({ ignoreGates: true });
   });
 
+  // ignoreGates opens the folder gates, so a hand-edited file naming folder
+  // paths would move this device's recordings and logs — the dialog promises
+  // folders are never imported.
+  it("strips the machine folder paths before the gate-bypassing apply", async () => {
+    const { applyBlob } = await import("./sync");
+    const { applyImport } = await import("./settingsFile");
+    vi.mocked(applyBlob).mockClear();
+    const categories = {
+      recording: { recordingsDir: "/evil/rec", audioBaseDir: "/evil/audio", saveRecordings: true },
+      logging: { logDir: "/evil/logs", keepDays: 7 },
+    } as unknown as SyncBlob;
+    await applyImport({ ...allOff(), recording: true, logging: true }, { ...emptyResult(), categories });
+    const blob = vi.mocked(applyBlob).mock.calls[0][0] as unknown as Record<string, Record<string, unknown>>;
+    expect(blob.recording).not.toHaveProperty("recordingsDir");
+    expect(blob.recording).not.toHaveProperty("audioBaseDir");
+    expect(blob.recording.saveRecordings).toBe(true);
+    expect(blob.logging).not.toHaveProperty("logDir");
+    expect(blob.logging.keepDays).toBe(7);
+  });
+
   // The preview dialog shows an error on false — a deferred apply or exhausted
   // retries — so the boolean is part of the contract, not a pass-through detail.
   it("reports whether the apply landed", async () => {

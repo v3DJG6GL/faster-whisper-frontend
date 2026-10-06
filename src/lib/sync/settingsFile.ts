@@ -56,8 +56,24 @@ export async function applyImport(
   // Normalize a file written before the category split (chip fields inside
   // recording, the quick-add chord/pin under general/backends).
   const blob: SyncBlob = migrateBlob({ ...result.categories });
+  // ignoreGates turns the folder gates on, so a file naming folder paths would
+  // move this device's recordings and logs — which the dialog promises never
+  // happens. Our own exports never carry these keys; strip them so a
+  // hand-edited file cannot either (absent keys keep the local values).
+  if (isPlainObject(blob.recording)) {
+    const { recordingsDir: _r, audioBaseDir: _a, ...rec } = blob.recording;
+    blob.recording = rec as SyncBlob["recording"];
+  }
+  if (isPlainObject(blob.logging)) {
+    const { logDir: _l, ...lg } = blob.logging;
+    blob.logging = lg as SyncBlob["logging"];
+  }
   if (selection.backends && blob.backends && Object.keys(result.secrets).length > 0) {
     blob.backends = { ...blob.backends, secrets: result.secrets };
   }
   return applyBlob(blob, selection, 2, { ignoreGates: true });
+}
+
+function isPlainObject<T>(v: T | undefined): v is T {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }

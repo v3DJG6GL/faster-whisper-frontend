@@ -8,7 +8,7 @@ import {
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
-import type { Backend } from "../types";
+import { backend } from "./syncTestFixtures";
 import type { SyncState } from "./syncTypes";
 
 /** Record what the engine writes to sync-state.json (outside Tauri the real call no-ops). */
@@ -22,21 +22,6 @@ vi.mock("../api", async (importOriginal) => {
     },
   };
 });
-
-function backend(over: Partial<Backend> = {}): Backend {
-  return {
-    id: "b1",
-    name: "local",
-    serverUrl: "http://10.0.0.2:8000",
-    hasApiKey: false,
-    model: "large-v3",
-    endpoint: "transcriptions",
-    language: "auto",
-    responseFormat: "verbose_json",
-    kind: "faster-whisper",
-    ...over,
-  } as Backend;
-}
 
 function reset() {
   const settings = structuredClone(DEFAULT_SETTINGS);

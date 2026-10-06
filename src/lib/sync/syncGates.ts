@@ -40,7 +40,10 @@ export const SCALAR_CATS: readonly WireCategory[] = [
   "logging",
 ];
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+/** A JSON object — not null, not an array, not a string. The blob's containers are attacker-shaped
+ *  just like its lists, and `Object.entries`/`Object.keys` accept a string by expanding it per code
+ *  unit; every ceiling in the engine bounds ENTRY COUNT, which that turns into 4M. */
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 

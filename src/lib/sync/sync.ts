@@ -96,6 +96,7 @@ import {
   substituteElementFields,
   type Gates,
   catsFromGates,
+  isPlainObject,
   SCALAR_CATS,
 } from "./syncGates";
 
@@ -119,7 +120,7 @@ export function categorySelection(on: boolean): Record<SyncCategory, boolean> {
 
 /** This device's field-level opt-outs (Settings → Sync sub-toggles), with the
  *  behavior-preserving defaults for configs from before they existed. */
-export function subSettings(): SyncSubSettings {
+function subSettings(): SyncSubSettings {
   return (
     useApp.getState().settings.sync?.sub ?? {
       recordingsDir: false,
@@ -132,7 +133,7 @@ export function subSettings(): SyncSubSettings {
 
 /** This device's complete per-setting sync gates (the granular switches on
  *  Settings → Sync), with manifest defaults + legacy/category migration. */
-export function settingGates(): Gates {
+function settingGates(): Gates {
   const sync = useApp.getState().settings.sync;
   return completeGates(sync?.sub, sync?.categories);
 }
@@ -169,7 +170,7 @@ import { stableStringify } from "../stable";
 
 /** FNV-1a over the canonical string — a compact change-detection token (NOT
  *  crypto; it only gates "did anything sync-relevant change?"). */
-export function hashBlob(v: unknown): string {
+function hashBlob(v: unknown): string {
   const s = stableStringify(v ?? null);
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -179,12 +180,7 @@ export function hashBlob(v: unknown): string {
   return (h >>> 0).toString(16).padStart(8, "0");
 }
 
-/** A JSON object — not null, not an array, not a string. The blob's containers are attacker-shaped
- *  just like its lists, and `Object.entries`/`Object.keys` accept a string by expanding it per code
- *  unit; every ceiling in the engine bounds ENTRY COUNT, which that turns into 4M. */
-export function isPlainObject(v: unknown): v is Record<string, unknown> {
-  return !!v && typeof v === "object" && !Array.isArray(v);
-}
+export { isPlainObject } from "./syncGates";
 
 /** Category equality — the test that decides whether a category conflicts and prompts, or merges
  *  silently. Compares the canonical strings, NOT their hashes: `hashBlob` builds this exact string
@@ -474,6 +470,9 @@ function extractDictionary(
 
 type StoreSlice = Pick<Config, "settings" | "backends" | "profiles"> & { appRules: AppRule[] };
 
+/** Blobs `composeBlob` built through its degraded-keyring pass-through (see `backendsDegraded`). */
+const degradedComposes = new WeakSet<SyncBlob>();
+
 /**
  * Build the blob this device would push: live state for toggled-ON categories,
  * the snapshot's (server's) state for OFF ones. `secrets` are attached only
@@ -540,6 +539,9 @@ export async function composeBlob(
         // erased, then recorded as the new merge base. On the export path (no snapshot) the
         // local list travels without secrets — a backup must never silently lose the server list.
         blob.backends = snapshot ? snapshot.backends : { list: cfg.backends };
+        // Marked for the merge callers (`backendsDegraded`): not by reference identity, because
+        // the per-setting gate pass below rebuilds `blob.backends` into a fresh object.
+        if (snapshot) degradedComposes.add(blob);
       }
     }
   } else {
@@ -636,7 +638,7 @@ export async function composeBlob(
 
 // ── merge: category-level 3-way ─────────────────────────────────────────────
 
-export interface MergeResult {
+interface MergeResult {
   merged: SyncBlob;
   /** Categories BOTH sides changed to different values — the user must pick. */
   conflicts: SyncCategory[];
@@ -1875,7 +1877,14 @@ export async function applyBlob(
   }
   // The retry runs OUTSIDE the try so the STALE sentinel of the recursive call is its own
   // (`applyingRemote` wraps only `hydrate`, so nothing is held across the recursion).
-  if (staleRestart) return applyBlob(blob, cats, retries - 1, opts);
+  // A session that started during the keyring wait must NOT park the blob via the top-of-function
+  // pendingApply branch: only a top-level call may queue — one-shot callers (import, restore,
+  // review approval, conflict resolution) pre-check status to avoid that queue, and a "not
+  // applied" answer that later lands behind the UI's back is worse than a plain "not applied".
+  if (staleRestart) {
+    if (useApp.getState().status !== "idle") return false;
+    return applyBlob(blob, cats, retries - 1, opts);
+  }
   // Retries exhausted: the apply was dropped stale, so report "not applied" —
   // the caller must leave the base alone and let the next pull re-offer it.
   if (staleAbort) return false;
@@ -1998,7 +2007,7 @@ let snapshotSecretsUnavailable = false;
  *  could not give back the keys the snapshot recorded — the push is refused instead of
  *  sending a keyless list (or omitting the category, which the whole-blob PUT treats as
  *  deletion). Latched for the session like the flag it reads. */
-export function backendsPushBlocked(): boolean {
+function backendsPushBlocked(): boolean {
   return snapshotSecretsUnavailable;
 }
 
@@ -2011,6 +2020,14 @@ export function backendsBlobIncomplete(blob: SyncBlob): boolean {
   return list.some(
     (b) => isPlainObject(b) && b.hasApiKey === true && typeof b.id === "string" && !ownProp(secrets, b.id),
   );
+}
+
+/** Did `composeBlob` take its degraded-keyring pass-through (the backends category re-sent from
+ *  the snapshot because the live key read came back incomplete)? A merge against such a blob sees
+ *  "local unchanged" and keeps the remote list, so applying it would silently revert this
+ *  device's own backend edits — callers leave the category out of the apply and adopt no base. */
+function backendsDegraded(composed: SyncBlob, cats: Record<SyncCategory, boolean>): boolean {
+  return cats.backends && degradedComposes.has(composed);
 }
 
 async function stashSnapshotSecrets(secrets: Record<string, string>): Promise<void> {
@@ -2271,7 +2288,9 @@ export async function pushNow(manual = false): Promise<void> {
       state.snapshot,
       { includeSecrets: true, sub: subSettings(), gates: settingGates() },
     );
-    if (myGen !== gen) return; // the keyring read in composeBlob can park up to 10 s
+    // The keyring read in composeBlob can park up to 10 s — superseded meanwhile (sync turned
+    // off, server copy deleted): never send. inFlight was already reset by supersede().
+    if (myGen !== gen) return;
     let base = state.version ?? 0;
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
       setRuntime({ syncStatus: "ok" });
@@ -2292,10 +2311,7 @@ export async function pushNow(manual = false): Promise<void> {
       return;
     }
     for (let attempt = 0; attempt < 3; attempt++) {
-      // Superseded while composing (the keyring read can park up to 10 s) — sync turned off or
-      // the server copy deleted meanwhile: never send. inFlight was already reset by supersede().
-      if (myGen !== gen) return;
-      // Re-asked per ATTEMPT, not once before the loop: a conflict retry re-composes and re-sends,
+      // Re-asked per ATTEMPT, not once before the loop: a conflict retry re-sends the merged blob,
       // so the address can go stale between attempts too. This is the request that carries every
       // backend's plaintext key, so it is the one that must not go to an abandoned host.
       const pushUrl = liveSyncTarget(backend);
@@ -2345,12 +2361,16 @@ export async function pushNow(manual = false): Promise<void> {
           return;
         }
         // Auto-merged: adopt the merge locally, then retry on the new base. Honour the user's
-        // opt-outs like the other two applyBlob callers.
-        const pushCats = syncCats();
+        // opt-outs like the other two applyBlob callers. A degraded-keyring compose leaves the
+        // backends category out of the apply, as reconcileRemote does.
+        const syncedCats = syncCats();
+        const degraded = backendsDegraded(blob, syncedCats);
+        const pushCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
         const riskyPush = gatedSecurityCheck(merged, blob, pushCats);
         if (riskyPush.length > 0) {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
+          if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
@@ -2360,9 +2380,10 @@ export async function pushNow(manual = false): Promise<void> {
         }
         const applied = await applyBlob(merged, pushCats);
         if (myGen !== gen) return; // superseded during the apply wait
-        if (!applied) {
-          // Deferred/dropped: no base adopted, the next pull re-offers it. Clear the
-          // 'syncing' this call set, as reconcileRemote's twin does.
+        if (!applied || degraded) {
+          // Deferred/dropped, or applied without the degraded backends category: no base adopted
+          // and nothing pushed, the next pull re-offers it. Clear the 'syncing' this call set, as
+          // reconcileRemote's twin does.
           setRuntime({ syncStatus: "ok" });
           return;
         }
@@ -2401,28 +2422,37 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
       remoteUpdatedAt: remote.updated_ts ?? null });
     return;
   }
+  // Degraded keyring (see `backendsDegraded`): `local.backends` is the snapshot's own category,
+  // not this device's list, so the merge "keeps" the remote list and applying it would silently
+  // revert every backend added or edited here. Leave the backends category out of the apply.
+  const degraded = backendsDegraded(local, cats);
+  const applyCats = degraded ? { ...cats, backends: false } : cats;
   // This pull is unattended (startup + every window focus). If it would repoint a backend or
   // swap a stored key, hold it for confirmation instead of adopting it silently.
-  const risky = gatedSecurityCheck(merged, local, cats);
+  const risky = gatedSecurityCheck(merged, local, applyCats);
   if (risky.length > 0) {
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
     // change, so the next pull re-offers it until the user decides.
-    await applyBlob(merged, heldBack(cats, risky));
+    await applyBlob(merged, heldBack(applyCats, risky));
+    if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, cats, remote: remoteBlob,
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true,
     });
     return;
   }
-  if (!(await applyBlob(merged, cats))) {
-    // Deferred (dictation live). Persist no base so the next pull re-offers the
-    // blob — the same rule the held-back-review path documents above.
+  const applied = await applyBlob(merged, applyCats);
+  // Epoch FIRST: applyBlob answers false exactly when a supersede bumped `gen` during its keyring
+  // wait, and the "ok" below would then land over the reset state (pushNow's 409 twin's order).
+  if (myGen !== gen) return;
+  if (!applied || degraded) {
+    // Deferred (dictation live) or applied without the backends category. Persist no base so the
+    // next pull re-offers the blob — the same rule the held-back-review path documents above.
     setRuntime({ syncStatus: "ok" });
     return;
   }
-  if (myGen !== gen) return;
   // Persist what the SERVER holds (remote), not the merge result: snapshot is
   // the 3-way base for the NEXT sync and hash is the did-anything-change gate
   // for pushes. Recording `merged` here would make the follow-up push compose
@@ -2595,14 +2625,15 @@ export function securityChanges(
   // recordings; dictation sessions incl. audio; file transcripts incl. their
   // audio copies). Only a change that starts deleting, or deletes sooner, needs
   // consent — lengthening the window (or turning retention off) destroys
-  // nothing. The recording and dictation clocks ride the `recording` category;
-  // the file clock its own category. Typed reads: the merged blob reaches here
+  // nothing. The recording and dictation clocks ride the `recording` category and
+  // are judged as the ONE effective dictation clock both sweeps use (below); the
+  // file clock rides its own category. Typed reads: the merged blob reaches here
   // before applyBlob's typedLike pass, so a string `"3"` would otherwise raise
   // a review (and park the whole category) for a change that never applies.
   const clockCheck = (
     container: unknown,
     localContainer: unknown,
-    key: "recordingsRetentionDays" | "dictationRetentionDays" | "historyRetentionDays",
+    key: "historyRetentionDays",
     fallback: number,
     what: string,
     kind: SecurityChange["kind"],
@@ -2635,8 +2666,6 @@ export function securityChanges(
   // `saveRecordings` turns on a permanent plaintext archive of everything dictated. Both applied
   // silently on an unattended pull. They get the same confirmation as a repointed server.
   if (cats.recording && incoming.recording) {
-    clockCheck(incoming.recording, local.recording, "recordingsRetentionDays", 0,
-      "saved recordings", "recording-retention");
     if (incoming.recording.saveRecordings === true && local.recording?.saveRecordings !== true) {
       out.push({
         kind: "save-recordings",
@@ -2667,9 +2696,38 @@ export function securityChanges(
       });
     }
   }
-  if (cats.recording) {
-    clockCheck(incoming.recording, local.recording, "dictationRetentionDays", 7,
-      "dictations", "dictation-retention");
+  // The audio window (recordingsRetentionDays, default 0) and the record window
+  // (dictationRetentionDays, default 7) are ONE clock: both sweeps delete by the stricter
+  // non-zero of the two (Rust's `effective_dictation_days`, Settings' `dictDays`). Judging
+  // each key alone asked consent for "saved recordings ... currently kept forever" when the
+  // effective window only lengthened (audio 0 + record 7 → 30/30). So compare that one value.
+  // An absent or non-numeric incoming key is "no change" (the apply keeps the local value),
+  // so it reads as the local value here. ("recording-retention" stays in the union for
+  // persisted parked reviews, but is no longer raised.)
+  if (cats.recording && isPlainObject(incoming.recording)) {
+    const effDays = (a: number, r: number) => (a === 0 ? r : r === 0 ? a : Math.min(a, r));
+    const days = (container: unknown, key: string, fallback: number) => {
+      const v = isPlainObject(container) ? ownProp(container, key) : undefined;
+      return typeof v === "number" && Number.isFinite(v) ? v : fallback;
+    };
+    const localA = days(local.recording, "recordingsRetentionDays", 0);
+    const localR = days(local.recording, "dictationRetentionDays", 7);
+    const hereDays = effDays(localA, localR);
+    const nextDays = effDays(
+      days(incoming.recording, "recordingsRetentionDays", localA),
+      days(incoming.recording, "dictationRetentionDays", localR),
+    );
+    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
+      const what = "dictations (text and audio)";
+      out.push({
+        kind: "dictation-retention",
+        backend: "",
+        detail:
+          hereDays === 0
+            ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
+            : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
+      });
+    }
   }
   if (cats.fileTranscriptions) {
     clockCheck(incoming.fileTranscriptions, local.fileTranscriptions, "historyRetentionDays", 0,
@@ -2773,8 +2831,14 @@ export async function approvePendingReview(): Promise<void> {
   // after the user changed their mind and pressed Reject. Leave the review up instead; the
   // dialog says why.
   if (useApp.getState().status !== "idle") return;
+  // The epoch this approval belongs to: a supersede during the apply's keyring wait (sync off,
+  // server switched, server copy deleted) dropped this review on purpose — never revive it, and
+  // never adopt the old server's version into the new state.
+  const myGen = gen;
   pendingReview = null;
-  if (!(await applyBlob(r.blob, r.cats))) {
+  const applied = await applyBlob(r.blob, r.cats);
+  if (myGen !== gen) return;
+  if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it): put
     // the review back so the approval isn't consumed by an apply that never happened.
     pendingReview = r;
@@ -2787,6 +2851,7 @@ export async function approvePendingReview(): Promise<void> {
     hash: hashBlob(r.remote),
     snapshot: r.remote,
   });
+  if (myGen !== gen) return;
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: r.device });
   if (r.pushAfter && hashBlob(r.blob) !== hashBlob(r.remote)) schedulePush(0);
 }
@@ -2818,6 +2883,11 @@ export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void
   } as unknown as PendingConflict);
 }
 
+/** Test seam: is a deferred apply parked for the end of the dictation session? */
+export function hasPendingApplyForTests(): boolean {
+  return pendingApply !== null;
+}
+
 function raiseConflict(c: PendingConflict): void {
   pendingConflictId = ++conflictSeq;
   pendingConflict = c;
@@ -2835,6 +2905,7 @@ export async function resolveSyncConflicts(
   const c = pendingConflict;
   if (!c) return;
   if (useApp.getState().status !== "idle") return; // same rule as approvePendingReview
+  const myGen = gen; // same epoch rule as approvePendingReview
   pendingConflict = null;
   const final: SyncBlob = { ...c.merged };
   for (const cat of c.categories) {
@@ -2854,6 +2925,7 @@ export async function resolveSyncConflicts(
   const risky = gatedSecurityCheck(final, c.local, applyCats);
   if (risky.length > 0) {
     await applyBlob(final, heldBack(applyCats, risky));
+    if (myGen !== gen) return;
     raiseReview({
       changes: risky,
       blob: final,
@@ -2866,7 +2938,9 @@ export async function resolveSyncConflicts(
     });
     return;
   }
-  if (!(await applyBlob(final, applyCats))) {
+  const applied = await applyBlob(final, applyCats);
+  if (myGen !== gen) return;
+  if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it):
     // restore the conflict so the picks are re-offered, not a base that never landed.
     pendingConflict = c;
@@ -2885,6 +2959,7 @@ export async function resolveSyncConflicts(
     hash: hashBlob(c.remote),
     snapshot: c.remote,
   });
+  if (myGen !== gen) return;
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: c.remoteDevice ?? null });
   // The resolved doc differs from what the server holds unless "remote" won
   // everywhere — push it (base = the server version the conflict reported).

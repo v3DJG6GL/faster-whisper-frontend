@@ -114,6 +114,13 @@ function joinNames(names: string[]): string {
   return names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+/** The import header's date. `createdAt` is copied verbatim from the file, so a
+ *  hand-edited non-date falls back to "?" like its sibling fields, not "Invalid Date". */
+function createdLabel(createdAt: string | undefined): string {
+  const created = new Date(createdAt ?? "");
+  return Number.isNaN(created.getTime()) ? "?" : created.toLocaleString();
+}
+
 /** Initial per-category selection for the two preview dialogs: every category
  *  present in the blob starts checked. */
 function presentSel(blob: SyncBlob): Record<SyncCategory, boolean> {
@@ -234,7 +241,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
       <div className="text-[15px] font-semibold text-text">Import settings</div>
       <div className="mt-1 text-[12.5px] text-dim">
         From {safeText(result.hostname, 60) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
-        {safeText(result.appVersion, 30) || "?"} · {result.createdAt ? new Date(result.createdAt).toLocaleString() : "?"}
+        {safeText(result.appVersion, 30) || "?"} · {createdLabel(result.createdAt)}
       </div>
 
       <div className="mt-4">
@@ -258,7 +265,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
 
       <div className="mt-3 flex flex-col gap-2">
         <Notice>
-          Machine-specific settings (microphone, audio folder, evdev) are never imported.
+          Machine-specific settings (microphone, audio and log folders, evdev) are never imported.
         </Notice>
         {/* The hazard notice `RestoreFromServer` has and this dialog did not, though both default
             every present category to ON and both apply through `applyBlob` — which REPLACES rather

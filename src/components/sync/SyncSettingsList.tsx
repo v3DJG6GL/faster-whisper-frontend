@@ -136,7 +136,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
         <div className="min-w-0 flex-1">
           <div className="text-[13.5px] font-medium text-text">Sync everything</div>
           <div className="text-[12px] text-faint">
-            On = all settings follow your account. Off = pick per setting below.
+            On = every setting follows your account. Off = none do. In between = your picks below.
           </div>
         </div>
         <Toggle

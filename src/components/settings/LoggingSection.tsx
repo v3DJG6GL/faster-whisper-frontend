@@ -48,7 +48,7 @@ export function LoggingSection() {
       </SettingRow>
       <SettingRow
         title={SETTING.logRetention.label}
-        desc="Log files older than this are deleted on startup. The current session is always kept."
+        desc="Log files older than this are deleted right away when you change it, and again at every startup. The current session is always kept."
       >
         <Select
           value={String(logging?.keepDays ?? 30)}

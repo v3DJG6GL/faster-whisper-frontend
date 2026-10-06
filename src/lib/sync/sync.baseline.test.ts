@@ -8,8 +8,10 @@ import {
   applyBlob,
   categorySelection,
   composeBlob,
+  hasPendingApplyForTests,
   mergeBlobs,
   migrateBlob,
+  rejectPendingReview,
   sanitizeProfiles,
   securityChanges,
 } from "./sync";
@@ -18,6 +20,7 @@ import { DEFAULT_SETTINGS } from "../defaults";
 import { IS_WINDOWS } from "../platform";
 import type { SyncBlob } from "./syncTypes";
 import type { AppSettings, Backend, Profile, SyncSubSettings } from "../types";
+import { backend } from "./syncTestFixtures";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
  *  parked, the store is live and the user can keep editing. Default is passthrough. */
@@ -40,21 +43,6 @@ const LEGACY_SUB: SyncSubSettings = {
 
 function settings(): AppSettings {
   return structuredClone(DEFAULT_SETTINGS);
-}
-
-function backend(over: Partial<Backend> = {}): Backend {
-  return {
-    id: "b1",
-    name: "local",
-    serverUrl: "http://10.0.0.2:8000",
-    hasApiKey: false,
-    model: "large-v3",
-    endpoint: "transcriptions",
-    language: "auto",
-    responseFormat: "verbose_json",
-    kind: "faster-whisper",
-    ...over,
-  } as Backend;
 }
 
 function profile(over: Partial<Profile> = {}): Profile {
@@ -699,6 +687,31 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(byId.get("b1")!.name).toBe("local"); // and the blob did not land
   });
 
+  it("a session started during the keyring wait reports 'not applied' and parks nothing", async () => {
+    // The stale-restart retry re-entered applyBlob's top-of-function "dictation live" branch and
+    // parked the blob in pendingApply — so a one-shot caller (import, restore, review approval)
+    // was told "not applied" while the settings landed anyway once the session ended.
+    rejectPendingReview(); // drops the apply the "defers while dictation is live" test parked
+    expect(hasPendingApplyForTests()).toBe(false);
+    let release: (v: Record<string, string>) => void = () => {};
+    keyring.park = new Promise((r) => (release = r));
+    try {
+      const applying = applyBlob(
+        { backends: { list: [backend({ name: "from-peer" })] } },
+        { ...CATS_ALL, profiles: false },
+      );
+      await Promise.resolve();
+      useApp.setState({ status: "recording" as never });
+      release({});
+      expect(await applying).toBe(false);
+    } finally {
+      keyring.park = null;
+      useApp.setState({ status: "idle" });
+    }
+    expect(hasPendingApplyForTests()).toBe(false); // nothing queued to land behind the UI
+    expect(useApp.getState().backends[0].name).toBe("local");
+  });
+
   it("side-differing inbound chords are only collapsed where the registrar collapses them", async () => {
     // The sanitizer calls `conflicts(peers, !IS_WINDOWS)` and switches the later member of
     // each collision off. Windows' low-level hook registers LCtrl+Space and RCtrl+Space as
@@ -743,16 +756,36 @@ describe("applyBlob keep-local (baseline)", () => {
         { recording: { recordingsRetentionDays: "3", saveRecordings: "yes" } } as never,
         local,
         CATS_ALL,
-      ).filter((c) => c.kind === "recording-retention" || c.kind === "save-recordings"),
+      ).filter((c) => c.kind.endsWith("-retention") || c.kind === "save-recordings"),
     ).toEqual([]);
-    // The typed input still raises both.
+    // The typed input still raises both (the audio window shortens the one dictation clock).
     expect(
       securityChanges(
         { recording: { recordingsRetentionDays: 3, saveRecordings: true } } as never,
         local,
         CATS_ALL,
       ).map((c) => c.kind).sort(),
-    ).toEqual(["recording-retention", "save-recordings"]);
+    ).toEqual(["dictation-retention", "save-recordings"]);
+  });
+
+  it("the two dictation retention keys are judged as the one effective clock", () => {
+    const retention = (c: { kind: string }) => c.kind.endsWith("-retention");
+    // Audio 0 + record 7 (effective 7) → 30/30 lengthens the window: nothing is deleted sooner.
+    expect(
+      securityChanges(
+        { recording: { recordingsRetentionDays: 30, dictationRetentionDays: 30 } } as never,
+        { recording: { recordingsRetentionDays: 0 } } as never,
+        CATS_ALL,
+      ).filter(retention),
+    ).toEqual([]);
+    // Both 0 (kept forever) → audio 3: dictations start being deleted.
+    expect(
+      securityChanges(
+        { recording: { recordingsRetentionDays: 3 } } as never,
+        { recording: { recordingsRetentionDays: 0, dictationRetentionDays: 0 } } as never,
+        CATS_ALL,
+      ).filter(retention).map((c) => c.kind),
+    ).toEqual(["dictation-retention"]);
   });
 
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {
