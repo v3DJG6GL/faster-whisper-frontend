@@ -99,6 +99,10 @@ pub fn injection_cancelled(epoch: u64) -> bool {
 /// cancel or an abort, so `RECOVER_AT_EPOCH == INJECT_EPOCH` stays true indefinitely after one
 /// error abort and would suppress every later legitimate restore.
 ///
+/// Both session-level restores honour it: the per-phrase `restore_clipboard_snapshot` peeks it
+/// (a restore the frontend queued before an error abort can still run after the recovery write),
+/// and `end_injection` takes it.
+///
 /// Armed at all three recovery writes (the two in the paste path and the mid-function divert
 /// arm), and consumed at the top of `end_injection` — unconditionally,
 /// above its snapshot test, so a session that never took a snapshot still clears it — or by
@@ -115,6 +119,13 @@ static RECOVERY_ON_CLIPBOARD: AtomicBool = AtomicBool::new(false);
 /// Record that the clipboard now holds a recovered transcript (see `RECOVERY_ON_CLIPBOARD`).
 pub fn note_recovery_on_clipboard() {
     RECOVERY_ON_CLIPBOARD.store(true, Ordering::SeqCst);
+}
+
+/// Peek at the recovery flag without consuming it: the per-phrase `restore_clipboard_snapshot`
+/// declines while a recovered transcript is on the clipboard but leaves the flag for the session
+/// teardown (`end_injection` / `discard_injection_snapshot`) to consume.
+pub fn recovery_on_clipboard() -> bool {
+    RECOVERY_ON_CLIPBOARD.load(Ordering::SeqCst)
 }
 
 /// Take the recovery flag: true exactly once per recovery, for the restore that would erase it.
@@ -1483,5 +1494,25 @@ mod tests {
         // Remote target / a write that must stay: the pending restore is dropped.
         assert_eq!(merge_pending_restore(None, p(), false), None);
         assert_eq!(merge_pending_restore(None, None, true), None);
+    }
+
+    /// The per-phrase `restore_clipboard_snapshot` only PEEKS the recovery flag: a restore queued
+    /// before an error abort must decline, and the flag must still be there for the session
+    /// teardown (`end_injection`) to take, or that teardown restores the old clipboard over the
+    /// recovered transcript. Only this test touches the flag, so the shared static is safe here.
+    #[test]
+    fn recovery_flag_peek_does_not_consume() {
+        use super::{
+            clear_recovery_on_clipboard, note_recovery_on_clipboard, recovery_on_clipboard,
+            take_recovery_on_clipboard,
+        };
+        clear_recovery_on_clipboard();
+        assert!(!recovery_on_clipboard());
+        note_recovery_on_clipboard();
+        assert!(recovery_on_clipboard());
+        assert!(recovery_on_clipboard(), "a peek consumed the flag");
+        assert!(take_recovery_on_clipboard());
+        assert!(!recovery_on_clipboard());
+        assert!(!take_recovery_on_clipboard());
     }
 }

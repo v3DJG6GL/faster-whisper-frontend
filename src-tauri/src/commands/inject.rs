@@ -109,6 +109,15 @@ pub fn restore_clipboard_snapshot(snap: State<ClipboardSnapshot>) {
             );
             return;
         }
+        // An error abort just put the abandoned transcript on the clipboard (see end_injection).
+        // A per-phrase restore the frontend queued before the abort can still run after that
+        // recovery write and would erase it. Peek, don't take: the session teardown consumes it.
+        if crate::inject::recovery_on_clipboard() {
+            tracing::info!(
+                "[clip] restore_clipboard_snapshot: a recovered transcript is on the clipboard — restore skipped"
+            );
+            return;
+        }
         tracing::info!(
             "[clip] restore_clipboard_snapshot: {} bytes (delayed)",
             prev.len()
@@ -166,9 +175,27 @@ pub async fn get_focused_app(
     // The window TITLE can carry sensitive data (open document / email subject / private tab names)
     // and this is polled ~every 700ms during a session, so keep it OUT of the default-on `info` line —
     // log only app_id + editable there; the full record (incl. title) goes to `debug` (off by default).
-    match &focused {
-        Some(f) => tracing::info!("[focused-app] id={} editable={:?}", f.app_id, f.editable),
-        None => tracing::info!("[focused-app] none"),
+    // The `info` line fires only when app_id/editable CHANGE: at the ~700ms poll an unconditional
+    // line floods the log ring and file over a long session, pushing out the diagnostics that matter.
+    static LAST_FOCUS_LOG: std::sync::Mutex<Option<(String, Option<bool>)>> =
+        std::sync::Mutex::new(None);
+    let key = focused.as_ref().map(|f| (f.app_id.clone(), f.editable));
+    let changed = match LAST_FOCUS_LOG.lock() {
+        Ok(mut last) => {
+            let changed = *last != key;
+            if changed {
+                *last = key;
+            }
+            changed
+        }
+        // A poisoned lock only costs dedup: keep logging rather than go silent.
+        Err(_) => true,
+    };
+    if changed {
+        match &focused {
+            Some(f) => tracing::info!("[focused-app] id={} editable={:?}", f.app_id, f.editable),
+            None => tracing::info!("[focused-app] none"),
+        }
     }
     tracing::debug!("[focused-app] {focused:?}");
     Ok(focused)
