@@ -1,5 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
-import { deleteFailureMessage, pullNow, pushNow, resetSyncState } from "./sync";
+import {
+  approvePendingReview,
+  deleteFailureMessage,
+  getPendingConflict,
+  getPendingReview,
+  pullNow,
+  pushNow,
+  resetSyncState,
+  resolveSyncConflicts,
+} from "./sync";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import type { Backend } from "../types";
@@ -184,6 +193,52 @@ describe("a sync composed with a degraded keyring", () => {
     }
   });
 
+  // Resolving a conflict applied with backends ON: `c.local` is the degraded compose, so the
+  // resolved doc held the base's list whichever side won and the hydrate deleted b2.
+  it("resolving a conflict keeps this device's list", async () => {
+    try {
+      const { base, before } = await seed();
+      const s = useApp.getState().settings;
+      const localStart = !s.general.startMinimized;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: localStart } } });
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: peer(base, before, false) };
+      await pullNow(true);
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      await resolveSyncConflicts({ general: "remote" });
+      const st = useApp.getState();
+      expect(st.backends.map((b) => b.id)).toEqual(["b1", "b2"]);
+      expect(st.settings.general.typeAsISpeak).toBe(!before);
+      expect(st.syncStatus).toBe("ok");
+    } finally {
+      cleanup();
+    }
+  });
+
+  // A review raised over a degraded compose held backends out of the apply, but the approval
+  // adopted the peer's changed backends category as base — the next unlocked push then
+  // reverted the peer's change. It must withhold the base like the paths that raised it.
+  it("approving a review whose remote changed backends adopts no base", async () => {
+    try {
+      const { base, before } = await seed();
+      const remote = peer(base, before, true);
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
+      await approvePendingReview();
+      const st = useApp.getState();
+      expect(st.settings.transcribe?.dictationRetentionDays).toBe(1); // the approved change applied
+      expect(st.backends.map((b) => [b.id, b.name])).toEqual([["b1", "local"], ["b2", "added-here"]]);
+      expect(st.syncStatus).toBe("error");
+      expect(st.syncError).toContain("keyring");
+      api.keys = { b1: "sk-secret" };
+      await pushNow(true);
+      expect(api.pushedBase).toBe(1); // still the seeded base
+    } finally {
+      cleanup();
+    }
+  });
+
   it("a 409 that changed backends stops with a keyring error instead of a silent ok", async () => {
     try {
       const { base, before } = await seed();
@@ -197,6 +252,39 @@ describe("a sync composed with a degraded keyring", () => {
       expect(st.syncError).toContain("keyring");
     } finally {
       cleanup();
+    }
+  });
+});
+
+// After a peer's "Delete server copy" the backend answers a stale base with a 409 whose body is the
+// zero-state (blob null). Merging `{}` against the old snapshot dropped every unchanged category
+// and conflicted the changed ones; the push must re-seed from version 0 like the pull does.
+describe("a 409 against a deleted server copy", () => {
+  it("re-seeds from version 0 and pushes the full blob", async () => {
+    try {
+      await resetSyncState();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+      useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+      api.keys = { b1: "sk-secret" };
+      await pushNow(true);
+      const full = structuredClone(api.pushed) as SyncBlob;
+      const s = useApp.getState().settings;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: !s.general.startMinimized } } });
+      api.conflicts = [{ version: 0, updated_ts: null, device: null, blob: null }];
+      const pushesBefore = api.pushes;
+      await pushNow(true);
+      expect(getPendingConflict()).toBeNull();
+      // The follow-up push (scheduled at 0 ms) sends the whole document on base 0.
+      await vi.waitFor(() => expect(api.pushes).toBe(pushesBefore + 2));
+      expect(api.pushedBase).toBe(0);
+      const sent = api.pushed as SyncBlob;
+      expect(Object.keys(sent).sort()).toEqual(Object.keys(full).sort());
+      expect(sent.backends?.secrets).toEqual({ b1: "sk-secret" });
+      expect(useApp.getState().syncStatus).toBe("ok");
+    } finally {
+      api.keys = null;
+      api.conflicts = [];
     }
   });
 });

@@ -97,6 +97,9 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   const [confirmAll, setConfirmAll] = useState(false);
 
   function setGates(patch: Partial<Record<SettingId, boolean>>) {
+    // Any gate change disarms "Restore all defaults…": otherwise a confirm left open
+    // while the changes were cleared another way resurfaces on the next switch flip.
+    setConfirmAll(false);
     const next = { ...gates, ...patch };
     // Persist the complete gate map plus the legacy mirror keys, so an older
     // app version reading this config still sees the audio-folder and auto-stop intent.
@@ -209,8 +212,10 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
             changedOnly={ui.changedOnly}
             // A chevron in "Changed & default-off" mode was inert (that mode wins over
             // `expanded`): make it leave the mode, so the click does what the arrow shows.
-            onToggleExpand={() =>
-              patchUi({ changedOnly: false, expanded: { [group]: !ui.expanded[group] } })
+            // Flip what the arrow SHOWS (`shownOpen`), not the hidden `expanded` flag —
+            // in that mode the two differ, and flipping `expanded` inverted the click.
+            onToggleExpand={(shownOpen) =>
+              patchUi({ changedOnly: false, expanded: { [group]: !shownOpen } })
             }
             onGate={(id, v) => setGates({ [id]: v } as Partial<Record<SettingId, boolean>>)}
             onGateMany={(patch) => setGates(patch)}
@@ -299,7 +304,7 @@ function GroupCard({
   changed: ReadonlySet<SettingId>;
   expanded: boolean;
   changedOnly: boolean;
-  onToggleExpand: () => void;
+  onToggleExpand: (shownOpen: boolean) => void;
   onGate: (id: SettingId, v: boolean) => void;
   onGateMany: (patch: Partial<Record<SettingId, boolean>>) => void;
   onResetSetting: (def: SettingDef) => void;
@@ -333,7 +338,7 @@ function GroupCard({
       <div className="flex items-center gap-3 py-2.5">
         <DisclosureToggle
           open={panelOpen}
-          onToggle={onToggleExpand}
+          onToggle={() => onToggleExpand(panelOpen)}
           ariaControls={owns ? panelId : undefined}
           className="text-[13px] font-semibold text-text"
         >

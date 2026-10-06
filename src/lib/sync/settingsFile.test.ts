@@ -10,6 +10,8 @@ vi.mock("../api", async (importOriginal) => {
     ...mod,
     appVersion: async () => "0.0.0-test",
     syncDeviceInfo: async () => null,
+    exportSettingsFile: vi.fn(async () => undefined),
+    readBackendKeys: vi.fn(async () => ({})),
   };
 });
 
@@ -59,6 +61,35 @@ describe("buildEnvelope", () => {
     expect(tr.backendId).toBe("b1");
     expect(tr.model).toBe("m");
     expect(tr.language).toBe("en");
+  });
+});
+
+// A locked keyring degrades the composed backends to the keyless list; the
+// export must report that instead of a plain "Exported" for a backup the user
+// asked to carry the keys.
+describe("exportToFile", () => {
+  it("reports keysMissing when the keys were asked for but could not be read", async () => {
+    const { useApp } = await import("../store");
+    const api = await import("../api");
+    const { exportToFile } = await import("./settingsFile");
+    const prev = useApp.getState().backends;
+    const b0 = { ...(prev[0] ?? {}), id: "b1", hasApiKey: true } as (typeof prev)[number];
+    useApp.setState({ backends: [b0] });
+    try {
+      vi.mocked(api.readBackendKeys).mockResolvedValueOnce({});
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
+      const calls = vi.mocked(api.exportSettingsFile).mock.calls;
+      const env = calls[calls.length - 1][1] as { categories: SyncBlob };
+      expect(env.categories.backends?.secrets).toBeUndefined();
+
+      vi.mocked(api.readBackendKeys).mockResolvedValueOnce({ b1: "sk-1" });
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+
+      // Keys not asked for: nothing is missing.
+      await expect(exportToFile("/tmp/x.json", false)).resolves.toEqual({ keysMissing: false });
+    } finally {
+      useApp.setState({ backends: prev });
+    }
   });
 });
 

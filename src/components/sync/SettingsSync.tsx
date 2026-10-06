@@ -265,7 +265,9 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
 
       <div className="mt-3 flex flex-col gap-2">
         <Notice>
-          Machine-specific settings (microphone, audio and log folders, evdev) are never imported.
+          Never imported: the microphone, this device&apos;s audio and log folders, and the Linux
+          input backend. Other machine-specific settings in the file (chip position, paste
+          shortcuts, server addresses) come in with their category.
         </Notice>
         {/* The hazard notice `RestoreFromServer` has and this dialog did not, though both default
             every present category to ON and both apply through `applyBlob` — which REPLACES rather
@@ -718,7 +720,7 @@ export function SyncTab() {
   const lastSyncDevice = useApp((st) => st.lastSyncDevice);
 
   const [includeSecrets, setIncludeSecrets] = useState(false);
-  const [exportState, setExportState] = useState<"idle" | "busy" | "done" | "error">("idle");
+  const [exportState, setExportState] = useState<"idle" | "busy" | "done" | "nokeys" | "error">("idle");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [deleteArmed, setDeleteArmed] = useState(false);
@@ -734,9 +736,16 @@ export function SyncTab() {
       const path = await pickSavePath(`faster-whisper-settings-${stamp}.json`);
       if (!path) return;
       setExportState("busy");
-      await exportToFile(path, includeSecrets);
+      const { keysMissing } = await exportToFile(path, includeSecrets);
+      // A keyless backup the user asked to carry keys stays flagged (no auto-reset):
+      // the gap otherwise surfaces only when restoring.
+      if (keysMissing) {
+        setExportState("nokeys");
+        return;
+      }
       setExportState("done");
-      setTimeout(() => setExportState("idle"), 2500);
+      // Only clear our own "done": a later export's "nokeys" must outlive this timer.
+      setTimeout(() => setExportState((st) => (st === "done" ? "idle" : st)), 2500);
     } catch (e) {
       console.error("export failed", e);
       setExportState("error");
@@ -783,6 +792,14 @@ export function SyncTab() {
             {exportState === "done" ? "Exported ✓" : exportState === "error" ? "Failed — retry" : "Export…"}
           </Button>
         </SettingRow>
+        {exportState === "nokeys" && (
+          <div className="pb-4">
+            <Notice tone="warn">
+              Exported — but the API keys could not be read from the system keyring and are not in
+              the file.
+            </Notice>
+          </div>
+        )}
         <SettingRow
           title="Include API keys"
           desc="Write the stored keys into the file in plain text — only for backups you keep private."

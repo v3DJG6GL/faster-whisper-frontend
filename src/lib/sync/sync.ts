@@ -150,7 +150,7 @@ function syncCats(): Record<SyncCategory, boolean> {
 /** applyBlob strips gated-off scalar fields, so the security review must judge what
  *  will actually apply: comparing ungated blobs raised the consent dialog (and held a
  *  whole category back) for a peer edit to a setting this device opted out of. Both
- *  sides are stripped, or `clockCheck`'s absent-key fallbacks would fire spuriously. */
+ *  sides are stripped, or `securityChanges`' local-value fallbacks would fire spuriously. */
 function gateScalars(b: SyncBlob, gates: Gates): SyncBlob {
   const out: SyncBlob = { ...b };
   for (const c of SCALAR_CATS) {
@@ -1442,7 +1442,7 @@ export async function applyBlob(
       const { theme, accentHue, accentMotion, ...incoming } = blob.general as SyncGeneral;
       // Machine-local fields are excluded from SyncGeneral by TYPE only, which stops us sending
       // them but not a peer (or a hand-authored import file) from sending them to us — and the
-      // import dialog promises the user "evdev is never imported". Enforce it on the way in.
+      // import dialog promises the user the Linux input backend is never imported. Enforce it on the way in.
       // `autoEnter` gets the same treatment for a sharper reason: the synthesized Return is sent
       // AFTER the paste, i.e. outside the bracketed-paste region, so it submits whatever the
       // pasted (server-authored, newline-preserving) transcript put in the buffer. A peer must
@@ -2352,6 +2352,7 @@ export async function pushNow(manual = false): Promise<void> {
           hash: hashBlob(blob),
           snapshot: blob,
         });
+        if (myGen !== gen) return; // superseded during the keyring stash wait
         setRuntime({
           syncStatus: "ok",
           syncUnsupported: false,
@@ -2364,6 +2365,19 @@ export async function pushNow(manual = false): Promise<void> {
         const remote = res.conflict;
         if (remote.blob !== null && !isPlainObject(remote.blob)) {
           handleTransportFailure(res.status, "The server sent settings this app cannot read.");
+          return;
+        }
+        if (remote.blob === null) {
+          // The server copy was deleted under our base (a peer's "Delete server copy", or a
+          // wipe): the 409 body is the zero-state. Merging `{}` against the stale snapshot drops
+          // every unchanged category and conflicts the changed ones — re-seed from version 0
+          // instead, as pullNow's null-blob arm does, and let the follow-up push send it all.
+          await clearSnapshotSecrets();
+          if (myGen !== gen) return;
+          await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
+          if (myGen !== gen) return;
+          setRuntime({ syncStatus: "ok", lastSyncedAt: null, lastSyncDevice: null });
+          schedulePush(0);
           return;
         }
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
@@ -2390,7 +2404,7 @@ export async function pushNow(manual = false): Promise<void> {
           raiseReview({
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
-            pushAfter: true,
+            pushAfter: true, degraded,
           });
           return;
         }
@@ -2460,7 +2474,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     raiseReview({
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
-      device: remote.device ?? null, pushAfter: true,
+      device: remote.device ?? null, pushAfter: true, degraded,
     });
     return;
   }
@@ -2490,6 +2504,9 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     hash: hashBlob(remoteBlob),
     snapshot: remoteBlob,
   });
+  // persistState can park in the keyring stash; a reset/sync-off in that window must not get
+  // this epoch's "ok" written over it.
+  if (myGen !== gen) return;
   setRuntime({
     syncStatus: "ok",
     lastSyncedAt: Date.now(),
@@ -2654,26 +2671,30 @@ export function securityChanges(
   // file clock rides its own category. Typed reads: the merged blob reaches here
   // before applyBlob's typedLike pass, so a string `"3"` would otherwise raise
   // a review (and park the whole category) for a change that never applies.
-  const clockCheck = (
+  //
+  // `norm` mirrors what the apply does to an incoming value: the u32 key drops anything that
+  // is not a whole non-negative number (typedLike's U32_KEYS), the two transcription-settings
+  // keys round and clamp to 0..3650 (sanitizeTranscription). Judging the raw value raised a
+  // consent review for a deletion window (-1, 0.3, 2.5) that could never be applied. `undefined`
+  // from `norm` is "dropped": the apply keeps the local days, so it reads as no change.
+  const days = (
     container: unknown,
-    localContainer: unknown,
-    key: "historyRetentionDays",
+    key: string,
     fallback: number,
-    what: string,
-    kind: SecurityChange["kind"],
-  ) => {
-    if (!isPlainObject(container)) return;
-    const rawNext = ownProp(container, key);
-    // An ABSENT key is "no change" on the apply side (the arms merge over current), so it
-    // must not be read as the app default here — a peer with this row's sync switch off
-    // omits it, and the fallback raised a consent dialog for a deletion that can't happen.
-    if (rawNext === undefined) return;
-    const rawHere = isPlainObject(localContainer) ? ownProp(localContainer, key) : undefined;
-    const hereDays = typeof rawHere === "number" && Number.isFinite(rawHere) ? rawHere : fallback;
-    // A non-numeric value (null, a string) is dropped by the apply side, which keeps the local
-    // days — so it reads as "no change" here too. Falling back to the app default raised a
-    // consent dialog for a deletion window that could never be applied.
-    const nextDays = typeof rawNext === "number" && Number.isFinite(rawNext) ? rawNext : hereDays;
+    norm?: (v: number) => number | undefined,
+  ): number => {
+    // An ABSENT key is "no change" on the apply side (the arms merge over current), so it must
+    // not be read as the app default — a peer with this row's sync switch off omits it, and the
+    // default raised a consent dialog for a deletion that can't happen. A non-numeric value
+    // (null, a string) is dropped by the apply side too, which keeps the local days.
+    const v = isPlainObject(container) ? ownProp(container, key) : undefined;
+    if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+    return norm ? (norm(v) ?? fallback) : v;
+  };
+  const asU32 = (v: number) => (Number.isInteger(v) && v >= 0 && v <= 0xff_ff_ff_ff ? v : undefined);
+  const clamp3650 = (v: number) => Math.max(0, Math.min(3650, Math.round(v)));
+  // Only a change that starts deleting, or deletes sooner, needs consent.
+  const pushIfSooner = (hereDays: number, nextDays: number, what: string, kind: SecurityChange["kind"]) => {
     if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
       out.push({
         kind,
@@ -2730,32 +2751,26 @@ export function securityChanges(
   // persisted parked reviews, but is no longer raised.)
   if (cats.recording && isPlainObject(incoming.recording)) {
     const effDays = (a: number, r: number) => (a === 0 ? r : r === 0 ? a : Math.min(a, r));
-    const days = (container: unknown, key: string, fallback: number) => {
-      const v = isPlainObject(container) ? ownProp(container, key) : undefined;
-      return typeof v === "number" && Number.isFinite(v) ? v : fallback;
-    };
     const localA = days(local.recording, "recordingsRetentionDays", 0);
     const localR = days(local.recording, "dictationRetentionDays", 7);
-    const hereDays = effDays(localA, localR);
-    const nextDays = effDays(
-      days(incoming.recording, "recordingsRetentionDays", localA),
-      days(incoming.recording, "dictationRetentionDays", localR),
+    pushIfSooner(
+      effDays(localA, localR),
+      effDays(
+        days(incoming.recording, "recordingsRetentionDays", localA, asU32),
+        days(incoming.recording, "dictationRetentionDays", localR, clamp3650),
+      ),
+      "dictations (text and audio)",
+      "dictation-retention",
     );
-    if (nextDays !== hereDays && nextDays !== 0 && (hereDays === 0 || nextDays < hereDays)) {
-      const what = "dictations (text and audio)";
-      out.push({
-        kind: "dictation-retention",
-        backend: "",
-        detail:
-          hereDays === 0
-            ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
-            : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
-      });
-    }
   }
-  if (cats.fileTranscriptions) {
-    clockCheck(incoming.fileTranscriptions, local.fileTranscriptions, "historyRetentionDays", 0,
-      "file transcriptions", "history-retention");
+  if (cats.fileTranscriptions && isPlainObject(incoming.fileTranscriptions)) {
+    const here = days(local.fileTranscriptions, "historyRetentionDays", 0);
+    pushIfSooner(
+      here,
+      days(incoming.fileTranscriptions, "historyRetentionDays", here, clamp3650),
+      "file transcriptions",
+      "history-retention",
+    );
   }
   if (cats.profiles && incoming.profiles) {
     out.push(...typedTextChanges(incoming.profiles.list, local.profiles?.list, "profiles"));
@@ -2829,6 +2844,9 @@ interface PendingReview {
   updatedAt: number | null;
   device: string | null;
   pushAfter: boolean;
+  /** Raised over a degraded-keyring compose (`backendsDegraded`): `cats` already holds backends
+   *  out, and the approval may adopt the remote as base only under `degradedBaseWithheld`. */
+  degraded?: boolean;
 }
 let pendingReview: PendingReview | null = null;
 
@@ -2868,6 +2886,9 @@ export async function approvePendingReview(): Promise<void> {
     pendingReview = r;
     return;
   }
+  // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
+  // it left the backends category alone, or the next unlocked push reverts the peer's change.
+  if (r.degraded && degradedBaseWithheld(r.remote)) return;
   await persistState({
     version: r.version,
     updatedAt: r.updatedAt,
@@ -2938,7 +2959,12 @@ export async function resolveSyncConflicts(
     if (val === undefined) delete final[cat];
     else (final as Record<string, unknown>)[cat] = val;
   }
-  const applyCats = syncCats();
+  // Degraded keyring (see `backendsDegraded`): `c.local` carries the base's backends category, not
+  // this device's list, so `final` holds the remote/base list whichever side won — applying it
+  // deleted every backend added here. Hold the category out, as the two sibling adopt sites do.
+  const syncedCats = syncCats();
+  const degraded = backendsDegraded(c.local, syncedCats);
+  const applyCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
   // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
   // `c.merged`, which already contains every NON-conflicting category auto-resolved in the
   // server's favour — so a peer that also touches some category the user happened to edit
@@ -2959,6 +2985,7 @@ export async function resolveSyncConflicts(
       updatedAt: c.remoteUpdatedAt ?? null,
       device: c.remoteDevice ?? null,
       pushAfter: true,
+      degraded,
     });
     return;
   }
@@ -2970,6 +2997,7 @@ export async function resolveSyncConflicts(
     pendingConflict = c;
     return;
   }
+  if (degraded && degradedBaseWithheld(c.remote)) return;
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.

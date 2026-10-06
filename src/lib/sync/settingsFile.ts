@@ -37,10 +37,22 @@ export async function buildEnvelope(includeSecrets: boolean): Promise<ExportEnve
   };
 }
 
-/** Build + write the export to `path` (picked via the save dialog). */
-export async function exportToFile(path: string, includeSecrets: boolean): Promise<void> {
+/** Build + write the export to `path` (picked via the save dialog).
+ *  `keysMissing`: the user asked for the API keys, this device has some, yet
+ *  the file has none — composeBlob degrades a locked or partial keyring read to
+ *  the keyless list (all or nothing), so the caller must say so instead of
+ *  reporting a plain success for a backup that silently lacks its keys. */
+export async function exportToFile(
+  path: string,
+  includeSecrets: boolean,
+): Promise<{ keysMissing: boolean }> {
   const envelope = await buildEnvelope(includeSecrets);
   await exportSettingsFile(path, envelope);
+  const keysMissing =
+    includeSecrets &&
+    useApp.getState().backends.some((b) => b.hasApiKey) &&
+    !envelope.categories.backends?.secrets;
+  return { keysMissing };
 }
 
 /** Apply the user's per-category selection from a parsed import. Secrets ride

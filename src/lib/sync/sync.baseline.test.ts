@@ -510,6 +510,31 @@ describe("applyBlob keep-local (baseline)", () => {
     }
   });
 
+  // The apply rounds/clamps the two transcription-settings clocks to 0..3650 and drops a
+  // non-u32 recordingsRetentionDays; the review must judge that same value, or it asks consent
+  // for a deletion window that never applies.
+  it("retention days are judged as the apply normalizes them", () => {
+    const local = { recording: { dictationRetentionDays: 30 } } as never;
+    const dictChange = (incoming: Record<string, unknown>) =>
+      securityChanges({ recording: incoming } as never, local, CATS_ALL).find(
+        (c) => c.kind === "dictation-retention",
+      );
+    expect(dictChange({ dictationRetentionDays: -1 })).toBeUndefined(); // clamps to 0 = off
+    expect(dictChange({ dictationRetentionDays: 0.3 })).toBeUndefined(); // rounds to 0 = off
+    expect(dictChange({ recordingsRetentionDays: 2.5 })).toBeUndefined(); // not a u32: dropped
+    expect(dictChange({ recordingsRetentionDays: -3 })).toBeUndefined();
+    expect(dictChange({ dictationRetentionDays: 6.6 })?.detail).toContain("after 7 day(s) instead of 30");
+    const fileLocal = { fileTranscriptions: { historyRetentionDays: 30 } } as never;
+    const fileChange = (v: unknown) =>
+      securityChanges({ fileTranscriptions: { historyRetentionDays: v } } as never, fileLocal, CATS_ALL).some(
+        (c) => c.kind === "history-retention",
+      );
+    expect(fileChange(-5)).toBe(false);
+    expect(fileChange(0.4)).toBe(false);
+    expect(fileChange(undefined)).toBe(false); // absent key: no change
+    expect(fileChange(9)).toBe(true);
+  });
+
   it("the Pinned word mappings switch gates the pin on apply", async () => {
     const base = settings();
     useApp.setState({
