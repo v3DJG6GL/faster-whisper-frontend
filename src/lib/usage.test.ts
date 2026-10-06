@@ -130,6 +130,15 @@ describe("usage poll gates", () => {
     expect(calls().page).toBe(2);
     close();
   });
+
+  it("refetches a backend whose cached usage was dropped without a backend edit", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    getUsageStats.mockClear();
+    useApp.getState().forgetBackendCaches("b1"); // an API-key rotation: bKey does not move
+    await settle();
+    expect(calls().fixed).toBe(1); // without waiting for the next tick
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

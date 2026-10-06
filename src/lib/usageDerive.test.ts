@@ -219,6 +219,17 @@ describe("usageDerive", () => {
     expect(rhythmModel("hours", { hours }, "file", "sessions", 20_000, 20_013).peak).toMatchObject({ row: 1, col: 10, value: 1 });
   });
 
+  it("rhythmModel hours: a weekday a short window never reaches is out of the window, not zeros", () => {
+    const hours: UsageHourCell[] = [{ dow: dowOf(20_000), hour: 9, all: 50, dictation: 50, file: 0, url: 0, text: 0 }];
+    const m = rhythmModel("hours", { hours }, "all", "words", 20_000, 20_002); // three days
+    expect(m.cells.filter((c) => !c.inWindow)).toHaveLength(4 * 24);
+    expect(m.counts.reduce((a, v) => a + v, 0)).toBe(3 * 24);
+    expect(m.counts[0]).toBe(3 * 24 - 1);
+    for (const d of [0, 1, 2]) expect(m.cells[dowOf(20_000 + d) * 24].inWindow).toBe(true);
+    // A full week or longer keeps every weekday in.
+    expect(rhythmModel("hours", { hours }, "all", "words", 20_000, 20_006).cells.every((c) => c.inWindow)).toBe(true);
+  });
+
   it("rhythmModel: a words-only server is reported, not shown as zeros", () => {
     const hours: UsageHourCell[] = [{ dow: 0, hour: 8, all: 10, dictation: 10, file: 0, url: 0, text: 0 }];
     expect(rhythmModel("hours", { hours }, "all", "words", 1, 30).sent).toBe("yes");

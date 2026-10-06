@@ -272,7 +272,7 @@ export default function Dashboard() {
             // (the same dark ink app.css pairs with the stock amber accent).
             "bg-armed text-[#1a1207]"
           : "bg-surface-2 text-dim";
-  const waveTone = vis.tone === "faint" ? "dim" : vis.tone;
+  const waveTone = vis.tone;
   // Mirror the chip (Overlay working = processing || warming): vis.state is "processing" for
   // transcribing/injecting AND cold-mic warm-up, so the bars self-sweep during warm-up instead of
   // sitting flat at the ~0 level a warming mic delivers — matching heroFill and the chip.

@@ -59,7 +59,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
     if (i < N) {
       const c = model.cells[i];
       if (!c) return null;
-      if (!c.inWindow) return { title: L.cellName(i), kinds: c.kinds, total: 0, quarter: undefined, extra: [], out: rhythm === "months" ? `${L.cellName(i)} is outside ${fmtDateFull(from)} – ${fmtDateFull(to)}` : `the ${ordinal(c.col + 1)} does not occur between ${fmtDateFull(from)} and ${fmtDateFull(to)}` };
+      if (!c.inWindow) return { title: L.cellName(i), kinds: c.kinds, total: 0, quarter: undefined, extra: [], out: rhythm === "months" ? `${L.cellName(i)} is outside ${fmtDateFull(from)} – ${fmtDateFull(to)}` : rhythm === "hours" ? `no ${DOW_LONG[c.row]} falls between ${fmtDateFull(from)} and ${fmtDateFull(to)}` : `the ${ordinal(c.col + 1)} does not occur between ${fmtDateFull(from)} and ${fmtDateFull(to)}` };
       const occ = model.occOf(c);
       const extra: [string, string][] = [];
       if (c.value > 0 && occ > 1) extra.push([`≈ ${metricText(metric, c.value / occ, true)} per ${model.occWord(c)}`, `${fmtFull(occ)} ${rhythm === "hours" ? `${model.occWord(c)}s` : "months"} in range`]);
@@ -206,36 +206,41 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
             ))}
             <div role="presentation" />
             <div role="presentation" />
-            {Array.from({ length: L.rows }, (_, r) => (
-              <div key={r} role="row" className="contents">
-                <div className="flex items-center font-mono text-[10.5px] leading-none text-faint">{L.rowLabel(r)}</div>
-                {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
-                  const i = r * L.cols + c.col;
-                  return (
-                    <i
-                      key={c.col}
-                      data-i={i}
-                      tabIndex={i === focusIdx ? 0 : -1}
-                      role="gridcell"
-                      aria-label={`${L.cellName(i)}: ${!c.inWindow ? "not in this window" : c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
-                      className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", tip?.i === i && CELL_HOT)}
-                      style={{ background: c.inWindow ? LEVEL_BG[c.level] : "repeating-linear-gradient(135deg, var(--c-line-strong) 0 2px, var(--c-surface-2) 2px 5px)" }}
-                    />
-                  );
-                })}
-                <div role="presentation" />
-                <div
-                  data-i={N + L.cols + r}
-                  tabIndex={0}
-                  role="img"
-                  aria-label={`${L.rowLong(r)}: ${metricText(metric, model.rowTotals[r])}, ${model.rowIndex[r].toFixed(1)} times an average ${L.rowUnit}`}
-                  data-track="side"
-                  className={cn("relative flex items-center rounded-[2px] outline-none", CELL_HOVER, tip?.i === N + L.cols + r && CELL_HOT)}
-                >
-                  <i className="block h-[calc(100%-4px)] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
+            {Array.from({ length: L.rows }, (_, r) => {
+              // A row the window never reaches (a weekday a short span skips) hides its side
+              // bar, like an out-of-window top bar; the box stays so the tick still spans the track.
+              const rowLive = model.cells.slice(r * L.cols, r * L.cols + L.cols).some((c) => c.inWindow);
+              return (
+                <div key={r} role="row" className="contents">
+                  <div className="flex items-center font-mono text-[10.5px] leading-none text-faint">{L.rowLabel(r)}</div>
+                  {model.cells.slice(r * L.cols, r * L.cols + L.cols).map((c) => {
+                    const i = r * L.cols + c.col;
+                    return (
+                      <i
+                        key={c.col}
+                        data-i={i}
+                        tabIndex={i === focusIdx ? 0 : -1}
+                        role="gridcell"
+                        aria-label={`${L.cellName(i)}: ${!c.inWindow ? "not in this window" : c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
+                        className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", tip?.i === i && CELL_HOT)}
+                        style={{ background: c.inWindow ? LEVEL_BG[c.level] : "repeating-linear-gradient(135deg, var(--c-line-strong) 0 2px, var(--c-surface-2) 2px 5px)" }}
+                      />
+                    );
+                  })}
+                  <div role="presentation" />
+                  <div
+                    data-i={N + L.cols + r}
+                    tabIndex={rowLive ? 0 : -1}
+                    role="img"
+                    aria-label={`${L.rowLong(r)}: ${metricText(metric, model.rowTotals[r])}, ${model.rowIndex[r].toFixed(1)} times an average ${L.rowUnit}`}
+                    data-track="side"
+                    className={cn("relative flex items-center rounded-[2px] outline-none", CELL_HOVER, !rowLive && "invisible", tip?.i === N + L.cols + r && CELL_HOT)}
+                  >
+                    <i className="block h-[calc(100%-4px)] rounded-r-[2px]" style={{ width: `${barLen(model.rowIndex[r], rMax)}%`, background: barBg(model.rowIndex[r]) }} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
           {ticks && (
             <>

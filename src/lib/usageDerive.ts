@@ -5,7 +5,7 @@
 // vitest covers it without a webview. The charts in components/stats/ only
 // lay these numbers out.
 
-import { dayToDate } from "@/lib/format";
+import { dayToDate, plural } from "@/lib/format";
 import type {
   UsageHourCell,
   UsageKind,
@@ -776,6 +776,9 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   // the window, not a zero month — hatched, unlevelled, and left out of the flat average.
   const monthIn = (row: number, col: number) =>
     Date.UTC(L.y0 + row, col, 1) / DAY_MS <= t && Date.UTC(L.y0 + row, col + 1, 0) / DAY_MS >= f;
+  // Hours: likewise a weekday a short custom window never reaches (four of a 3-day span's
+  // seven rows) is out of the window, not a row of zero slots.
+  const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
   const cells: RhythmCell[] = [];
   for (let i = 0; i < N; i++) {
     const kinds = grid[i] ?? zeroKinds();
@@ -785,7 +788,7 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
       row, col, kinds, level: 0,
       value: metricValue(kinds[scope], metric),
       companion: metricValue(kinds[scope], comp),
-      inWindow: L.colOcc ? L.colOcc[col] > 0 : rhythm === "months" ? monthIn(row, col) : true,
+      inWindow: L.colOcc ? L.colOcc[col] > 0 : rhythm === "months" ? monthIn(row, col) : wd ? wd[row] > 0 : true,
     });
   }
   const active = cells.filter((c) => c.inWindow);
@@ -802,7 +805,6 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   const rowTotals = new Array<number>(L.rows).fill(0);
   for (const c of cells) { colTotals[c.col] += c.value; rowTotals[c.row] += c.value; }
   const sum = colTotals.reduce((a, v) => a + v, 0);
-  const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
   // A side bar compares its average per occurrence with the flat one: a year has twelve
   // 1sts but seven 31sts, a 30-day window five of two weekdays and four of the rest, and a
   // month the window never touches does not occur at all.
@@ -961,7 +963,7 @@ export function translationRows(d: {
       const runs = typeof t.runs === "number" ? t.runs : 0;
       return {
         label: code,
-        title: `${code} · ${runs} ${runs === 1 ? "dictation" : "dictations"}${kept > 0 ? ` · ${kept} kept the original` : ""}`,
+        title: `${code} · ${plural(runs, "dictation")}${kept > 0 ? ` · ${kept} kept the original` : ""}`,
         value: runs,
         colorVar: "var(--c-translate)",
       };

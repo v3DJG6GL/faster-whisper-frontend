@@ -135,7 +135,7 @@ async function refreshYear(force = false): Promise<void> {
   const target = effectiveServerUrl(backend, s.settings);
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, q, tz);
-  if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !pollingAll && !force) return; // the poll refreshes it; a filter change reuses it (a failed, carried year is retried)
+  if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !force) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
@@ -244,7 +244,7 @@ async function refreshAll(): Promise<void> {
           /* the page keeps its last document */
         }
         try {
-          await refreshYear();
+          await refreshYear(true);
         } catch {
           /* the calendar keeps its last year */
         }
@@ -288,6 +288,14 @@ export function initUsageController(): void {
     const bKey = (bs: typeof state.backends) =>
       bs.map((b) => b.id + "\0" + b.serverUrl + "\0" + b.hasApiKey + "\0" + (b.kind ?? "")).join("\n");
     if (bKey(state.backends) !== bKey(prev.backends)) {
+      void refreshAll();
+    } else if (
+      state.usage !== prev.usage &&
+      state.backends.some((b) => hasOwn(prev.usage, b.id) && !hasOwn(state.usage, b.id))
+    ) {
+      // A live backend's cached usage was dropped without bKey moving — an API-key rotation
+      // (forgetBackendCaches) or a URL override (setUrlOverride): refetch it now, not on the
+      // next tick. refreshOne only ever adds keys, so this cannot loop.
       void refreshAll();
     }
     // Refetch shortly after a dictation session ends (idle transition) — the server

@@ -1,6 +1,6 @@
 import { useMemo, useRef } from "react";
 import { cn } from "@/lib/cn";
-import { fmtFull, fmtDateFull, localTodayDay } from "@/lib/format";
+import { fmtFull, fmtDateFull, localTodayDay, plural } from "@/lib/format";
 import {
   DOW_SHORT, KIND_LABEL, METRIC_LABEL, QUARTER_NAME, STAGE_CHIP_LABEL, calendarModel, streakFor, weekColumns,
   type ChartMetric, type UsageScope,
@@ -53,7 +53,7 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
           {mark && <Pill>{mark.word} marked</Pill>}
           {failed ? <Pill>couldn’t load</Pill> : stale && <Pill>loading…</Pill>}
           <Pill>
-            streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}
+            streak {plural(streak.current, "day")} · best {fmtFull(streak.best)}
             {filtered ? " · filtered" : ""}
           </Pill>
         </>

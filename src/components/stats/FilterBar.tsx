@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Segmented } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { fmtFull } from "@/lib/format";
+import { fmtFull, plural } from "@/lib/format";
 import {
   CHART_METRICS, KINDS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
   bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_SPAN_DAYS, type ChartMetric,
@@ -22,9 +22,9 @@ const STAGE_DOT: Record<UsageStageKey, string> = {
   vad: "var(--c-think)",
 };
 
-function CustomSpanPopover({ from, to, today, onApply, onCancel }: { from: number; to: number; today: number; onApply: (from: number, to: number) => void; onCancel: () => void }) {
-  const [f, setF] = useState(dayToIso(from));
-  const [t, setT] = useState(dayToIso(to));
+/** The draft dates live in FilterBar, not here: the popover sits inside the full bar, which
+ *  remounts whenever the bar pins or un-pins, and a local draft would reset mid-edit. */
+function CustomSpanPopover({ f, t, setF, setT, today, onApply, onCancel }: { f: string; t: string; setF: (v: string) => void; setT: (v: string) => void; today: number; onApply: (from: number, to: number) => void; onCancel: () => void }) {
   const fd = isoToDay(f);
   const td = isoToDay(t);
   const ok = fd !== undefined && td !== undefined && fd <= td && td - fd < MAX_SPAN_DAYS;
@@ -58,7 +58,7 @@ function CustomSpanPopover({ from, to, today, onApply, onCancel }: { from: numbe
         ))}
       </div>
       <div className="mt-2.5 flex items-center gap-2 text-[11.5px] text-faint">
-        <span>{ok ? `${days} ${days === 1 ? "day" : "days"} · shown by ${BUCKET_WORD[mode]}` : "Pick a start on or before the end, at most 10 years apart."}</span>
+        <span>{ok ? `${plural(days, "day")} · shown by ${BUCKET_WORD[mode]}` : "Pick a start on or before the end, at most 10 years apart."}</span>
         <span className="flex-1" />
         <button type="button" onClick={onCancel} className="ring-signal rounded-pill border border-line-strong px-3 py-1 text-[12px] text-dim hover:text-text">
           Cancel
@@ -141,7 +141,10 @@ export function FilterBar({
   /** The fetch for this query failed: the older document stays up, and the rail says so. */
   failed: boolean;
 }) {
-  const [custom, setCustom] = useState(false);
+  // The Custom popover's draft dates (null = closed). Held here so a pin / un-pin — which
+  // remounts the full bar the popover lives in — keeps what was typed.
+  const [draft, setDraft] = useState<{ f: string; t: string } | null>(null);
+  const custom = draft !== null;
   const [sentinelRef, stuck] = useStuck();
   const barRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
@@ -151,10 +154,14 @@ export function FilterBar({
   const win = resolveWindow(query, today, firstDay);
   const pickRange = (r: RangePreset) => {
     if (r === "custom") {
-      setCustom(true);
+      // Already open (Custom picked again): keep the draft rather than resetting it.
+      setDraft((d) => d ?? {
+        f: dayToIso(query.range === "custom" && query.from !== undefined ? query.from : win.from),
+        t: dayToIso(query.range === "custom" && query.to !== undefined ? query.to : win.to),
+      });
       return;
     }
-    setCustom(false);
+    setDraft(null);
     onQuery({ range: r, with: query.with });
   };
   const toggleStage = (k: UsageStageKey) => {
@@ -165,14 +172,14 @@ export function FilterBar({
   };
   const anySet = isFiltered(scope, query) || query.range !== "30";
   const clearAll = () => {
-    setCustom(false);
+    setDraft(null);
     onScope("all");
     onQuery({ range: "30", with: [] });
   };
   const spanText =
     query.range === "all"
-      ? `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"} · since the first session`
-      : `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"}${query.range === "custom" ? " · custom" : ""}`;
+      ? `${fmtDateRange(win.from, win.to)} · ${plural(win.days, "day")} · since the first session`
+      : `${fmtDateRange(win.from, win.to)} · ${plural(win.days, "day")}${query.range === "custom" ? " · custom" : ""}`;
   const rangeChip = query.range === "all" ? "All time" : query.range === "custom" ? fmtDateRange(win.from, win.to) : RANGE_LABEL[query.range];
   const clearButton = (
     <button type="button" onClick={clearAll} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
@@ -237,16 +244,18 @@ export function FilterBar({
           options={CHART_METRICS.map((m) => ({ value: m, label: METRIC_LABEL[m] }))}
         />
       </div>
-      {custom && (
+      {draft && (
         <CustomSpanPopover
-          from={query.range === "custom" && query.from !== undefined ? query.from : win.from}
-          to={query.range === "custom" && query.to !== undefined ? query.to : win.to}
+          f={draft.f}
+          t={draft.t}
+          setF={(v) => setDraft((d) => d && { ...d, f: v })}
+          setT={(v) => setDraft((d) => d && { ...d, t: v })}
           today={today}
           onApply={(from, to) => {
-            setCustom(false);
+            setDraft(null);
             onQuery({ range: "custom", from, to, with: query.with });
           }}
-          onCancel={() => setCustom(false)}
+          onCancel={() => setDraft(null)}
         />
       )}
       {query.with.length > 0 && (
