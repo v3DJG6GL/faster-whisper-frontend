@@ -685,15 +685,21 @@ export default function History() {
         ) : (
           <>
             {/* Translation was configured but produced nothing: the body below IS the
-                original, and it is the text that was inserted. Saying so — with the cause —
+                original, and whatever reached the field (typed, or left on the clipboard) was
+                the original too — the tail names which, and says nothing when the text was
+                never delivered ("not inserted" in the meta line). Saying so — with the cause —
                 is the difference between "this session had no translation" and "the
                 translation you asked for didn't happen"; without it the record silently
                 presents the original as the intended output. */}
             {rec.translationAttempted && (
               <div className="mt-3 font-mono text-[11px] text-warn">
                 translation to {safeDisplayText(rec.translationTarget ?? "the target language", 40)} failed
-                {rec.translationFailure ? ` (${safeDisplayText(rec.translationFailure, 24)})` : ""} — original
-                inserted
+                {rec.translationFailure ? ` (${safeDisplayText(rec.translationFailure, 24)})` : ""}
+                {rec.insertMethod === "typed"
+                  ? " — original inserted"
+                  : rec.insertMethod === "clipboard"
+                    ? " — original copied to the clipboard"
+                    : ""}
               </div>
             )}
             <div className="mt-3 max-h-56 select-text overflow-y-auto whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
