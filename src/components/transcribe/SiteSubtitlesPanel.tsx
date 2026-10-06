@@ -164,7 +164,7 @@ export function SiteSubtitlesPanel({
                         value={listed}
                         onChange={(next) => {
                           const code = next.find((c) => !listed.includes(c));
-                          if (code) onChange(addLanguage(input, state, code));
+                          if (code && !mtFull) onChange(addLanguage(input, state, code));
                         }}
                         supported={supported}
                         modelName={modelName}

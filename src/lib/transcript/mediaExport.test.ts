@@ -132,7 +132,6 @@ describe("mediaExportPlan", () => {
     expect(side.files.map((f) => f.name("talk"))).toEqual(["talk.mp4", "talk.de.srt", "talk.en.srt"]);
     expect(side.embedded).toEqual([]);
     expect(side.sidecars).toEqual({ tracks: ["orig", "en"], format: "srt" });
-    expect(side.containerRelevant).toBe(false);
     const both = mediaExportPlan({ ...base, subtitleMode: "both", format: "vtt" });
     expect(both.files.map((f) => f.name("talk"))).toEqual(["talk.mp4", "talk.de.vtt", "talk.en.vtt"]);
     expect(both.embedded).toEqual(["orig", "en"]);
@@ -140,6 +139,19 @@ describe("mediaExportPlan", () => {
     // A stale non-subtitle format never names a sidecar nobody loads.
     const stale = mediaExportPlan({ ...base, subtitleMode: "sidecar", format: "txt" });
     expect(stale.sidecars?.format).toBe("srt");
+  });
+  it("video, sidecar plain copy: the file keeps the local video's own extension", () => {
+    const base = { choice: "video" as const, container: "mkv" as const, format: "srt",
+      textFileNames: names, audioExt: null, tracks: ["orig"], result: { language: "de" }, hasVideoSource: true,
+      copyExt: "webm" };
+    const side = mediaExportPlan({ ...base, subtitleMode: "sidecar" });
+    expect(side.primary.name("talk")).toBe("talk.webm");
+    expect(side.primaryExt).toBe("webm");
+    expect(side.files.map((f) => f.name("talk"))).toEqual(["talk.webm", "talk.de.srt"]);
+    // Packaged on the server (tracks ride inside): the chosen container names it.
+    const emb = mediaExportPlan({ ...base, subtitleMode: "embedded" });
+    expect(emb.primary.name("talk")).toBe("talk.mkv");
+    expect(emb.primaryExt).toBe("mkv");
   });
   it("video without a source degrades to the text plan", () => {
     const p = mediaExportPlan({ choice: "video", container: "mkv", subtitleMode: "embedded", format: "vtt",
@@ -217,6 +229,13 @@ describe("linkSiteName", () => {
     expect(linkSiteName("http://192.168.1.5/a.mp4", "Generic")).toBe("");
     expect(linkSiteName("http://192.168.1.5/a.mp4")).toBe("");
     expect(linkSiteName("not a url")).toBe("");
+  });
+
+  it("never reads Object.prototype for a site named like one of its keys", () => {
+    expect(linkSiteName("https://www.constructor.io/v")).toBe("constructor");
+    expect(siteDisplayName("https://www.constructor.io/v")).toBe("Constructor");
+    expect(siteDisplayName("http://192.168.1.5/a.mp4", "toString")).toBe("Tostring");
+    expect(exportStem("Talk", "https://www.constructor.io/v")).toBe("constructor___Talk");
   });
 });
 

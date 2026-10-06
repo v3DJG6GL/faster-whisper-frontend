@@ -5,7 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  TRANSCRIBED_CPS, buildCues, cueResult, timedTrack, trText, trackCues, trackLimits, wrapLines, type CueOptions,
+  buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, wrapLines, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { codeSlug, stripControlChars } from "../sanitize";
@@ -259,6 +259,11 @@ function nameOf(ctx: Ctx, label: string): string {
   return speakerName(ctx.opts.renames, label);
 }
 
+/** The "Name: " a line opens with ("" without a speaker or with names off). */
+function namePrefix(ctx: Ctx, label: string | null | undefined): string {
+  return label && ctx.names ? `${nameOf(ctx, label)}: ` : "";
+}
+
 function colorOf(ctx: Ctx, label: string): string {
   // `opts.colors` is the wire format: explicit hexes, built FROM the user's
   // palette picks by callers (the viewer maps its pick indexes through
@@ -294,7 +299,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     return (
       result.segments
         .flatMap((seg) => {
-          const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
+          const prefix = namePrefix(ctx, seg.speaker);
           const time = `[${txtTime(seg.start)}] `;
           return cueLines(
             ctx,
@@ -318,7 +323,7 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     const slotLangs = ctx.lineTracks.map((t) => (t === "orig" ? null : t));
     const flush = () => {
       if (bufs.some((b) => b.length)) {
-        const prefix = who && ctx.names ? `${nameOf(ctx, who)}: ` : "";
+        const prefix = namePrefix(ctx, who);
         bufs.forEach((b, i) => {
           if (!b.length) return;
           const lang = slotLangs[i];
@@ -395,7 +400,7 @@ function srtStyled(ctx: Ctx, seg: TranscriptSegment, text: string): string {
 
 /** Chars a "Name: " prefix takes on a cue's first line (0 without one). */
 function nameReserve(ctx: Ctx, seg: TranscriptSegment): number {
-  return seg.speaker && ctx.names ? nameOf(ctx, seg.speaker).length + 2 : 0;
+  return namePrefix(ctx, seg.speaker).length;
 }
 
 function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
@@ -511,7 +516,7 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
   const out: string[] = [];
   for (let i = 0; i < segs.length; i++) {
     const seg = segs[i];
-    const prefix = seg.speaker && ctx.names ? `${nameOf(ctx, seg.speaker)}: ` : "";
+    const prefix = namePrefix(ctx, seg.speaker);
     if (track !== "orig") {
       const t = trOf(seg, track);
       if (t) out.push(`[${lrcTime(seg.start)}]${prefix}${t}`);
@@ -815,7 +820,7 @@ export function cpsWarnings(
   const grid = cueGrid(result, { ...opts, format: "srt" }, tracks);
   const out: { lang: string; index: number; cps: number }[] = [];
   for (const track of tracks) {
-    const limit = trackLimits(result, opts.cues, track)?.cps ?? TRANSCRIBED_CPS;
+    const limit = trackCps(result, opts.cues, track);
     // Kept-original lines are never exported — trackCues never yields them.
     for (const c of trackCues(grid, track)) {
       const dur = c.end - c.start;

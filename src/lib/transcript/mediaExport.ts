@@ -4,7 +4,6 @@
 // dialogs, the Tauri commands and the record. Also home to the one export
 // queue every viewer shares (bottom).
 
-import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptFormats";
 import { codeSlug } from "../sanitize";
@@ -83,8 +82,6 @@ export interface EmbeddedTrack {
  *  Kodi, Emby, Infuse, MPC-HC) — or, for a language's further tracks,
  *  `stem.<Label>.<code>.<ext>` (trackFileSuffixes). */
 export interface SidecarFile {
-  track: string;
-  lang: string;
   name: (stem: string) => string;
   content: string;
 }
@@ -144,7 +141,7 @@ export function sidecarFiles(
   const names = sidecarNames(result, tracks, format);
   return tracks.flatMap((t, i) => {
     const content = trackSubtitle(result, opts, t, format);
-    return content.trim() ? [{ track: t, lang: trackLang(result, t), name: names[i], content }] : [];
+    return content.trim() ? [{ name: names[i], content }] : [];
   });
 }
 
@@ -164,8 +161,6 @@ export interface MediaExportPlan {
    *  files come from the plain text export (Media = None / Audio). */
   sidecars: { tracks: string[]; format: SubtitleFormat } | null;
   saveLabel: string;
-  /** Whether the container choice matters for this plan. */
-  containerRelevant: boolean;
 }
 
 /** What one Save writes, in order: the media file first (it names the
@@ -182,6 +177,9 @@ export function mediaExportPlan(a: {
   /** The result the tracks belong to (names their sidecars). */
   result: Pick<BatchResult, "language" | "timedTracks">;
   hasVideoSource: boolean;
+  /** The local video's own extension when a no-embed export plain-copies it
+   *  (sidecar mode): the copy keeps its container, so its name does too. */
+  copyExt?: string | null;
 }): MediaExportPlan {
   const text: PlannedFile[] = a.textFileNames.map((name) => ({ name, kind: "text" }));
   const label = (n: number, one: string) => (n === 1 ? one : `Save ${n} files`);
@@ -190,11 +188,12 @@ export function mediaExportPlan(a: {
     const files = [audio, ...text];
     return {
       files, primary: audio, primaryExt: a.audioExt, embedded: [], sidecars: null,
-      saveLabel: label(files.length, "Save audio"), containerRelevant: false,
+      saveLabel: label(files.length, "Save audio"),
     };
   }
   if (a.choice === "video" && a.hasVideoSource) {
-    const video: PlannedFile = { name: (stem) => `${stem}.${a.container}`, kind: "video" };
+    const ext = a.subtitleMode === "sidecar" && a.copyExt ? a.copyExt : a.container;
+    const video: PlannedFile = { name: (stem) => `${stem}.${ext}`, kind: "video" };
     const embedded = a.subtitleMode === "sidecar" ? [] : a.tracks;
     // Sidecars are one file per language (a player lists each as a track);
     // the format row is narrowed to SRT/VTT while Video is on, and a stale
@@ -206,15 +205,14 @@ export function mediaExportPlan(a: {
       : [];
     const files = [video, ...side];
     return {
-      files, primary: video, primaryExt: a.container, embedded, sidecars,
-      saveLabel: label(files.length, "Save video"), containerRelevant: a.subtitleMode !== "sidecar",
+      files, primary: video, primaryExt: ext, embedded, sidecars,
+      saveLabel: label(files.length, "Save video"),
     };
   }
   const primary = text[0] ?? { name: (stem) => `${stem}.${a.format}`, kind: "text" as const };
   return {
     files: text.length ? text : [primary], primary, primaryExt: a.format, embedded: [], sidecars: null,
     saveLabel: label(Math.max(text.length, 1), `Save ${a.format.toUpperCase()}`),
-    containerRelevant: false,
   };
 }
 
@@ -241,6 +239,12 @@ const TWO_PART_SUFFIXES = new Set([
   "co.in", "co.za", "com.sg", "co.il",
 ]);
 
+/** `map[key]` for the map's OWN keys only — a site named "constructor" or
+ *  "toString" must not read Object.prototype. */
+function ownEntry(map: Record<string, string>, key: string): string | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
+
 /** Short-link domains whose name is not the site's own. */
 const SITE_ALIASES: Record<string, string> = { youtu: "youtube" };
 
@@ -263,7 +267,7 @@ export function linkSiteName(url: string, extractor?: string | null): string {
     const name = labels.length >= 3 && TWO_PART_SUFFIXES.has(lastTwo)
       ? labels[labels.length - 3]
       : labels[labels.length - 2];
-    if (/^[a-z0-9-]{1,40}$/.test(name) && !/^-|-$/.test(name)) return SITE_ALIASES[name] ?? name;
+    if (/^[a-z0-9-]{1,40}$/.test(name) && !/^-|-$/.test(name)) return ownEntry(SITE_ALIASES, name) ?? name;
   }
   const ex = codeSlug((extractor ?? "").split(":")[0].toLowerCase(), 40);
   return ex && ex !== "generic" ? ex : "";
@@ -284,7 +288,7 @@ const SITE_DISPLAY: Record<string, string> = {
  *  none. */
 export function siteDisplayName(url: string, extractor?: string | null): string {
   const name = linkSiteName(url, extractor);
-  return SITE_DISPLAY[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
+  return ownEntry(SITE_DISPLAY, name) ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 /** The result with every site track's `site` filled in from the link (and its extractor,

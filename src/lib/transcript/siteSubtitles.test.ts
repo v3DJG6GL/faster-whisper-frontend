@@ -167,6 +167,18 @@ describe("tracks and switches", () => {
     expect(v.rows[0].sub).toBe("Multiple languages · main: German");
     expect(v.rows[0].badges[0].text).toBe("Whisper · each part in its language");
   });
+  it("a run fetches at most 8 tracks, always including the transcript's own, and counts those", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da"];
+    const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: [] });
+    const v = derive(inp, initialSiteState(inp.targets));
+    const run = v.run!;
+    expect(run.transcriptTrackId).toBe("de");
+    expect(run.fetch).toHaveLength(8);
+    expect(run.fetch).toContain("de");
+    // The site's order holds; the overflow drops from the end.
+    expect(run.fetch).toEqual(["en", "fr", "it", "es", "pt", "nl", "pl", "de"]);
+    expect(v.counter.used).toBe(8);
+  });
   it("counter counts the tracks in use", () => {
     const inp = input();
     const [, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "generate"));

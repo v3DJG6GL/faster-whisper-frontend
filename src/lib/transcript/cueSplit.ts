@@ -121,6 +121,13 @@ export function trackLimits(
   return o ? limitsFor(o, trackLang(result, track)) : null;
 }
 
+/** One track's reading-speed threshold: its limits', else the as-transcribed one. */
+export function trackCps(
+  result: Pick<BatchResult, "language" | "timedTracks">, o: CueOptions | undefined, track: string,
+): number {
+  return trackLimits(result, o, track)?.cps ?? TRANSCRIBED_CPS;
+}
+
 /** Limits as a tooltip: "2 lines × 42 characters · up to 7 s · 17 chars/s". */
 export function limitsTitle(l: CueLimits): string {
   return `${plural(l.lines, "line")} × ${l.cpl} characters · up to ${l.maxDur} s · ${l.cps} chars/s`;
@@ -206,13 +213,13 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
- *  without spaces (CJK) splits per character. */
+ *  without spaces (CJK) splits per code point. */
 function spreadTokens(text: string, a: number, b: number): Tok[] {
   const spans: [number, number][] = [];
   if (/\s/.test(text.trim())) {
     for (const m of text.matchAll(/\S+/g)) spans.push([m.index!, m.index! + m[0].length]);
   } else {
-    for (let i = 0; i < text.length; i++) if (text[i].trim()) spans.push([i, i + 1]);
+    for (const m of text.matchAll(/\S/gu)) spans.push([m.index!, m.index! + m[0].length]);
   }
   const tot = spans.reduce((n, [f, t]) => n + t - f + 1, 0) || 1;
   let c = a;
@@ -307,9 +314,13 @@ function timedPieces(
 export function cutByShare(text: string, shares: number[]): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
-  // Candidate cut positions: a space (dropped) or, for CJK, any char boundary.
+  // Candidate cut positions: a space (dropped) or, for CJK, any code-point
+  // boundary (never inside a surrogate pair, e.g. an emoji).
   const cand: number[] = [];
-  for (let i = 1; i < text.length; i++) if (spaced ? /\s/.test(text[i]) : true) cand.push(i);
+  for (let i = 1; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (spaced ? /\s/.test(text[i]) : c < 0xdc00 || c > 0xdfff) cand.push(i);
+  }
   const tot = shares.reduce((a, b) => a + b, 0) || 1;
   const cuts: number[] = [];
   let done = 0;
@@ -349,39 +360,66 @@ export function cutByShare(text: string, shares: number[]): string[] {
 
 // ── line wrapping ───────────────────────────────────────────────────────────
 
-/** Wrap one cue's text onto at most `lines` lines of `cpl` chars, bottom-heavy
- *  (the second line may be longer), preferring breaks after punctuation and
- *  never after an article. Text that cannot fit gets extra lines rather than
- *  losing words. `firstReserve` = chars a prefix ("Name: ", "[DE] ") takes on
- *  the first line. */
-export function wrapLines(text: string, cpl: number, lines: number, firstReserve = 0): string[] {
+/** Wrap one cue's text onto as few lines of `cpl` chars as it needs (the cue
+ *  splitter keeps a cue within its line cap, so `_lines` only documents the
+ *  caller's limit), bottom-heavy (the second line may be longer), preferring
+ *  breaks after punctuation and never after an article. Text that cannot fit
+ *  gets extra lines rather than losing words. `firstReserve` = chars a prefix
+ *  ("Name: ", "[DE] ") takes on the first line. */
+export function wrapLines(text: string, cpl: number, _lines: number, firstReserve = 0): string[] {
   const t = text.trim();
   const len = t.length + firstReserve;
   if (len <= cpl) return [t];
   const spaced = /\s/.test(t);
   const toks = spaced ? t.split(/\s+/) : Array.from(t);
-  const join = (ws: string[]) => ws.join(spaced ? " " : "");
   if (toks.length < 2) return [t];
-  // More text than the lines hold (a segment that could not be split): add lines.
-  const n = Math.max(2, lines, Math.ceil(len / cpl));
-  const target = len / n;
-  let best = -Infinity;
-  let bi = 1;
-  for (let i = 1; i < toks.length; i++) {
-    const a = join(toks.slice(0, i)).length + firstReserve;
-    const b = join(toks.slice(i)).length;
-    let s = 0;
-    if (a > cpl) s -= 1000;
-    if (b > cpl * (n - 1)) s -= 1000;
-    if (spaced) s += breakScore(toks[i - 1], toks[i]) * 0.3;
-    s -= Math.abs(a - target) * 0.6;
-    if (a <= b / (n - 1)) s += 4; // bottom-heavy
-    if (s > best) {
-      best = s;
-      bi = i;
+  return wrapTokens(toks, spaced, cpl, len, firstReserve);
+}
+
+/** wrapLines past its early returns: `len` (> cpl) is the text's length incl.
+ *  `reserve`, toks.length >= 2. Line widths come from prefix sums, so a long
+ *  unsplit paragraph costs one pass per line, not one rejoin per candidate. */
+function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, reserve: number): string[] {
+  const sep = spaced ? 1 : 0;
+  const cum = [0];
+  for (const w of toks) cum.push(cum[cum.length - 1] + w.length);
+  const T = toks.length;
+  /** Joined length of toks[a..b), b > a. */
+  const width = (a: number, b: number) => cum[b] - cum[a] + (b - a - 1) * sep;
+  const join = (a: number, b: number) => toks.slice(a, b).join(spaced ? " " : "");
+  const out: string[] = [];
+  let lo = 0;
+  for (;;) {
+    // As many lines as the text needs (a segment that could not be split gets more than two).
+    const n = Math.max(2, Math.ceil(len / cpl));
+    const target = len / n;
+    let best = -Infinity;
+    let bi = lo + 1;
+    for (let i = lo + 1; i < T; i++) {
+      const a = width(lo, i) + reserve;
+      const b = width(i, T);
+      let s = 0;
+      if (a > cpl) s -= 1000;
+      if (b > cpl * (n - 1)) s -= 1000;
+      if (spaced) s += breakScore(toks[i - 1], toks[i]) * 0.3;
+      s -= Math.abs(a - target) * 0.6;
+      if (a <= b / (n - 1)) s += 4; // bottom-heavy
+      if (s > best) {
+        best = s;
+        bi = i;
+      }
+    }
+    out.push(join(lo, bi));
+    lo = bi;
+    reserve = 0;
+    len = width(lo, T);
+    if (len <= cpl) return [...out, join(lo, T)];
+    if (T - lo < 2) {
+      // One over-long word left: it wraps per character.
+      const chars = Array.from(toks[lo]);
+      return chars.length < 2 ? [...out, toks[lo]] : [...out, ...wrapTokens(chars, false, cpl, len, 0)];
     }
   }
-  return [join(toks.slice(0, bi)), ...wrapLines(join(toks.slice(bi)), cpl, n - 1)];
 }
 
 // ── the grid ────────────────────────────────────────────────────────────────

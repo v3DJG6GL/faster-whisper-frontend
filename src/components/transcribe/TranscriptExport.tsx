@@ -22,7 +22,7 @@ import {
   type ExportOptions, exportFileNames,
 } from "@/lib/transcript/transcriptFormats";
 import {
-  CUE_PRESETS, CUE_RANGES, TRANSCRIBED_CPS, limitsTitle, sanitizeCueLimits, trackLimits, type CueLimits,
+  CUE_PRESETS, CUE_RANGES, limitsTitle, sanitizeCueLimits, trackCps, type CueLimits,
   type CueOptions, type SubtitleLength,
 } from "@/lib/transcript/cueSplit";
 import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/transcript/exportSummary";
@@ -36,7 +36,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
-  legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarNames,
+  legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -58,6 +58,14 @@ const FORMAT_CARDS: { value: ExportFormat; label: string; use: string }[] = [
   { value: "json", label: "JSON", use: "full data — every field & word" },
 ];
 
+
+/** A media export's progress line (the footer). */
+interface MediaJob {
+  jobId: string;
+  phase: MediaExportPhase;
+  done: number;
+  total: number | null;
+}
 
 export function TranscriptExport({
   open, editedResult, hasWords, path, mediaPath, overlayKey, record: rec, initialExport,
@@ -120,13 +128,22 @@ export function TranscriptExport({
   // The panel stays mounted across records, so a job names the record it saves: a running
   // export shows on its own record only, and another record's Save can queue behind it.
   const owner = rec?.id ?? path;
-  const [mediaJob, setMediaJobAny] = useState<{
-    owner: string; jobId: string; phase: MediaExportPhase; done: number; total: number | null;
-  } | null>(null);
-  /** Set this record's job; null clears it only if it is still this record's. */
-  const setMediaJob = (j: Omit<NonNullable<typeof mediaJob>, "owner"> | null) =>
-    setMediaJobAny((cur) => (j ? { ...j, owner } : cur?.owner === owner ? null : cur));
-  const ownJob = mediaJob?.owner === owner ? mediaJob : null;
+  /** The record on screen now — an export's late UI writes (its outcome, "Saved") land
+   *  only while its own record still shows. */
+  const ownerRef = useRef(owner);
+  ownerRef.current = owner;
+  // One job slot PER record: another record's progress events never overwrite this one's.
+  const [mediaJobs, setMediaJobs] = useState<Record<string, MediaJob>>({});
+  /** Set this record's job; null clears this record's only. */
+  const setMediaJob = (j: MediaJob | null) =>
+    setMediaJobs((m) => {
+      if (j) return { ...m, [owner]: j };
+      if (!(owner in m)) return m;
+      const n = { ...m };
+      delete n[owner];
+      return n;
+    });
+  const ownJob = mediaJobs[owner] ?? null;
   /** This record's export waiting its turn (queueMediaExport), or null. */
   const queuedJob = useSyncExternalStore(subscribeExportQueue, () => queuedExportFor(owner));
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
@@ -135,13 +152,6 @@ export function TranscriptExport({
    *  card moves to SRT and the footer says so once (cleared on the next
    *  card or media click). */
   const [switchNote, setSwitchNote] = useState<string | null>(null);
-  useEffect(() => {
-    if (mediaChoice !== "video" || isSubtitleFormat(exportFormat)) return;
-    setSwitchNote(`SRT — switched from ${exportFormat.toUpperCase()}, which can't ride with a video`);
-    setExportFormat("srt");
-    patchTranscribe({ exportFormat: "srt" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mediaChoice, exportFormat]);
   useEffect(() => {
     if (!initialExport) return;
     setMediaChoice(initialExport.media);
@@ -175,11 +185,36 @@ export function TranscriptExport({
   const urlVideoOnDemand = urlSource && trCaps?.url_video_enabled === true;
   const hasVideoSource = !!(serverVideoId || localVideo || urlVideoOnDemand);
   const showMedia = !textSource && (urlSource || isVideoSourcePath(path));
-  const audioExt = mediaPath ? extOf(mediaPath) || "m4a" : null;
-  const mp4Why = mediaChoice === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
-  // Codec facts for the MP4 verdict, fetched once the panel wants them.
+  // A link's audio: the app's copy, else the server's (fetched at Save; m4a until then).
+  const audioExt = mediaPath ? extOf(mediaPath) || "m4a" : urlSource && rec?.result?.sourceMediaId ? "m4a" : null;
+  const audioAvailable = urlSource && !!(mediaPath || rec?.result?.sourceMediaId);
+  const videoWhy = !hasVideoSource
+    ? "no video is available for this transcription"
+    : !packageOn && subtitleMode !== "sidecar" && !localVideo
+      ? noPackageWhy
+      : null;
+  /** The media choice this record can honour: the persisted pick is global, so a choice
+   *  this record offers no card for (Media hidden, no audio, no video) counts as None —
+   *  the setting itself stays for the records that do. */
+  const effMedia: MediaChoice = !showMedia
+    ? "none"
+    : mediaChoice === "audio" && !audioAvailable
+      ? "none"
+      : mediaChoice === "video" && videoWhy
+        ? "none"
+        : mediaChoice;
   useEffect(() => {
-    if (!open || mediaChoice !== "video" || !serverVideoId || streams || !trBackend) return;
+    if (effMedia !== "video" || isSubtitleFormat(exportFormat)) return;
+    setSwitchNote(`SRT — switched from ${exportFormat.toUpperCase()}, which can't ride with a video`);
+    setExportFormat("srt");
+    patchTranscribe({ exportFormat: "srt" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effMedia, exportFormat]);
+  const mp4Why = effMedia === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
+  // Codec facts for the MP4 verdict, fetched once the panel wants them. `streams` is a
+  // dep: a record switch nulls it AFTER this ran with the predecessor's facts.
+  useEffect(() => {
+    if (!open || effMedia !== "video" || !serverVideoId || streams || !trBackend) return;
     let alive = true;
     getMediaStreams({
       serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id, mediaId: serverVideoId,
@@ -188,7 +223,7 @@ export function TranscriptExport({
       .catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, mediaChoice, serverVideoId]);
+  }, [open, effMedia, serverVideoId, streams]);
   // A different record: forget its predecessor's facts, picks and outcome.
   // Keyed on record identity, not `result`: every retro-translate chunk merge
   // hands in a fresh result object, and resetting on those wiped the track
@@ -247,7 +282,26 @@ export function TranscriptExport({
   };
   /** The tracks a video carries, inside or beside it. */
   const videoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
-  const videoPlan = mediaChoice === "video" && hasVideoSource;
+  /** The files one Save writes (the media file first, then the text files),
+   *  from the panel's current choices — Save, the preview tabs and the names
+   *  all read this one plan. */
+  const plan = useMemo(() => mediaExportPlan({
+    choice: effMedia, container, subtitleMode, format: exportFormat,
+    textFileNames: exportFileNames(exportOptions, editedResult),
+    audioExt,
+    tracks: videoTracks,
+    result: editedResult,
+    hasVideoSource,
+    // A plain copy (no tracks inside) keeps the local video's container.
+    copyExt: localVideo ? extOf(localVideo) || null : null,
+  }), [effMedia, container, subtitleMode, exportFormat, exportOptions, editedResult, audioExt, videoTracks,
+    hasVideoSource, localVideo]);
+  const videoPlan = plan.primary.kind === "video";
+  /** The sidecar files' names, one per video track (null = the tracks ride inside only). */
+  const sideNames = useMemo(
+    () => (plan.sidecars ? plan.files.filter((f) => f.kind === "text").map((f) => f.name) : null),
+    [plan],
+  );
 
   /** How many leading subtitles (or segments) the preview serializes — enough
    *  to show real content past a VTT STYLE block, still cheap per toggle. */
@@ -259,14 +313,13 @@ export function TranscriptExport({
     key: string; tracks?: string[]; format: ExportFormat; name: ((stem: string) => string) | null;
   }[] => {
     if (videoPlan) {
-      const format = exportFormat === "vtt" ? "vtt" : "srt";
-      const side = subtitleMode === "embedded" ? null : sidecarNames(editedResult, videoTracks, format);
-      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format, name: side?.[i] ?? null }));
+      const format = plan.sidecars?.format ?? (exportFormat === "vtt" ? "vtt" : "srt");
+      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format, name: sideNames?.[i] ?? null }));
     }
     return exportFileGroups(exportOptions, editedResult).map((g) => ({
       key: tracksOf(g).join("+"), tracks: g.tracks, format: exportFormat, name: g.name,
     }));
-  }, [videoPlan, exportFormat, subtitleMode, editedResult, videoTracks, exportOptions]);
+  }, [videoPlan, plan, sideNames, exportFormat, editedResult, videoTracks, exportOptions]);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const previewFile = previewFiles.find((f) => f.key === previewKey) ?? previewFiles[0];
 
@@ -281,19 +334,6 @@ export function TranscriptExport({
     );
   }, [open, editedResult, exportOptions, previewFile]);
 
-  /** The files one Save writes (the media file first, then the text files),
-   *  from the panel's current choices. */
-  const exportPlanNow = () => {
-    return mediaExportPlan({
-      choice: mediaChoice, container, subtitleMode, format: exportFormat,
-      textFileNames: exportFileNames(exportOptions, editedResult),
-      audioExt,
-      tracks: videoTracks,
-      result: editedResult,
-      hasVideoSource,
-    });
-  };
-
   /** A local copy under way: the footer shows "copying…" until it settles. */
   const copying = async (job: Promise<unknown>) => {
     setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
@@ -305,27 +345,41 @@ export function TranscriptExport({
   };
 
   /** Plain copy of the audio (the app's local copy; a link's is fetched
-   *  first when the copy is missing and the server still has it). */
-  const exportAudioTo = async (dest: string) => {
+   *  first when the copy is missing and the server still has it). Returns
+   *  where it landed: a fetched copy keeps its own container's extension. */
+  const exportAudioTo = async (dest: string): Promise<string> => {
     let src = mediaPath ?? null;
     if (!src && urlSource && rec?.result?.sourceMediaId && trBackend) {
       setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
-      src = await fetchUrlMedia({
-        serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
-        mediaId: rec.result.sourceMediaId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
-      });
-      setMediaJob(null);
+      try {
+        src = await fetchUrlMedia({
+          serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
+          mediaId: rec.result.sourceMediaId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
+        });
+      } finally {
+        setMediaJob(null);
+      }
+      if (src) {
+        // The fetched copy is the record's local copy now: playback has a file, and the
+        // next Save copies it instead of downloading again.
+        const got = src;
+        patchRecord(rec.id, (r) => (r.mediaPath === got ? r : { ...r, mediaPath: got }));
+        const ext = extOf(got);
+        if (ext && ext !== extOf(dest)) dest = dest.replace(/\.[^.\\/]+$/, "." + ext);
+      }
     }
     if (!src) throw new Error("No audio is stored for this transcription.");
     if (!rec) throw new Error("This transcription has no record to export from.");
     await copying(copyMediaTo({ src, dest, recordId: rec.id, audioBase: audioBasePref(settings.recording) }));
+    return dest;
   };
 
   /** The video: a plain copy when no tracks ride inside it and a local copy
    *  exists; otherwise the server packages it (uploading a local file first,
    *  or fetching a link's video on demand). False = stopped with an error
-   *  the panel now shows. */
-  const exportVideoTo = async (dest: string, embedded: string[]): Promise<boolean> => {
+   *  the panel now shows. `mine` = its record still shows (no outcome lands on
+   *  another record's panel). */
+  const exportVideoTo = async (dest: string, embedded: string[], mine: () => boolean): Promise<boolean> => {
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
@@ -345,6 +399,9 @@ export function TranscriptExport({
           maxHeight: settings.transcribe?.urlVideoMaxHeight ?? null,
         });
         source = { sourceMediaId: got.mediaId };
+        // Fetched: a wait in the queue below shows as Queued (with its Cancel), not as
+        // a fetch that never ends.
+        setMediaJob(null);
         // Every write below merges onto the LATEST copy of the record, never
         // onto `rec`: that is the render's snapshot, and spreading it (the
         // video fetch lands after the write above) erased the id just stored.
@@ -362,11 +419,11 @@ export function TranscriptExport({
           .catch(() => {});
       } catch (e) {
         setMediaJob(null);
-        setMediaError({ kind: "fetch", msg: safeDisplayText(String(e), 300) || "The video could not be fetched." });
+        if (mine()) setMediaError({ kind: "fetch", msg: safeDisplayText(String(e), 300) || "The video could not be fetched." });
         return false;
       }
     } else {
-      setMediaError({ kind: "none", msg: "No video is available for this transcription." });
+      if (mine()) setMediaError({ kind: "none", msg: "No video is available for this transcription." });
       return false;
     }
     const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, exportOptions, embedded, trackNames) : [];
@@ -396,6 +453,7 @@ export function TranscriptExport({
             audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
             destPath: dest, filename: fileStem(dest),
             maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
+            audioBase,
           });
           if (out.kind === "busy" && out.mediaId) {
             if (source.sourcePath) uploadedExpiry = out.expiresAt;
@@ -411,7 +469,7 @@ export function TranscriptExport({
       setMediaJob(null);
     }
     if (!outcome) {
-      setMediaError({ kind: "cancelled", msg: "Export cancelled." });
+      if (mine()) setMediaError({ kind: "cancelled", msg: "Export cancelled." });
       return false;
     }
     if (outcome.kind === "ok") {
@@ -439,7 +497,7 @@ export function TranscriptExport({
         if (!urlSource) { delete r.sourceMediaId; delete r.sourceMediaExpiresAt; }
         return { ...latest, result: r };
       });
-      setMediaError({
+      if (mine()) setMediaError({
         kind: "expired",
         msg: localVideo
           ? "The server no longer has this video — save again to upload the local copy."
@@ -448,11 +506,13 @@ export function TranscriptExport({
       return false;
     }
     if (outcome.kind === "mp4_incompatible") {
-      setStreams({ mp4Ok: false, mp4Reason: outcome.reason ?? outcome.detail });
-      setMediaError({ kind: "mp4", msg: outcome.reason ?? outcome.detail, reason: outcome.reason ?? undefined });
+      if (mine()) {
+        setStreams({ mp4Ok: false, mp4Reason: outcome.reason ?? outcome.detail });
+        setMediaError({ kind: "mp4", msg: outcome.reason ?? outcome.detail, reason: outcome.reason ?? undefined });
+      }
       return false;
     }
-    setMediaError({
+    if (mine()) setMediaError({
       kind: outcome.kind,
       msg: outcome.kind === "cancelled" ? "Export cancelled." : safeDisplayText(outcome.detail, 300) || "Export failed.",
     });
@@ -460,9 +520,12 @@ export function TranscriptExport({
   };
 
   const doExport = async () => {
+    // The panel stays mounted across records: what this Save reports after an await
+    // lands only while its record still shows.
+    const started = owner;
+    const mine = () => ownerRef.current === started;
     setSaveError(null);
     setMediaError(null);
-    const plan = exportPlanNow();
     // Beside a video the text files are one subtitle file per language; the
     // plain text export stays the (possibly bilingual) reading file.
     const files = plan.sidecars
@@ -490,26 +553,28 @@ export function TranscriptExport({
     const written: string[] = [];
     try {
       for (const f of plan.files) {
-        const dest = dir + f.name(pickedStem);
+        let dest = dir + f.name(pickedStem);
         if (f.kind === "text") {
           const content = contents.get(f.name(pickedStem));
           if (content === undefined) continue;
           await saveTextFile(dest, content);
         } else if (f.kind === "audio") {
-          await exportAudioTo(dest);
-        } else if (!(await exportVideoTo(dest, plan.embedded))) {
+          dest = await exportAudioTo(dest);
+        } else if (!(await exportVideoTo(dest, plan.embedded, mine))) {
           return;
         }
         written.push(dest);
       }
     } catch (e) {
       setMediaJob(null);
-      setSaveError(String(e));
+      if (mine()) setSaveError(String(e));
       return;
     }
-    setSaved(true);
-    if (saveTimer.current) window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => setSaved(false), 1500);
+    if (mine()) {
+      setSaved(true);
+      if (saveTimer.current) window.clearTimeout(saveTimer.current);
+      saveTimer.current = window.setTimeout(() => setSaved(false), 1500);
+    }
     // Read now, not at the click: a queued video export can finish long after, and the
     // menu's switch may have changed meanwhile.
     if (revealAfterSaveOn(useApp.getState().settings.transcribe)) void revealSaved(written);
@@ -530,11 +595,10 @@ export function TranscriptExport({
 
   if (!open) return null;
 
-  const plan = exportPlanNow();
   const names = plan.files.map((f) => f.name(stem));
   const textNames = plan.files.filter((f) => f.kind === "text");
   const cpsLimits = new Set(
-    videoTracks.map((t) => trackLimits(editedResult, cueOpts, t)?.cps ?? TRANSCRIBED_CPS),
+    videoTracks.map((t) => trackCps(editedResult, cueOpts, t)),
   );
   const summary = exportSummary({
     format: exportFormat,
@@ -550,7 +614,8 @@ export function TranscriptExport({
     cpsCount: cpsWarn.length,
     cpsLimit: cpsLimits.size === 1 ? `${[...cpsLimits][0]} chars/s` : "each language's limit",
     editCount,
-    media: showMedia ? { choice: mediaChoice, container, subtitleMode, audioExt } : null,
+    // A plain copy's container is the source's own (plan.primaryExt), not the chip's.
+    media: showMedia ? { choice: effMedia, container: videoPlan ? plan.primaryExt : container, subtitleMode, audioExt } : null,
   });
   const phaseText =
     ownJob?.phase === "fetching" ? "fetching the video from the link…"
@@ -571,7 +636,7 @@ export function TranscriptExport({
   const planned = planTracks(editedResult, videoTracks, trackNames);
   /** A track as its file name, or — riding inside the video only — as its title there. */
   const fileLine = (f: (typeof previewFiles)[number]) =>
-    f.name ? f.name(stem) : `${stem}.${container} · ${planned.find((t) => t.id === f.key)?.title ?? ""}`;
+    f.name ? f.name(stem) : `${plan.primary.name(stem)} · ${planned.find((t) => t.id === f.key)?.title ?? ""}`;
   const preview = (
     <PanelBox title="Preview" right={<>
       <span className="font-mono text-[11px] text-faint">
@@ -615,12 +680,9 @@ export function TranscriptExport({
   // audio; Video = the kept/uploaded video, with the chosen tracks muxed in
   // as subtitle streams (server-side), as sidecars, or both.
   const media = showMedia && (() => {
-    const audioAvailable = urlSource && !!(mediaPath || rec?.result?.sourceMediaId);
-    const videoWhy = !hasVideoSource
-      ? "no video is available for this transcription"
-      : !packageOn && subtitleMode !== "sidecar" && !localVideo
-        ? noPackageWhy
-        : null;
+    // A plain copy (subtitles beside it only) keeps the local video's container.
+    const copyLock = subtitleMode === "sidecar" && !!localVideo;
+    const copyContainer: MediaContainer = localVideo && extOf(localVideo) === "mp4" ? "mp4" : "mkv";
     const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); patchTranscribe({ exportMedia: c }); };
     // `why` = not on offer, and why (the card's tooltip).
     const cards: { value: MediaChoice; label: string; sub: string; why?: string }[] = [
@@ -636,21 +698,20 @@ export function TranscriptExport({
       <PanelBox title="Media">
         <div role="radiogroup" aria-label="Export media" className="flex gap-2">
           {cards.map((c) => (
-            <ChoiceCard key={c.value} on={mediaChoice === c.value} off={!!c.why} title={c.why} label={c.label} sub={c.sub}
+            <ChoiceCard key={c.value} on={effMedia === c.value} off={!!c.why} title={c.why} label={c.label} sub={c.sub}
               onPick={() => pick(c.value)} />
           ))}
         </div>
-        {mediaChoice === "video" && !videoWhy && (
+        {effMedia === "video" && (
           <div className="flex flex-col gap-2 text-[12px]">
             <span className="flex flex-wrap items-center gap-2">
               <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">container</span>
               {(["mkv", "mp4"] as const).map((c) => {
-                const off = subtitleMode === "sidecar" && !!localVideo && !serverVideoId
-                  ? c !== (extOf(localVideo) === "mp4" ? "mp4" : "mkv")
-                  : c === "mp4" && !!mp4Why;
+                const off = copyLock ? c !== copyContainer : c === "mp4" && !!mp4Why;
                 return (
-                  <ChipToggle key={c} on={container === c} disabled={off} size="xs" className="font-mono font-medium"
-                    title={c === "mp4" && mp4Why ? mp4Why : subtitleMode === "sidecar" && !!localVideo && !serverVideoId ? "a plain copy keeps the original container" : undefined}
+                  <ChipToggle key={c} on={copyLock ? c === copyContainer : container === c} disabled={off} size="xs"
+                    className="font-mono font-medium"
+                    title={copyLock ? "a plain copy keeps the original container" : c === "mp4" && mp4Why ? mp4Why : undefined}
                     onClick={() => { if (!off) { setContainer(c); patchTranscribe({ exportContainer: c }); } }}>
                     {c.toUpperCase()}
                   </ChipToggle>
@@ -687,7 +748,6 @@ export function TranscriptExport({
 
   // Track names (D89): what each track is called inside the video, its
   // sidecar's name and its flags. Only with a video.
-  const sideNames = plan.sidecars ? sidecarNames(editedResult, videoTracks, plan.sidecars.format) : null;
   const renamed = (t: (typeof planned)[number]) => !!cleanTrackTitle(trackNames[t.id]) && t.title !== t.defaultTitle;
   const setName = (id: string, name: string | null) => {
     const next = { ...trackNames };
@@ -703,7 +763,7 @@ export function TranscriptExport({
         {resetIcon} Reset all
       </button>
     )}>
-      <span className="-mt-2 truncate font-mono text-[11px] text-faint">{`${stem}.${container}`}</span>
+      <span className="-mt-2 truncate font-mono text-[11px] text-faint">{plan.primary.name(stem)}</span>
       {planned.map((t, i) => (
         <div key={t.id} className="grid grid-cols-[auto_2.5rem_minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1">
           <span aria-hidden className={cn("size-1.5 rounded-full", trackTone(t, "dot"))} />
@@ -755,7 +815,7 @@ export function TranscriptExport({
             <div role="radiogroup" aria-label="Export format" className="flex gap-2">
               {FORMAT_CARDS.map((f) => {
                 const on = exportFormat === f.value;
-                const notSubtitle = mediaChoice === "video" && !isSubtitleFormat(f.value);
+                const notSubtitle = effMedia === "video" && !isSubtitleFormat(f.value);
                 return (
                   <ChoiceCard
                     key={f.value}

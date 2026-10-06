@@ -352,9 +352,7 @@ export function recordDictation(cap: DictationCapture): string {
 /** Late-link the saved recording (the Rust event can land after the session
  *  settles). No-op when the record is gone (deleted, or capture skipped). */
 export function attachRecordingPath(id: string, path: string): void {
-  const rec = useTranscriptHistory.getState().records.find((r) => r.id === id);
-  if (!rec || rec.sourcePath === path) return;
-  upsertRecord({ ...rec, sourcePath: path });
+  patchRecord(id, (r) => (r.sourcePath === path ? r : { ...r, sourcePath: path }));
 }
 
 /** Remove one record — mirror and disk. */

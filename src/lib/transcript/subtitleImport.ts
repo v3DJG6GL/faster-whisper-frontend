@@ -173,7 +173,7 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
     const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(lines.join(" ").trim());
     if (v) {
       const text = stripMarkup(v[2]);
-      if (text) segments.push({ start, end, text, speaker: v[1].trim() });
+      if (text) segments.push({ start, end, text, speaker: decodeEntities(v[1]).replace(/\s+/g, " ").trim() });
     } else {
       const { text, speaker } = cueText(lines);
       if (text) segments.push({ start, end, text, speaker });

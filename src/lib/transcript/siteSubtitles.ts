@@ -327,14 +327,21 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     return { code, parts };
   });
   const mtTargets = targets.filter((c) => langSources(c).badges[0].state === "active");
+  // A run downloads at most 8 tracks, kept in the site's order — and the transcript's own
+  // track is always one of them (cut off, the run would transcribe after all).
+  const ids = avail.filter((t) => shown.has(t.id)).map((t) => t.id);
+  const kept = new Set([
+    ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => id !== transcriptTrackId),
+  ].slice(0, 8));
+  const fetch = ids.filter((id) => kept.has(id));
+  const runOn = st.subs && input.tracks.length > 0;
   return {
     view: {
       rows,
       chips,
-      counter: { used: shown.size, of: avail.length, existing: tracks.filter((t) => t.kind === "manual").length },
-      run: st.subs && input.tracks.length
-        ? { fetch: avail.filter((t) => shown.has(t.id)).map((t) => t.id).slice(0, 8), transcriptTrackId, mtTargets }
-        : null,
+      // What the run actually downloads, not every track the badges light.
+      counter: { used: runOn ? fetch.length : shown.size, of: avail.length, existing: tracks.filter((t) => t.kind === "manual").length },
+      run: runOn ? { fetch, transcriptTrackId, mtTargets } : null,
     } satisfies SiteSubsView,
     snap,
     codeOf,

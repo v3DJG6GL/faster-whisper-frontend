@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, limitsTitle, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "../types";
@@ -30,6 +30,8 @@ function seg1(text: string, a: number, b: number, extra: Partial<BatchResult> = 
 }
 
 const STD: CueOptions = { length: "standard", timing: "same" };
+/** No lone surrogate: an emoji was never cut in half. */
+const wellFormed = (s: string) => !/[\ud800-\udfff]/.test(s.replace(/[\ud800-\udbff][\udc00-\udfff]/g, ""));
 const LONG =
   "The glacier behind me has lost almost forty percent of its volume since 1980. " +
   "The scientists who measure it every summer say the pace is still accelerating, " +
@@ -158,6 +160,15 @@ describe("buildCues", () => {
     expect(grid.own.de.map((c) => c.text).join(" ")).toBe(de);
   });
 
+  it("own timing: spaceless text splits per code point, never inside an emoji", () => {
+    const ja = "🎉".repeat(4) + "今日は朝から雨が降っていて🎉駅までの道はとても混んでいました🎉電車も遅れていました🎉";
+    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+    const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
+    expect(grid.own.ja.length).toBeGreaterThan(1);
+    expect(grid.own.ja.every((c) => wellFormed(c.text))).toBe(true);
+    expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
+  });
+
   it("site tracks always keep their own timing", () => {
     const r: BatchResult = {
       ...seg1("Hello there.", 0, 2),
@@ -198,6 +209,36 @@ describe("wrapLines", () => {
     const lines = wrapLines("one two three four five six seven eight", 20, 2, 10);
     expect(lines[0].length).toBeLessThanOrEqual(10);
   });
+  it("uses the fewest lines the text needs, not the line cap", () => {
+    const lines = wrapLines("The quick brown fox jumps over the lazy dog near the river bank", 42, 3);
+    expect(lines).toEqual(["The quick brown fox jumps over", "the lazy dog near the river bank"]);
+  });
+  it("long unsplit paragraphs wrap fast and exactly as before", () => {
+    const p =
+      "When the river rose that spring, the town council met every evening, and the mayor, who had lived there " +
+      "since the flood of 1980, said the levee would hold. It did not. By Thursday the water had reached the " +
+      "bakery on Main Street, and the old bridge was closed.";
+    expect(wrapLines(p, 42, 2, 9)).toEqual([
+      "When the river rose that spring,", "the town council met every evening,", "and the mayor, who had lived there",
+      "since the flood of 1980, said the levee", "would hold. It did not. By Thursday", "the water had reached the bakery on Main",
+      "Street, and the old bridge was closed.",
+    ]);
+    const ja = "今日は朝から雨が降っていて、駅までの道はとても混んでいました。電車も遅れていたので、会社に着いたのは十時過ぎでした。🎉それでも午後には晴れて、皆で外に出ました。";
+    expect(wrapLines(ja, 16, 2)).toEqual([
+      "今日は朝から雨が降っていて", "、駅までの道はとても混んで", "いました。電車も遅れていた", "ので、会社に着いたのは十時過",
+      "ぎでした。🎉それでも午後に", "は晴れて、皆で外に出ました。",
+    ]);
+    // 1200 words used to take seconds (every candidate rejoined both halves).
+    const big = Array.from({ length: 1200 }, (_, i) => `word${i % 17}${i % 9 ? "" : ","}`).join(" ");
+    const t0 = performance.now();
+    const lines = wrapLines(big, 42, 2);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(lines.join(" ")).toBe(big);
+  });
+  it("an over-long word left alone on the last line wraps per character", () => {
+    const w = "x".repeat(50);
+    expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a", "x".repeat(25), "x".repeat(25)]);
+  });
 });
 
 describe("cutByShare", () => {
@@ -206,6 +247,11 @@ describe("cutByShare", () => {
   });
   it("cuts CJK text at character boundaries", () => {
     expect(cutByShare("今日は晴れ。明日は雨。", [1, 1])).toEqual(["今日は晴れ。", "明日は雨。"]);
+  });
+  it("never cuts inside a surrogate pair", () => {
+    const parts = cutByShare("今日🎉楽しい", [3, 4]);
+    expect(parts.join("")).toBe("今日🎉楽しい");
+    expect(parts.every(wellFormed)).toBe(true);
   });
 });
 
@@ -235,6 +281,8 @@ describe("trackLimits / limitsTitle", () => {
     expect(trackLimits(r, o, "ja")?.cpl).toBe(13);
     expect(trackLimits(r, undefined, "orig")).toBeNull();
     expect(TRANSCRIBED_CPS).toBe(20);
+    expect(trackCps(r, o, "orig")).toBe(17);
+    expect(trackCps(r, undefined, "orig")).toBe(TRANSCRIBED_CPS);
   });
   it("the tooltip names lines, characters, duration and speed", () => {
     expect(limitsTitle(CUE_PRESETS.standard)).toBe("2 lines × 42 characters · up to 7 s · 17 chars/s");

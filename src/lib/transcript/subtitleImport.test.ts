@@ -56,6 +56,12 @@ describe("round-trips against generateExport", () => {
     expect(back.segments).toHaveLength(2);
     expect(back.segments[1]).toMatchObject({ text: "General greeting.", speaker: "Speaker 2" });
   });
+  it("vtt: an escaped speaker name decodes back", () => {
+    const vtt = generateExport(RESULT, { format: "vtt", renames: { SPEAKER_00: "Tom & <Jerry>" } });
+    expect(vtt).toContain("<v Tom &amp; &lt;Jerry&gt;>");
+    const back = parseImportedText("vtt", vtt);
+    expect(back.segments[0]).toMatchObject({ text: "Hello there.", speaker: "Tom & <Jerry>" });
+  });
   it("lrc: line tags parse, enhanced word tags reduce to text", () => {
     const lrc = generateExport(RESULT, { format: "lrc", wordTimestamps: true });
     const back = parseImportedText("lrc", lrc);
