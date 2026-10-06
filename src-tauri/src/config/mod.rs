@@ -678,9 +678,10 @@ pub struct LoggingSettings {
     pub keep_days: u32,
     #[serde(default = "default_log_sidebar")]
     pub show_in_sidebar: bool,
-    /// Custom log folder; None = `<app_data>/logs`. Machine-specific: never
-    /// included in an export, and synced only when this device's `logFolder`
-    /// gate is on (TS `extractLogging` / `applySyncBlob`).
+    /// Custom log folder; None = `<app_local_data>/logs` (never the roaming
+    /// dir). Machine-specific: never included in an export, and synced only
+    /// when this device's `logFolder` gate is on (TS `extractLogging` on
+    /// compose and the `gates.logFolder` check on apply, src/lib/sync/sync.ts).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_dir: Option<String>,
 }
@@ -1030,11 +1031,36 @@ pub fn backup_failed() -> bool {
     BACKUP_FAILED.load(Ordering::SeqCst)
 }
 
-/// Stash an unusable `config.json` as `config.json.bak` — rename first, a copy when the
-/// rename is refused (the original then stays in place, but a backup exists). False only
-/// when neither worked.
-fn backup_unreadable(path: &Path) -> bool {
+/// Where to stash a config backup: `config.json.bak`, after moving an existing `.bak` aside to
+/// a timestamped `config.json.bak.<secs>` sibling — a second reset in a later session must not
+/// replace the backup of the user's original settings with the post-reset file. When the old
+/// `.bak` can't be moved, the new backup takes the timestamped name instead.
+fn bak_target(path: &Path) -> PathBuf {
     let bak = path.with_extension("json.bak");
+    if !bak.exists() {
+        return bak;
+    }
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut aside = path.with_extension(format!("json.bak.{secs}"));
+    let mut n = 1;
+    while aside.exists() {
+        aside = path.with_extension(format!("json.bak.{secs}-{n}"));
+        n += 1;
+    }
+    match std::fs::rename(&bak, &aside) {
+        Ok(()) => bak,
+        Err(_) => aside,
+    }
+}
+
+/// Stash an unusable `config.json` as `config.json.bak` (see `bak_target`) — rename first, a
+/// copy when the rename is refused (the original then stays in place, but a backup exists).
+/// False only when neither worked.
+fn backup_unreadable(path: &Path) -> bool {
+    let bak = bak_target(path);
     let Err(rename_err) = std::fs::rename(path, &bak) else {
         return true;
     };
@@ -1092,6 +1118,12 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
     };
     // Fast path: already the current (v3) shape.
     if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
+        // An earlier load this session hit a transient lock and couldn't back the file up, so
+        // `save` refuses. It reads fine now: back it up and let saves through again.
+        if BACKUP_FAILED.load(Ordering::SeqCst) && std::fs::copy(&path, bak_target(&path)).is_ok() {
+            tracing::info!("[config] config readable again and backed up; saves re-enabled");
+            BACKUP_FAILED.store(false, Ordering::SeqCst);
+        }
         return (cfg, *recovered);
     }
     // Migration path: a legacy `profiles`/`modes` config (no `backends`).
@@ -1289,6 +1321,33 @@ mod tests {
         );
         // Nothing to rename and nothing to copy: the caller must learn no backup exists.
         assert!(!backup_unreadable(&dir.join("gone.json")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_second_reset_keeps_the_first_backup() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-bak2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(dir.join("config.json.bak"), b"first").unwrap();
+        std::fs::write(&path, b"second").unwrap();
+        assert!(backup_unreadable(&path));
+        assert_eq!(
+            std::fs::read(dir.join("config.json.bak")).unwrap(),
+            b"second"
+        );
+        let aside: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("config.json.bak.")
+            })
+            .collect();
+        assert_eq!(aside.len(), 1);
+        assert_eq!(std::fs::read(aside[0].path()).unwrap(), b"first");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

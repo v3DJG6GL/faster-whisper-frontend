@@ -43,8 +43,26 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart(&app, config.settings.general.open_at_login);
-    apply_recordings_retention(&app, &config);
-    crate::store::transcripts::apply_transcripts_retention(&app, &config);
+    // The retention sweeps are O(history) filesystem work; a sync command runs on the main
+    // thread, so they go to a background thread. The mutex serializes them, so two quick saves
+    // never prune or wipe at the same time, and the generation check drops a superseded save's
+    // sweep (the mutex is not FIFO, so an older, shorter window could otherwise run last).
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SWEEP_GEN: AtomicU64 = AtomicU64::new(0);
+        let my_gen = SWEEP_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+        let app = app.clone();
+        let config = config.clone();
+        std::thread::spawn(move || {
+            static SWEEP: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _g = SWEEP.lock().unwrap_or_else(|e| e.into_inner());
+            if SWEEP_GEN.load(Ordering::SeqCst) != my_gen {
+                return;
+            }
+            apply_recordings_retention(&app, &config);
+            crate::store::transcripts::apply_transcripts_retention(&app, &config);
+        });
+    }
     // Log level reload / session-file move / prune — so Settings changes
     // apply live, not at the next restart.
     crate::logging::apply_log_settings(&app, &config);
@@ -54,8 +72,9 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Enforce the dictation clock on saved recordings. Called on startup and after every config
-/// save, so shortening the window takes effect immediately rather than at the next restart.
+/// Enforce the dictation clock on saved recordings. Called on startup (synchronously) and after
+/// every config save, so shortening the window takes effect immediately rather than at the next
+/// restart. The post-save sweep runs off the main thread, serialized by a mutex in `save_config`.
 ///
 /// The window is `effective_dictation_days` — the same value Settings' "Delete dictations
 /// after" row shows and the record sweep (store/transcripts.rs) uses, so a dictation's text and
