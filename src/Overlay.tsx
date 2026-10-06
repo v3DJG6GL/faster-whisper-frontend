@@ -449,9 +449,6 @@ export default function Overlay() {
   const [hoverReveal, setHoverReveal] = useState(false);
   const [hovering, setHovering] = useState(false);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Mirrors `hovering` for the async dwell verify below (the state value would be stale
-  // inside its closure).
-  const hoveringRef = useRef(false);
   // Bumped on every hover start and clear, so a pointer-over answer still in flight from an
   // earlier hover (GDK enter/leave churn at the dot's edge) can't clear the current one.
   const hoverEpoch = useRef(0);
@@ -496,7 +493,6 @@ export default function Overlay() {
   // lost-leave safety nets below (non-interactive reset, failed dwell verify, watchdog).
   const clearHover = useCallback(() => {
     hoverEpoch.current++;
-    hoveringRef.current = false;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHovering(false);
     setPeekRestoring(false);
@@ -504,7 +500,6 @@ export default function Overlay() {
   }, []);
   const onPointerEnter = () => {
     hoverEpoch.current++;
-    hoveringRef.current = true;
     setHovering(true);
     setPeekRestoring(peeked); // remember whether the chip was tucked when this hover began
     peekGraceUntil.current = performance.now() + PEEK_HOVER_GRACE_MS;
@@ -520,7 +515,7 @@ export default function Overlay() {
       const ep = hoverEpoch.current;
       void chipPointerOver().then((over) => {
         // A real leave (or a newer hover) beat the round-trip.
-        if (ep !== hoverEpoch.current || !hoveringRef.current) return;
+        if (ep !== hoverEpoch.current) return;
         if (over) setHoverReveal(true);
         else clearHover();
       });

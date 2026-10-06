@@ -33,8 +33,6 @@
 
 import type { AccentMotion, ThemeName } from "./types";
 
-export type { AccentMotion };
-
 const LIGHT_MQ = "(prefers-color-scheme: light)";
 const REDUCED_MOTION_MQ = "(prefers-reduced-motion: reduce)";
 

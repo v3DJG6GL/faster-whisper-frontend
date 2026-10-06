@@ -665,6 +665,12 @@ async function replaceSelectionAfterClose(
   // paste/type would misfire; the resolver coerces those to clipboard-only.)
   const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
   if (current == null || current.trim() !== original) return;
+  // The seed was trimmed Rust-side (sanitize_seed) but this live re-read is not, and the paste
+  // replaces the WHOLE selection — so put back the spaces a double-click selection carries
+  // (Word / browsers grab the trailing space). Any other edge whitespace (a newline) → leave it.
+  const lead = /^[ \t\u00a0]*/.exec(current)![0];
+  const trail = /[ \t\u00a0]*$/.exec(current)![0];
+  if (current.length - lead.length - trail.length !== current.trim().length) return;
   // No profile layer, deliberately: this window has no dictation session and no active
   // Profile — the correction is a Quick-Add action, not a dictation — so it resolves
   // app-rule ← global exactly as it always has. Passing `undefined` states that rather
@@ -680,7 +686,7 @@ async function replaceSelectionAfterClose(
   // Same re-check as the dictation path: this one deliberately waits for the WM to hand focus
   // back before resolving, so focus can move again between that resolve and the keystrokes.
   await injectText({
-    text: safe,
+    text: lead + safe + trail,
     method,
     autoEnter: false,
     restoreClipboard,

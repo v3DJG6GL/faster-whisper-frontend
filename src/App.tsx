@@ -1,4 +1,4 @@
-import { useEffect, useState, type DependencyList, useRef } from "react";
+import { useEffect, useState, type DependencyList, type ReactNode, useRef } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
@@ -88,7 +88,11 @@ function NavigationBridge() {
   useTauriListener(
     () =>
       onAppNavigate((screen) => {
-        const path = SCREEN_PATH[screen as keyof typeof SCREEN_PATH];
+        // Own-key lookup: the target comes from a synced quick-launch setting that is only
+        // type-checked, so "constructor" must not resolve to an Object.prototype member.
+        const path = Object.prototype.hasOwnProperty.call(SCREEN_PATH, screen)
+          ? SCREEN_PATH[screen as keyof typeof SCREEN_PATH]
+          : undefined;
         // Same unsaved-work guard the sidebar runs: the overlay chip can fire
         // this while a list editor is open.
         if (path && path !== locRef.current) {
@@ -114,85 +118,92 @@ function SaveErrorBanner() {
   const setSaveError = useApp((s) => s.setSaveError);
   if (!saveError) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex justify-center px-4 pb-4">
-      <div
-        role="alert"
-        className="pointer-events-auto flex max-w-xl items-start gap-2 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
-      >
-        <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-        <div className="flex-1">
-          {saveErrorKind === "load" ? (
-            // Load-time notice — self-contained; no "Couldn't save / changes lost on restart" framing.
-            saveError
-          ) : (
-            <>
-              <span className="font-semibold">Couldn’t save your settings.</span> Recent changes may
-              be lost when you restart the app. <span className="text-warn/80">{saveError}</span>
-            </>
-          )}
-        </div>
-        <button
-          type="button"
-          onClick={() => setSaveError(null)}
-          title="Dismiss"
-          aria-label="Dismiss"
-          className="shrink-0 rounded-md p-0.5 text-warn/70 hover:text-warn"
-        >
-          <X className="h-3.5 w-3.5" />
-        </button>
+    <div
+      role="alert"
+      className="pointer-events-auto flex max-w-xl items-start gap-2 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
+    >
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <div className="flex-1">
+        {saveErrorKind === "load" ? (
+          // Load-time notice — self-contained; no "Couldn't save / changes lost on restart" framing.
+          saveError
+        ) : (
+          <>
+            <span className="font-semibold">Couldn’t save your settings.</span> Recent changes may
+            be lost when you restart the app. <span className="text-warn/80">{saveError}</span>
+          </>
+        )}
       </div>
+      <button
+        type="button"
+        onClick={() => setSaveError(null)}
+        title="Dismiss"
+        aria-label="Dismiss"
+        className="shrink-0 rounded-md p-0.5 text-warn/70 hover:text-warn"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
 
 // The failure doorway: "Transcription failed — View logs". Set by the dictation
 // and batch-transcription error paths; "View logs" lands on /logs pre-filtered
-// to warnings+errors. Same bottom-center slot as SaveErrorBanner (renders above
-// it when both are up, since it sits earlier in the flex column). Must live
-// inside <HashRouter> for useNavigate.
+// to warnings+errors. Shares one bottom-center BottomBanners column with
+// SaveErrorBanner (rendered first, so it stacks above it when both are up — a
+// wrapped save banner grows the column instead of covering these buttons). Must
+// live inside <HashRouter> for useNavigate.
 function LogsDoorwayBanner() {
   const doorway = useApp((s) => s.logsDoorway);
   const setLogsDoorway = useApp((s) => s.setLogsDoorway);
   const navigate = useNavigate();
   if (!doorway) return null;
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-14 z-50 flex justify-center px-4 pb-4">
-      <div
-        role="alert"
-        className="pointer-events-auto flex max-w-xl items-center gap-2.5 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
-      >
-        <AlertTriangle className="h-4 w-4 shrink-0" />
-        <span className="flex-1">{doorway.msg}</span>
-        {/* Only when the log actually holds MORE than the message says —
-            the truthful-toast contract (errors.ts sets showLogs). */}
-        {doorway.showLogs && (
-          <button
-            type="button"
-            // Through the unsaved-work guard like every other navigation the shell issues: the
-            // doorway is raised asynchronously and can land over an open editor.
-            onClick={() => {
-              const go = () => {
-                setLogsDoorway(null);
-                openLogsPrefiltered("warn");
-                navigate("/logs");
-              };
-              if (tryNavigate(go)) go();
-            }}
-            className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
-          >
-            View logs
-          </button>
-        )}
+    <div
+      role="alert"
+      className="pointer-events-auto flex max-w-xl items-center gap-2.5 rounded-xl border border-warn/40 bg-warn/10 px-3.5 py-2.5 text-[12.5px] text-warn shadow-lg backdrop-blur-sm"
+    >
+      <AlertTriangle className="h-4 w-4 shrink-0" />
+      <span className="flex-1">{doorway.msg}</span>
+      {/* Only when the log actually holds MORE than the message says —
+          the truthful-toast contract (errors.ts sets showLogs). */}
+      {doorway.showLogs && (
         <button
           type="button"
-          onClick={() => setLogsDoorway(null)}
-          title="Dismiss"
-          aria-label="Dismiss"
-          className="shrink-0 rounded-md p-0.5 text-warn/70 hover:text-warn"
+          // Through the unsaved-work guard like every other navigation the shell issues: the
+          // doorway is raised asynchronously and can land over an open editor.
+          onClick={() => {
+            const go = () => {
+              setLogsDoorway(null);
+              openLogsPrefiltered("warn");
+              navigate("/logs");
+            };
+            if (tryNavigate(go)) go();
+          }}
+          className="shrink-0 whitespace-nowrap font-semibold text-accent hover:underline"
         >
-          <X className="h-3.5 w-3.5" />
+          View logs
         </button>
-      </div>
+      )}
+      <button
+        type="button"
+        onClick={() => setLogsDoorway(null)}
+        title="Dismiss"
+        aria-label="Dismiss"
+        className="shrink-0 rounded-md p-0.5 text-warn/70 hover:text-warn"
+      >
+        <X className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  );
+}
+
+// The fixed bottom-center slot the shell's banners share: one flex column, so they stack
+// at their real heights instead of each guessing the other's offset.
+function BottomBanners({ children }: { children: ReactNode }) {
+  return (
+    <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 px-4 pb-4">
+      {children}
     </div>
   );
 }
@@ -279,7 +290,9 @@ export default function App() {
     return (
       <>
         <Onboarding onDone={() => setOnboarding(false)} />
-        <SaveErrorBanner />
+        <BottomBanners>
+          <SaveErrorBanner />
+        </BottomBanners>
       </>
     );
   }
@@ -310,8 +323,10 @@ export default function App() {
           </Routes>
         </main>
       </div>
-      <LogsDoorwayBanner />
-      <SaveErrorBanner />
+      <BottomBanners>
+        <LogsDoorwayBanner />
+        <SaveErrorBanner />
+      </BottomBanners>
     </HashRouter>
   );
 }

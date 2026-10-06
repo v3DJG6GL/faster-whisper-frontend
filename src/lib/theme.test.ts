@@ -109,9 +109,10 @@ describe("motion arithmetic", () => {
 
   it("every window agrees: the hue depends on the clock, not on when the window opened", () => {
     const m = { period: 180, range: "wheel" as const };
-    // A chip opened 47 s after the main window computes the same hue for the same instant.
-    expect(driftHue(65, m, 1_700_000_047_000)).toBe(driftHue(65, m, 1_700_000_047_000));
-    expect(driftHue(65, m, 1_700_000_047_000)).not.toBe(driftHue(65, m, 1_700_000_000_000));
+    // Absolute wall-clock phase (t mod period), not time since the window opened: a chip
+    // opened 47 s after the main window lands on the same hue as it for the same instant.
+    expect(driftHue(65, m, 1_700_000_047_000)).toBeCloseTo(319);
+    expect(driftHue(65, m, 1_700_000_000_000)).toBeCloseTo(225);
   });
 
   it("an arc breathes along the SHORT way round, in both directions", () => {
