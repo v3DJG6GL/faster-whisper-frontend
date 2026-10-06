@@ -183,9 +183,11 @@ pub fn is_own_injected(text: &str) -> bool {
 static LAST_PASTE_REMOTE: AtomicBool = AtomicBool::new(false);
 
 /// Record where the paste whose transcript just reached the clipboard goes (see
-/// `LAST_PASTE_REMOTE`).
+/// `LAST_PASTE_REMOTE`). A paste also supersedes any transcript delivered to the clipboard
+/// before it (see `DELIVERED_ON_CLIPBOARD`).
 pub fn note_paste_target(remote: bool) {
     LAST_PASTE_REMOTE.store(remote, Ordering::SeqCst);
+    DELIVERED_ON_CLIPBOARD.store(false, Ordering::SeqCst);
 }
 
 /// Did the most recent paste go to a remote-desktop target?
@@ -193,9 +195,35 @@ pub fn last_paste_was_remote() -> bool {
     LAST_PASTE_REMOTE.load(Ordering::SeqCst)
 }
 
-/// Forget the last paste target (a session ended).
+/// Forget the last paste target (a session ended), and with it any delivered-transcript flag.
 pub fn clear_paste_target() {
     LAST_PASTE_REMOTE.store(false, Ordering::SeqCst);
+    DELIVERED_ON_CLIPBOARD.store(false, Ordering::SeqCst);
+}
+
+/// The session's last clipboard write DELIVERED a transcript there for the user to paste — a
+/// clipboard-only phrase or a divert (`inject_text`) — and no paste has written since.
+///
+/// The frontend decides the end-of-session restore from its own restore-debt flag, which a
+/// delivered phrase clears; but an error teardown or a rejected stop clears that flag anyway and
+/// calls `end_injection` regardless, which then served the session snapshot over the phrase the
+/// user had just been told to paste. Recorded here, in write order (the inject queue serialises
+/// the writes), rather than captured by the frontend: a paste already queued but not yet written
+/// would otherwise land after a snapshot of the flags and leave them stale.
+///
+/// Armed by the two clipboard-only/divert writes in `inject_text`, cleared by every paste write
+/// (`note_paste_target`) — that paste replaced the delivered text — and consumed by `end_injection`
+/// or dropped by `discard_injection_snapshot` (both via `clear_paste_target`).
+static DELIVERED_ON_CLIPBOARD: AtomicBool = AtomicBool::new(false);
+
+/// Record that a delivered transcript now sits on the clipboard (see `DELIVERED_ON_CLIPBOARD`).
+pub fn note_delivered_on_clipboard() {
+    DELIVERED_ON_CLIPBOARD.store(true, Ordering::SeqCst);
+}
+
+/// Take the delivered-transcript flag: true once, for the session-end restore that would erase it.
+pub fn take_delivered_on_clipboard() -> bool {
+    DELIVERED_ON_CLIPBOARD.swap(false, Ordering::SeqCst)
 }
 
 /// "Keep dictated text out of clipboard history & cloud clipboard" (settings.general
@@ -1229,6 +1257,9 @@ fn code_to_enigo(code: &str) -> Option<(Key, bool)> {
         "ShiftLeft" | "ShiftRight" => (Key::Shift, true),
         "AltLeft" | "AltRight" => (Key::Alt, true),
         "MetaLeft" | "MetaRight" | "OSLeft" | "OSRight" => (Key::Meta, true),
+        // enigo declares `Key::Insert` only off macOS; there an "Insert" chord falls to `None`
+        // and the caller's unmapped-key fallback.
+        #[cfg(not(target_os = "macos"))]
         "Insert" => (Key::Insert, false),
         c if c.len() == 4 && c.starts_with("Key") => (
             Key::Unicode(c.as_bytes()[3].to_ascii_lowercase() as char),
@@ -1528,5 +1559,35 @@ mod tests {
         assert!(take_recovery_on_clipboard());
         assert!(!recovery_on_clipboard());
         assert!(!take_recovery_on_clipboard());
+    }
+
+    /// A transcript delivered to the clipboard (clipboard-only phrase or divert) keeps the
+    /// session-end restore off it exactly once, and a later paste write supersedes it — that paste
+    /// replaced the delivered text, so the restore is owed again. Only this test touches the
+    /// delivered flag and the paste target, so the shared statics are safe here.
+    #[test]
+    fn delivered_flag_is_one_shot_and_superseded_by_a_paste() {
+        use super::{
+            clear_paste_target, last_paste_was_remote, note_delivered_on_clipboard,
+            note_paste_target, take_delivered_on_clipboard,
+        };
+        clear_paste_target();
+        assert!(!take_delivered_on_clipboard());
+        note_delivered_on_clipboard();
+        assert!(take_delivered_on_clipboard());
+        assert!(!take_delivered_on_clipboard(), "the take is not one-shot");
+        note_delivered_on_clipboard();
+        note_paste_target(false);
+        assert!(
+            !take_delivered_on_clipboard(),
+            "a later paste did not supersede it"
+        );
+        note_delivered_on_clipboard();
+        clear_paste_target();
+        assert!(
+            !take_delivered_on_clipboard(),
+            "a session teardown left it armed"
+        );
+        assert!(!last_paste_was_remote());
     }
 }

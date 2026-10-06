@@ -49,7 +49,7 @@ pub struct InjectOutcome {
 /// on Windows for up to `CLIP_IDLE_WAIT` + 250ms while another program holds the clipboard — and
 /// `inject_text` is async, so calling it inline parks a runtime worker for that long. Still
 /// awaited in place, so every call site keeps its ordering and its Ok/Err handling.
-async fn persist_off_runtime(text: String) -> Result<(), String> {
+pub(crate) async fn persist_off_runtime(text: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || crate::inject::set_clipboard_persistent(&text))
         .await
         .map_err(|e| e.to_string())?
@@ -138,6 +138,8 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
+            // Delivered: the session-end restore must not serve the snapshot over it.
+            crate::inject::note_delivered_on_clipboard();
             // A recovery write too when an error abort fell through the gate above: arm the
             // session-restore guard, as the mid-function divert below does, so the error
             // teardown's `end_injection` does not serve the session snapshot over the transcript.
@@ -337,6 +339,8 @@ pub(crate) async fn inject_text(
                     diverted: false,
                 });
             }
+            // Delivered: the session-end restore must not serve the snapshot over it.
+            crate::inject::note_delivered_on_clipboard();
             // Another recovery write: an error abort that fell through the gate above has just put
             // the transcript on the clipboard; arm the session-restore guard like the two
             // paste-path writes so end_injection does not serve `prev` over it. Not armed on a
@@ -388,9 +392,7 @@ pub(crate) async fn inject_text(
     // restore_clipboard_snapshot), which run after focus may have moved — see LAST_PASTE_REMOTE.
     // Recorded by each paste sink once the transcript reached the clipboard, NOT here: several
     // sinks still bail with nothing written, and a skipped phrase must not overwrite the target
-    // of the paste before it. A bare auto-Enter carries no transcript and touches no clipboard,
-    // so it does not count either.
-    let is_paste = method != "direct";
+    // of the paste before it.
 
     // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
     let recovery_text = text.clone();
@@ -735,7 +737,9 @@ pub(crate) async fn inject_text(
         // write, as the Wayland arm does. This covers only an Err, which may or may not have
         // written, so it may only ever record a REMOTE target — the safe side, which skips a
         // restore rather than serving one over a fetch the remote has not made yet.
-        if is_paste && !recovery_text.is_empty() && remote_target && x11_res.is_err() {
+        // `remote_target` already excludes direct typing; a bare auto-Enter carries no transcript
+        // and touches no clipboard, so it does not count either (`!recovery_text.is_empty()`).
+        if remote_target && !recovery_text.is_empty() && x11_res.is_err() {
             crate::inject::note_paste_target(true);
         }
         x11_res

@@ -51,6 +51,9 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
 pub fn end_injection(snap: State<ClipboardSnapshot>) {
     // Where the session's LAST paste went, read and forgotten here (the session is over).
     let last_remote = crate::inject::last_paste_was_remote();
+    // Taken before `clear_paste_target`, which also clears it (see `DELIVERED_ON_CLIPBOARD`), and
+    // unconditionally for the same one-shot reason as the recovery flag below.
+    let delivered_on_clipboard = crate::inject::take_delivered_on_clipboard();
     crate::inject::clear_paste_target();
     // Taken UNCONDITIONALLY, above the snapshot test. Inside `if let Some(prev)` it would be
     // unreachable on every session that took no snapshot (direct-typing method, restore-clipboard
@@ -78,6 +81,16 @@ pub fn end_injection(snap: State<ClipboardSnapshot>) {
         if recovered_on_clipboard {
             tracing::info!(
                 "[clip] end_injection: a recovered transcript is on the clipboard — restore skipped"
+            );
+            return;
+        }
+        // The session's last clipboard write delivered a transcript there (a clipboard-only
+        // phrase, or a divert the user was told to paste) and no paste has superseded it. The
+        // frontend's own restore-debt flag cannot say this on an error or a rejected stop — it
+        // clears it and calls this anyway — so restoring `prev` would erase the phrase.
+        if delivered_on_clipboard {
+            tracing::info!(
+                "[clip] end_injection: a delivered transcript is on the clipboard — restore skipped"
             );
             return;
         }
@@ -452,9 +465,7 @@ pub async fn recover_to_clipboard(text: String) -> Result<bool, String> {
     if text.is_empty() {
         return Ok(false);
     }
-    let res = tokio::task::spawn_blocking(move || crate::inject::set_clipboard_persistent(&text))
-        .await
-        .map_err(|e| e.to_string())?;
+    let res = crate::inject::text::persist_off_runtime(text).await;
     if let Err(e) = &res {
         tracing::warn!("[inject] clipboard recovery failed: {e}");
     }
