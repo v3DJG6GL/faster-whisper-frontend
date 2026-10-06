@@ -15,6 +15,7 @@ use futures_util::StreamExt;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 type Guarded = Arc<parking_lot::Mutex<super::Snapshot>>;
 
@@ -27,9 +28,21 @@ pub(super) fn next_failures(failures: u32, pumped_60s: bool) -> u32 {
 
 /// First + every 30th — the shared dedup gate for both reconnect outcomes, so
 /// neither a fast-ending stream nor an Err/Ok alternation can flood the ring
-/// at the 2 s retry cadence.
+/// at the retry cadence (2 s, backing off to 30 s).
 pub(super) fn should_log(failures: u32) -> bool {
     failures == 1 || failures.is_multiple_of(30)
+}
+
+/// The pause before the next reconnect: 2 s, doubling per consecutive failure (4, 8, 16),
+/// capped at 30 s — a session with no working a11y bus otherwise re-opens connections and
+/// re-triggers a failed D-Bus activation every few seconds forever. The cap keeps a
+/// late-starting bus picked up within 30 s; `next_failures` resetting to 1 after a
+/// long-lived connection keeps the ordinary bus-restart recovery at 2 s.
+pub(super) fn retry_delay(failures: u32) -> Duration {
+    let exp = failures.saturating_sub(1).min(4);
+    Duration::from_secs(2)
+        .saturating_mul(1u32 << exp)
+        .min(Duration::from_secs(30))
 }
 
 pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String> {
@@ -38,7 +51,8 @@ pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), 
     // would exit forever and the snapshot would freeze on the last-seen app (looked like
     // "worked for a while, then everything became konsole"). So we always reconnect.
     // Repeated failures log dedup'd (first + every 30th) — a broken bus otherwise floods
-    // the journal at one warn per 2 s retry for as long as the outage lasts.
+    // the journal at one warn per retry (2 s, backing off to 30 s) for as long as the
+    // outage lasts.
     let mut failures: u32 = 0;
     loop {
         // CRITICAL: enable session accessibility so app a11y bridges actually EMIT events.
@@ -71,7 +85,7 @@ pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), 
         // A stream that ENDS is a failure shape too (bus restart): count it, and clear
         // the counter only after a connection that actually pumped for a while — a fast
         // end (or an Err/Ok alternation) would otherwise reset past the gate and flood at
-        // one warn per 2 s retry. Both outcomes: a long-lived connection that finally dies
+        // one warn per retry (2 s, backing off to 30 s). Both outcomes: a long-lived connection that finally dies
         // with an ERROR opens a new incident whose first warn must not be swallowed by a
         // counter an earlier outage left at 45.
         failures = next_failures(
@@ -88,7 +102,7 @@ pub(super) async fn run(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), 
                 ),
             }
         }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(retry_delay(failures)).await;
     }
 }
 

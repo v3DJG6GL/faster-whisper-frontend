@@ -283,7 +283,7 @@ mod atspi;
 
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
-    use super::atspi::{next_failures, should_log};
+    use super::atspi::{next_failures, retry_delay, should_log};
 
     #[test]
     fn our_own_app_is_recognised_under_every_name_a_desktop_may_report() {
@@ -298,6 +298,17 @@ mod tests {
         assert_eq!(next_failures(45, true), 1);
         assert_eq!(next_failures(45, false), 46);
         assert_eq!(next_failures(0, false), 1);
+    }
+
+    #[test]
+    fn reconnect_delay_backs_off_to_30s_and_restarts_after_a_long_lived_connection() {
+        use std::time::Duration;
+        assert_eq!(retry_delay(1), Duration::from_secs(2));
+        assert_eq!(retry_delay(2), Duration::from_secs(4));
+        assert_eq!(retry_delay(4), Duration::from_secs(16));
+        assert_eq!(retry_delay(5), Duration::from_secs(30));
+        assert_eq!(retry_delay(u32::MAX), Duration::from_secs(30));
+        assert_eq!(retry_delay(next_failures(45, true)), Duration::from_secs(2));
     }
 
     #[test]
