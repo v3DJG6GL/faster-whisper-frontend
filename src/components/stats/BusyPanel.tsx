@@ -106,7 +106,9 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
     if (!host) { setTicks(null); return; }
     const measure = () => {
       const box = host.getBoundingClientRect();
-      const tops = host.querySelectorAll<HTMLElement>('[data-track="top"]');
+      // Only the columns the window reaches: an out-of-window top bar keeps its layout box.
+      const live = host.querySelectorAll<HTMLElement>('[data-track="top"][data-live]');
+      const tops = live.length ? live : host.querySelectorAll<HTMLElement>('[data-track="top"]');
       const sides = host.querySelectorAll<HTMLElement>('[data-track="side"]');
       if (!tops.length || !sides.length) { setTicks(null); return; }
       const t0 = tops[0].getBoundingClientRect();
@@ -177,6 +179,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
                 role="img"
                 aria-label={`${L.colLong(c)}: ${metricText(metric, model.colTotals[c])}, ${idx.toFixed(1)} times an average ${L.colUnit}`}
                 data-track="top"
+                data-live={model.colLive[c] ? "1" : undefined}
                 className={cn("relative flex h-[24px] items-end rounded-[2px] outline-none", CELL_HOVER, !model.colLive[c] && "invisible", tip?.i === N + c && CELL_HOT)}
               >
                 <i className="block w-full rounded-t-[2px]" style={{ height: `${barLen(idx, cMax)}%`, background: barBg(idx) }} />

@@ -802,16 +802,22 @@ export function rhythmModel(rhythm: Rhythm, src: RhythmSource, scope: UsageScope
   const rowTotals = new Array<number>(L.rows).fill(0);
   for (const c of cells) { colTotals[c.col] += c.value; rowTotals[c.row] += c.value; }
   const sum = colTotals.reduce((a, v) => a + v, 0);
-  const liveOf = (n: number, at: (c: RhythmCell) => number) => {
-    const live = new Set(active.map(at)).size;
-    return live || n;
-  };
-  const liveCols = L.colOcc ? L.colOcc.filter((n) => n > 0).length || L.cols : rhythm === "months" ? liveOf(L.cols, (c) => c.col) : L.cols;
-  const liveRows = rhythm === "months" ? liveOf(L.rows, (c) => c.row) : L.rows;
-  const colIndex = colTotals.map((v) => (sum > 0 ? v / (sum / liveCols) : 0));
-  const colLive = Array.from({ length: L.cols }, (_, c) => active.some((x) => x.col === c));
-  const rowIndex = rowTotals.map((v) => (sum > 0 ? v / (sum / liveRows) : 0));
   const wd = rhythm === "hours" ? weekdayCounts(f, t) : null;
+  // A side bar compares its average per occurrence with the flat one: a year has twelve
+  // 1sts but seven 31sts, a 30-day window five of two weekdays and four of the rest, and a
+  // month the window never touches does not occur at all.
+  const monthOcc = (at: (c: RhythmCell) => number, i: number) => active.filter((x) => at(x) === i).length;
+  const colOcc = Array.from({ length: L.cols }, (_, c) =>
+    L.colOcc ? L.colOcc[c] : rhythm === "months" ? monthOcc((x) => x.col, c) : 1);
+  const rowOcc = Array.from({ length: L.rows }, (_, r) =>
+    wd ? wd[r] : rhythm === "months" ? monthOcc((x) => x.row, r) : 1);
+  const index = (tot: readonly number[], occ: readonly number[]) => {
+    const so = occ.reduce((a, v) => a + v, 0);
+    return tot.map((v, i) => (sum > 0 && so > 0 && occ[i] > 0 ? v / occ[i] / (sum / so) : 0));
+  };
+  const colIndex = index(colTotals, colOcc);
+  const colLive = Array.from({ length: L.cols }, (_, c) => active.some((x) => x.col === c));
+  const rowIndex = index(rowTotals, rowOcc);
   const { y0: _y0, ...layout } = L;
   return {
     layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, colLive, rowIndex, sum, sent,

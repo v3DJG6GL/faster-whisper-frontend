@@ -295,6 +295,21 @@ describe("usageDerive", () => {
     expect(m.rowIndex[0]).toBeCloseTo(1);
   });
 
+  it("rhythmModel: side bars compare per occurrence, so flat use reads flat", () => {
+    // A year of even days: twelve 1sts, eleven 29ths, seven 31sts — every one average.
+    const span = rhythmModel("days", { dom_hours: [] }, "all", "words", 20_000, 20_364).layout.colOcc!;
+    const dom_hours: UsageHourCell[] = span.map((n, c) => ({ dom: c + 1, hour: 9, all: n * 10, dictation: n * 10, file: 0, url: 0, text: 0 }));
+    const y = rhythmModel("days", { dom_hours }, "all", "words", 20_000, 20_364);
+    expect(y.colIndex[0]).toBeCloseTo(1);
+    expect(y.colIndex[28]).toBeCloseTo(1);
+    expect(y.colIndex[30]).toBeCloseTo(1);
+    // A 30-day window holds five of two weekdays and four of the rest.
+    const wd = weekdayCounts(20_000, 20_029);
+    const hours: UsageHourCell[] = wd.map((n, r) => ({ dow: r, hour: 9, all: n * 10, dictation: n * 10, file: 0, url: 0, text: 0 }));
+    const h = rhythmModel("hours", { hours }, "all", "words", 20_000, 20_029);
+    for (let r = 0; r < 7; r++) expect(h.rowIndex[r]).toBeCloseTo(1);
+  });
+
   it("bucketing: days ≤ 120, ISO weeks ≤ 730, months beyond; sums per bucket", () => {
     expect(bucketMode(30)).toBe("day");
     expect(bucketMode(120)).toBe("day");
