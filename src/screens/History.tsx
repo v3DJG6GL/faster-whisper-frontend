@@ -79,13 +79,22 @@ const haystackCache = new WeakMap<TranscriptRecord, Haystack>();
 function haystackOf(r: TranscriptRecord): Haystack {
   const hit = haystackCache.get(r);
   if (hit) return hit;
-  // The translated text a session injected is shown and copied, so it is
-  // searchable too — type-guarded and bounded, the file is not validated on load.
+  // The translated text a session injected, and a file/link/text run's batch
+  // translations, are shown and copied, so they are searchable too —
+  // type-guarded and bounded, the file is not validated on load.
   const translated = typeof r.translatedText === "string" ? "\n" + r.translatedText.slice(0, 20_000) : "";
+  const rt: unknown = r.result?.translations;
+  const fileTr =
+    rt && typeof rt === "object"
+      ? Object.values(rt as Record<string, unknown>)
+          .filter((v): v is string => typeof v === "string")
+          .map((v) => "\n" + v.slice(0, 20_000))
+          .join("")
+      : "";
   const h: Haystack = {
     name: r.sourceName.toLowerCase(),
     appId: (r.appId ?? "").toLowerCase(),
-    text: (recordText(r, 20_000) + translated).toLowerCase(),
+    text: (recordText(r, 20_000) + translated + fileTr).toLowerCase(),
   };
   haystackCache.set(r, h);
   return h;
@@ -286,7 +295,19 @@ export default function History() {
       }, Math.max(0, next.getTime() - Date.now()) + 1000);
     };
     arm();
-    return () => window.clearTimeout(t);
+    // Timers run on a clock that stops during suspend, so after an overnight
+    // sleep the fire lands hours late — re-read the day on wake/focus too.
+    const recheck = () => {
+      const s = startOfDay(new Date());
+      if (s !== todayStart) setTodayStart(s);
+    };
+    document.addEventListener("visibilitychange", recheck);
+    window.addEventListener("focus", recheck);
+    return () => {
+      window.clearTimeout(t);
+      document.removeEventListener("visibilitychange", recheck);
+      window.removeEventListener("focus", recheck);
+    };
   }, [todayStart]);
 
   useEffect(() => {

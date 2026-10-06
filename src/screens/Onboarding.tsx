@@ -50,6 +50,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const [info, setInfo] = useState<ConnectionInfo | null>(null);
   const [backendId, setBackendId] = useState<string | null>(null);
   const [pull, setPull] = useState<SyncPullResult | null>(null);
+  // Why the starters step shows: the user declined a restore, the account has nothing
+  // synced, or neither is known (standard server, failed pull) — its copy must not lie.
+  const [startersIntro, setStartersIntro] = useState<StartersIntro>("none");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
   // The restore offer's disclosure chips. Migrate the raw blob (once per pull, not per
   // category per render) so pre-split categories (chip, dictionary,
@@ -151,6 +154,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           setStep("restore");
           return;
         }
+        setStartersIntro(p.ok ? "empty" : "none");
+      } else {
+        setStartersIntro("none");
       }
       setStep("starters");
     } catch (e) {
@@ -314,7 +320,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 <Button variant="accent" onClick={() => void restoreEverything()} disabled={busy}>
                   {busy ? "Restoring…" : "Restore everything"}
                 </Button>
-                <Button variant="ghost" onClick={() => setStep("starters")} disabled={busy}>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setStartersIntro("fresh");
+                    setStep("starters");
+                  }}
+                  disabled={busy}
+                >
                   Start fresh instead
                 </Button>
               </div>
@@ -330,6 +343,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         {step === "starters" && (
           <StartersStep
             backendId={backendId}
+            intro={startersIntro}
             onConfirm={(drafts) => {
               const s = st.getState();
               for (const p of drafts) s.upsertProfile(p);
@@ -363,11 +377,21 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
 // ── Step 2b: editable starter profiles ─────────────────────────────────────
 
+type StartersIntro = "fresh" | "empty" | "none";
+
+const STARTERS_INTRO: Record<StartersIntro, string> = {
+  fresh: "Starting fresh — here are two starters.",
+  empty: "Nothing synced on this account yet — here are two starters.",
+  none: "Here are two starters.",
+};
+
 function StartersStep({
   backendId,
+  intro,
   onConfirm,
 }: {
   backendId: string | null;
+  intro: StartersIntro;
   onConfirm: (drafts: Profile[]) => void;
 }) {
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
@@ -389,8 +413,7 @@ function StartersStep({
     <>
       <h1 className="mt-6 font-display text-[21px] font-[680]">Your hotkeys</h1>
       <p className="mt-1.5 max-w-[52ch] text-[13px] text-dim">
-        Nothing synced on this account yet — here are two starters. Everything is editable; they’re
-        only created when you confirm.
+        {STARTERS_INTRO[intro]} Everything is editable; they’re only created when you confirm.
       </p>
       <div className="mt-5 grid w-full max-w-[540px] grid-cols-1 gap-3 text-left sm:grid-cols-2">
         {drafts.map((p) => (
