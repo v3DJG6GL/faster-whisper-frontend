@@ -624,6 +624,11 @@ const MAX_PLAN_STAGES: usize = 8;
 /// Matches the server's TRANSLATION_MAX_TARGETS ceiling with headroom.
 const MAX_PLAN_UNITS: usize = 16;
 
+/// The sanity range for a video height the server reports.
+const SERVER_HEIGHT: std::ops::RangeInclusive<u32> = 1..=8192;
+/// The video height cap the server accepts on a request.
+const REQUEST_HEIGHT: std::ops::RangeInclusive<u32> = 144..=4320;
+
 /// A finite, non-negative seconds value — anything else is dropped rather
 /// than rendered as "NaNs left".
 fn fin_secs(v: Option<f64>) -> Option<f64> {
@@ -714,7 +719,7 @@ fn bound_video(v: VideoProgress) -> VideoProgress {
         state: v.state.map(|s| super::bounded_server_text(&s, 16)),
         progress: fin_frac(v.progress),
         container: v.container.map(|s| super::bounded_server_text(&s, 8)),
-        height: v.height.filter(|h| (1..=8192).contains(h)),
+        height: v.height.filter(|h| SERVER_HEIGHT.contains(h)),
         label: v.label.map(|s| super::bounded_server_text(&s, 32)),
         vcodec: v.vcodec.map(|s| super::bounded_server_text(&s, 32)),
         acodec: v.acodec.map(|s| super::bounded_server_text(&s, 32)),
@@ -1182,7 +1187,7 @@ async fn post(
         form = form.text("keep_video", if k { "true" } else { "false" });
         // The height cap rides only with keep_video, and only in the range the
         // server accepts (it clamps too — this keeps nonsense off the wire).
-        if let Some(h) = opts.video_max_height.filter(|h| (144..=4320).contains(h)) {
+        if let Some(h) = opts.video_max_height.filter(|h| REQUEST_HEIGHT.contains(h)) {
             form = form.text("video_max_height", h.to_string());
         }
         if let Some(f) = opts.video_format.as_deref().filter(|f| is_format_id(f)) {
@@ -1304,7 +1309,7 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
         source_video_expires_at: parsed.source_video_expires_at,
         source_video_height: parsed
             .source_video_height
-            .filter(|h| (1..=8192).contains(h)),
+            .filter(|h| SERVER_HEIGHT.contains(h)),
         source_video_container: parsed
             .source_video_container
             .map(|s| super::bounded_server_text(&s, 8)),
@@ -1507,7 +1512,7 @@ fn bound_rung(r: VideoRung) -> VideoRung {
         protocol: r.protocol.map(|s| super::bounded_server_text(&s, 8)),
         format_id: r.format_id.filter(|s| is_format_id(s)),
         audio_format_id: r.audio_format_id.filter(|s| is_format_id(s)),
-        height: r.height.filter(|h| (1..=8192).contains(h)),
+        height: r.height.filter(|h| SERVER_HEIGHT.contains(h)),
         tbr_kbps: r.tbr_kbps.filter(|t| *t <= 1_000_000),
         ..r
     }
@@ -1571,9 +1576,7 @@ pub async fn url_preview(
             .collect(),
         language: parsed.language.filter(|l| super::is_lang_code(l)),
         subtitle_tracks: bound_tracks(parsed.subtitle_tracks),
-        url_max_duration_s: parsed
-            .url_max_duration_s
-            .filter(|s| s.is_finite() && *s >= 0.0),
+        url_max_duration_s: fin_secs(parsed.url_max_duration_s),
         ..parsed
     })
 }
@@ -1801,7 +1804,7 @@ pub async fn url_video_download(
     progress_id: Option<&str>,
 ) -> anyhow::Result<UrlMediaDownload> {
     let mut body = serde_json::json!({});
-    if let Some(h) = max_height.filter(|h| (144..=4320).contains(h)) {
+    if let Some(h) = max_height.filter(|h| REQUEST_HEIGHT.contains(h)) {
         body["max_height"] = serde_json::json!(h);
     }
     if let Some(f) = format_id.filter(|f| is_format_id(f)) {
@@ -1870,10 +1873,13 @@ async fn url_media_download(
     Ok(UrlMediaDownload {
         container: parsed.container.map(|s| super::bounded_server_text(&s, 8)),
         ext: parsed.ext.map(|s| super::bounded_server_text(&s, 8)),
-        height: parsed.height.filter(|h| (1..=8192).contains(h)),
+        height: parsed.height.filter(|h| SERVER_HEIGHT.contains(h)),
         ..parsed
     })
 }
+
+/// Per-call suffix for `download_result_media`'s tmp file.
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Fetch the server-retained audio of a finished URL run into the local
 /// media store as `media/<record_id>.<ext>` (tmp+rename, owner-only), so the
@@ -1940,7 +1946,15 @@ pub async fn download_result_media(
     // the layout migration): the base is a user pick that may sit in a shared/synced tree.
     crate::audio::create_dir_private(dest_dir).context("creating the media folder")?;
     let dest = dest_dir.join(format!("{record_id}.{ext}"));
-    let tmp = dest_dir.join(format!("{record_id}.{ext}.tmp"));
+    // Unique per call: two fetches of the same record (the run's background copy and an
+    // export's own fetch) can overlap, and a shared name let each truncate or rename the
+    // other's file. Still ends in `.tmp`, so every sweep and folder move skips it; the
+    // final rename is atomic, so the last finisher leaves a complete file.
+    let tmp = dest_dir.join(format!(
+        "{record_id}.{ext}.{}-{}.tmp",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
     // Async file I/O: up to MAX_MEDIA_BYTES lands here, and a synchronous write per chunk
     // parked a runtime worker (the same contract `save_transcript_media` documents by
     // running on a blocking thread) while the run's progress polls share that runtime.

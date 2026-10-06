@@ -18,6 +18,17 @@ pub const MAX_TRACKS: usize = 12;
 pub const MAX_SRT_BYTES: usize = 2 * 1024 * 1024;
 /// A 10 GB upload or download on a slow link: hours, not the run's ceiling.
 pub const MEDIA_EXPORT_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
+/// The `too_large` sentence, whether the command's early size check or the
+/// upload's own check refuses the file.
+pub const TOO_LARGE_DETAIL: &str = "the video is larger than the server's upload limit";
+
+/// `<path>.tmp` — the sibling a tmp + rename write goes through. Shared so a
+/// caller's cleanup always names the exact file the writer created.
+pub(crate) fn tmp_sibling(p: &Path) -> std::path::PathBuf {
+    let mut t = p.as_os_str().to_owned();
+    t.push(".tmp");
+    t.into()
+}
 
 /// One subtitle track as the webview sends it (already-generated SRT text).
 #[derive(Debug, Clone, Deserialize)]
@@ -48,13 +59,19 @@ pub fn bound_label(label: Option<&str>) -> Option<String> {
         .filter(|l| !l.trim().is_empty())
 }
 
-/// The longest language code the package route takes — its regex is
-/// `[a-z]{2,3}(-[A-Za-z0-9]{2,8})?`, tighter than [`super::is_lang_code`]'s 16.
-const MAX_PACKAGE_LANG: usize = 12;
-
-/// A subtitle-track / audio language code the package route will accept.
+/// A subtitle-track / audio language code the package route will accept —
+/// mirrors its regex `[a-z]{2,3}(-[A-Za-z0-9]{2,8})?` exactly (tighter than
+/// [`super::is_lang_code`]), so a code it would 422 never reaches it.
 pub fn is_package_lang(l: &str) -> bool {
-    l.len() <= MAX_PACKAGE_LANG && super::is_lang_code(l)
+    let (primary, subtag) = match l.split_once('-') {
+        Some((p, s)) => (p, Some(s)),
+        None => (l, None),
+    };
+    (2..=3).contains(&primary.len())
+        && primary.bytes().all(|b| b.is_ascii_lowercase())
+        && subtag.is_none_or(|s| {
+            (2..=8).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric())
+        })
 }
 
 /// The wire's `subtitles` list: each track with its (bounded) title and
@@ -121,11 +138,7 @@ pub struct PackageOutcome {
 }
 
 impl PackageOutcome {
-    pub fn err_pub(kind: &'static str, detail: impl Into<String>) -> Self {
-        Self::err(kind, detail)
-    }
-
-    fn err(kind: &'static str, detail: impl Into<String>) -> Self {
+    pub fn err(kind: &'static str, detail: impl Into<String>) -> Self {
         PackageOutcome {
             kind,
             detail: detail.into(),
@@ -194,7 +207,7 @@ pub async fn upload_media(
     if len > max_bytes {
         return Ok(UploadOutcome::Http {
             status: 413,
-            detail: "the video is larger than the server's limit".into(),
+            detail: TOO_LARGE_DETAIL.into(),
         });
     }
     let p = progress.clone();
@@ -362,12 +375,7 @@ pub async fn package_to_path(
         return Ok(out);
     }
     let total = resp.content_length();
-    let ext = container.to_string();
-    let tmp = {
-        let mut t = dest.as_os_str().to_owned();
-        t.push(".tmp");
-        std::path::PathBuf::from(t)
-    };
+    let tmp = tmp_sibling(dest);
     let mut written: u64 = 0;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
@@ -404,7 +412,6 @@ pub async fn package_to_path(
         let _ = std::fs::remove_file(&tmp);
         anyhow::anyhow!("saving the export file: {e}")
     })?;
-    let _ = ext;
     Ok(PackageOutcome {
         kind: "ok",
         detail: String::new(),
@@ -463,7 +470,12 @@ mod tests {
         // The bell and the right-to-left override are both dropped, not counted.
         assert!(label.starts_with("Germanx"));
         assert_eq!(label.chars().count(), MAX_LABEL_CHARS);
-        assert!(is_package_lang("pt-BR") && !is_package_lang("zh-Hant-TW-x1"));
+        for ok in ["de", "pt-BR", "yue", "zh-Hant"] {
+            assert!(is_package_lang(ok), "{ok}");
+        }
+        for bad in ["EN", "de-", "zh-Hant-TW", "auto", "d", "de-x"] {
+            assert!(!is_package_lang(bad), "{bad}");
+        }
         assert_eq!(body[1]["label"], serde_json::Value::Null);
         assert_eq!(body[1]["original"], false);
         assert_eq!(body[1]["default"], false);

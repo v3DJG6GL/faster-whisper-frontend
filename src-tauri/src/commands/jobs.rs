@@ -58,5 +58,3 @@ pub fn save_jobs_ledger(app: AppHandle, ledger: serde_json::Value) -> Result<(),
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     crate::store::jobs_ledger::save(&dir, &ledger).map_err(|e| e.to_string())
 }
-
-// ── P30: settings export/import + server sync ──────────────────────────────

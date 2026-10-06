@@ -35,7 +35,7 @@ pub fn load(dir: &Path) -> Option<serde_json::Value> {
         .filter(|v| v.is_object())
 }
 
-/// Persist atomically (tmp + rename, owner-only), mirroring `store::usage_queue::save`.
+/// Persist atomically (tmp + rename, owner-only) via `config::write_private_atomic`.
 /// Refuses (Err) a document over the cap rather than truncating it.
 pub fn save(dir: &Path, ledger: &serde_json::Value) -> anyhow::Result<()> {
     let text = serde_json::to_string(ledger)?;
@@ -44,15 +44,7 @@ pub fn save(dir: &Path, ledger: &serde_json::Value) -> anyhow::Result<()> {
     }
     std::fs::create_dir_all(dir)?;
     let path = ledger_path(dir);
-    let tmp = path.with_extension("json.tmp");
-    if let Err(e) = crate::config::write_private(&tmp, &text) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
+    crate::config::write_private_atomic(&path, &text)?;
     Ok(())
 }
 

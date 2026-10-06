@@ -13,7 +13,7 @@ pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> 
     let dir = resolve_audio_base(&app, custom)?;
     if let Ok(home) = app.path().home_dir() {
         if let Ok(rest) = dir.strip_prefix(&home) {
-            return Some(format!("~/{}", rest.display()));
+            return Some(format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()));
         }
     }
     Some(dir.to_string_lossy().into_owned())
@@ -385,9 +385,7 @@ pub async fn save_text_file(path: String, contents: String) -> Result<(), String
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         use std::io::Write as _;
         let path = PathBuf::from(path);
-        let mut tmp = path.clone().into_os_string();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
+        let tmp = crate::transport::media::tmp_sibling(&path);
         let write = || -> std::io::Result<()> {
             let mut f = std::fs::File::create(&tmp)?;
             f.write_all(contents.as_bytes())?;

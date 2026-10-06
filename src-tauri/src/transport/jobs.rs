@@ -123,11 +123,36 @@ fn outcome_for<T>(status: reqwest::StatusCode) -> JobOutcome<T> {
     }
 }
 
-async fn send(req: reqwest::RequestBuilder) -> Result<reqwest::Response, String> {
-    req.timeout(JOB_TIMEOUT)
-        .send()
-        .await
-        .map_err(|e| friendly_err(&e))
+/// The shared front half of every jobs call: screen the id, send
+/// `{method} /v1/jobs/{id}{suffix}`, and fold a transport failure or a non-2xx
+/// status into the outcome the caller returns as-is. `timeout` is `None` only
+/// where the shared client's default must apply (the result payload).
+async fn job_request<T>(
+    server_url: &str,
+    api_key: Option<&str>,
+    job_id: &str,
+    method: reqwest::Method,
+    suffix: &str,
+    timeout: Option<Duration>,
+) -> Result<reqwest::Response, JobOutcome<T>> {
+    if !is_progress_id(job_id) {
+        return Err(JobOutcome::Error {
+            message: "malformed job id".into(),
+        });
+    }
+    let url = format!("{}/v1/jobs/{job_id}{suffix}", base_url(server_url));
+    let mut req = with_auth(client().request(method, url), api_key);
+    if let Some(t) = timeout {
+        req = req.timeout(t);
+    }
+    let resp = req.send().await.map_err(|e| JobOutcome::Error {
+        message: friendly_err(&e),
+    })?;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(outcome_for(status));
+    }
+    Ok(resp)
 }
 
 /// `GET /v1/jobs/{id}` — the row, with the live progress while in flight.
@@ -136,25 +161,19 @@ pub async fn get_job(
     api_key: Option<&str>,
     job_id: &str,
 ) -> JobOutcome<JobStatus> {
-    if !is_progress_id(job_id) {
-        return JobOutcome::Error {
-            message: "malformed job id".into(),
-        };
-    }
-    let base = base_url(server_url);
-    let resp = match send(with_auth(
-        client().get(format!("{base}/v1/jobs/{job_id}")),
+    let resp = match job_request(
+        server_url,
         api_key,
-    ))
+        job_id,
+        reqwest::Method::GET,
+        "",
+        Some(JOB_TIMEOUT),
+    )
     .await
     {
         Ok(r) => r,
-        Err(message) => return JobOutcome::Error { message },
+        Err(o) => return o,
     };
-    let status = resp.status();
-    if !status.is_success() {
-        return outcome_for(status);
-    }
     match json_capped_to::<JobStatus>(resp, MAX_META_BODY).await {
         Ok(parsed) => JobOutcome::Ok {
             value: bound_job_status(parsed),
@@ -164,34 +183,27 @@ pub async fn get_job(
 }
 
 /// `GET /v1/jobs/{id}/result` — the payload, through the POST's own
-/// conversion and bounding. Generous timeout: a verbose_json payload with
-/// words and translations can be megabytes.
+/// conversion and bounding.
 pub async fn get_job_result(
     server_url: &str,
     api_key: Option<&str>,
     job_id: &str,
 ) -> JobOutcome<BatchResult> {
-    if !is_progress_id(job_id) {
-        return JobOutcome::Error {
-            message: "malformed job id".into(),
-        };
-    }
-    let base = base_url(server_url);
-    let resp = match with_auth(
-        client().get(format!("{base}/v1/jobs/{job_id}/result")),
+    // No JOB_TIMEOUT: a verbose_json payload with words and translations can
+    // be megabytes, so this keeps the shared client's generous default.
+    let resp = match job_request(
+        server_url,
         api_key,
+        job_id,
+        reqwest::Method::GET,
+        "/result",
+        None,
     )
-    .send()
     .await
-    .map_err(|e| friendly_err(&e))
     {
         Ok(r) => r,
-        Err(message) => return JobOutcome::Error { message },
+        Err(o) => return o,
     };
-    let status = resp.status();
-    if !status.is_success() {
-        return outcome_for(status);
-    }
     match json_capped::<VerboseJson>(resp).await {
         Ok(parsed) => JobOutcome::Ok {
             value: to_batch_result(parsed),
@@ -202,26 +214,19 @@ pub async fn get_job_result(
 
 /// `DELETE /v1/jobs/{id}` — cancel a running job / delete a finished one.
 pub async fn delete_job(server_url: &str, api_key: Option<&str>, job_id: &str) -> JobOutcome<()> {
-    if !is_progress_id(job_id) {
-        return JobOutcome::Error {
-            message: "malformed job id".into(),
-        };
-    }
-    let base = base_url(server_url);
-    let resp = match send(with_auth(
-        client().delete(format!("{base}/v1/jobs/{job_id}")),
+    match job_request(
+        server_url,
         api_key,
-    ))
+        job_id,
+        reqwest::Method::DELETE,
+        "",
+        Some(JOB_TIMEOUT),
+    )
     .await
     {
-        Ok(r) => r,
-        Err(message) => return JobOutcome::Error { message },
-    };
-    let status = resp.status();
-    if !status.is_success() {
-        return outcome_for(status);
+        Ok(_) => JobOutcome::Ok { value: () },
+        Err(o) => o,
     }
-    JobOutcome::Ok { value: () }
 }
 
 #[cfg(test)]
@@ -303,5 +308,20 @@ mod wire_field_tests {
         assert_eq!(k(outcome_for(StatusCode::INTERNAL_SERVER_ERROR)), "error");
         let ok = serde_json::to_value(JobOutcome::Ok { value: 3 }).unwrap();
         assert_eq!(ok, serde_json::json!({"kind": "ok", "value": 3}));
+    }
+
+    #[tokio::test]
+    async fn malformed_job_id_never_reaches_the_wire() {
+        // The guard lives in the shared `job_request`, so every call refuses a
+        // path-bearing id before building a URL (the server here is unroutable).
+        let bad = "../../etc/passwd";
+        let msg = |v: serde_json::Value| v["message"].as_str().unwrap().to_string();
+        let a = serde_json::to_value(super::get_job("http://0.0.0.0:1", None, bad).await);
+        let b = serde_json::to_value(super::get_job_result("http://0.0.0.0:1", None, bad).await);
+        let c = serde_json::to_value(super::delete_job("http://0.0.0.0:1", None, bad).await);
+        for v in [a.unwrap(), b.unwrap(), c.unwrap()] {
+            assert_eq!(v["kind"], "error");
+            assert_eq!(msg(v), "malformed job id");
+        }
     }
 }

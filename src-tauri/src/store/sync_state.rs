@@ -30,22 +30,12 @@ pub fn load(dir: &Path) -> Option<serde_json::Value> {
         .filter(|v| v.is_object())
 }
 
-/// Persist atomically (tmp + rename), mirroring `config::save`.
+/// Persist atomically (tmp + rename, owner-only) via `config::write_private_atomic`.
 pub fn save(dir: &Path, state: &serde_json::Value) -> anyhow::Result<()> {
     std::fs::create_dir_all(dir)?;
     let path = sync_state_path(dir);
-    let tmp = path.with_extension("json.tmp");
     let text = serde_json::to_string(state)?;
-    // Don't leave the tmp behind when the write OR the rename fails — see `config::save`. The
-    // tmp here holds a partial copy of the whole merge-base snapshot.
-    if let Err(e) = crate::config::write_private(&tmp, &text) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
-    if let Err(e) = std::fs::rename(&tmp, &path) {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e.into());
-    }
+    crate::config::write_private_atomic(&path, &text)?;
     Ok(())
 }
 

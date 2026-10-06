@@ -417,8 +417,12 @@ pub async fn package_media(
     dest_path: String,
     filename: String,
     max_upload_bytes: Option<u64>,
+    audio_base: Option<String>,
 ) -> Result<transport::media::PackageOutcome, String> {
     use transport::media::{self as media, PackageOutcome, UploadOutcome};
+    // Capture the epoch BEFORE the (potentially slow) keyring resolve so a
+    // cancel that lands during the D-Bus round-trip is never missed.
+    let epoch = MEDIA_EXPORT_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     if !job_id.is_empty() && !transport::is_progress_id(&job_id) {
         return Err("malformed job id".into());
     }
@@ -452,9 +456,10 @@ pub async fn package_media(
     let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
         return Err("the export folder does not exist".into());
     };
-    if inside_app_storage(&app, None, parent) {
+    if inside_app_storage(&app, audio_base, parent) {
         return Err("choose a folder outside the app's own storage".into());
     }
+    let max_upload = max_upload_bytes.unwrap_or(crate::store::transcripts::MAX_MEDIA_BYTES);
     let (media_id, path) = match (source_media_id, source_path) {
         (Some(id), None) => {
             transport::gate_media_id(&id).map_err(|e| e.to_string())?;
@@ -466,18 +471,14 @@ pub async fn package_media(
             if !meta.is_file() {
                 return Err("the video is not a file".into());
             }
-            if meta.len() > max_upload_bytes.unwrap_or(crate::store::transcripts::MAX_MEDIA_BYTES) {
-                return Ok(PackageOutcome::err_pub(
-                    "too_large",
-                    "the video is larger than the server's upload limit",
-                ));
+            if meta.len() > max_upload {
+                return Ok(PackageOutcome::err("too_large", media::TOO_LARGE_DETAIL));
             }
             (None, Some(p))
         }
         _ => return Err("name exactly one of a media id or a local file".into()),
     };
     let key = resolve_key(api_key, backend_id);
-    let epoch = MEDIA_EXPORT_EPOCH.load(std::sync::atomic::Ordering::SeqCst);
     let emit_app = app.clone();
     let job = job_id.clone();
     // Throttled to ~10 events/s: the transfer loops report every KB-sized chunk, and each
@@ -509,7 +510,6 @@ pub async fn package_media(
             },
         );
     });
-    let max_upload = max_upload_bytes.unwrap_or(crate::store::transcripts::MAX_MEDIA_BYTES);
     let dest_for_cleanup = dest.clone();
     let fut = async {
         let mut uploaded_expiry: Option<i64> = None;
@@ -539,7 +539,7 @@ pub async fn package_media(
                             403 | 503 => "disabled",
                             _ => "error",
                         };
-                        return Ok::<_, anyhow::Error>(PackageOutcome::err_pub(kind, detail));
+                        return Ok::<_, anyhow::Error>(PackageOutcome::err(kind, detail));
                     }
                 }
             }
@@ -575,13 +575,11 @@ pub async fn package_media(
     let r = until_epoch_bumps(&MEDIA_EXPORT_EPOCH, epoch, fut).await;
     if r.is_err() {
         // A cancelled or failed export leaves no half-written file behind.
-        let mut tmp = dest_for_cleanup.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let _ = std::fs::remove_file(PathBuf::from(tmp));
+        let _ = std::fs::remove_file(media::tmp_sibling(&dest_for_cleanup));
     }
     match r {
         Ok(out) => Ok(out),
-        Err(e) if e == "cancelled" => Ok(PackageOutcome::err_pub("cancelled", "export cancelled")),
+        Err(e) if e == "cancelled" => Ok(PackageOutcome::err("cancelled", "export cancelled")),
         Err(e) => Err(e),
     }
 }
@@ -646,9 +644,7 @@ pub async fn copy_media_to(
         return Err("that is the file itself".into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
-        let mut tmp = dest_path.as_os_str().to_owned();
-        tmp.push(".tmp");
-        let tmp = PathBuf::from(tmp);
+        let tmp = transport::media::tmp_sibling(&dest_path);
         let n = match std::fs::copy(&src_real, &tmp) {
             Ok(n) => n,
             Err(e) => {
