@@ -16,7 +16,10 @@ const api = vi.hoisted(() => ({
   readCalled: false,
   pushes: 0,
   pushed: null as unknown,
+  pushedBase: null as null | number,
   pulled: null as unknown,
+  /** Answered (once each, in order) with a 409 carrying this state instead of a 200. */
+  conflicts: [] as unknown[],
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -27,10 +30,13 @@ vi.mock("../api", async (importOriginal) => {
       api.readCalled = true;
       return api.park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
     },
-    syncPush: async (args: { blob: unknown }) => {
+    syncPush: async (args: { blob: unknown; baseVersion: number }) => {
       api.pushes++;
       api.pushed = args.blob;
-      return { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "me", blob: {} } };
+      api.pushedBase = args.baseVersion;
+      const conflict = api.conflicts.shift();
+      if (conflict) return { ok: false, status: 409, conflict };
+      return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 1, device: "me", blob: {} } };
     },
     syncPull: async () => ({ ok: true, status: 200, state: api.pulled }),
   };
@@ -88,45 +94,109 @@ describe("a push superseded while composing", () => {
 // A locked keyring makes composeBlob re-send the SNAPSHOT's backends category (never a keyless
 // list). Merged against that, "local unchanged" kept the remote list, and the pull hydrated it
 // over the store — silently deleting a backend added here. The category must stay out of the
-// apply, and no base may be adopted (the next pull, keyring unlocked, merges it properly).
-describe("a pull composed with a degraded keyring", () => {
-  it("keeps this device's backends and adopts no base", async () => {
+// apply. The remote becomes the base only when it left the category alone (nothing is lost);
+// otherwise no base is adopted and the status says the keyring is locked, rather than "ok"
+// while every later push stalls behind a 409.
+describe("a sync composed with a degraded keyring", () => {
+  /** Seed a version-1 base from a clean push, then lock the wallet and add a backend here. */
+  async function seed(): Promise<{ base: SyncBlob; before: boolean }> {
+    await resetSyncState();
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
     const b1 = backend({ hasApiKey: true });
     useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
-    // Seed a base: a clean push with the keyring readable records its blob as the snapshot.
     api.keys = { b1: "sk-secret" };
+    await pushNow(true);
+    const base = structuredClone(api.pushed) as SyncBlob;
+    expect(base.backends?.secrets).toEqual({ b1: "sk-secret" });
+    api.keys = {};
+    const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
+    useApp.setState({ backends: [b1, added] });
+    return { base, before: useApp.getState().settings.general.typeAsISpeak };
+  }
+  /** The peer's blob: `general` flipped, and optionally b1 renamed. */
+  function peer(base: SyncBlob, before: boolean, renameB1: boolean): SyncBlob {
+    const remote = structuredClone(base);
+    remote.general = { ...remote.general, typeAsISpeak: !before } as never;
+    if (renameB1) remote.backends!.list = remote.backends!.list.map((b) => ({ ...b, name: "renamed-by-peer" }));
+    return remote;
+  }
+  const cleanup = () => {
+    api.keys = null;
+    api.pulled = null;
+    api.conflicts = [];
+  };
+
+  it("a pull that left backends alone keeps this device's list and adopts the base", async () => {
     try {
-      await pushNow(true);
-      const base = structuredClone(api.pushed) as SyncBlob;
-      expect(base.backends?.secrets).toEqual({ b1: "sk-secret" });
-
-      // Wallet locked; the user adds a backend; a peer changes only `general`.
-      api.keys = {};
-      const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
-      useApp.setState({ backends: [b1, added] });
-      const before = useApp.getState().settings.general.typeAsISpeak;
-      const remote = structuredClone(base);
-      remote.general = { ...remote.general, typeAsISpeak: !before } as never;
-      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
-      const pushesBefore = api.pushes;
+      const { base, before } = await seed();
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: peer(base, before, false) };
       await pullNow(true);
-
       const st = useApp.getState();
       expect(st.backends.map((b) => b.id)).toEqual(["b1", "b2"]); // the local add survived
       expect(st.settings.general.typeAsISpeak).toBe(!before); // everything else still applied
       expect(st.syncStatus).toBe("ok");
-      // No base adopted: a forced push still names version 1 (the seeded one) as its base, i.e.
-      // the snapshot was not replaced by the peer's version 2.
+      // Base adopted: the next push (keyring unlocked) names the peer's version 2 and carries
+      // this device's list.
       api.keys = { b1: "sk-secret" };
-      api.pushed = null;
       await pushNow(true);
-      expect(api.pushes).toBe(pushesBefore + 1);
+      expect(api.pushedBase).toBe(2);
       expect((api.pushed as SyncBlob).backends?.list.map((b) => b.id)).toEqual(["b1", "b2"]);
     } finally {
-      api.keys = null;
-      api.pulled = null;
+      cleanup();
+    }
+  });
+
+  it("a pull that changed backends adopts no base and says the keyring is locked", async () => {
+    try {
+      const { base, before } = await seed();
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: peer(base, before, true) };
+      await pullNow(true);
+      const st = useApp.getState();
+      expect(st.backends.map((b) => [b.id, b.name])).toEqual([["b1", "local"], ["b2", "added-here"]]);
+      expect(st.settings.general.typeAsISpeak).toBe(!before);
+      expect(st.syncStatus).toBe("error");
+      expect(st.syncError).toContain("keyring");
+      api.keys = { b1: "sk-secret" };
+      await pushNow(true);
+      expect(api.pushedBase).toBe(1); // still the seeded base
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a 409 that left backends alone adopts the merge and pushes on the new base", async () => {
+    try {
+      const { base, before } = await seed();
+      api.conflicts = [{ version: 5, updated_ts: 5, device: "peer", blob: peer(base, before, false) }];
+      const pushesBefore = api.pushes;
+      await pushNow(true);
+      const st = useApp.getState();
+      expect(api.pushes).toBe(pushesBefore + 2);
+      expect(api.pushedBase).toBe(5);
+      // The locked keyring never pushes a reverted list: the re-push carries the base's category.
+      expect((api.pushed as SyncBlob).backends?.list.map((b) => b.id)).toEqual(["b1"]);
+      expect(st.backends.map((b) => b.id)).toEqual(["b1", "b2"]);
+      expect(st.settings.general.typeAsISpeak).toBe(!before);
+      expect(st.syncStatus).toBe("ok");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a 409 that changed backends stops with a keyring error instead of a silent ok", async () => {
+    try {
+      const { base, before } = await seed();
+      api.conflicts = [{ version: 5, updated_ts: 5, device: "peer", blob: peer(base, before, true) }];
+      const pushesBefore = api.pushes;
+      await pushNow(true);
+      const st = useApp.getState();
+      expect(api.pushes).toBe(pushesBefore + 1);
+      expect(st.backends.map((b) => [b.id, b.name])).toEqual([["b1", "local"], ["b2", "added-here"]]);
+      expect(st.syncStatus).toBe("error");
+      expect(st.syncError).toContain("keyring");
+    } finally {
+      cleanup();
     }
   });
 });

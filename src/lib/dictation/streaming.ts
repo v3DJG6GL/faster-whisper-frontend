@@ -1032,19 +1032,6 @@ function enqueueAutoEnter(): void {
   });
 }
 
-/** Enqueue a clipboard restore (live paste): put the user's clipboard back from the most-recent
- *  per-phrase snapshot, without consuming it (so the next phrase's paste + restore repeats).
- *  No-op in Rust when we never snapshotted. */
-function enqueueRestoreSnapshot(): void {
-  enqueueInject(async () => {
-    try {
-      await restoreClipboardSnapshot();
-    } catch (e) {
-      console.error("restore clipboard snapshot failed:", e);
-    }
-  });
-}
-
 /** (Re)arm the phrase-end quiet timer — the single "you paused, the phrase is done" signal that
  *  drives the per-phrase actions: auto-Enter, clipboard restore, AND advancing the clipboard-only
  *  phrase baseline. Called on every partial/final while live, so ongoing speech keeps deferring
@@ -2486,17 +2473,33 @@ async function ensureListeners(): Promise<void> {
           }
         });
       }
-      // The phrase ended hard → restore the clipboard too, as a backstop in case the quiet
-      // timer hadn't already (the timer normally fires ~PHRASE_END_QUIET_MS before this). Clear
-      // clipHoldsOurs ONLY here (we restored the user's clipboard) — NOT at the unconditional
-      // clipDirty=false below, where a clipboard-only-last phrase still holds our text.
-      if (clipDirty && beganInjection) {
-        clipHoldsOurs = false;
-        enqueueRestoreSnapshot();
-      }
     }
     phraseDirty = false;
-    clipDirty = false;
+    // The phrase ended hard → restore the clipboard too, as a backstop in case the quiet timer
+    // hadn't already (clearPhraseEndTimer above just dropped its queued restore). Decided IN the
+    // queue, like bumpPhraseEnd's link: a phrase task still awaiting its translate sets clipDirty
+    // only after its paste lands, so a synchronous read here saw false and its synchronous clear
+    // then left that late debt unrestored (the transcript sat on the clipboard). Clear
+    // clipHoldsOurs ONLY on a restore — a clipboard-only-last phrase still holds our text.
+    // Chained directly so the flood cap can never drop it; the session token guards a
+    // cancel-then-restart (both reset all of this themselves).
+    {
+      const cfg = insertCfg;
+      const live = !!insertCfg?.live;
+      injectChain = injectChain.then(async () => {
+        if (insertCfg !== cfg) return;
+        if (live && clipDirty && beganInjection) {
+          clipDirty = false;
+          clipHoldsOurs = false; // the restore below puts the user's clipboard back
+          try {
+            await restoreClipboardSnapshot();
+          } catch (e) {
+            console.error("restore clipboard snapshot failed:", e);
+          }
+        }
+        clipDirty = false;
+      });
+    }
   });
 
   await reg<string>("stream://status", (e) => {

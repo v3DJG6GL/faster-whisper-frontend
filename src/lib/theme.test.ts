@@ -22,6 +22,7 @@ import {
   lum,
   motionCostNote,
   motionPhase,
+  nearestPreset,
   secToSlider,
   setAccentHue,
   setAccentDriftPaused,
@@ -141,6 +142,17 @@ describe("motion arithmetic", () => {
     // The first tenth of the breath moves far less than the middle tenth.
     expect(at(10)).toBeLessThan(at(30) - at(20));
     expect(at(50)).toBeCloseTo(120);
+  });
+
+  it("an arc with no near end breathes from the palette's stand-in, never in place", () => {
+    // A stored arc without arcFrom and a Signal colour at/near Rose: the palette shows
+    // Lilac ↔ Rose, and that is what must move (it used to sit on 350 → 350).
+    const m = { period: 100, range: "arc" as const };
+    expect(driftHue(350, m, 0)).toBe(305);
+    expect(driftHue(350, m, 50_000)).toBeCloseTo(350);
+    expect(driftHue(345, m, 0)).toBe(305);
+    expect(nearestPreset(350, 350)).toBe(305);
+    expect(nearestPreset(70)).toBe(65);
   });
 
   it("an arc with no second colour goes to the Rose preset", () => {

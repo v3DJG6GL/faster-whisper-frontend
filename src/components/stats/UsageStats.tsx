@@ -450,8 +450,10 @@ export function StatisticsView({
   const year = useApp((s) => s.usageYear);
   const yearQ = yearPageQuery(query);
   const yearSig = yearQ && viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), yearQ, viewerTimeZone()) : null;
-  // A failed year fetch is still loading (the carried same-source year shows dimmed), not an empty year.
+  // A failed year fetch is not fresh (the carried same-source year shows dimmed), not an empty
+  // year — and it says it failed, as the filter bar does, instead of "loading…".
   const yearFresh = !yearQ ? fresh : !!yearSig && year?.sig === yearSig && !year.failed && !!year.stats;
+  const yearFailed = !yearQ ? failed : !!yearSig && year?.sig === yearSig && !!year.failed;
   // yearSig shares sig's backend + target, so the same-source check against sig holds for it.
   const yearStats = !yearQ ? stats : (year && sameViewSource(year.sig, sig) ? year.stats : null);
   const yearWin = { from: today - 364, to: today };
@@ -511,6 +513,7 @@ export function StatisticsView({
           filtered={filtered}
           metric={metric}
           stale={!yearFresh}
+          failed={yearFailed}
         />
         <BusyPanel stats={stats} dense={dense} scope={scope} title={word} metric={metric} rhythm={rhythm} onRhythm={onRhythm} from={win.from} to={win.to} />
       </div>

@@ -207,12 +207,24 @@ describe("site subtitle cleanup", () => {
     const json = '{"segments":[{"text":"a\\u202eb","speaker":"S\\u0007"}]}';
     expect(parseImportedText("json", json).segments[0]).toMatchObject({ text: "ab", speaker: "S" });
   });
+  it("a JSON top-level text fallback is sanitized too", () => {
+    const json = '{"text":"abc\\u202edef \\u001bx"}';
+    expect(parseImportedText("json", json).segments.map((s) => s.text).join(" ")).toBe("abcdef x");
+  });
   it("a VTT cue with two voices yields one segment per speaker", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alice>Hi</v>\n<v.loud Bob>Hello</v>\n";
     expect(parseImportedText("vtt", vtt).segments).toEqual([
       { start: 1, end: 3, text: "Hi", speaker: "Alice" },
       { start: 1, end: 3, text: "Hello", speaker: "Bob" },
     ]);
+  });
+  it("a voice tag the span regex rejects keeps the cue's text", () => {
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alice>Hi</v> <v Dr. Bartholomew Featherstonehaugh-Montgomery III>Hello</v>\n";
+    expect(parseImportedText("vtt", vtt).segments.map((s) => s.text).join(" ")).toBe("Hi Hello");
+  });
+  it("a single classed voice tag still carries the speaker", () => {
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v.loud Alice>Hi\n";
+    expect(parseImportedText("vtt", vtt).segments).toEqual([{ start: 1, end: 2, text: "Hi", speaker: "Alice" }]);
   });
   it("cleanup runs for SRT too", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";

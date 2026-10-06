@@ -56,6 +56,22 @@ export const ACCENT_PRESETS: ReadonlyArray<readonly [name: string, hue: number]>
   ["Rose", 350],
 ];
 
+/** The preset hue nearest to `hue` on the wheel (the arc palette shows presets only),
+ *  skipping the preset `exclude` when given. */
+export function nearestPreset(hue: number, exclude?: number): number {
+  let best = ACCENT_PRESETS[0][1];
+  let bestD = 361;
+  for (const [, h] of ACCENT_PRESETS) {
+    if (h === exclude) continue;
+    const d = Math.abs(((((h - hue) % 360) + 540) % 360) - 180);
+    if (d < bestD) {
+      bestD = d;
+      best = h;
+    }
+  }
+  return best;
+}
+
 /** OKLCH → sRGB hex, gamut-clipped per channel (a pastel-enough L/C never clips much). */
 export function oklchHex(L: number, C: number, h: number): string {
   const a = C * Math.cos((h * Math.PI) / 180);
@@ -193,15 +209,17 @@ export function motionPhase(nowMs: number, period: number): number {
 
 /** The hue at `nowMs` for a base hue and a motion. Pure — the driver and the tests share
  *  it. "wheel" sweeps the full circle from the base; "arc" breathes along the SHORT arc
- *  between `arcFrom` (the base when absent) and `arcHue` with an ease-in-out ((1 − cos)/2),
- *  so it lingers at both ends the way a lamp does. Period 0 returns the base untouched. */
+ *  between `arcFrom` and `arcHue` with an ease-in-out ((1 − cos)/2), so it lingers at both
+ *  ends the way a lamp does. An older blob with no `arcFrom` starts from the preset nearest
+ *  the base other than the far end — the pair the Settings palette shows — so a base at or
+ *  near the far end never collapses the breath to one hue. Period 0 returns the base untouched. */
 export function driftHue(base: number, motion: AccentMotion, nowMs: number): number {
   const { period } = motion;
   if (!(period > 0)) return base;
   const ph = motionPhase(nowMs, period);
   if (motion.range === "wheel") return (base + 360 * ph) % 360;
-  const near = motion.arcFrom ?? base;
   const far = motion.arcHue ?? DEFAULT_ARC_HUE;
+  const near = motion.arcFrom ?? nearestPreset(base, far);
   // Signed shortest angular distance, in (−180, 180].
   const d = ((((far - near) % 360) + 540) % 360) - 180;
   const e = (1 - Math.cos(2 * Math.PI * ph)) / 2;

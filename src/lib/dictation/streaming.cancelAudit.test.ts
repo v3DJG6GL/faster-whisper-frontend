@@ -296,4 +296,18 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(link).toContain("flushClipByLang(");
     expect(mask(boundary).split("clipBooked = null").length, "only the link may close the window").toBe(2);
   });
+
+  it("a hard break decides its restore backstop in the queue, not synchronously", () => {
+    // Same race as the phrase-end timer: a phrase task still awaiting its translate sets
+    // clipDirty after the break, so a synchronous read misses the debt and a synchronous
+    // clear wipes it.
+    const boundary = mask(bodyAfter(streamingSrc, '"stream://boundary"'));
+    const link = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(async () =>"));
+    expect(link).toContain("restoreClipboardSnapshot(");
+    for (const step of ["clipDirty && beganInjection", "clipDirty = false"]) {
+      expect(link, `${step} must run inside the queued link`).toContain(step);
+      const inLink = link.split(step).length;
+      expect(boundary.split(step).length, `${step} must not run synchronously in the boundary`).toBe(inLink);
+    }
+  });
 });

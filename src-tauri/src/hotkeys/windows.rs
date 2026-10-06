@@ -63,7 +63,9 @@
 //! phrase to the clipboard. So the worker RECONCILES: while it believes anything is
 //! held it asks the OS directly (`GetAsyncKeyState` — independent of any message
 //! queue, though it reflects only key events no low-level hook swallowed) and releases
-//! what the OS says is up. See `resync_held`.
+//! what the OS says is up. While a remote-desktop client has focus that reading is blind
+//! to the keys its hook swallows, so there a key must also have stopped autorepeating
+//! (our hook still sees those) before it is released. See `resync_held`.
 
 /// Live listener: the receiver thread's native id (to post it `WM_QUIT`). Dropping
 /// it stops forwarding (the worker then drains + cleans up) and tears down the
@@ -306,7 +308,7 @@ mod imp {
     use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
     use crate::hotkeys::triggers::TriggerPayload;
     use std::cell::Cell;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::sync::mpsc::{channel, Receiver, Sender};
     use std::sync::Mutex;
     use tauri::{AppHandle, Emitter, Manager};
@@ -1187,6 +1189,11 @@ mod imp {
     /// empty held-set to clear stale first strikes.
     const RESYNC_INTERVAL: std::time::Duration = std::time::Duration::from_millis(250);
 
+    /// While a remote-desktop client has focus, how long a held key must go without a down or
+    /// autorepeat before an OS "up" reading may release it. Well over the default typematic
+    /// delay (≤1 s), so a physically held key always proves itself alive within the window.
+    const RDP_LIVENESS: std::time::Duration = std::time::Duration::from_millis(1500);
+
     /// Release every key the held-set still carries that the OS says is UP — the repair for a
     /// key-up neither feed ever saw (see the module header for how that happens).
     ///
@@ -1204,10 +1211,14 @@ mod imp {
     /// switch is released, ending its push-to-talk session. `up_once` carries the first strike
     /// between calls.
     ///
-    /// Skipped while a remote-desktop client has focus: its capture hook swallows the keys it
-    /// forwards, so the OS async state reads a held chord UP and the reconciler would cut
-    /// every push-to-talk hold after two polls. A key stranded there is repaired by the first
-    /// polls after focus leaves the client.
+    /// While a remote-desktop client has focus the OS reading alone is not enough: its capture
+    /// hook swallows the keys it forwards, so the async state reads a held chord UP and two
+    /// polls would cut every push-to-talk hold. Our re-armed hook sits above it and still sees
+    /// the autorepeat downs of a physically held key, so there a key is released only when it
+    /// ALSO sent no down/autorepeat for RDP_LIVENESS (`last_down`, stamped by the worker). That
+    /// keeps the repair for the RDP case the module header names first — a release swallowed
+    /// in a re-arm gap — instead of stranding the key until focus leaves the client.
+    #[allow(clippy::too_many_arguments)]
     fn resync_held(
         app: &AppHandle,
         held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
@@ -1215,21 +1226,27 @@ mod imp {
         engine: &mut Engine,
         up_once: &mut HashSet<u16>,
         deb: &mut crate::hotkeys::debounce::Debouncer,
+        last_down: &mut HashMap<u16, std::time::Instant>,
+        now: std::time::Instant,
     ) {
-        // The OS async state is blind to keys an RDP capture hook swallows: trust nothing
-        // it says while the client has focus, and drop any first strike taken before.
-        if crate::inject::rdp_client::focus_is_remote_desktop_client() {
-            up_once.clear();
-            return;
-        }
+        last_down.retain(|id, _| held.contains(id));
         let up_now: HashSet<u16> = held
             .iter()
             .copied()
             .filter(|&id| !physically_down(id))
             .collect();
         // Retain-then-swap: only keys up on BOTH polls are acted on.
-        let confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
+        let mut confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
         *up_once = up_now;
+        // Under RDP a key still repeating is held, whatever the OS says; it keeps its strike
+        // and is asked again next poll.
+        if !confirmed.is_empty() && crate::inject::rdp_client::focus_is_remote_desktop_client() {
+            confirmed.retain(|id| {
+                last_down
+                    .get(id)
+                    .is_none_or(|&t| now.saturating_duration_since(t) >= RDP_LIVENESS)
+            });
+        }
         for id in confirmed {
             up_once.remove(&id);
             // Clear any deferred release the debouncer still holds for this key,
@@ -1272,6 +1289,9 @@ mod imp {
             crate::hotkeys::debounce::Debouncer::new(crate::hotkeys::debounce::RELEASE_DEBOUNCE);
         // First strikes for the held-set reconciler (see resync_held).
         let mut up_once: HashSet<u16> = HashSet::new();
+        // When each held key last sent a down or autorepeat — the liveness signal resync_held
+        // trusts under RDP, where the OS async state reads swallowed keys UP.
+        let mut last_down: HashMap<u16, std::time::Instant> = HashMap::new();
         let mut next_resync = std::time::Instant::now() + RESYNC_INTERVAL;
 
         loop {
@@ -1318,9 +1338,14 @@ mod imp {
                     &mut engine,
                     &mut up_once,
                     &mut deb,
+                    &mut last_down,
+                    now,
                 );
             }
             if let Some(ev) = ev {
+                if ev.down {
+                    last_down.insert(ev.id, now);
+                }
                 if let Some((k, d)) = deb.on_event(ev.id, ev.down, held.contains(&ev.id), now) {
                     commit(&app, &held_keys, &mut held, &mut engine, k, d, false);
                 }

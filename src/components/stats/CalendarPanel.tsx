@@ -16,7 +16,7 @@ import { Panel, Pill } from "@/components/stats/primitives";
  *  that already spans a year), whatever range the page shows: a week of squares says
  *  nothing and its quartiles less. The page's range is MARKED on it instead — days outside
  *  it are dimmed — so the strip also shows where the filter sits. */
-export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered, metric, stale }: {
+export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, filtered, metric, stale, failed }: {
   dense: readonly UsageSeriesPoint[];
   streaks: UsageStreaks | undefined;
   scope: UsageScope;
@@ -28,6 +28,8 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
   filtered: boolean;
   metric: ChartMetric;
   stale: boolean;
+  /** The year's fetch failed: says so instead of "loading…" (the filter bar's wording). */
+  failed: boolean;
 }) {
   const model = useMemo(() => calendarModel(dense, scope, from, to, metric), [dense, scope, from, to, metric]);
   const cols = useMemo(() => weekColumns(model.cells), [model.cells]);
@@ -49,7 +51,7 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
       right={
         <>
           {mark && <Pill>{mark.word} marked</Pill>}
-          {stale && <Pill>loading…</Pill>}
+          {failed ? <Pill>couldn’t load</Pill> : stale && <Pill>loading…</Pill>}
           <Pill>
             streak {fmtFull(streak.current)} {streak.current === 1 ? "day" : "days"} · best {fmtFull(streak.best)}
             {filtered ? " · filtered" : ""}

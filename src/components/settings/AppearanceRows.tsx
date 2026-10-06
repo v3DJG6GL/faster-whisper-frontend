@@ -4,7 +4,7 @@ import { Notice, Segmented, SectionLabel, Select, SettingRow } from "@/component
 import { cn } from "@/lib/cn";
 import { SETTING } from "@/lib/settingsManifest";
 import {
-  ACCENT_PRESETS, DEFAULT_ACCENT_HUE, DEFAULT_ACCENT_MOTION, DEFAULT_ARC_HUE, currentAccentHue, deriveAccent,
+  ACCENT_PRESETS, DEFAULT_ACCENT_HUE, DEFAULT_ACCENT_MOTION, DEFAULT_ARC_HUE, currentAccentHue, deriveAccent, nearestPreset,
   fmtPer, motionCostNote, prefersReducedMotion, resolvedTheme, secToSlider, sliderToSec, subscribeAccentHue,
 } from "@/lib/theme";
 import type { AccentMotion, ThemeName } from "@/lib/types";
@@ -235,21 +235,6 @@ const MOTION_TIERS: { value: string; label: string }[] = [
   { value: "60", label: "Every minute" },
   { value: "custom", label: "Custom…" },
 ];
-/** The preset hue nearest to `hue` on the wheel (the arc palette shows presets only),
- *  skipping the preset `exclude` when given. */
-function nearestPreset(hue: number, exclude?: number): number {
-  let best = ACCENT_PRESETS[0][1];
-  let bestD = 361;
-  for (const [, h] of ACCENT_PRESETS) {
-    if (h === exclude) continue;
-    const d = Math.abs(((((h - hue) % 360) + 540) % 360) - 180);
-    if (d < bestD) {
-      bestD = d;
-      best = h;
-    }
-  }
-  return best;
-}
 const REDUCED_MOTION_REASON = "Still — your system asks for reduced motion.";
 
 /** Does the OS ask for reduced motion, tracked live. */
@@ -363,8 +348,8 @@ function MotionRows({
         )}. Every window computes this from the clock.`;
   // The arc's two ends. Older blobs started from the Signal colour; the preset nearest to
   // it, other than end 2, stands in so the palette always shows two rings and the breath
-  // never collapses to one hue (the engine keeps the exact hue until the next pick writes
-  // both ends).
+  // never collapses to one hue (theme.ts driftHue uses the same stand-in, so what the
+  // palette shows is what breathes).
   const arcTo = motion.arcHue ?? DEFAULT_ARC_HUE;
   const arcFrom = motion.arcFrom ?? nearestPreset(baseHue, arcTo);
   // Two-of-six: a new pick becomes end 2 and the old end 2 becomes end 1, so two clicks

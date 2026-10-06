@@ -2025,9 +2025,25 @@ export function backendsBlobIncomplete(blob: SyncBlob): boolean {
 /** Did `composeBlob` take its degraded-keyring pass-through (the backends category re-sent from
  *  the snapshot because the live key read came back incomplete)? A merge against such a blob sees
  *  "local unchanged" and keeps the remote list, so applying it would silently revert this
- *  device's own backend edits — callers leave the category out of the apply and adopt no base. */
+ *  device's own backend edits — callers leave the category out of the apply and adopt the remote
+ *  as base only when it left the category alone (`degradedBaseWithheld`). */
 function backendsDegraded(composed: SyncBlob, cats: Record<SyncCategory, boolean>): boolean {
   return cats.backends && degradedComposes.has(composed);
+}
+
+/** After a degraded-keyring merge applied without the backends category: may the remote become
+ *  the new base? Only when the remote left the category exactly as the current base holds it —
+ *  then this device's list stays put and the next push re-sends the base's category, so nothing
+ *  is lost. A remote that changed backends must not become the base (the next unlocked merge
+ *  would read the peer's change as "local unchanged" and drop this device's edits), and holding
+ *  it back forever under an "ok" status stalled every push behind a 409 — so say why. */
+function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
+  if (catEqual(remoteBlob.backends, state.snapshot?.backends)) return false;
+  setRuntime({
+    syncStatus: "error",
+    syncError: "Your API keys couldn't be read from the keyring, so incoming backend changes are on hold. Unlock it and restart the app to resume syncing.",
+  });
+  return true;
 }
 
 async function stashSnapshotSecrets(secrets: Record<string, string>): Promise<void> {
@@ -2380,13 +2396,18 @@ export async function pushNow(manual = false): Promise<void> {
         }
         const applied = await applyBlob(merged, pushCats);
         if (myGen !== gen) return; // superseded during the apply wait
-        if (!applied || degraded) {
-          // Deferred/dropped, or applied without the degraded backends category: no base adopted
-          // and nothing pushed, the next pull re-offers it. Clear the 'syncing' this call set, as
-          // reconcileRemote's twin does.
+        if (!applied) {
+          // Deferred/dropped: no base adopted and nothing pushed, the next pull re-offers it.
+          // Clear the 'syncing' this call set, as reconcileRemote's twin does.
           setRuntime({ syncStatus: "ok" });
           return;
         }
+        // Applied without the degraded backends category: adopt the base and keep pushing only
+        // when the remote left that category alone (see `degradedBaseWithheld`).
+        if (degraded && degradedBaseWithheld(remoteBlob)) return;
+        // The merge carries the base's backends category, not this device's list: a second 409
+        // must still keep it out of the apply.
+        if (degraded) degradedComposes.add(merged);
         blob = merged;
         base = remote.version;
         continue;
@@ -2447,12 +2468,15 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // Epoch FIRST: applyBlob answers false exactly when a supersede bumped `gen` during its keyring
   // wait, and the "ok" below would then land over the reset state (pushNow's 409 twin's order).
   if (myGen !== gen) return;
-  if (!applied || degraded) {
-    // Deferred (dictation live) or applied without the backends category. Persist no base so the
-    // next pull re-offers the blob — the same rule the held-back-review path documents above.
+  if (!applied) {
+    // Deferred (dictation live). Persist no base so the next pull re-offers the blob — the same
+    // rule the held-back-review path documents above.
     setRuntime({ syncStatus: "ok" });
     return;
   }
+  // Applied without the degraded backends category: the remote becomes the base only when it
+  // left that category alone; otherwise no base, and the status says why (`degradedBaseWithheld`).
+  if (degraded && degradedBaseWithheld(remoteBlob)) return;
   // Persist what the SERVER holds (remote), not the merge result: snapshot is
   // the 3-way base for the NEXT sync and hash is the did-anything-change gate
   // for pushes. Recording `merged` here would make the follow-up push compose

@@ -3,7 +3,7 @@
 
 use super::{resolve_audio_base, resolve_key_async, AUDIO_SUBDIRS};
 use crate::transport;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager};
 
 #[tauri::command]
@@ -598,6 +598,58 @@ pub async fn get_media_streams(
         .map_err(|e| format!("{e:#}"))
 }
 
+/// No-clobber destinations a copy in this process is writing right now (placeholder + tmp).
+static NO_CLOBBER_IN_FLIGHT: std::sync::Mutex<Option<std::collections::HashSet<PathBuf>>> =
+    std::sync::Mutex::new(None);
+
+/// A live no-clobber claim on a destination; dropping it (any exit path) releases the name.
+struct NoClobberClaim(PathBuf);
+
+impl Drop for NoClobberClaim {
+    fn drop(&mut self) {
+        let mut set = NO_CLOBBER_IN_FLIGHT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(set) = set.as_mut() {
+            set.remove(&self.0);
+        }
+    }
+}
+
+/// Claim `dest` for a no-clobber copy: an exclusive create (fails if anything is there, a
+/// dangling symlink included), recorded as in flight. None = the name is taken. A `<dest>.tmp`
+/// that no live copy here owns is a DEAD copy's leftover (crash, quit, kill mid-copy) — with
+/// no `dest`, or with the 0-byte placeholder that copy claimed, both are reclaimed instead of
+/// blocking the name forever. A tmp beside a real (non-empty) file stays put: name taken.
+fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobberClaim>> {
+    let mut guard = NO_CLOBBER_IN_FLIGHT
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    let set = guard.get_or_insert_with(Default::default);
+    if set.contains(dest) {
+        return Ok(None);
+    }
+    if std::fs::symlink_metadata(tmp).is_ok() {
+        match std::fs::symlink_metadata(dest) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(m) if m.is_file() && m.len() == 0 => std::fs::remove_file(dest)?,
+            _ => return Ok(None),
+        }
+        std::fs::remove_file(tmp)?;
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dest)
+    {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
+        Err(e) => return Err(e),
+    }
+    set.insert(dest.to_path_buf());
+    Ok(Some(NoClobberClaim(dest.to_path_buf())))
+}
+
 /// Copy one of a record's media files (its source, its audio copy or its
 /// video copy — or any file inside the app's media folders) to a user-picked
 /// path. Plain copy via tmp + rename; returns the bytes copied. The
@@ -649,24 +701,18 @@ pub async fn copy_media_to(
     let no_clobber = no_clobber.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<u64>, String> {
         let tmp = transport::media::tmp_sibling(&dest_path);
-        // No-clobber: claim the name with an exclusive create (fails if anything is there,
-        // a dangling symlink included) BEFORE copying, so a taken name costs no copy; then
-        // rename the finished copy over our own placeholder. A foreign `<dest>.tmp` is a
-        // name the dialog never approved either: leave it alone and report the name taken.
-        if no_clobber {
-            if std::fs::symlink_metadata(&tmp).is_ok() {
-                return Ok(None);
-            }
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&dest_path)
-            {
-                Ok(_) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Ok(None),
+        // No-clobber: claim the name BEFORE copying, so a taken name costs no copy; then
+        // rename the finished copy over our own placeholder. Held until this closure returns,
+        // on every path, so a later export can tell a live copy from a dead one's leftovers.
+        let _claim = if no_clobber {
+            match claim_no_clobber(&dest_path, &tmp) {
+                Ok(Some(claim)) => Some(claim),
+                Ok(None) => return Ok(None),
                 Err(e) => return Err(e.to_string()),
             }
-        }
+        } else {
+            None
+        };
         let n = match std::fs::copy(&src_real, &tmp) {
             Ok(n) => n,
             Err(e) => {
@@ -731,3 +777,55 @@ pub async fn get_transcribe_progress(
 // Deliberately NOT wrapped in `until_file_epoch_bumps`: that epoch is one global
 // counter any cancel bumps, and a late result ingest must survive an unrelated
 // cancel. The typed outcome (not an Err) is what the reconcile step switches on.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("fwf-noclobber-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn a_dead_copys_leftovers_are_reclaimed() {
+        let dir = scratch("dead");
+        let dest = dir.join("talk.mp4");
+        let tmp = transport::media::tmp_sibling(&dest);
+        // A crashed copy: the 0-byte placeholder plus a half-written tmp.
+        std::fs::write(&dest, b"").unwrap();
+        std::fs::write(&tmp, b"partial").unwrap();
+        let claim = claim_no_clobber(&dest, &tmp).unwrap();
+        assert!(
+            claim.is_some(),
+            "a dead copy's leftovers must not block the name"
+        );
+        assert!(!tmp.exists());
+        // While that claim is live, the same name is taken — even with a tmp beside it.
+        std::fs::write(&tmp, b"partial").unwrap();
+        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_none());
+        assert!(tmp.exists(), "a live copy's tmp is left alone");
+        drop(claim);
+        std::fs::remove_file(&dest).unwrap();
+        // A tmp with no dest and no live copy: reclaimed.
+        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_some());
+        assert!(!tmp.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_real_file_keeps_its_name() {
+        let dir = scratch("real");
+        let dest = dir.join("talk.mp4");
+        let tmp = transport::media::tmp_sibling(&dest);
+        std::fs::write(&dest, b"the user's file").unwrap();
+        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_none());
+        std::fs::write(&tmp, b"x").unwrap();
+        assert!(claim_no_clobber(&dest, &tmp).unwrap().is_none());
+        assert_eq!(std::fs::read(&dest).unwrap(), b"the user's file");
+        assert!(tmp.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

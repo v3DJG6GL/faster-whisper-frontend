@@ -181,17 +181,23 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
     // One cue may carry a two-person exchange ("<v Alice>Hi</v> <v Bob>Hello</v>"): one
     // segment per voice span, all on the cue's clock — the single-span regex below would
     // run the lazy group to the end and credit both lines to the first voice.
-    if ((joined.match(/<v[\s.]/g) ?? []).length > 1) {
+    const tags = (joined.match(/<v[\s.]/g) ?? []).length;
+    if (tags > 1) {
       const first = joined.search(/<v[\s.]/);
-      const lead = cueText([joined.slice(0, first)]);
-      if (lead.text) segments.push({ start, end, text: lead.text, speaker: lead.speaker });
-      for (const m of joined.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?=<v[\s.]|$)/g)) {
-        const text = stripMarkup(m[2]);
-        if (text) segments.push({ start, end, text, speaker: voiceName(m[1]) || undefined });
+      const spans = [...joined.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?=<v[\s.]|$)/g)];
+      // A tag the span regex rejects (a name over 40 characters) would drop its text: take
+      // the whole cue as plain text instead, as the single-voice path does.
+      if (spans.length === tags) {
+        const lead = cueText([joined.slice(0, first)]);
+        if (lead.text) segments.push({ start, end, text: lead.text, speaker: lead.speaker });
+        for (const m of spans) {
+          const text = stripMarkup(m[2]);
+          if (text) segments.push({ start, end, text, speaker: voiceName(m[1]) || undefined });
+        }
+        continue;
       }
-      continue;
     }
-    const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(joined);
+    const v = tags > 1 ? null : /^<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(joined);
     if (v) {
       const text = stripMarkup(v[2]);
       if (text) segments.push({ start, end, text, speaker: voiceName(v[1]) });
@@ -316,7 +322,8 @@ function parseJsonExport(body: string): ImportedText {
     }
   }
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
-    const plain = parsePlainText(obj.text);
+    // Decoded by JSON.parse after the control-char pass, like the segment text above.
+    const plain = parsePlainText(stripControlChars(obj.text));
     if (typeof obj.language === "string" && obj.language.trim()) {
       (plain as { language?: string }).language = safeDisplayText(obj.language, 64) || undefined;
     }
