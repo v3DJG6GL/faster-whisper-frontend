@@ -255,6 +255,13 @@ fn run(
     .map_err(|e| e.to_string())?;
 
     stream.play().map_err(|e| e.to_string())?;
+    // Lost while opening or in play()'s first moments: fail the start instead of reporting a test
+    // that is already over (the frontend only hears test-ended once its start resolved). The event
+    // still goes out for a start that stopped waiting after OPEN_WAIT and so resolved Ok already.
+    if lost.load(Ordering::SeqCst) {
+        let _ = app.emit("audio://test-ended", "device-lost");
+        return Err("the microphone stopped delivering audio".into());
+    }
     let _ = ready.send(Ok(()));
 
     super::publish_levels_with_live(&app, "audio://level", &level_bits, &stop, None);

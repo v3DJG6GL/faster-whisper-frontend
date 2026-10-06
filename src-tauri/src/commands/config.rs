@@ -71,18 +71,22 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
     let _ = if enabled { mgr.enable() } else { mgr.disable() };
 }
 
-/// Serializes keyring mutations. Off the main thread they no longer run in IPC order, and a set
-/// parked behind the wallet prompt could otherwise land AFTER a later delete of the same account
-/// (sync's clearSnapshotSecrets) and leave the secret behind. Held inside the blocking closure,
-/// so a parked write only queues the next write, never the UI.
-static KEYRING_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+/// Serializes keyring mutations in the order the commands queue on it. tokio's Mutex is fair
+/// (waiters are woken first-come, first-served), and each command takes it in its async body
+/// BEFORE handing the write to the blocking pool, holding it until the write returns. So writes
+/// run one at a time, in the order their command tasks reached `lock()`: a set parked behind the
+/// wallet prompt can no longer land after a delete issued later (sync's clearSnapshotSecrets).
+/// That order is the IPC order whenever the earlier call reached the lock first, which the
+/// runtime does not strictly promise for two calls arriving in the same instant. Only the queued
+/// writes wait; the UI thread never does.
+static KEYRING_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // Keyring writes can park behind a locked-wallet prompt; off the main thread so the app does
 // not freeze meanwhile (same reason as `read_backend_keys`).
 #[tauri::command]
 pub async fn set_backend_key(backend_id: String, key: String) -> Result<(), String> {
+    let _guard = KEYRING_WRITE_LOCK.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = KEYRING_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         config::keys::set(&backend_id, &key).map_err(|e| e.to_string())
     })
     .await
@@ -91,8 +95,8 @@ pub async fn set_backend_key(backend_id: String, key: String) -> Result<(), Stri
 
 #[tauri::command]
 pub async fn delete_backend_key(backend_id: String) -> Result<(), String> {
+    let _guard = KEYRING_WRITE_LOCK.lock().await;
     tauri::async_runtime::spawn_blocking(move || {
-        let _guard = KEYRING_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         config::keys::delete(&backend_id).map_err(|e| e.to_string())
     })
     .await

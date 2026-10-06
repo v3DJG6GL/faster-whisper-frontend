@@ -245,9 +245,16 @@ function Editor({
         setSavingKey(false);
       }
       // Retyped during the write: the keyring holds the OLD key, so persisting now would claim
-      // the new one. Keep the editor open; the next Save stores what is typed.
+      // the new one. Keep the editor open; the next Save stores what is typed. A backend not in
+      // the store yet owns no keyring entry, so drop the one just written (as Onboarding does);
+      // a saved one routes with it already, and the message says so.
       if (liveTarget.current.key !== key) {
-        setKeyError("The API key changed while it was being saved. Save again to store the new key.");
+        if (!useApp.getState().backends.some((x) => x.id === b.id)) {
+          void deleteBackendKey(b.id).catch(() => {});
+          setKeyError("The API key changed while it was being saved, so nothing was stored. Save again to store the new key.");
+        } else {
+          setKeyError("The API key changed while it was being saved. The key typed before is stored and already in use for this backend; Save again to store the new one.");
+        }
         return false;
       }
     }

@@ -35,7 +35,7 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
+  basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
   legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportPhase, type MediaStreams,
   type SubtitleMode,
@@ -158,6 +158,8 @@ export function TranscriptExport({
   const [wide, setWide] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  /** The audio landed under another name than the plan shows (its real container's extension). */
+  const [audioSavedAs, setAudioSavedAs] = useState<string | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
 
   // ── Media section facts ──────────────────────────────────────────────────
@@ -234,6 +236,7 @@ export function TranscriptExport({
     // next to B's button.
     setSaveError(null);
     setSaved(false);
+    setAudioSavedAs(null);
   }, [overlayKey, path]);
   /** Tracks the export actually carries (the picker, else the visible ones),
    *  in track order. `order` holds only THIS file's tracks, so a pick left
@@ -332,21 +335,23 @@ export function TranscriptExport({
   }, [open, editedResult, exportOptions, previewFile]);
 
   /** A local copy under way: the footer shows "copying…" until it settles. */
-  const copying = async (job: Promise<unknown>) => {
+  const copying = async <T,>(job: Promise<T>): Promise<T> => {
     setMediaJob({ jobId: "", phase: "copying", done: 0, total: null });
     try {
-      await job;
+      return await job;
     } finally {
       setMediaJob(null);
     }
   };
 
   /** Plain copy of the audio (the app's local copy; a link's is fetched
-   *  first when the copy is missing and the server still has it). Writes to
-   *  exactly `dest` — the path the save dialog confirmed (and approved any
-   *  overwrite of); renaming it to the fetched file's extension afterwards
-   *  could replace a different file nobody was asked about. */
-  const exportAudioTo = async (dest: string): Promise<void> => {
+   *  first when the copy is missing and the server still has it). Returns
+   *  where it landed. A fetched copy's real container may differ from the
+   *  extension the dialog showed (m4a until it is fetched): then it goes to
+   *  the same stem with the real extension, but only if nothing is there yet
+   *  (the dialog approved overwriting `dest`, never that other name);
+   *  otherwise to exactly `dest`, the path the user confirmed. */
+  const exportAudioTo = async (dest: string): Promise<string> => {
     let src = mediaPath ?? null;
     if (!src && urlSource && rec?.result?.sourceMediaId && trBackend) {
       setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
@@ -367,7 +372,15 @@ export function TranscriptExport({
     }
     if (!src) throw new Error("No audio is stored for this transcription.");
     if (!rec) throw new Error("This transcription has no record to export from.");
-    await copying(copyMediaTo({ src, dest, recordId: rec.id, audioBase: audioBasePref(settings.recording) }));
+    const audioBase = audioBasePref(settings.recording);
+    const ext = extOf(src);
+    // "bin" = a type the fetch could not name; the confirmed extension is the better guess.
+    if (ext && ext !== "bin" && ext !== extOf(dest)) {
+      const real = dest.replace(/\.[^.\\/]+$/, "") + "." + ext;
+      if ((await copying(copyMediaTo({ src, dest: real, recordId: rec.id, audioBase, noClobber: true }))) !== null) return real;
+    }
+    await copying(copyMediaTo({ src, dest, recordId: rec.id, audioBase }));
+    return dest;
   };
 
   /** The video: a plain copy when no tracks ride inside it and a local copy
@@ -522,6 +535,7 @@ export function TranscriptExport({
     const mine = () => ownerRef.current === started;
     setSaveError(null);
     setMediaError(null);
+    setAudioSavedAs(null);
     // Beside a video the text files are one subtitle file per language; the
     // plain text export stays the (possibly bilingual) reading file.
     const files = plan.sidecars
@@ -555,7 +569,10 @@ export function TranscriptExport({
           if (content === undefined) continue;
           await saveTextFile(dest, content);
         } else if (f.kind === "audio") {
-          await exportAudioTo(dest);
+          const landed = await exportAudioTo(dest);
+          if (landed !== dest && mine()) setAudioSavedAs(basename(landed));
+          written.push(landed);
+          continue;
         } else if (!(await exportVideoTo(dest, plan.embedded, mine))) {
           return;
         }
@@ -939,6 +956,7 @@ export function TranscriptExport({
               <span className="min-w-0 font-mono text-[11px] text-faint [overflow-wrap:anywhere]">
                 {names.join(" + ")}
                 {switchNote && <span className="text-warn"> · {switchNote}</span>}
+                {audioSavedAs && <span className="text-dim"> · audio saved as {safeDisplayText(audioSavedAs, 200)} (its real format)</span>}
               </span>
               {ownJob ? (
                 <span className="inline-flex items-center gap-2 font-mono text-[11px] tabular-nums text-dim">

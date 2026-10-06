@@ -158,14 +158,17 @@ export const SegmentRow = memo(function SegmentRow({
           aria-label={`Correct segment ${i + 1}`}
           key={editRev}
           onBlur={(e) => {
-            const typed = e.currentTarget.textContent ?? "";
+            const el = e.currentTarget;
+            const typed = el.textContent ?? "";
             const shown = onCommitEdit(i, typed);
             // Remount from props: React never rewrites text the user typed into a
             // contentEditable, so an emptied line (committed as "no edit") would
-            // stay blank on screen while Copy and the exports keep its text. Only
+            // stay blank on screen while Copy and the exports keep its text, and
+            // pasted markup (bold, a link, an image — none of it in textContent)
+            // would stay on screen though only the plain text is stored. Only
             // then, though: a bare blur (Alt-Tab mid-correction) must keep the span,
             // so the caret comes back when the window regains focus.
-            if (shown !== typed) setEditRev((r) => r + 1);
+            if (shown !== typed || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {

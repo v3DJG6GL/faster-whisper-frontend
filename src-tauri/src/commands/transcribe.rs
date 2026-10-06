@@ -601,7 +601,9 @@ pub async fn get_media_streams(
 /// Copy one of a record's media files (its source, its audio copy or its
 /// video copy — or any file inside the app's media folders) to a user-picked
 /// path. Plain copy via tmp + rename; returns the bytes copied. The
-/// destination must lie OUTSIDE the app's own storage.
+/// destination must lie OUTSIDE the app's own storage. `no_clobber`: write only
+/// when nothing is at `dest` yet, else leave it alone and return None (a name the
+/// save dialog never showed, so no overwrite was approved for it).
 #[tauri::command]
 pub async fn copy_media_to(
     app: tauri::AppHandle,
@@ -609,7 +611,8 @@ pub async fn copy_media_to(
     dest: String,
     record_id: String,
     audio_base: Option<String>,
-) -> Result<u64, String> {
+    no_clobber: Option<bool>,
+) -> Result<Option<u64>, String> {
     if !crate::store::transcripts::valid_id(&record_id) {
         return Err("malformed record id".into());
     }
@@ -643,7 +646,8 @@ pub async fn copy_media_to(
     {
         return Err("that is the file itself".into());
     }
-    tauri::async_runtime::spawn_blocking(move || -> Result<u64, String> {
+    let no_clobber = no_clobber.unwrap_or(false);
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<u64>, String> {
         let tmp = transport::media::tmp_sibling(&dest_path);
         let n = match std::fs::copy(&src_real, &tmp) {
             Ok(n) => n,
@@ -652,11 +656,33 @@ pub async fn copy_media_to(
                 return Err(e.to_string());
             }
         };
+        // No-clobber: claim the name with an exclusive create (fails if anything is there,
+        // a dangling symlink included), then rename the finished copy over our own placeholder.
+        if no_clobber {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&dest_path)
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    let _ = std::fs::remove_file(&tmp);
+                    return if e.kind() == std::io::ErrorKind::AlreadyExists {
+                        Ok(None)
+                    } else {
+                        Err(e.to_string())
+                    };
+                }
+            }
+        }
         if let Err(e) = std::fs::rename(&tmp, &dest_path) {
             let _ = std::fs::remove_file(&tmp);
+            if no_clobber {
+                let _ = std::fs::remove_file(&dest_path);
+            }
             return Err(e.to_string());
         }
-        Ok(n)
+        Ok(Some(n))
     })
     .await
     .map_err(|e| e.to_string())?

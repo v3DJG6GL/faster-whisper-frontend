@@ -421,8 +421,9 @@ interface AppState {
   /** The Statistics page's own usage document: fetched for the filters it has set
    *  (`usageViewQuery`) against the viewed backend, tagged with the query signature it
    *  answers so a stale response is ignored. null = nothing fetched yet / unsupported.
-   *  `failed`: the fetch for `sig` failed — `stats` is then the last good document (any
-   *  query), kept up so a refused range doesn't wipe the page. Runtime-only. Fed by lib/usage.ts. */
+   *  `failed`: the fetch for `sig` failed — `stats` is then the last good document of the same
+   *  backend + target (any query), kept up so a refused range doesn't wipe the page, else null.
+   *  Runtime-only. Fed by lib/usage.ts. */
   usageView: { sig: string; stats: UsageStats | null; failed?: boolean } | null;
   /** The Statistics calendar's own document: the last 365 days under the page's stage
    *  filter, whatever range the page shows, so the calendar is always a year (the page's
@@ -596,6 +597,17 @@ function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
   if (i >= 0) next[i] = item;
   else next.push(item);
   return next;
+}
+
+/** The backend + target part of a usage-view signature (lib/usage.ts viewSignature's
+ *  `[backendId, target, query]`), or null for a signature not in that shape. */
+export function viewSource(sig: string): string | null {
+  try {
+    const a: unknown = JSON.parse(sig);
+    return Array.isArray(a) && a.length >= 2 ? JSON.stringify(a.slice(0, 2)) : null;
+  } catch {
+    return null;
+  }
 }
 
 function evictBackendCaches(s: AppState, id: string) {
@@ -826,7 +838,12 @@ export const useApp = create<AppState>((set) => ({
     set((s) => {
       if (stats === null) {
         if (s.usageView?.sig === sig && s.usageView.failed) return {};
-        return { usageView: { sig, stats: s.usageView?.stats ?? null, failed: true } };
+        // Only a document from the same backend + target may stand in (another server's numbers
+        // would read as this one's); otherwise null, and the page falls back to the backend's own
+        // poll document.
+        const prev = s.usageView;
+        const carry = prev && viewSource(prev.sig) !== null && viewSource(prev.sig) === viewSource(sig) ? prev.stats : null;
+        return { usageView: { sig, stats: carry, failed: true } };
       }
       // Same stability rule as setUsage: the 30 s poll re-answers the same query with an
       // identical document; keep the reference so the page does not re-render for nothing.

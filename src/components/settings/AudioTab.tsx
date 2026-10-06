@@ -78,8 +78,13 @@ export function AudioTab() {
   useEffect(() => {
     if (!testing) return;
     let active = true;
-    // The open resolved: a test-ended event before this belongs to the capture it replaced.
+    // `issued`: our start went out, after the replaced capture's stop settled (that join is where
+    // its last event was sent), so a test-ended before this belongs to the replaced capture.
+    // `started`: the open resolved. An event between the two is ours but early: latch it and act
+    // once the start resolves (a start that fails takes its own path instead).
+    let issued = false;
     let started = false;
+    let endedEarly = false;
     let unlisten: (() => void) | undefined;
     let unlistenEnded: (() => void) | undefined;
     // Show "warming up…" until real audio flows (a cold/Bluetooth mic is silent for
@@ -107,10 +112,17 @@ export function AudioTab() {
       unlisten = un;
       // The capture ends itself when the device is lost; leave "testing" the way Stop does (the
       // clip heard so far stays replayable) and say why.
-      const unEnded = await onMicTestEnded(() => {
-        if (!active || !started) return;
+      const endTest = () => {
         setTestNote("The microphone stopped delivering audio, so the test ended.");
         void stopAndReplayRef.current();
+      };
+      const unEnded = await onMicTestEnded(() => {
+        if (!active || !issued) return;
+        if (!started) {
+          endedEarly = true;
+          return;
+        }
+        endTest();
       }).catch(() => undefined);
       if (!active) {
         unEnded?.();
@@ -118,8 +130,11 @@ export function AudioTab() {
       }
       unlistenEnded = unEnded;
       try {
-        await startMicTest(microphoneId);
+        await startMicTest(microphoneId, () => {
+          issued = true;
+        });
         started = true;
+        if (endedEarly && active) endTest();
       } catch (e) {
         // The mic failed to open (busy / unplugged / denied). Don't leave a silent dead meter
         // with the button stuck on Stop — end the test (cleanup stops + unlistens).

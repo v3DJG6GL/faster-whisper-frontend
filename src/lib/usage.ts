@@ -94,7 +94,8 @@ export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
   return withUsage.find((b) => b.id === s.usageViewBackendId) ?? withUsage.find((b) => b.id === defaultId) ?? withUsage[0];
 }
 
-/** The signature a view document answers: backend + target + the exact wire query. */
+/** The signature a view document answers: backend + target + the exact wire query. store.ts's
+ *  viewSource reads the first two back out, so keep them leading. */
 export function viewSignature(backend: Backend, target: string, q: UsagePageQuery, tz: string | undefined): string {
   return JSON.stringify([backend.id, target, toUsageQuery(q, tz)]);
 }

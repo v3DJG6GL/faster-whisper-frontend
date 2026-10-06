@@ -105,15 +105,27 @@ describe("usage poll gates", () => {
 });
 
 describe("the Statistics page document on a failed fetch", () => {
+  const sig = (backendId: string, target: string, range: string) => JSON.stringify([backendId, target, { range }]);
+
   it("keeps the last good document up and marks the new query failed", () => {
     const good = { today: {}, total: {}, series: [] } as never;
     useApp.setState({ usageView: null });
-    useApp.getState().setUsageView("q30", good);
-    useApp.getState().setUsageView("q365", null);
-    expect(useApp.getState().usageView).toEqual({ sig: "q365", stats: good, failed: true });
+    useApp.getState().setUsageView(sig("a", "http://a", "30"), good);
+    useApp.getState().setUsageView(sig("a", "http://a", "365"), null);
+    expect(useApp.getState().usageView).toEqual({ sig: sig("a", "http://a", "365"), stats: good, failed: true });
     // A later success for that query clears the failure.
     const fresh = { today: {}, total: { words: 1 }, series: [] } as never;
-    useApp.getState().setUsageView("q365", fresh);
-    expect(useApp.getState().usageView).toEqual({ sig: "q365", stats: fresh });
+    useApp.getState().setUsageView(sig("a", "http://a", "365"), fresh);
+    expect(useApp.getState().usageView).toEqual({ sig: sig("a", "http://a", "365"), stats: fresh });
+  });
+
+  it("never carries another backend's or target's document over a failure", () => {
+    const good = { today: {}, total: {}, series: [] } as never;
+    for (const next of [sig("b", "http://a", "30"), sig("a", "http://other", "30")]) {
+      useApp.setState({ usageView: null });
+      useApp.getState().setUsageView(sig("a", "http://a", "30"), good);
+      useApp.getState().setUsageView(next, null);
+      expect(useApp.getState().usageView).toEqual({ sig: next, stats: null, failed: true });
+    }
   });
 });

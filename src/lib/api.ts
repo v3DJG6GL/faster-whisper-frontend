@@ -365,19 +365,22 @@ export async function getMediaStreams(args: ServerTarget & {
 }
 
 /** Plain copy of one of a record's media files (source, audio copy or
- *  video copy) to a user-picked path. Returns the bytes copied. */
+ *  video copy) to a user-picked path. Returns the bytes copied; null when
+ *  `noClobber` is set and something already sits at `dest` (left untouched). */
 export async function copyMediaTo(args: {
   src: string;
   dest: string;
   recordId: string;
   audioBase?: string | null;
-}): Promise<number> {
+  noClobber?: boolean;
+}): Promise<number | null> {
   if (!isTauri) throw new Error("Not running in the desktop app.");
-  return invoke<number>("copy_media_to", {
+  return invoke<number | null>("copy_media_to", {
     src: args.src,
     dest: args.dest,
     recordId: args.recordId,
     audioBase: args.audioBase ?? null,
+    noClobber: args.noClobber ?? false,
   });
 }
 
@@ -722,9 +725,14 @@ function inMicTestOrder<T>(op: () => Promise<T>): Promise<T> {
   return run;
 }
 
-export async function startMicTest(deviceId: string | null): Promise<void> {
+/** `onIssued` runs when the start actually goes out, i.e. after every earlier start/stop settled
+ *  (and so after a replaced capture was joined and had sent its last event). */
+export async function startMicTest(deviceId: string | null, onIssued?: () => void): Promise<void> {
   if (!isTauri) return;
-  await inMicTestOrder(() => invoke("start_mic_test", { deviceId }));
+  await inMicTestOrder(() => {
+    onIssued?.();
+    return invoke("start_mic_test", { deviceId });
+  });
 }
 
 /** Stop the mic test; resolves to the number of seconds captured (0 = nothing). */
