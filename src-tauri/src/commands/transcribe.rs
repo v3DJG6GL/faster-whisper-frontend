@@ -346,6 +346,11 @@ async fn until_epoch_bumps<T, E: std::fmt::Display>(
     epoch: u64,
     fut: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, String> {
+    // A cancel that landed before the first poll (e.g. while the keyring prompt was up)
+    // must not start the request at all: the future is lazy, so nothing has been sent yet.
+    if counter.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+        return Err("cancelled".into());
+    }
     tokio::pin!(fut);
     loop {
         tokio::select! {
@@ -843,6 +848,22 @@ mod tests {
         assert!(tmp.is_dir());
         assert!(dest.is_file());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn a_cancel_before_the_first_poll_never_starts_the_request() {
+        static EPOCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let started = std::sync::atomic::AtomicBool::new(false);
+        let epoch = EPOCH.load(std::sync::atomic::Ordering::SeqCst);
+        // The cancel lands while the key is still resolving, before the request is polled.
+        EPOCH.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let r = until_epoch_bumps(&EPOCH, epoch, async {
+            started.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok::<_, String>(())
+        })
+        .await;
+        assert_eq!(r.unwrap_err(), "cancelled");
+        assert!(!started.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

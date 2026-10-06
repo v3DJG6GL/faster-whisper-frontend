@@ -442,14 +442,25 @@ mod tests {
         let ok = file.to_string_lossy().into_owned();
         assert_eq!(reveal_target(&ok).unwrap(), file);
         // Relative, empty, over-long, control characters, missing: all refused.
-        assert!(reveal_target("talk.srt").is_err());
-        assert!(reveal_target("").is_err());
+        // Each refusal is asserted by its message: the paths below do not exist either,
+        // so a bare is_err() would pass on the final missing-file gate alone.
+        assert_eq!(
+            reveal_target("talk.srt").unwrap_err(),
+            "not an absolute path"
+        );
+        assert_eq!(reveal_target("").unwrap_err(), "not a usable path");
         let long = format!("/{}", "a".repeat(REVEAL_PATH_MAX));
-        assert!(reveal_target(&long).is_err());
-        assert!(reveal_target(&format!("{ok}\n")).is_err());
-        assert!(reveal_target(&format!("{ok}\u{7f}")).is_err());
+        assert_eq!(reveal_target(&long).unwrap_err(), "not a usable path");
+        assert_eq!(
+            reveal_target(&format!("{ok}\n")).unwrap_err(),
+            "the path has control characters"
+        );
+        assert_eq!(
+            reveal_target(&format!("{ok}\u{7f}")).unwrap_err(),
+            "the path has control characters"
+        );
         std::fs::remove_file(&file).unwrap();
-        assert!(reveal_target(&ok).is_err());
+        assert_eq!(reveal_target(&ok).unwrap_err(), "the file is not there");
     }
 
     #[test]

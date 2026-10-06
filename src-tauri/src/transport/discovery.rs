@@ -5,6 +5,7 @@ use super::{
     Capabilities, ConnectionInfo, DecodeDefault, DecodeDefaults, ServerModel, UsageStats,
 };
 use serde::Deserialize;
+use std::time::Duration;
 
 #[derive(Deserialize)]
 struct WhoAmI {
@@ -58,6 +59,12 @@ const MAX_SERIES: usize = 3_700;
 /// dedicated ceiling the document is silently rejected and the Statistics page
 /// stays blank for any multi-year user who picks the "All" range.
 const USAGE_MAX_BODY: usize = 8 * 1024 * 1024;
+
+/// Per-request ceiling for `GET /v1/usage`, overriding the shared client's 120 s. usage.ts
+/// polls it every 30 s and serializes the pass across backends, so one black-holed server
+/// must fail promptly instead of stalling every other backend's numbers; 30 s (send + body)
+/// still leaves headroom for an up-to-`USAGE_MAX_BODY` "All" window over a slow link.
+const USAGE_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
@@ -442,7 +449,9 @@ pub async fn get_usage_stats(
     // `series` is sliced client-side. The `test_connection` sibling caps `username`.
     // Read at the usage-specific ceiling (not the shared MAX_META_BODY): the "All"
     // window can legitimately exceed 1 MiB — see USAGE_MAX_BODY.
-    let mut u: UsageStats = match with_auth(client().get(url), api_key).send().await {
+    // A timeout collapses to None like any other failure, so the UI keeps its last values.
+    let req = with_auth(client().get(url), api_key).timeout(USAGE_TIMEOUT);
+    let mut u: UsageStats = match req.send().await {
         Ok(resp) if resp.status().is_success() => {
             super::json_capped_to::<UsageStats>(resp, USAGE_MAX_BODY)
                 .await
