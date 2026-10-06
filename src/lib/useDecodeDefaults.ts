@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getDecodeDefaults } from "@/lib/api";
 import type { DecodeDefaults } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
@@ -36,10 +36,11 @@ export function useDecodeDefaults(args: {
   const profileName = settledTarget === target ? settledProfile : rawProfile;
   const [dd, setDd] = useState<DecodeDefaults | undefined>(undefined);
 
-  // Keyed on "standard" (skip) and "full": a successful connection test after an outage
-  // (unknown → full) must refetch, or labels that failed at mount stay bare until a remount.
+  // Keyed on "standard" (skip) and on each rise to "full": a successful connection test after an
+  // outage (unknown → full) must refetch, or labels that failed at mount stay bare until a
+  // remount. Only the rise — the kind also drops to unknown on every address keystroke.
   const standard = serverKind === "standard";
-  const full = serverKind === "full";
+  const full = useRisesToFull(serverKind);
   useEffect(() => {
     setDd(undefined);
     if (standard || !backendId) return;
@@ -55,4 +56,16 @@ export function useDecodeDefaults(args: {
   }, [serverUrl, backendId, apiKey, model, profileName, standard, full]);
 
   return dd;
+}
+
+/** Counts the times `kind` became "full" after mount: an effect keyed on it re-runs when a
+ *  server comes back (unknown → full) but not when it drops away (full → unknown). */
+export function useRisesToFull(kind: ServerKind): number {
+  const prev = useRef(kind);
+  const rises = useRef(0);
+  if (kind !== prev.current) {
+    if (kind === "full") rises.current += 1;
+    prev.current = kind;
+  }
+  return rises.current;
 }

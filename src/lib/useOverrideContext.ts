@@ -3,6 +3,7 @@ import { getCapabilities } from "@/lib/api";
 import { effectiveServerUrl, normalizeUrl } from "@/lib/backends";
 import { refreshCaps } from "@/lib/capabilities";
 import { useApp } from "@/lib/store";
+import { useRisesToFull } from "@/lib/useDecodeDefaults";
 import { hasOwn, ownProp } from "@/lib/own";
 import type { Capabilities } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
@@ -37,10 +38,11 @@ export function useOverrideContext(args: {
   const [liveCaps, setLiveCaps] = useState<Capabilities | null>(null);
   const [live, setLive] = useState(false);
 
-  // Keyed on "standard" (skip) and "full": a successful connection test after an outage
-  // (unknown → full) must re-probe, or caps that failed at mount stay empty until a remount.
+  // Keyed on "standard" (skip) and on each rise to "full": a successful connection test after an
+  // outage (unknown → full) must re-probe, or caps that failed at mount stay empty until a
+  // remount. Only the rise — the kind also drops to unknown on every address keystroke.
   const standard = serverKind === "standard";
-  const full = serverKind === "full";
+  const full = useRisesToFull(serverKind);
   useEffect(() => {
     if (standard || !backendId) {
       // A backend that turns out to be a plain OpenAI server (or is gone) must not keep

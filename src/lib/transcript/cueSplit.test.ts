@@ -270,6 +270,12 @@ describe("wrapLines", () => {
     expect(lines[0]).toBe("Verantwortlichkeiten");
     expect(lines.join(" ")).toBe("Verantwortlichkeiten sind wichtig für alle Beteiligten hier heute");
   });
+  it("a CJK run that fits alone but not after the name prefix still wraps", () => {
+    const t = "我们今天要讨论的是如何使 AI 工具";
+    const lines = wrapLines(t, 16, 2, 6);
+    expect(lines[0].length + 6).toBeLessThanOrEqual(16);
+    expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+  });
   it("an over-cpl CJK run still wraps per character under a name prefix", () => {
     const t = "我们今天要讨论的是如何使用大型语言模型来处理数据和文本 AI 工具";
     const lines = wrapLines(t, 16, 2, 6);

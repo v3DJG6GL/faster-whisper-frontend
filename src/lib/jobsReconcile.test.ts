@@ -36,7 +36,7 @@ vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
 const { _resetReconcileForTests, initJobReconcile, reconcileJobs, watchOrphan, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
-const { useTranscribeRun, forgetRecord, cancelRun, retryFile } = await import("./transcribeRun");
+const { useTranscribeRun, forgetRecord, cancelRun, retryFile, startRun } = await import("./transcribeRun");
 const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
 const { useApp } = await import("./store");
 type LedgerRow = import("./jobsLedger").LedgerRow;
@@ -463,6 +463,23 @@ describe("reconcileJobs", () => {
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
     expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
     expect(records().some((x) => x.id === JOB_A)).toBe(false);
+  });
+
+  it("starting a new run over a lost request's row stops its orphan watcher too", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    useTranscribeRun.setState({ files: [r.path], running: false,
+      queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    deleteJob.mockClear();
+    startRun(undefined, {}, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
   });
 
   it("initJobReconcile loads the persisted ledger after configReady, once", async () => {

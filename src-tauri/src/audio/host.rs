@@ -62,9 +62,12 @@ fn with_host<R>(f: impl Fn(&cpal::Host) -> Option<R>) -> Option<R> {
     #[cfg(target_os = "linux")]
     {
         // A sound server already known to be wedged (pulse's timeout hold) would block here with
-        // no timeout, holding HOST and the caller's locks: record through ALSA while the hold's
-        // back-off runs (held() lapses after it, so the server gets tried again).
-        if super::pulse::server_present() && !super::pulse::held() {
+        // no timeout, holding HOST and the caller's locks. While the hold is up, probe through
+        // pulse's timed path instead: `snapshot` lets one caller retry per back-off (behind its
+        // 2 s timeout) and an answer lifts the hold; until then record through ALSA.
+        if super::pulse::server_present()
+            && (!super::pulse::held() || super::pulse::snapshot().is_some())
+        {
             if let Some(r) = with_pulse(&f) {
                 return Some(r);
             }

@@ -2019,6 +2019,8 @@ export function startRun(options: TranscribeOptions | undefined,
   // that never reached its `finally`); the epoch bump below orphans it, so
   // stop it before the new run competes with it for the same GPU.
   abandonActiveRun();
+  // The rebuilt queue drops every orphanJobId: stop those watchers first (see retryFile).
+  stopOrphans(s.queue);
   const epoch = s.epoch + 1;
   set({
     epoch,
@@ -2082,6 +2084,13 @@ export function reconcileRetryOptions(
   };
 }
 
+/** Stop the headless watchers of failed rows whose lost request was handed off, before those
+ *  rows are re-queued: a still-running old job would otherwise land a second record (and the
+ *  file is transcribed twice). */
+function stopOrphans(items: QueueItem[]) {
+  for (const it of items) if (it.orphanJobId) orphanStop?.(it.orphanJobId);
+}
+
 export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverrides) {
   const s = get();
   if (s.running) return;
@@ -2090,8 +2099,7 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   if (overrides) set({ lastOverrides: overrides });
   // A lost request's job may still be running under a headless watcher: stop it, or
   // the old job lands a second record (and transcribes the file twice).
-  const orphan = s.queue.find((it) => it.path === path)?.orphanJobId;
-  if (orphan) orphanStop?.(orphan);
+  stopOrphans(s.queue.filter((it) => it.path === path));
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
   void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard), ctx);
 }

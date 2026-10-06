@@ -70,6 +70,8 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
   cps: { min: 10, max: 25, step: 1 },
 };
 
+/** Scripts written without spaces between words: a run of them can break anywhere. */
+const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 
 /** Clamp an untrusted (synced / stored) limits object; undefined when unusable. */
@@ -425,10 +427,15 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
         bi = i;
       }
     }
-    if (bi === lo + 1 && width(lo, bi) > cpl && Array.from(toks[lo]).length >= 2) {
+    if (
+      bi === lo + 1 &&
+      (UNSPACED.test(toks[lo]) ? width(lo, bi) + reserve : width(lo, bi)) > cpl &&
+      Array.from(toks[lo]).length >= 2
+    ) {
       // One over-long token on its own line (a CJK run before a Latin word): it
-      // wraps per character too, not just a trailing one. Only when the token
-      // alone exceeds the line — a word pushed over by the name prefix stays whole.
+      // wraps per character too, not just a trailing one. A spaced-script word
+      // pushed over only by the name prefix stays whole; an unspaced run has no
+      // word to protect, so it still wraps to fit the prefixed line.
       out.push(...wrapTokens(Array.from(toks[lo]), false, cpl, toks[lo].length + reserve, reserve));
     } else out.push(join(lo, bi));
     lo = bi;
