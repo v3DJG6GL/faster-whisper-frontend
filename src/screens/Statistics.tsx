@@ -15,6 +15,7 @@ import { useSearchParams } from "react-router-dom";
 import { StatisticsView } from "@/components/stats/UsageStats";
 import { PageHeader } from "@/components/ui";
 import { useApp } from "@/lib/store";
+import { openStatisticsPage } from "@/lib/usage";
 import { pageQueryParams, parsePageQuery, type ChartMetric, type Rhythm, type UsagePageQuery, type UsageScope } from "@/lib/usageDerive";
 
 export default function Statistics() {
@@ -30,6 +31,10 @@ export default function Statistics() {
     setUsageViewQuery(state.query);
     setParams.current(pageQueryParams(state.scope, state.query, state.metric, state.rhythm), { replace: true });
   }, [state, setUsageViewQuery]);
+  // The page's documents are fetched only while it is open (lib/usage.ts). Declared after
+  // the query effect so the first fetch already asks for this page's query: effects run in
+  // declaration order, and a child's (StatisticsView's) would run before both.
+  useEffect(() => openStatisticsPage(), []);
   const setScope = (scope: UsageScope) => setState((s) => ({ ...s, scope }));
   const setQuery = (query: UsagePageQuery) => setState((s) => ({ ...s, query }));
   const setMetric = (metric: ChartMetric) => setState((s) => ({ ...s, metric }));

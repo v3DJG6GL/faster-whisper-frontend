@@ -168,7 +168,7 @@ export function FilterBar({
   };
   const spanText =
     query.range === "all"
-      ? `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} days · since the first ${firstDay == null ? "run" : "dictation"}`
+      ? `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"} · since the first session`
       : `${fmtDateRange(win.from, win.to)} · ${fmtFull(win.days)} ${win.days === 1 ? "day" : "days"}${query.range === "custom" ? " · custom" : ""}`;
   const rangeChip = query.range === "all" ? "All time" : query.range === "custom" ? fmtDateRange(win.from, win.to) : RANGE_LABEL[query.range];
   const clearButton = (

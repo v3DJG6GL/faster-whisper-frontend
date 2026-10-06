@@ -41,6 +41,9 @@ describe("usage poll gates", () => {
     vi.useFakeTimers();
     useApp.setState({
       backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      // Not the 30-day default: its query would look exactly like the fixed document's, and
+      // `calls()` could not tell the page's own fetch from it.
+      usageViewQuery: { range: "90", with: [] },
     });
     initUsageController();
     await settle(); // the launch pass
@@ -56,12 +59,12 @@ describe("usage poll gates", () => {
     getUsageStats.mockClear();
     const close = openStatisticsPage();
     await settle();
-    expect(calls().page).toBeGreaterThan(0); // fetched on open, not on the next tick
+    expect(calls().page).toBe(2); // the view + the year, fetched on open, not on the next tick
 
     getUsageStats.mockClear();
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
-    expect(calls().page).toBeGreaterThan(0);
+    expect(calls().page).toBe(2);
 
     close();
     close(); // a second cleanup call must not unbalance the count

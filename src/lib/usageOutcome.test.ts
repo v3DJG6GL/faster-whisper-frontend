@@ -1,6 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The runtime flush posts through these; the pure state machine below never touches them.
+const post = vi.hoisted(() => ({ release: [] as (() => void)[] }));
+vi.mock("./api", async (orig) => ({
+  ...(await orig<typeof import("./api")>()),
+  isTauri: true,
+  saveUsageOutcomes: async () => {},
+  postUsageOutcomes: () => new Promise((res) => post.release.push(() => res({ ok: true, status: 200 }))),
+}));
+vi.mock("./store", () => ({ useApp: { getState: () => ({ configLoaded: false, configLoadFailed: false, backends: [] }) } }));
+
 import {
   EMPTY_QUEUE,
+  enqueueOutcome,
+  flushOutcomes,
   applyPost,
   backoffMs,
   enqueue,
@@ -99,5 +112,21 @@ describe("usage outcome queue", () => {
     expect(parsed.items[0].outcome.app_id).toBe("thunderbird");
     expect(parsed.items[1].outcome.app_id).toBeUndefined();
     expect(parsed.items[1].queuedAt).toBe(0);
+  });
+});
+
+describe("flushOutcomes", () => {
+  it("a flush asked for mid-pass waits for the running post (refreshAll's ordering)", async () => {
+    enqueueOutcome("b", "u", oc(hex(1))); // starts the pass; its post hangs
+    expect(post.release).toHaveLength(1);
+    let done = false;
+    const second = flushOutcomes().then(() => (done = true));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(done).toBe(false);
+    post.release.shift()!();
+    await second;
+    expect(done).toBe(true);
+    expect(post.release).toHaveLength(0); // the extra pass found nothing left to post
   });
 });

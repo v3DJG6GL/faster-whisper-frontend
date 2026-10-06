@@ -33,7 +33,7 @@ import {
   fmtDuration,
   localTodayDay,
 } from "@/lib/format";
-import { TREND_DAYS, openStatisticsPage, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
+import { TREND_DAYS, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
 import { effectiveServerUrl } from "@/lib/backends";
 import {
   KINDS,
@@ -126,7 +126,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
                   <i className="inline-block size-2 rounded-full" style={{ background: "var(--c-line-strong)" }} />
                   {row.label}
                 </div>
-                <div className="text-faint">Not used in {rangeWord}. {row.emptyCopy}</div>
+                <div className="text-faint">Not used {rangeWord.startsWith("since ") ? rangeWord : `in ${rangeWord}`}. {row.emptyCopy}</div>
               </div>
             );
           }
@@ -419,15 +419,15 @@ export function StatisticsView({
   onRhythm: (r: Rhythm) => void;
 }) {
   const { statsBackends, viewBackend, setView, stats: base } = useUsageView();
-  // The page's documents are fetched only while it is open (lib/usage.ts).
-  useEffect(() => openStatisticsPage(), []);
   const view = useApp((s) => s.usageView);
   const settings = useApp((s) => s.settings);
   const today = localTodayDay();
   // The page's own document, only when it answers THIS query against THIS backend; until
   // then the last one it had (or the fixed 30-day one on first visit) stays up, marked stale.
   const sig = viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), query, viewerTimeZone()) : null;
-  const fresh = !!sig && view?.sig === sig;
+  // A failed fetch for this signature commits a null document: keep the last one up (marked
+  // stale, filter bar usable) instead of the empty state, until the next poll lands.
+  const fresh = !!sig && view?.sig === sig && !!view.stats;
   const stats = fresh ? view!.stats : (view?.stats ?? base);
   const win = useMemo(
     () => (fresh && stats?.range ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, stats?.range?.first_day)),

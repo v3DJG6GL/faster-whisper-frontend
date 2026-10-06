@@ -381,10 +381,10 @@ export default function Dashboard() {
               {vis.label}
             </div>
             <div className="mt-1 text-[16px] font-semibold text-text">
-              {!enabled.length ? "Enable a profile to begin" : busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : target ? `Press to dictate with ${safeDisplayText(target.name, 80)}` : "Press to dictate"}
+              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : !enabled.length ? "Enable a profile to begin" : target ? `Press to dictate with ${safeDisplayText(target.name, 80)}` : "Press to dictate"}
             </div>
             <div className="mt-0.5 text-[12.5px] text-faint">
-              {enabled.length ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is." : "The button and the hotkeys stay off until a profile is enabled."}
+              {busy || enabled.length ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is." : "The button and the hotkeys stay off until a profile is enabled."}
             </div>
           </div>
           <LiveWaveform

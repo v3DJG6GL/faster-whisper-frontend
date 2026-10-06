@@ -175,6 +175,9 @@ let queue: OutcomeQueue = EMPTY_QUEUE;
 let loaded = false;
 let loading = false; // the persisted file is being read — a save now would clobber its backlog
 let flushing = false;
+// The running flush pass, so a caller that arrives mid-pass can wait for it (refreshAll
+// must not refetch before the outcome it flushes has landed).
+let inflight: Promise<void> | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 let flushAgain = false;
 
@@ -219,15 +222,23 @@ export function enqueueOutcome(backendId: string, serverUrl: string, outcome: Us
 }
 
 /** Post every due batch. One in-flight flush at a time; a request that arrives meanwhile
- *  runs one more pass afterwards. A transient failure stops the pass (the backoff decides
- *  when that server is tried again) — the next poll picks it up. */
+ *  runs one more pass afterwards and resolves only when that pass is done. A transient
+ *  failure stops the pass (the backoff decides when that server is tried again) — the next
+ *  poll picks it up. */
 export async function flushOutcomes(): Promise<void> {
   if (!isTauri) return;
   if (flushing) {
     flushAgain = true;
-    return;
+    return inflight;
   }
   flushing = true;
+  inflight = flushPass();
+  return inflight;
+}
+
+// `flushing` (not `inflight`) gates: it clears synchronously as the pass ends, so a request
+// can never join a pass that has already finished its last loop check.
+async function flushPass(): Promise<void> {
   try {
     do {
       flushAgain = false;
