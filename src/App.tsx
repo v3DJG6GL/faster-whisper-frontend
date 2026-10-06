@@ -10,7 +10,9 @@ import { initOverlayController } from "@/lib/dictation/chipController";
 import { initUsageController } from "@/lib/usage";
 import { initCapsController } from "@/lib/capabilities";
 import { initJobReconcile } from "@/lib/jobsReconcile";
-import { noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate } from "@/lib/api";
+import {
+  noteRoute, onTrigger, onSystemResumed, onOverlayAction, onAppNavigate, onBeforeQuit, quitReady,
+} from "@/lib/api";
 import { dictate, runOverlayAction } from "@/lib/dictation/dictation";
 import { cancelLive, requestStopIfStarting } from "@/lib/dictation/streaming";
 import { SCREEN_PATH } from "@/lib/screenRegistry";
@@ -251,10 +253,27 @@ export default function App() {
     void migrateLegacyMicPin();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
-    // History coalesces rapid record writes (chunked translate); land them on quit/reload.
+    // History coalesces rapid record writes (chunked translate); land them on a reload. A real
+    // quit never fires beforeunload — that goes through the `app://before-quit` handshake below.
     window.addEventListener("beforeunload", flushRecordWrites);
     return () => window.removeEventListener("beforeunload", flushRecordWrites);
   }, []);
+
+  // Quit handshake (tray Quit / the trayless close): land the coalesced History writes, then
+  // let Rust exit. It waits at most ~1.5 s for this, so a slow or failed save can't block quit.
+  useTauriListener(
+    () =>
+      onBeforeQuit(() => {
+        void (async () => {
+          try {
+            await flushRecordWrites();
+          } finally {
+            void quitReady().catch(() => {});
+          }
+        })();
+      }),
+    [],
+  );
 
   // Global dictation triggers (CLI / hotkeys) → start/stop the right mode.
   useTauriListener(() => onTrigger((e) => dictate(e.profileId, e.action)), []);

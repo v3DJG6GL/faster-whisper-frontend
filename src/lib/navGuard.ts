@@ -1,15 +1,16 @@
 // Unsaved-work guard for in-app navigation.
 //
-// The list screens (Profiles / Backends / Per-app rules) hold their editor's
+// The editor screens (Profiles / Backends / App rules / Dictionary) hold their
 // draft in local state, so clicking a sidebar entry mid-edit used to throw the
 // work away in silence. React Router's own `useBlocker` is data/framework-mode
 // only and the app runs a declarative <HashRouter>, so the interception happens
 // where the navigation is ISSUED instead: every route change reachable while an
-// editor is mounted (the sidebar links, and the overlay's app://navigate
-// bridge) asks here first.
+// editor is mounted asks here first — the sidebar links, the overlay's
+// app://navigate bridge (App.tsx NavigationBridge) and the failure doorway's
+// "View logs" button (App.tsx LogsDoorwayBanner). A new in-app link must too.
 //
-// One guard at a time — only one editor is ever open, since the editor replaces
-// the list it belongs to.
+// One guard at a time — only one editor screen is ever mounted, since each one
+// is its own route (and a list's editor replaces the list it belongs to).
 
 interface NavGuard {
   /** Is there work that would be lost? Read at navigation time, not registration. */

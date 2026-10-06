@@ -646,8 +646,9 @@ export default function QuickAdd() {
 
 /** After Quick-Add hides, wait for focus to return to the source app, confirm (via accessibility)
  *  that the SAME word is still selected, then paste the list-corrected version over it — correcting
- *  the word in place. Silently does nothing if the selection is gone or changed (the "check first"
- *  guard). Paste replaces the active selection; the user's prior clipboard is restored afterwards. */
+ *  the word in place. Skips if the selection is gone or changed (the "check first" guard), or — on
+ *  the typing method only — if its edges carry a line break that typing would turn into Enter.
+ *  Paste replaces the active selection; the user's prior clipboard is restored afterwards. */
 async function replaceSelectionAfterClose(
   original: string,
   corrected: string,
@@ -664,19 +665,24 @@ async function replaceSelectionAfterClose(
   // (A live selection can sit in a NON-editable view — a read-only doc/web page — where a synthetic
   // paste/type would misfire; the resolver coerces those to clipboard-only.)
   const [current, app] = await Promise.all([getFocusedSelection(), getFocusedApp()]);
-  if (current == null || current.trim() !== original) return;
-  // The seed was trimmed Rust-side (sanitize_seed) but this live re-read is not, and the paste
-  // replaces the WHOLE selection — so put back the spaces a double-click selection carries
-  // (Word / browsers grab the trailing space). Any other edge whitespace (a newline) → leave it.
-  const lead = /^[ \t\u00a0]*/.exec(current)![0];
-  const trail = /[ \t\u00a0]*$/.exec(current)![0];
-  if (current.length - lead.length - trail.length !== current.trim().length) return;
+  if (current == null) return;
   // No profile layer, deliberately: this window has no dictation session and no active
   // Profile — the correction is a Quick-Add action, not a dictation — so it resolves
   // app-rule ← global exactly as it always has. Passing `undefined` states that rather
   // than leaving it to argument order.
   const { rule, method, pasteShortcut, restoreClipboard, remoteDesktop } = resolveInjectionTarget(app ?? null, appRules, general, undefined);
   if (rule?.block) return; // the user marked this app "never type into" — don't correct into it at all (not even clipboard)
+  // The seed was trimmed Rust-side (sanitize_seed) but this live re-read is not, and the paste
+  // replaces the WHOLE selection — so put back the edge whitespace it carries: the space a
+  // double-click grabs (Word / browsers) and the line break a triple-click grabs. A paste /
+  // clipboard route puts that back verbatim; only the typing method would turn an edge newline
+  // into a real Enter, so there the edges are spaces/tabs only and anything else is a skip.
+  const lead = (method === "direct" ? /^[ \t\u00a0]*/ : /^\s*/).exec(current)![0];
+  const trail = (method === "direct" ? /[ \t\u00a0]*$/ : /\s*$/).exec(current)![0];
+  if (current.slice(lead.length, Math.max(lead.length, current.length - trail.length)) !== original) {
+    console.info("[quick-add] correct-on-close skipped: selection changed or edge line break on a typed route");
+    return;
+  }
   // Clipboard-only (explicit per-app, or coerced for a non-editable target) puts the correction on the
   // clipboard with no keystroke; restore the prior clipboard only for a real paste.
   // The replacement text comes from the server's mapping list, and every typing path turns a
