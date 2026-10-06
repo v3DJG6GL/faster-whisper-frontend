@@ -106,9 +106,16 @@ fn clear_stuck(helper: u64) {
 
 /// Is a timeout's hold (or its one post-back-off retry) in force? Then a None from [`snapshot`]
 /// means "the server is not answering", not "no server": callers must not fall back to raw ALSA.
-/// A refused connect never raises the hold.
+/// A refused connect never raises the hold. Time-bounded like [`admit`]: true only while the
+/// back-off runs (or MAX_PARKED helpers are parked), so a caller that never reaches [`snapshot`]
+/// (`host::with_host`) tries the server again once it ran out instead of skipping it for good
+/// while a single wedged helper stays parked.
 pub fn held() -> bool {
-    stuck().is_some()
+    match *stuck() {
+        None => false,
+        Some(st) if st.since.elapsed() < BACKOFF => true,
+        Some(_) => LIVE_HELPERS.load(Ordering::SeqCst) >= MAX_PARKED,
+    }
 }
 
 /// Put a connection that answered after its caller gave up back into the empty slot: it is
@@ -455,7 +462,7 @@ mod tests {
     }
 
     #[test]
-    fn a_timeout_hold_reads_as_held_until_its_helper_lifts_it() {
+    fn a_timeout_hold_reads_as_held_until_lifted_or_its_back_off_runs_out() {
         *stuck() = Some(Stuck {
             since: Instant::now(),
             helper: 7,
@@ -465,6 +472,13 @@ mod tests {
         assert!(held(), "another helper's return must not lift the hold");
         clear_stuck(7);
         assert!(!held());
+        // Past its back-off (and below the parked cap) a hold no longer reads as held, so
+        // with_host tries the server again even while the wedged helper stays parked.
+        if let Some(since) = Instant::now().checked_sub(BACKOFF + Duration::from_secs(1)) {
+            *stuck() = Some(Stuck { since, helper: 7 });
+            assert!(!held());
+            clear_stuck(7);
+        }
     }
 
     #[test]

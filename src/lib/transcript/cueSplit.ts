@@ -425,9 +425,10 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
         bi = i;
       }
     }
-    if (bi === lo + 1 && width(lo, bi) + reserve > cpl && Array.from(toks[lo]).length >= 2) {
+    if (bi === lo + 1 && width(lo, bi) > cpl && Array.from(toks[lo]).length >= 2) {
       // One over-long token on its own line (a CJK run before a Latin word): it
-      // wraps per character too, not just a trailing one.
+      // wraps per character too, not just a trailing one. Only when the token
+      // alone exceeds the line — a word pushed over by the name prefix stays whole.
       out.push(...wrapTokens(Array.from(toks[lo]), false, cpl, toks[lo].length + reserve, reserve));
     } else out.push(join(lo, bi));
     lo = bi;

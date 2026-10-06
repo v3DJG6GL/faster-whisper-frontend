@@ -1685,7 +1685,12 @@ function armStuckWatchdog(): void {
           // so a press in that window is admitted, and flashError would stamp IT "error" — inSession()
           // drops its frames, its warm lease and pending hold-start go, and the linger idles the chip
           // with capture and the system mute still up. Report through the Logs doorway instead.
-          const superseded = startingSession || insertCfg !== null || isActiveDictation(useApp.getState().status);
+          // A hands-free asker's open target picker counts too: startLive (startingSession) only
+          // runs after the pick, and flashError would wipe its "choosing" chip and arm the linger
+          // that nulls activeProfile mid-pick.
+          const app = useApp.getState();
+          const superseded =
+            startingSession || insertCfg !== null || isActiveDictation(app.status) || app.routePending === "choosing";
           if (superseded) {
             console.warn(`[dictation] stuck-finalize recovery finished after a new session started (on clipboard: ${onClipboard})`);
             useApp

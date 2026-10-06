@@ -547,7 +547,7 @@ pub async fn package_media(
             }
             _ => unreachable!(),
         };
-        let mut out = media::package_to_path(
+        let packaged = media::package_to_path(
             &server_url,
             key.as_deref(),
             &mid,
@@ -562,7 +562,21 @@ pub async fn package_media(
             crate::store::transcripts::MAX_MEDIA_BYTES,
             progress.clone(),
         )
-        .await?;
+        .await;
+        let mut out = match packaged {
+            Ok(out) => out,
+            // The package POST or the streamed write failed after this call uploaded the
+            // file: a failed outcome that still names the server copy (same message as the
+            // Err arm below would give), so the webview's next Save skips the upload.
+            Err(e) if uploaded => {
+                let _ = std::fs::remove_file(media::tmp_sibling(&dest));
+                let mut out = PackageOutcome::err("error", format!("{e:#}"));
+                out.media_id = Some(mid);
+                out.expires_at = uploaded_expiry;
+                return Ok(out);
+            }
+            Err(e) => return Err(e),
+        };
         if out.kind == "ok" && out.expires_at.is_none() {
             out.expires_at = uploaded_expiry;
         }

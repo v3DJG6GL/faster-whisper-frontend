@@ -57,6 +57,9 @@ export interface QueueItem {
   tookMs?: number;
   /** App-managed audio copy — playback falls back to it when `path` is gone. */
   mediaPath?: string;
+  /** Failed row whose lost request was handed to a headless watcher: that server job
+   *  id. A retry stops the watcher first; the watcher's ingest settles the row. */
+  orphanJobId?: string;
 }
 
 /** What a queue item runs as: a link (downloaded and transcribed server-side, even when it ends
@@ -1389,6 +1392,12 @@ export function setOrphanWatch(fn: ((jobId: string) => void) | null): void {
   orphanWatch = fn;
 }
 
+/** Stops a watchOrphan watcher and forgets its row (retryFile). Set by jobsReconcile. */
+let orphanStop: ((jobId: string) => void) | null = null;
+export function setOrphanStop(fn: ((jobId: string) => void) | null): void {
+  orphanStop = fn;
+}
+
 /** Take over the rail for a run the server is still working on (found in
  *  the in-flight ledger at launch): the queue shows it running, the first
  *  stage's clock starts when the request originally left, and Cancel routes
@@ -1440,6 +1449,9 @@ export function ingestJobResult(
   if (opts.attached) {
     patchItem(row.path, { status: "done", result: res, tookMs });
     set({ selectedPath: row.path, openRecordId: null });
+  } else if (get().queue.some((it) => it.path === row.path && it.orphanJobId === row.jobId && it.status === "failed")) {
+    // The lost request's row still reads "failed" with Retry: the server finished after all.
+    patchItem(row.path, { status: "done", result: res, tookMs, error: undefined, orphanJobId: undefined });
   }
   const rec = recordRun(row.path, row.ctx, row.options, { status: "done", result: res, tookMs }, extra);
   if (isUrl) {
@@ -1949,7 +1961,7 @@ async function pump(
         const lost = ledgered && (cause === "timed out" || cause === "could not connect") && !uploadTooLarge(e);
         if (lost && pid && orphanWatch) {
           const error = String(e);
-          patchItem(next.path, { status: "failed", error });
+          patchItem(next.path, { status: "failed", error, orphanJobId: pid });
           recordRun(next.path, ctx, options, { status: "failed", error }, { id: pid });
           orphanWatch(pid);
           handedOff = true;
@@ -2076,7 +2088,11 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // A retry may carry NEW decode overrides (the VAD one-click fix); the rail's honesty
   // line reads the store, so the store must learn them too.
   if (overrides) set({ lastOverrides: overrides });
-  patchItem(path, { status: "queued", error: undefined });
+  // A lost request's job may still be running under a headless watcher: stop it, or
+  // the old job lands a second record (and transcribes the file twice).
+  const orphan = s.queue.find((it) => it.path === path)?.orphanJobId;
+  if (orphan) orphanStop?.(orphan);
+  patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
   void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard), ctx);
 }
 

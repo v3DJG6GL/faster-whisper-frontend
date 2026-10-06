@@ -164,6 +164,12 @@ describe("serverInherited", () => {
     expect(s.sources.output_prefix).toBeDefined();
     expect(s.values.suppress_chars).toBe("none");
   });
+  it("keeps a multiline key's empty server value as empty, not none", () => {
+    const entry = (value: DecodeDefault["value"]): DecodeDefault => ({ value, source: "server", label: "", locked: false });
+    const s = serverInherited(dd({ settings: { streaming_hard_break_separator: entry("") } as DecodeDefaults["settings"] }));
+    expect(s.values.streaming_hard_break_separator).toBe("");
+    expect(s.sources.streaming_hard_break_separator).toBeDefined();
+  });
   it("is empty without server data", () => {
     const s = serverInherited(null, { beam_size: 2 });
     expect(s.values).toEqual({ beam_size: 2 });

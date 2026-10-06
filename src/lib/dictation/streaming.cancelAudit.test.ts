@@ -294,6 +294,10 @@ describe("work that must wait for the queue or the cancel", () => {
     const guard = recovery.indexOf("insertCfg !== null");
     expect(guard, "recovery must check for a superseding session").toBeGreaterThanOrEqual(0);
     expect(recovery.indexOf("flashError(")).toBeGreaterThan(guard);
+    // …and for an open translation-target picker (startLive only runs after the pick).
+    const picker = recovery.indexOf("routePending ==="); // string literals are masked
+    expect(picker, "recovery must treat an open target picker as superseding").toBeGreaterThanOrEqual(0);
+    expect(recovery.indexOf("flashError(")).toBeGreaterThan(picker);
   });
 
   it("the live closed tail chains its final clipboard restore past the flood cap", () => {

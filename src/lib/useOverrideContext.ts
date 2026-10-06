@@ -37,8 +37,10 @@ export function useOverrideContext(args: {
   const [liveCaps, setLiveCaps] = useState<Capabilities | null>(null);
   const [live, setLive] = useState(false);
 
-  // Only "standard" matters (full ⇄ unknown flips while typing / testing must not refetch).
+  // Keyed on "standard" (skip) and "full": a successful connection test after an outage
+  // (unknown → full) must re-probe, or caps that failed at mount stay empty until a remount.
   const standard = serverKind === "standard";
+  const full = serverKind === "full";
   useEffect(() => {
     if (standard || !backendId) {
       // A backend that turns out to be a plain OpenAI server (or is gone) must not keep
@@ -85,7 +87,7 @@ export function useOverrideContext(args: {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, apiKey, backendId, standard]);
+  }, [serverUrl, apiKey, backendId, standard, full]);
 
   return { caps: live ? liveCaps : caps };
 }

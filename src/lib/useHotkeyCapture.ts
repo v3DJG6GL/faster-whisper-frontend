@@ -81,9 +81,10 @@ export function useHotkeyCapture(opts: {
   // (which would re-add listeners + re-suspend hotkeys on every render).
   const ref = useRef(opts);
   ref.current = opts;
-  // Owners already taken over for the parked chord: a chord can clash with several bindings at
-  // once, and the caller's take-over state update has not re-rendered `others` yet, so the next
-  // clash check filters these out by id.
+  // Owners the user agreed to take over for the parked chord: a chord can clash with several
+  // bindings at once, so the next clash check filters these out by id. Their onTakeOver runs
+  // only on the final clash-free commit — a "Try again" on a later clash (or a new capture)
+  // drops the list, so no binding loses its keys to a chord that never got committed.
   const takenRef = useRef<string[]>([]);
 
   useEffect(() => {
@@ -245,7 +246,6 @@ export function useHotkeyCapture(opts: {
 
   const acceptPending = () => {
     if (!pending) return;
-    ref.current.onTakeOver(pending.otherId);
     takenRef.current = [...takenRef.current, pending.otherId];
     // findChordConflict reports only the first owner: if another binding clashes too, name it
     // next instead of committing a set the save gate would refuse.
@@ -264,7 +264,9 @@ export function useHotkeyCapture(opts: {
       });
       return;
     }
+    const taken = takenRef.current;
     takenRef.current = [];
+    for (const id of taken) ref.current.onTakeOver(id);
     ref.current.onCommit(pending.codes);
     setPending(null);
   };

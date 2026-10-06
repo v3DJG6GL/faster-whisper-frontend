@@ -76,6 +76,8 @@ async function invokeServer<T>(
 export interface LoadedConfig {
   config: Config;
   recovered: boolean;
+  /** The reset happened but no config.json.bak could be made: Rust refuses every save this session. */
+  backupFailed: boolean;
 }
 
 export async function loadConfig(): Promise<LoadedConfig | null> {

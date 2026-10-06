@@ -273,12 +273,19 @@ export default function History() {
   // open overnight moves yesterday's entries out of "Today".
   const [todayStart, setTodayStart] = useState(() => startOfDay(new Date()));
   useEffect(() => {
-    const next = new Date(todayStart);
-    next.setDate(next.getDate() + 1);
-    const t = window.setTimeout(
-      () => setTodayStart(startOfDay(new Date())),
-      Math.max(0, next.getTime() - Date.now()) + 1000,
-    );
+    let t: number | undefined;
+    // Self-rescheduling: a fire that still finds the same day (clock stepped back, a
+    // zone moved west) re-arms for the recomputed midnight instead of going quiet.
+    const arm = () => {
+      const next = new Date(startOfDay(new Date()));
+      next.setDate(next.getDate() + 1);
+      t = window.setTimeout(() => {
+        const s = startOfDay(new Date());
+        if (s !== todayStart) setTodayStart(s);
+        else arm();
+      }, Math.max(0, next.getTime() - Date.now()) + 1000);
+    };
+    arm();
     return () => window.clearTimeout(t);
   }, [todayStart]);
 

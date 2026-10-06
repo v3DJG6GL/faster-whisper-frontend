@@ -8,11 +8,14 @@ use tauri::AppHandle;
 /// Frontend-facing config load: the config plus whether Rust had to RECOVER it (backed up a
 /// present-but-unreadable/corrupt file to .json.bak and returned defaults), so the frontend can warn
 /// the user their settings were reset instead of the armed auto-save silently persisting the wipe.
+/// `backup_failed`: the reset happened but no `.json.bak` could be made — saving is refused this
+/// session, so the frontend must not promise a backup.
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LoadedConfig {
     pub config: Config,
     pub recovered: bool,
+    pub backup_failed: bool,
 }
 
 #[tauri::command]
@@ -20,12 +23,17 @@ pub fn load_config(app: AppHandle) -> LoadedConfig {
     match config_dir(&app) {
         Ok(dir) => {
             let (config, recovered) = config::load_outcome(&dir);
-            LoadedConfig { config, recovered }
+            LoadedConfig {
+                config,
+                recovered,
+                backup_failed: config::backup_failed(),
+            }
         }
         // No config dir at all (can't happen in practice) — clean defaults, nothing was backed up.
         Err(_) => LoadedConfig {
             config: Config::default(),
             recovered: false,
+            backup_failed: false,
         },
     }
 }

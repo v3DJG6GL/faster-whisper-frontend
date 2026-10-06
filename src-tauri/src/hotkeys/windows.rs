@@ -1205,10 +1205,12 @@ mod imp {
 
     /// Is focus on a remote-desktop / VDI client, by EITHER `inject::rdp_client` detector (see
     /// `rdp_client::focus_is_remote_desktop`); the app id is read only when the class misses.
+    /// The LIVE foreground's id: `focused_app_now` falls back to the app focused before ours
+    /// (and keeps it across the shell), so leaving a client for our window or the taskbar
+    /// would still read as remote and arm the latch / liveness rule off-RDP.
     fn focus_is_remote(app: &AppHandle) -> bool {
         crate::inject::rdp_client::focus_is_remote_desktop(|| {
-            crate::focus::focused_app_now(app.state::<crate::focus::AtspiGuard>().inner())
-                .map(|f| f.app_id)
+            crate::focus::focused_app_id_live(app.state::<crate::focus::AtspiGuard>().inner())
         })
     }
 

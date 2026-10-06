@@ -17,13 +17,13 @@
 // Every ingest is idempotent: the record id IS the job id, so a second pass upserts
 // the same record; the row is forgotten only after the record was written.
 
-import { getJob, getJobResult, isTauri } from "./api";
+import { deleteJob, getJob, getJobResult, isTauri } from "./api";
 import { configReady } from "./persistence";
 import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
 import {
-  failJob, foldProgress, ingestJobResult, reattachRun, setOrphanWatch, setReattachStop, useTranscribeRun,
-  withSiteTracks,
+  failJob, foldProgress, ingestJobResult, reattachRun, setOrphanStop, setOrphanWatch, setReattachStop,
+  useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
 import type { JobStatus } from "./types";
 
@@ -43,9 +43,9 @@ let started = false;
 let inFlight = false;
 let retries = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
-/** Job ids a watcher is polling right now: a retry pass re-reads the live ledger,
- *  where a watched row stays until it settles, and must not start a second watcher. */
-const watching = new Set<string>();
+/** Job ids a watcher is polling right now (→ its stop): a retry pass re-reads the live
+ *  ledger, where a watched row stays until it settles, and must not start a second watcher. */
+const watching = new Map<string, () => void>();
 /** When this launch's reconcile started. Rows the pump persists from then on are its
  *  own live requests, never something to reconcile. */
 let launchedAt = Infinity;
@@ -66,17 +66,18 @@ function failedText(status: JobStatus): string {
 /** Fetch + ingest a finished job. Returns false when the fetch must be retried
  *  (transport error, or the result is not published yet). Attached: an epoch move
  *  during either fetch (the result, then a link's site subtitles) means the user cancelled (or started something else) and the
- *  stop hook already released the rail and forgot the row — drop the result. */
+ *  stop hook already released the rail and forgot the row — drop the result. `stopped`:
+ *  the watcher was stopped meanwhile (stopOrphan: the user retried) — drop it too. */
 async function ingestDone(
-  row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number,
+  row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number, stopped: () => boolean = () => false,
 ): Promise<boolean> {
   const r = await getJobResult({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
-  if (attached && useTranscribeRun.getState().epoch !== epoch) return true;
+  if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
   switch (r.kind) {
     case "ok": {
       // A second network await (the link's site subtitles): the epoch can move during it too.
       const result = await withSiteTracks(r.value, row.path, row.urlMeta, row.ctx);
-      if (attached && useTranscribeRun.getState().epoch !== epoch) return true;
+      if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
       ingestJobResult(row, result, tookMsOf(status, row), { attached });
       await forgetRow(row.jobId);
       return true;
@@ -109,7 +110,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     clearTimeout(timer);
     watching.delete(row.jobId);
   };
-  watching.add(row.jobId);
+  watching.set(row.jobId, stop);
   // The rail's stop hook (abandonActiveRun): the user moved on, so the row goes too.
   const abandon = () => {
     stop();
@@ -159,7 +160,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
       if (status.state === "done") {
         // The stop hook stays installed through the fetch, so a cancel meanwhile still
         // releases the rail; settleReattached clears it once the run is ingested/failed.
-        if (await ingestDone(row, status, opts.attached, opts.epoch)) {
+        if (await ingestDone(row, status, opts.attached, opts.epoch, () => stopped)) {
           stop();
           return;
         }
@@ -194,6 +195,18 @@ export function watchOrphan(jobId: string): void {
   if (row) watchJob(row, { attached: false });
 }
 setOrphanWatch(watchOrphan);
+
+/** The user retried a file whose lost request was handed to watchOrphan: stop that
+ *  watcher and forget its row, so the old job can't land a second record (and re-point
+ *  the file's latest transcript) after the retry's; best-effort, the server stops it. */
+export function stopOrphan(jobId: string): void {
+  watching.get(jobId)?.();
+  const row = ledgerRows().find((r) => r.jobId === jobId);
+  if (!row) return;
+  void forgetRow(jobId);
+  void deleteJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId }).catch(() => {});
+}
+setOrphanStop(stopOrphan);
 
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
  *  cannot be reached. */

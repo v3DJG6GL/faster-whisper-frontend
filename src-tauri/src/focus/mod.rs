@@ -212,6 +212,29 @@ pub fn focused_app_now(g: &AtspiGuard) -> Option<FocusedApp> {
     }
 }
 
+/// The app id holding focus RIGHT NOW, or `None` when that is our own window, a shell surface,
+/// or an app we can't read — never `focused_app_now`'s fallback to the app focused before us.
+/// For decisions about the live foreground (is a remote-desktop client capturing the keys?),
+/// where the app the user came from must not count. On Windows it resolves the foreground
+/// window directly: the tracker keeps the previous app `current` across shell surfaces and
+/// unreadable processes, so the snapshot can't answer this.
+pub fn focused_app_id_live(g: &AtspiGuard) -> Option<String> {
+    #[cfg(windows)]
+    {
+        let _ = g;
+        windows::foreground_app_id_live().filter(|id| !is_noise(id))
+    }
+    #[cfg(not(windows))]
+    {
+        start(g);
+        let snap = g.snapshot.lock();
+        snap.current
+            .as_ref()
+            .filter(|c| !is_noise(&c.app_id))
+            .map(|c| c.app_id.clone())
+    }
+}
+
 pub async fn focused_app(g: &AtspiGuard) -> Option<FocusedApp> {
     focused_app_now(g)
 }

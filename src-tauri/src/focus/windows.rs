@@ -148,6 +148,16 @@ fn fold_foreground() {
     });
 }
 
+/// The foreground window's app id read live (no snapshot), or None for a shell surface, an
+/// unreadable process or no foreground window — `focus::focused_app_id_live`'s Windows half.
+pub(super) fn foreground_app_id_live() -> Option<String> {
+    let hwnd = unsafe { GetForegroundWindow() };
+    if hwnd.is_null() {
+        return None;
+    }
+    unsafe { foreground_app_id(hwnd) }
+}
+
 /// Identity of the foreground window's app, or None to keep the previous snapshot
 /// untouched (a shell surface, or an unreadable process).
 unsafe fn foreground_app_id(hwnd: HWND) -> Option<String> {

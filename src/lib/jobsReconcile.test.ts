@@ -11,6 +11,7 @@ const loadJobsLedger = vi.fn<() => Promise<unknown>>(() => Promise.resolve(null)
 const saveJobsLedger = vi.fn<(l: unknown) => Promise<void>>(() => Promise.resolve());
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
 const cancelBackendTranscription = vi.fn(() => Promise.resolve());
+const deleteJob = vi.fn((_args: { jobId: string }) => Promise.resolve({ kind: "ok", value: null }));
 const getTranscribeProgress = vi.fn<(args: { progressId: string }) => Promise<unknown>>(
   () => Promise.resolve({ stage: "unknown" }));
 vi.mock("./api", async (importOriginal) => ({
@@ -23,6 +24,7 @@ vi.mock("./api", async (importOriginal) => ({
   saveJobsLedger: (l: unknown) => saveJobsLedger(l),
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
   cancelBackendTranscription: () => cancelBackendTranscription(),
+  deleteJob: (a: { jobId: string }) => deleteJob(a),
   getTranscribeProgress: (a: { progressId: string }) => getTranscribeProgress(a),
   // Media copies are best-effort side effects; keep them inert here.
   saveTranscriptMedia: () => Promise.resolve(null),
@@ -34,7 +36,7 @@ vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
 const { _resetReconcileForTests, initJobReconcile, reconcileJobs, watchOrphan, NOT_FOUND_ERROR } =
   await import("./jobsReconcile");
-const { useTranscribeRun, forgetRecord, cancelRun } = await import("./transcribeRun");
+const { useTranscribeRun, forgetRecord, cancelRun, retryFile } = await import("./transcribeRun");
 const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
 const { useApp } = await import("./store");
 type LedgerRow = import("./jobsLedger").LedgerRow;
@@ -424,6 +426,43 @@ describe("reconcileJobs", () => {
     expect(ledgerRows()).toEqual([]);
     // Headless: the rail was not touched.
     expect(useTranscribeRun.getState().queue).toEqual([]);
+  });
+
+  it("a lost request's watcher settles its still-failed queue row when the server finishes", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    const it0 = useTranscribeRun.getState().queue[0];
+    expect([it0.status, it0.error, it0.orphanJobId]).toEqual(["done", undefined, undefined]);
+    expect(it0.result?.text).toBe("hallo welt");
+  });
+
+  it("retrying a lost request's row stops its orphan watcher, forgets the row, cancels the job", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    useTranscribeRun.setState({ files: [r.path], running: false, lastOptions: undefined,
+      queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJob).toHaveBeenCalledTimes(1);
+    deleteJob.mockClear();
+    retryFile(r.path, r.ctx);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    expect(useTranscribeRun.getState().queue[0].orphanJobId).toBeUndefined();
+    // The old job's watcher is gone: no more polls, its row is forgotten, and the
+    // job can't land a record under the old id.
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
   });
 
   it("initJobReconcile loads the persisted ledger after configReady, once", async () => {

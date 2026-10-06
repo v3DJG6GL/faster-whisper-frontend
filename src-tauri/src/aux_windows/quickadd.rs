@@ -662,10 +662,11 @@ pub(crate) mod win_seed {
         // unshown until the copy lands / the forwarding grace passes — see the consts.
         // BOTH `inject::rdp_client` detectors, as the paste path uses them: the window class
         // (mstsc, and the RDP control hosted by RDCMan & co.) OR the focused app id (VirtualBox,
-        // VMware, Citrix, AnyDesk… — clients whose window class says nothing).
+        // VMware, Citrix, AnyDesk… — clients whose window class says nothing). The LIVE
+        // foreground's id, like the class check: the copy goes to whatever holds focus now,
+        // never `focused_app_now`'s fallback to the app before a shell surface.
         let remote = crate::inject::rdp_client::focus_is_remote_desktop(|| {
-            crate::focus::focused_app_now(app.state::<crate::focus::AtspiGuard>().inner())
-                .map(|f| f.app_id)
+            crate::focus::focused_app_id_live(app.state::<crate::focus::AtspiGuard>().inner())
         });
         if remote {
             tracing::info!(

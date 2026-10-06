@@ -18,6 +18,16 @@ export const configReady: Promise<void> = new Promise((r) => {
   resolveConfigReady = r;
 });
 
+/** The startup "load" notice (settings reset / load failed), remembered so a later save
+ *  failure (or a hotkey-conflict freeze) that takes the banner slot can't erase it for good:
+ *  the next successful save puts it back. Dismissing the banner forgets it. */
+let loadNotice: string | null = null;
+
+function raiseLoadNotice(msg: string): void {
+  loadNotice = msg;
+  useApp.getState().setSaveError(msg, "load");
+}
+
 export async function initConfig(): Promise<void> {
   // Run once. React StrictMode double-invokes the App effect in dev; without this guard a
   // second initConfig would register a second auto-save subscriber (doubled saveConfig +
@@ -47,13 +57,15 @@ export async function initConfig(): Promise<void> {
       // Rust recovered from an unreadable / corrupt / forward-incompatible config by backing it up to
       // config.json.bak and loading defaults — surface that so the user knows their settings were reset
       // (and where the backup is), instead of a silent wipe the armed auto-save below then persists.
-      if (loaded.recovered) {
-        useApp
-          .getState()
-          .setSaveError(
-            "Your saved settings couldn’t be read and were reset — a backup was kept at config.json.bak.",
-            "load",
-          );
+      if (loaded.backupFailed) {
+        // No backup exists — Rust refuses every save this session, so don't promise one.
+        raiseLoadNotice(
+          "Your saved settings couldn’t be read and no backup could be made — changes won’t be saved this session. Fix access to config.json and restart the app.",
+        );
+      } else if (loaded.recovered) {
+        raiseLoadNotice(
+          "Your saved settings couldn’t be read and were reset — a backup was kept at config.json.bak.",
+        );
       }
     }
   } catch (e) {
@@ -61,9 +73,7 @@ export async function initConfig(): Promise<void> {
     // The load failed at the IPC level (Rust load() itself returns a valid config and backs up an
     // unreadable one). Auto-save is still armed below holding the EMPTY boot state — a save now
     // would wipe the on-disk config (and re-open the first-run gate on the next launch), so warn.
-    useApp
-      .getState()
-      .setSaveError("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.", "load");
+    raiseLoadNotice("Couldn’t load your saved settings — saving now may overwrite them. Restart to retry.");
     useApp.getState().setConfigLoadFailed();
   } finally {
     hydrated = true;
@@ -80,6 +90,12 @@ export async function initConfig(): Promise<void> {
       evdevPermitted = st.permitted;
     })
     .catch(() => {});
+
+  // The banner went away (the user dismissed it; the save path below never clears it while a
+  // load notice is remembered — it restores it instead) ⇒ forget the load notice.
+  useApp.subscribe((state, prev) => {
+    if (prev.saveError && !state.saveError) loadNotice = null;
+  });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let pendingBindingChange = false;
@@ -147,11 +163,14 @@ export async function initConfig(): Promise<void> {
           () => {
             // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
             // notice (settings reset from a corrupt file / failed to load) is not a save failure:
-            // it stays until the user dismisses it, so the first edit can't silently erase where
-            // the backup went or the "saving may overwrite" warning. Re-registration has its OWN
+            // it stays until the user dismisses it — and comes back once a save error or conflict
+            // freeze that replaced it clears — so an edit can't silently erase where the backup
+            // went or the "saving may overwrite" warning. Re-registration has its OWN
             // catch: a reregister failure is NOT data loss (the config was persisted fine), so it
             // must never raise the "couldn't save your settings" banner below.
-            if (useApp.getState().saveErrorKind !== "load") useApp.getState().setSaveError(null);
+            if (loadNotice) {
+              if (useApp.getState().saveError !== loadNotice) useApp.getState().setSaveError(loadNotice, "load");
+            } else useApp.getState().setSaveError(null);
             // Use the capture-aware variant: a debounced save left pending by an edit just before the
             // user enters chord-capture can resolve DURING the capture window, and a plain reregister
             // would re-arm the hotkeys mid-capture (the next keypress would both rebind AND fire

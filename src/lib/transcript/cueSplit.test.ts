@@ -265,6 +265,18 @@ describe("wrapLines", () => {
     for (const l of lines) expect(l.length).toBeLessThanOrEqual(16);
     expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
   });
+  it("a word that fits alone but not after the name prefix stays whole", () => {
+    const lines = wrapLines("Verantwortlichkeiten sind wichtig für alle Beteiligten hier heute", 42, 2, 30);
+    expect(lines[0]).toBe("Verantwortlichkeiten");
+    expect(lines.join(" ")).toBe("Verantwortlichkeiten sind wichtig für alle Beteiligten hier heute");
+  });
+  it("an over-cpl CJK run still wraps per character under a name prefix", () => {
+    const t = "我们今天要讨论的是如何使用大型语言模型来处理数据和文本 AI 工具";
+    const lines = wrapLines(t, 16, 2, 6);
+    expect(lines[0].length + 6).toBeLessThanOrEqual(16);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(16);
+    expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+  });
 });
 
 describe("cutByShare", () => {

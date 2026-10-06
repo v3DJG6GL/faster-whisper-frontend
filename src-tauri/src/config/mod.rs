@@ -1024,6 +1024,12 @@ fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
 /// replace the only copy of the user's backends/profiles/hotkeys with the seeded defaults.
 static BACKUP_FAILED: AtomicBool = AtomicBool::new(false);
 
+/// Whether this session's load reset an unusable config WITHOUT managing a backup — `save`
+/// refuses from then on, so the frontend says so instead of promising a `.json.bak`.
+pub fn backup_failed() -> bool {
+    BACKUP_FAILED.load(Ordering::SeqCst)
+}
+
 /// Stash an unusable `config.json` as `config.json.bak` — rename first, a copy when the
 /// rename is refused (the original then stays in place, but a backup exists). False only
 /// when neither worked.

@@ -60,7 +60,9 @@ function shownValue(key: DecodeKey, v: DecodeDefault["value"] | undefined): stri
   if (v === null) return NULL_TEXT[key];
   if (typeof v === "number") return Number.isFinite(v) ? v : undefined;
   // An empty text value is the server sending nothing (OUTPUT_PREFIX=""), not an unknown value.
-  if (v === "" && keySpec(key).kind === "text") return NULL_TEXT[key] ?? "none";
+  // A multiline key's "" is itself the value (the hard-break separator "" = glue, shown
+  // as "nothing"), never the word "none" the preview would type.
+  if (v === "" && keySpec(key).kind === "text") return keySpec(key).multiline ? "" : NULL_TEXT[key] ?? "none";
   if (typeof v === "string") return (keySpec(key).multiline ? v !== "" : v.trim()) ? v : undefined;
   return undefined;
 }
