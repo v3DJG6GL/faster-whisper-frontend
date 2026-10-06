@@ -245,12 +245,22 @@ pub fn apply_log_level(level: LogLevel) {
     if ENV_OVERRIDE.get().copied().unwrap_or(false) {
         return;
     }
-    let l = level.as_str();
     if let Some(h) = RELOAD.get() {
-        let _ = h.reload(tracing_subscriber::EnvFilter::new(format!(
-            "faster_whisper_frontend_lib={l},info"
-        )));
+        let _ = h.reload(tracing_subscriber::EnvFilter::new(level_directive(level)));
     }
+}
+
+/// The filter directive for a chosen level: our crate at that level, every other
+/// target (tauri, reqwest, cpal, log-bridged crates) at the stricter of it and
+/// info — so Errors/Warnings really leave lower levels unrecorded everywhere.
+fn level_directive(level: LogLevel) -> String {
+    let l = level.as_str();
+    let other = match level {
+        LogLevel::Error => "error",
+        LogLevel::Warn => "warn",
+        LogLevel::Info | LogLevel::Debug => "info",
+    };
+    format!("faster_whisper_frontend_lib={l},{other}")
 }
 
 /// The log directory: the user's custom folder when set, else `<app_local_data>/logs` —
@@ -516,6 +526,22 @@ pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_level_directive_clamps_other_targets_to_the_chosen_level() {
+        assert_eq!(
+            level_directive(LogLevel::Error),
+            "faster_whisper_frontend_lib=error,error"
+        );
+        assert_eq!(
+            level_directive(LogLevel::Warn),
+            "faster_whisper_frontend_lib=warn,warn"
+        );
+        assert_eq!(
+            level_directive(LogLevel::Debug),
+            "faster_whisper_frontend_lib=debug,info"
+        );
+    }
 
     #[test]
     fn the_replayed_head_uses_the_same_stamp_format_as_the_live_tail() {

@@ -510,7 +510,7 @@ pub(crate) mod win_seed {
     }
 
     /// Non-Windows twin (never called — `grab`'s only call sites are `#[cfg(windows)]` —
-    /// but kept so the Linux dev loop type-checks the module, like `clipboard_seq`'s.
+    /// but kept so the Linux dev loop type-checks the module, like `grab`'s enigo injection twin.
     #[cfg(not(windows))]
     fn modifier_physically_down() -> bool {
         false
@@ -595,8 +595,23 @@ pub(crate) mod win_seed {
         // the risky case — see `ctrl_logically_down`). Known residual: a Win-containing
         // chord held past the autorepeat delay can re-arm the Start menu after this
         // mask (Win repeats count as fresh bare presses; Alt does not repeat-re-arm).
+        //
+        // The OS reads are OR-ed with the hook-fed `HeldKeys` mirror: a capturing RDP
+        // client's own low-level hook swallows the chord, so `GetAsyncKeyState` reads it
+        // UP there — but our hook is re-armed above mstsc's and still records it, which
+        // is what makes the mask fire through a full-screen remote session (the exact
+        // case `send_menu_mask` exists for). The OS reads stay in the OR so the off-RDP
+        // AltGr skip still holds (HeldKeys filters AltGr's phantom LCtrl). Known
+        // residual: an AltGr chord under RDP capture shows only RAlt (code 100) and
+        // gets masked.
+        let held = app
+            .state::<crate::hotkeys::held_keys::HeldKeys>()
+            .inner()
+            .clone();
         #[cfg(windows)]
-        if alt_or_win_physically_down() && !ctrl_logically_down() {
+        if (alt_or_win_physically_down() || held.any_held(&[56, 100, 125, 126]))
+            && !(ctrl_logically_down() || held.any_held(&[29, 97]))
+        {
             let _ = send_menu_mask();
         }
         // The summoning chord's modifiers must be UP before injecting: a still-held
@@ -613,10 +628,6 @@ pub(crate) mod win_seed {
         // tap by then) worked. Waiting longer is free — the copy fires the moment the
         // keys lift, and the window follows immediately after — only INJECTING with
         // modifiers down is dangerous.
-        let held = app
-            .state::<crate::hotkeys::held_keys::HeldKeys>()
-            .inner()
-            .clone();
         let deadline = Instant::now() + Duration::from_millis(3000);
         while held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES) {
             if Instant::now() >= deadline {
@@ -677,6 +688,17 @@ pub(crate) mod win_seed {
         // and terminals all honor it, and unlike Ctrl+C it is never a terminal
         // interrupt. Injected events are skipped by our own keyboard hook
         // (LLKHF_INJECTED + marker), so this can't disturb chord matching.
+        //
+        // Last supersede check before anything is injected: `hide` bumps the generation,
+        // and that can land during the release gate or the un-timed clipboard prologue.
+        // Nothing is on its way to the source app yet, so bailing here leaves the
+        // clipboard genuinely untouched (no restore needed); `ready` signals on drop.
+        if superseded() {
+            tracing::info!(
+                "[quickadd-seed] summon superseded before injection; not sending the copy chord"
+            );
+            return None;
+        }
         #[cfg(windows)]
         if !send_copy_chord() {
             tracing::warn!(
@@ -751,7 +773,10 @@ pub(crate) mod win_seed {
                         injected_at.elapsed().as_millis(),
                         remote
                     );
-                    return None; // clipboard untouched — nothing to restore
+                    // Nothing to restore yet — a copy slower than the deadline can still
+                    // land later and leave the selection on the clipboard (no restore
+                    // tail on purpose, see the supersede arm above).
+                    return None;
                 }
             }
             // Copy landed — over remote desktop this is what ends the hold (usually well

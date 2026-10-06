@@ -13,8 +13,10 @@ pub fn monitor_of(win: &WebviewWindow) -> Option<tauri::Monitor> {
     }
 }
 
-/// Center a window of logical size `w`×`h` on its monitor. A no-op on native Wayland,
-/// where the compositor decides placement.
+/// Center a window of logical size `w`×`h` on its monitor. A window larger than the
+/// monitor keeps its top-left on screen (offsets clamp at 0, like the chip placement), so
+/// an undecorated window's header stays reachable. A no-op on native Wayland, where the
+/// compositor decides placement.
 pub fn center_on_monitor(win: &WebviewWindow, w: f64, h: f64) {
     let Some(monitor) = monitor_of(win) else {
         return;
@@ -24,7 +26,7 @@ pub fn center_on_monitor(win: &WebviewWindow, w: f64, h: f64) {
     let m_size = monitor.size();
     let pw = (w * scale) as i32;
     let ph = (h * scale) as i32;
-    let x = m_pos.x + (m_size.width as i32 - pw) / 2;
-    let y = m_pos.y + (m_size.height as i32 - ph) / 2;
+    let x = m_pos.x + ((m_size.width as i32 - pw) / 2).max(0);
+    let y = m_pos.y + ((m_size.height as i32 - ph) / 2).max(0);
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }

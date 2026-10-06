@@ -1,6 +1,7 @@
 //! System tray icon + menu. The app lives in the background; the tray is the
-//! primary way to reveal the window or quit. A left click on the icon shows the
-//! window; the menu lists every screen so the right-click menu is a launcher too.
+//! primary way to reveal the window or quit. A left click (and, on Linux, a middle
+//! click) on the icon toggles the window — hides it when it is up, otherwise shows it;
+//! the menu lists every screen so the right-click menu is a launcher too.
 //!
 //! Two implementations behind one menu ([`menu_entries`]) and one action table
 //! ([`run_menu_action`]):

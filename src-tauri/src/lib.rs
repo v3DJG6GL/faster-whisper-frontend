@@ -138,10 +138,10 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             tray::create(app)?;
-            let cfg = app
+            let (cfg, cfg_recovered) = app
                 .path()
                 .app_config_dir()
-                .map(|dir| config::load(&dir))
+                .map(|dir| config::load_outcome(&dir))
                 .unwrap_or_default();
             // Apply the saved log level, open this session's log file (ring
             // replayed in, so it's complete from launch), prune old ones, and
@@ -180,10 +180,18 @@ pub fn run() {
             // sweeps so they look in the right place.
             commands::ensure_audio_layout(app.handle(), &cfg);
             // Enforce the saved-recording retention window once per launch, so it also applies
-            // to a machine that dictated for months and only just enabled it.
-            commands::apply_recordings_retention(app.handle(), &cfg);
-            // Same once-per-launch sweep for the transcription history.
-            store::transcripts::apply_transcripts_retention(app.handle(), &cfg);
+            // to a machine that dictated for months and only just enabled it. Skipped when the
+            // config was reset this launch: the defaults' 7-day window would otherwise delete
+            // history the user's real (backed-up or unreadable) settings said to keep.
+            if cfg_recovered || config::backup_failed() {
+                tracing::info!(
+                    "[config] settings were reset this launch; retention sweeps skipped"
+                );
+            } else {
+                commands::apply_recordings_retention(app.handle(), &cfg);
+                // Same once-per-launch sweep for the transcription history.
+                store::transcripts::apply_transcripts_retention(app.handle(), &cfg);
+            }
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start. Known to have
             // no tray: minimize instead. (A Linux tray still connecting counts as present; if
@@ -290,6 +298,7 @@ pub fn run() {
             commands::evdev_status,
             commands::evdev_setup,
             commands::inject_text,
+            commands::recover_to_clipboard,
             commands::begin_injection,
             commands::end_injection,
             commands::restore_clipboard_snapshot,
