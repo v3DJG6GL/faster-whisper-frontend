@@ -54,21 +54,31 @@ export function ServerInfoPanel({ id, info, reportApp }: { id: string; info: Ser
 
 /** The ⓘ that opens the panel — on the Backends list row and in the editor header. Always shown:
  *  until the server's info is known (no connection test yet, or an older server) it greys out
- *  and says why. The red dot = this server records requests (captures on). */
+ *  and says why — `tested` = a test succeeded and the server still reported nothing, where
+ *  asking for another test would never help. The red dot = this server records requests
+ *  (captures on). */
 export function ServerInfoButton({
   info,
+  tested = false,
   open,
   onToggle,
   controls,
 }: {
   info: ServerInfo | undefined;
+  tested?: boolean;
   open: boolean;
   onToggle: () => void;
   controls: string;
 }) {
   return (
     <IconButton
-      label={info ? "What this server allows and keeps" : "Test the connection to see what this server allows and keeps"}
+      label={
+        info
+          ? "What this server allows and keeps"
+          : tested
+            ? "This server doesn't report what it allows and keeps (an older or standard server)"
+            : "Test the connection to see what this server allows and keeps"
+      }
       onClick={onToggle}
       disabled={!info}
       expanded={!!info && open}

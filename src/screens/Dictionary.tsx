@@ -459,7 +459,7 @@ function RuleCard({
                       }}
                     />
                     <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
-                    <TextInput ref={(el) => { valueRefs.current.set(row.id, el); }}
+                    <TextInput ref={(el) => { if (el) valueRefs.current.set(row.id, el); else valueRefs.current.delete(row.id); }}
                       value={row.v} disabled={inputsDisabled} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
                     <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
@@ -824,8 +824,9 @@ export default function Dictionary() {
   // same (now stale) fingerprints — and the first one's finally would unfreeze the editor under it.
   const saveInFlight = useRef<Promise<boolean> | null>(null);
 
-  /** Save; `false` when nothing was saved, so the leave guard keeps the user on-screen. A call while a
-   *  save is already running joins that one instead of sending another. */
+  /** Save; `false` when something was not saved (an error, or rules that conflicted on the server), so
+   *  the leave guard keeps the user on-screen. A call while a save is already running joins that one
+   *  instead of sending another. */
   function save(): Promise<boolean> {
     if (saveInFlight.current) return saveInFlight.current;
     const p = runSave().finally(() => {
@@ -866,7 +867,10 @@ export default function Dictionary() {
       // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.
       if (backend.id !== selectedIdRef.current) return false;
       setResult(res);
-      return res.ok;
+      // A 2xx with conflicts still dropped those rules' edits (load() replaced them with server truth):
+      // report not-saved so "Save and leave" stays on-screen and the banner's conflict notice is seen.
+      const conflicted = Array.isArray(res.conflicts) && res.conflicts.length > 0;
+      return res.ok && !conflicted;
     } catch (e) {
       console.error("save pipeline rules failed:", e);
       if (backend.id === selectedIdRef.current) {

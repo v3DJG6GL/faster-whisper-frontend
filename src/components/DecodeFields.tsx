@@ -189,7 +189,7 @@ export function DecodeFields({
     // The app's own −/+ stepper (never the browser's spinner); unset = the inherited value, greyed.
     const inhNum = typeof inherited?.[k] === "number" ? (inherited[k] as number) : undefined;
     return (
-      <div aria-describedby={described} title={[title, range].filter(Boolean).join(" · ") || undefined}>
+      <div title={[title, range].filter(Boolean).join(" · ") || undefined}>
         <Stepper
           className="w-full"
           value={typeof cur === "number" ? cur : undefined}
@@ -203,6 +203,7 @@ export function DecodeFields({
           inherited={inhNum}
           inheritedText={inhNum === undefined ? (inh ?? inheritWord) : undefined}
           ariaLabel={spec.env}
+          describedBy={described}
           disabled={off}
         />
       </div>

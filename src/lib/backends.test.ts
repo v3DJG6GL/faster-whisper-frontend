@@ -1,10 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, newBackendDraft } from "./backends";
+import { backendPrompt, backendPromptFields, effectiveLanguage, insecureUrlWarning, newBackendDraft } from "./backends";
 import type { Backend } from "./types";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
     expect(newBackendDraft().language).toBe("");
+  });
+});
+
+describe("insecureUrlWarning", () => {
+  it("0.0.0.0 (the bind-all address the server prints) never leaves the machine", () => {
+    expect(insecureUrlWarning("http://0.0.0.0:8000")).toBeNull();
+  });
+  it("still warns for plain http to a public address", () => {
+    expect(insecureUrlWarning("http://8.8.8.8:8000")).not.toBeNull();
   });
 });
 

@@ -72,8 +72,9 @@ function isLocalAddress(host: string): boolean {
   // "fc" or "fd" (fcc.gov, fdic.gov, fc2.com …) as LAN and silently suppressed the warning.
   if (!v4) return h.includes(":") && (h.startsWith("fc") || h.startsWith("fd") || h.startsWith("fe80:"));
   const [a, b] = [Number(v4[1]), Number(v4[2])];
+  // 0.0.0.0/8 = "this host", never routed — the bind-all address uvicorn prints at startup.
   return (
-    a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) ||
+    a === 0 || a === 127 || a === 10 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) ||
     (a === 169 && b === 254)
   );
 }

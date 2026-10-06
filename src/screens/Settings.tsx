@@ -51,6 +51,23 @@ function fmtBytes(n: number): string {
   return `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
+/** Link-download video height caps. A synced value outside this list (sync accepts any
+ *  144–4320) is appended by `withCurrentHeight` so the Select shows the real cap instead
+ *  of falling back to "Best available". */
+const URL_VIDEO_QUALITY_OPTIONS = [
+  { value: "best", label: "Best available" },
+  { value: "2160", label: "Up to 2160p (4K)" },
+  { value: "1440", label: "Up to 1440p" },
+  { value: "1080", label: "Up to 1080p" },
+  { value: "720", label: "Up to 720p" },
+  { value: "480", label: "Up to 480p" },
+  { value: "360", label: "Up to 360p" },
+];
+function withCurrentHeight(h: number | null | undefined) {
+  if (h == null || URL_VIDEO_QUALITY_OPTIONS.some((o) => o.value === String(h))) return URL_VIDEO_QUALITY_OPTIONS;
+  return [...URL_VIDEO_QUALITY_OPTIONS, { value: String(h), label: `Up to ${h}p` }];
+}
+
 const TABS = ["General", "Appearance", "Audio", "Dictation", "Recording & history", "Chip", "Sync", "Permissions"] as const;
 
 /** The audio store's per-type identity: subfolder, legend label, and the hue
@@ -110,6 +127,9 @@ export default function Settings() {
   const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   const [dirBusy, setDirBusy] = useState(false);
   const dirBusyRef = useRef(false);
+  // One store action in flight: the confirm stays mounted until it settles, and a second click
+  // re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
+  const storeBusyRef = useRef(false);
   // Both die with the tab that owns them: an armed "Delete 214 dictations" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
   useEffect(() => {
@@ -120,7 +140,7 @@ export default function Settings() {
   const tabRef = useRef(tab);
   tabRef.current = tab;
   const runStoreAction = (kind: "dict" | "files" | "links" | "video" | "clear") => {
-    if (dirBusyRef.current) return;
+    if (dirBusyRef.current || storeBusyRef.current) return;
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
     // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
     // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
@@ -137,30 +157,28 @@ export default function Settings() {
       void loadHistory(true).catch(() => {});
     };
     const fail = (e: unknown) => {
-      setConfirming(null);
-      setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
+      if (tabRef.current === "Recording & history") {
+        setConfirming(null);
+        setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
+      } else console.error("store action failed:", e);
     };
-    if (kind === "dict") {
-      void deleteAllDictations(basePref)
-        .then((n) => done(n, "dictation file(s)"))
-        .catch(fail);
-    } else if (kind === "files") {
-      void removeTranscriptMedia("file", basePref)
-        .then((n) => done(n, "audio cop(y/ies)"))
-        .catch(fail);
-    } else if (kind === "links") {
-      void removeTranscriptMedia("url", basePref)
-        .then((n) => done(n, "downloaded file(s)"))
-        .catch(fail);
-    } else if (kind === "video") {
-      void removeTranscriptMedia("video", basePref)
-        .then((n) => done(n, "video file(s)"))
-        .catch(fail);
-    } else {
-      void clearFileTranscriptions(basePref)
-        .then((n) => done(n, "transcript(s)"))
-        .catch(fail);
-    }
+    storeBusyRef.current = true; // set with the IPC, so nothing above can leave it stuck
+    const [op, what]: [Promise<number>, string] =
+      kind === "dict"
+        ? [deleteAllDictations(basePref), "dictation file(s)"]
+        : kind === "files"
+          ? [removeTranscriptMedia("file", basePref), "audio cop(y/ies)"]
+          : kind === "links"
+            ? [removeTranscriptMedia("url", basePref), "downloaded file(s)"]
+            : kind === "video"
+              ? [removeTranscriptMedia("video", basePref), "video file(s)"]
+              : [clearFileTranscriptions(basePref), "transcript(s)"];
+    void op
+      .then((n) => done(n, what))
+      .catch(fail)
+      .finally(() => {
+        storeBusyRef.current = false;
+      });
   };
   // One dictation clock for text AND audio: display the stricter of the two
   // legacy values (the keys keep syncing separately for older builds), write
@@ -232,6 +250,7 @@ export default function Settings() {
             // A partial move already rewrote the records that did move: reload either way.
             forgetRecord(null);
             void loadHistory(true).catch(() => {});
+            refreshStoreStats();
             throw e;
           }
           updateRecording({ audioBaseDir: picked });
@@ -263,6 +282,7 @@ export default function Settings() {
         // A partial move already rewrote the records that did move: reload either way.
         forgetRecord(null);
         void loadHistory(true).catch(() => {});
+        refreshStoreStats();
         setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true });
       })
       .finally(() => { dirBusyRef.current = false; setDirBusy(false); });
@@ -694,15 +714,7 @@ export default function Settings() {
                   updateTranscribe({ urlVideoMaxHeight: v === "best" ? null : Number(v) })
                 }
                 ariaLabel={SETTING.urlVideoQuality.label}
-                options={[
-                  { value: "best", label: "Best available" },
-                  { value: "2160", label: "Up to 2160p (4K)" },
-                  { value: "1440", label: "Up to 1440p" },
-                  { value: "1080", label: "Up to 1080p" },
-                  { value: "720", label: "Up to 720p" },
-                  { value: "480", label: "Up to 480p" },
-                  { value: "360", label: "Up to 360p" },
-                ]}
+                options={withCurrentHeight(s.transcribe?.urlVideoMaxHeight)}
               />
             </SettingRow>
             <SettingRow

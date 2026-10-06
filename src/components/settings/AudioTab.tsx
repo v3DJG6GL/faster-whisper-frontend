@@ -10,6 +10,7 @@ import {
 import type { MicInventory } from "@/lib/types";
 import { MicPicker } from "@/components/settings/MicPicker";
 import { buildMicView, isAlsaPin, labelForPick } from "@/lib/micOptions";
+import { safeDisplayText } from "@/lib/sanitize";
 
 // Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
 // cold/Bluetooth mic can be open but silent for ~1–2s first). A live mic has a faint
@@ -279,8 +280,8 @@ export function AudioTab() {
         expand={
           view.missing ? (
             <Notice className="mb-3">
-              {view.pinnedLabel} is not connected. Dictation uses System default
-              {inv?.defaultLabel ? ` (${inv.defaultLabel})` : ""} until it is plugged back in.
+              {safeDisplayText(view.pinnedLabel ?? "", 80)} is not connected. Dictation uses System default
+              {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, 80)})` : ""} until it is plugged back in.
             </Notice>
           ) : undefined
         }

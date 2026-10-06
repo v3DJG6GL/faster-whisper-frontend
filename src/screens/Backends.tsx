@@ -69,6 +69,10 @@ function Editor({
   const setUrlOverride = useApp((s) => s.setUrlOverride);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState(initialKey ?? "");
+  // Whether a key is already in the keyring. A connect-first add carries its typed key in
+  // `initialKey` with `hasApiKey` already set, but that key only reaches the keyring on save —
+  // clearing the field must not leave the "stored" placeholder or flag behind (doSave agrees).
+  const keyStored = initial.hasApiKey && !initialKey;
   // The address this editor's requests ACTUALLY go to — the same rule `effectiveServerUrl`
   // applies, but reactive, so a change to "Address on this device" re-runs the effects below.
   // `runTest`, `liveTarget`, the list card and every transcription already resolve the override;
@@ -144,12 +148,20 @@ function Editor({
   const detected = classifyConnection(conn);
   const chips = backendChips(b, conn ?? undefined);
   const kind = effectiveServerKind(b, conn);
+  // The hooks below fetch for the DEBOUNCED target, so they get the kind last seen while that
+  // target was settled: `kind` follows the live field at once, and a typo-then-revert flipped it
+  // full → unknown → full, which counted as a rise and refetched an unchanged target (and a
+  // paste + Test inside the debounce refetched the old address). Holding it until the debounce
+  // lands moves the kind change and the new address into the same render — one fetch.
+  const hookKindRef = useRef(kind);
+  if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
+  const hookKind = hookKindRef.current;
   // Caller capabilities, for gating the decode editor.
   const { caps } = useOverrideContext({
     serverUrl: debouncedUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
-    serverKind: kind,
+    serverKind: hookKind,
   });
   // The model is typed too: debounce it like the address so typing doesn't fetch per character.
   const debouncedModel = useDebounced(b.model ?? "", 400);
@@ -161,7 +173,7 @@ function Editor({
     apiKey: debouncedKey || null,
     model: debouncedModel,
     profileName: b.overrideProfile,
-    serverKind: kind,
+    serverKind: hookKind,
   });
   const server = serverInherited(decodeDefaults);
   // "Multiple languages" is the backend's default `multilingual` decode override.
@@ -346,7 +358,13 @@ function Editor({
                 ? "Error"
                 : "Untested"}
           </span>
-          <ServerInfoButton info={caps?.server_info} open={showInfo} onToggle={() => setShowInfo((v) => !v)} controls={infoId} />
+          <ServerInfoButton
+            info={caps?.server_info}
+            tested={!!conn?.ok && (caps != null || kind === "standard")}
+            open={showInfo}
+            onToggle={() => setShowInfo((v) => !v)}
+            controls={infoId}
+          />
         </div>
         {showInfo && caps?.server_info && <ServerInfoPanel id={infoId} info={caps.server_info} reportApp={reportApp} />}
       </div>
@@ -420,9 +438,9 @@ function Editor({
                 value={key}
                 onChange={(e) => {
                   setKey(e.target.value);
-                  set({ hasApiKey: e.target.value.length > 0 || initial.hasApiKey });
+                  set({ hasApiKey: e.target.value.length > 0 || keyStored });
                 }}
-                placeholder={initial.hasApiKey ? "•••••••••• (stored — leave blank to keep)" : "wk_… (optional)"}
+                placeholder={keyStored ? "•••••••••• (stored — leave blank to keep)" : "wk_… (optional)"}
               />
             </div>
           </OverrideHeader>
@@ -459,7 +477,7 @@ function Editor({
                 serverUrl={debouncedUrl}
                 backendId={b.id}
                 apiKey={debouncedKey || null}
-                serverKind={kind}
+                serverKind={hookKind}
                 canRequest={caps?.can_request_override_profile}
                 value={b.overrideProfile ?? ""}
                 inheritLabel="Server default"
@@ -1154,6 +1172,7 @@ export default function Backends() {
                     <div className="flex items-center gap-1">
                       <ServerInfoButton
                         info={ownProp(caps, b.id)?.server_info}
+                        tested={!!conn?.ok && ownProp(caps, b.id) != null}
                         open={infoOpen === b.id}
                         onToggle={() => setInfoOpen((cur) => (cur === b.id ? null : b.id))}
                         controls={`${infoBase}-${b.id}`}

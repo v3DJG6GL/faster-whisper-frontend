@@ -246,7 +246,12 @@ export function useHotkeyCapture(opts: {
 
   const acceptPending = () => {
     if (!pending) return;
-    takenRef.current = [...takenRef.current, pending.otherId];
+    // The clash was computed when the capture ended; the tile's Activation stays live while it is
+    // parked, so re-check the owner now — a flip that made it the designed hold ⊂ hands-free
+    // nesting must commit without taking that binding's keys away.
+    const owner = ref.current.others.find((o) => o.id === pending.otherId);
+    if (owner && findChordConflict(pending.codes, [owner], !ref.current.lowLevelActive, ref.current.selfKind))
+      takenRef.current = [...takenRef.current, pending.otherId];
     // findChordConflict reports only the first owner: if another binding clashes too, name it
     // next instead of committing a set the save gate would refuse.
     const next = findChordConflict(

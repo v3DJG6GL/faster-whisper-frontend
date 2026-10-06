@@ -635,7 +635,9 @@ function Editor({
             // profile typing via paste/direct inserts on release, so its Mode is honoured.
             // (An app rule can still override the method per window; the editor can't
             // know the window, so profile-else-global is the closest honest read.)
-            liveInsert={liveAllowed({
+            // A push-to-talk profile that asks for its targets answers at the one-shot
+            // insert, so it never runs live either.
+            liveInsert={!(p.askTranslationTargets && p.activation === "hold") && liveAllowed({
               wants: p.typeAsISpeak ?? globalTypeAsISpeak,
               endpoint: p.endpoint ?? backend?.endpoint ?? "stream",
               activation: p.activation,

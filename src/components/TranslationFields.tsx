@@ -16,7 +16,7 @@ import { cn } from "../lib/cn";
 import type { Capabilities, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { CodeChip, MicroLabel, Segmented, Stepper } from "./ui";
-import { inheritLabel, onOff } from "../lib/inherit";
+import { inheritLabel, onOff, shortModelName } from "../lib/inherit";
 
 export function TranslationTargetChips({
   value,
@@ -165,7 +165,7 @@ export function TranslationOptionsFields({
                 onChange={onModelChange}
                 models={caps?.translation_models ?? []}
                 defaultLabel={inheritLabel(
-                  (inheritedModel || caps?.translation_models?.[0]?.id || "server model").split("/").pop(),
+                  shortModelName(inheritedModel) ?? shortModelName(caps?.translation_models?.[0]?.id) ?? "server model",
                   "Default",
                 )}
                 ariaLabel="Translation model"
