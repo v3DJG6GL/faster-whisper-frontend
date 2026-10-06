@@ -12,8 +12,8 @@
 //! through [`super::with_legacy_path`] (new path first, the old one on a 404).
 
 use super::{
-    base_url, body_capped_to, client, detail_from, friendly_err, json_capped_to, with_auth,
-    with_legacy_path, Answered,
+    base_url, body_capped_to, client, detail_from, friendly_err, with_auth, with_legacy_path,
+    Answered,
 };
 
 /// The settings-sync resource, and its name before the rename (still served, deprecated).
@@ -194,8 +194,22 @@ async fn pull_at(url: String, api_key: Option<&str>) -> SyncPull {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
+                // Read the body apart from parsing it, as `push_at` does: a timeout or
+                // oversized body is a transport failure, not a malformed reply, and must
+                // not surface as "Unexpected response: Timed out…".
+                let text = match body_capped_to(resp, SYNC_MAX_BODY).await {
+                    Ok(b) => b,
+                    Err(reason) => {
+                        return SyncPull {
+                            ok: false,
+                            status: code,
+                            state: None,
+                            error: Some(reason),
+                        }
+                    }
+                };
                 match accept(
-                    json_capped_to(resp, SYNC_MAX_BODY).await,
+                    serde_json::from_str(&text).map_err(|e| e.to_string()),
                     "Unexpected response",
                 ) {
                     Ok(state) => SyncPull {
@@ -419,6 +433,37 @@ mod tests {
         assert!(state(MAX_SAFE_VERSION).version_representable());
         assert!(state(-MAX_SAFE_VERSION).version_representable());
         assert!(state(0).version_representable());
+    }
+
+    #[tokio::test]
+    async fn an_oversized_pull_body_is_a_transport_error_not_an_unexpected_response() {
+        // A 2xx whose declared length is past the ceiling: the body read fails before any
+        // parse, so the reason must come through bare, without the malformed-reply prefix.
+        // The app installs the TLS provider at startup (lib.rs); the shared client needs it.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut req = [0u8; 4096];
+            let _ = sock.read(&mut req);
+            let head = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                SYNC_MAX_BODY + 1
+            );
+            let _ = sock.write_all(head.as_bytes());
+        });
+        let out = pull_at(format!("http://{addr}{SYNC_PATH}"), None).await;
+        assert!(!out.ok);
+        assert_eq!(out.status, 200);
+        assert!(out.state.is_none());
+        let error = out.error.expect("an error reason");
+        assert!(
+            !error.starts_with("Unexpected response"),
+            "transport failure mislabelled: {error}"
+        );
+        assert_eq!(error, super::super::TOO_LARGE);
     }
 
     #[test]

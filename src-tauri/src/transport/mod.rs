@@ -616,8 +616,10 @@ pub struct UsageWindow {
     /// "rollups", or "jobs" when a stage filter recomputed the document.
     #[serde(default)]
     pub source: String,
-    #[serde(default)]
-    pub jobs_retention_days: i64,
+    /// How many days the server keeps per-job rows. None on older servers (the key stays
+    /// absent so the webview's fallback applies); 0 = never pruned.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jobs_retention_days: Option<i64>,
 }
 
 /// The caller's own usage document — one fetch feeds the Home strip, the Statistics

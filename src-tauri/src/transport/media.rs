@@ -235,7 +235,8 @@ pub async fn upload_media(
         .await
         .map_err(|e| anyhow::anyhow!(e))
         .context("decoding the upload answer")?;
-    gate_media_id(&parsed.media_id).context("the server answered with a malformed media id")?;
+    gate_media_id(&parsed.media_id)
+        .map_err(|_| anyhow::anyhow!("the server answered with a malformed media id"))?;
     Ok(UploadOutcome::Ok {
         media_id: parsed.media_id,
         expires_at: parsed.expires_at,

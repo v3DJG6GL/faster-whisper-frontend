@@ -565,25 +565,20 @@ pub async fn package_media(
         .await;
         let mut out = match packaged {
             Ok(out) => out,
-            // The package POST or the streamed write failed after this call uploaded the
-            // file: a failed outcome that still names the server copy (same message as the
-            // Err arm below would give), so the webview's next Save skips the upload.
-            Err(e) if uploaded => {
-                let _ = std::fs::remove_file(media::tmp_sibling(&dest));
-                let mut out = PackageOutcome::err("error", format!("{e:#}"));
-                out.media_id = Some(mid);
-                out.expires_at = uploaded_expiry;
-                return Ok(out);
-            }
+            // package_to_path already removed its partial file; after an upload the
+            // failure becomes an outcome so the naming block below can name the copy.
+            Err(e) if uploaded => PackageOutcome::err("error", format!("{e:#}")),
             Err(e) => return Err(e),
         };
         if out.kind == "ok" && out.expires_at.is_none() {
             out.expires_at = uploaded_expiry;
         }
         // Busy (the user's export slot is taken elsewhere), or any other failed package
-        // after this call uploaded a local file (e.g. mp4_incompatible): name the server
-        // copy so the webview's retry (or "Save as MKV") packages it without uploading the
-        // file again. "expired" means that copy is gone, so it is never named.
+        // after this call uploaded a local file (e.g. mp4_incompatible, or the package
+        // POST / streamed write failing — same message the plain Err arm would give):
+        // name the server copy so the webview's retry (or "Save as MKV") packages it
+        // without uploading the file again. "expired" means that copy is gone, so it is
+        // never named.
         if out.kind == "busy"
             || (uploaded && out.media_id.is_none() && out.kind != "ok" && out.kind != "expired")
         {

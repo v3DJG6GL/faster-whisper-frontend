@@ -268,9 +268,10 @@ pub async fn move_audio_base(
             let _ = std::fs::write(&new_stamp, b"");
         }
         let _ = std::fs::remove_dir(&from); // only if empty
-                                            // Always re-point what actually moved: records store ABSOLUTE paths, and a
-                                            // partial move leaves the preference on the old base, which the startup heal
-                                            // then searches — so an unrewritten record would stay broken for good.
+
+        // Always re-point what actually moved: records store ABSOLUTE paths, and a
+        // partial move leaves the preference on the old base, which the startup heal
+        // then searches — so an unrewritten record would stay broken for good.
         rewrite_media_paths(&app, &map);
         tracing::info!(
             "[audio] base moved: {} file(s) → {}",

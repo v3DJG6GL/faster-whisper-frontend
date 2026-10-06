@@ -1887,7 +1887,8 @@ async fn url_media_download(
         "decoding the media download answer",
     )
     .await?;
-    gate_media_id(&parsed.media_id).context("the server answered with a malformed media id")?;
+    gate_media_id(&parsed.media_id)
+        .map_err(|_| anyhow::anyhow!("the server answered with a malformed media id"))?;
     Ok(UrlMediaDownload {
         container: parsed.container.map(|s| super::bounded_server_text(&s, 8)),
         ext: parsed.ext.map(|s| super::bounded_server_text(&s, 8)),

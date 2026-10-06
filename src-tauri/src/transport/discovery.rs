@@ -465,6 +465,7 @@ pub async fn get_usage_stats(
         d.truncate(MAX_DOM_HOURS);
     }
     u.range.source = super::bounded_server_text(&u.range.source, 16);
+    u.range.jobs_retention_days = nonneg_retention(u.range.jobs_retention_days);
     u.stages.truncate(MAX_USAGE_LIST);
     for st in &mut u.stages {
         st.stage = super::bounded_server_text(&st.stage, 32);
@@ -482,6 +483,12 @@ pub async fn get_usage_stats(
         a.app_id = super::bounded_server_text(&a.app_id, 64);
     }
     Some(u)
+}
+
+/// The server prunes job rows only when the retention is > 0, so a negative value means
+/// "never pruned" — the same as 0, which is how the webview reads it.
+fn nonneg_retention(d: Option<i64>) -> Option<i64> {
+    d.map(|d| d.max(0))
 }
 
 /// The request-default-settings resource, and its name before the rename (still served,
@@ -628,8 +635,25 @@ pub async fn get_decode_defaults(
 
 #[cfg(test)]
 mod tests {
-    use super::{bound_decode_defaults, decode_defaults_url};
-    use crate::transport::DecodeDefaults;
+    use super::{bound_decode_defaults, decode_defaults_url, nonneg_retention};
+    use crate::transport::{DecodeDefaults, UsageStats};
+
+    #[test]
+    fn usage_jobs_retention_stays_absent_on_older_servers_and_never_goes_negative() {
+        let old: UsageStats = serde_json::from_str(r#"{"range":{"source":"rollups"}}"#).unwrap();
+        assert_eq!(old.range.jobs_retention_days, None);
+        let out = serde_json::to_value(&old).unwrap();
+        assert!(out["range"].get("jobs_retention_days").is_none());
+
+        let new: UsageStats =
+            serde_json::from_str(r#"{"range":{"jobs_retention_days":30}}"#).unwrap();
+        let out = serde_json::to_value(&new).unwrap();
+        assert_eq!(out["range"]["jobs_retention_days"], 30);
+
+        assert_eq!(nonneg_retention(Some(-5)), Some(0));
+        assert_eq!(nonneg_retention(Some(30)), Some(30));
+        assert_eq!(nonneg_retention(None), None);
+    }
 
     #[test]
     fn decode_defaults_url_encodes_the_model_and_keeps_only_a_slug_profile() {
