@@ -57,6 +57,15 @@ export interface QueueItem {
   mediaPath?: string;
 }
 
+/** What a queue item runs as: a link (downloaded and transcribed server-side, even when it ends
+ *  in .srt/.txt), a text source (translated alone), else a media file. URL-first, so the pump,
+ *  the run panel and the queue row all classify an item the same way. */
+export function itemSourceKind(it: { kind?: QueueItem["kind"]; path: string }): "url" | "text" | "file" {
+  if (it.kind === "url" || isSourceUrl(it.path)) return "url";
+  if (it.kind === "text" || isTextSourcePath(it.path)) return "text";
+  return "file";
+}
+
 /** The pipeline stages of a run, in server order (the progress rail). */
 export type RailStage = "downloading" | "separating" | "transcribing" | "diarizing" | "translating";
 
@@ -90,9 +99,16 @@ export interface StageMeta {
   unitStarts?: Record<string, number>;
   /** Download stage only (keep_video runs): the secondary video fetch's
    *  last reported state, and when it first reported downloading (its own
-   *  rate clock, like dlStart). */
+   *  rate clock, like dlStart), and when it first reported a terminal state
+   *  (done/failed/cancelled) — freezes its clock and average speed. */
   video?: VideoProgress;
   videoDlStart?: number;
+  videoDlEnd?: number;
+}
+
+/** A secondary video fetch state that ends its clock. */
+function videoTerminal(st: VideoProgress["state"] | undefined): boolean {
+  return st === "done" || st === "failed" || st === "cancelled";
 }
 
 /** Canonical pipeline order — used to close seeded clocks of stages the server
@@ -103,9 +119,15 @@ const RAIL_ORDER: RailStage[] = ["downloading", "separating", "transcribing", "d
 /** A stage switch (diarization, music separation) as the run sends it: the screen's own pick
  *  (true/false), else the server's default for this caller (request-default-settings
  *  `diarize` / `separate_bgm`), else undefined — an older server that names no default gets no
- *  field, so its own default still applies. The rail, the preload plan and the request all read
- *  this one value; `=== true` is "the stage runs". */
-export function stagePick(own: boolean | undefined, serverDefault: { value: unknown } | null | undefined): boolean | undefined {
+ *  field, so its own default still applies. A LOCKED server default wins over the screen's pick —
+ *  the server binds it regardless of the request, so the rail must show what will actually run.
+ *  The rail, the preload plan and the request all read this one value; `=== true` is "the stage
+ *  runs". */
+export function stagePick(
+  own: boolean | undefined,
+  serverDefault: { value: unknown; locked?: boolean } | null | undefined,
+): boolean | undefined {
+  if (serverDefault?.locked === true && typeof serverDefault.value === "boolean") return serverDefault.value;
   if (typeof own === "boolean") return own;
   const v = serverDefault?.value;
   return typeof v === "boolean" ? v : undefined;
@@ -529,6 +551,9 @@ export interface TranscribeRunState {
     /** The link card's spoken language (a code, "auto" or MULTI_LANGUAGE) when it
      *  differs from the screen's — named by the site, detected, or picked. */
     spokenLanguage?: string;
+    /** Whether the server's own default (as the card saw it) is multilingual — lets an
+     *  Auto-detect pick send multilingual=false instead of inheriting it. */
+    spokenMultiInherited?: boolean;
     /** Audio the spoken-language check already downloaded; the run reuses it. */
     prefetchMediaId?: string;
     /** The link card's site-subtitle plan (D86), frozen at Add link. */
@@ -918,6 +943,9 @@ function awaitRunUrlVideo(
                 ...s.stageMeta.downloading,
                 video: p.video ?? undefined,
                 videoDlStart: s.stageMeta.downloading?.videoDlStart ?? Date.now(),
+                videoDlEnd: videoTerminal(p.video?.state)
+                  ? (s.stageMeta.downloading?.videoDlEnd ?? Date.now())
+                  : undefined,
               },
             },
           }));
@@ -954,6 +982,7 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
         video: { ...(st2.stageMeta.downloading?.video as VideoProgress), state: "queued",
                  progress: null, downloadedBytes: null, error: null },
         videoDlStart: Date.now(),
+        videoDlEnd: undefined,
       },
     },
   }));
@@ -1282,6 +1311,9 @@ export function foldProgress(p: BatchProgress) {
           videoDlStart:
             stageMeta.downloading?.videoDlStart ??
             (p.video.state === "downloading" ? now : undefined),
+          videoDlEnd: videoTerminal(p.video.state)
+            ? (stageMeta.downloading?.videoDlEnd ?? now)
+            : undefined,
         },
       };
     }
@@ -1635,7 +1667,7 @@ async function runLink(
   const req = {
     ...common,
     ...(spoken
-      ? { language: spokenLanguage(spoken), decodeOverrides: applyMultilingual(common.decodeOverrides ?? undefined, spoken, undefined) }
+      ? { language: spokenLanguage(spoken), decodeOverrides: applyMultilingual(common.decodeOverrides ?? undefined, spoken, meta?.spokenMultiInherited) }
       : {}),
   };
   if (!site?.fetch.length) return { res: await transcribeUrl({ ...req, sourceUrl: url, options }) };
@@ -1694,8 +1726,9 @@ async function pump(
     while (epoch === get().epoch) {
       const next = get().queue.find((it) => it.status === "queued");
       if (!next) break;
-      const isUrl = next.kind === "url" || isSourceUrl(next.path);
-      const isText = !isUrl && (next.kind === "text" || isTextSourcePath(next.path));
+      const sourceKind = itemSourceKind(next);
+      const isUrl = sourceKind === "url";
+      const isText = sourceKind === "text";
       // A URL item can only run against a full backend (the download happens
       // server-side). A stale queue on a standard server fails locally with
       // a clear message instead of a confusing server 4xx.

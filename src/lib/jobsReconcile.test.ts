@@ -39,6 +39,7 @@ type LedgerRow = import("./jobsLedger").LedgerRow;
 const T0 = 1_800_000_000_000;
 const JOB_A = "a".repeat(32);
 const JOB_B = "b".repeat(32);
+const JOB_C = "c".repeat(32);
 
 function row(jobId: string, startedAt: number, kind: "file" | "url" = "file"): LedgerRow {
   return {
@@ -316,6 +317,61 @@ describe("reconcileJobs", () => {
     expect(ledgerRows()).toEqual([]);
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob).not.toHaveBeenCalled();
+  });
+
+  for (const outcome of ["error", "ok"] as const) {
+    it(`cancelling while a re-attached run's result is in flight releases the rail (${outcome})`, async () => {
+      await seed(row(JOB_A, T0));
+      getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+      await reconcileJobs();
+      await vi.advanceTimersByTimeAsync(0);
+      getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+      let resolve!: (r: JobOutcome<BatchResult>) => void;
+      getJobResult.mockImplementation(() => new Promise((res) => { resolve = res; }));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getJobResult).toHaveBeenCalledTimes(1);
+      getJob.mockClear();
+      cancelRun();
+      resolve(outcome === "ok" ? ok(RESULT) : { kind: "error", message: "Could not connect" });
+      await vi.advanceTimersByTimeAsync(0);
+      const s = useTranscribeRun.getState();
+      expect(s.running).toBe(false);
+      expect(s.queue[0].status).toBe("cancelled");
+      expect(ledgerRows()).toEqual([]);
+      expect(records()).toEqual([]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(getJob).not.toHaveBeenCalled();
+    });
+  }
+
+  it("a retry pass never starts a second watcher for a row already being watched", async () => {
+    await seed(row(JOB_A, T0), row(JOB_B, T0 + 1));
+    getJob.mockImplementation(async ({ jobId }) =>
+      jobId === JOB_A ? ok({ jobId, state: "running" }) : { kind: "error", message: "Could not connect" });
+    await reconcileJobs();
+    expect(useTranscribeRun.getState().running).toBe(true);
+    // The 30 s retry pass (for B) re-reads the ledger, where A still sits.
+    await vi.advanceTimersByTimeAsync(30_000);
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getJob.mock.calls.filter((c) => c[0].jobId === JOB_A)).toHaveLength(1);
+    // After a cancel no orphaned watcher writes a "Cancelled" record for A.
+    cancelRun();
+    getJob.mockImplementation(async ({ jobId }) =>
+      jobId === JOB_A ? ok({ jobId, state: "cancelled" }) : { kind: "error", message: "Could not connect" });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(records().filter((r) => r.id === JOB_A)).toEqual([]);
+  });
+
+  it("a retry pass skips rows the pump persisted during this launch", async () => {
+    loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [row(JOB_B, T0)] }));
+    getJob.mockResolvedValue({ kind: "error", message: "Could not connect" });
+    await initJobReconcile();
+    await persistRow(row(JOB_C, Date.now() + 1));
+    await vi.advanceTimersByTimeAsync(30_000);
+    const polled = getJob.mock.calls.map((c) => c[0].jobId);
+    expect(polled.filter((id) => id === JOB_B).length).toBeGreaterThanOrEqual(2);
+    expect(polled).not.toContain(JOB_C);
   });
 
   it("initJobReconcile loads the persisted ledger after configReady, once", async () => {

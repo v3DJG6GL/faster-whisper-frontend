@@ -11,7 +11,8 @@
 //   done     → the result is fetched and ingested exactly like the POST path.
 //   failed / cancelled / unknown → a failed record with the reason.
 //   server unreachable → try again every 30 s for ten minutes, then leave the rows
-//              for the next launch (nothing is lost — the server holds them 72 h).
+//              for the next launch (nothing is lost — the server holds them for its
+//              jobs TTL, caps.jobs.ttl_s, 72 h by default).
 //
 // Every ingest is idempotent: the record id IS the job id, so a second pass upserts
 // the same record; the row is forgotten only after the record was written.
@@ -41,6 +42,12 @@ let started = false;
 let inFlight = false;
 let retries = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
+/** Job ids a watcher is polling right now: a retry pass re-reads the live ledger,
+ *  where a watched row stays until it settles, and must not start a second watcher. */
+const watching = new Set<string>();
+/** When this launch's reconcile started. Rows the pump persists from then on are its
+ *  own live requests, never something to reconcile. */
+let launchedAt = Infinity;
 
 /** Server-clocked wall time when both stamps are there, else our own. */
 function tookMsOf(status: JobStatus, row: LedgerRow): number {
@@ -56,9 +63,14 @@ function failedText(status: JobStatus): string {
 }
 
 /** Fetch + ingest a finished job. Returns false when the fetch must be retried
- *  (transport error, or the result is not published yet). */
-async function ingestDone(row: LedgerRow, status: JobStatus, attached: boolean): Promise<boolean> {
+ *  (transport error, or the result is not published yet). Attached: an epoch move
+ *  during the fetch means the user cancelled (or started something else) and the
+ *  stop hook already released the rail and forgot the row — drop the result. */
+async function ingestDone(
+  row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number,
+): Promise<boolean> {
   const r = await getJobResult({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
+  if (attached && useTranscribeRun.getState().epoch !== epoch) return true;
   switch (r.kind) {
     case "ok":
       ingestJobResult(row, await withSiteTracks(r.value, row.path, row.urlMeta, row.ctx), tookMsOf(status, row), { attached });
@@ -90,7 +102,9 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
   const stop = () => {
     stopped = true;
     clearTimeout(timer);
+    watching.delete(row.jobId);
   };
+  watching.add(row.jobId);
   // The rail's stop hook (abandonActiveRun): the user moved on, so the row goes too.
   const abandon = () => {
     stop();
@@ -138,8 +152,9 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
         return;
       }
       if (status.state === "done") {
-        if (opts.attached) setReattachStop(null);
-        if (await ingestDone(row, status, opts.attached)) {
+        // The stop hook stays installed through the fetch, so a cancel meanwhile still
+        // releases the rail; settleReattached clears it once the run is ingested/failed.
+        if (await ingestDone(row, status, opts.attached, opts.epoch)) {
           stop();
           return;
         }
@@ -147,13 +162,10 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
         // that keeps failing slows down to MAX_BACKOFF_MS instead of 1 s for 72 h).
         failures += 1;
         delay = Math.min(POLL_MS * 2 ** failures, MAX_BACKOFF_MS);
-        if (!opts.attached) return;
-        if (useTranscribeRun.getState().epoch !== opts.epoch) {
+        if (opts.attached && useTranscribeRun.getState().epoch !== opts.epoch) {
           // The rail moved on during the fetch; the hook slot is someone else's now.
           stop();
-          return;
         }
-        setReattachStop(abandon);
         return;
       }
       stop();
@@ -179,6 +191,8 @@ export async function reconcileJobs(): Promise<void> {
     const rows = [...ledgerRows()].sort((a, b) => a.startedAt - b.startedAt);
     const running: LedgerRow[] = [];
     for (const row of rows) {
+      // Already polled by a watcher, or a request this session's pump posted itself.
+      if (watching.has(row.jobId) || row.startedAt >= launchedAt) continue;
       // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
       // server still holds the run for its TTL, but the app has no way to reach it.
       if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
@@ -242,6 +256,7 @@ export async function reconcileJobs(): Promise<void> {
 export async function initJobReconcile(): Promise<void> {
   if (!isTauri || started) return;
   started = true;
+  launchedAt = Date.now();
   await configReady;
   await initLedger();
   await reconcileJobs();
@@ -254,4 +269,6 @@ export function _resetReconcileForTests(): void {
   retries = 0;
   clearTimeout(retryTimer);
   retryTimer = undefined;
+  watching.clear();
+  launchedAt = Infinity;
 }

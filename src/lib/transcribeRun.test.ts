@@ -46,6 +46,10 @@ describe("stagePick", () => {
     expect(stagePick(false, { value: true })).toBe(false);
     expect(stagePick(true, { value: false })).toBe(true);
   });
+  it("a locked server default wins over the screen's pick", () => {
+    expect(stagePick(false, { value: true, locked: true })).toBe(true);
+    expect(stagePick(true, { value: false, locked: true })).toBe(false);
+  });
   it("else the server's default for this caller", () => {
     expect(stagePick(undefined, { value: true })).toBe(true);
     expect(stagePick(undefined, { value: false })).toBe(false);
@@ -856,6 +860,16 @@ describe("keep_video: the secondary download folds into the Download row's meta"
       expect(meta?.videoDlStart).toBe(12_000);
       // The download stage's own clock is untouched by the video fetch.
       expect(useTranscribeRun.getState().stageTimes.downloading).toBeUndefined();
+      expect(meta?.videoDlEnd).toBeUndefined();
+      // A finished video freezes its clock at the first terminal poll; later polls keep it.
+      vi.setSystemTime(20_000);
+      foldProgress({ stage: "transcribing", progress: 0.5,
+        video: { state: "done", progress: 1, downloadedBytes: 100, totalBytes: 100 } });
+      expect(useTranscribeRun.getState().stageMeta.downloading?.videoDlEnd).toBe(20_000);
+      vi.setSystemTime(25_000);
+      foldProgress({ stage: "transcribing", progress: 0.7,
+        video: { state: "done", progress: 1, downloadedBytes: 100, totalBytes: 100 } });
+      expect(useTranscribeRun.getState().stageMeta.downloading?.videoDlEnd).toBe(20_000);
     } finally {
       vi.useRealTimers();
       useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });

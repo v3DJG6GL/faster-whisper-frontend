@@ -294,6 +294,8 @@ export function TranscriptViewer({
   const speakers = useMemo(() => speakerOrder(result), [result]);
   const hasSegments = !!result.segments?.length;
   const hasSpeakers = speakers.length > 0;
+  // Per-transcript constant: computed once here, not per row in the (up to 5000-row) list.
+  const origLang = useMemo(() => safeDisplayText(result.language ?? "??", 16), [result.language]);
   // Overlay slot: the record id when known, else the path (see overlayKey).
   const okey = overlayKey ?? path;
   const fileRenames = useMemo(() => renames[okey] ?? {}, [renames, okey]);
@@ -1304,6 +1306,24 @@ export function TranscriptViewer({
           t.isContentEditable)
       )
         return;
+      // Esc and F come before the control guard below: clicking the Focus button leaves
+      // it focused, and Esc (as its title says) must still leave focus mode. Only a popup
+      // owner (an open list/menu) keeps them — there Esc closes the popup.
+      const inPopup = t?.closest(
+        '[role="combobox"], [role="listbox"], [role="option"], [role="menu"], [role="menuitem"], [aria-expanded="true"]',
+      );
+      if (e.key === "Escape" && !inPopup) {
+        if (focus) {
+          e.preventDefault();
+          setFocus(false);
+        }
+        return;
+      }
+      if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey && !inPopup) {
+        e.preventDefault();
+        toggleFocus();
+        return;
+      }
       // A focused control owns Space and the arrows: every switch/segment/chip in this
       // app is a <button> that activates on Space, and preventDefault here cancelled that
       // — Tab to "Speaker diarization", press Space, and the audio play/paused instead.
@@ -1313,18 +1333,6 @@ export function TranscriptViewer({
         )
       )
         return;
-      if (e.key === "Escape") {
-        if (focus) {
-          e.preventDefault();
-          setFocus(false);
-        }
-        return;
-      }
-      if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        e.preventDefault();
-        toggleFocus();
-        return;
-      }
       if (!audioSrc || audioBroken) return;
       if (e.key === " ") {
         e.preventDefault();
@@ -1388,7 +1396,9 @@ export function TranscriptViewer({
   const onCommitEdit = useCallback(
     (i: number, text: string) => {
       const t = stripControlChars(text).trim();
-      const orig = (result.segments?.[i]?.text ?? "").trim();
+      // Same cleaning as the typed text, or a line with bidi marks (imported RTL
+      // subtitles) never compares equal and a bare focus/blur stores a phantom edit.
+      const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
       setSegmentEdit(okey, i, t && t !== orig ? t : null);
     },
     [okey, result],
@@ -1451,7 +1461,7 @@ export function TranscriptViewer({
         {result.duration
           ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
           : ""}
-        {hasSpeakers ? ` · ${speakers.length} speakers` : ""}
+        {hasSpeakers ? ` · ${plural(speakers.length, "speaker")}` : ""}
       </div>
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Segmented
@@ -2021,7 +2031,7 @@ export function TranscriptViewer({
                 translationsKept={result.segments?.[i]?.translationsKept}
                 visLangsKey={visLangsKey}
                 origVisible={origVisible}
-                origLang={safeDisplayText((result.language ?? "??"), 16)}
+                origLang={origLang}
                 stale={!!fileStale[i]}
                 isFrontier={i === (trRun?.frontierIdx ?? -1)}
                 colorOf={colorOf}

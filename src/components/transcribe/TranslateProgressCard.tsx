@@ -33,13 +33,18 @@ export function TranslateProgressCard({
 }) {
   // Self-ticking clock: polls drive most re-renders, but between chunks (or
   // against a backend without the progress entry) nothing else updates.
+  const done = run.phase === "done";
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    // Done: stamp the end once and stop — the receipt's "took" must not keep counting.
+    if (done) {
+      setNow(Date.now());
+      return;
+    }
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
-  }, []);
+  }, [done]);
   const reconnecting = run.phase === "reconnecting";
-  const done = run.phase === "done";
   const lane = run.modelPhaseSeen ? MODEL_LANE : 0;
   const amberW = lane * run.modelPct;
   const tealW = (1 - lane) * (done ? 1 : run.pct);

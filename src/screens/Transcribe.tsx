@@ -37,7 +37,7 @@ import {
   activeRailIndex, addFiles, axisLayout, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stagePick, startRun, useTranscribeRun,
-  type RunContext, type StepState, settledPanelItem, runTotals } from "@/lib/transcribeRun";
+  type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
 import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
@@ -272,6 +272,7 @@ export default function Transcribe() {
   const [urlPreviewData, setUrlPreviewData] = useState<UrlPreview | null>(null);
   // The server refuses a link longer than its URL_MAX_DURATION_S: say so before Add link.
   const linkTooLongWhy = linkTooLong(urlPreviewData);
+  const draftUrl = normalizeMediaUrl(urlDraft);
   const [urlPreviewErr, setUrlPreviewErr] = useState<string | null>(null);
   const [urlPreviewLoading, setUrlPreviewLoading] = useState(false);
   // The link card's per-item video choice, seeded from Settings on every new
@@ -460,7 +461,7 @@ export default function Transcribe() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per preview
   }, [urlPreviewData]);
   const linkLang = useLinkLanguage({
-    url: normalizeMediaUrl(urlDraft),
+    url: draftUrl,
     preview: urlPreviewData,
     serverUrl,
     backendId: backend?.id,
@@ -473,7 +474,7 @@ export default function Transcribe() {
     screen: spoken.value,
   });
   /** The previewed link's site ("YouTube"): the source words of its subtitles and the spoken pill. */
-  const previewSite = urlPreviewData ? siteDisplayName(normalizeMediaUrl(urlDraft) ?? "", urlPreviewData.extractor) : "";
+  const previewSite = urlPreviewData ? siteDisplayName(draftUrl ?? "", urlPreviewData.extractor) : "";
   const siteInput = siteState && caps?.url_subtitles_enabled === true && urlPreviewData?.subtitle_tracks?.length
     ? {
         tracks: urlPreviewData.subtitle_tracks,
@@ -505,6 +506,8 @@ export default function Transcribe() {
     : null;
 
   const busy = queue.some((it) => it.status === "running" || it.status === "queued");
+  /** One gate for the Add button, Enter and addLink itself. */
+  const canAddLink = !!draftUrl && !busy && !urlPreviewLoading && !linkTooLongWhy;
   const runningOverall = useTranscribeRun(runBadgeFraction);
   const lastRunPath = useTranscribeRun((st) => st.lastRunPath);
 
@@ -570,6 +573,7 @@ export default function Transcribe() {
     setUrlPreviewErr(null);
     setLinkKeepVideo(null);
     setLinkVideoHeight(undefined);
+    setLinkVideoFormat(undefined);
     const seq = ++urlPreviewSeq.current;
     if (!url || !urlAvailable || !backend) {
       setUrlPreviewLoading(false);
@@ -598,8 +602,8 @@ export default function Transcribe() {
   }, [urlDraft, urlAvailable, backend?.id]);
 
   const addLink = () => {
-    const url = normalizeMediaUrl(urlDraft);
-    if (!url || busy || urlPreviewLoading) return;
+    const url = draftUrl;
+    if (!url || !canAddLink) return;
     if (urlPreviewData) {
       setUrlMeta(url, {
         title: urlPreviewData.title ?? undefined,
@@ -611,13 +615,15 @@ export default function Transcribe() {
         videoLadder: urlPreviewData.video_ladder ?? undefined,
         // The preview's own ceiling, else the server's from /v1/me (now always sent).
         mediaMaxBytes: urlPreviewData.media_max_bytes ?? caps?.media_max_bytes ?? undefined,
-        // Only an explicit pick rides along; absent = the Settings default
-        // at run time (so a later Settings change still applies).
-        ...(linkKeepVideo !== null ? { keepVideo: linkKeepVideo } : {}),
-        ...(linkVideoHeight !== undefined ? { videoMaxHeight: linkVideoHeight } : {}),
-        ...(linkVideoFormat !== undefined ? { videoFormat: linkVideoFormat } : {}),
-        // Always written (undefined clears a re-added link's old values).
+        // Always written (undefined clears a re-added link's old values). For the video
+        // picks undefined = the Settings default at run time (so a later Settings change
+        // still applies); only an explicit pick on this card rides along.
+        keepVideo: linkKeepVideo ?? undefined,
+        videoMaxHeight: linkVideoHeight,
+        videoFormat: linkVideoFormat,
         spokenLanguage: linkLang.sp.value !== spoken.value ? linkLang.sp.value : undefined,
+        // Gated on multiOffered: a server that refuses or locks the key never gets it sent.
+        spokenMultiInherited: multiOffered && inheritedBaseline.multilingual === true,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
         siteSubs: siteView?.run ? frozenSiteRun(siteView.run, siteInput?.tracks ?? [], translationAvailable) : undefined,
       });
@@ -1117,7 +1123,7 @@ export default function Transcribe() {
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && normalizeMediaUrl(urlDraft) && !busy && !urlPreviewLoading && !linkTooLongWhy) addLink();
+                if (e.key === "Enter" && canAddLink) addLink();
               }}
               disabled={busy}
               spellCheck={false}
@@ -1128,7 +1134,7 @@ export default function Transcribe() {
             <Button
               variant="accent"
               className="shrink-0 whitespace-nowrap"
-              disabled={!normalizeMediaUrl(urlDraft) || busy || urlPreviewLoading || !!linkTooLongWhy}
+              disabled={!canAddLink}
               onClick={addLink}
               title={
                 urlPreviewLoading
@@ -1147,7 +1153,7 @@ export default function Transcribe() {
               )}
             </Button>
           </div>
-          {urlDraft.trim() !== "" && !normalizeMediaUrl(urlDraft) && (
+          {urlDraft.trim() !== "" && !draftUrl && (
             <div className="mt-2 text-[12px] text-warn">
               Include http:// or https:// at the start of the link.
             </div>
@@ -1178,7 +1184,7 @@ export default function Transcribe() {
               <div className="min-w-0 flex-1">
                 <div className="line-clamp-2 text-[13.5px] font-medium text-text">
                   {safeDisplayText(urlPreviewData.title, 120) ||
-                    displayLabel(normalizeMediaUrl(urlDraft) ?? urlDraft)}
+                    displayLabel(draftUrl ?? urlDraft)}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3.5 gap-y-1 text-[12px] text-dim">
                   {urlPreviewData.uploader && (
@@ -1352,7 +1358,7 @@ export default function Transcribe() {
                       }
                     />
                     <StageSwitch
-                      value={separateBgm}
+                      value={bgmAvailable ? separateBgm : false}
                       serverDefault={decodeDefaults?.separate_bgm}
                       disabled={!bgmAvailable}
                       ariaLabel="Music source separation"
@@ -1557,7 +1563,7 @@ export default function Transcribe() {
                       disabledReason="Turn on speaker diarization to change its settings"
                     />
                     <StageSwitch
-                      value={diarize}
+                      value={diarAvailable ? diarize : false}
                       serverDefault={decodeDefaults?.diarize}
                       disabled={!diarAvailable}
                       ariaLabel="Speaker diarization"
@@ -1715,7 +1721,7 @@ export default function Transcribe() {
               <span className="text-faint">· only for this run — empty inherits the backend</span>
             </div>
             <OverrideProfilePicker
-              serverUrl={backend ? effectiveServerUrl(backend, settings) : ""}
+              serverUrl={serverUrl}
               backendId={backend?.id ?? ""}
               serverKind={serverKind}
               canRequest={caps?.can_request_override_profile}
@@ -1771,14 +1777,11 @@ export default function Transcribe() {
         const panelItem = runningItem ?? (complete ? lastSettled : null);
         // URL items prepend a Download stage to the rail (per-item, so file
         // items in the same run never show it).
-        const forUrl =
-          panelItem?.kind === "url" ||
-          (panelItem ? isSourceUrl(panelItem.path) : false);
+        const panelKind = panelItem ? itemSourceKind(panelItem) : null;
+        const forUrl = panelKind === "url";
         // Text sources run the translation stage alone — per item, so audio
         // files in the same run keep the full pipeline rail.
-        const forText =
-          panelItem?.kind === "text" ||
-          (panelItem && !forUrl ? isTextSourcePath(panelItem.path) : false);
+        const forText = panelKind === "text";
         const stages = railStages(lastOptions, forUrl, forText);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
@@ -2540,6 +2543,7 @@ export default function Transcribe() {
                     <VideoBranchRow
                       v={meta.video}
                       dlStart={meta.videoDlStart}
+                      dlEnd={meta.videoDlEnd}
                       now={now}
                       onRetry={
                         panelItem && !runningItem
@@ -2667,7 +2671,7 @@ export default function Transcribe() {
                     )}
                   >
                     {displayLabel(it.path, it.title ?? urlMeta[it.path]?.title)}
-                    {(it.kind === "url" || isSourceUrl(it.path)) && (
+                    {itemSourceKind(it) === "url" && (
                       <span className="ml-2 font-mono text-[11px] text-faint">
                         {urlHost(it.path)}
                       </span>
@@ -2675,11 +2679,7 @@ export default function Transcribe() {
                   </span>
                   {it.status === "done" && it.result && (
                     <span className="font-mono text-[11px] text-faint">
-                      {it.result.duration
-                        ? it.result.duration < 60
-                          ? `${it.result.duration.toFixed(0)}s`
-                          : fmtDurationExact(it.result.duration)
-                        : ""}
+                      {it.result.duration ? fmtDurationExact(it.result.duration) : ""}
                       {it.result.language ? ` · ${it.result.language}` : ""}
                       {(() => {
                         const spk = speakersOf(it.result).length;
@@ -2695,7 +2695,12 @@ export default function Transcribe() {
                           polled) shows the stage word: the row's only liveness signal. */}
                       {typeof runningOverall === "number" && runningOverall > 0
                         ? `${Math.round(runningOverall * 100)}%`
-                        : stageLabel(progress, it.kind === "text" || isTextSourcePath(it.path)).toLowerCase()}
+                        : stageLabel(
+                            progress,
+                            // A link ending in .srt/.txt is still downloaded and transcribed:
+                            // the same url-first test the pump and the run panel apply.
+                            itemSourceKind(it) === "text",
+                          ).toLowerCase()}
                     </span>
                   )}
                   {it.status === "cancelled" && (

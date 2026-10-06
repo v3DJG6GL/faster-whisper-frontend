@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import { LangTag } from "@/components/ui";
 import { fmtTimestamp } from "@/lib/format";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
@@ -56,6 +56,8 @@ export const SegmentRow = memo(function SegmentRow({
   onReassign: (i: number, label: string) => void;
   onCommitEdit: (i: number, text: string) => void;
 }) {
+  // Bumped on every edit commit to remount the editable span (see its onBlur).
+  const [editRev, setEditRev] = useState(0);
   // Word spans only on the ACTIVE segment — keeps the DOM light. Edited
   // segments stay karaoke too: their words are re-aligned to the corrected
   // text (wordAlign), so the timings still match what's on screen.
@@ -153,7 +155,14 @@ export const SegmentRow = memo(function SegmentRow({
           suppressContentEditableWarning
           role="textbox"
           aria-label={`Correct segment ${i + 1}`}
-          onBlur={(e) => onCommitEdit(i, e.currentTarget.textContent ?? "")}
+          key={editRev}
+          onBlur={(e) => {
+            onCommitEdit(i, e.currentTarget.textContent ?? "");
+            // Remount from props: React never rewrites text the user typed into a
+            // contentEditable, so an emptied line (committed as "no edit") would
+            // stay blank on screen while Copy and the exports keep its text.
+            setEditRev((r) => r + 1);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();

@@ -19,14 +19,21 @@ export function StageSwitch({
   ariaLabel: string;
 }) {
   const def = typeof serverDefault?.value === "boolean" ? serverDefault.value : undefined;
+  // A server-locked stage runs as the server says whatever the request asks: show its
+  // value, not the user's pick (which stays stored for a server without the lock).
+  const locked = serverDefault?.locked === true;
   return (
     <Segmented
       ariaLabel={ariaLabel}
-      disabled={disabled}
-      value={value === true ? "on" : value === false ? "off" : "inherit"}
+      disabled={disabled || locked}
+      value={locked ? "inherit" : value === true ? "on" : value === false ? "off" : "inherit"}
       onChange={(v) => onChange(v === "inherit" ? undefined : v === "on")}
       options={[
-        { value: "inherit", label: inheritLabel(onOff(def), "Default"), title: serverDefault ? "This server's default" : undefined },
+        {
+          value: "inherit",
+          label: inheritLabel(onOff(def), locked ? "Set by server" : "Default"),
+          title: locked ? "Fixed by the server's admin" : serverDefault ? "This server's default" : undefined,
+        },
         { value: "on", label: "On" },
         { value: "off", label: "Off" },
       ]}

@@ -12,16 +12,20 @@ import { aboutLeft, fmtElapsed, STAGE_COLORS } from "@/components/transcribe/rai
 export function VideoBranchRow({
   v,
   dlStart,
+  dlEnd,
   now,
   onRetry,
 }: {
   v: VideoProgress;
   dlStart?: number;
+  /** When the video reached done/failed/cancelled — freezes the clock and the avg speed. */
+  dlEnd?: number;
   now: number;
   onRetry?: () => void;
 }) {
   const terminal = v.state === "done" || v.state === "failed" || v.state === "cancelled";
-  const elapsed = dlStart ? Math.max(0, now - dlStart) : 0;
+  // A finished copy's clock stops at its end, not at the still-running transcription's now.
+  const elapsed = dlStart ? Math.max(0, (terminal && dlEnd ? dlEnd : now) - dlStart) : 0;
   const total = v.totalBytes ?? null;
   const got = v.downloadedBytes ?? 0;
   const over = v.state === "downloading" && !!total && got >= total;
