@@ -135,7 +135,8 @@ describe("runDictationTranslate", () => {
     const d = deps((a) => {
       seen.push(a.texts);
       expect(a.progressId).toBe(PID);
-      expect(a.contextSegments).toBe(2);
+      // No profile depth = inherit: the server's own default picks the context lines.
+      expect(a.contextSegments).toBeNull();
       return Promise.resolve(answer(a.texts));
     });
     const r = await runDictationTranslate(
@@ -168,8 +169,9 @@ describe("runDictationTranslate", () => {
     };
     expect(await run(0)).toEqual({ texts: ["drei"], ctx: 0 });
     expect(await run(1)).toEqual({ texts: ["zwei", "drei"], ctx: 1 });
-    // No depth = inherit: everything the stream kept, depth = what was sent.
-    expect(await run(undefined)).toEqual({ texts: ["eins", "zwei", "drei"], ctx: 2 });
+    // No depth = inherit: everything the stream kept is submitted, but no depth is sent,
+    // so the server's TRANSLATION_CONTEXT_SEGMENTS decides how much of it is context.
+    expect(await run(undefined)).toEqual({ texts: ["eins", "zwei", "drei"], ctx: null });
   });
 
   it("drops a target the server kept as the source text", async () => {

@@ -8,6 +8,7 @@ import {
   chipRoutePending,
   chipRouteTargets,
   configuredRouteTargets,
+  trayRoute,
   trayStatus,
 } from "./chipController";
 
@@ -146,5 +147,29 @@ describe("trayStatus", () => {
     expect(trayStatus("transcribing", true, "decoding")).toBe("transcribing");
     expect(trayStatus("idle", false, "loading")).toBe("idle");
     expect(trayStatus("error", false, "decoding")).toBe("error");
+  });
+});
+
+describe("trayRoute", () => {
+  type TrayState = Parameters<typeof trayRoute>[0];
+  const profile = { id: "p", backendId: "b", language: "de", translationOverrides: { translateTo: ["fr", "it"] } };
+  const state = (over: Partial<Record<string, unknown>>) =>
+    ({
+      activeProfile: "p",
+      profiles: [profile],
+      backends: [{ id: "b" }],
+      sessionTargets: null,
+      routePending: null,
+      ...over,
+    }) as unknown as TrayState;
+
+  it("shows the running session's resolved route", () => {
+    expect(trayRoute(state({ sessionTargets: [" fr ", "it"] }))).toBe("DE → FR IT");
+  });
+
+  it("advertises no route without a session, even when the Profile would translate", () => {
+    // A failed start's error linger keeps activeProfile but nulls sessionTargets: nothing
+    // runs, so the Profile's configured targets must not read as a live route.
+    expect(trayRoute(state({ sessionTargets: null }))).toBe("");
   });
 });

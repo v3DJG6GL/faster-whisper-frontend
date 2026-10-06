@@ -1901,7 +1901,10 @@ async function ensureListeners(): Promise<void> {
   // the document while it could still change (a half-spoken "neuer" before "Absatz", a trailing
   // "Komma"), and releases it with a final of its own — before a hard break, at close, on a
   // flush — that belongs to no utterance. Rust drops that frame's `flush: true` marker; the
-  // missing ordinal is what identifies it here.
+  // missing ordinal is what identifies it here. The CLOSING final (`last: true`) is a release
+  // final too, even though it carries an ordinal: the server's close() emits it after its
+  // utterance counter has already advanced, so it is stamped with the NEXT ordinal, one no
+  // `open` ever announced (stream.rs's ClipCutter cuts no clip on it for the same reason).
   type FinalFrame = { committed: string; tail: string; last: boolean; utterance: number | null };
   await reg<FinalFrame>("stream://final", (e) => {
     // An errored session's draining stop (or a stop_record detached POST) can still emit a late
@@ -1927,10 +1930,12 @@ async function ensureListeners(): Promise<void> {
     // land up to PARTIAL_MIN_MS later and regress this publish.
     resetPartialPreview();
     setDictation({ partial: committedDoc });
+    // The utterance this final belongs to — null for a release final (no ordinal, or the closing
+    // final's phantom next ordinal, see FinalFrame), so its held-back words fold into the last
+    // utterance's record instead of opening a one-word record of their own.
+    const ordinal = typeof e.payload.utterance === "number" && !e.payload.last ? e.payload.utterance : null;
     // Per-utterance History: written now, before the insert — the queued task reports back to it.
-    const uttRec = sessionPerUtterance
-      ? recordUtteranceFinal(typeof e.payload.utterance === "number" ? e.payload.utterance : null)
-      : null;
+    const uttRec = sessionPerUtterance ? recordUtteranceFinal(ordinal) : null;
     // Live mode (append-only): type the newest phrase from `tail` immediately,
     // only ever APPENDING what's new beyond what we've already typed — we never
     // backspace/revise. On the rare occasion the backend re-tidies a seam (e.g.
@@ -1984,8 +1989,10 @@ async function ensureListeners(): Promise<void> {
       // own capture id (and so its own held log receipt) instead of taking
       // whichever id happened to arrive last.
       // `null` from a server that predates the ordinal: pair nothing, rather than
-      // keying every phrase of the session onto ordinal 0.
-      const utterance = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
+      // keying every phrase of the session onto ordinal 0. `null` for a release final too: no
+      // `captured` frame ever comes for the closing final's phantom ordinal, so pairing on it
+      // would only wait out CAPTURE_ID_WAIT_MS.
+      const utterance = ordinal;
       enqueueInject(async () => {
         const t = await resolveTarget(cfg);
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
@@ -2908,7 +2915,7 @@ async function ensureListeners(): Promise<void> {
           app.setDictation({ dictationError: `${e.payload} — your text is on the clipboard to paste manually.` });
         } else {
           console.warn("[dictation] stream-error recovery finished after the error chip moved on (on clipboard: true)");
-          app.setLogsDoorway("Connection lost — your earlier text is on the clipboard to paste manually.");
+          app.setLogsDoorway("Dictation failed — your earlier text is on the clipboard to paste manually.");
         }
       })();
     }
@@ -3662,13 +3669,25 @@ export async function stopLive(): Promise<void> {
     // all null it (this catch mirrored every OTHER teardown step but missed this one). endInjection is
     // chained on `owed` above, so any snapshot still restores; the recovery below doesn't read insertCfg.
     insertCfg = null;
+    // Flash BEFORE the recovery await, as the stream://error handler does: the chip sits on
+    // "transcribing" until the flash, so a stop gesture landing in that window cancels this session
+    // (or a late `closed` that beat the void-fired epoch retire settleIdles it) and a fresh press
+    // starts another — which the late flash would then stamp "error", releasing its lease mid-capture.
+    const message = String(e);
+    flashError(message);
     if (pending) {
       void (async () => {
         const onClipboard = await recoverUnguarded(pending, "stop reject");
-        flashError(onClipboard ? `${String(e)} — your text is on the clipboard to paste manually.` : String(e));
+        if (!onClipboard) return;
+        // Upgrade the message only while this errored session still owns the chip.
+        const app = useApp.getState();
+        if (app.status === "error" && app.dictationError === message && insertCfg === null && !startingSession) {
+          app.setDictation({ dictationError: `${message} — your text is on the clipboard to paste manually.` });
+        } else {
+          console.warn("[dictation] stop-reject recovery finished after the error chip moved on (on clipboard: true)");
+          app.setLogsDoorway("Dictation failed — your earlier text is on the clipboard to paste manually.");
+        }
       })();
-    } else {
-      flashError(String(e));
     }
   }
 }

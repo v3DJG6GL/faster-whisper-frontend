@@ -148,6 +148,9 @@ export default function LangPick() {
   const toggle = useCallback((code: string) => setChosen((cur) => toggleCode(cur, code, max)), [max]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
+    // Mid-composition the IME owns Esc (cancel the half-typed text), Enter (commit it) and the
+    // arrows (candidate list); WebKit still reports their `key`, with keyCode 229.
+    if (e.isComposing || e.keyCode === 229) return;
     // A focused button (Cancel, Don't insert, a chip's remove) answers Enter/Space with its
     // own label — committing the preset here would invert it. Esc, 0 and the digits still
     // work from anywhere.

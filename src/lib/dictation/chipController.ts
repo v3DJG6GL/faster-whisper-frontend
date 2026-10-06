@@ -118,10 +118,12 @@ function validRouteTargets(sessionTargets: string[] | null, profileTargets: stri
 /** The running session's route as one string ("DE → FR IT") for the tray tooltip, or "" when
  *  this session doesn't translate. Reads the SAME resolved `sessionTargets` the chip does, so
  *  the two surfaces can't disagree — and the spoken language from the active Profile, which is
- *  the only piece the session state doesn't already carry. */
-function trayRoute(state: ReturnType<typeof useApp.getState>): string {
+ *  the only piece the session state doesn't already carry. Unlike the chip there is no Profile
+ *  fallback: the tray has no standby preview, and a `null` `sessionTargets` under a non-idle
+ *  status only happens in a failed start's error linger — no session, so no route to show. */
+export function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const profile = state.activeProfile ? state.profiles.find((p) => p.id === state.activeProfile) : undefined;
-  const targets = validRouteTargets(state.sessionTargets, profile?.translationOverrides?.translateTo);
+  const targets = validRouteTargets(state.sessionTargets, undefined);
   // A push-to-talk session that asks at release has no targets yet, but it does have a
   // route — an undecided one, "DE → ?" — and the tray is the only surface on a chip-less
   // desktop. Ask-standby (no session) stays empty, like every other idle tooltip.
@@ -130,7 +132,7 @@ function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const backend = backendForProfile(profile, state.backends);
   const src = effectiveLanguage(profile?.language, backend?.language) ?? "";
   if (targets.length === 0) return `${src.toUpperCase() || "AUTO"} → ?`;
-  const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.toUpperCase());
+  const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.trim().toUpperCase());
   const more = targets.length - shown.length;
   return `${src.toUpperCase() || "AUTO"} → ${shown.join(" ")}${more > 0 ? ` +${more}` : ""}`;
 }

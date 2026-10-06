@@ -236,6 +236,15 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
   it("a release final (no utterance ordinal) doesn't end the open utterance", () => {
     expect(finalBody).toContain('if (typeof e.payload.utterance === "number" || pending.state === null) endUtterance();');
   });
+
+  it("the closing final (last: true) books its words onto the last utterance, not its phantom ordinal", () => {
+    // The server stamps its close() final with the NEXT ordinal, one no `open` announced; History
+    // and the capture pairing must treat it as a release final.
+    const body = mask(finalBody);
+    expect(finalBody).toContain('const ordinal = typeof e.payload.utterance === "number" && !e.payload.last ? e.payload.utterance : null;');
+    expect(body).toContain("recordUtteranceFinal(ordinal)");
+    expect(body).toContain("const utterance = ordinal;");
+  });
 });
 
 describe("insertion gates the re-derivations must keep", () => {
@@ -298,6 +307,18 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(copy, "stream-error recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
     expect(flash).toBeLessThan(copy);
     // The post-await upgrade must not re-flash (that would stamp a superseding session).
+    expect(body.indexOf("flashError(", copy)).toBe(-1);
+  });
+
+  it("a rejected stop flashes the error before awaiting the recovery copy", () => {
+    // The chip sits on "transcribing" until the flash; a flash deferred behind the copy lets a
+    // cancel + fresh press land in between, and the late flash then stamps the new session "error".
+    const body = mask(fns.stopLive);
+    const flash = body.indexOf("flashError(");
+    expect(flash, "stop-reject path must flash").toBeGreaterThanOrEqual(0);
+    const copy = body.indexOf("recoverUnguarded(");
+    expect(copy, "stop-reject recovery must use recoverUnguarded").toBeGreaterThanOrEqual(0);
+    expect(flash).toBeLessThan(copy);
     expect(body.indexOf("flashError(", copy)).toBe(-1);
   });
 

@@ -248,7 +248,8 @@ export async function runDictationTranslate(
   // The server translates EVERY submitted segment into every target and uses the
   // depth only to pick context lines, so phrases beyond the profile's depth would
   // cost full passes (and still lend implicit context with context turned off).
-  // No depth = inherit: send what the stream kept.
+  // No depth = inherit: submit what the stream kept, but send no depth, so the server
+  // applies its own TRANSLATION_CONTEXT_SEGMENTS (off or lower than what was kept).
   const depth =
     typeof req.contextSegments === "number"
       ? Math.max(0, Math.floor(req.contextSegments))
@@ -282,7 +283,7 @@ export async function runDictationTranslate(
         model: req.model,
         mode: req.mode,
         glossary: req.glossary,
-        contextSegments: req.contextSegments ?? (context.length ? context.length : null),
+        contextSegments: req.contextSegments ?? null,
         progressId,
         capturedId: req.capturedId ?? null,
         clientJob: req.clientJob ?? null,
