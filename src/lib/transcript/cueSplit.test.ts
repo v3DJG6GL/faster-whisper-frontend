@@ -45,6 +45,8 @@ describe("limits", () => {
     expect(limitsFor({ length: "short", timing: "same" }, "zh").cpl).toBe(16);
     expect(limitsFor({ length: "custom", custom: { cpl: 30, lines: 1, maxDur: 5, cps: 12 }, timing: "same" }, "en"))
       .toEqual({ cpl: 30, lines: 1, maxDur: 5, cps: 12 });
+    // An imported language naming an Object.prototype member is not a CJK entry.
+    expect(limitsFor(STD, "constructor").cpl).toBe(42);
   });
   it("sanitizes untrusted custom limits", () => {
     expect(sanitizeCueLimits({ cpl: 999, lines: 0, maxDur: 3.3, cps: 15 })).toEqual({ cpl: 60, lines: 1, maxDur: 3.5, cps: 15 });
@@ -149,6 +151,13 @@ describe("buildCues", () => {
     expect(trackCues(grid, "de").map((c) => c.text)).toEqual(parts);
   });
 
+  it("same timing: a translation lane keeps the segment's speaker", () => {
+    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, speaker: "SPEAKER_00", translations: { de: "Hallo." } }] });
+    const grid = buildCues(r, STD, ["orig", "de"]);
+    expect(trackCues(grid, "de").every((c) => c.speaker === "SPEAKER_00")).toBe(true);
+    expect(trackCues(grid, "orig").every((c) => c.speaker === "SPEAKER_00")).toBe(true);
+  });
+
   it("own timing: each translation gets its own split with its own limits", () => {
     const de = "Der Gletscher hinter mir hat seit 1980 fast vierzig Prozent seines Volumens verloren, sagen alle.";
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { de } }] });
@@ -234,6 +243,17 @@ describe("wrapLines", () => {
     const lines = wrapLines(big, 42, 2);
     expect(performance.now() - t0).toBeLessThan(500);
     expect(lines.join(" ")).toBe(big);
+  });
+  it("a ~3,000-word paragraph wraps quickly and exactly as the full candidate scan did", () => {
+    const W = ["the", "Hello,", "world.", "and", "extraordinarily", "of", "so;", "running"];
+    const big = Array.from({ length: 3000 }, (_, i) => W[(i * 7 + (i >> 3)) % W.length]).join(" ");
+    const t0 = performance.now();
+    const lines = wrapLines(big, 42, 2);
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(lines.join(" ")).toBe(big);
+    // Pre-change snapshot: the candidate cut-off changes speed, never the chosen breaks.
+    expect(lines.length).toBe(510);
+    expect(lines[12]).toBe("Hello, Hello, the running so; of extraordinarily and world.");
   });
   it("an over-long word left alone on the last line wraps per character", () => {
     const w = "x".repeat(50);

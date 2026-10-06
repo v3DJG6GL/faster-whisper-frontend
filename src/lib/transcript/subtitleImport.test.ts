@@ -198,6 +198,22 @@ describe("site subtitle cleanup", () => {
     expect(dedupeRollingCues(cues)).toEqual(cues);
     expect(fixBroadcasterText(["E-", "Mail an a b"])).toEqual(["E-", "Mail an a b"]);
   });
+  it("decoded references and JSON escapes cannot smuggle control or bidi characters", () => {
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\n&#x202E;abc &#27;x\n";
+    expect(parseImportedText("srt", srt).segments[0].text).toBe("abc x");
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v &#x202E;Bob>Hi there</v>\n";
+    const seg = parseImportedText("vtt", vtt).segments[0];
+    expect(seg).toMatchObject({ speaker: "Bob", text: "Hi there" });
+    const json = '{"segments":[{"text":"a\\u202eb","speaker":"S\\u0007"}]}';
+    expect(parseImportedText("json", json).segments[0]).toMatchObject({ text: "ab", speaker: "S" });
+  });
+  it("a VTT cue with two voices yields one segment per speaker", () => {
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n<v Alice>Hi</v>\n<v.loud Bob>Hello</v>\n";
+    expect(parseImportedText("vtt", vtt).segments).toEqual([
+      { start: 1, end: 3, text: "Hi", speaker: "Alice" },
+      { start: 1, end: 3, text: "Hello", speaker: "Bob" },
+    ]);
+  });
   it("cleanup runs for SRT too", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);

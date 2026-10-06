@@ -72,4 +72,8 @@ describe("exportSummary", () => {
     expect(row(rows, "Reading speed")?.state).toBe("na");
     expect(row(rows, "Speaker names")).toBeUndefined();
   });
+  it("txt with two tracks: interleaved, never \"inside each subtitle\"", () => {
+    const rows = sum({ format: "txt", content: contentStates({ ...base, format: "txt" }) });
+    expect(row(rows, "Tracks")?.why).toBe("EN · DE — in that order, interleaved");
+  });
 });

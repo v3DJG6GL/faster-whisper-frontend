@@ -82,11 +82,18 @@ function decodeEntities(s: string): string {
 
 /** Cue text without markup: tags (`<font>`, `<c.x>`, `<i>`, inline word tags) and ASS
  *  override blocks go, then character references decode (after, so `&lt;i&gt;` stays text),
- *  whitespace collapses. */
+ *  whitespace collapses. The decode runs after parseImportedText's control-char pass, so
+ *  `&#x202E;` / `&#27;` would mint the very characters that pass dropped — strip again. */
 function stripMarkup(s: string): string {
-  return decodeEntities(s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, ""))
+  return stripControlChars(decodeEntities(s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "")))
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** A `<v Name>` voice tag's name: references decoded, then bounded and sanitized like any
+ *  file-authored label (the decode can produce control/bidi characters). */
+function voiceName(raw: string): string {
+  return safeDisplayText(decodeEntities(raw), 40).replace(/\s+/g, " ").trim();
 }
 
 /** Strip markup a cue line may carry and split a leading "Name:" speaker. */
@@ -170,10 +177,24 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
   const segments: ImportedText["segments"] = [];
   for (const { start, end, lines: raw } of dedupeRollingCues(cues)) {
     const lines = fixBroadcasterText(raw);
-    const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(lines.join(" ").trim());
+    const joined = lines.join(" ").trim();
+    // One cue may carry a two-person exchange ("<v Alice>Hi</v> <v Bob>Hello</v>"): one
+    // segment per voice span, all on the cue's clock — the single-span regex below would
+    // run the lazy group to the end and credit both lines to the first voice.
+    if ((joined.match(/<v[\s.]/g) ?? []).length > 1) {
+      const first = joined.search(/<v[\s.]/);
+      const lead = cueText([joined.slice(0, first)]);
+      if (lead.text) segments.push({ start, end, text: lead.text, speaker: lead.speaker });
+      for (const m of joined.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?=<v[\s.]|$)/g)) {
+        const text = stripMarkup(m[2]);
+        if (text) segments.push({ start, end, text, speaker: voiceName(m[1]) || undefined });
+      }
+      continue;
+    }
+    const v = /^<v\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(joined);
     if (v) {
       const text = stripMarkup(v[2]);
-      if (text) segments.push({ start, end, text, speaker: decodeEntities(v[1]).replace(/\s+/g, " ").trim() });
+      if (text) segments.push({ start, end, text, speaker: voiceName(v[1]) });
     } else {
       const { text, speaker } = cueText(lines);
       if (text) segments.push({ start, end, text, speaker });
@@ -276,18 +297,21 @@ function parseJsonExport(body: string): ImportedText {
     for (const s of obj.segments) {
       if (typeof s !== "object" || s === null) continue;
       const seg = s as Record<string, unknown>;
-      const text = typeof seg.text === "string" ? seg.text.trim() : "";
+      // JSON.parse decodes `\u202e` escapes after parseImportedText's control-char pass,
+      // so text and speaker are sanitized again here (language already is, below).
+      const text = typeof seg.text === "string" ? stripControlChars(seg.text).trim() : "";
       if (!text) continue;
+      const name =
+        typeof seg.speakerName === "string"
+          ? seg.speakerName
+          : typeof seg.speaker === "string"
+            ? seg.speaker
+            : undefined;
       segments.push({
         text,
         start: typeof seg.start === "number" ? seg.start : undefined,
         end: typeof seg.end === "number" ? seg.end : undefined,
-        speaker:
-          typeof seg.speakerName === "string"
-            ? seg.speakerName
-            : typeof seg.speaker === "string"
-              ? seg.speaker
-              : undefined,
+        speaker: name === undefined ? undefined : safeDisplayText(name, 40).trim() || undefined,
       });
     }
   }

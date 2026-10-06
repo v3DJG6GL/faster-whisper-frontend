@@ -17,8 +17,8 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 const {
-  appChipLabel, currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation, recordTracks,
-  upsertRecord, selectRecord, useTranscriptHistory,
+  appChipLabel, currentRecord, deleteRecord, dropPendingWrites, loadHistory, patchRecord, recordDictation,
+  recordEditedResult, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
@@ -395,6 +395,29 @@ describe("lastWriteAt pruning keeps coalescing intact", () => {
       dropPendingWrites();
       vi.useRealTimers();
     }
+  });
+});
+
+describe("recordEditedResult", () => {
+  // The server's text need not be a space-join of its segments (CJK, punctuation).
+  const result = {
+    text: "你好。世界。",
+    segments: [
+      { id: 0, start: 0, end: 1, text: "你好。" },
+      { id: 1, start: 1, end: 2, text: "世界。" },
+    ],
+  };
+  const rec = (over: Partial<TranscriptRecord> = {}) => ({ id: "r", result, ...over }) as TranscriptRecord;
+
+  it("leaves an unedited record's result alone, its text included (the viewer's rule)", () => {
+    expect(recordEditedResult(rec())).toBe(result);
+    expect(recordEditedResult(rec({ edits: {}, speakerEdits: {} })).text).toBe("你好。世界。");
+  });
+
+  it("rebuilds the text from the segments once a segment is corrected", () => {
+    const out = recordEditedResult(rec({ edits: { 1: "地球。" } }));
+    expect(out.segments?.[1].text).toBe("地球。");
+    expect(out.text).toBe("你好。 地球。");
   });
 });
 

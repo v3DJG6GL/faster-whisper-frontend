@@ -447,7 +447,10 @@ export function recordEditedResult(rec: TranscriptRecord): BatchResult {
   const res = rec.result ?? { text: "" };
   const edits = rec.edits ?? {};
   const speakerEdits = rec.speakerEdits ?? {};
-  if (!res.segments?.length) return res;
+  // Unedited: the server's own result, its `text` included — the viewer's rule, so
+  // History's quick export matches the panel's (a CJK or punctuated text is not
+  // a space-join of its segments).
+  if (!res.segments?.length || (!Object.keys(edits).length && !Object.keys(speakerEdits).length)) return res;
   const segments = res.segments.map((s, i) => {
     const text = edits[i] ?? s.text;
     const speaker = speakerEdits[i] ?? s.speaker;

@@ -6,6 +6,7 @@
 
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptFormats";
+import { ownProp } from "../own";
 import { codeSlug } from "../sanitize";
 import type { BatchResult, Capabilities, TranscribeSettings } from "../types";
 import { isSourceUrl } from "../urlSource";
@@ -239,12 +240,6 @@ const TWO_PART_SUFFIXES = new Set([
   "co.in", "co.za", "com.sg", "co.il",
 ]);
 
-/** `map[key]` for the map's OWN keys only — a site named "constructor" or
- *  "toString" must not read Object.prototype. */
-function ownEntry(map: Record<string, string>, key: string): string | undefined {
-  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
-}
-
 /** Short-link domains whose name is not the site's own. */
 const SITE_ALIASES: Record<string, string> = { youtu: "youtube" };
 
@@ -267,7 +262,7 @@ export function linkSiteName(url: string, extractor?: string | null): string {
     const name = labels.length >= 3 && TWO_PART_SUFFIXES.has(lastTwo)
       ? labels[labels.length - 3]
       : labels[labels.length - 2];
-    if (/^[a-z0-9-]{1,40}$/.test(name) && !/^-|-$/.test(name)) return ownEntry(SITE_ALIASES, name) ?? name;
+    if (/^[a-z0-9-]{1,40}$/.test(name) && !/^-|-$/.test(name)) return ownProp(SITE_ALIASES, name) ?? name;
   }
   const ex = codeSlug((extractor ?? "").split(":")[0].toLowerCase(), 40);
   return ex && ex !== "generic" ? ex : "";
@@ -288,7 +283,7 @@ const SITE_DISPLAY: Record<string, string> = {
  *  none. */
 export function siteDisplayName(url: string, extractor?: string | null): string {
   const name = linkSiteName(url, extractor);
-  return ownEntry(SITE_DISPLAY, name) ?? name.charAt(0).toUpperCase() + name.slice(1);
+  return ownProp(SITE_DISPLAY, name) ?? name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 /** The result with every site track's `site` filled in from the link (and its extractor,
@@ -373,7 +368,9 @@ export function revealAfterSaveOn(t: Pick<TranscribeSettings, "revealAfterSave">
   return t?.revealAfterSave !== false;
 }
 
-export type MediaExportPhase = "fetching" | "uploading" | "packaging" | "downloading" | "copying" | "writing";
+/** A media export's phases; "fetching-audio" = a link's audio downloading before its copy. */
+export type MediaExportPhase =
+  | "fetching" | "fetching-audio" | "uploading" | "packaging" | "downloading" | "copying" | "writing";
 
 export interface MediaExportProgress {
   jobId: string;

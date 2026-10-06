@@ -14,6 +14,7 @@
 
 import { plural } from "../format";
 import { primarySubtag } from "../languages";
+import { ownProp } from "../own";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
 
@@ -107,7 +108,8 @@ export function limitsFor(o: CueOptions, lang?: string): CueLimits {
   const b = primarySubtag(lang);
   const base =
     o.length === "custom" ? (o.custom ?? CUE_PRESETS.standard) : { ...CUE_PRESETS[o.length], cps: b === "en" ? 20 : 17 };
-  const cjk = CJK_CPL[b];
+  // Own keys only: an imported language "constructor" otherwise reads Object.prototype.
+  const cjk = ownProp(CJK_CPL, b);
   return cjk ? { ...base, cpl: Math.min(base.cpl, cjk) } : base;
 }
 
@@ -395,8 +397,17 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
     const target = len / n;
     let best = -Infinity;
     let bi = lo + 1;
+    let past = -1;
     for (let i = lo + 1; i < T; i++) {
       const a = width(lo, i) + reserve;
+      // Past the first over-cpl candidate every later one carries the same -1000 (its b is
+      // then under cpl*(n-1) by construction), breakScore*0.3 + bottom-heavy can add at most
+      // 64, and |a - target| (target <= cpl < a) grows with a at 0.6/char — so a candidate
+      // more than 107 chars further cannot win. Stops a long paragraph costing O(lines x T).
+      if (a > cpl) {
+        if (past < 0) past = a;
+        else if (a - past > 107) break;
+      }
       const b = width(i, T);
       let s = 0;
       if (a > cpl) s -= 1000;
@@ -486,10 +497,19 @@ export function trText(seg: TranscriptSegment, lang: string): string | null {
 
 /** The timed lines one track will show: its own cues when own-timed, else the
  *  shared cues (original text, or that language's cut). */
-export function trackCues(grid: CueGrid, track: string): { start: number; end: number; text: string; seg: number }[] {
+export function trackCues(
+  grid: CueGrid, track: string,
+): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
   if (grid.own[track]) return grid.own[track];
+  // Speaker kept like own-timed cues keep it, so a shared-cue lane still prefixes "Name: ".
   return grid.cues
-    .map((c) => ({ start: c.start, end: c.end, seg: c.seg, text: track === "orig" ? c.text : (c.tr[track] ?? "") }))
+    .map((c) => ({
+      start: c.start,
+      end: c.end,
+      seg: c.seg,
+      ...(c.speaker ? { speaker: c.speaker } : {}),
+      text: track === "orig" ? c.text : (c.tr[track] ?? ""),
+    }))
     .filter((c) => c.text);
 }
 

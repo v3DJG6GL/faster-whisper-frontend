@@ -435,7 +435,11 @@ function srtExport(result: BatchResult, ctx: Ctx): string {
 function vttExport(result: BatchResult, ctx: Ctx): string {
   const mode = ctx.opts.speakerColors ?? "off";
   const out: string[] = ["WEBVTT", ""];
-  if (ctx.visLangs.length) {
+  // A site's own subtitle track is human-made, not machine translation: it renders like the
+  // original line and never gets the .mt tint.
+  const isSite = (l: string) => !!timedTrack(result, l);
+  const mtLangs = ctx.visLangs.filter((l) => !isSite(l));
+  if (mtLangs.length) {
     // Translated lines carry a generated .mt class so players that honor
     // STYLE can tone them; others degrade to plain text.
     out.push("STYLE");
@@ -446,7 +450,7 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     // the file said "this is a translation" and never which one. The classes
     // are generated from the language code, which is a code, never user text.
     if (ambiguous(ctx)) {
-      for (const lang of ctx.visLangs) {
+      for (const lang of mtLangs) {
         out.push(`::cue(.mt-${vttClass(lang)}) { color: #4dd0c4; }`);
       }
     }
@@ -463,23 +467,20 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
     out.push("");
   }
   (result.segments ?? []).forEach((seg) => {
-    const text = vttEscape(ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg)));
-    let orig: string;
-    if (!seg.speaker || !ctx.hasSpeakers) {
-      orig = text;
-    } else {
+    /** An escaped line in the original's speaker markup (the original and site tracks). */
+    const plain = (text: string): string => {
+      if (!seg.speaker || !ctx.hasSpeakers) return text;
       const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
-      if (!ctx.names) {
-        orig = mode === "off" ? text : `<c.${cls}>${text}</c>`;
-      } else {
-        const name = vttEscape(nameOf(ctx, seg.speaker));
-        if (mode === "off") orig = `<v ${name}>${text}</v>`;
-        else if (mode === "name") orig = `<c.${cls}>${name}:</c> ${text}`;
-        else if (mode === "line") orig = `<c.${cls}>${name}: ${text}</c>`;
-        else orig = `<c.${cls}>${text}</c>`;
-      }
-    }
+      if (!ctx.names) return mode === "off" ? text : `<c.${cls}>${text}</c>`;
+      const name = vttEscape(nameOf(ctx, seg.speaker));
+      if (mode === "off") return `<v ${name}>${text}</v>`;
+      if (mode === "name") return `<c.${cls}>${name}:</c> ${text}`;
+      if (mode === "line") return `<c.${cls}>${name}: ${text}</c>`;
+      return `<c.${cls}>${text}</c>`;
+    };
+    const orig = plain(vttEscape(ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg))));
     const lines = cueLines(ctx, seg, orig, (t, _s, lang) => {
+      if (isSite(lang)) return plain(vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg))));
       const mt = ambiguous(ctx) ? `mt.mt-${vttClass(lang)}` : "mt";
       // Translated lines carry the SAME speaker classes as the original (the
       // speaker is language-independent) stacked with .mt — the spk STYLE
@@ -667,7 +668,7 @@ export function generateExport(source: BatchResult, opts: ExportOptions): string
 
 function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
   const order = speakerOrder(result);
-  const lineTracks = exportTrackList(opts);
+  const lineTracks = tracksOf(opts);
   const cues = isSubtitleFormat(opts.format) ? opts.cues : undefined;
   return {
     opts,
@@ -706,11 +707,11 @@ export function exportFileGroups(
   result: Pick<BatchResult, "language" | "timedTracks"> = {},
 ): ExportFileGroup[] {
   const ext = EXPORT_EXTENSIONS[opts.format];
-  // JSON carries every track regardless of the picker (see ctxOf), so the stem
+  // JSON carries every track regardless of the picker (jsonExport writes them all), so the stem
   // suffix must be empty — a language-suffixed name for a full-data file is
   // misleading and wrong when the track picker state survives a format switch.
   if (opts.format === "json") return [{ tracks: opts.tracks, name: (stem) => `${stem}.${ext}` }];
-  const tracks = exportTrackList(opts);
+  const tracks = tracksOf(opts);
   const perTrack = opts.format === "lrc" || ownTimingOn(opts);
   const alone = tracks.filter((t) => perTrack || timedTrack(result, t));
   if (!alone.length) {
@@ -779,12 +780,6 @@ export function generateExports(
     tracks: g.tracks,
     content: generateExport(result, { ...opts, tracks: g.tracks }),
   }));
-}
-
-/** The tracks an export writes, in order (the original only without a pick). */
-function exportTrackList(opts: ExportOptions): string[] {
-  if (opts.format === "json") return opts.tracks?.includes("orig") === false ? [] : ["orig"];
-  return tracksOf(opts);
 }
 
 /** The file names an export would write — NO content serialized, so the export panel can

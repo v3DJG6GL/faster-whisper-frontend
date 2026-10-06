@@ -708,6 +708,12 @@ describe("subtitle cues", () => {
       .toEqual(["s.de.vtt", "s.Site.de.vtt"]);
     const txt = generateExports(site, { format: "txt", tracks: ["de-x-site"] });
     expect(txt[0].content).toBe("Hallo zusammen. Grüezi.\n");
+    // A site's own subtitles are not machine translation: no .mt STYLE, no .mt class.
+    const vtt = generateExports(site, { format: "vtt", tracks: ["orig", "fr", "de-x-site"] });
+    expect(vtt[1].content).not.toContain("::cue(.mt");
+    expect(vtt[1].content).not.toContain("<c.mt");
+    expect(vtt[1].content).toContain("00:00:10.500 --> 00:00:12.000\nHallo zusammen.\n");
+    expect(vtt[0].content).toContain("::cue(.mt)");
     const json = JSON.parse(generateExport(site, { format: "json" }));
     expect(json.timedTracks[0]).toEqual({
       id: "de-x-site", lang: "de", source: "site", kind: "manual",

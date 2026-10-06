@@ -119,7 +119,8 @@ export function exportSummary(a: {
     state: "on",
     why: a.format === "json" ? "every track, as data"
       : a.trackCodes.join(" · ") + (a.trackCodes.length > 1
-        ? a.filePerTrack ? " — one file each" : a.stacked ? " — in that order inside each subtitle" : ""
+        ? a.filePerTrack ? " — one file each"
+          : a.stacked ? (sub ? " — in that order inside each subtitle" : " — in that order, interleaved") : ""
         : ""),
   });
   rows.push(
