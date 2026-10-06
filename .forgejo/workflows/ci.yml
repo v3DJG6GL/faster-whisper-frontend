@@ -108,7 +108,9 @@ jobs:
       - name: Enable pnpm
         run: corepack enable
 
-      # webkit/gtk for tauri itself; appindicator for the tray; asound for cpal;
+      # webkit/gtk for tauri itself; appindicator only because tauri's
+      # "tray-icon" feature links libappindicator on every target (the Linux
+      # tray itself is ksni, StatusNotifierItem over D-Bus); asound for cpal;
       # xkbcommon for the Wayland virtual keyboard.
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'

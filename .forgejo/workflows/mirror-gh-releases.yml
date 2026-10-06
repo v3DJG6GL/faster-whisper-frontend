@@ -140,16 +140,6 @@ jobs:
           while IFS= read -r rel; do
             tag=$(jq -r '.tag_name' <<<"$rel")
 
-            # Missing-tag guard — see header. Plain curl: a 404 here is an
-            # expected state, not a transient error worth retrying.
-            code=$(curl -s -o /dev/null -w '%{http_code}' -H "$DST_HDR" \
-              "$dst_api/repos/$DST_REPO/git/ref/tags/$tag")
-            if [ "$code" != "200" ]; then
-              echo "::warning::[$tag] tag not on GitHub yet (push mirror lag?) — skipping until next slot"
-              lagging=$((lagging + 1))
-              continue
-            fi
-
             # Metadata the mirror owns on the GitHub side. Forgejo may leave
             # name empty ("" survives jq's //, so test explicitly).
             want=$(jq -c '{name: (if (.name // "") == "" then .tag_name else .name end),
@@ -157,6 +147,17 @@ jobs:
 
             dstrel=$(jq -c --arg t "$tag" 'select(.tag_name == $t)' dst.ndjson | head -n1)
             if [ -z "$dstrel" ]; then
+              # Missing-tag guard — see header. Only the create path needs
+              # it: a release that already exists on GitHub has its tag, so
+              # no lookup per mirrored release. Plain curl: a 404 here is an
+              # expected state, not a transient error worth retrying.
+              code=$(curl -s -o /dev/null -w '%{http_code}' -H "$DST_HDR" \
+                "$dst_api/repos/$DST_REPO/git/ref/tags/$tag")
+              if [ "$code" != "200" ]; then
+                echo "::warning::[$tag] tag not on GitHub yet (push mirror lag?) — skipping until next slot"
+                lagging=$((lagging + 1))
+                continue
+              fi
               echo "[$tag] creating release"
               # make_latest omitted: every create defaults to latest, and the
               # oldest-first order leaves the newest one holding the badge.
