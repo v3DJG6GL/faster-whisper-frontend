@@ -140,6 +140,12 @@ mod tests {
         );
         // Latched: a later error of any kind stays terminal.
         assert_eq!(g.on_error(ErrorKind::Xrun, "x", t0), Verdict::Terminal);
+        // An invalidated stream is the other device-loss kind, terminal on a fresh gate too.
+        let mut g2 = ErrorGate::new("t");
+        assert_eq!(
+            g2.on_error(ErrorKind::StreamInvalidated, "gone", t0),
+            Verdict::Terminal
+        );
     }
 
     #[test]

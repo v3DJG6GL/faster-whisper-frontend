@@ -53,7 +53,8 @@ pub async fn start_stream(
             .0
             .lock()
             .map_err(|_| "stream state poisoned".to_string())?;
-        *guard = None; // stop any previous session first (Drop joins capture, drains WS)
+        // Stop any previous session first (Drop joins capture and aborts the WS task, no drain).
+        *guard = None;
         let sess = session::start(
             app.clone(),
             StartParams {
@@ -108,33 +109,31 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
-        let (sess, had_session) = {
+        let sess = {
             let mut guard = state
                 .0
                 .lock()
                 .map_err(|_| "stream state poisoned".to_string())?;
             let sess = guard.take();
-            let had = sess.is_some();
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
             // this prevents a race where a new session claims epoch N+1, the lock drops, and THEN
             // the stale retire bumps to N+2 — silencing the new session's emissions.
             session::retire_active_epoch();
-            (sess, had)
+            sess
         };
         drop(sess); // Drop (not finish) runs OUTSIDE the lock — capture join, mute release, etc.
-                    // …and abandon any transcript still being typed out. The typing paths emit one key at a
-                    // time, so without this a cancel only stopped FUTURE inserts while the current one kept
-                    // going into whatever window had focus.
-                    //
-                    // When a session was actually taken, OR the user pressed Cancel. The frontend
-                    // fire-and-forgets a (non-user) cancel on every normal close, and that no-op call used to
-                    // bump the counter too — harmless only because the injection captured its epoch so late
-                    // that the bump always landed first. Now that the capture is at the top of `inject_text`,
-                    // an unconditional bump here would abort the legitimate end-of-session insert queued
-                    // moments later. But in stop-timing mode the session is ALREADY gone while the transcript
-                    // is being typed, so `had_session` alone made the chip's ✕ a no-op during "inserting…" —
-                    // the one phase where a cancel matters most. `user_initiated` tells the two apart.
-        if had_session || user_initiated {
+
+        // …and abandon any transcript still being typed out. The typing paths emit one key at a
+        // time, so without this a cancel only stopped FUTURE inserts while the current one kept
+        // going into whatever window had focus.
+        //
+        // Only when the user pressed Cancel. The one non-user caller is the frontend's `closed`
+        // handler releasing a parked session (capture death / server-initiated close): that
+        // session is still in state, so gating on "a session was taken" bumped the epoch exactly
+        // while that session's own last phrase was being typed and cut it off. In stop-timing
+        // mode the session is already gone while the transcript is typed, so the chip's ✕ must
+        // abort on `user_initiated` alone — which it does.
+        if user_initiated {
             crate::inject::cancel_injection();
         }
         Ok(())
@@ -250,18 +249,17 @@ pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), S
         // Only when there was no live session: a cancel that DID find one is aimed at that
         // session, and disowning here would instead kill a legitimate earlier transcription that
         // is still in flight (stop A → start B → cancel B would have discarded A's result).
-        let (sess, had_session) = {
+        let sess = {
             let mut guard = state
                 .0
                 .lock()
                 .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
-            let had_session = sess.is_some();
-            if !had_session {
+            if sess.is_none() {
                 session::cancel_detached_batch();
             }
             session::retire_active_epoch();
-            (sess, had_session)
+            sess
         };
         // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
         // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
@@ -271,9 +269,10 @@ pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), S
         }
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
-        // going into whatever window had focus. Gated on a real session OR a user-initiated
-        // cancel, for the reasons the streaming twin gives — see `cancel_stream`.
-        if had_session || user_initiated {
+        // going into whatever window had focus. Only on a user-initiated cancel: the non-user
+        // call is the `closed` handler releasing a parked session, whose own final/tail insert
+        // must not be aborted — see `cancel_stream`.
+        if user_initiated {
             crate::inject::cancel_injection();
         }
         Ok(())

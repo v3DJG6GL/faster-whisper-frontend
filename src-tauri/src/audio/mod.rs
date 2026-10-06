@@ -162,27 +162,45 @@ pub fn is_dictation_file(name: &str) -> bool {
 /// the `.txt` sidecar next to each — so pointing the recordings folder at a shared directory
 /// can't make it delete anything else.
 pub fn prune_recordings(dir: &Path, days: u32) -> usize {
+    let removed = prune_older_than(dir, days, |e| {
+        is_dictation_file(&e.file_name().to_string_lossy())
+    });
+    if removed > 0 {
+        let effective = days.min(MAX_RETENTION_DAYS);
+        tracing::info!("[record] retention: removed {removed} file(s) older than {effective}d");
+    }
+    removed
+}
+
+/// The longest retention window any sweep honours, in days. Clamp before the cutoff arithmetic:
+/// the windows are u32s that arrive from config — and sync categories carry them, so a peer's
+/// blob sets them with no numeric validation on the way in. On Windows the subtraction converts
+/// the span to 100 ns intervals in an i64, which overflows once the window passes ~10.7 million
+/// days, and `SystemTime: Sub<Duration>` panics rather than returning an error — inside
+/// `setup()`, on every launch, with the value already persisted. Ten years is far past any real
+/// retention window and 0 still means "keep forever".
+pub const MAX_RETENTION_DAYS: u32 = 3650;
+
+/// Delete the entries of `dir` that `matches` accepts and whose mtime is older than `days`
+/// (0 = keep forever; clamped to [`MAX_RETENTION_DAYS`]). Best-effort and silent on I/O errors —
+/// retention is housekeeping. Returns how many files were removed. The one mtime sweep behind
+/// the recordings, transcript-history and log-file retention windows.
+pub fn prune_older_than(
+    dir: &Path,
+    days: u32,
+    matches: impl Fn(&std::fs::DirEntry) -> bool,
+) -> usize {
     if days == 0 {
         return 0;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return 0;
     };
-    // Clamp before the arithmetic. `days` is a u32 that arrives from config — and the `recording`
-    // sync category carries it, so a peer's blob sets it with no numeric validation on the way in.
-    // On Windows the subtraction converts the span to 100 ns intervals in an i64, which overflows
-    // once the window passes ~10.7 million days, and `SystemTime: Sub<Duration>` panics rather than
-    // returning an error — inside `setup()`, on every launch, with the value already persisted.
-    // Ten years is far past any real retention window and 0 still means "keep forever".
-    const MAX_RETENTION_DAYS: u32 = 3650;
     let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(days.min(MAX_RETENTION_DAYS) as u64 * 86_400);
+        - Duration::from_secs(u64::from(days.min(MAX_RETENTION_DAYS)) * 86_400);
     let mut removed = 0;
     for entry in entries.flatten() {
-        let path = entry.path();
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !is_dictation_file(&name) {
+        if !matches(&entry) {
             continue;
         }
         let old = entry
@@ -190,13 +208,9 @@ pub fn prune_recordings(dir: &Path, days: u32) -> usize {
             .and_then(|m| m.modified())
             .map(|t| t < cutoff)
             .unwrap_or(false);
-        if old && std::fs::remove_file(&path).is_ok() {
+        if old && std::fs::remove_file(entry.path()).is_ok() {
             removed += 1;
         }
-    }
-    if removed > 0 {
-        let effective = days.min(MAX_RETENTION_DAYS);
-        tracing::info!("[record] retention: removed {removed} file(s) older than {effective}d");
     }
     removed
 }

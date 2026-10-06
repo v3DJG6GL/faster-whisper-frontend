@@ -24,7 +24,8 @@ use crate::audio::MicClip;
 /// Keep at most this many seconds of the most recent capture for replay.
 const MAX_CLIP_SECS: usize = 30;
 /// How long [`start_level_meter`] waits for the device to open before handing back the handle
-/// anyway (a slow open then still meters once it lands, or logs its failure).
+/// anyway (a slow open then still meters once it lands; a late failure ends the test through
+/// `audio://test-ended`).
 const OPEN_WAIT: Duration = Duration::from_secs(5);
 
 pub struct CaptureHandle {
@@ -121,12 +122,19 @@ pub fn start_level_meter(
     // run() reports Ok once the stream plays; every Err it returns comes before that, so the
     // channel carries exactly one message and the one-slot buffer never blocks the sender.
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+    let (app_ev, stop_ev) = (app.clone(), stop.clone());
     let join = std::thread::Builder::new()
         .name("mic-capture".into())
         .spawn(move || {
             if let Err(e) = run(app, device_id, stop_thread, clip, &ready_tx) {
                 tracing::warn!("[audio] capture ended: {e}");
-                let _ = ready_tx.send(Err(e));
+                // The send fails only when the starter stopped waiting after OPEN_WAIT and already
+                // resolved Ok, so nothing else would tell the Settings test it is over. Skip it on a
+                // user stop/replacement and on the lost-at-open path (both raise `stop`; the latter
+                // already emitted).
+                if ready_tx.send(Err(e)).is_err() && !stop_ev.load(Ordering::SeqCst) {
+                    let _ = app_ev.emit("audio://test-ended", "open-failed");
+                }
             }
         })
         .map_err(|e| e.to_string())?;

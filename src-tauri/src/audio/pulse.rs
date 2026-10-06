@@ -9,10 +9,14 @@
 //! The client's reactor thread only exits when the server hangs up, never when the client is
 //! dropped, so ONE client is kept for the life of the process and rebuilt only after it failed.
 //! Every call runs on a helper thread with a timeout: a wedged server costs a 2 s wait, never a
-//! hung caller.
+//! hung caller. The client has no timeout of its own, so that helper stays parked until the server
+//! answers or hangs up; until it does, later calls return None at once instead of each parking
+//! another helper (the mic watch and the Settings device poll ask every few seconds).
 
 use std::collections::HashMap;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(2);
@@ -46,6 +50,36 @@ impl Snapshot {
 }
 
 static CLIENT: Mutex<Option<Arc<pulseaudio::Client>>> = Mutex::new(None);
+/// A helper thread outlived its timeout and is still parked on the server. Set by [`wait`],
+/// cleared by the helper itself once its call returns.
+static STUCK: AtomicBool = AtomicBool::new(false);
+
+/// Why [`query`] produced no snapshot.
+enum QueryFail {
+    /// The server answered with an error (or the client is disconnected): worth a fresh client.
+    Error,
+    /// No answer in time; the helper is still parked on this client, so keep it.
+    TimedOut,
+}
+
+/// Wait for a helper's answer. On a timeout, raise [`STUCK`]; the helper clears it right after its
+/// send, so an answer that slipped in between the timeout and the flag is picked up here instead
+/// of leaving the flag raised for good.
+fn wait<T>(rx: &Receiver<T>) -> Option<T> {
+    match rx.recv_timeout(TIMEOUT) {
+        Ok(v) => Some(v),
+        Err(RecvTimeoutError::Timeout) => {
+            STUCK.store(true, Ordering::SeqCst);
+            let late = rx.try_recv().ok();
+            if late.is_some() {
+                STUCK.store(false, Ordering::SeqCst);
+            }
+            late
+        }
+        // The helper died without answering: nothing is parked.
+        Err(RecvTimeoutError::Disconnected) => None,
+    }
+}
 
 /// Is a PulseAudio-protocol server socket there at all? Cheap; no connection.
 pub fn server_present() -> bool {
@@ -54,18 +88,23 @@ pub fn server_present() -> bool {
 
 /// The server's current view, or None when no server answers.
 pub fn snapshot() -> Option<Snapshot> {
-    if !server_present() {
+    // A helper is still parked on a wedged server: don't park another one beside it.
+    if !server_present() || STUCK.load(Ordering::SeqCst) {
         return None;
     }
     for _ in 0..2 {
         let client = client()?;
-        if let Some(s) = query(client) {
-            return Some(s);
-        }
-        // Failed or timed out: rebuild the client once (a restarted server leaves the old one
-        // disconnected; its reactor thread has already exited).
-        if let Ok(mut c) = CLIENT.lock() {
-            *c = None;
+        match query(client) {
+            Ok(s) => return Some(s),
+            // Wedged, not gone: a fresh client would only hang the same way.
+            Err(QueryFail::TimedOut) => return None,
+            // Failed: rebuild the client once (a restarted server leaves the old one
+            // disconnected; its reactor thread has already exited).
+            Err(QueryFail::Error) => {
+                if let Ok(mut c) = CLIENT.lock() {
+                    *c = None;
+                }
+            }
         }
     }
     None
@@ -81,26 +120,27 @@ fn client() -> Option<Arc<pulseaudio::Client>> {
         .name("pulse-connect".into())
         .spawn(move || {
             let _ = tx.send(pulseaudio::Client::from_env(c"faster-whisper-frontend"));
+            STUCK.store(false, Ordering::SeqCst);
         })
         .ok()?;
-    match rx.recv_timeout(TIMEOUT) {
-        Ok(Ok(c)) => {
+    match wait(&rx) {
+        Some(Ok(c)) => {
             let c = Arc::new(c);
             *slot = Some(c.clone());
             Some(c)
         }
-        Ok(Err(e)) => {
+        Some(Err(e)) => {
             tracing::debug!("[audio] sound server connect failed: {e}");
             None
         }
-        Err(_) => {
+        None => {
             tracing::warn!("[audio] sound server did not answer within {TIMEOUT:?}");
             None
         }
     }
 }
 
-fn query(client: Arc<pulseaudio::Client>) -> Option<Snapshot> {
+fn query(client: Arc<pulseaudio::Client>) -> Result<Snapshot, QueryFail> {
     let (tx, rx) = mpsc::channel();
     std::thread::Builder::new()
         .name("pulse-query".into())
@@ -111,25 +151,28 @@ fn query(client: Arc<pulseaudio::Client>) -> Option<Snapshot> {
                 Ok::<_, pulseaudio::ClientError>((info, sources))
             });
             let _ = tx.send(res);
+            STUCK.store(false, Ordering::SeqCst);
         })
-        .ok()?;
-    let (info, sources) = match rx.recv_timeout(TIMEOUT) {
-        Ok(Ok(v)) => v,
-        Ok(Err(e)) => {
+        .map_err(|_| QueryFail::Error)?;
+    let (info, sources) = match wait(&rx) {
+        Some(Ok(v)) => v,
+        Some(Err(e)) => {
             tracing::debug!("[audio] sound server query failed: {e}");
-            return None;
+            return Err(QueryFail::Error);
         }
-        Err(_) => {
+        None if STUCK.load(Ordering::SeqCst) => {
             tracing::warn!("[audio] sound server query timed out after {TIMEOUT:?}");
-            return None;
+            return Err(QueryFail::TimedOut);
         }
+        // The helper died without answering.
+        None => return Err(QueryFail::Error),
     };
     let server_name = info
         .server_name
         .as_ref()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_default();
-    Some(Snapshot {
+    Ok(Snapshot {
         flavour: flavour(&server_name),
         default_source: info
             .default_source_name

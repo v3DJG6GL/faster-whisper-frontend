@@ -12,6 +12,7 @@ use crate::transport::stream::{self, StreamEvent, StreamParams};
 use cpal::traits::{DeviceTrait, StreamTrait};
 use cpal::{Device, SampleFormat, StreamConfig};
 use serde::Serialize;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -61,21 +62,43 @@ pub fn retire_active_epoch() {
 /// A dedicated pair rather than reusing `ACTIVE_EPOCH`: that one is also bumped when the NEXT
 /// session starts, so gating on "still active" would throw away a legitimate transcription
 /// whenever the user began dictating again before the previous batch POST returned.
+///
+/// The cancelled side is a short list, not one slot: stop A → cancel while A transcribes → start
+/// B → cancel B used to overwrite A's mark with B's, so A's POST returned uncancelled and kept its
+/// `.wav` and wrote its `.txt`. A few recent epochs cover any realistic overlap of detached POSTs.
 static DETACHED_BATCH_EPOCH: AtomicU64 = AtomicU64::new(0);
-static CANCELLED_BATCH_EPOCH: AtomicU64 = AtomicU64::new(0);
+static CANCELLED_BATCHES: Mutex<VecDeque<u64>> = Mutex::new(VecDeque::new());
+/// How many cancelled epochs [`CANCELLED_BATCHES`] remembers (oldest dropped first).
+const CANCELLED_BATCHES_CAP: usize = 16;
+
+/// Record `epoch` as cancelled. Epoch 0 ("none detached yet") is never recorded.
+fn mark_batch_cancelled(epoch: u64) {
+    if epoch == 0 {
+        return;
+    }
+    if let Ok(mut q) = CANCELLED_BATCHES.lock() {
+        if !q.contains(&epoch) {
+            q.push_back(epoch);
+            while q.len() > CANCELLED_BATCHES_CAP {
+                q.pop_front();
+            }
+        }
+    }
+}
 
 /// Disown whatever batch transcription is currently detached, if any. Called by `cancel_record`
 /// even when the session has already been taken out of state by a preceding stop.
 pub fn cancel_detached_batch() {
-    CANCELLED_BATCH_EPOCH.store(
-        DETACHED_BATCH_EPOCH.load(Ordering::SeqCst),
-        Ordering::SeqCst,
-    );
+    mark_batch_cancelled(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst));
 }
 
 /// Was the detached transcription for `epoch` cancelled? Epoch 0 is "none detached yet".
 fn batch_cancelled(epoch: u64) -> bool {
-    epoch != 0 && CANCELLED_BATCH_EPOCH.load(Ordering::SeqCst) == epoch
+    epoch != 0
+        && CANCELLED_BATCHES
+            .lock()
+            .map(|q| q.contains(&epoch))
+            .unwrap_or(false)
 }
 
 /// Emit a `stream://*` event only if `epoch` is still the active session (see [`ACTIVE_EPOCH`]).
@@ -780,11 +803,11 @@ impl RecordSession {
     /// arm already fired, the flag is too late and only the epoch can reach the spawned work.
     /// Marking `self.epoch` rather than "whatever is currently detached" is what makes this safe
     /// to do unconditionally: epochs are strictly monotonic, so this can never match an earlier
-    /// session's still-in-flight transcription (the hazard `cancel_record`'s `!had_session` gate
+    /// session's still-in-flight transcription (the hazard `cancel_record`'s no-live-session gate
     /// exists for — leave that gate exactly as it is).
     pub fn discard(self) {
         self.discard.store(true, Ordering::SeqCst);
-        CANCELLED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
+        mark_batch_cancelled(self.epoch);
     }
 
     /// Claim this session as the detached batch BEFORE the state lock is released.
@@ -832,7 +855,7 @@ impl RecordSession {
         // capture-thread join above — is not merely redundant, it can move a monotonic epoch
         // BACKWARDS: `start_record`/`stop_record` for session N+1 can acquire the freed lock
         // inside that join and set DETACHED to N+1, and this store would then put it back to N.
-        // A `cancel_record` arriving during N+1's "transcribing…" phase takes the `!had_session`
+        // A `cancel_record` arriving during N+1's "transcribing…" phase takes the no-live-session
         // branch, so `cancel_detached_batch` would copy N and disown the ALREADY-FINISHED session
         // instead of the live one: the clip the user just cancelled gets POSTed to the server and
         // its .wav plus verbatim .txt sidecar are left on disk, while the UI shows a clean
@@ -993,6 +1016,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         return;
     }
     let wav = crate::audio::wav_from_pcm16(&pcm, 16_000, 1);
+    // Not read again: free it rather than hold a second copy of the clip across the POST.
+    drop(pcm);
     match batch::transcribe_wav_bytes(
         &params.server_url,
         params.api_key.as_deref(),
@@ -1512,5 +1537,24 @@ Sink Input #12\n\
     fn empty_or_garbage_input_mutes_nothing() {
         assert!(streams_to_mute("", 1).is_empty());
         assert!(streams_to_mute("no sink inputs here\nSink Input #notanumber\n", 1).is_empty());
+    }
+
+    #[test]
+    fn a_later_cancel_keeps_an_earlier_batch_cancelled() {
+        use super::{
+            batch_cancelled, cancel_detached_batch, mark_batch_cancelled, DETACHED_BATCH_EPOCH,
+        };
+        use std::sync::atomic::Ordering;
+        // Epochs far above anything a real session claims in a test run.
+        let (a, b, c) = (u64::MAX - 3, u64::MAX - 2, u64::MAX - 1);
+        // stop A → cancel while A transcribes (disowns the detached A)…
+        DETACHED_BATCH_EPOCH.store(a, Ordering::SeqCst);
+        cancel_detached_batch();
+        // …→ start B → cancel B (RecordSession::discard marks B's own epoch).
+        mark_batch_cancelled(b);
+        assert!(batch_cancelled(a), "B's cancel must not un-cancel A");
+        assert!(batch_cancelled(b));
+        assert!(!batch_cancelled(c));
+        assert!(!batch_cancelled(0));
     }
 }
