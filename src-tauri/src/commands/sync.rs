@@ -249,22 +249,9 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
                 "That file lists far more server connections than the app supports.".into(),
             );
         }
-        for b in &parsed {
-            if b.has_api_key && !secrets.contains_key(&b.id) {
-                // Bounded and defanged. `b.name` is wholly file-controlled and length-unbounded,
-                // and it sits at the FRONT of the only sentence telling the user a key is
-                // missing — while the sole render of this string is `safeDisplayText(w, 300)`,
-                // which truncates with no marker. At 300+ code points the whole explanatory
-                // clause is cut away, leaving a warn-styled box in the import-consent dialog that
-                // renders only the file author's own sentence. 60 leaves the clause intact and
-                // `bounded_server_text` marks the cut with an ellipsis, so a padded or
-                // control-char name cannot pass itself off as the app's copy.
-                warnings.push(format!(
-                    "\u{201c}{}\u{201d} uses an API key, but the file doesn't include it — re-enter the key after importing.",
-                    crate::transport::bounded_server_text(&b.name, 60)
-                ));
-            }
-        }
+        // No per-backend "missing API key" warning here: the import preview's
+        // selection-aware notice is the single source, so it neither repeats per
+        // backend nor lingers once Backends is deselected.
         *list = serde_json::to_value(parsed).map_err(|e| e.to_string())?;
     }
     if let Some(list) = categories

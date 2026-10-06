@@ -105,6 +105,22 @@ pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
     v.get("kind")?.as_str().map(str::to_owned)
 }
 
+/// Rewrite a record in place for a path fix-up (move / heal), keeping its mtime: record
+/// and dictation-audio retention both age by mtime, and a same-volume audio move keeps the
+/// file's, so a reset record clock would outlive its audio by a whole retention window.
+/// User edits (`save_transcript_record`) deliberately DO refresh it.
+fn rewrite_record_keep_mtime(path: &Path, out: &str, mtime: Option<std::time::SystemTime>) -> bool {
+    if crate::config::write_private_atomic(path, out).is_err() {
+        return false;
+    }
+    if let Some(t) = mtime {
+        if let Ok(f) = std::fs::File::options().append(true).open(path) {
+            let _ = f.set_modified(t);
+        }
+    }
+    true
+}
+
 /// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
 /// (old absolute path → new absolute path), after a migration or base move.
 /// Best-effort per record; a record that fails to parse is left untouched.
@@ -145,7 +161,8 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            if crate::config::write_private_atomic(&path, &out).is_ok() {
+            let mtime = entry.metadata().and_then(|m| m.modified()).ok();
+            if rewrite_record_keep_mtime(&path, &out, mtime) {
                 rewritten += 1;
             }
         }
@@ -219,7 +236,8 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
             let Ok(out) = serde_json::to_string(&v) else {
                 continue;
             };
-            if crate::config::write_private_atomic(&path, &out).is_ok() {
+            let mtime = entry.metadata().and_then(|m| m.modified()).ok();
+            if rewrite_record_keep_mtime(&path, &out, mtime) {
                 healed += 1;
             }
         }
@@ -563,7 +581,7 @@ pub fn delete_all_dictations(app: AppHandle, audio_base: Option<String>) -> Resu
     Ok(removed)
 }
 
-/// "Delete all transcriptions": every file/link record with its corrections;
+/// "Delete all transcriptions": every file/link/text record with its corrections;
 /// the orphan sweep then drops their audio.
 #[tauri::command]
 pub fn clear_file_transcriptions(
@@ -811,6 +829,25 @@ mod tests {
         assert!(!valid_id("../../../etc/passwd"));
         assert!(!valid_id("abcXYZ123"));
         assert!(!valid_id(""));
+    }
+
+    #[test]
+    fn path_rewrite_keeps_the_record_mtime() {
+        let dir = std::env::temp_dir().join(format!("fwf-rewrite-mtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rec = dir.join("aaaa1111.json");
+        std::fs::write(&rec, b"{}").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 86_400);
+        let f = std::fs::File::options().append(true).open(&rec).unwrap();
+        f.set_modified(old).unwrap();
+        drop(f);
+        let mtime = std::fs::metadata(&rec).and_then(|m| m.modified()).ok();
+        assert!(rewrite_record_keep_mtime(&rec, "{\"a\":1}", mtime));
+        assert_eq!(std::fs::read_to_string(&rec).unwrap(), "{\"a\":1}");
+        // Still old enough for a 1-day retention to prune it.
+        assert_eq!(prune_transcripts(&dir, 1), 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

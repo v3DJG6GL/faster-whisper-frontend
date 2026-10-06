@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 const KEYRING_SERVICE: &str = "faster-whisper-frontend";
@@ -1017,6 +1018,32 @@ fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     }
 }
 
+/// Set when `load_outcome` reset an unreadable/unparseable config to defaults but could NOT
+/// stash the original as `.json.bak` (e.g. a Windows lock without delete/read share). `save`
+/// then refuses for the rest of the session: the frontend's armed auto-save would otherwise
+/// replace the only copy of the user's backends/profiles/hotkeys with the seeded defaults.
+static BACKUP_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// Stash an unusable `config.json` as `config.json.bak` — rename first, a copy when the
+/// rename is refused (the original then stays in place, but a backup exists). False only
+/// when neither worked.
+fn backup_unreadable(path: &Path) -> bool {
+    let bak = path.with_extension("json.bak");
+    let Err(rename_err) = std::fs::rename(path, &bak) else {
+        return true;
+    };
+    match std::fs::copy(path, &bak) {
+        Ok(_) => true,
+        Err(copy_err) => {
+            tracing::error!(
+                "config backup failed (rename: {rename_err}; copy: {copy_err}); \
+                 refusing to overwrite config.json this session"
+            );
+            false
+        }
+    }
+}
+
 /// Load config from `<dir>/config.json`, falling back to defaults if missing or invalid. A legacy
 /// (pre-v2) config is migrated losslessly and re-saved so the next load takes the fast path.
 ///
@@ -1050,7 +1077,9 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
             // write OVER the real config — back it up first (mirrors the parse-failure path below) so
             // it stays recoverable, and report `recovered` so the frontend surfaces the reset.
             tracing::warn!("config read failed ({e}); backing up + using defaults");
-            let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+            if !backup_unreadable(&path) {
+                BACKUP_FAILED.store(true, Ordering::SeqCst);
+            }
             *recovered = true;
             return (Config::default(), true);
         }
@@ -1072,7 +1101,9 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
             // after load, so the next save would overwrite it with defaults and lose the user's
             // backends/profiles/settings for good. Stash the unparseable file so a corrupt,
             // hand-edited, or forward-incompatible config stays recoverable, and report `recovered`.
-            let _ = std::fs::rename(&path, path.with_extension("json.bak"));
+            if !backup_unreadable(&path) {
+                BACKUP_FAILED.store(true, Ordering::SeqCst);
+            }
             *recovered = true;
             (Config::default(), true)
         }
@@ -1086,6 +1117,11 @@ pub fn load(dir: &Path) -> Config {
 
 /// Persist config atomically to `<dir>/config.json`.
 pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
+    if BACKUP_FAILED.load(Ordering::SeqCst) {
+        anyhow::bail!(
+            "your settings file could not be backed up; not overwriting it this session — restart the app"
+        );
+    }
     std::fs::create_dir_all(dir)?;
     let path = config_path(dir);
     let text = serde_json::to_string_pretty(config)?;
@@ -1232,6 +1268,23 @@ pub mod keys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_unusable_config_is_stashed_or_reported_unbacked() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-bak-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"{not json").unwrap();
+        assert!(backup_unreadable(&path));
+        assert_eq!(
+            std::fs::read(dir.join("config.json.bak")).unwrap(),
+            b"{not json"
+        );
+        // Nothing to rename and nothing to copy: the caller must learn no backup exists.
+        assert!(!backup_unreadable(&dir.join("gone.json")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_dictation_clock_is_the_stricter_non_zero_window() {

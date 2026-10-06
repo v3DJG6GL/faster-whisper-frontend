@@ -2,7 +2,7 @@
 //! defaults, pipeline rules, recent words and usage stats (plus the on-disk
 //! usage-outcome queue).
 
-use super::{resolve_key, resolve_key_async};
+use super::resolve_key_async;
 use crate::transport;
 use tauri::{AppHandle, Manager};
 
@@ -12,7 +12,7 @@ pub async fn test_connection(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> transport::ConnectionInfo {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::discovery::test_connection(&server_url, key.as_deref()).await
 }
 
@@ -24,7 +24,7 @@ pub async fn list_override_profiles(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> Vec<String> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::discovery::list_override_profiles(&server_url, key.as_deref()).await
 }
 
@@ -36,7 +36,7 @@ pub async fn get_capabilities(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> Option<transport::Capabilities> {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::discovery::get_capabilities(&server_url, key.as_deref()).await
 }
 
@@ -51,7 +51,7 @@ pub async fn preload_models(
     api_key: Option<String>,
     models: Vec<transport::preload::PreloadModel>,
 ) -> bool {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::preload::preload_models(&server_url, key.as_deref(), models).await
 }
 
@@ -85,7 +85,7 @@ pub async fn get_pipeline_rules(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> transport::pipeline::PipelineFetch {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::pipeline::get_pipeline_rules(&server_url, key.as_deref()).await
 }
 
@@ -100,7 +100,7 @@ pub async fn save_pipeline_rules(
     api_key: Option<String>,
     patch: serde_json::Value,
 ) -> transport::pipeline::PipelineSave {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::pipeline::save_pipeline_rules(&server_url, key.as_deref(), patch).await
 }
 
@@ -114,7 +114,7 @@ pub async fn get_recent_words(
     backend_id: Option<String>,
     api_key: Option<String>,
 ) -> transport::pipeline::RecentWords {
-    let key = resolve_key(api_key, backend_id);
+    let key = resolve_key_async(api_key, backend_id).await;
     transport::pipeline::get_recent_words(&server_url, key.as_deref()).await
 }
 
