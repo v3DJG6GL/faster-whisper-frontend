@@ -134,8 +134,9 @@ export function Notice({
 
 /** A bottom-center transient notice with an optional action ("Undo"). Portaled
  *  to <body>: Card's backdrop-blur makes it a containing block for fixed
- *  descendants (same reason the Sync modal portals). The caller owns the
- *  timeout — render while its state says so. */
+ *  descendants (same reason the Sync modal portals). Auto-dismisses after
+ *  `durationMs` by calling onDismiss (0 = sticky); the caller owns the
+ *  visibility state — render while it says so. */
 export function Toast({
   children,
   actionLabel,

@@ -79,7 +79,7 @@ export interface MenuCheck {
 /** A Button with a chevron beside it that opens a menu of on/off options for the same action
  *  (role="menu" of menuitemcheckbox rows, portaled like ListPicker's popover). ↑↓ on the
  *  chevron opens it; in the menu ↑↓ move, Space ticks, Enter ticks and closes, Esc closes back
- *  to the chevron; Tab and a click outside just close. */
+ *  to the chevron; Tab closes and moves on from the chevron; a click outside just closes. */
 export function SplitButton({
   children,
   onClick,
@@ -146,7 +146,9 @@ export function SplitButton({
       e.stopPropagation();
       close(true);
     } else if (e.key === "Tab") {
-      close(false);
+      // The menu is portaled to the end of <body>: refocus the chevron before the browser's
+      // default Tab runs, so focus moves on from the chevron, not from the document's end.
+      close(true);
     }
   };
 

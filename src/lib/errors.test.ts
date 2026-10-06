@@ -33,6 +33,15 @@ describe("describeTransportError", () => {
     ).toContain("while transcribing");
   });
 
+  it("a server 503 whose body says 'timed out' is an HTTP refusal, not lost contact", () => {
+    const d = describeTransportError(
+      "transcribe",
+      "HTTP 503: Auto-convert of 'x' timed out waiting for a peer worker",
+      "B",
+    );
+    expect(d.title).toBe("Transcription failed on B (HTTP 503).");
+  });
+
   it("a translate 403 is 'turned off' only when the body says so; a bare one is the key", () => {
     const off = describeTransportError("translate", new Error("HTTP 403: translation disabled"), "GPU box");
     expect(off.title).toBe("Translation is turned off on GPU box.");
@@ -82,6 +91,10 @@ describe("shortCause", () => {
     expect(shortCause(new Error("translation timed out"))).toBe("timed out");
     expect(shortCause("HTTP 404: not found")).toBe("HTTP 404");
     expect(shortCause("???")).toBe("see the log");
+  });
+
+  it("prefers the HTTP code over a 'timed out' in the server's body", () => {
+    expect(shortCause("HTTP 503: Auto-convert of 'x' timed out waiting for a peer worker")).toBe("HTTP 503");
   });
 });
 

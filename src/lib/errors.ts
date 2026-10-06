@@ -42,9 +42,11 @@ export function errorText(e: unknown, max = Infinity): string {
 export function shortCause(e: unknown): string {
   const msg = String(e ?? "");
   if (msg.includes("Could not connect")) return "could not connect";
-  if (/timed out/i.test(msg)) return "timed out";
+  // HTTP first: a server refusal whose body mentions a timeout (a 503 "timed out waiting for
+  // a peer worker") is an answer, not lost contact. Rust's own timeouts never carry "HTTP nnn".
   const http = /HTTP (\d{3})/.exec(msg);
   if (http) return `HTTP ${http[1]}`;
+  if (/timed out/i.test(msg)) return "timed out";
   return "see the log";
 }
 
@@ -88,13 +90,8 @@ export function describeTransportError(
       showLogs: false,
     };
   }
-  if (/timed out/i.test(msg)) {
-    return {
-      title: `Lost contact with ${label} while ${GERUND[kind]}.`,
-      hint: "The server may still be working — check it, then try again.",
-      showLogs: true,
-    };
-  }
+  // HTTP before the timeout test: a server refusal whose body says "timed out" (a 503 from a
+  // peer-convert wait) is an answer from the server, not lost contact.
   const http = /HTTP (\d{3})/.exec(msg);
   if (http) {
     const code = Number(http[1]);
@@ -121,6 +118,13 @@ export function describeTransportError(
     return {
       title: `${NOUN[kind]} failed on ${label} (HTTP ${code}).`,
       hint: "",
+      showLogs: true,
+    };
+  }
+  if (/timed out/i.test(msg)) {
+    return {
+      title: `Lost contact with ${label} while ${GERUND[kind]}.`,
+      hint: "The server may still be working — check it, then try again.",
       showLogs: true,
     };
   }
