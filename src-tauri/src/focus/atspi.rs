@@ -149,10 +149,13 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     // Each is its OWN slot so a burst can't drop the activate/deactivate that drive foreground
     // tracking (the bug a single shared slot caused). Resolved OFF the event loop (a11y
     // round-trips run on the target app's UI thread). Processed per cycle in the order
-    // activate → deactivate → focus so the foreground mark is right before focus is gated.
+    // activate → deactivate → focus so the foreground mark is right before focus is gated —
+    // except when the deactivate ARRIVED first (a same-app window switch: deactivate A, then
+    // activate A): replaying it after the activate would clear A's mark although A is in front.
+    // The window slots carry an arrival sequence number for that check.
     type Slots = (
-        Option<ObjectRefOwned>,
-        Option<ObjectRefOwned>,
+        Option<(u64, ObjectRefOwned)>,
+        Option<(u64, ObjectRefOwned)>,
         Option<ObjectRefOwned>,
     );
     let pending: Arc<parking_lot::Mutex<Slots>> =
@@ -172,30 +175,43 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                     (p.0.take(), p.1.take(), p.2.take())
                 };
                 let deep = deep.load(Ordering::Relaxed);
+                // Deactivate first only when it arrived before the activate (see Slots).
+                let deact_first = matches!((&act, &deact), (Some((a, _)), Some((d, _))) if d < a);
                 // window:activate → mark this app foreground. Only a genuine activation reports
                 // STATE_ACTIVE; a background app's stray activate reports false → ignore it.
-                if let Some(item) = act {
-                    if let Ok(Some((app_id, _, active))) = tokio::time::timeout(
-                        std::time::Duration::from_millis(1000),
-                        resolve_focus(&item, &bus, deep, false, true),
-                    )
-                    .await
-                    {
-                        if active != Some(false) {
-                            note_activate(&snapshot, app_id);
+                let activate = async {
+                    if let Some((_, item)) = act {
+                        if let Ok(Some((app_id, _, active))) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            resolve_focus(&item, &bus, deep, false, true),
+                        )
+                        .await
+                        {
+                            if active != Some(false) {
+                                note_activate(&snapshot, app_id);
+                            }
                         }
                     }
-                }
+                };
                 // window:deactivate → if it's the app we had marked foreground, clear the mark.
-                if let Some(item) = deact {
-                    if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
-                        std::time::Duration::from_millis(1000),
-                        resolve_focus(&item, &bus, deep, false, false),
-                    )
-                    .await
-                    {
-                        note_deactivate(&snapshot, &app_id);
+                let deactivate = async {
+                    if let Some((_, item)) = deact {
+                        if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
+                            std::time::Duration::from_millis(1000),
+                            resolve_focus(&item, &bus, deep, false, false),
+                        )
+                        .await
+                        {
+                            note_deactivate(&snapshot, &app_id);
+                        }
                     }
+                };
+                if deact_first {
+                    deactivate.await;
+                    activate.await;
+                } else {
+                    activate.await;
+                    deactivate.await;
                 }
                 // element focus → accept only from the foreground app (or when none is marked).
                 if let Some(item) = foc {
@@ -214,6 +230,8 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
         })
     };
 
+    // Arrival order of window events (see Slots); a u64 never overflows in practice.
+    let mut seq: u64 = 0;
     let result = loop {
         tokio::select! {
             ev = stream.next() => {
@@ -238,11 +256,13 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                             true
                         }
                         Event::Window(WindowEvents::Activate(e)) => {
-                            p.0 = Some(e.item);
+                            seq += 1;
+                            p.0 = Some((seq, e.item));
                             true
                         }
                         Event::Window(WindowEvents::Deactivate(e)) => {
-                            p.1 = Some(e.item);
+                            seq += 1;
+                            p.1 = Some((seq, e.item));
                             true
                         }
                         _ => false,

@@ -61,9 +61,9 @@
 //! makes the Alt+Super quick-add chord complete on any Super press) and pinning a
 //! phantom modifier in `HeldKeys`, which stalls every injection and can divert every
 //! phrase to the clipboard. So the worker RECONCILES: while it believes anything is
-//! held it asks the OS directly (`GetAsyncKeyState` — the physical state, above the
-//! hook chain and independent of any message queue) and releases what the OS says is
-//! up. See `resync_held`.
+//! held it asks the OS directly (`GetAsyncKeyState` — independent of any message
+//! queue, though it reflects only key events no low-level hook swallowed) and releases
+//! what the OS says is up. See `resync_held`.
 
 /// Live listener: the receiver thread's native id (to post it `WM_QUIT`). Dropping
 /// it stops forwarding (the worker then drains + cleans up) and tears down the
@@ -1142,9 +1142,10 @@ mod imp {
 
     /// Is `id` physically down right now, straight from the OS?
     ///
-    /// `GetAsyncKeyState`'s high bit is the real, current keyboard state: it is maintained
-    /// above the hook chain and independently of any message queue, so it can arbitrate a
-    /// held-set the hook chain may have lied to. `aux_windows::quickadd::win_seed` already leans on the
+    /// `GetAsyncKeyState`'s high bit is the current keyboard state as the OS saw it after the
+    /// low-level hook chain: it is independent of any message queue, so it can arbitrate a
+    /// held-set our hook or raw-input feed missed — but it reflects only key events no
+    /// low-level hook swallowed (a key an RDP client's capture hook eats reads UP here). `aux_windows::quickadd::win_seed` already leans on the
     /// same authority for the same reason before it injects.
     ///
     /// `id & 0xFF` strips the synthetic extended bit we fold into NumpadEnter: the OS knows
@@ -1202,6 +1203,11 @@ mod imp {
     /// every key UP for the whole switch, which outlasts two polls — a chord held across such a
     /// switch is released, ending its push-to-talk session. `up_once` carries the first strike
     /// between calls.
+    ///
+    /// Skipped while a remote-desktop client has focus: its capture hook swallows the keys it
+    /// forwards, so the OS async state reads a held chord UP and the reconciler would cut
+    /// every push-to-talk hold after two polls. A key stranded there is repaired by the first
+    /// polls after focus leaves the client.
     fn resync_held(
         app: &AppHandle,
         held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
@@ -1210,6 +1216,12 @@ mod imp {
         up_once: &mut HashSet<u16>,
         deb: &mut crate::hotkeys::debounce::Debouncer,
     ) {
+        // The OS async state is blind to keys an RDP capture hook swallows: trust nothing
+        // it says while the client has focus, and drop any first strike taken before.
+        if crate::inject::rdp_client::focus_is_remote_desktop_client() {
+            up_once.clear();
+            return;
+        }
         let up_now: HashSet<u16> = held
             .iter()
             .copied()

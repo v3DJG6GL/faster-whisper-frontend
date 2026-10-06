@@ -331,16 +331,22 @@ pub struct EvdevStatus {
 }
 
 /// Status for the Permissions UI: is evdev available / permitted / enabled?
+/// `async` + spawn_blocking: `permitted()` opens and probes every /dev/input node and the config
+/// is read from disk — neither belongs on the main thread (a slow device would freeze the window).
 #[tauri::command]
-pub fn evdev_status(app: AppHandle) -> EvdevStatus {
-    let enabled = config_dir(&app)
-        .map(|d| config::load(&d).settings.general.evdev_enabled)
-        .unwrap_or(false);
-    EvdevStatus {
-        available: cfg!(target_os = "linux"),
-        permitted: crate::hotkeys::evdev::permitted(),
-        enabled,
-    }
+pub async fn evdev_status(app: AppHandle) -> Result<EvdevStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let enabled = config_dir(&app)
+            .map(|d| config::load(&d).settings.general.evdev_enabled)
+            .unwrap_or(false);
+        EvdevStatus {
+            available: cfg!(target_os = "linux"),
+            permitted: crate::hotkeys::evdev::permitted(),
+            enabled,
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Add the user to the `input` group via `pkexec` (polkit GUI auth). The user must

@@ -310,11 +310,8 @@ fn take_registrations(app: &AppHandle) -> HashMap<Shortcut, ShortcutTarget> {
 pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
     // Flush any held PTT chord's "stop" before tearing down the old registrations (a rebind mid-hold
     // would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's stop_held_sessions.
-    stop_held_sessions(app);
+    unregister_all(app);
     let gs = app.global_shortcut();
-    for sc in take_registrations(app).keys() {
-        let _ = gs.unregister(*sc);
-    }
 
     // Built unlocked and stored in one short lock at the end (see take_registrations).
     let mut map = HashMap::new();

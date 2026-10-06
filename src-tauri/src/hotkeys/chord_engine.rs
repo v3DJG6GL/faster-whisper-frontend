@@ -646,7 +646,7 @@ mod tests {
                 (&[CTRL_L, SHIFT_L], t),
                 (&[CTRL_L, SHIFT_L, SPACE], t), // handoff
                 (&[CTRL_L, SHIFT_L], t),        // lift — silent
-                (&[CTRL_L, SHIFT_L, SPACE], t), // re-press: hands-free re-armed → reclassify (no active hold → toggle)
+                (&[CTRL_L, SHIFT_L, SPACE], t), // re-press: hands-free re-armed; no active hold to upgrade → plain toggle (toggles the session off)
                 (&[], t),
             ],
         );
