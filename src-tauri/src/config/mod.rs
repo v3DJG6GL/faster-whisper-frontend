@@ -1031,6 +1031,16 @@ pub fn backup_failed() -> bool {
     BACKUP_FAILED.load(Ordering::SeqCst)
 }
 
+/// Sticky per-process "a load reset the config this session" (see `load_outcome`).
+static RECOVERED_THIS_SESSION: Mutex<bool> = Mutex::new(false);
+
+/// Whether a load this session reset an unusable config (backup made or not).
+pub fn reset_this_session() -> bool {
+    *RECOVERED_THIS_SESSION
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 /// A reset nobody has saved over yet: `config.json` is gone but its `.bak` is there (the reset
 /// renamed it, and no settings change has been written since). A later launch then loads the
 /// defaults with `recovered = false`, so the startup retention sweeps check this too — the
@@ -1100,7 +1110,6 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
     // it renames config.json → .bak, then the main window's read sees NotFound → `(default, false)`,
     // so the reset banner (surfaced ONLY by the main window's initConfig on `recovered`) never shows
     // and its armed auto-save silently persists the seeded defaults over the user's backed-up config.
-    static RECOVERED_THIS_SESSION: Mutex<bool> = Mutex::new(false);
     // Held across the whole read+rename so the two concurrent startup loads can't interleave the
     // destructive recovery (contended only at launch, by exactly those two callers).
     let mut recovered = RECOVERED_THIS_SESSION

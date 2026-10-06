@@ -41,13 +41,18 @@ pub fn load_config(app: AppHandle) -> LoadedConfig {
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
+    // A save over a reset (this session, or one nobody has saved over yet) carries the defaults'
+    // retention windows, not the backed-up settings' — its sweeps must not delete that history.
+    let reset = config::reset_this_session() || config::reset_unconfirmed(&dir);
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart(&app, config.settings.general.open_at_login);
     // The retention sweeps are O(history) filesystem work; a sync command runs on the main
     // thread, so they go to a background thread. The mutex serializes them, so two quick saves
     // never prune or wipe at the same time, and the generation check drops a superseded save's
     // sweep (the mutex is not FIFO, so an older, shorter window could otherwise run last).
-    {
+    if reset {
+        tracing::info!("[config] settings were reset; post-save retention sweeps skipped");
+    } else {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SWEEP_GEN: AtomicU64 = AtomicU64::new(0);
         let my_gen = SWEEP_GEN.fetch_add(1, Ordering::SeqCst) + 1;

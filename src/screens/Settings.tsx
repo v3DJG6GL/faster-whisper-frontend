@@ -130,6 +130,9 @@ export default function Settings() {
   // One store action in flight: the confirm stays mounted until it settles, and a second click
   // re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
   const storeBusyRef = useRef(false);
+  // Its state mirror disables the folder buttons while a wipe runs (a move would walk the folder
+  // the wipe is deleting from).
+  const [storeBusy, setStoreBusy] = useState(false);
   // Both die with the tab that owns them: an armed "Delete 214 dictations" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
   useEffect(() => {
@@ -163,6 +166,7 @@ export default function Settings() {
       } else console.error("store action failed:", e);
     };
     storeBusyRef.current = true; // set with the IPC, so nothing above can leave it stuck
+    setStoreBusy(true);
     const [op, what]: [Promise<number>, string] =
       kind === "dict"
         ? [deleteAllDictations(basePref), "dictation file(s)"]
@@ -178,6 +182,7 @@ export default function Settings() {
       .catch(fail)
       .finally(() => {
         storeBusyRef.current = false;
+        setStoreBusy(false);
       });
   };
   // One dictation clock for text AND audio: display the stricter of the two
@@ -238,7 +243,12 @@ export default function Settings() {
   const changeRecDir = () =>
     void pickRecordingsDir()
       .then(async (picked) => {
-        if (!picked || dirBusyRef.current || storeBusyRef.current) return;
+        if (!picked || dirBusyRef.current) return;
+        // The buttons are disabled during a wipe, but the native picker may have opened before it.
+        if (storeBusyRef.current) {
+          setStoreMsg({ text: "A cleanup is still running — try the move again when it finishes.", error: true });
+          return;
+        }
         dirBusyRef.current = true;
         setDirBusy(true);
         try {
@@ -518,14 +528,14 @@ export default function Settings() {
                     <FolderOpen size={14} strokeWidth={2} />
                     Open
                   </Button>
-                  <Button size="sm" onClick={changeRecDir} disabled={dirBusy}>
+                  <Button size="sm" onClick={changeRecDir} disabled={dirBusy || storeBusy}>
                     {dirBusy ? "Moving…" : "Change…"}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={resetRecDir}
-                    disabled={dirBusy || !basePref}
+                    disabled={dirBusy || storeBusy || !basePref}
                     title="Move everything back to the default location"
                   >
                     Reset

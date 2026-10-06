@@ -3023,15 +3023,13 @@ function teardownAfterFatalInject(): void {
   void retireSessionEpoch().catch((err) => console.error("retire epoch after fatal inject failed:", err));
 }
 
-/** The wording for "nothing was written and the clipboard retry failed too". On a
- *  clipboard-method insert `landed:false` has TWO producers this side cannot tell apart —
- *  Rust's own-window guard runs for every method before the clipboard arm, and `t.isSelf`
- *  is a ~1 s-old answer — so the message names neither cause alone; blaming focus (or the
- *  clipboard) outright sent the user after the wrong problem. */
+/** The wording for "nothing was written and the clipboard retry failed too". The retry goes
+ *  through the guard-free recover_to_clipboard, so its failure means the clipboard write itself
+ *  failed. On a non-clipboard method the skip itself was our window taking focus. */
 export function sinkSkipMessage(method: InsertMethod): string {
   return method === "clipboard"
-    ? "Nothing was inserted — the text couldn’t be put on the clipboard, or this app has focus."
-    : "Focus moved to this app — nothing was inserted.";
+    ? "Nothing was inserted — the text couldn’t be put on the clipboard."
+    : "Focus moved to this app — nothing was inserted, and the text couldn’t be put on the clipboard.";
 }
 
 /** Show an error on the chip, then auto-clear it to idle after ERROR_LINGER_MS so it doesn't stick.
