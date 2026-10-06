@@ -14,11 +14,11 @@ import { TriggerTile } from "@/components/TriggerTile";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { Button, Labeled, Notice, Select, TextInput } from "@/components/ui";
 import {
-  evdevStatus, getPipelineRules, importSettingsFile, pickImportFile, setBackendKey,
-  syncPull, testConnection,
+  deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
+  setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
-import { quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/hotkeyConflicts";
+import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
@@ -115,7 +115,18 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Full backend → this account may have synced settings; discover, don't ask.
       if (res.bootId) {
         const p = await syncPull({ serverUrl, apiKey: key || null });
-        if (abandoned.current || normalizeUrl(urlRef.current) !== serverUrl || keyRef.current !== keyAtTest) return;
+        if (abandoned.current) return;
+        if (normalizeUrl(urlRef.current) !== serverUrl || keyRef.current !== keyAtTest) {
+          // Retyped during the pull: the backend minted above (and its keyring entry) is for
+          // the abandoned target — roll it back, or the corrected attempt mints a duplicate
+          // beside it. (After `finish()` the minted backend is kept: the user left with it.)
+          st.getState().removeBackend(backend.id);
+          if (key) void deleteBackendKey(backend.id).catch(() => {});
+          gateBackend.current = null;
+          setInfo(null);
+          setBackendId(null);
+          return;
+        }
         if (p.ok && p.state?.blob) {
           setPull(p);
           setStep("restore");
@@ -124,7 +135,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       }
       setStep("starters");
     } catch (e) {
-      setError(String(e));
+      // Same live-target guard as the resolved branches: a keyring or invoke failure for the
+      // abandoned target must not show under the corrected one.
+      if (!abandoned.current && normalizeUrl(urlRef.current) === serverUrl && keyRef.current === keyAtTest) {
+        setError(String(e));
+      }
     } finally {
       setBusy(false);
     }
@@ -175,15 +190,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
 
   const doImport = async () => {
     setError(null);
-    try {
-      const path = await pickImportFile();
-      if (!path) return;
-      setImportResult(await importSettingsFile(path));
-    } catch (e) {
-      // Same as the Sync tab's twin: the Rust import error can quote the untrusted file's own
-      // text back, unbounded, and this is the first-run gate.
-      setError(safeDisplayText(String(e), 300));
-    }
+    const r = await pickAndImportSettings();
+    if (!r) return;
+    if ("error" in r) setError(r.error);
+    else setImportResult(r.result);
   };
 
   return (
@@ -372,7 +382,7 @@ function StartersStep({
           <StarterCard
             key={p.id}
             profile={p}
-            others={[...drafts.filter((x) => x.id !== p.id), ...(quickAddHotkey.length ? [quickAddPeer(quickAddHotkey)] : [])]}
+            others={withQuickAddPeer(drafts.filter((x) => x.id !== p.id), quickAddHotkey)}
             lowLevelActive={lowLevel}
             onPatch={(patchP) => patch(p.id, patchP)}
             onTakeOver={(id) =>
@@ -439,7 +449,13 @@ function StarterCard({
           setCapturing(true);
         }}
       />
-      <div className="mt-2.5 text-[11px] text-faint">Language, vocabulary and more: Profiles screen, any time.</div>
+      <div className="mt-2.5 text-[11px] text-faint">
+        {/* Confirm drops a starter without keys (its shortcut may have been handed to the other
+            card via "Use it here") — say so on the card instead of dropping it silently. */}
+        {p.hotkey.length === 0
+          ? "Not created without a shortcut — record one, or it is skipped."
+          : "Language, vocabulary and more: Profiles screen, any time."}
+      </div>
     </div>
   );
 }

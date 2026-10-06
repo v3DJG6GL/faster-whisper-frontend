@@ -39,7 +39,7 @@ import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
 import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/transcript/exportTracks";
 import { cueOptionsOf } from "@/lib/transcript/cueSplit";
-import { displayToggles } from "@/lib/useDisplayToggles";
+import { displayToggles, patchTranscribe } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
 import { releaseDetachedMedia } from "@/lib/mediaElement";
 
@@ -129,7 +129,7 @@ function RecordingPlayer({ path }: { path: string }) {
     return (
       <div className="mt-3 text-[12px] text-faint">
         {tooBig
-          ? "Audio too large to play here — open the recording from the log folder."
+          ? "Audio too large to play here — open the recording from the audio folder (Settings → Recording & history → Audio folder, dictations subfolder)."
           : "Audio unavailable — removed by retention, or recordings were off."}
       </div>
     );
@@ -230,7 +230,6 @@ export default function History() {
   const running = useTranscribeRun((s) => s.running);
   const settings = useApp((s) => s.settings);
   const backends = useApp((s) => s.backends);
-  const updateSettings = useApp((s) => s.updateSettings);
   const [query, setQuery] = useState(viewMemory.query);
   const [segment, setSegment] = useState<Segment>(viewMemory.segment);
   const [appFilter, setAppFilter] = useState<string | null>(viewMemory.appFilter);
@@ -417,11 +416,13 @@ export default function History() {
       return;
     }
     if (!path) return;
-    // The viewer's tracks in the viewer's order (a dragged order included), site tracks
-    // named from the link — the same files the export panel writes.
-    const result = withTrackSites(recordEditedResult(rec), rec.sourcePath);
-    const all = transcriptTracks(result);
     try {
+      // The viewer's tracks in the viewer's order (a dragged order included), site tracks
+      // named from the link — the same files the export panel writes. Inside the try: an
+      // on-disk record is unvalidated, and a throw here must land in the row's export note
+      // rather than escape the fire-and-forget `void quickExport(rec)` as a rejection.
+      const result = withTrackSites(recordEditedResult(rec), rec.sourcePath);
+      const all = transcriptTracks(result);
       const files = generateExports(result, exportOptionsFor({
         format,
         speakers: speakerOrder(rec.result ?? { text: "" }),
@@ -916,11 +917,7 @@ export default function History() {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() =>
-              updateSettings({
-                transcribe: { ...settings.transcribe, keepDictationHistory: true },
-              })
-            }
+            onClick={() => patchTranscribe({ keepDictationHistory: true })}
           >
             Turn on
           </Button>

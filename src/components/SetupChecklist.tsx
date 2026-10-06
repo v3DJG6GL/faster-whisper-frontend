@@ -9,11 +9,10 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button, Card } from "@/components/ui";
-import { importSettingsFile, pickImportFile } from "@/lib/api";
+import { pickAndImportSettings } from "@/lib/api";
 import { useApp } from "@/lib/store";
 import type { ImportResult } from "@/lib/sync/syncTypes";
 import { ImportPreview } from "@/components/sync/SettingsSync";
-import { safeDisplayText } from "@/lib/sanitize";
 
 function StepBullet({ state, n }: { state: "done" | "now" | "off"; n: number }) {
   return (
@@ -45,16 +44,10 @@ export function SetupChecklist() {
 
   const doImport = async () => {
     setImportError(null);
-    try {
-      const path = await pickImportFile();
-      if (!path) return;
-      setImportResult(await importSettingsFile(path));
-    } catch (e) {
-      // Defanged and bounded like the two sibling import buttons: the Rust typed parse
-      // Display-formats serde errors whose `unknown variant` text quotes the untrusted file's own
-      // string verbatim, and the only ceiling on it is the 20 MB whole-file cap.
-      setImportError(safeDisplayText(String(e), 300));
-    }
+    const r = await pickAndImportSettings();
+    if (!r) return;
+    if ("error" in r) setImportError(r.error);
+    else setImportResult(r.result);
   };
 
   return (
