@@ -148,7 +148,9 @@ mod native {
                     ..
                 } = event
                 {
-                    toggle_main(tray.app_handle());
+                    if accept_toggle() {
+                        toggle_main(tray.app_handle());
+                    }
                 }
             })
             .on_menu_event(|app, event| run_menu_action(app, event.id.as_ref()));
@@ -159,6 +161,35 @@ mod native {
 
         builder.build(app)?;
         Ok(())
+    }
+
+    /// Whether a left-click Up may toggle the window. A shell double-click delivers DOWN, UP,
+    /// DBLCLK, UP — two `Click { Up }` events (tray-icon maps every WM_LBUTTONUP) — so without
+    /// this the window toggles twice and ends where it started. An Up within the system
+    /// double-click time of the last accepted one is the second half of a double-click.
+    fn accept_toggle() -> bool {
+        use std::sync::Mutex;
+        use std::time::{Duration, Instant};
+        static LAST_TOGGLE: Mutex<Option<Instant>> = Mutex::new(None);
+        let window = Duration::from_millis(double_click_ms());
+        let now = Instant::now();
+        let mut last = LAST_TOGGLE.lock().unwrap_or_else(|e| e.into_inner());
+        if last.is_some_and(|t| now.duration_since(t) < window) {
+            return false;
+        }
+        *last = Some(now);
+        true
+    }
+
+    #[cfg(windows)]
+    fn double_click_ms() -> u64 {
+        // SAFETY: no arguments, no pointers; reads a per-user system setting.
+        u64::from(unsafe { windows_sys::Win32::UI::Input::KeyboardAndMouse::GetDoubleClickTime() })
+    }
+
+    #[cfg(not(windows))]
+    fn double_click_ms() -> u64 {
+        500
     }
 }
 

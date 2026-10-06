@@ -12,6 +12,10 @@
 //! An emit with no listener is dropped, never queued — the webview also asks
 //! `isVisible()` once its listener is up (windowVisibility.ts), which covers a hide that
 //! happened before it loaded (start minimized).
+//!
+//! `emit_to(label, …)` scopes only listeners registered for that label: a webview listening
+//! through the global `listen()` (target Any) hears every window's notify, so it must listen
+//! on its own window (`getCurrentWebviewWindow().listen`).
 
 use tauri::{Emitter, Runtime};
 

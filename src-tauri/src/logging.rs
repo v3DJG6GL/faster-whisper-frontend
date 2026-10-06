@@ -516,7 +516,7 @@ pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String,
     // Home-relative display, same as audio_dir_path.
     if let Ok(home) = app.path().home_dir() {
         if let Ok(rest) = dir.strip_prefix(&home) {
-            return Ok(format!("~/{}", rest.display()));
+            return Ok(format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display()));
         }
     }
     Ok(dir.to_string_lossy().into_owned())

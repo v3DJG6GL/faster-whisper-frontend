@@ -175,8 +175,9 @@ pub fn prewarm_chip_rule(cfg: &crate::config::Config) {
     };
     // (No monitor cap here — there is no window yet to ask; chip_position clamps x at 0.)
     let (w, h) = window_size(f64::MAX);
+    let gen = kwin::next_place_gen();
     std::thread::spawn(move || {
-        kwin::place_chip(kwin::chip_position(edge, w, h));
+        kwin::place_chip(kwin::chip_position(edge, w, h), gen);
     });
 }
 
@@ -220,8 +221,9 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
         // it runs on the GTK/UI thread — a hang here freezes the whole app and every
         // queued command (text injection included). Do it on a detached thread; the
         // window is already shown, the rule only nudges it into position afterwards.
+        let gen = kwin::next_place_gen();
         std::thread::spawn(move || {
-            kwin::place_chip(kwin::chip_position(&position, w, h));
+            kwin::place_chip(kwin::chip_position(&position, w, h), gen);
         });
         return;
     }
@@ -704,7 +706,7 @@ mod win_hover {
 #[cfg(target_os = "linux")]
 mod kwin {
     use std::process::{Command, Stdio};
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     use std::sync::Mutex;
 
     // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::aux_windows::kwin.
@@ -719,6 +721,16 @@ mod kwin {
     /// The last logical position we forced, so we only reconfigure KWin when the
     /// active output actually changes (avoids churn on every dictation).
     static LAST_POS: Mutex<Option<(i32, i32)>> = Mutex::new(None);
+    /// Bumped on the calling thread by every show/prewarm BEFORE it spawns its placement
+    /// thread. `chip_position` shells out before `place_chip` takes its lock, so two
+    /// placements can reach the lock in reverse order; the one that is no longer the newest
+    /// skips its (stale) position and leaves it to the newer thread.
+    static PLACE_GEN: AtomicU64 = AtomicU64::new(0);
+
+    /// Claim a placement generation — call on the show path, before spawning.
+    pub fn next_place_gen() -> u64 {
+        PLACE_GEN.fetch_add(1, Ordering::Relaxed) + 1
+    }
 
     /// Connector name of the output the user is on (cursor / focused window), via
     /// KWin's D-Bus. e.g. "DP-1". None if KWin isn't reachable.
@@ -812,9 +824,9 @@ mod kwin {
         }
     }
 
-    /// Install the chip rule (once) and force its position to `pos` (when known),
-    /// reloading KWin only when something actually changed.
-    pub fn place_chip(pos: Option<(i32, i32)>) {
+    /// Install the chip rule (once) and force its position to `pos` (when known and `gen` is
+    /// still the newest placement), reloading KWin only when something actually changed.
+    pub fn place_chip(pos: Option<(i32, i32)>, gen: u64) {
         // Serialize: show_overlay spawns this on a thread, so two back-to-back shows (rapid stop→start
         // or a profile switch) would run two place_chip threads racing on the EXTERNAL kwinrulesrc
         // file — concurrent kwriteconfig6 read-modify-writes can lose an update and reconfigure() can
@@ -836,6 +848,9 @@ mod kwin {
             need_reconfigure = true;
         }
 
+        // A newer show claimed a generation after this one: its thread writes the fresher
+        // position, so this (stale) one must not land last and pin LAST_POS.
+        let pos = pos.filter(|_| PLACE_GEN.load(Ordering::Relaxed) == gen);
         if let Some((x, y)) = pos {
             if let Ok(mut last) = LAST_POS.lock() {
                 if *last != Some((x, y)) {

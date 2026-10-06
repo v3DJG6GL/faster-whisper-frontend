@@ -6,7 +6,8 @@
 //! our own allocator stats cannot see it — /proc can. A spike also logs a `warn` (so it lands
 //! in the log at the default level): once when a process crosses `WARN_ANON_MB` (re-armed
 //! once it falls back under `REARM_ANON_MB`), and whenever a peak jumps by `WARN_PEAK_JUMP_MB`
-//! between two samples. Linux only; `note_route` exists everywhere because the webview calls
+//! between two samples (or, the first time a process is seen, when its peak is already over
+//! `WARN_ANON_MB`). Linux only; `note_route` exists everywhere because the webview calls
 //! it on every platform.
 
 use std::sync::Mutex;
@@ -83,6 +84,10 @@ mod imp {
                 format!("web{pid}")
             };
             line.push_str(&format!(" | {name} {anon}M (peak {peak}M)"));
+            // A first-seen process (the first sample, or a relaunched web process) is seeded
+            // with its current peak, so the jump check below cannot fire for it: a spike that
+            // has already receded by then would otherwise only reach the debug line.
+            let is_new = !seen.contains_key(&pid);
             let s = seen.entry(pid).or_insert_with(|| Seen {
                 peak_mb: peak,
                 warned: false,
@@ -95,7 +100,11 @@ mod imp {
             } else if anon < REARM_ANON_MB {
                 s.warned = false;
             }
-            if peak >= s.peak_mb + WARN_PEAK_JUMP_MB {
+            if is_new && peak >= WARN_ANON_MB {
+                tracing::warn!(
+                    "[mem] {name} (pid {pid}) peaked at {peak}M since launch — screen {route}"
+                );
+            } else if peak >= s.peak_mb + WARN_PEAK_JUMP_MB {
                 tracing::warn!(
                     "[mem] {name} (pid {pid}) peaked at {peak}M since the last sample (was {}M) — screen {route}",
                     s.peak_mb
