@@ -425,9 +425,10 @@ export function StatisticsView({
   // The page's own document, only when it answers THIS query against THIS backend; until
   // then the last one it had (or the fixed 30-day one on first visit) stays up, marked stale.
   const sig = viewBackend ? viewSignature(viewBackend, effectiveServerUrl(viewBackend, settings), query, viewerTimeZone()) : null;
-  // A failed fetch for this signature commits a null document: keep the last one up (marked
-  // stale, filter bar usable) instead of the empty state, until the next poll lands.
-  const fresh = !!sig && view?.sig === sig && !!view.stats;
+  // A failed fetch for this signature keeps the last good document up (marked stale, filter bar
+  // usable) and says so, instead of an "updating…" that never resolves; the next poll retries.
+  const fresh = !!sig && view?.sig === sig && !view.failed && !!view.stats;
+  const failed = !!sig && view?.sig === sig && !!view.failed;
   const stats = fresh ? view!.stats : (view?.stats ?? base);
   const win = useMemo(
     () => (fresh && stats?.range ? { from: stats.range.from, to: stats.range.to, days: stats.range.days } : resolveWindow(query, today, stats?.range?.first_day)),
@@ -468,7 +469,7 @@ export function StatisticsView({
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
         <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
-        {!fresh && <Pill>updating…</Pill>}
+        {failed ? <Pill>couldn’t load this range · showing older data</Pill> : !fresh && <Pill>updating…</Pill>}
       </div>
       <FilterBar
         scope={scope}

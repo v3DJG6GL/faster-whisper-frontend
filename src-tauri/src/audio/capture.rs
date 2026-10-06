@@ -179,12 +179,16 @@ fn run(
     }
 
     let level_bits = Arc::new(AtomicU32::new(0));
+    // Set by on_terminal only (a user stop raises `stop` alone), so the exit below can tell the
+    // frontend the test ended on its own.
+    let lost = Arc::new(AtomicBool::new(false));
     // A lost device (or an error storm) ends the test: zero the meter and stop publishing, which
     // drops the stream. The clip recorded so far stays replayable.
     let on_terminal = || {
-        let (s, l) = (stop.clone(), level_bits.clone());
+        let (s, l, d) = (stop.clone(), level_bits.clone(), lost.clone());
         move || {
             l.store(0f32.to_bits(), Ordering::Relaxed);
+            d.store(true, Ordering::SeqCst);
             s.store(true, Ordering::SeqCst);
         }
     };
@@ -257,6 +261,11 @@ fn run(
     // Leave the meter at rest: after a device loss its last live-looking level would otherwise
     // stay on screen (after a user stop the listener is already gone, so this is a no-op).
     let _ = app.emit("audio://level", 0f32);
+    // A device loss ended the test: tell the Settings test so it leaves "testing" (its start
+    // call resolved long ago, so nothing else would reach it).
+    if lost.load(Ordering::SeqCst) {
+        let _ = app.emit("audio://test-ended", "device-lost");
+    }
     // `stream` is dropped here, on the capture thread, stopping the device.
     Ok(())
 }

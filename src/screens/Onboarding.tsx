@@ -78,6 +78,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
     // was run with — a corrected key matters as much as a corrected host.
     const keyAtTest = key;
+    // Still the target on screen? Every await below re-asks — the inputs stay editable
+    // throughout (the test, the keyring write parked on a wallet prompt, the pull).
+    const stillLive = () =>
+      !abandoned.current && normalizeUrl(urlRef.current) === serverUrl && keyRef.current === keyAtTest;
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
       setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
       return;
@@ -94,9 +98,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // the keyring under it, `syncPull` run against it, and its restore offer presented while the
       // on-screen field showed the corrected host. Accepting that restore runs
       // `applyBlob(blob, ALL_ON)` and binds sync to that server.
-      if (abandoned.current || normalizeUrl(urlRef.current) !== serverUrl || keyRef.current !== keyAtTest) {
-        return;
-      }
+      if (!stillLive()) return;
       if (!res.ok) {
         setError(res.error || "Couldn’t reach the server.");
         return;
@@ -106,7 +108,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // and the standard-server batch endpoint are picked up here too.
       // Key goes to the OS keyring FIRST (mirrors the Backends editor).
       const backend: Backend = newBackendDraft({ serverUrl, hasApiKey: key.length > 0, info: res });
-      if (key) await setBackendKey(backend.id, key);
+      if (key) {
+        await setBackendKey(backend.id, key);
+        // The keyring write can park behind a locked-wallet prompt while the user retypes the
+        // target (or leaves): nothing references this entry yet, so drop it and mint nothing.
+        if (!stillLive()) {
+          void deleteBackendKey(backend.id).catch(() => {});
+          return;
+        }
+      }
       st.getState().upsertBackend(backend);
       gateBackend.current = backend;
       st.getState().setConnection(backend.id, res);
@@ -116,7 +126,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (res.bootId) {
         const p = await syncPull({ serverUrl, apiKey: key || null });
         if (abandoned.current) return;
-        if (normalizeUrl(urlRef.current) !== serverUrl || keyRef.current !== keyAtTest) {
+        if (!stillLive()) {
           // Retyped during the pull: the backend minted above (and its keyring entry) is for
           // the abandoned target — roll it back, or the corrected attempt mints a duplicate
           // beside it. (After `finish()` the minted backend is kept: the user left with it.)
@@ -137,9 +147,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     } catch (e) {
       // Same live-target guard as the resolved branches: a keyring or invoke failure for the
       // abandoned target must not show under the corrected one.
-      if (!abandoned.current && normalizeUrl(urlRef.current) === serverUrl && keyRef.current === keyAtTest) {
-        setError(String(e));
-      }
+      if (stillLive()) setError(String(e));
     } finally {
       setBusy(false);
     }

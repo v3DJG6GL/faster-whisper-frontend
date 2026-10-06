@@ -9,14 +9,16 @@ use tauri::{AppHandle, Emitter, Manager};
 /// True while shortcuts are intentionally suspended for an in-progress binding capture
 /// (suspend_shortcuts is only ever called by the capture hook). The suspend-watch resume
 /// path reads this so an automatic resume re-arm can't override a deliberate capture
-/// suspension; reregister_shortcuts (the capture-end pair) clears it.
+/// suspension; reregister_shortcuts (the capture-end pair) clears it. Read and written only
+/// under APPLY_LOCK, so a check and the apply it gates can't straddle a suspend.
 static CAPTURE_SUSPENDED: AtomicBool = AtomicBool::new(false);
 
 /// Serializes every registration change: apply_bindings' whole load→branch→apply and
 /// suspend_shortcuts' teardown. Its holders may block on the MAIN thread — in plugin mode
 /// `gs.register`/`gs.unregister` post to it (the plugin's `run_main_thread!`) and wait for the
 /// answer — so no holder may run on the main thread, and no main-thread caller may wait for it:
-/// that is why the commands below are `async` (Tauri runs them off the main thread). setup's
+/// that is why the commands below are `async` and run on the blocking pool (spawn_blocking —
+/// they may wait here for seconds, which must not park a tokio worker either). setup's
 /// apply_bindings is the one main-thread holder, and is safe only because it runs before
 /// spawn_suspend_watch starts the other one.
 static APPLY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -26,13 +28,19 @@ static APPLY_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// silences both the global-shortcut plugin AND the evdev reader (which otherwise
 /// keeps firing from /dev/input). Pair with `reregister_shortcuts` (apply_bindings)
 /// to restore whichever backend is active when capture ends.
-#[tauri::command(async)]
-pub fn suspend_shortcuts(app: AppHandle) {
-    CAPTURE_SUSPENDED.store(true, Ordering::SeqCst);
+#[tauri::command]
+pub async fn suspend_shortcuts(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || suspend_shortcuts_blocking(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn suspend_shortcuts_blocking(app: &AppHandle) {
     // Off the main thread now, so it could race a suspend-watch apply_bindings re-arming the
     // backend this is tearing down; take the same lock to keep the two in order.
     let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    crate::hotkeys::triggers::unregister_all(&app);
+    CAPTURE_SUSPENDED.store(true, Ordering::SeqCst);
+    crate::hotkeys::triggers::unregister_all(app);
     let state = app.state::<crate::hotkeys::evdev::EvdevState>();
     crate::hotkeys::evdev::stop(&state);
     // Windows twin of the evdev teardown (no-op elsewhere): the hook backend is the
@@ -44,8 +52,8 @@ pub fn suspend_shortcuts(app: AppHandle) {
     app.state::<crate::hotkeys::held_keys::HeldKeys>().clear();
     // (2) the held-SESSION "stop" — a PTT chord held while a rebind capture starts would otherwise
     // wedge "listening" until manual cancel (the release reaches no reader). No-op when none held.
-    crate::hotkeys::evdev::stop_held_sessions(&app);
-    crate::hotkeys::windows::stop_held_sessions(&app);
+    crate::hotkeys::evdev::stop_held_sessions(app);
+    crate::hotkeys::windows::stop_held_sessions(app);
 }
 
 /// Whether ALL of the given chord's MODIFIER keys are physically held RIGHT NOW, per
@@ -79,7 +87,11 @@ pub fn apply_bindings(app: &AppHandle) {
     // chord double-fires) or neither is registered (no hotkeys until the next reregister). See
     // APPLY_LOCK for the threads that may (and may not) hold it.
     let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    apply_bindings_locked(app);
+}
 
+/// The apply step itself; the caller holds APPLY_LOCK.
+fn apply_bindings_locked(app: &AppHandle) {
     let Ok(dir) = config_dir(app) else { return };
     let cfg = config::load(&dir);
     // The quick-add chord stays INERT until a word-mapping list is designated
@@ -130,15 +142,32 @@ pub fn apply_bindings(app: &AppHandle) {
     }
 }
 
+/// Re-apply the bindings unless a binding capture holds them suspended — the check and the
+/// apply share one APPLY_LOCK hold, so a suspend_shortcuts can't land between them. Returns
+/// whether it applied.
+fn apply_bindings_unless_capturing(app: &AppHandle) -> bool {
+    let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
+        return false;
+    }
+    apply_bindings_locked(app);
+    true
+}
+
 /// Re-read config and re-apply bindings (call after hotkeys / evdev toggle change).
-/// `async` so the wait on APPLY_LOCK happens off the main thread (see there).
-#[tauri::command(async)]
-pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
-    // Capture ended (or bindings changed): no longer suspended-for-capture, so a later
-    // resume may re-arm normally again.
-    CAPTURE_SUSPENDED.store(false, Ordering::SeqCst);
-    apply_bindings(&app);
-    Ok(())
+/// `async` + spawn_blocking so the wait on APPLY_LOCK happens off the main thread and off
+/// the tokio workers (see there).
+#[tauri::command]
+pub async fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // Capture ended (or bindings changed): no longer suspended-for-capture, so a later
+        // resume may re-arm normally again.
+        CAPTURE_SUSPENDED.store(false, Ordering::SeqCst);
+        apply_bindings_locked(&app);
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Like `reregister_shortcuts`, but a NO-OP while a binding capture is in progress
@@ -147,12 +176,15 @@ pub fn reregister_shortcuts(app: AppHandle) -> Result<(), String> {
 /// (the suspend-watch deliberately left them suspended, and the capture-end `reregister_shortcuts`
 /// will re-arm once capture truly ends). Outside a capture it behaves exactly like the unconditional
 /// reregister, preserving cancelLive's stuck-hotkey recovery.
-#[tauri::command(async)]
-pub fn reregister_shortcuts_unless_capturing(app: AppHandle) -> Result<(), String> {
-    if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
-        return Ok(());
-    }
-    reregister_shortcuts(app)
+#[tauri::command]
+pub async fn reregister_shortcuts_unless_capturing(app: AppHandle) -> Result<(), String> {
+    // Outside a capture CAPTURE_SUSPENDED is already false, so applying without clearing it
+    // is exactly the unconditional reregister.
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_bindings_unless_capturing(&app);
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Detect a system suspend/resume: a dedicated thread ticks every couple of seconds
@@ -183,12 +215,10 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 // next chord both rebind AND fire dictation (for a held evdev PTT chord, wedge
                 // "listening" — exactly what the suspend guards). The capture's reregister
                 // rebuilds fresh held-state on completion, so nothing is lost by skipping.
-                if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
+                if !apply_bindings_unless_capturing(&app) {
                     tracing::info!(
                         "[suspend] binding capture in progress; leaving shortcuts suspended"
                     );
-                } else {
-                    apply_bindings(&app);
                 }
                 // A resume reshuffles the desktop (display re-attach, lock screen); make
                 // sure the chip did not come back underneath something.

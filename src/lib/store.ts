@@ -421,8 +421,9 @@ interface AppState {
   /** The Statistics page's own usage document: fetched for the filters it has set
    *  (`usageViewQuery`) against the viewed backend, tagged with the query signature it
    *  answers so a stale response is ignored. null = nothing fetched yet / unsupported.
-   *  Runtime-only. Fed by lib/usage.ts. */
-  usageView: { sig: string; stats: UsageStats | null } | null;
+   *  `failed`: the fetch for `sig` failed — `stats` is then the last good document (any
+   *  query), kept up so a refused range doesn't wipe the page. Runtime-only. Fed by lib/usage.ts. */
+  usageView: { sig: string; stats: UsageStats | null; failed?: boolean } | null;
   /** The Statistics calendar's own document: the last 365 days under the page's stage
    *  filter, whatever range the page shows, so the calendar is always a year (the page's
    *  own document is used instead when its range already covers one). Runtime-only. */
@@ -823,9 +824,13 @@ export const useApp = create<AppState>((set) => ({
 
   setUsageView: (sig, stats) =>
     set((s) => {
+      if (stats === null) {
+        if (s.usageView?.sig === sig && s.usageView.failed) return {};
+        return { usageView: { sig, stats: s.usageView?.stats ?? null, failed: true } };
+      }
       // Same stability rule as setUsage: the 30 s poll re-answers the same query with an
       // identical document; keep the reference so the page does not re-render for nothing.
-      if (s.usageView && s.usageView.sig === sig && JSON.stringify(s.usageView.stats) === JSON.stringify(stats)) return {};
+      if (s.usageView && s.usageView.sig === sig && !s.usageView.failed && JSON.stringify(s.usageView.stats) === JSON.stringify(stats)) return {};
       return { usageView: { sig, stats } };
     }),
   setUsageYear: (sig, stats) =>

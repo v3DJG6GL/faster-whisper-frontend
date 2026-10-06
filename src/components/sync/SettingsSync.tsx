@@ -30,6 +30,7 @@ import {
   getPendingConflict,
   getPendingReview,
   isCodeList,
+  isPlainObject,
   migrateBlob,
   pullNow,
   pushNow,
@@ -93,16 +94,18 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
 
 
 /** What a selection would overwrite on this device, for the two preview dialogs' replace
- *  warning: a selected category the blob carries AND the device already has data for. */
+ *  warning: a selected category the blob carries AND the device already has data for. "Carries"
+ *  is applyBlob's own arm test (a plain object), so the warning never names a category the
+ *  apply would skip. */
 function replacedNames(
   sel: Record<SyncCategory, boolean>,
   blob: SyncBlob,
   st: ReturnType<typeof useApp.getState>,
 ): string[] {
   return [
-    sel.backends && blob.backends && st.backends.length > 0 && "backends",
-    sel.profiles && blob.profiles && st.profiles.length > 0 && "profiles",
-    sel.appRules && blob.appRules && st.appRules.length > 0 && "app rules for this OS",
+    sel.backends && isPlainObject(blob.backends) && st.backends.length > 0 && "backends",
+    sel.profiles && isPlainObject(blob.profiles) && st.profiles.length > 0 && "profiles",
+    sel.appRules && isPlainObject(blob.appRules) && st.appRules.length > 0 && "app rules for this OS",
   ].filter((n): n is string => typeof n === "string");
 }
 

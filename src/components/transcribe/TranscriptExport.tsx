@@ -108,7 +108,8 @@ export function TranscriptExport({
   const urlSource = isSourceUrl(path);
   const textSource = isTextSourcePath(path);
   // Export panel state, seeded from the persisted screen defaults.
-  const [exportFormat, setExportFormat] = useState<ExportFormat>(
+  // The user's format pick (persisted); `exportFormat` below is what this record exports.
+  const [formatPick, setFormatPick] = useState<ExportFormat>(
     () => settings.transcribe?.exportFormat ?? "srt",
   );
   // Which language tracks the export carries: null = follow the viewer's
@@ -148,10 +149,6 @@ export function TranscriptExport({
   const queuedJob = useSyncExternalStore(subscribeExportQueue, () => queuedExportFor(owner));
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
   const [streams, setStreams] = useState<MediaStreams | null>(null);
-  /** D69 A: with Video on, only subtitle formats stay live. A lit TXT/LRC/JSON
-   *  card moves to SRT and the footer says so once (cleared on the next
-   *  card or media click). */
-  const [switchNote, setSwitchNote] = useState<string | null>(null);
   useEffect(() => {
     if (!initialExport) return;
     setMediaChoice(initialExport.media);
@@ -203,13 +200,13 @@ export function TranscriptExport({
       : mediaChoice === "video" && videoWhy
         ? "none"
         : mediaChoice;
-  useEffect(() => {
-    if (effMedia !== "video" || isSubtitleFormat(exportFormat)) return;
-    setSwitchNote(`SRT — switched from ${exportFormat.toUpperCase()}, which can't ride with a video`);
-    setExportFormat("srt");
-    patchTranscribe({ exportFormat: "srt" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [effMedia, exportFormat]);
+  /** D69 A: with Video on, only subtitle formats stay live — a TXT/LRC/JSON pick exports
+   *  as SRT and the footer says so. Derived, never persisted, like `effMedia`: the pick is
+   *  global, and writing the coercion back lost it for every record without a video. */
+  const exportFormat: ExportFormat = effMedia === "video" && !isSubtitleFormat(formatPick) ? "srt" : formatPick;
+  const switchNote = exportFormat !== formatPick
+    ? `SRT — ${formatPick.toUpperCase()} can't ride with a video`
+    : null;
   const mp4Why = effMedia === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
   // Codec facts for the MP4 verdict, fetched once the panel wants them. `streams` is a
   // dep: a record switch nulls it AFTER this ran with the predecessor's facts.
@@ -345,9 +342,11 @@ export function TranscriptExport({
   };
 
   /** Plain copy of the audio (the app's local copy; a link's is fetched
-   *  first when the copy is missing and the server still has it). Returns
-   *  where it landed: a fetched copy keeps its own container's extension. */
-  const exportAudioTo = async (dest: string): Promise<string> => {
+   *  first when the copy is missing and the server still has it). Writes to
+   *  exactly `dest` — the path the save dialog confirmed (and approved any
+   *  overwrite of); renaming it to the fetched file's extension afterwards
+   *  could replace a different file nobody was asked about. */
+  const exportAudioTo = async (dest: string): Promise<void> => {
     let src = mediaPath ?? null;
     if (!src && urlSource && rec?.result?.sourceMediaId && trBackend) {
       setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
@@ -364,14 +363,11 @@ export function TranscriptExport({
         // next Save copies it instead of downloading again.
         const got = src;
         patchRecord(rec.id, (r) => (r.mediaPath === got ? r : { ...r, mediaPath: got }));
-        const ext = extOf(got);
-        if (ext && ext !== extOf(dest)) dest = dest.replace(/\.[^.\\/]+$/, "." + ext);
       }
     }
     if (!src) throw new Error("No audio is stored for this transcription.");
     if (!rec) throw new Error("This transcription has no record to export from.");
     await copying(copyMediaTo({ src, dest, recordId: rec.id, audioBase: audioBasePref(settings.recording) }));
-    return dest;
   };
 
   /** The video: a plain copy when no tracks ride inside it and a local copy
@@ -553,13 +549,13 @@ export function TranscriptExport({
     const written: string[] = [];
     try {
       for (const f of plan.files) {
-        let dest = dir + f.name(pickedStem);
+        const dest = dir + f.name(pickedStem);
         if (f.kind === "text") {
           const content = contents.get(f.name(pickedStem));
           if (content === undefined) continue;
           await saveTextFile(dest, content);
         } else if (f.kind === "audio") {
-          dest = await exportAudioTo(dest);
+          await exportAudioTo(dest);
         } else if (!(await exportVideoTo(dest, plan.embedded, mine))) {
           return;
         }
@@ -681,9 +677,11 @@ export function TranscriptExport({
   // as subtitle streams (server-side), as sidecars, or both.
   const media = showMedia && (() => {
     // A plain copy (subtitles beside it only) keeps the local video's container.
-    const copyLock = subtitleMode === "sidecar" && !!localVideo;
-    const copyContainer: MediaContainer = localVideo && extOf(localVideo) === "mp4" ? "mp4" : "mkv";
-    const pick = (c: MediaChoice) => { setSwitchNote(null); setMediaChoice(c); patchTranscribe({ exportMedia: c }); };
+    // The chips say what the plan writes (`copyExt`): the source's own extension, which may
+    // be neither chip (webm, mov) — then both sit out and the real one shows beside them.
+    const copyExt = subtitleMode === "sidecar" && localVideo ? extOf(localVideo) || null : null;
+    const copyLock = copyExt !== null;
+    const pick = (c: MediaChoice) => { setMediaChoice(c); patchTranscribe({ exportMedia: c }); };
     // `why` = not on offer, and why (the card's tooltip).
     const cards: { value: MediaChoice; label: string; sub: string; why?: string }[] = [
       { value: "none", label: "None", sub: "text file only" },
@@ -707,9 +705,9 @@ export function TranscriptExport({
             <span className="flex flex-wrap items-center gap-2">
               <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">container</span>
               {(["mkv", "mp4"] as const).map((c) => {
-                const off = copyLock ? c !== copyContainer : c === "mp4" && !!mp4Why;
+                const off = copyLock ? c !== copyExt : c === "mp4" && !!mp4Why;
                 return (
-                  <ChipToggle key={c} on={copyLock ? c === copyContainer : container === c} disabled={off} size="xs"
+                  <ChipToggle key={c} on={copyLock ? c === copyExt : container === c} disabled={off} size="xs"
                     className="font-mono font-medium"
                     title={copyLock ? "a plain copy keeps the original container" : c === "mp4" && mp4Why ? mp4Why : undefined}
                     onClick={() => { if (!off) { setContainer(c); patchTranscribe({ exportContainer: c }); } }}>
@@ -717,6 +715,11 @@ export function TranscriptExport({
                   </ChipToggle>
                 );
               })}
+              {copyExt && copyExt !== "mkv" && copyExt !== "mp4" && (
+                <ChipToggle on disabled size="xs" className="font-mono font-medium" title="a plain copy keeps the original container">
+                  {copyExt.toUpperCase()}
+                </ChipToggle>
+              )}
             </span>
             <span className="flex flex-wrap items-center gap-2">
               <span className="w-[72px] shrink-0 font-mono text-[10.5px] uppercase tracking-label text-faint">subtitles</span>
@@ -826,8 +829,7 @@ export function TranscriptExport({
                     sub={f.use}
                     mono
                     onPick={() => {
-                      setSwitchNote(null);
-                      setExportFormat(f.value);
+                      setFormatPick(f.value);
                       patchTranscribe({ exportFormat: f.value });
                     }}
                   />

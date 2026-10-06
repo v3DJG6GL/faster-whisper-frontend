@@ -64,7 +64,7 @@ function failedText(status: JobStatus): string {
 
 /** Fetch + ingest a finished job. Returns false when the fetch must be retried
  *  (transport error, or the result is not published yet). Attached: an epoch move
- *  during the fetch means the user cancelled (or started something else) and the
+ *  during either fetch (the result, then a link's site subtitles) means the user cancelled (or started something else) and the
  *  stop hook already released the rail and forgot the row — drop the result. */
 async function ingestDone(
   row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number,
@@ -72,10 +72,14 @@ async function ingestDone(
   const r = await getJobResult({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
   if (attached && useTranscribeRun.getState().epoch !== epoch) return true;
   switch (r.kind) {
-    case "ok":
-      ingestJobResult(row, await withSiteTracks(r.value, row.path, row.urlMeta, row.ctx), tookMsOf(status, row), { attached });
+    case "ok": {
+      // A second network await (the link's site subtitles): the epoch can move during it too.
+      const result = await withSiteTracks(r.value, row.path, row.urlMeta, row.ctx);
+      if (attached && useTranscribeRun.getState().epoch !== epoch) return true;
+      ingestJobResult(row, result, tookMsOf(status, row), { attached });
       await forgetRow(row.jobId);
       return true;
+    }
     case "running":
       // The status said done but the result endpoint still answers 409 (the server
       // publishes the two a moment apart). Retry like a fetch error: nothing was

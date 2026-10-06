@@ -712,15 +712,25 @@ export async function resolveLegacyMic(name: string): Promise<{ id: string; labe
 }
 
 
+// Mic-test start/stop run on Rust's blocking pool and meet on a non-FIFO mutex, so two in
+// flight could apply out of order — a stale stop landing after a newer start kills the new test
+// with the UI still on "testing". Issue each only once the previous one settled.
+let micTestChain: Promise<unknown> = Promise.resolve();
+function inMicTestOrder<T>(op: () => Promise<T>): Promise<T> {
+  const run = micTestChain.then(op);
+  micTestChain = run.catch(() => {});
+  return run;
+}
+
 export async function startMicTest(deviceId: string | null): Promise<void> {
   if (!isTauri) return;
-  await invoke("start_mic_test", { deviceId });
+  await inMicTestOrder(() => invoke("start_mic_test", { deviceId }));
 }
 
 /** Stop the mic test; resolves to the number of seconds captured (0 = nothing). */
 export async function stopMicTest(): Promise<number> {
   if (!isTauri) return 0;
-  return invoke<number>("stop_mic_test");
+  return inMicTestOrder(() => invoke<number>("stop_mic_test"));
 }
 
 /** Replay the most recent mic-test capture on the default output device (no-op if
@@ -751,6 +761,12 @@ async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<()
  *  clear its "playing" state. Returns an unlisten fn. */
 export async function onMicTestPlayEnded(cb: () => void): Promise<() => void> {
   return subscribe<unknown>("audio://test-play-ended", () => cb());
+}
+
+/** Fires when the mic test ended on its own (`"device-lost"`: the mic vanished or kept
+ *  erroring) rather than by a stop call. Returns an unlisten fn. */
+export async function onMicTestEnded(cb: (reason: string) => void): Promise<() => void> {
+  return subscribe<string>("audio://test-ended", (reason) => cb(reason));
 }
 
 // ── In-app log viewer (Logs screen) ─────────────────────────────────────────

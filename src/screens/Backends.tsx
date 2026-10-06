@@ -225,6 +225,12 @@ function Editor({
 
   // Write the API key to the keyring FIRST (awaited) and only commit + close on success, so a
   // keyring failure can't persist a backend whose "key" badge claims a key that isn't stored.
+  // The latest draft and verdict, for `doSave` after its keyring await: the fields stay editable
+  // while the write is parked behind a wallet prompt, and the render-time `b` would drop those edits.
+  const latestB = useRef(b);
+  latestB.current = b;
+  const latestResult = useRef(result);
+  latestResult.current = result;
   const doSave = async () => {
     setKeyError(null);
     if (key) {
@@ -238,26 +244,35 @@ function Editor({
       } finally {
         setSavingKey(false);
       }
+      // Retyped during the write: the keyring holds the OLD key, so persisting now would claim
+      // the new one. Keep the editor open; the next Save stores what is typed.
+      if (liveTarget.current.key !== key) {
+        setKeyError("The API key changed while it was being saved. Save again to store the new key.");
+        return false;
+      }
     }
+    const cur = latestB.current;
+    const verdict = latestResult.current;
+    const savedUrl = liveTarget.current.url;
     // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
     // the override-profile name → undefined when blank — so stray whitespace isn't persisted, sent to
     // the server (a padded value never matches a real profile), or shown as a blank card.
     onSave({
-      ...b,
+      ...cur,
       // A connect-step key only reaches the keyring on THIS save — if the field
       // was cleared before saving, no key was ever stored, so don't claim one
       // (an EXISTING backend's blank field still means "keep the stored key").
-      hasApiKey: key.length > 0 || (initialKey ? false : b.hasApiKey),
-      name: b.name.trim() || "Untitled backend",
-      serverUrl: b.serverUrl.trim(),
-      model: b.model.trim(),
-      overrideProfile: b.overrideProfile?.trim() ? b.overrideProfile.trim() : undefined,
+      hasApiKey: key.length > 0 || (initialKey ? false : cur.hasApiKey),
+      name: cur.name.trim() || "Untitled backend",
+      serverUrl: cur.serverUrl.trim(),
+      model: cur.model.trim(),
+      overrideProfile: cur.overrideProfile?.trim() ? cur.overrideProfile.trim() : undefined,
     });
     // Now that the target is persisted (upsertBackend's eviction has run inside onSave, and a
     // typed key reached the keyring above), cache the in-editor verdict — only if it still
     // describes the address + key that were just saved.
-    if (result && resultTarget.current.url === effUrl && resultTarget.current.key === key) {
-      setConnection(b.id, result);
+    if (verdict && resultTarget.current.url === savedUrl && resultTarget.current.key === key) {
+      setConnection(cur.id, verdict);
     }
     return true;
   };

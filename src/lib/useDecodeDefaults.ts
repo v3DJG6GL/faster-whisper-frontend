@@ -26,8 +26,14 @@ export function useDecodeDefaults(args: {
   const { serverUrl, backendId, apiKey, serverKind } = args;
   const model = args.model?.trim() ?? "";
   // Debounced here, once for every caller: the override-profile picker's custom name reports each
-  // keystroke, and each one cleared the inherited values and fired a credentialed fetch.
-  const profileName = useDebounced(args.profileName?.trim() || null, 400);
+  // keystroke, and each one cleared the inherited values and fired a credentialed fetch. Only the
+  // TYPING is debounced: when the backend / address changes, the name changes with it in the same
+  // render (a backend's own override profile), and the settled one belongs to the previous server.
+  const rawProfile = args.profileName?.trim() || null;
+  const target = `${backendId ?? ""}\u0000${serverUrl}`;
+  const settled = useDebounced(JSON.stringify([target, rawProfile]), 400);
+  const [settledTarget, settledProfile] = JSON.parse(settled) as [string, string | null];
+  const profileName = settledTarget === target ? settledProfile : rawProfile;
   const [dd, setDd] = useState<DecodeDefaults | undefined>(undefined);
 
   useEffect(() => {

@@ -281,6 +281,23 @@ fn batch_decode_overrides(v: &serde_json::Value) -> Option<String> {
 }
 
 #[cfg(test)]
+mod media_tmp_tests {
+    use super::media_tmp_pid;
+
+    /// Only this record's `<id>.<ext>.<pid>-<seq>.tmp` names yield a pid — never the media
+    /// file itself, another record's tmp, or another extension's.
+    #[test]
+    fn media_tmp_names_parse_to_their_pid() {
+        assert_eq!(media_tmp_pid("r1.mp4.4242-7.tmp", "r1", "mp4"), Some(4242));
+        assert_eq!(media_tmp_pid("r1.mp4", "r1", "mp4"), None);
+        assert_eq!(media_tmp_pid("r1.mp4.tmp", "r1", "mp4"), None);
+        assert_eq!(media_tmp_pid("r10.mp4.4242-7.tmp", "r1", "mp4"), None);
+        assert_eq!(media_tmp_pid("r1.webm.4242-7.tmp", "r1", "mp4"), None);
+        assert_eq!(media_tmp_pid("r1.mp4.x-7.tmp", "r1", "mp4"), None);
+    }
+}
+
+#[cfg(test)]
 mod wire_field_tests {
     use super::{
         batch_decode_overrides, bound_language_check, bound_progress, bound_rung, bound_subtitles,
@@ -1881,6 +1898,38 @@ async fn url_media_download(
 /// Per-call suffix for `download_result_media`'s tmp file.
 static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// The process id embedded in a `download_result_media` tmp name for this record and
+/// extension (`<record_id>.<ext>.<pid>-<seq>.tmp`), or None when `name` is not one.
+fn media_tmp_pid(name: &str, record_id: &str, ext: &str) -> Option<u32> {
+    let rest = name
+        .strip_prefix(record_id)?
+        .strip_prefix('.')?
+        .strip_prefix(ext)?
+        .strip_prefix('.')?
+        .strip_suffix(".tmp")?;
+    let (pid, seq) = rest.split_once('-')?;
+    seq.parse::<u64>().ok()?;
+    pid.parse().ok()
+}
+
+/// Remove the tmps an earlier process left for this record when it died or quit mid-download.
+/// Each call's tmp name is unique, so nothing else would ever reuse or reclaim them, and every
+/// sweep skips `.tmp`. Only OTHER processes' tmps: this process's belong to fetches that may
+/// still be streaming. Best effort — errors are ignored.
+async fn remove_stale_media_tmps(dest_dir: &Path, record_id: &str, ext: &str) {
+    let Ok(mut dir) = tokio::fs::read_dir(dest_dir).await else {
+        return;
+    };
+    let me = std::process::id();
+    while let Ok(Some(entry)) = dir.next_entry().await {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if media_tmp_pid(name, record_id, ext).is_some_and(|pid| pid != me) {
+            let _ = tokio::fs::remove_file(entry.path()).await;
+        }
+    }
+}
+
 /// Fetch the server-retained audio of a finished URL run into the local
 /// media store as `media/<record_id>.<ext>` (tmp+rename, owner-only), so the
 /// existing local-playback machinery works unchanged. `Ok(None)` when the
@@ -1946,6 +1995,7 @@ pub async fn download_result_media(
     // the layout migration): the base is a user pick that may sit in a shared/synced tree.
     crate::audio::create_dir_private(dest_dir).context("creating the media folder")?;
     let dest = dest_dir.join(format!("{record_id}.{ext}"));
+    remove_stale_media_tmps(dest_dir, record_id, ext).await;
     // Unique per call: two fetches of the same record (the run's background copy and an
     // export's own fetch) can overlap, and a shared name let each truncate or rename the
     // other's file. Still ends in `.tmp`, so every sweep and folder move skips it; the

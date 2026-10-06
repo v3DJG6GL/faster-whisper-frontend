@@ -235,6 +235,27 @@ fn letter_vk_from_scan(scan: u16) -> Option<u16> {
     Some(u16::from(letter)) // VK_A..VK_Z equal their ASCII capitals
 }
 
+/// Inverse of `letter_vk_from_scan`: VK_A..VK_Z → the US set-1 scan position of
+/// that letter.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn letter_scan_from_vk(vk: u16) -> Option<u16> {
+    (0x10..=0x32u16).find(|&scan| letter_vk_from_scan(scan) == Some(vk))
+}
+
+/// The scan position a PHYSICAL id stands for — letter ids (`physical_key_id`'s
+/// re-keyed VK_A..VK_Z) and `0x8000 | scan` ids. None = the id is a plain VK the OS
+/// key state can be asked about directly.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn physical_scan_of_id(id: u16) -> Option<u16> {
+    if id & 0x8000 != 0 {
+        return Some(id & 0x7FFF);
+    }
+    letter_scan_from_vk(id)
+}
+
+/// VK_PACKET: the VK a KEYEVENTF_UNICODE injection reports.
+const VK_PACKET: u16 = 0xE7;
+
 /// The decoders' fallback arm for a VK with no special handling: re-key letters by
 /// physical position (see `letter_vk_from_scan`). A layout letter on a NON-letter
 /// position (AZERTY's M on the US Semicolon key) becomes an id no chord can contain
@@ -243,7 +264,10 @@ fn letter_vk_from_scan(scan: u16) -> Option<u16> {
 /// records layout-relative) keep the plain VK.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn physical_key_id(vk: u16, scan: u16, extended: bool) -> u16 {
-    if scan == 0 || extended {
+    // VK_PACKET (KEYEVENTF_UNICODE injection: voice typing, the emoji panel, password
+    // managers) carries the UTF-16 code unit in the scan field — space would read as
+    // the D position, ',' as Z. It is not a key, so it keeps its inert VK id.
+    if vk == VK_PACKET || scan == 0 || extended {
         return vk;
     }
     if let Some(letter) = letter_vk_from_scan(scan) {
@@ -290,17 +314,20 @@ mod imp {
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
     use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, GetKeyState};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW, MAPVK_VSC_TO_VK_EX,
+    };
     use windows_sys::Win32::UI::Input::{
         GetRawInputData, RegisterRawInputDevices, HRAWINPUT, RAWINPUT, RAWINPUTDEVICE,
         RAWINPUTHEADER, RIDEV_INPUTSINK, RID_INPUT, RIM_TYPEKEYBOARD,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-        GetMessageW, KillTimer, PostThreadMessageW, RegisterClassW, SetTimer, SetWindowsHookExW,
-        UnhookWindowsHookEx, EVENT_SYSTEM_FOREGROUND, HHOOK, HWND_MESSAGE, KBDLLHOOKSTRUCT,
-        LLKHF_EXTENDED, LLKHF_INJECTED, MSG, RI_KEY_BREAK, RI_KEY_E0, RI_KEY_E1, WH_KEYBOARD_LL,
-        WINEVENT_OUTOFCONTEXT, WM_INPUT, WM_KEYDOWN, WM_QUIT, WM_SYSKEYDOWN, WM_TIMER, WNDCLASSW,
+        GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, KillTimer, PostThreadMessageW,
+        RegisterClassW, SetTimer, SetWindowsHookExW, UnhookWindowsHookEx, EVENT_SYSTEM_FOREGROUND,
+        HHOOK, HWND_MESSAGE, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, MSG, RI_KEY_BREAK,
+        RI_KEY_E0, RI_KEY_E1, WH_KEYBOARD_LL, WINEVENT_OUTOFCONTEXT, WM_INPUT, WM_KEYDOWN, WM_QUIT,
+        WM_SYSKEYDOWN, WM_TIMER, WNDCLASSW,
     };
 
     /// A physical key transition, forwarded from `hook_proc` to the worker.
@@ -1126,8 +1153,31 @@ mod imp {
     /// the opposite question but only about MODIFIERS, which carry no synthetic bit, so the
     /// aliasing (an Enter-bound chord reading "down" because the OTHER Enter is held) never
     /// reaches an arm/don't-arm decision.
+    ///
+    /// Physical ids (letters re-keyed by position, `0x8000 | scan`) are NOT layout VKs:
+    /// on QWERTZ the id VK_Y is the US-Y position, which the OS knows as VK_Z. They are
+    /// mapped back through the foreground thread's layout (the one the key events were
+    /// translated with) before the OS is asked. A letter id is ALSO down if its plain VK
+    /// reads down — a scan-less VK-only SendInput keeps the layout VK as its id. An id
+    /// the layout cannot map reads DOWN: unknown is never grounds to force-release.
     fn physically_down(id: u16) -> bool {
-        unsafe { GetAsyncKeyState((id & 0x00FF) as i32) as u16 & 0x8000 != 0 }
+        let vk_down = |vk: u16| unsafe { GetAsyncKeyState(i32::from(vk)) as u16 & 0x8000 != 0 };
+        let Some(scan) = super::physical_scan_of_id(id) else {
+            return vk_down(id & 0x00FF);
+        };
+        let layout_vk = unsafe {
+            let fg = GetForegroundWindow();
+            let tid = if fg.is_null() {
+                0 // this thread's layout — the best guess without a foreground window
+            } else {
+                GetWindowThreadProcessId(fg, std::ptr::null_mut())
+            };
+            MapVirtualKeyExW(u32::from(scan), MAPVK_VSC_TO_VK_EX, GetKeyboardLayout(tid))
+        };
+        if layout_vk == 0 || layout_vk > 0xFF {
+            return true;
+        }
+        vk_down(layout_vk as u16) || (id & 0x8000 == 0 && vk_down(id))
     }
 
     /// How often the worker re-asks the OS about the keys it believes are held. Only
@@ -1384,6 +1434,24 @@ mod tests {
         assert_eq!(super::physical_key_id(0xB0, 0x19, true), 0xB0); // E0 next-track
         assert_eq!(super::physical_key_id(0x5A, 0, false), 0x5A); // VK-only SendInput
         assert_eq!(super::physical_key_id(0x20, 0x39, false), 0x20); // Space untouched
+        assert_eq!(super::physical_key_id(0xE7, 0x20, false), 0xE7); // VK_PACKET ' ' ≠ D
+        assert_eq!(super::physical_key_id(0xE7, 0x2C, false), 0xE7); // VK_PACKET ',' ≠ Z
+    }
+
+    // The OS reconciler maps a physical id back to its scan position; the inverse
+    // must round-trip every letter and leave non-letter VKs to the plain-VK path.
+    #[test]
+    fn physical_ids_round_trip_to_their_scan() {
+        for scan in 0..=0xFFu16 {
+            if let Some(vk) = super::letter_vk_from_scan(scan) {
+                assert_eq!(super::letter_scan_from_vk(vk), Some(scan));
+                assert_eq!(super::physical_scan_of_id(vk), Some(scan));
+            }
+        }
+        assert_eq!(super::physical_scan_of_id(0x8027), Some(0x27)); // AZERTY M
+        assert_eq!(super::physical_scan_of_id(0xA2), None); // VK_LCONTROL
+        assert_eq!(super::physical_scan_of_id(super::NUMPAD_ENTER), None);
+        assert_eq!(super::physical_scan_of_id(0x30), None); // Digit0
     }
 
     // The ids must stay distinct per code (e.g. Enter vs NumpadEnter via the

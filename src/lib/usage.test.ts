@@ -103,3 +103,17 @@ describe("usage poll gates", () => {
     setHidden(false);
   });
 });
+
+describe("the Statistics page document on a failed fetch", () => {
+  it("keeps the last good document up and marks the new query failed", () => {
+    const good = { today: {}, total: {}, series: [] } as never;
+    useApp.setState({ usageView: null });
+    useApp.getState().setUsageView("q30", good);
+    useApp.getState().setUsageView("q365", null);
+    expect(useApp.getState().usageView).toEqual({ sig: "q365", stats: good, failed: true });
+    // A later success for that query clears the failure.
+    const fresh = { today: {}, total: { words: 1 }, series: [] } as never;
+    useApp.getState().setUsageView("q365", fresh);
+    expect(useApp.getState().usageView).toEqual({ sig: "q365", stats: fresh });
+  });
+});

@@ -74,6 +74,9 @@ export interface TranslateRunUi {
   chunkIdxs?: number[];
   /** ms epoch when the run started (the "running m:ss" clock). */
   startedAt: number;
+  /** ms epoch when the run finished — stamped with phase "done", so the receipt's
+   *  "took m:ss" stays the run's own length however late the card mounts. */
+  endedAt?: number;
   /** A model download/load phase was observed — keeps the amber bar segment. */
   modelPhaseSeen: boolean;
   /** 0..1 within the model phase (downloading fraction; 1 once loading). */

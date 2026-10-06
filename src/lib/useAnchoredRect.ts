@@ -15,26 +15,34 @@ export interface AnchorRect {
  */
 export function useAnchoredRect(ref: RefObject<HTMLElement | null>, open: boolean): AnchorRect | null {
   const [rect, setRect] = useState<AnchorRect | null>(null);
-  const place = useCallback(() => {
-    const el = ref.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    // Every scroll in the page lands here (capture phase), including scrolling inside the
-    // popover itself: keep the same object while the anchor hasn't moved, so nothing re-renders.
-    setRect((prev) =>
-      prev && prev.left === r.left && prev.top === r.top && prev.bottom === r.bottom && prev.width === r.width
-        ? prev
-        : { left: r.left, top: r.top, bottom: r.bottom, width: r.width },
-    );
-  }, [ref]);
+  // `fresh`: commit a new object even when the anchor didn't move. A resize must re-render the
+  // popover regardless — popoverBox reads the viewport size at render (up/down, `bottom`, room,
+  // the right-edge clamp), and a height-only resize leaves the anchor where it was.
+  const place = useCallback(
+    (fresh: boolean) => {
+      const el = ref.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      // Every scroll in the page lands here (capture phase), including scrolling inside the
+      // popover itself: keep the same object while the anchor hasn't moved, so nothing re-renders.
+      setRect((prev) =>
+        !fresh && prev && prev.left === r.left && prev.top === r.top && prev.bottom === r.bottom && prev.width === r.width
+          ? prev
+          : { left: r.left, top: r.top, bottom: r.bottom, width: r.width },
+      );
+    },
+    [ref],
+  );
   useLayoutEffect(() => {
     if (!open) return;
-    place();
-    window.addEventListener("scroll", place, true);
-    window.addEventListener("resize", place);
+    const onScroll = () => place(false);
+    const onResize = () => place(true);
+    place(true);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
-      window.removeEventListener("scroll", place, true);
-      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open, place]);
   return rect;

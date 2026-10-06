@@ -5,7 +5,7 @@ import { Button, Card, Notice, SettingRow } from "@/components/ui";
 import { Waveform } from "@/components/Waveform";
 import {
   listAudioDevices, startMicTest, stopMicTest, playMicTest, stopMicTestPlayback, onMicTestPlayEnded,
-  onAudioLevel,
+  onMicTestEnded, onAudioLevel,
 } from "@/lib/api";
 import type { MicInventory } from "@/lib/types";
 import { MicPicker } from "@/components/settings/MicPicker";
@@ -38,6 +38,8 @@ export function AudioTab() {
   // Whether a replay is currently sounding — drives the button label and guards
   // against starting a second, overlapping playback.
   const [playing, setPlaying] = useState(false);
+  // Why the last test ended on its own (the mic vanished mid-test); cleared by the next start.
+  const [testNote, setTestNote] = useState<string | null>(null);
   const clipSecsRef = useRef(0);
   const playTimerRef = useRef<number | null>(null);
   // False once the tab unmounted, so a stop that resolves afterwards doesn't start a replay.
@@ -76,7 +78,10 @@ export function AudioTab() {
   useEffect(() => {
     if (!testing) return;
     let active = true;
+    // The open resolved: a test-ended event before this belongs to the capture it replaced.
+    let started = false;
     let unlisten: (() => void) | undefined;
+    let unlistenEnded: (() => void) | undefined;
     // Show "warming up…" until real audio flows (a cold/Bluetooth mic is silent for
     // ~1–2s first), with a safety timeout so it never hangs on a silent device.
     setMicWarming(true);
@@ -100,8 +105,21 @@ export function AudioTab() {
         return;
       }
       unlisten = un;
+      // The capture ends itself when the device is lost; leave "testing" the way Stop does (the
+      // clip heard so far stays replayable) and say why.
+      const unEnded = await onMicTestEnded(() => {
+        if (!active || !started) return;
+        setTestNote("The microphone stopped delivering audio, so the test ended.");
+        void stopAndReplayRef.current();
+      }).catch(() => undefined);
+      if (!active) {
+        unEnded?.();
+        return;
+      }
+      unlistenEnded = unEnded;
       try {
         await startMicTest(microphoneId);
+        started = true;
       } catch (e) {
         // The mic failed to open (busy / unplugged / denied). Don't leave a silent dead meter
         // with the button stuck on Stop — end the test (cleanup stops + unlistens).
@@ -117,6 +135,7 @@ export function AudioTab() {
       clearTimeout(warmTimer);
       clearTimeout(maxTimer);
       unlisten?.();
+      unlistenEnded?.();
       void stopMicTest().catch(() => {});
       setLevel(0);
       setMicWarming(false);
@@ -210,6 +229,7 @@ export function AudioTab() {
         playTimerRef.current = null;
       }
       setHasClip(false);
+      setTestNote(null);
       setTesting(true);
       return;
     }
@@ -269,6 +289,7 @@ export function AudioTab() {
           {testing && micWarming && (
             <span className="animate-pulse font-mono text-[11px] text-faint">warming up…</span>
           )}
+          {!testing && testNote && <span className="text-[11px] text-faint">{testNote}</span>}
 
           <div className="flex items-center gap-2">
             <Button variant={testing ? "danger" : "default"} size="sm" onClick={() => void onToggle()}>

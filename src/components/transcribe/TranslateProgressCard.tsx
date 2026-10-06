@@ -36,11 +36,8 @@ export function TranslateProgressCard({
   const done = run.phase === "done";
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    // Done: stamp the end once and stop — the receipt's "took" must not keep counting.
-    if (done) {
-      setNow(Date.now());
-      return;
-    }
+    // Done: the receipt reads the run's own endedAt — stop ticking.
+    if (done) return;
     const t = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(t);
   }, [done]);
@@ -120,7 +117,7 @@ export function TranslateProgressCard({
         )}
         <span className="flex-1" />
         <span className="font-mono text-[11px] tabular-nums text-faint">
-          {done ? "took" : "running"} {fmtRunClock(now - run.startedAt)}
+          {done ? "took" : "running"} {fmtRunClock((done ? (run.endedAt ?? now) : now) - run.startedAt)}
         </span>
       </div>
       <div className={cn("mt-2.5 flex h-1.5 overflow-hidden rounded-pill", reconnecting && "opacity-50")}>

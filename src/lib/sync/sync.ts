@@ -182,7 +182,7 @@ export function hashBlob(v: unknown): string {
 /** A JSON object — not null, not an array, not a string. The blob's containers are attacker-shaped
  *  just like its lists, and `Object.entries`/`Object.keys` accept a string by expanding it per code
  *  unit; every ceiling in the engine bounds ENTRY COUNT, which that turns into 4M. */
-function isPlainObject(v: unknown): v is Record<string, unknown> {
+export function isPlainObject(v: unknown): v is Record<string, unknown> {
   return !!v && typeof v === "object" && !Array.isArray(v);
 }
 
@@ -2260,6 +2260,9 @@ export async function pushNow(manual = false): Promise<void> {
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
+    // Superseded (sync turned off, server copy deleted) while an await parked: no status write
+    // below may land over the reset state. inFlight was already reset by supersede().
+    if (myGen !== gen) return;
     const s = useApp.getState();
     const cats = syncCats();
     let blob = await composeBlob(
@@ -2268,6 +2271,7 @@ export async function pushNow(manual = false): Promise<void> {
       state.snapshot,
       { includeSecrets: true, sub: subSettings(), gates: settingGates() },
     );
+    if (myGen !== gen) return; // the keyring read in composeBlob can park up to 10 s
     let base = state.version ?? 0;
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
       setRuntime({ syncStatus: "ok" });

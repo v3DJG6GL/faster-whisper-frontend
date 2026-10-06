@@ -642,7 +642,7 @@ export function TranscriptViewer({
       if (!ctl.cancelled) {
         setShowTranslate(false);
         setTrRun((s) =>
-          s ? { ...s, phase: "done", pct: 1, done: s.total, frontierIdx: -1 } : s,
+          s ? { ...s, phase: "done", pct: 1, done: s.total, frontierIdx: -1, endedAt: Date.now() } : s,
         );
         // Brief success receipt, then the card folds away — module timer, so
         // the store entry is cleaned even if the viewer is unmounted by then.
@@ -1399,7 +1399,10 @@ export function TranscriptViewer({
       // Same cleaning as the typed text, or a line with bidi marks (imported RTL
       // subtitles) never compares equal and a bare focus/blur stores a phantom edit.
       const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
-      setSegmentEdit(okey, i, t && t !== orig ? t : null);
+      const edit = t && t !== orig ? t : null;
+      setSegmentEdit(okey, i, edit);
+      // What the row renders from now on (`fileEdits[i] ?? seg.text`, trimmed).
+      return (edit ?? result.segments?.[i]?.text ?? "").trim();
     },
     [okey, result],
   );

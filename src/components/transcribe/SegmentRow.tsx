@@ -54,9 +54,10 @@ export const SegmentRow = memo(function SegmentRow({
   seekTo: (t: number) => void;
   onToggleReassign: (i: number) => void;
   onReassign: (i: number, label: string) => void;
-  onCommitEdit: (i: number, text: string) => void;
+  /** Stores the correction; returns the text the row shows from now on. */
+  onCommitEdit: (i: number, text: string) => string;
 }) {
-  // Bumped on every edit commit to remount the editable span (see its onBlur).
+  // Bumped when an edit commit changes the text on screen, to remount the editable span (see its onBlur).
   const [editRev, setEditRev] = useState(0);
   // Word spans only on the ACTIVE segment — keeps the DOM light. Edited
   // segments stay karaoke too: their words are re-aligned to the corrected
@@ -157,11 +158,14 @@ export const SegmentRow = memo(function SegmentRow({
           aria-label={`Correct segment ${i + 1}`}
           key={editRev}
           onBlur={(e) => {
-            onCommitEdit(i, e.currentTarget.textContent ?? "");
+            const typed = e.currentTarget.textContent ?? "";
+            const shown = onCommitEdit(i, typed);
             // Remount from props: React never rewrites text the user typed into a
             // contentEditable, so an emptied line (committed as "no edit") would
-            // stay blank on screen while Copy and the exports keep its text.
-            setEditRev((r) => r + 1);
+            // stay blank on screen while Copy and the exports keep its text. Only
+            // then, though: a bare blur (Alt-Tab mid-correction) must keep the span,
+            // so the caret comes back when the window regains focus.
+            if (shown !== typed) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
