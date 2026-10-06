@@ -198,7 +198,7 @@ jobs:
                 SHA256SUMS*) ;;
                 *) continue ;;
               esac
-              sumsfound=1
+              sumsfound=$((sumsfound + 1))
               # NOT inside an `if`: a command in an if-condition is exempt from `set -e`, so a
               # 404 or a persistent 5xx used to leave allsums.txt short and the per-asset check
               # below then silently degraded to a size comparison — exactly the failure someone
