@@ -45,6 +45,7 @@ const CONTROL: Partial<Record<DecodeKey, { min: number; max: number; step: numbe
 };
 
 const num = (v: unknown): number | undefined => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+const str = (v: unknown): string | undefined => (typeof v === "string" ? v : undefined);
 
 export function LiveDictationFields({
   value,
@@ -91,12 +92,7 @@ export function LiveDictationFields({
     innerMs: num(own("streaming_vad_inner_silence_ms")) ?? num(inh("streaming_vad_inner_silence_ms")) ?? LIVE_FALLBACK.innerMs,
     outerMs: num(own("streaming_vad_outer_silence_ms")) ?? num(inh("streaming_vad_outer_silence_ms")) ?? LIVE_FALLBACK.outerMs,
     hardMs: num(own("streaming_hard_break_silence_ms")) ?? num(inh("streaming_hard_break_silence_ms")) ?? LIVE_FALLBACK.hardMs,
-    separator:
-      typeof own("streaming_hard_break_separator") === "string"
-        ? (own("streaming_hard_break_separator") as string)
-        : typeof inh("streaming_hard_break_separator") === "string"
-          ? (inh("streaming_hard_break_separator") as string)
-          : LIVE_FALLBACK.separator,
+    separator: str(own("streaming_hard_break_separator")) ?? str(inh("streaming_hard_break_separator")) ?? LIVE_FALLBACK.separator,
   };
 
   /** Inner/outer: write the moved one, and the other only when it had to move along. */
@@ -162,10 +158,10 @@ export function LiveDictationFields({
               ariaLabel={label}
               escape
               maxLength={spec.maxLen}
-              value={typeof own(k) === "string" ? (own(k) as string) : undefined}
+              value={str(own(k))}
               onChange={(s) => patch({ [k]: s })}
               // The server's "" is a real value: nothing is typed at a hard break.
-              inherited={typeof i === "string" ? i : known ? "nothing" : undefined}
+              inherited={str(i) ?? (known ? "nothing" : undefined)}
               title="\n = a line break, \t = a tab"
               disabled={off}
             />

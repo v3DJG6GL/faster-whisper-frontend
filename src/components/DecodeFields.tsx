@@ -199,7 +199,7 @@ export function DecodeFields({
           step={spec.step}
           decimals={stepDecimals(spec.step)}
           unit={spec.unit}
-          zeroLabel={spec.nullText && spec.min === 0 ? spec.nullText : undefined}
+          zeroLabel={spec.zeroOff ? spec.nullText : undefined}
           inherited={inhNum}
           inheritedText={inhNum === undefined ? (inh ?? inheritWord) : undefined}
           ariaLabel={spec.env}

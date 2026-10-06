@@ -40,6 +40,8 @@ export function AudioTab() {
   const [playing, setPlaying] = useState(false);
   const clipSecsRef = useRef(0);
   const playTimerRef = useRef<number | null>(null);
+  // False once the tab unmounted, so a stop that resolves afterwards doesn't start a replay.
+  const mountedRef = useRef(true);
   // Latest "stop + offer replay" handler, so the auto-stop timer (armed in an effect defined
   // above the handler) can call it without a declaration-order / stale-closure problem.
   const stopAndReplayRef = useRef<() => void>(() => {});
@@ -125,6 +127,7 @@ export function AudioTab() {
   // playback drains (and wasn't superseded). The duration-based timer in replay()
   // is just a safety net in case the event is missed.
   useEffect(() => {
+    mountedRef.current = true;
     let active = true;
     let un: (() => void) | undefined;
     void onMicTestPlayEnded(() => {
@@ -136,6 +139,7 @@ export function AudioTab() {
       })
       .catch(() => {}); // a rejected dynamic import / listen() must not surface as an unhandled rejection
     return () => {
+      mountedRef.current = false;
       active = false;
       un?.();
       if (playTimerRef.current != null) clearTimeout(playTimerRef.current);
@@ -183,6 +187,9 @@ export function AudioTab() {
     } finally {
       setTesting(false);
     }
+    // Unmounted during the await: the cleanup already silenced playback, and a replay started
+    // now would have no button left to stop it.
+    if (!mountedRef.current) return;
     if (secs > 0.2) {
       setHasClip(true);
       clipSecsRef.current = secs;

@@ -80,6 +80,11 @@ describe("DECODE_KEYS", () => {
     expect([...TYPED_TEXT_KEYS].sort()).toEqual(["output_prefix", "output_suffix", "streaming_hard_break_separator"]);
   });
 
+  it("labels 0 as off only where the server reads 0 as off", () => {
+    // no_speech / compression_ratio 0 are applied as the most aggressive threshold, not "off".
+    expect(DECODE_KEY_LIST.filter((k) => keySpec(k).zeroOff)).toEqual(["hallucination_silence_threshold"]);
+  });
+
   it("every numeric key has bounds and every text key a length cap", () => {
     for (const k of DECODE_KEY_LIST) {
       const s = keySpec(k);

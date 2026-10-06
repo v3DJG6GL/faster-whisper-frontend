@@ -1,3 +1,5 @@
+import { ownProp } from "./own";
+
 // A pipeline rule's "card colour" is set by an admin on the backend as a SEMANTIC
 // name (red/amber/green/teal/blue/purple/pink — the theme owns the actual colour),
 // never a hex. These hexes mirror the backend's own pipeline editor exactly (the
@@ -20,5 +22,5 @@ const RULE_DOT_HEX: Record<string, string> = {
 /** The hex for a rule's admin-set card colour, or null when unset/unrecognised. */
 export function ruleDotColor(color?: string | null): string | null {
   if (!color) return null;
-  return RULE_DOT_HEX[color] ?? null;
+  return ownProp(RULE_DOT_HEX, color) ?? null; // own-only: "constructor" is no colour
 }

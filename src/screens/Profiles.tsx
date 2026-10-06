@@ -18,14 +18,14 @@ import { dictationControls, FIELD_LABEL } from "@/components/DictationFields";
 import { hasInsertionOverrides, insertionSetCount } from "@/lib/dictation/insertion";
 import { TranslationDefaultsEditor, type TranslationInherited } from "@/components/TranslationFields";
 import { targetsLabel } from "@/lib/translationTargets";
-import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited, serverLanguageLabel } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
 import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { conflicts as chordConflicts, conflictsByProfile, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID } from "@/lib/hotkeyConflicts";
+import { conflicts as chordConflicts, conflictsByProfile, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
@@ -67,9 +67,6 @@ const LIVE_BATCH_REASON = "Live dictation only: this profile uses the Batch endp
 function blankProfile(backendId: string | null): Profile {
   return { id: crypto.randomUUID(), name: "New profile", activation: "hold", enabled: true, hotkey: [], backendId };
 }
-
-// useHotkeyCapture moved to src/lib/useHotkeyCapture.ts (shared with the Settings
-// "quick-add shortcut" row).
 
 function Editor({
   initial,
@@ -122,7 +119,7 @@ function Editor({
   // (probes once per session when the connection cache is empty).
   const models = useBackendModels(backend);
   const serverKind = backend
-    ? effectiveServerKind(backend, p.backendId ? ownProp(connections, p.backendId) : undefined)
+    ? effectiveServerKind(backend, ownProp(connections, backend.id))
     : "unknown";
   // The effective override-profile (Profile over Backend) and the caller's
   // capabilities, so the decode editor gates on what this connection allows.
@@ -352,8 +349,14 @@ function Editor({
                 !backend
                   ? undefined
                   : backend.language === ""
-                    ? // The backend leaves it to the server: name the server's language.
-                      serverLanguageLabel(decodeDefaults)
+                    ? // The backend leaves it to the server: name the server's language,
+                      // folding the inherited multilingual flag like the branch below.
+                      (() => {
+                        const v = decodeDefaults?.language?.value;
+                        return typeof v === "string"
+                          ? spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited))
+                          : undefined;
+                      })()
                     : spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)),
               )}
             />
@@ -428,7 +431,7 @@ function Editor({
         <OverrideHeader title="Server override profile" env={false} overridden={!!p.overrideProfile} last>
           <div className={OVERRIDE_CONTROL_W}>
             <OverrideProfilePicker
-              serverUrl={backend ? effectiveServerUrl(backend, useApp.getState().settings) : ""}
+              serverUrl={serverUrl}
               backendId={backend?.id ?? ""}
               serverKind={serverKind}
               canRequest={caps?.can_request_override_profile}
@@ -800,8 +803,7 @@ export default function Profiles() {
   // save-gate (persistence.ts) use, so a profile whose chord collides with the global quick-add
   // chord shows a banner on its own card — not just the global save freeze. All three conflict
   // surfaces now agree.
-  const conflictPeers =
-    quickAddHotkey.length > 0 ? [...profiles, quickAddPeer(quickAddHotkey)] : profiles;
+  const conflictPeers = withQuickAddPeer(profiles, quickAddHotkey);
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
   // `||` not `??`: safeDisplayText returns "" for a non-string, so the fallback still applies.
   const nameOf = (id: string) =>
@@ -872,10 +874,10 @@ export default function Profiles() {
             // it duplicates a profile chord (profiles register first), so a rebind could otherwise
             // kill quick-add with no warning. Symmetric with the Dictionary screen's QuickAddShortcutField (was the Settings quick-add row), which
             // already checks against the profiles.
-            others={[
-              ...profiles.filter((p) => p.id !== editingId),
-              ...(quickAddHotkey.length > 0 ? [quickAddPeer(quickAddHotkey)] : []),
-            ]}
+            others={withQuickAddPeer(
+              profiles.filter((p) => p.id !== editingId),
+              quickAddHotkey,
+            )}
             onSave={onSave}
             onCancel={onCancel}
           />

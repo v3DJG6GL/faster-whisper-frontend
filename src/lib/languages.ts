@@ -2,6 +2,7 @@
 // follows — what a search matches, which groups show in which order, what a pick does to the
 // decode overrides — lives here as a plain function, so it is tested without a DOM.
 
+import { ownProp } from "./own";
 import { safeDisplayText } from "./sanitize";
 import type { DecodeOverrides } from "./types";
 
@@ -71,14 +72,24 @@ export function langCode(code: string, max = 16): string {
   return safeDisplayText(code, max).toUpperCase();
 }
 
-/** English name for a language code; an unknown code comes back unchanged. */
+const labels = new Map<string, string>();
+/** English name for a language code; an unknown code comes back unchanged. Cached: the pickers
+ *  sort ~100 codes by it on every render. LABEL_FIX is read own-only — a server-listed code like
+ *  "constructor" would otherwise come back as an Object.prototype function and throw in a sort. */
 export function languageLabel(code: string): string {
-  return LABEL_FIX[code] ?? intlName(code) ?? code;
+  let l = labels.get(code);
+  if (l === undefined) {
+    l = ownProp(LABEL_FIX, code) ?? intlName(code) ?? code;
+    labels.set(code, l);
+  }
+  return l;
 }
 
 /** A track's language as its titles and chips name it: the English name with the region in
  *  caps ("Portuguese (BR)"); a code with no name in caps ("XX"). */
 export function trackLanguageName(code: string): string {
+  const exact = ownProp(LABEL_FIX, code); // "zh-Hant" is "Traditional Chinese", not "Chinese (HANT)"
+  if (exact) return exact;
   const [base, region] = code.split("-");
   const b = base.toLowerCase();
   const name = languageLabel(b);

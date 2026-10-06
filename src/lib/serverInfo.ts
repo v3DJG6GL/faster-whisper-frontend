@@ -18,6 +18,8 @@ export interface InfoRow {
 }
 
 const days = (n: number) => (n === 1 ? "1 day" : `${n} days`);
+/** A retention in days where the server reads 0 as "never auto-delete". */
+const keepDays = (n: number) => (n === 0 ? "0 · forever" : days(n));
 
 /** The "Limits" rows. */
 export function limitRows(info: ServerInfo | undefined): InfoRow[] {
@@ -52,7 +54,7 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
   const c = k.captures;
   if (c?.enabled !== undefined) rows.push({ env: "CAPTURES_RECORDING_ENABLED", value: on ? "on" : "off", tone: on ? "bad" : "ok" });
   if (c?.retention_days !== undefined)
-    rows.push({ env: "CAPTURES_RETENTION_DAYS", value: days(c.retention_days), tone: on ? "bad" : "none" });
+    rows.push({ env: "CAPTURES_RETENTION_DAYS", value: keepDays(c.retention_days), tone: on ? "bad" : "none" });
   if (c?.sample_fraction !== undefined)
     rows.push({
       env: "CAPTURES_RECORDING_SAMPLE_RATE",
@@ -75,13 +77,13 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
     });
   const rt = k.recent_transcriptions;
   if (rt?.retention_days !== undefined)
-    rows.push({ env: "RECENT_TRANSCRIPTIONS_RETENTION_DAYS", value: days(rt.retention_days), tone: "warn" });
+    rows.push({ env: "RECENT_TRANSCRIPTIONS_RETENTION_DAYS", value: rt.retention_days === 0 ? "0 · no age limit" : days(rt.retention_days), tone: "warn" });
   if (rt?.max !== undefined)
     rows.push({ env: "RECENT_TRANSCRIPTIONS_MAX", value: rt.max === 0 ? "0 · unbounded" : String(rt.max), tone: "warn" });
   if (k.usage_app_retention_days !== undefined)
     rows.push({
       env: "USAGE_APP_RETENTION_DAYS",
-      value: days(k.usage_app_retention_days),
+      value: keepDays(k.usage_app_retention_days),
       tone: reportApp ? "warn" : "ok",
       you: reportApp
         ? "Applies to you: “Report the app I dictate into” is on in Settings."
@@ -90,7 +92,7 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
   if (k.usage_retention_days !== undefined)
     rows.push({
       env: "USAGE_RETENTION_DAYS",
-      value: k.usage_retention_days === 0 ? "0 · forever" : days(k.usage_retention_days),
+      value: keepDays(k.usage_retention_days),
       tone: k.usage_retention_days === 0 ? "none" : "warn",
     });
   return rows;

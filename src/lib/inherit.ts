@@ -126,7 +126,8 @@ export const NOT_ON_SERVER_REASON = "This server doesn't have this setting (an o
  * including the server-bound and requested override profiles); `below` the client layers in
  * between (a profile editor passes its backend's defaults; the backend editor passes nothing),
  * named by `belowSource` in the tooltip. A client value beats the server's unless the key is
- * locked; in `stream` mode live dictation's own best_of replaces the batch one and
+ * locked; in `stream` mode live dictation's own best_of replaces the batch one (even when best_of
+ * is locked — the server's live final decode then uses STREAMING_FINAL_BEST_OF too) and
  * condition_on_previous_text is pinned.
  */
 export function serverInherited(
@@ -156,7 +157,7 @@ export function serverInherited(
     }
     if (mode === "stream" && dd.streaming) {
       const best = dd.streaming.best_of?.value;
-      if (typeof best === "number" && Number.isFinite(best) && !locked.has("best_of")) {
+      if (typeof best === "number" && Number.isFinite(best)) {
         values.best_of = best;
         sources.best_of = "Live dictation's own default";
       }

@@ -41,6 +41,9 @@ export interface KeySpec {
   typed?: boolean;
   /** What a server value of null means here ("off", "none"). */
   nullText?: string;
+  /** The server reads 0 as off, so the stepper labels 0 with `nullText`. Only where it really does —
+   *  the other thresholds apply 0 as their most aggressive setting. */
+  zeroOff?: boolean;
   /** Ladder: the most rungs the server keeps. */
   maxRungs?: number;
 }
@@ -59,6 +62,7 @@ export const DECODE_KEYS = {
   // ── Recognition thresholds ──
   hallucination_silence_threshold: {
     kind: "float", env: "HALLUCINATION_SILENCE_THRESHOLD", section: "thresholds", min: 0, max: 60, step: 0.5, unit: "s", nullText: "off",
+    zeroOff: true,
   },
   best_of: { kind: "int", env: "BEST_OF", section: "thresholds", min: 1, max: 20, step: 1 },
   no_speech_threshold: { kind: "float", env: "NO_SPEECH_THRESHOLD", section: "thresholds", min: 0, max: 1, step: 0.05, nullText: "off" },

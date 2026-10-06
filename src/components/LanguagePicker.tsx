@@ -180,8 +180,11 @@ export function TargetLanguagePicker({
       rowKey={(r) => r.value}
       isSelected={(r) => value.includes(r.value)}
       onPick={(r) => {
-        if (!value.includes(r.value)) use(r.value);
-        onChange(toggleCode(value, r.value, max));
+        // The multi popover stays open at the cap, where a tick is a no-op: only a code that
+        // was really added counts as a Recent target.
+        const next = toggleCode(value, r.value, max);
+        if (next.includes(r.value) && !value.includes(r.value)) use(r.value);
+        onChange(next);
       }}
       onClose={flush}
       renderRow={(r, { selected }) => <TargetRow row={r} on={selected} />}

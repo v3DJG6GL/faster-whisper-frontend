@@ -122,6 +122,15 @@ describe("serverInherited", () => {
     // A backend best_of still wins in dictation.
     expect(serverInherited(dd(), { best_of: 4 }, "stream").values.best_of).toBe(4);
   });
+  it("a locked best_of still shows live dictation's own value in stream mode", () => {
+    // The server's live final decode uses STREAMING_FINAL_BEST_OF whenever best_of is locked.
+    const d = dd();
+    d.settings.best_of = { value: 5, source: "server", label: "global default", locked: true };
+    const s = serverInherited(d, { best_of: 4 }, "stream");
+    expect(s.values.best_of).toBe(1);
+    expect(s.locked.has("best_of")).toBe(true);
+    expect(s.ignored).toContain("best_of");
+  });
   it("carries the prompt and its lock", () => {
     const p = serverInherited(dd()).prompt!;
     expect(p.value).toBe("Medizin");

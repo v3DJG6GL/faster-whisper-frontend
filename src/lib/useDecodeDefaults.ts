@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { getDecodeDefaults } from "@/lib/api";
 import type { DecodeDefaults } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
+import { useDebounced } from "@/lib/useDebounced";
 
 /**
  * The decode values a request inherits from the server (GET /v1/request-default-settings) for one
@@ -24,7 +25,9 @@ export function useDecodeDefaults(args: {
 }): DecodeDefaults | undefined {
   const { serverUrl, backendId, apiKey, serverKind } = args;
   const model = args.model?.trim() ?? "";
-  const profileName = args.profileName?.trim() || null;
+  // Debounced here, once for every caller: the override-profile picker's custom name reports each
+  // keystroke, and each one cleared the inherited values and fired a credentialed fetch.
+  const profileName = useDebounced(args.profileName?.trim() || null, 400);
   const [dd, setDd] = useState<DecodeDefaults | undefined>(undefined);
 
   useEffect(() => {

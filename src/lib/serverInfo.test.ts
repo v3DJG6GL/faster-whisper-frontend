@@ -44,6 +44,21 @@ describe("keepRows", () => {
     expect(you(false)?.you).toMatch(/^Not sent/);
     expect(you(false)?.tone).toBe("ok");
   });
+  it("a retention of 0 reads as never auto-deleted, not as 0 days", () => {
+    const zero: ServerInfo = {
+      keeps: {
+        captures: { enabled: true, retention_days: 0 },
+        recent_transcriptions: { retention_days: 0, max: 500 },
+        usage_app_retention_days: 0,
+      },
+    };
+    const value = (env: string) => keepRows(zero, true).find((r) => r.env === env)?.value;
+    expect(value("CAPTURES_RETENTION_DAYS")).toBe("0 · forever");
+    // The row cap still trims it, so only the age limit is gone.
+    expect(value("RECENT_TRANSCRIPTIONS_RETENTION_DAYS")).toBe("0 · no age limit");
+    expect(value("USAGE_APP_RETENTION_DAYS")).toBe("0 · forever");
+    expect(keepRows(info, true).find((r) => r.env === "CAPTURES_RETENTION_DAYS")?.value).toBe("365 days");
+  });
   it("captures off: the dot is calm", () => {
     const off = { keeps: { captures: { enabled: false, retention_days: 365 } } };
     expect(capturesOn(off)).toBe(false);

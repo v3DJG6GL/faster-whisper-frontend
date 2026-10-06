@@ -6,10 +6,10 @@
 //
 // Nothing else explains a setting in prose: a row that cannot be used right now says why in its
 // tooltip (`disabledTitle`).
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Eraser, Lock, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { escapeText, unescapeText } from "@/lib/escapeText";
+import { escapedFieldText, unescapeText } from "@/lib/escapeText";
 import { overrideTextPlaceholder, type InheritWord } from "@/lib/inherit";
 import { TextArea, TextInput } from "@/components/ui";
 
@@ -174,9 +174,13 @@ export function OverrideText({
   title?: string;
   className?: string;
 }) {
-  const shown = fixedLabel || value === undefined ? "" : escape ? escapeText(value) : value;
+  // The escaped text as typed, kept while it still means the stored value (see escapedFieldText);
+  // dropped on blur so the field settles on the canonical escaped form.
+  const [draft, setDraft] = useState<string | null>(null);
+  const shown = fixedLabel || value === undefined ? "" : escape ? escapedFieldText(draft, value) : value;
   const placeholder = overrideTextPlaceholder({ value, inherited, inheritWord, escape, fixedLabel });
   const commit = (raw: string) => {
+    if (escape) setDraft(raw);
     const v = escape ? unescapeText(raw) : raw;
     onChange(maxLength !== undefined ? Array.from(v).slice(0, maxLength).join("") : v);
   };
@@ -190,8 +194,14 @@ export function OverrideText({
     className: cn(value !== undefined && !fixedLabel && "border-accent/55", className),
   };
   return rows && rows > 1 ? (
-    <TextArea {...common} rows={rows} value={shown} onChange={(e) => commit(e.target.value)} />
+    <TextArea
+      {...common}
+      rows={rows}
+      value={shown}
+      onChange={(e) => commit(e.target.value)}
+      onBlur={() => setDraft(null)}
+    />
   ) : (
-    <TextInput {...common} value={shown} onChange={(e) => commit(e.target.value)} />
+    <TextInput {...common} value={shown} onChange={(e) => commit(e.target.value)} onBlur={() => setDraft(null)} />
   );
 }

@@ -50,6 +50,9 @@ export function MicPicker({
     0,
     choices.findIndex((r) => r.value === value),
   );
+  // `active` clamped to the current list: it shrinks under an open menu when the advanced
+  // toggle goes off or a device drops out on a re-list.
+  const activeIdx = Math.min(active, Math.max(0, choices.length - 1));
 
   useOutsidePress([rootRef], open, () => setOpen(false));
 
@@ -64,8 +67,8 @@ export function MicPicker({
   // Keep the active row in view while moving through a long (advanced) list.
   useEffect(() => {
     if (!open) return;
-    document.getElementById(`${uid}-opt-${active}`)?.scrollIntoView({ block: "nearest" });
-  }, [open, active, uid]);
+    document.getElementById(`${uid}-opt-${activeIdx}`)?.scrollIntoView({ block: "nearest" });
+  }, [open, activeIdx, uid]);
 
   const close = (refocus: boolean) => {
     setOpen(false);
@@ -78,12 +81,12 @@ export function MicPicker({
 
   const onListKey = (e: KeyboardEvent) => {
     const last = choices.length - 1;
-    if (e.key === "ArrowDown") setActive((i) => Math.min(last, i + 1));
-    else if (e.key === "ArrowUp") setActive((i) => Math.max(0, i - 1));
+    if (e.key === "ArrowDown") setActive(Math.min(last, activeIdx + 1));
+    else if (e.key === "ArrowUp") setActive(Math.max(0, activeIdx - 1));
     else if (e.key === "Home") setActive(0);
     else if (e.key === "End") setActive(last);
     else if (e.key === "Enter" || e.key === " ") {
-      const r = choices[active];
+      const r = choices[activeIdx];
       if (r) pick(r);
     } else if (e.key === "Escape") close(true);
     else if (e.key === "Tab") {
@@ -112,7 +115,7 @@ export function MicPicker({
     n += 1;
     const idx = n;
     const selected = r.value === value;
-    const isActive = idx === active;
+    const isActive = idx === activeIdx;
     const prev = view.rows[i - 1];
     const divider =
       (r.type === "mic" && prev?.type === "default") || (r.type === "path" && prev?.type === "mic");
@@ -139,7 +142,7 @@ export function MicPicker({
           ) : null}
         </span>
         <span className="min-w-0 flex-1">
-          <span className={cn("block truncate text-[13px] text-text", r.type === "mic" && r.missing && "text-dim")}>
+          <span className={cn("block truncate text-[13px]", r.type === "mic" && r.missing ? "text-dim" : "text-text")}>
             {safeDisplayText(r.label, LABEL_MAX)}
           </span>
           {r.type === "default" && <span className="block text-[11.5px] text-dim">{r.sub}</span>}
@@ -175,7 +178,7 @@ export function MicPicker({
             setOpen(true);
           }
         }}
-        className={cn(view.missing && "text-dim")}
+        muted={view.missing}
       >
         {safeDisplayText(view.triggerLabel, LABEL_MAX)}
       </FieldTrigger>
@@ -187,7 +190,7 @@ export function MicPicker({
             role="listbox"
             aria-label="Microphone"
             tabIndex={-1}
-            aria-activedescendant={`${uid}-opt-${active}`}
+            aria-activedescendant={`${uid}-opt-${activeIdx}`}
             onKeyDown={onListKey}
             className="max-h-[360px] overflow-auto outline-none"
           >

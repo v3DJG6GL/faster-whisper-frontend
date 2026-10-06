@@ -30,7 +30,7 @@ function rank(suggestions: string[], query: string): string[] {
     const i = s.toLowerCase().indexOf(q);
     if (i === 0) prefix.push(s);
     else if (i > 0) substr.push(s);
-    if (prefix.length + substr.length >= MAX_SHOWN * 3) break;
+    if (prefix.length >= MAX_SHOWN) break; // enough prefix hits; substrings would only trail them
   }
   return [...prefix, ...substr].slice(0, MAX_SHOWN);
 }

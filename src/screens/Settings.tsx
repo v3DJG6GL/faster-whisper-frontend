@@ -30,6 +30,7 @@ import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
 // Row titles come from the settings manifest — the single source both this
 // screen and the Sync list render from, so their labels can never drift.
 import { SETTING } from "@/lib/settingsManifest";
+import { patchTranscribe } from "@/lib/useDisplayToggles";
 import { SyncTab } from "@/components/sync/SettingsSync";
 import {
   DICTATION_RETENTION_OPTIONS,
@@ -82,10 +83,9 @@ export default function Settings() {
   const chipOff = s.recording.indicatorPosition === "off";
   const updateGeneral = useApp((st) => st.updateGeneral);
   const updateRecording = useApp((st) => st.updateRecording);
-  const updateSettings = useApp((st) => st.updateSettings);
-  /** History settings ride the opaque settings.transcribe blob (merge-patch). */
-  const updateTranscribe = (patch: Partial<NonNullable<typeof s.transcribe>>) =>
-    updateSettings({ transcribe: { ...s.transcribe, ...patch } });
+  /** History settings ride the opaque settings.transcribe blob (merge-patch over the live
+   *  store, not this render's snapshot). */
+  const updateTranscribe = patchTranscribe;
   // The one audio base folder (audioBaseDir, legacy recordingsDir fallback).
   const basePref = audioBasePref(s.recording);
   // Per-type storage readout (the folder row's bar + the action rows' counts).
@@ -526,10 +526,8 @@ export default function Settings() {
                     <span>
                       total{" "}
                       <span className="text-text">
-                        {fmtBytes(
-                          storeStats.recordingsBytes + storeStats.fileMediaBytes + storeStats.linkMediaBytes,
-                        )}{" "}
-                        · {storeStats.recordingsFiles + storeStats.fileMediaFiles + storeStats.linkMediaFiles}
+                        {fmtBytes(AUDIO_STORE_TYPES.reduce((n, t) => n + storeStats[t.bytesKey], 0))}{" "}
+                        · {AUDIO_STORE_TYPES.reduce((n, t) => n + storeStats[t.filesKey], 0)}
                       </span>
                     </span>
                   </div>

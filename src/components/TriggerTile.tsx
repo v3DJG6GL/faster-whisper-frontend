@@ -103,7 +103,11 @@ function useJustSet(codes: string[], capturing: boolean): [boolean, number] {
     setN((x) => x + 1);
     setOn(true);
     const t = window.setTimeout(() => setOn(false), 900);
-    return () => window.clearTimeout(t);
+    // A re-run (Clear, or Change starting a recording) cancels the timer, so it drops the ring too.
+    return () => {
+      window.clearTimeout(t);
+      setOn(false);
+    };
   }, [sig, capturing]);
   return [on, n];
 }

@@ -34,6 +34,7 @@ import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
+import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer } from "@/components/sync/SettingsSync";
 import { relTime } from "@/lib/format";
 
@@ -76,11 +77,7 @@ function Editor({
   // Debounce the typed key AND the server URL before they drive the best-effort capability /
   // override-profile lookups, so typing either field doesn't fire a burst of requests on every
   // keystroke (the URL drives two lookups — getCapabilities + listOverrideProfiles — per char).
-  const [debouncedKey, setDebouncedKey] = useState(initialKey ?? "");
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedKey(key), 400);
-    return () => clearTimeout(t);
-  }, [key]);
+  const debouncedKey = useDebounced(key, 400);
   // Debounced on the EFFECTIVE address. This value feeds `useOverrideContext` / `useDecodeDefaults`,
   // whose probes (getCapabilities, getDecodeDefaults, listOverrideProfiles) carry the bearer credential — the
   // typed key, or, when the field is blank, the STORED keyring key Rust resolves for this id. On
@@ -88,13 +85,7 @@ function Editor({
   // from, and the override-profile names the picker offered came from that host while the name
   // chosen was then sent to the other one. `Profiles.tsx` already resolves the override for
   // exactly this reason, and Q13/J8 fixed the same divergence on `runTest` and the card's address.
-  const [debouncedUrl, setDebouncedUrl] = useState(
-    () => urlOverride.trim() || initial.serverUrl,
-  );
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedUrl(effUrl), 400);
-    return () => clearTimeout(t);
-  }, [effUrl]);
+  const debouncedUrl = useDebounced(effUrl, 400);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
@@ -142,8 +133,14 @@ function Editor({
   // classification (a manual override wins). `kind` gates the decode-override editor.
   const detected = classifyConnection(result);
   // The freshest verdict for the top card and the model list: this editor's test, else the
-  // session cache (the list card's tests, the Transcribe screen's probes).
-  const conn = result ?? storedConn;
+  // session cache (the list card's tests, the Transcribe screen's probes) — but the cache only
+  // while the editor still points at the target it describes. An unsaved edit of Server URL or
+  // API key drops `result` above but not the store entry, which kept "Connected", the old
+  // version chips and the old server's models beside the new address.
+  const storedTarget = useRef({ url: effUrl, key });
+  const storedFresh = storedTarget.current.url === effUrl && storedTarget.current.key === key;
+  const stored = storedFresh ? storedConn : undefined;
+  const conn = result ?? stored;
   const chips = backendChips(b, conn ?? undefined);
   const kind = effectiveServerKind(b, result);
   // Caller capabilities, for gating the decode editor.
@@ -154,11 +151,7 @@ function Editor({
     serverKind: kind,
   });
   // The model is typed too: debounce it like the address so typing doesn't fetch per character.
-  const [debouncedModel, setDebouncedModel] = useState(initial.model ?? "");
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedModel(b.model ?? ""), 400);
-    return () => clearTimeout(t);
-  }, [b.model]);
+  const debouncedModel = useDebounced(b.model ?? "", 400);
   // What the server gives this backend's requests (its model + override profile) — the values
   // its blank decode fields and prompt inherit. Batch terms: the backend serves both.
   const decodeDefaults = useDecodeDefaults({
@@ -474,7 +467,7 @@ function Editor({
                 ariaLabel="Model"
                 value={b.model}
                 onChange={(v) => set({ model: v })}
-                models={result?.ok ? result.models : storedConn?.ok ? storedConn.models : []}
+                models={result?.ok ? result.models : stored?.ok ? stored.models : []}
                 placeholder={decodeDefaults?.model ? inheritLabel(shortModelName(decodeDefaults.model), "Default") : "whisper-1 / large-v3"}
               />
             </div>
@@ -1042,29 +1035,9 @@ export default function Backends() {
               initialKey={flow.key}
               initialResult={flow.info}
               onCancel={() => setFlow(null)}
-              onSave={(b) => {
-                handleSave(b);
-                // The connect step's test is still current when the URL wasn't
-                // edited — show it on the list card instead of "untested".
-                //
-                // Both terms, canonical AND effective. "Address on this device" is applied LIVE
-                // from inside this editor (`setUrlOverride`, no save needed) and
-                // `effectiveServerUrl` prefers it, so checking only the canonical url caches host
-                // A's verdict onto a backend that now routes to host B: a green "connected" dot
-                // beside B's address on the card this file's own comment calls the audit surface,
-                // with `effectiveServerKind` classifying B from A's answer — which gates the
-                // decode-override editor and the endpoint warning. Permanent, since every
-                // `setConnection` caller is a user gesture and nothing re-tests on its own. The
-                // editor's stale-result effect and `handleTest` both already carry this term; this
-                // commit path, the one that writes to the store, had neither.
-                if (
-                  flow.info &&
-                  b.serverUrl === flow.draft.serverUrl &&
-                  effectiveUrl(b) === flow.draft.serverUrl
-                ) {
-                  setConnection(b.id, flow.info);
-                }
-              }}
+              // Editor.doSave caches the connect step's verdict (its `initialResult`) while it still
+              // describes the saved address AND key — a URL-only check here re-cached it after a key edit.
+              onSave={(b) => handleSave(b)}
             />
           )}
         </div>

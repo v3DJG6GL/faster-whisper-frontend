@@ -23,6 +23,10 @@ describe("languageLabel", () => {
     expect(languageLabel("xx")).toBe("xx");
     expect(languageLabel("not a tag")).toBe("not a tag");
   });
+  it("an Object.prototype key is a code like any other, not an inherited function", () => {
+    expect(languageLabel("constructor")).toBe("constructor");
+    expect(languageLabel("toString")).toBe("toString");
+  });
   it("every Whisper language has a real name", () => {
     expect(WHISPER_LANGUAGES).toHaveLength(100);
     for (const c of WHISPER_LANGUAGES) expect(languageLabel(c), c).not.toBe(c);
@@ -108,6 +112,11 @@ describe("targetSections", () => {
     expect(values(s[0].rows)).toEqual(["zh-Hant"]);
     expect(values(s[1].rows)).toEqual(["zh"]);
   });
+  it("a server-listed Object.prototype key sorts like any code instead of throwing", () => {
+    for (const query of ["", "c"]) {
+      expect(() => targetSections({ query, recent: [], supported: ["constructor", "de"] })).not.toThrow();
+    }
+  });
 });
 
 describe("toggleCode", () => {
@@ -174,6 +183,10 @@ describe("trackLanguageName", () => {
     expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
     expect(trackLanguageName("fi")).toBe("Finnish");
     expect(trackLanguageName("xx")).toBe("XX");
+  });
+  it("a code with its own fixed name keeps it whole instead of splitting off a script", () => {
+    expect(trackLanguageName("zh-Hant")).toBe("Traditional Chinese");
+    expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
   });
 });
 
