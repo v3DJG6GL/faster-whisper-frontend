@@ -29,6 +29,31 @@ import { learnLetter } from "./keyboardLayout";
 import { findChordConflict, type BindingKind, type ConflictKind } from "./hotkeyConflicts";
 import type { Profile } from "./types";
 
+// One capture at a time across every hook instance (Onboarding renders one per starter card):
+// a new capture cancels the previous owner, whose capture-phase window listeners would
+// otherwise record the same chord too.
+let activeCapture: { cancel: () => void } | null = null;
+// Hotkey suspension is shared by the captures in flight: suspend on the first, re-arm only once
+// the last ends. The re-arm waits a microtask so a hand-off inside one commit (a cancelled
+// owner's cleanup next to the new capture's start, or a lowLevelActive flip) issues nothing,
+// instead of a reregister racing the new capture's suspend.
+let suspendDepth = 0;
+let suspended = false;
+function holdSuspension(): void {
+  suspendDepth++;
+  if (suspended) return;
+  suspended = true;
+  void suspendShortcuts().catch((e) => console.error("suspendShortcuts failed", e));
+}
+function releaseSuspension(): void {
+  suspendDepth--;
+  queueMicrotask(() => {
+    if (suspendDepth > 0 || !suspended) return;
+    suspended = false;
+    void reregisterShortcuts().catch((e) => console.error("reregisterShortcuts failed", e));
+  });
+}
+
 export function useHotkeyCapture(opts: {
   capturing: boolean;
   lowLevelActive: boolean;
@@ -64,7 +89,11 @@ export function useHotkeyCapture(opts: {
       return;
     }
     setPending(null); // a new capture replaces an unanswered clash
-    void suspendShortcuts().catch((e) => console.error("suspendShortcuts failed", e));
+    const me = { cancel: () => ref.current.onCancel() };
+    const prev = activeCapture;
+    activeCapture = me;
+    holdSuspension();
+    prev?.cancel();
     const pressed = new Set<string>();
     let peak: string[] = [];
     let done = false;
@@ -99,7 +128,7 @@ export function useHotkeyCapture(opts: {
       } else {
         void validateCodes(codes)
           .then((ok) => {
-            if (cancelled) return; // capture torn down / cancelled while validating
+            if (cancelled || activeCapture !== me) return; // torn down / cancelled / superseded while validating
             if (ok) settle();
             else {
               setWarn("Can’t register that — add a letter/digit, or enable evdev (Settings → Permissions) for modifier-only / AltGr");
@@ -118,6 +147,8 @@ export function useHotkeyCapture(opts: {
       }
     };
     const onKeyDown = (e: KeyboardEvent) => {
+      // Superseded by another capture, before this one's cleanup ran.
+      if (activeCapture !== me) return;
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") {
@@ -165,6 +196,7 @@ export function useHotkeyCapture(opts: {
       finalize(canonicalizeCodes(dropAltGrPhantom([...pressed, code], altGr)));
     };
     const onKeyUp = (e: KeyboardEvent) => {
+      if (activeCapture !== me) return;
       e.preventDefault();
       pressed.delete(eventToCode(e));
       setHeldCodes(canonicalizeCodes([...pressed]));
@@ -201,7 +233,8 @@ export function useHotkeyCapture(opts: {
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur);
-      void reregisterShortcuts().catch((e) => console.error("reregisterShortcuts failed", e));
+      if (activeCapture === me) activeCapture = null;
+      releaseSuspension();
     };
   }, [capturing, lowLevelActive]);
 

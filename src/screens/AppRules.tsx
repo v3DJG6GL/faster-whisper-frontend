@@ -77,10 +77,9 @@ function Editor({
   const detectId = normalizeAppId(r.appId);
   const [autoRemote, setAutoRemote] = useState<boolean | null>(null);
   useEffect(() => {
-    if (!detectId) {
-      setAutoRemote(null);
-      return;
-    }
+    // Reset first: a previous id's answer must not label this one while its reply is in flight.
+    setAutoRemote(null);
+    if (!detectId) return;
     let live = true;
     void remoteDesktopAutoDetected(detectId).then((v) => {
       if (live) setAutoRemote(v);

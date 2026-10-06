@@ -196,6 +196,11 @@ export function TargetLanguagePicker({
           <span title={full ? fullTitle : undefined} className="inline-flex">
             <button
               {...p}
+              // At the cap the button only LOOKS disabled (aria-disabled): ListPicker.show already
+              // ignores it, and a natively disabled button can't take the focus back when Enter or
+              // Esc closes the still-open multi popover — focus would drop to <body>.
+              disabled={disabled}
+              aria-disabled={p.disabled || undefined}
               aria-label={full ? `Add a target language — ${fullTitle}` : "Add a target language"}
               className={cn(
                 "ring-signal h-7 rounded-pill border border-dashed border-line-strong px-2.5 text-[11.5px] text-dim hover:text-text",

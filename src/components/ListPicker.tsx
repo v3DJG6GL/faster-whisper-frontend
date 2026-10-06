@@ -272,7 +272,9 @@ export function ListPicker<R>({
       e.stopPropagation();
       close(true);
     } else if (e.key === "Tab") {
-      close(false);
+      // Refocus the trigger before the browser's default Tab, so focus moves on from it
+      // instead of from the portal at the end of <body>.
+      close(true);
     }
   };
 

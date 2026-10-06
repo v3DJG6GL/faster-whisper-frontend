@@ -21,14 +21,18 @@ export function deviceChip(device: string | undefined | null): string | undefine
 const tail = (id: string) => id.split("/").pop() ?? id;
 
 /** Where the backend's default model runs: the model it names (by id, else by the same last path
- *  part, "org/large-v3" ~ "large-v3"), else — a backend that leaves the model to the server — the
+ *  part, "org/large-v3" ~ "large-v3"), else — a backend that leaves the model to the server, or
+ *  names the OpenAI alias "whisper-1" the server maps to its default (and does not list) — the
  *  model the server has loaded (or its only model). */
 export function modelDevice(models: readonly ServerModel[] | undefined, model: string): string | undefined {
   if (!models?.length) return undefined;
   const m = model.trim();
-  const hit = m
-    ? (models.find((x) => x.id === m) ?? models.find((x) => tail(x.id) === tail(m)))
-    : (models.find((x) => x.loaded && x.device) ?? (models.length === 1 ? models[0] : undefined));
+  const byName = m ? (models.find((x) => x.id === m) ?? models.find((x) => tail(x.id) === tail(m))) : undefined;
+  const hit =
+    byName ??
+    (!m || m === "whisper-1"
+      ? (models.find((x) => x.loaded && x.device) ?? (models.length === 1 ? models[0] : undefined))
+      : undefined);
   return deviceChip(hit?.device);
 }
 

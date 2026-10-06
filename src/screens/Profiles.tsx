@@ -18,7 +18,7 @@ import { dictationControls, FIELD_LABEL } from "@/components/DictationFields";
 import { hasInsertionOverrides, insertionSetCount } from "@/lib/dictation/insertion";
 import { TranslationDefaultsEditor, type TranslationInherited } from "@/components/TranslationFields";
 import { targetsLabel } from "@/lib/translationTargets";
-import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited, shortModelName } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
@@ -721,7 +721,7 @@ function ProfileRow({
               source={effLang}
               targets={configuredRouteTargets(p, { translationOverrides: { translateTo: backendTargets } })}
             />
-            {p.model && <Badge>{safeDisplayText(p.model.split("/").pop() ?? p.model, 40)}</Badge>}
+            {p.model && <Badge>{shortModelName(p.model, 40) ?? ""}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
           <div className="mt-1.5 flex items-center gap-3">

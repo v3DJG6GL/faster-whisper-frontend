@@ -55,15 +55,20 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
   if (c?.enabled !== undefined) rows.push({ env: "CAPTURES_RECORDING_ENABLED", value: on ? "on" : "off", tone: on ? "bad" : "ok" });
   if (c?.retention_days !== undefined)
     rows.push({ env: "CAPTURES_RETENTION_DAYS", value: keepDays(c.retention_days), tone: on ? "bad" : "none" });
-  if (c?.sample_fraction !== undefined)
+  if (c?.sample_fraction !== undefined) {
+    // Rounding never turns a small sample into "0%" (nothing captured) or a near-full one into
+    // "100%" (every request).
+    const pct = c.sample_fraction * 100;
+    const shown = pct > 0 && pct < 1 ? "<1" : pct > 99 && pct < 100 ? ">99" : String(Math.round(pct));
     rows.push({
       env: "CAPTURES_RECORDING_SAMPLE_RATE",
       value:
         c.sample_fraction >= 1
           ? `${c.sample_fraction.toFixed(1)} · every request`
-          : `${c.sample_fraction} · ${Math.round(c.sample_fraction * 100)}% of requests`,
+          : `${c.sample_fraction} · ${shown}% of requests`,
       tone: on ? "warn" : "none",
     });
+  }
   const log = k.server_log;
   if (log?.max_bytes !== undefined) rows.push({ env: "LOG_MAX_BYTES", value: fmtBytes(log.max_bytes), tone: "warn" });
   if (log?.backup_count !== undefined)

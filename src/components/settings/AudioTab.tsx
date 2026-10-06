@@ -47,10 +47,18 @@ export function AudioTab() {
   // Latest "stop + offer replay" handler, so the auto-stop timer (armed in an effect defined
   // above the handler) can call it without a declaration-order / stale-closure problem.
   const stopAndReplayRef = useRef<() => void>(() => {});
+  // A stop in flight: a double-clicked Stop, or Stop racing the auto-stop, must not stop and
+  // replay twice (the second replay would restart the playback).
+  const stoppingRef = useRef(false);
+  // Bumped per listing and by the poll's cleanup, so a reply issued before a "Show all audio
+  // paths" flip (or unmount) can't land after the newer one and overwrite it.
+  const invSeq = useRef(0);
 
   const refresh = useCallback(async () => {
+    const my = ++invSeq.current;
     try {
-      setInv(await listAudioDevices(withPaths));
+      const next = await listAudioDevices(withPaths);
+      if (my === invSeq.current) setInv(next);
     } catch (e) {
       console.error("listing audio devices failed:", e); // keep prior list; don't float the rejection
     }
@@ -71,6 +79,7 @@ export function AudioTab() {
     return () => {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
+      invSeq.current++;
     };
   }, [refresh]);
 
@@ -110,14 +119,20 @@ export function AudioTab() {
         return;
       }
       unlisten = un;
-      // The capture ends itself when the device is lost; leave "testing" the way Stop does (the
-      // clip heard so far stays replayable) and say why.
+      // The capture ends itself when the device is lost or a slow open failed late; leave
+      // "testing" the way Stop does (the clip heard so far stays replayable) and say why.
+      let endReason = "device-lost";
       const endTest = () => {
-        setTestNote("The microphone stopped delivering audio, so the test ended.");
+        setTestNote(
+          endReason === "open-failed"
+            ? "The microphone could not be opened, so the test ended."
+            : "The microphone stopped delivering audio, so the test ended.",
+        );
         void stopAndReplayRef.current();
       };
-      const unEnded = await onMicTestEnded(() => {
+      const unEnded = await onMicTestEnded((reason) => {
         if (!active || !issued) return;
+        endReason = reason;
         if (!started) {
           endedEarly = true;
           return;
@@ -213,6 +228,8 @@ export function AudioTab() {
   // Stop button AND the 15s auto-stop, so both offer replay. try/finally: always flip testing off
   // even if the stop invoke rejects, so the button can't stick on "Stop".
   const stopAndReplay = useCallback(async () => {
+    if (stoppingRef.current) return;
+    stoppingRef.current = true;
     let secs = 0;
     try {
       secs = await stopMicTest();
@@ -220,6 +237,7 @@ export function AudioTab() {
       console.error("stop mic test failed:", e); // secs stays 0 → the replay below is correctly skipped
     } finally {
       setTesting(false);
+      stoppingRef.current = false;
     }
     // Unmounted during the await: the cleanup already silenced playback, and a replay started
     // now would have no button left to stop it.

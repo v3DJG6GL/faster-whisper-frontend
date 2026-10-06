@@ -223,6 +223,7 @@ export function DecodeFields({
         overridden={overridden && !fixed}
         lockReason={fixed ? title : undefined}
         describedById={title ? descId(k) : undefined}
+        describedText={title}
         // Text fields can be CLEARED to an explicit empty override (suppress the inherited value).
         onClear={spec.kind === "text" && !fixed && !why ? () => setField(k, "") : undefined}
         canClear={value[k] !== ""}
@@ -238,7 +239,7 @@ export function DecodeFields({
               : "Ignored · locked by the server"
             : overridden && why
               ? "Ignored here"
-              : !overridden && !fixed && ignored?.includes(k)
+              : !overridden && isLocked(k) && ignored?.includes(k)
                 ? "Backend value ignored · locked by the server"
                 : undefined
         }

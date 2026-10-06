@@ -89,11 +89,11 @@ export function serverContextSegments(dd: DecodeDefaults | null | undefined): nu
 }
 
 /** A model name for an inherit label: the last path part ("large-v3" for
- *  "Systran/faster-whisper-large-v3"), bounded; undefined when there is none. */
-export function shortModelName(id: unknown): string | undefined {
+ *  "Systran/faster-whisper-large-v3"), bounded to `max`; undefined when there is none. */
+export function shortModelName(id: unknown, max = 60): string | undefined {
   if (typeof id !== "string" || !id.trim()) return undefined;
   const t = id.trim();
-  return safeDisplayText(t.split("/").pop() || t, 60) || undefined;
+  return safeDisplayText(t.split("/").pop() || t, max) || undefined;
 }
 
 /** The name a request-default-settings entry gives (the default model, a stage model), short. */

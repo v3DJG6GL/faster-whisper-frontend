@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
@@ -36,7 +36,7 @@ import { refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer } from "@/components/sync/SettingsSync";
-import { relTime } from "@/lib/format";
+import { plural, relTime } from "@/lib/format";
 
 function Editor({
   initial,
@@ -129,9 +129,6 @@ function Editor({
   // The prompt's tri-state view: undefined = inherit, "" = explicit clear, value = set.
   const promptOverride = backendPrompt(b);
   const promptOverridden = promptOverride !== undefined;
-  // `detected` = what the last connection test inferred; `kind` = the effective
-  // classification (a manual override wins). `kind` gates the decode-override editor.
-  const detected = classifyConnection(result);
   // The freshest verdict for the top card and the model list: this editor's test, else the
   // session cache (the list card's tests, the Transcribe screen's probes) — but the cache only
   // while the editor still points at the target it describes. An unsaved edit of Server URL or
@@ -141,8 +138,12 @@ function Editor({
   const storedFresh = storedTarget.current.url === effUrl && storedTarget.current.key === key;
   const stored = storedFresh ? storedConn : undefined;
   const conn = result ?? stored;
+  // `detected` = what the freshest verdict (this editor's test, else the fresh session cache)
+  // inferred; `kind` = the effective classification (a manual override wins). `kind` gates the
+  // decode-override editor.
+  const detected = classifyConnection(conn);
   const chips = backendChips(b, conn ?? undefined);
-  const kind = effectiveServerKind(b, result);
+  const kind = effectiveServerKind(b, conn);
   // Caller capabilities, for gating the decode editor.
   const { caps } = useOverrideContext({
     serverUrl: debouncedUrl,
@@ -659,7 +660,7 @@ function ConnResult({ info }: { info: ConnectionInfo }) {
     <Notice tone={info.ok ? "ok" : "warn"} className="mt-4">
       {info.ok ? (
         <>
-          Connected — {info.models.length} model{info.models.length === 1 ? "" : "s"}
+          Connected — {plural(info.models.length, "model")}
           {info.openMode ? " · open mode (no auth)" : info.username ? ` · ${safeDisplayText(info.username, 60)}` : ""}.
         </>
       ) : (
@@ -819,6 +820,10 @@ function RestoreOffer({
   onDone: () => void;
 }) {
   const [restoring, setRestoring] = useState(false);
+  const remoteCategories = useMemo(() => {
+    const m = remote.blob ? migrateBlob(remote.blob) : {};
+    return ALL_CATEGORIES.filter((c) => m[c] !== undefined);
+  }, [remote.blob]);
 
   // After the blob applied: make sure a backend for this server exists (the
   // restore may or may not have brought one — the backends category can be
@@ -872,7 +877,7 @@ function RestoreOffer({
         <StatusDot tone="ok" />
         <span>
           connected · faster-whisper-backend{info.serverVersion ? ` ${safeDisplayText(info.serverVersion, 60)}` : ""} ·{" "}
-          {info.models.length} model{info.models.length === 1 ? "" : "s"}
+          {plural(info.models.length, "model")}
           {info.username ? ` · ${safeDisplayText(info.username, 60)}` : ""}
         </span>
       </div>
@@ -883,7 +888,7 @@ function RestoreOffer({
           {remote.updated_ts ? ` · ${relTime(remote.updated_ts * 1000)}` : ""}
         </div>
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {ALL_CATEGORIES.filter((c) => (remote.blob ? migrateBlob(remote.blob) : {})[c] !== undefined).map((c) => (
+          {remoteCategories.map((c) => (
             <span
               key={c}
               className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim"

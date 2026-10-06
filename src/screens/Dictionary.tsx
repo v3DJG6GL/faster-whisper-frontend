@@ -21,6 +21,7 @@ import {
 import { useApp } from "@/lib/store";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { Badge, Button, Card, ConfirmLeave, Labeled, Notice, SectionLabel, Stack, Toggle, TextInput } from "@/components/ui";
+import { plural } from "@/lib/format";
 import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
@@ -243,7 +244,7 @@ function RuleCard({
           )}
           <span className="truncate text-[14px] font-medium text-text">{safeDisplayText(rule.label, 120)}</span>
           {dirty && <span className="size-1.5 shrink-0 rounded-full bg-accent" title="Unsaved changes" aria-hidden />}
-          <Badge>{TYPE_LABEL[rule.type] ?? safeDisplayText(rule.type, 40)}</Badge>
+          <Badge>{ownProp(TYPE_LABEL, rule.type) ?? safeDisplayText(rule.type, 40)}</Badge>
           {pinned && <Badge tone="accent">quick-add</Badge>}
           {locked && (
             <span className="inline-flex items-center gap-1 text-faint" title="Locked by the server admin — read-only">
@@ -485,7 +486,7 @@ function RuleCard({
                   className="ring-signal self-start rounded-md font-mono text-[11.5px] text-dim hover:text-text">
                   {mapShowAll
                     ? `▾ Hide ${mapHidden} older`
-                    : `▸ Show ${mapHidden} older mapping${mapHidden === 1 ? "" : "s"}`}
+                    : `▸ Show ${plural(mapHidden, "older mapping")}`}
                 </button>
               )}
             </Stack>
@@ -1150,23 +1151,18 @@ function SaveBanner({ result, reloadDisabled, onReload }: { result: PipelineSave
     }));
   if (result.status === 422 && errors.length) {
     return (
-      <div className="rounded-xl border border-warn/30 bg-warn/5 px-3.5 py-2.5 text-[12.5px] text-warn">
-        <div className="flex items-start gap-2">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-          <div>
-            <div className="font-medium">The server rejected the changes</div>
-            <ul className="mt-1 space-y-0.5 text-warn/90">
-              {errors.slice(0, 6).map((e, i) => (
-                <li key={i}>
-                  {e.loc ? <span className="font-mono text-[11px] opacity-80">{e.loc}: </span> : null}
-                  {e.msg}
-                </li>
-              ))}
-            </ul>
-            <p className="mt-1 text-warn/80">A rule the admin set may already be invalid — only the listed issues block saving.</p>
-          </div>
-        </div>
-      </div>
+      <Notice>
+        <div className="font-medium">The server rejected the changes</div>
+        <ul className="mt-1 space-y-0.5 text-warn/90">
+          {errors.slice(0, 6).map((e, i) => (
+            <li key={i}>
+              {e.loc ? <span className="font-mono text-[11px] opacity-80">{e.loc}: </span> : null}
+              {e.msg}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-1 text-warn/80">A rule the admin set may already be invalid — only the listed issues block saving.</p>
+      </Notice>
     );
   }
   if (!result.ok) {

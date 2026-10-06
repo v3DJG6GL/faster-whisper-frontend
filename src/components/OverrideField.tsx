@@ -25,6 +25,7 @@ export function OverrideHeader({
   overridden = false,
   lockReason,
   describedById,
+  describedText,
   onClear,
   canClear = true,
   clearTitle = "Override with empty (suppress the inherited value)",
@@ -48,8 +49,12 @@ export function OverrideHeader({
   overridden?: boolean;
   /** Set when an admin locked the key: the lock icon, and its reason for screen readers. */
   lockReason?: string;
-  /** The id the control's `aria-describedby` names; the lock reason is rendered under it. */
+  /** The id the control's `aria-describedby` names; the lock reason (else `describedText`) is
+   * rendered under it. */
   describedById?: string;
+  /** What `describedById` announces on a row that is not locked (e.g. where its inherited value
+   * comes from). */
+  describedText?: string;
   /** Text fields: write the explicit empty override. Hidden while `canClear` is false. */
   onClear?: () => void;
   canClear?: boolean;
@@ -110,9 +115,9 @@ export function OverrideHeader({
                 <Lock className="size-3 shrink-0 text-faint" aria-hidden />
               </span>
             )}
-            {lockReason && describedById && (
+            {describedById && (lockReason || describedText) && (
               <span id={describedById} className="sr-only">
-                {lockReason}
+                {lockReason ?? describedText}
               </span>
             )}
           </div>

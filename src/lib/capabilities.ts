@@ -14,7 +14,7 @@ import { getCapabilities } from "./api";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";
-import { safeDisplayText } from "./sanitize";
+import { shortModelName } from "./inherit";
 import { targetCap } from "./languages";
 import type { Backend, Capabilities } from "./types";
 
@@ -134,7 +134,7 @@ export function maxTranslationTargets(caps: Capabilities | null | undefined): nu
 
 /** A translation model id as the "Supported by …" group names it: its last path part. */
 export function modelShortName(id: string | undefined): string | undefined {
-  return id ? safeDisplayText(id.split("/").pop() || id, 40) : undefined;
+  return shortModelName(id, 40);
 }
 
 /** A translation-target picker's grouping for a model (empty = the server's default): its

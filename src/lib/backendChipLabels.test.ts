@@ -31,6 +31,10 @@ describe("modelDevice", () => {
     expect(modelDevice(models, "")).toBe("CUDA");
     expect(modelDevice([], "")).toBeUndefined();
   });
+  it("the OpenAI alias whisper-1 is the server default: the loaded one, unless listed by id", () => {
+    expect(modelDevice(models, "whisper-1")).toBe("CUDA");
+    expect(modelDevice([...models, { id: "whisper-1", loaded: false, device: "cpu" }], "whisper-1")).toBe("CPU");
+  });
   it("an unknown model has no chip", () => {
     expect(modelDevice(models, "medium")).toBeUndefined();
   });

@@ -168,8 +168,8 @@ export function AppearanceRows() {
                 className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill disabled:cursor-not-allowed"
                 style={{ background: HUE_TRACK }}
               />
-              {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
-                  slider keeps its size and place while the number changes under a drag. */}
+              {/* Fixed width (the Custom speed row's readout width), so the slider keeps its
+                  size and place while the readout changes, and the columns line up. */}
               <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
                 {hue}° · {custom ? "custom" : preset![0].toLowerCase()}
               </span>
@@ -235,11 +235,13 @@ const MOTION_TIERS: { value: string; label: string }[] = [
   { value: "60", label: "Every minute" },
   { value: "custom", label: "Custom…" },
 ];
-/** The preset hue nearest to `hue` on the wheel (the arc palette shows presets only). */
-function nearestPreset(hue: number): number {
+/** The preset hue nearest to `hue` on the wheel (the arc palette shows presets only),
+ *  skipping the preset `exclude` when given. */
+function nearestPreset(hue: number, exclude?: number): number {
   let best = ACCENT_PRESETS[0][1];
   let bestD = 361;
   for (const [, h] of ACCENT_PRESETS) {
+    if (h === exclude) continue;
     const d = Math.abs(((((h - hue) % 360) + 540) % 360) - 180);
     if (d < bestD) {
       bestD = d;
@@ -263,10 +265,6 @@ function useReducedMotion(): boolean {
   return reduced;
 }
 
-/** Motion of the Signal colour: tier dropdown, the custom log-scale speed, the range
- *  (whole wheel / an arc to a second swatch) and a live "Right now" readout fed by this
- *  window's drift driver (theme.ts). The engine itself never touches `accentHue`: the
- *  hue you picked above is the base every turn starts from. */
 /** The Motion cost notice (D71–D73), under the Custom speed row while Custom is picked
  *  (so the slider above it never moves) and under Motion otherwise. It fades and folds
  *  its height in and out instead of popping, and keeps the last text while it fades out. */
@@ -298,6 +296,10 @@ function CostNotice({ cost }: { cost: ReturnType<typeof motionCostNote> }) {
   );
 }
 
+/** Motion of the Signal colour: tier dropdown, the custom log-scale speed, the range
+ *  (whole wheel / an arc to a second swatch) and a live "Right now" readout fed by this
+ *  window's drift driver (theme.ts). The engine itself never touches `accentHue`: the
+ *  hue you picked above is the base every turn starts from. */
 function MotionRows({
   dark, motion, reduced, baseHue,
 }: { dark: boolean; motion: AccentMotion; reduced: boolean; baseHue: number }) {
@@ -360,10 +362,11 @@ function MotionRows({
           motion.period,
         )}. Every window computes this from the clock.`;
   // The arc's two ends. Older blobs started from the Signal colour; the preset nearest to
-  // it stands in so the palette always shows two rings (the engine keeps the exact hue
-  // until the next pick writes both ends).
+  // it, other than end 2, stands in so the palette always shows two rings and the breath
+  // never collapses to one hue (the engine keeps the exact hue until the next pick writes
+  // both ends).
   const arcTo = motion.arcHue ?? DEFAULT_ARC_HUE;
-  const arcFrom = motion.arcFrom ?? nearestPreset(baseHue);
+  const arcFrom = motion.arcFrom ?? nearestPreset(baseHue, arcTo);
   // Two-of-six: a new pick becomes end 2 and the old end 2 becomes end 1, so two clicks
   // in a row set the pair in reading order and a single click swaps the far end.
   const pickArc = (h: number) => {
@@ -449,8 +452,7 @@ function MotionRows({
                   />
                 ))}
               </div>
-              {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
-                  slider keeps its size and place while the number changes under a drag. */}
+              {/* Same fixed width as the speed readout above, so the readout columns line up. */}
               <span className="w-[36ch] shrink-0 whitespace-nowrap font-mono text-[11.5px] tabular-nums text-dim">
                 {arcName(arcFrom)} ↔ {arcName(arcTo)}
               </span>

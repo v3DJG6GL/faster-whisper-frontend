@@ -59,6 +59,16 @@ describe("keepRows", () => {
     expect(value("USAGE_APP_RETENTION_DAYS")).toBe("0 · forever");
     expect(keepRows(info, true).find((r) => r.env === "CAPTURES_RETENTION_DAYS")?.value).toBe("365 days");
   });
+  it("a sample rate never rounds to 0% or 100%", () => {
+    const rate = (sample_fraction: number) =>
+      keepRows({ keeps: { captures: { enabled: true, sample_fraction } } }, true).find(
+        (r) => r.env === "CAPTURES_RECORDING_SAMPLE_RATE",
+      )?.value;
+    expect(rate(0.001)).toBe("0.001 · <1% of requests");
+    expect(rate(0.999)).toBe("0.999 · >99% of requests");
+    expect(rate(0.25)).toBe("0.25 · 25% of requests");
+    expect(rate(0)).toBe("0 · 0% of requests");
+  });
   it("captures off: the dot is calm", () => {
     const off = { keeps: { captures: { enabled: false, retention_days: 365 } } };
     expect(capturesOn(off)).toBe(false);
