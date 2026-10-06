@@ -185,14 +185,16 @@ export async function attachLogStream(): Promise<() => void> {
     if (!hydrated) parked.push(...p.lines);
     else if (isWindowHidden()) {
       hiddenParked.push(...p.lines);
-      if (hiddenParked.length > LOG_BUFFER_CAP) hiddenParked = hiddenParked.slice(-LOG_BUFFER_CAP);
+      // Hysteresis: trimming at 1x re-sliced a full cap-sized array on every later
+      // batch. append() caps buf on replay, so the 2x ceiling only bounds memory.
+      if (hiddenParked.length > 2 * LOG_BUFFER_CAP) hiddenParked = hiddenParked.slice(-LOG_BUFFER_CAP);
     } else append(p.lines);
   });
   const unsubHidden = onWindowHiddenChange((hidden) => {
     if (hidden || cancelled || !hydrated || hiddenParked.length === 0) return;
     const held = hiddenParked;
     hiddenParked = [];
-    append(held);
+    append(held.length > LOG_BUFFER_CAP ? held.slice(-LOG_BUFFER_CAP) : held);
   });
   // Stream first-gate AFTER the listener exists, then hydrate the gap —
   // set_log_stream(true) marks "emit from now", so hydration covers the past.

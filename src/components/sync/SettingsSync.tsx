@@ -557,7 +557,6 @@ function SecurityReviewDialog() {
     "new-backend": "New server added",
     "server-url": "Server address changed",
     "api-key": "API key changed",
-    "recording-retention": "Saved recordings would be deleted",
     "save-recordings": "Saving every dictation would be turned on",
     "history-retention": "File transcriptions would start being deleted",
     "dictation-retention": "Dictations would start being deleted",

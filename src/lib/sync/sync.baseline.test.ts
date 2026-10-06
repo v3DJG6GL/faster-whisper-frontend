@@ -813,6 +813,27 @@ describe("applyBlob keep-local (baseline)", () => {
     ).toEqual(["dictation-retention"]);
   });
 
+  it("a gated-off server address or API key raises no review (the apply would re-pin it)", () => {
+    const local = {
+      backends: { list: [{ id: "b1", name: "Home", serverUrl: "http://a:8000" }], secrets: { b1: "old" } },
+    } as never;
+    const incoming = {
+      backends: { list: [{ id: "b1", name: "Home", serverUrl: "http://b:8000" }], secrets: { b1: "new" } },
+    } as never;
+    const kinds = (g?: { serverAddresses?: boolean; apiKeys?: boolean }) =>
+      securityChanges(incoming, local, CATS_ALL, g as never).map((c) => c.kind).sort();
+    expect(kinds()).toEqual(["api-key", "server-url"]);
+    expect(kinds({ serverAddresses: false })).toEqual(["api-key"]);
+    expect(kinds({ apiKeys: false })).toEqual(["server-url"]);
+    // A backend new to this device keeps its inbound address regardless of the gate.
+    expect(
+      securityChanges(incoming, { backends: { list: [], secrets: {} } } as never, CATS_ALL, {
+        serverAddresses: false,
+        apiKeys: false,
+      } as never).map((c) => c.kind),
+    ).toEqual(["new-backend"]);
+  });
+
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {
     const [junk, mixed] = sanitizeProfiles([
       profile({ id: "p1", decodeOverrides: "abc" as never }),

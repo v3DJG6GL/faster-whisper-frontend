@@ -1322,6 +1322,9 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
 async function reconcileBackendSecrets(
   list: Backend[],
   secrets: Record<string, string> | undefined,
+  // Superseded apply (sync off / server switch): stop writing the abandoned blob's keys into
+  // the keyring. The caller's own `gen !== myGen` check after the await still drops the apply.
+  aborted: () => boolean = () => false,
 ): Promise<Backend[]> {
   // Only ids that are actually in the list: composeBlob reads keys for exactly the backends it
   // ships, so a secret for an unknown id can't come from a legitimate peer — but it WOULD be
@@ -1334,6 +1337,7 @@ async function reconcileBackendSecrets(
   // O(backends), can never drop a legitimate key, and makes the lookup own-property at the same
   // time (`secrets.constructor` is a truthy function otherwise — the class already fixed below).
   for (const b of list) {
+    if (aborted()) return list;
     const id = b.id;
     const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
     if (typeof key === "string" && key) {
@@ -1346,6 +1350,7 @@ async function reconcileBackendSecrets(
       );
     }
   }
+  if (aborted()) return list;
   const present = await withTimeout(
     readBackendKeys(list.map((b) => b.id)),
     10_000,
@@ -1658,6 +1663,7 @@ export async function applyBlob(
         inboundBackends,
         // API-keys gate off: inbound secrets never touch this device's keyring.
         gates.apiKeys ? blob.backends.secrets : undefined,
+        () => gen !== myGen,
       );
       // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
       // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
@@ -2544,7 +2550,6 @@ export interface SecurityChange {
     | "new-backend"
     | "server-url"
     | "api-key"
-    | "recording-retention"
     | "save-recordings"
     | "history-retention"
     | "dictation-retention"
@@ -2571,7 +2576,6 @@ export interface SecurityChange {
 function catOf({ kind, category }: SecurityChange): SyncCategory {
   if (kind === "typed-text") return category ?? "profiles";
   if (
-    kind === "recording-retention" ||
     kind === "save-recordings" ||
     kind === "dictation-retention" ||
     kind === "dictation-history" ||
@@ -2659,7 +2663,7 @@ export function securityChanges(
   incoming: SyncBlob,
   local: SyncBlob,
   cats: Record<SyncCategory, boolean>,
-  gates?: Pick<Gates, "modelDecodeDefaults">,
+  gates?: Partial<Pick<Gates, "modelDecodeDefaults" | "serverAddresses" | "apiKeys">>,
 ): SecurityChange[] {
   const out: SecurityChange[] = [];
   // The three retention clocks drive sweeps that DELETE stored data (saved
@@ -2747,8 +2751,7 @@ export function securityChanges(
   // each key alone asked consent for "saved recordings ... currently kept forever" when the
   // effective window only lengthened (audio 0 + record 7 → 30/30). So compare that one value.
   // An absent or non-numeric incoming key is "no change" (the apply keeps the local value),
-  // so it reads as the local value here. ("recording-retention" stays in the union for
-  // persisted parked reviews, but is no longer raised.)
+  // so it reads as the local value here.
   if (cats.recording && isPlainObject(incoming.recording)) {
     const effDays = (a: number, r: number) => (a === 0 ? r : r === 0 ? a : Math.min(a, r));
     const localA = days(local.recording, "recordingsRetentionDays", 0);
@@ -2800,9 +2803,17 @@ export function securityChanges(
     if (!b || typeof b.id !== "string" || typeof b.serverUrl !== "string") continue;
     const cur = here.get(b.id);
     const name = b.name || b.serverUrl || b.id;
+    // A backend new to this device keeps its inbound address even with "Server addresses" off
+    // (there is nothing local to re-pin), so `new-backend` is raised regardless of the gates.
+    // A KNOWN backend's address change, or an incoming key with "API keys" off, can never land —
+    // applyBlob re-pins serverUrl / drops inbound secrets — so raising them made approval a no-op
+    // and a rejection re-raise on every pull.
     if (!cur) {
       out.push({ kind: "new-backend", backend: name, detail: b.serverUrl, url: b.serverUrl });
-    } else if (normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)) {
+    } else if (
+      gates?.serverAddresses !== false &&
+      normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)
+    ) {
       out.push({
         kind: "server-url",
         backend: cur.name || name,
@@ -2821,7 +2832,7 @@ export function securityChanges(
     // as "the stored key would be replaced" for a key that does not exist locally.
     const incomingKey = ownProp(nextSecrets, b.id);
     const localKey = ownProp(localSecrets, b.id);
-    if (incomingKey && cur && incomingKey !== localKey) {
+    if (gates?.apiKeys !== false && incomingKey && cur && incomingKey !== localKey) {
       out.push({
         kind: "api-key",
         backend: cur.name || name,

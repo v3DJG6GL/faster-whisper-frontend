@@ -14,7 +14,7 @@
 // touch the settings' values, and like all sync switches they are
 // per-device, so a reset does not sync anywhere.
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import { RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
@@ -91,9 +91,13 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
   };
 
   const [toast, setToast] = useState<{
+    /** Keys the <Toast>: its auto-dismiss timer re-arms only on new text, so a
+     *  repeat action with identical text kept the old deadline for the new Undo. */
+    id: number;
     text: string;
     undo?: Partial<Record<SettingId, boolean>>;
   } | null>(null);
+  const toastSeq = useRef(0);
   const [confirmAll, setConfirmAll] = useState(false);
 
   function setGates(patch: Partial<Record<SettingId, boolean>>) {
@@ -116,7 +120,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
         defs.map((d) => [d.id, DEFAULT_SETTING_SYNC[d.id as SettingId]]),
       ) as Partial<Record<SettingId, boolean>>,
     );
-    setToast({ text: label, undo });
+    setToast({ id: ++toastSeq.current, text: label, undo });
   }
 
   // Tri-state like every GroupCard below: a boolean master read "Off" forever
@@ -153,6 +157,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
               Object.fromEntries(DEFS.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
             );
             setToast({
+              id: ++toastSeq.current,
               text: v
                 ? "Every setting now syncs, including machine-specific ones"
                 : "Sync switched off for every setting",
@@ -269,6 +274,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
 
       {toast && (
         <Toast
+          key={toast.id}
           actionLabel={toast.undo ? "Undo" : undefined}
           onAction={
             toast.undo

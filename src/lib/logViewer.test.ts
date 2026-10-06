@@ -54,7 +54,7 @@ function setHidden(h: boolean) {
   for (const fn of [...vis.listeners]) fn(h);
 }
 
-const { attachLogStream, clearView, visibleLines, useLogs } = await import("./logViewer");
+const { attachLogStream, clearView, visibleLines, useLogs, LOG_BUFFER_CAP } = await import("./logViewer");
 
 describe("visibleLines", () => {
   it("hands back a fresh array on every version bump, so memos keyed on it invalidate", async () => {
@@ -131,5 +131,23 @@ describe("attachLogStream while the window is hidden", () => {
 
     detach();
     expect(vis.listeners.size).toBe(0);
+  });
+
+  it("a long hidden spell replays only the newest cap's worth, in order", async () => {
+    const detach = await attachLogStream();
+    // Past every seq earlier cases used.
+    const base = 1000;
+    setHidden(true);
+    // Small batches well past 2x cap: the parked queue is trimmed with hysteresis.
+    const total = 2 * LOG_BUFFER_CAP + 500;
+    for (let i = 0; i < total; i += 100) {
+      emit?.({ lines: Array.from({ length: 100 }, (_, k) => line(base + i + k)) });
+    }
+    setHidden(false);
+    const shown = visibleLines();
+    expect(shown).toHaveLength(LOG_BUFFER_CAP);
+    expect(shown[0].seq).toBe(base + total - LOG_BUFFER_CAP);
+    expect(shown[shown.length - 1].seq).toBe(base + total - 1);
+    detach();
   });
 });
