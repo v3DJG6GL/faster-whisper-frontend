@@ -216,7 +216,14 @@ async function startWithPickedTargets(
     // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
     // caller and silently drop the whole start; null = no known target, the session still runs.
     const targetApp = await getFocusedApp().catch(() => null);
-    useApp.getState().setDictation({ activeProfile: profile.id, routePending: "choosing" });
+    // The stamp also ends a lingering error: `error` isn't busy, so this start can open inside
+    // flashError's linger, whose timer would otherwise null activeProfile mid-pick (wrong chip
+    // tag beside the stale error). Its body is guarded by status === "error", so it no-ops.
+    useApp.getState().setDictation({
+      activeProfile: profile.id,
+      routePending: "choosing",
+      ...(useApp.getState().status === "error" ? { status: "idle" as const, dictationError: null } : {}),
+    });
     const pick = await askTranslationTargets(targetPickerSeed(profile, backend, "before"));
     if (pick.kind === "aborted") {
       // The user backed out: nothing starts, and the chip returns to standby (no Profile

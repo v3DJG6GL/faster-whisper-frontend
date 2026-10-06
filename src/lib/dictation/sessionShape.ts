@@ -8,8 +8,10 @@ import { backendPrompt, effectiveLanguage } from "../backends";
 import type { Backend, Profile } from "../types";
 
 /** The backend, and the model / language / prompt / decode / translation setup resolved
- *  against it the way startLiveInner does, plus the hands-free translation-target picker
- *  (it has to run before the session starts). `backend` is the Profile's resolved Backend
+ *  against it the way startLiveInner does, plus WHEN the translation-target picker asks: a
+ *  hands-free asker has to ask before the session starts, a hold asker asks at release — so a
+ *  hold root and a hands-free superset that both ask still can't share a session (the in-place
+ *  upgrade never runs the before-start picker). `backend` is the Profile's resolved Backend
  *  (dictation.ts `backendForProfile`); `null` when there is none. Compared as strings. */
 export function sessionShape(profile: Profile, backend: Backend | undefined): string | null {
   if (!backend) return null;
@@ -22,7 +24,7 @@ export function sessionShape(profile: Profile, backend: Backend | undefined): st
     profile.overrideProfile?.trim() || backend.overrideProfile,
     profile.endpoint ?? backend.endpoint,
     { ...backend.translationOverrides, ...profile.translationOverrides },
-    !!profile.askTranslationTargets,
+    profile.askTranslationTargets ? (profile.activation === "hold" ? "ask-at-release" : "ask-before-start") : false,
   ]);
 }
 

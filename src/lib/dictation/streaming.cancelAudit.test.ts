@@ -109,13 +109,22 @@ describe("dictation teardowns cancel the in-flight translate", () => {
   ];
   for (const [anchor, why] of cases) {
     it(`${anchor} cancels — ${why}`, () => {
+      const body = mask(bodyAfter(streamingSrc, anchor));
       expect(
-        bodyAfter(streamingSrc, anchor).includes("cancelDictationTranslate("),
+        body.includes("abandonSessionWork(") || body.includes("cancelDictationTranslate("),
         `${anchor} in streaming.ts abandons a dictation translate without stopping the server — ` +
-          "add cancelDictationTranslate() or update streaming.cancelAudit.test.ts",
+          "add abandonSessionWork() or update streaming.cancelAudit.test.ts",
       ).toBe(true);
     });
   }
+
+  it("abandonSessionWork stops the translate and the pending phrase-end work", () => {
+    // The shared teardown is only as good as its body: the four sites above rely on it.
+    const body = mask(topLevelFunctions(streamingSrc).abandonSessionWork);
+    for (const step of ["cancelDictationTranslate(", "clearPhraseEnd(", "clearStuckWatchdog(", "stopTargetPoll(", "clearWarmTimer(", "releaseWarmLease("]) {
+      expect(body, `abandonSessionWork must call ${step}`).toContain(step);
+    }
+  });
 
   it("only the user's cancel aborts an in-flight injection", () => {
     // cancelLive passes the user-initiated flag so Rust aborts a transcript being typed even
@@ -135,9 +144,9 @@ describe("dictation teardowns cancel the in-flight translate", () => {
     // already resolved — cancelling there would abort a finished (or a NEXT
     // session's) request. Pinned so the rule above isn't applied blindly.
     // Masked, so the comment that EXPLAINS the omission doesn't read as a call.
-    expect(mask(topLevelFunctions(streamingSrc).settleIdle)).not.toContain(
-      "cancelDictationTranslate(",
-    );
+    const settle = mask(topLevelFunctions(streamingSrc).settleIdle);
+    expect(settle).not.toContain("cancelDictationTranslate(");
+    expect(settle).not.toContain("abandonSessionWork(");
   });
 });
 
@@ -208,6 +217,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const task = bodyAfter(boundaryBody, "enqueueInject(async () =>");
     const skip = task.indexOf("if (carryText) return");
     expect(skip, "separator task must skip while a carry is pending").toBeGreaterThanOrEqual(0);
+    expect(task.indexOf("holdCoerced(")).toBeGreaterThanOrEqual(0);
     expect(skip).toBeGreaterThan(task.indexOf("holdCoerced("));
     expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
   });
@@ -274,6 +284,28 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(body.indexOf("injectText(")).toBeGreaterThan(wait);
   });
 
+  it("the stuck-finalize recovery stands down for a session started while it awaited", () => {
+    // cancelLive idles the chip synchronously, so a new session can start before the recovery's
+    // awaits finish; an unguarded flashError then stamps THAT session "error" (frames dropped,
+    // lease released, capture and system mute left up).
+    const body = mask(fns.armStuckWatchdog);
+    const recovery = body.slice(body.indexOf("await cancelled"));
+    expect(recovery.length).toBeLessThan(body.length);
+    const guard = recovery.indexOf("insertCfg !== null");
+    expect(guard, "recovery must check for a superseding session").toBeGreaterThanOrEqual(0);
+    expect(recovery.indexOf("flashError(")).toBeGreaterThan(guard);
+  });
+
+  it("the live closed tail chains its final clipboard restore past the flood cap", () => {
+    // enqueueInject drops work at MAX_INJECT_DEPTH; the session's last restore must never be dropped.
+    const closed = mask(bodyAfter(streamingSrc, 'e.payload === "closed"'));
+    expect(closed).not.toContain("enqueueInject(finalClip)");
+    const at = closed.indexOf("const tailCfg = cfg;");
+    expect(at, "the final-clip link moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const link = closed.slice(at, closed.indexOf("settleToIdleAfterInjection(", at));
+    expect(link, "finalClip must be chained directly").toMatch(/injectChain = injectChain\s*\.then\([^;]*finalClip\(\)/);
+  });
+
   it("the phrase-end timer decides restore and closes the clipboard window in the queue", () => {
     // Both depend on clipDirty / the window booking, which the queued phrase task sets only after
     // an awaited translate + inject — routinely longer than the 1.2 s quiet gap.
@@ -286,7 +318,9 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(timer.split("clipBooked = null").length).toBe(2);
     expect(timer.split("flushClipByLang(").length).toBe(2);
     expect(timer).not.toContain("enqueueRestoreSnapshot(");
-    expect(timer.indexOf("clipBaseline = committedDoc")).toBeLessThan(timer.indexOf("injectChain = injectChain.then("));
+    const base = timer.indexOf("clipBaseline = committedDoc");
+    expect(base, "the clipboard baseline must still advance synchronously").toBeGreaterThanOrEqual(0);
+    expect(base).toBeLessThan(timer.indexOf("injectChain = injectChain.then("));
   });
 
   it("a hard break closes the clipboard window in its chained link, not synchronously", () => {

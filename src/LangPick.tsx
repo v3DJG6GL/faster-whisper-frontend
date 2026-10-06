@@ -148,6 +148,10 @@ export default function LangPick() {
   const toggle = useCallback((code: string) => setChosen((cur) => toggleCode(cur, code, max)), [max]);
 
   const onKeyDown = useCallback((e: KeyboardEvent) => {
+    // A focused button (Cancel, Don't insert, a chip's remove) answers Enter/Space with its
+    // own label — committing the preset here would invert it. Esc, 0 and the digits still
+    // work from anywhere.
+    if ((e.key === "Enter" || e.key === " ") && e.target instanceof HTMLButtonElement) return;
     const typing = document.activeElement === inputRef.current && query.length > 0;
     const nav = navKey(e.key, active, rows.length);
     if (e.key === "Escape") {

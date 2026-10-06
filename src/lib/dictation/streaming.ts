@@ -1680,11 +1680,40 @@ function armStuckWatchdog(): void {
           // Notify in BOTH branches, mirroring the stream://error / stopLive-reject siblings: on a
           // double failure (link died AND the clipboard copy threw) the text is genuinely lost, so
           // surface it rather than silently idling. (No error payload here — it's a watchdog timeout.)
+          //
+          // Unless a NEW session started while we awaited: cancelLive idled the chip synchronously,
+          // so a press in that window is admitted, and flashError would stamp IT "error" — inSession()
+          // drops its frames, its warm lease and pending hold-start go, and the linger idles the chip
+          // with capture and the system mute still up. Report through the Logs doorway instead.
+          const superseded = startingSession || insertCfg !== null || isActiveDictation(useApp.getState().status);
+          if (superseded) {
+            console.warn(`[dictation] stuck-finalize recovery finished after a new session started (on clipboard: ${onClipboard})`);
+            useApp
+              .getState()
+              .setLogsDoorway(onClipboard ? "Connection lost — your earlier text is on the clipboard to paste manually." : "Connection lost — couldn't recover your earlier text.");
+            return;
+          }
           flashError(onClipboard ? "Connection lost — your text is on the clipboard to paste manually." : "Connection lost — couldn't recover your text.");
         })();
       }
     }
   }, STUCK_FINALIZE_MS);
+}
+
+/** The session-scoped work every ABANDONING teardown stops — cancelLive, the stopLive reject,
+ *  stream://error and teardownAfterFatalInject: the finalize backstop, the focus poll, the warm-up
+ *  gate, the pending phrase-end Enter/restore, the in-flight translate (the server keeps generating
+ *  for a phrase nobody will inject) and the warm lease. Hand-copied at four sites, these drifted
+ *  (stray Enters, stuck chips), so they travel together. All idempotent. NOT for settleIdle: the
+ *  success settle runs after the queue drained, and cancelling a translate there would abort a
+ *  finished — or the NEXT session's — request. */
+function abandonSessionWork(): void {
+  clearStuckWatchdog();
+  stopTargetPoll();
+  clearWarmTimer();
+  clearPhraseEnd();
+  cancelDictationTranslate();
+  releaseWarmLease();
 }
 
 async function ensureListeners(): Promise<void> {
@@ -2007,8 +2036,9 @@ async function ensureListeners(): Promise<void> {
                 ? clipBooked.text + PHRASE_GAP + clipOut.trim()
                 : clipOut.trim();
               // Per-language tracks: each final in this window translates the GROWING window,
-              // so the latest byLang supersedes every earlier one. Buffer it here; bumpPhraseEnd
-              // / clearPhraseEnd flush the final version into sessionByLang once per window.
+              // so the latest byLang supersedes every earlier one. Buffer it here; flushClipByLang
+              // books the final version into sessionByLang once per window (see clipByLang: the
+              // queued pause / hard-break links, clearPhraseEnd and settleIdle).
               if (byLang) clipByLang = byLang;
             }
             if (!t.isSelf && landed) {
@@ -2489,7 +2519,6 @@ async function ensureListeners(): Promise<void> {
       injectChain = injectChain.then(async () => {
         if (insertCfg !== cfg) return;
         if (live && clipDirty && beganInjection) {
-          clipDirty = false;
           clipHoldsOurs = false; // the restore below puts the user's clipboard back
           try {
             await restoreClipboardSnapshot();
@@ -2636,7 +2665,15 @@ async function ensureListeners(): Promise<void> {
         if (enterTail) enqueueAutoEnter();
         // Restore/discard once the queue drains (finalClip): restore only if we still owe one, else
         // keep a final clipboard-only transcript on the clipboard (and drop the snapshot).
-        enqueueInject(finalClip);
+        // Chained directly (like the boundary / phrase-end restores): the flood cap must never drop
+        // the session's final restore. The token guards a cancel-then-restart, whose cancelLive
+        // chains its own endInjection.
+        {
+          const tailCfg = cfg;
+          injectChain = injectChain
+            .then(() => (insertCfg === tailCfg ? finalClip() : undefined))
+            .catch((e) => console.error("final clip failed:", e));
+        }
         settleToIdleAfterInjection(startedAt, cfg);
       } else {
         // "stop" (and "live" on a batch profile): insert the whole transcript once, into the
@@ -2817,23 +2854,14 @@ async function ensureListeners(): Promise<void> {
     // emit_if_active and would flashError a spurious red chip over the idle chip the user cleared.
     // The first real session error always arrives while busy. Mirrors partial/final/boundary/overrides.
     if (!inSession()) return;
-    clearStuckWatchdog();
-    stopTargetPoll();
-    // Reconcile the warm-up gate, like every other terminal path (stop/cancel/closed): an error
-    // during warm-up otherwise leaves the backstop armed, so it fires MIC_WARM_TIMEOUT_MS later and
-    // stamps micLive:true onto the errored/idle chip — a spurious go-live that can mis-fire a cue.
-    clearWarmTimer();
-    // Cancel any pending per-phrase Enter / clipboard-restore. A server error frame is
-    // NON-terminal (no prompt `closed`; the real one only arrives ~6s later from the drain),
-    // so without this the ~1.2s quiet timer armed by the last `final` would fire a stray Enter
-    // into the user's now-refocused window. On error we want no trailing Enter (like cancel).
-    clearPhraseEnd();
-    // The session is over; any in-flight translate belongs to a phrase that will
-    // never be injected, so stop the server's side of it too (mirrors cancelLive
-    // / teardownAfterFatalInject / the stopLive reject).
-    cancelDictationTranslate();
-    releaseWarmLease();
-    // clearPhraseEnd cancelled the pending per-phrase clipboard restore, so a pasted phrase would
+    // Reconcile the warm-up gate (an error during warm-up otherwise leaves the backstop armed, so it
+    // stamps micLive:true onto the errored/idle chip later — a spurious go-live that can mis-fire a
+    // cue), cancel any pending per-phrase Enter / clipboard-restore (a server error frame is
+    // NON-terminal: the real `closed` only arrives ~6s later from the drain, so the ~1.2s quiet timer
+    // armed by the last `final` would fire a stray Enter into the user's now-refocused window), and
+    // stop the server's side of any in-flight translate — the session is over.
+    abandonSessionWork();
+    // clearPhraseEnd (in abandonSessionWork) cancelled the pending per-phrase clipboard restore, so a pasted phrase would
     // leave the clipboard holding the transcript (and the un-consumed snapshot would leak into the
     // next session, whose begin_injection keeps the prior snapshot). Restore the user's clipboard: a
     // swap ONLY, no keystroke, so nothing lands in the now-refocused window (unlike a stray Enter).
@@ -2965,14 +2993,9 @@ let errorClearTimer: ReturnType<typeof setTimeout> | null = null;
  *  message promises), so drop the snapshot WITHOUT restoring (restoring would clobber the transcript;
  *  clipDirty is false on a failed paste, so the end-of-session drain would discard it the same way). */
 function teardownAfterFatalInject(): void {
-  clearStuckWatchdog();
-  stopTargetPoll();
-  clearWarmTimer();
-  clearPhraseEnd();
   // The failed phrase (or one queued behind it) may still have a translate in
-  // flight; nothing will consume it now, so stop the server's work too.
-  cancelDictationTranslate();
-  releaseWarmLease();
+  // flight; nothing will consume it now, so this stops the server's work too.
+  abandonSessionWork();
   // Null insertCfg (like cancelLive) so any inject task still QUEUED behind the failed one bails on
   // its `insertCfg !== cfg` guard — its only gate — instead of typing/pasting a phrase and firing a
   // green "inserted" pulse onto the now-red error chip. Safe: the failing task `return`s without
@@ -3599,25 +3622,21 @@ export async function stopLive(): Promise<void> {
     // targetPollTimer (it would republish a stale target forever) or resets activeEndpoint, and
     // the stuck-watchdog can't recover it (flashError flips status to "error", which gates off its
     // status==="transcribing" cancelLive).
-    clearStuckWatchdog();
-    stopTargetPoll();
+    // A rejected stop leaves no `closed` behind to clean anything up, so abandonSessionWork also
+    // stops the stop-timing one-shot's translate (which can be waiting out a 60 s cold model load —
+    // the server would stay busy for text this path is about to recover to the clipboard instead),
+    // and cancels the ~1.2s quiet timer so a pending live-mode phrase can't fire a stray auto-Enter
+    // into the now-refocused window (mirrors the stream://error handler).
+    abandonSessionWork();
     activeEndpoint = null;
     capturing = false;
-    // A rejected stop leaves no `closed` behind to clean anything up, so the
-    // stop-timing one-shot's translate (which can be waiting out a 60 s cold
-    // model load) would keep the server busy for text this path is about to
-    // recover to the clipboard instead. Stop it here.
-    cancelDictationTranslate();
-    releaseWarmLease();
     // The detached drain (if any) can still emit a late final/closed on this epoch; retire it so it
     // can't bleed onto a session re-triggered during the error linger (mirrors stream://error).
     void retireSessionEpoch().catch((err) => console.error("retire epoch on stop-reject failed:", err));
     // No `closed` will follow a rejected stop, so the closed handler's per-phrase teardown never
-    // runs — mirror the stream://error handler: cancel the ~1.2s quiet timer so a pending live-mode
-    // phrase can't fire a stray auto-Enter into the now-refocused window, and restore the user's
-    // clipboard unconditionally once the queue drains (endInjection is idempotent) so a pasted
-    // phrase doesn't strand our transcript or leak the snapshot into the next session.
-    clearPhraseEnd();
+    // runs — restore the user's clipboard unconditionally once the queue drains (endInjection is
+    // idempotent) so a pasted phrase doesn't strand our transcript or leak the snapshot into the
+    // next session.
     const owed = injectChain;
     void owed.then(() => endInjection()).catch((err) => console.error("end injection on stop failed:", err));
     console.error("stop dictation failed:", e);
@@ -3661,22 +3680,17 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   voidPendingHoldStart(); // a deliberate cancel also voids a queued fast re-press (in-flight check included)
   pendingReclassify = null; // …and a queued chord-family upgrade
   restartOwed = null; // …or restart
-  clearWarmTimer();
-  clearStuckWatchdog();
-  stopTargetPoll();
+  // A translate may be in flight for a phrase this cancel just discarded; abandonSessionWork tells
+  // the server to stop — dropping our end leaves it generating tokens for text nobody will read
+  // (Rust waits an hour on that request). Every cancel entry point in the app — dictation.ts's five
+  // call sites, Home's stop button, App.tsx's resume handler and the chip's ✕ — routes through THIS
+  // function, so this one call covers them all; don't add duplicates at those sites.
+  abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); tell it
   // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported".
   reportSessionOutcome("none");
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
-  // A translate may be in flight for a phrase this cancel just discarded. Tell
-  // the server to stop: dropping our end leaves it generating tokens for text
-  // nobody will read (Rust waits an hour on that request). Every cancel entry
-  // point in the app — dictation.ts's five call sites, Home's stop button,
-  // App.tsx's resume handler and the chip's ✕ — routes through THIS function,
-  // so this one call covers them all; don't add duplicates at those sites.
-  cancelDictationTranslate();
-  releaseWarmLease();
   committedDoc = "";
   injectedText = "";
   // The user threw the session away, carry included — nothing of it may type later.
@@ -3709,7 +3723,6 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   sessionClipboard = false;
   sessionInsertSkipped = false;
   resetServerWork();
-  clearPhraseEnd();
   insertCfg = null;
   injectChain = Promise.resolve();
   injectDepth = { n: 0 };

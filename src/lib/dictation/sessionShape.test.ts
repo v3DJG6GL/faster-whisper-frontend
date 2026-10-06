@@ -40,6 +40,14 @@ describe("sessionShape", () => {
     }
   });
 
+  it("differs when both ask for targets but at different moments (hold at release, hands-free before start)", () => {
+    const hold = profile({ id: "ptt", activation: "hold", askTranslationTargets: true });
+    const free = profile({ id: "hf", activation: "handsfree", askTranslationTargets: true });
+    expect(sessionShape(hold, backend())).not.toBe(sessionShape(free, backend()));
+    // two Profiles that ask at the same moment are still one session
+    expect(sessionShape(free, backend())).toBe(sessionShape(profile({ id: "hf2", activation: "handsfree", askTranslationTargets: true }), backend()));
+  });
+
   it("ignores override key order", () => {
     const a = profile({ decodeOverrides: { hotwords: "x", condition_on_previous_text: true } });
     const b = profile({ decodeOverrides: { condition_on_previous_text: true, hotwords: "x" } });

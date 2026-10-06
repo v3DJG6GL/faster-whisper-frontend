@@ -50,7 +50,9 @@ export function newUtterancePending(): UtterancePending {
 
 /** A lifecycle frame arrived. Returns true when it was a terminal (`dropped`). Unknown states
  *  are ignored — must-ignore covers the value as much as the frame type, and the Rust parser
- *  already drops them; this is the second fence, for the value crossing the IPC as a string. */
+ *  already drops them; this is the second fence, for the value crossing the IPC as a string.
+ *  streaming.ts handles `dropped` through its own endUtterance (it has to read the min-show
+ *  hold before clearing), so the `dropped` branch here serves callers without that hold. */
 export function onFrame(p: UtterancePending, state: string, ordinal: number | null, now: number): boolean {
   if (state === "dropped") {
     onTerminal(p);
@@ -66,10 +68,12 @@ export function onFrame(p: UtterancePending, state: string, ordinal: number | nu
   return false;
 }
 
-/** The utterance ended: its `final` arrived, or it was dropped. Any `final` is a terminal —
- *  the socket is totally ordered and a final only ever comes from the finalize of the utterance
- *  in flight (or from the closing document, when none is), so matching ordinals would buy
- *  nothing and would mis-handle the closing final, whose ordinal belongs to no utterance. */
+/** The utterance ended: its `final` arrived, or it was dropped. A `final` that carries an
+ *  ordinal, or any `final` while nothing is held, is a terminal — the socket is totally ordered,
+ *  so matching ordinals would buy nothing and would mis-handle the closing final, whose ordinal
+ *  belongs to no utterance. But a release `final` WITHOUT an ordinal must not end an open
+ *  successor: that is the caller's call, not this function's (see the `final` handler in
+ *  streaming.ts), so don't "simplify" it into calling onTerminal on every final. */
 export function onTerminal(p: UtterancePending): void {
   p.state = null;
   p.ordinal = null;
