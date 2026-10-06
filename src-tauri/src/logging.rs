@@ -302,9 +302,11 @@ fn format_line(l: &LogLine) -> String {
         })
         .unwrap_or_default();
     let level = l.level.to_uppercase();
+    // Right-aligned like the live tail (`tracing_subscriber` pads " INFO"/" WARN"), so the
+    // replayed head and the rest of the file share one level column.
     match &l.tag {
-        Some(tag) => format!("{ts} {level:5} {}: [{tag}] {}\n", l.target, l.msg),
-        None => format!("{ts} {level:5} {}: {}\n", l.target, l.msg),
+        Some(tag) => format!("{ts} {level:>5} {}: [{tag}] {}\n", l.target, l.msg),
+        None => format!("{ts} {level:>5} {}: {}\n", l.target, l.msg),
     }
 }
 
@@ -344,34 +346,13 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
 /// `fwf.log`/`fwf.prev.log` pair.
 pub fn prune_log_files(dir: &Path, keep_days: u32) {
     prune_legacy_dir(dir);
-    if keep_days == 0 {
-        return;
-    }
-    // Clamp before the arithmetic — see `audio::prune_recordings` for the Windows overflow
-    // panic this prevents (inside setup(), with the value already persisted).
-    const MAX_RETENTION_DAYS: u32 = 3650;
-    let cutoff = std::time::SystemTime::now()
-        - std::time::Duration::from_secs(
-            u64::from(keep_days.min(MAX_RETENTION_DAYS)) * 24 * 60 * 60,
-        );
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if !(name.starts_with("fwf-") && name.ends_with(".log")) {
-            continue;
-        }
-        let old = entry
-            .metadata()
-            .and_then(|m| m.modified())
-            .map(|t| t < cutoff)
-            .unwrap_or(false);
-        if old {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
+    // The shared sweep clamps the window (see `audio::MAX_RETENTION_DAYS` for the Windows
+    // overflow panic that prevents, inside setup(), with the value already persisted).
+    let _ = crate::audio::prune_older_than(dir, keep_days, |e| {
+        let n = e.file_name();
+        let n = n.to_string_lossy();
+        n.starts_with("fwf-") && n.ends_with(".log")
+    });
 }
 
 /// Config-save side effect (also run once in setup): reload the level, move
@@ -556,6 +537,8 @@ mod tests {
                 && stamp.as_bytes()[19] == b'.',
             "{out:?}"
         );
+        // Level right-aligned in a 5-wide column, as `tracing_subscriber` writes the live tail.
+        assert!(out[stamp.len()..].starts_with("  INFO t: m"), "{out:?}");
     }
 
     #[test]

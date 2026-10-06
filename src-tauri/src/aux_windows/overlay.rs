@@ -711,7 +711,9 @@ mod kwin {
 
     // Generic KConfig/KWin primitives are shared with quickadd::kwin via crate::aux_windows::kwin.
     pub use crate::aux_windows::kwin::is_kde_wayland;
-    use crate::aux_windows::kwin::{config_tools, merge_general, reconfigure, set_key};
+    use crate::aux_windows::kwin::{
+        config_tools, keep_above_keys, merge_general, reconfigure, set_key,
+    };
 
     /// KConfig group (and `rules=` entry) for our rule. A fixed name keeps the
     /// operation idempotent — re-runs update the same entry instead of piling up.
@@ -803,15 +805,8 @@ mod kwin {
 
     /// Write the position-independent rule body (strength 2 = "Force").
     fn write_rule_body(writer: &str) {
-        let rule: &[(&str, &str)] = &[
-            ("Description", "faster-whisper dictation chip"),
-            ("title", super::CHIP_TITLE),
-            ("titlematch", "1"),   // exact title match
-            ("wmclassmatch", "0"), // ignore window class
-            ("above", "true"),
-            ("aboverule", "2"),
-            ("skiptaskbar", "true"),
-            ("skiptaskbarrule", "2"),
+        let shared = keep_above_keys("faster-whisper dictation chip", super::CHIP_TITLE);
+        let extra: &[(&str, &str)] = &[
             ("skipswitcher", "true"),
             ("skipswitcherrule", "2"),
             ("skippager", "true"),
@@ -819,7 +814,7 @@ mod kwin {
             ("acceptfocus", "false"),
             ("acceptfocusrule", "2"),
         ];
-        for (k, v) in rule {
+        for &(k, v) in shared.iter().chain(extra) {
             set_key(writer, GROUP, k, v);
         }
     }

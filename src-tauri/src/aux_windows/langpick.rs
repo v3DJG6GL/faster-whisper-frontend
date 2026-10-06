@@ -124,37 +124,20 @@ pub fn abort_lang_pick(app: AppHandle) {
 /// Its own GROUP + title so it can be toggled independently of the other two.
 #[cfg(target_os = "linux")]
 mod kwin {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
 
     pub use crate::aux_windows::kwin::is_kde_wayland;
-    use crate::aux_windows::kwin::{config_tools, merge_general, reconfigure, set_key};
 
     const GROUP: &str = "fwf-translate-to";
     static INSTALLED: AtomicBool = AtomicBool::new(false);
 
     /// Install the keep-above rule once per session (strength 2 = "Force"), then reload KWin.
     pub fn install_keep_above() {
-        if INSTALLED.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        let Some((writer, reader)) = config_tools() else {
-            INSTALLED.store(false, Ordering::Relaxed); // let a later summon retry once tools exist
-            return;
-        };
-        merge_general(writer, reader, GROUP);
-        let rule: &[(&str, &str)] = &[
-            ("Description", "faster-whisper translate-to picker"),
-            ("title", super::LP_TITLE),
-            ("titlematch", "1"),   // exact title match
-            ("wmclassmatch", "0"), // ignore window class
-            ("above", "true"),
-            ("aboverule", "2"),
-            ("skiptaskbar", "true"),
-            ("skiptaskbarrule", "2"),
-        ];
-        for (k, v) in rule {
-            set_key(writer, GROUP, k, v);
-        }
-        reconfigure();
+        crate::aux_windows::kwin::install_keep_above_once(
+            &INSTALLED,
+            GROUP,
+            "faster-whisper translate-to picker",
+            super::LP_TITLE,
+        );
     }
 }

@@ -1,8 +1,9 @@
 //! Shared KDE-Plasma-on-Wayland KConfig/KWin helpers for installing window rules — the dictation
 //! chip's keep-above / skip-taskbar / no-focus rule (see `overlay::kwin`), the quick-add window's
 //! keep-above rule (see `quickadd::kwin`) and the language picker's (see `langpick::kwin`). The
-//! generic KConfig primitives live here so the callers can't drift; each caller keeps its own rule
-//! group name, rule body, and install state.
+//! generic KConfig primitives and the shared keep-above rule body live here so the callers can't
+//! drift; each caller keeps its own rule group name, title, and install flag (the chip adds its
+//! no-focus keys on top of `keep_above_keys`).
 
 use std::process::{Command, Stdio};
 /// KDE Plasma on Wayland — the only place these window rules are needed and usable.
@@ -115,4 +116,43 @@ pub fn merge_general(writer: &str, reader: &str, group: &str) {
     }
     set_key(writer, "General", "count", &list.len().to_string());
     set_key(writer, "General", "rules", &list.join(","));
+}
+
+/// The keep-above / skip-taskbar rule body (strength 2 = "Force") matched on an exact window
+/// title. The quick-add window and language picker install exactly this; the chip extends it.
+pub fn keep_above_keys<'a>(description: &'a str, title: &'a str) -> [(&'a str, &'a str); 8] {
+    [
+        ("Description", description),
+        ("title", title),
+        ("titlematch", "1"),   // exact title match
+        ("wmclassmatch", "0"), // ignore window class
+        ("above", "true"),
+        ("aboverule", "2"),
+        ("skiptaskbar", "true"),
+        ("skiptaskbarrule", "2"),
+    ]
+}
+
+/// Install the `keep_above_keys` rule under `group` once per session (guarded by the caller's
+/// `installed` flag), then reload KWin. Missing KConfig tools reset the flag so a later summon
+/// retries once they exist.
+pub fn install_keep_above_once(
+    installed: &std::sync::atomic::AtomicBool,
+    group: &str,
+    description: &str,
+    title: &str,
+) {
+    use std::sync::atomic::Ordering;
+    if installed.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let Some((writer, reader)) = config_tools() else {
+        installed.store(false, Ordering::Relaxed);
+        return;
+    };
+    merge_general(writer, reader, group);
+    for (k, v) in keep_above_keys(description, title) {
+        set_key(writer, group, k, v);
+    }
+    reconfigure();
 }

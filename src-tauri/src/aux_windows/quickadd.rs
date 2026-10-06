@@ -161,16 +161,6 @@ impl SeedRendezvous {
     }
 }
 
-// One seed grab at a time — the flag itself lives in `win_seed`, its owner, so that the SECOND
-// caller (`commands::get_focused_selection`, the correct-on-close re-grab) is covered too and so
-// it is held for the grab's real lifetime rather than until a caller's timeout.
-//
-// The grab saves the clipboard, synthesizes a copy chord, then
-// restores what it saved — so two overlapping runs interleave: the second snapshots the
-// FIRST one's freshly-copied selection as "the user's clipboard", the first restores the
-// real one, and the second then puts the selection back. Net effect is the user's own
-// clipboard destroyed and their selection left resident globally, which is exactly the
-// residue the restore exists to prevent.
 /// Show + focus the quick-add window and signal the webview to (re)focus its
 /// field and refresh the list. Safe to call repeatedly (each summon re-centers).
 ///
@@ -317,9 +307,17 @@ pub fn hide_quick_add(app: AppHandle) {
 /// call sites are `#[cfg(windows)]`.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) mod win_seed {
-    /// See the note above `show`: one seed grab at a time, process-wide. Owned here rather
-    /// than in `show` so it covers `commands::get_focused_selection` too, and so it is held
-    /// for the grab's real lifetime rather than until a caller's timeout.
+    /// One seed grab at a time, process-wide. Owned here rather than in `show` so it covers
+    /// the SECOND caller too (`commands::get_focused_selection`, the correct-on-close
+    /// re-grab), and so it is held for the grab's real lifetime rather than until a caller's
+    /// timeout.
+    ///
+    /// The grab saves the clipboard, synthesizes a copy chord, then restores what it saved —
+    /// so two overlapping runs interleave: the second snapshots the FIRST one's
+    /// freshly-copied selection as "the user's clipboard", the first restores the real one,
+    /// and the second then puts the selection back. Net effect is the user's own clipboard
+    /// destroyed and their selection left resident globally, which is exactly the residue
+    /// the restore exists to prevent.
     pub(super) static SEED_GRAB_ACTIVE: std::sync::atomic::AtomicBool =
         std::sync::atomic::AtomicBool::new(false);
 
@@ -365,25 +363,10 @@ pub(crate) mod win_seed {
         unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
     }
 
-    /// Inject Ctrl+Insert as ONE `SendInput` batch of four events shaped exactly like a
-    /// physical keyboard's: the real make codes in `wScan` (left-Ctrl 0x1D; Insert 0x52
-    /// with `KEYEVENTF_EXTENDEDKEY` standing in for the E0 prefix) alongside the
-    /// virtual keys. Locally focused apps act on the VK — but a focused RDP client
-    /// forwards ONLY the scan code + extended bit ([MS-RDPBCGR]: keyboard input is
-    /// restricted to scancodes; no VK crosses the wire), which is where the enigo path
-    /// this replaces was malformed: it mapped VK→scan with `MAPVK_VK_TO_VSC_EX` under
-    /// the foreground window's layout and stored the result unmasked, so Insert went
-    /// out with wScan=0xE052 (the E0 prefix INSIDE the 8-bit-scan field low-level
-    /// consumers read) — or wScan=0 when the map failed, the classic works-locally/
-    /// dies-remotely event. And a forwarded 0x52 WITHOUT the extended bit is
-    /// numpad-0/Ins on the remote: NumLock on turns the "copy" into Ctrl+0 (reset zoom
-    /// in browsers) — why RDP selections never seeded while local ones always did.
-    /// Hardcoded scans are layout-proof; one batch keeps a concurrent user keystroke
-    /// from interleaving mid-chord (enigo issued three separate `SendInput`s). The
-    /// events carry enigo's `dwExtraInfo` marker so our own LL hook / raw-input feed
-    /// keeps ignoring our injections exactly as before.
+    /// Physical set-1 make codes; see `send_copy_chord`.
     #[cfg(windows)]
     const SCAN_LCTRL: u16 = 0x1D;
+    /// Physical set-1 make code; see `send_copy_chord`.
     #[cfg(windows)]
     const SCAN_INSERT: u16 = 0x52; // + KEYEVENTF_EXTENDEDKEY = the dedicated (E0) Insert
 
@@ -429,6 +412,23 @@ pub(crate) mod win_seed {
         sent == events.len() as u32
     }
 
+    /// Inject Ctrl+Insert as ONE `SendInput` batch of four events shaped exactly like a
+    /// physical keyboard's: the real make codes in `wScan` (left-Ctrl 0x1D; Insert 0x52
+    /// with `KEYEVENTF_EXTENDEDKEY` standing in for the E0 prefix) alongside the
+    /// virtual keys. Locally focused apps act on the VK — but a focused RDP client
+    /// forwards ONLY the scan code + extended bit ([MS-RDPBCGR]: keyboard input is
+    /// restricted to scancodes; no VK crosses the wire), which is where the enigo path
+    /// this replaces was malformed: it mapped VK→scan with `MAPVK_VK_TO_VSC_EX` under
+    /// the foreground window's layout and stored the result unmasked, so Insert went
+    /// out with wScan=0xE052 (the E0 prefix INSIDE the 8-bit-scan field low-level
+    /// consumers read) — or wScan=0 when the map failed, the classic works-locally/
+    /// dies-remotely event. And a forwarded 0x52 WITHOUT the extended bit is
+    /// numpad-0/Ins on the remote: NumLock on turns the "copy" into Ctrl+0 (reset zoom
+    /// in browsers) — why RDP selections never seeded while local ones always did.
+    /// Hardcoded scans are layout-proof; one batch keeps a concurrent user keystroke
+    /// from interleaving mid-chord (enigo issued three separate `SendInput`s). The
+    /// events carry enigo's `dwExtraInfo` marker so our own LL hook / raw-input feed
+    /// keeps ignoring our injections exactly as before.
     #[cfg(windows)]
     fn send_copy_chord() -> bool {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -799,7 +799,7 @@ pub(crate) mod win_seed {
                             // Clearing is the closest we can get to "as it was".
                             None => {
                                 let _ = cb.clear();
-                                tracing::info!("[quickadd-seed] non-text clipboard was replaced by the copy grab; cleared it");
+                                tracing::info!("[quickadd-seed] clipboard held no text before the grab (empty or non-text); cleared the copied selection");
                             }
                         }
                         return Some(text);
@@ -840,7 +840,7 @@ pub(crate) mod win_seed {
                         let _ = cb.set_text(prev); // put the user's clipboard back
                     }
                     None => tracing::info!(
-                        "[quickadd-seed] non-text clipboard was replaced by the copy grab"
+                        "[quickadd-seed] clipboard held no text before the grab (empty or non-text); left the copied selection"
                     ),
                 }
                 return now;
@@ -860,38 +860,21 @@ pub(crate) mod win_seed {
 /// `kwinrulesrc` without clobbering their other rules.
 #[cfg(target_os = "linux")]
 mod kwin {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::AtomicBool;
 
-    // Generic KConfig/KWin primitives are shared with overlay::kwin via crate::aux_windows::kwin.
+    // The keep-above rule body and KConfig/KWin primitives are shared via crate::aux_windows::kwin.
     pub use crate::aux_windows::kwin::is_kde_wayland;
-    use crate::aux_windows::kwin::{config_tools, merge_general, reconfigure, set_key};
 
     const GROUP: &str = "fwf-quick-add";
     static INSTALLED: AtomicBool = AtomicBool::new(false);
 
     /// Install the keep-above rule once per session (strength 2 = "Force"), then reload KWin.
     pub fn install_keep_above() {
-        if INSTALLED.swap(true, Ordering::Relaxed) {
-            return;
-        }
-        let Some((writer, reader)) = config_tools() else {
-            INSTALLED.store(false, Ordering::Relaxed); // let a later summon retry once tools exist
-            return;
-        };
-        merge_general(writer, reader, GROUP);
-        let rule: &[(&str, &str)] = &[
-            ("Description", "faster-whisper quick-add"),
-            ("title", super::QA_TITLE),
-            ("titlematch", "1"),   // exact title match
-            ("wmclassmatch", "0"), // ignore window class
-            ("above", "true"),
-            ("aboverule", "2"),
-            ("skiptaskbar", "true"),
-            ("skiptaskbarrule", "2"),
-        ];
-        for (k, v) in rule {
-            set_key(writer, GROUP, k, v);
-        }
-        reconfigure();
+        crate::aux_windows::kwin::install_keep_above_once(
+            &INSTALLED,
+            GROUP,
+            "faster-whisper quick-add",
+            super::QA_TITLE,
+        );
     }
 }
