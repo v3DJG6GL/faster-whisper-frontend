@@ -1315,6 +1315,13 @@ export async function onBeforeQuit(cb: () => void): Promise<() => void> {
   return subscribe<unknown>("app://before-quit", () => cb());
 }
 
+/** Subscribe (in the main window) to the Windows session end: `WM_QUERYENDSESSION` emits
+ *  `app://session-ending` so pending writes land early. Fire-and-forget — nothing waits for an
+ *  answer, and the user may still cancel the shutdown. Returns an unlisten fn. */
+export async function onSessionEnding(cb: () => void): Promise<() => void> {
+  return subscribe<unknown>("app://session-ending", () => cb());
+}
+
 /** Tell the quit handshake this window has landed its pending writes; the app exits now. */
 export async function quitReady(): Promise<void> {
   if (!isTauri) return;

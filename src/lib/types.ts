@@ -858,6 +858,8 @@ export interface PipelineSaveResult {
   saved: string[];
   conflicts: RuleConflict[];
   requires_restart: boolean;
+  /** Rules the server's environment pins: the PATCH skipped them, so their change never applies. */
+  env_pinned_ignored?: string[];
   errors?: { loc?: string; msg?: string }[];
   detail?: string;
 }
