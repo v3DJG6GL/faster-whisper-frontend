@@ -254,8 +254,7 @@ fn show_now(app: &AppHandle) {
             let _ = win.set_title(QA_TITLE);
             std::thread::spawn(kwin::install_keep_above);
         }
-        crate::aux_windows::visibility::notify(&win, "quickadd", true);
-        let _ = win.show();
+        crate::aux_windows::visibility::show(&win);
         // set_always_on_top(true) above is a no-op on Windows (tao only acts on a CHANGED
         // flag) and show() never raises — see topmost.rs.
         #[cfg(windows)]
@@ -276,8 +275,7 @@ pub fn hide(app: &AppHandle) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(win) = handle.get_webview_window("quickadd") {
-            let _ = win.hide();
-            crate::aux_windows::visibility::notify(&win, "quickadd", false);
+            crate::aux_windows::visibility::hide(&win);
         }
     });
 }
@@ -662,8 +660,13 @@ pub(crate) mod win_seed {
         // Read while focus is still on the source (the last pre-injection moment): a
         // remote-desktop client gets the longer network deadline AND keeps our window
         // unshown until the copy lands / the forwarding grace passes — see the consts.
-        // The window-class detector lives in `inject::rdp_client` now, shared with the paste path.
-        let remote = crate::inject::rdp_client::focus_is_remote_desktop_client();
+        // BOTH `inject::rdp_client` detectors, as the paste path uses them: the window class
+        // (mstsc, and the RDP control hosted by RDCMan & co.) OR the focused app id (VirtualBox,
+        // VMware, Citrix, AnyDesk… — clients whose window class says nothing).
+        let remote = crate::inject::rdp_client::focus_is_remote_desktop(|| {
+            crate::focus::focused_app_now(app.state::<crate::focus::AtspiGuard>().inner())
+                .map(|f| f.app_id)
+        });
         if remote {
             tracing::info!(
                 "[quickadd-seed] remote-desktop client focused; holding the window for the copy"
@@ -727,7 +730,11 @@ pub(crate) mod win_seed {
                     ready.signal();
                 }
                 // Reader gone (window closed / superseded): stop wasting the
-                // single-flight slot on an undeliverable result. Clipboard untouched.
+                // single-flight slot on an undeliverable result. NOT "clipboard untouched":
+                // the copy chord is already queued in the source app, so a slow copy can
+                // still land after we bail and leave the selection on the clipboard. No
+                // restore tail on purpose — it could not tell that late copy's sequence bump
+                // from a Ctrl+C the user makes right after Esc, and would clobber that.
                 if superseded() {
                     tracing::info!(
                         "[quickadd-seed] summon superseded {}ms after injection; abandoning the grab",

@@ -206,8 +206,7 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     #[cfg(target_os = "linux")]
     if kwin::is_kde_wayland() {
         let _ = win.set_title(CHIP_TITLE);
-        crate::aux_windows::visibility::notify(&win, "overlay", true);
-        let _ = win.show();
+        crate::aux_windows::visibility::show(&win);
         ignore_cursor(&win);
         // ignore_cursor REPLACED the input shape with an empty one (whole window click-through);
         // restore the chip's hit region at once so a standby→session re-center doesn't leave the
@@ -231,13 +230,12 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     // On Windows, apply cursor pass-through BEFORE show: tao's
     // set_ignore_cursor_events adds WS_EX_LAYERED, and toggling that on an
     // already-visible window leaves a stale (white) composite until the next
-    // SWP_FRAMECHANGED. The "must call after show" hazard (comment above) is
+    // SWP_FRAMECHANGED. The "must call after show" hazard (see `ignore_cursor`) is
     // GTK/KDE-Wayland-only and does not apply on Windows.
     #[cfg(windows)]
     ignore_cursor(&win);
 
-    crate::aux_windows::visibility::notify(&win, "overlay", true);
-    let _ = win.show();
+    crate::aux_windows::visibility::show(&win);
 
     #[cfg(not(windows))]
     ignore_cursor(&win);
@@ -302,8 +300,7 @@ pub fn set_overlay_scale(app: AppHandle, scale: f64) {
 #[tauri::command]
 pub fn hide_overlay(app: AppHandle) {
     if let Some(win) = app.get_webview_window("overlay") {
-        let _ = win.hide();
-        crate::aux_windows::visibility::notify(&win, "overlay", false);
+        crate::aux_windows::visibility::hide(&win);
     }
     #[cfg(windows)]
     win_hover::on_hide();
@@ -351,7 +348,7 @@ pub fn set_chip_hit_region(app: AppHandle, x: f64, y: f64, w: f64, h: f64, persi
         // If not applied, the GdkWindow isn't realized yet — a later retry will get
         // it. We must NOT fall back to `set_ignore_cursor_events` here: on an
         // unrealized window tao does `window().unwrap()` and ABORTS the whole app
-        // (the same hazard `show_overlay` documents). The window was already made
+        // (the same hazard `ignore_cursor` documents). The window was already made
         // click-through at show time, so doing nothing is safe.
     }
     #[cfg(windows)]
