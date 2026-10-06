@@ -258,6 +258,28 @@ fn run(
                 None,
             )
         }
+        SampleFormat::I32 => {
+            let mut meter = Meter::new(level_bits.clone());
+            let rec = Recorder {
+                clip: clip.clone(),
+                cap,
+            };
+            let mut mono: Vec<f32> = Vec::new();
+            device.build_input_stream(
+                config,
+                move |data: &[i32], _| {
+                    meter.push(analyze(
+                        data,
+                        channels,
+                        |s| s as f32 / 2_147_483_648.0,
+                        &mut mono,
+                    ));
+                    rec.push(&mono);
+                },
+                super::stream_errors::error_callback("audio", on_terminal()),
+                None,
+            )
+        }
         other => return Err(format!("unsupported sample format: {other:?}")),
     }
     .map_err(|e| e.to_string())?;

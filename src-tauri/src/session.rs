@@ -120,17 +120,28 @@ pub struct StreamState(pub Mutex<Option<StreamSession>>);
 /// the user's other apps muted. Takes the session out under the lock, then drops it outside (matches
 /// `stop_stream`/`stop_record`, so the capture-thread join doesn't run while the state is locked).
 pub fn cleanup_for_exit(app: &AppHandle) {
+    let mut dropped = false;
     if let Some(state) = app.try_state::<StreamState>() {
         let sess = state.0.lock().ok().and_then(|mut g| g.take());
+        dropped |= sess.is_some();
         drop(sess);
     }
     if let Some(state) = app.try_state::<RecordState>() {
         let sess = state.0.lock().ok().and_then(|mut g| g.take());
+        dropped |= sess.is_some();
         drop(sess);
     }
     // The drops above only ENQUEUED the unmute on the worker; wait (bounded) for it to actually run
     // before the process terminates, so quitting mid-dictation can't leave other apps muted.
-    flush_mute_worker(std::time::Duration::from_secs(2));
+    // The exit path runs this up to three times (the quit handler, then RunEvent::ExitRequested and
+    // RunEvent::Exit), but only one pass can take a session: flush once, plus again whenever a pass
+    // actually dropped one. Otherwise a wedged sound server (untimed pactl/wpctl on the worker)
+    // costs the full 2 s timeout on the main thread on every pass.
+    static EXIT_FLUSHED: AtomicBool = AtomicBool::new(false);
+    let first = !EXIT_FLUSHED.swap(true, Ordering::SeqCst);
+    if dropped || first {
+        flush_mute_worker(std::time::Duration::from_secs(2));
+    }
     // The remote-paste clipboard owner holds the last transcript DELAY-RENDERED: destroying its
     // window makes Windows ask it to render everything it still owes, so the text stays pasteable
     // after we exit. No exit path destroys that window otherwise (`exit()` skips destructors).
@@ -278,6 +289,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
 
     let capture_join = spawn_capture(
         app.clone(),
+        epoch,
         device,
         format,
         channels,
@@ -633,9 +645,18 @@ fn smooth(prev: f32, mono: &[f32]) -> f32 {
     prev * 0.7 + crate::audio::chip_level(rms(mono)) * 0.3
 }
 
+/// The `stream://error` text for a capture thread whose microphone open failed.
+fn mic_open_error(e: &str) -> String {
+    crate::transport::bounded_server_text(
+        &format!("Microphone could not be opened: {e}"),
+        crate::transport::MAX_ERROR_TEXT,
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_capture(
     app: AppHandle,
+    epoch: u64,
     device: Device,
     format: SampleFormat,
     channels: usize,
@@ -650,6 +671,10 @@ fn spawn_capture(
             if let Err(e) = run_capture(&app, device, format, channels, config, pcm_tx, level, stop)
             {
                 tracing::warn!("[stream] capture: {e}");
+                // Err only means the open failed (device loss trips `stop` and returns Ok). The
+                // dropped pcm_tx still closes the session, but without this the chip would settle
+                // to idle with no word of why dictation never started.
+                emit_if_active(&app, epoch, "stream://error", mic_open_error(&e));
             }
         })
         .map_err(|e| e.to_string())
@@ -715,6 +740,24 @@ fn run_capture(
                 config,
                 move |data: &[u16], _| {
                     let mono = downmix(data, channels, |s| (s as f32 - 32768.0) / 32768.0);
+                    sm = smooth(sm, &mono);
+                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
+                    let _ = tx.send(mono);
+                },
+                err_cb_with_stop(stop.clone()),
+                None,
+            )
+        }
+        SampleFormat::I32 => {
+            let tx = pcm_tx.clone();
+            let lvl = level.clone();
+            let mut sm = 0.0f32;
+            let mut ld = LiveDetect::new(live.clone());
+            device.build_input_stream(
+                config,
+                move |data: &[i32], _| {
+                    let mono = downmix(data, channels, |s| s as f32 / 2_147_483_648.0);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);
@@ -920,6 +963,9 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                 ) {
                     Err(e) => {
                         tracing::warn!("[record] capture: {e}");
+                        // Same as the streaming path: say why, then close (the frontend's error
+                        // handler tears the session down; the trailing closed is then ignored).
+                        emit_if_active(&app, epoch, "stream://error", mic_open_error(&e));
                         // Parity with the streaming path: there, a capture failure drops pcm_tx,
                         // closes the channel, and drives a StreamEvent::Closed → "stream://status:
                         // closed", so the chip settles back to idle. The batch path has no such
@@ -1475,6 +1521,33 @@ fn run_record_capture(
                         |s| (s as f32 - 32768.0) / 32768.0,
                         &mut mono,
                     );
+                    sm = smooth(sm, &mono);
+                    lvl.store(sm.to_bits(), Ordering::Relaxed);
+                    ld.feed(&mono);
+                    let bytes = resampler
+                        .lock()
+                        .map(|mut r| r.push(&mono))
+                        .unwrap_or_default();
+                    if !bytes.is_empty() {
+                        push_recording(&buf, &bytes, &capped);
+                    }
+                },
+                err_cb_with_lost(stop.clone(), device_lost.clone()),
+                None,
+            )
+        }
+        SampleFormat::I32 => {
+            let buf = buffer.clone();
+            let capped = capped.clone();
+            let lvl = level.clone();
+            let mut sm = 0.0f32;
+            let mut mono: Vec<f32> = Vec::new();
+            let resampler = resampler.clone();
+            let mut ld = LiveDetect::new(live.clone());
+            device.build_input_stream(
+                config,
+                move |data: &[i32], _| {
+                    downmix_into(data, channels, |s| s as f32 / 2_147_483_648.0, &mut mono);
                     sm = smooth(sm, &mono);
                     lvl.store(sm.to_bits(), Ordering::Relaxed);
                     ld.feed(&mono);

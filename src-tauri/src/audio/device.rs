@@ -353,14 +353,17 @@ pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
 }
 
 /// The config to capture with: the device's default, unless that sample format is one the capture
-/// loops don't convert (they take F32 / I16 / U16) — then F32, I16 or U16 at the same rate and
-/// channel count, if offered (cpal ranks I32/I24 above I16, so a raw hw: path offering S16_LE and
-/// S32_LE defaults to I32).
+/// loops don't convert (they take F32 / I16 / U16 / I32) — then F32, I16, U16 or I32 at the same
+/// rate and channel count, if offered (cpal ranks I24 above I16, so a raw hw: path offering S16_LE
+/// and S24_LE defaults to I24).
 pub fn input_config(device: &Device) -> Result<cpal::SupportedStreamConfig, String> {
     let def = device.default_input_config().map_err(|e| e.to_string())?;
     if matches!(
         def.sample_format(),
-        cpal::SampleFormat::F32 | cpal::SampleFormat::I16 | cpal::SampleFormat::U16
+        cpal::SampleFormat::F32
+            | cpal::SampleFormat::I16
+            | cpal::SampleFormat::U16
+            | cpal::SampleFormat::I32
     ) {
         return Ok(def);
     }
@@ -372,6 +375,7 @@ pub fn input_config(device: &Device) -> Result<cpal::SupportedStreamConfig, Stri
         cpal::SampleFormat::F32,
         cpal::SampleFormat::I16,
         cpal::SampleFormat::U16,
+        cpal::SampleFormat::I32,
     ]
     .into_iter()
     .find_map(|fmt| {

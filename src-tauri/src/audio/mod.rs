@@ -227,7 +227,10 @@ pub fn prune_older_than(
 /// entries in that folder could pre-plant a link named for a coming second and have the
 /// server-supplied transcript written through it. `create_new` fails on an existing name of any
 /// kind, symlink included.
-fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+///
+/// Takes the content in `parts`, written back to back, so a `.wav` can go out as header + the
+/// caller's PCM without first copying a recording (up to the multi-hundred-MB cap) into one buffer.
+fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     use std::io::Write;
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
@@ -248,7 +251,11 @@ fn write_new_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
             path.display()
         );
     }
-    if let Err(e) = f.write_all(bytes).and_then(|_| f.sync_all()) {
+    if let Err(e) = parts
+        .iter()
+        .try_for_each(|p| f.write_all(p))
+        .and_then(|_| f.sync_all())
+    {
         let _ = std::fs::remove_file(path);
         return Err(e);
     }
@@ -434,7 +441,9 @@ pub fn save_recording_as(dir: &Path, stem: &str, pcm: &[u8], sample_rate: u32) -
         path = dir.join(format!("{stem}-{n}.wav"));
         n += 1;
     }
-    match write_new_private(&path, &wav_from_pcm16(pcm, sample_rate, 1)) {
+    // Header + the caller's PCM as two writes (the u32 length as `wav_from_pcm16` writes it).
+    let header = wav_header(pcm.len() as u32, sample_rate, 1);
+    match write_new_private(&path, &[&header, pcm]) {
         Ok(()) => {
             tracing::info!("[record] saved {}", path.display());
             Some(path)
@@ -561,7 +570,7 @@ pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
         return;
     }
     let txt_path = wav_path.with_extension("txt");
-    if let Err(e) = write_new_private(&txt_path, format!("{trimmed}\n").as_bytes()) {
+    if let Err(e) = write_new_private(&txt_path, &[format!("{trimmed}\n").as_bytes()]) {
         tracing::warn!("[record] could not write transcript sidecar: {e}");
     } else {
         tracing::info!("[record] transcript saved {}", txt_path.display());
@@ -598,6 +607,21 @@ mod retention_tests {
         assert_eq!(&full[..44], &wav_header(n as u32, 44_100, 2)[..]);
         assert_eq!(&full[..4], b"RIFF");
         assert_eq!(&full[36..40], b"data");
+    }
+
+    /// The saved `.wav` goes out as header + PCM in two writes; the file must be byte-identical
+    /// to the single-buffer wrapper it replaced.
+    #[test]
+    fn saved_recording_matches_the_full_wrapper() {
+        let dir = std::env::temp_dir().join(format!("fwf-save-wav-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let pcm: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+        let path = save_recording_as(&dir, "dictation-test", &pcm, 16_000).unwrap();
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            wav_from_pcm16(&pcm, 16_000, 1)
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Write `name` into `dir` with an mtime `age_days` in the past.
