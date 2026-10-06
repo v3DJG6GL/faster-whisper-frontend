@@ -101,6 +101,20 @@ describe("round-trips against generateExport", () => {
     expect(bracket).toContain("彼は<00:00.50>「新機能」");
     expect(parseImportedText("lrc", bracket).segments[0].text).toBe("彼は「新機能」です");
   });
+  it("lrc: an astral (Ext-B) Han character at a word-tag seam round-trips without a space", () => {
+    // 𠮷 is a surrogate pair: the seam test used to look at one UTF-16 unit and miss it.
+    const text = "私は𠮷野家に行った山𠮷";
+    const ws = ["私は", "𠮷野家", "に行った", "山𠮷"];
+    const r: BatchResult = {
+      text,
+      language: "ja",
+      segments: [{ start: 0, end: ws.length * 0.5, text }],
+      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
+    };
+    const lrc = generateExport(r, { format: "lrc", wordTimestamps: true });
+    expect(lrc).toContain("私は<00:00.50>𠮷野家");
+    expect(parseImportedText("lrc", lrc).segments[0].text).toBe(text);
+  });
   it("json: our export shape incl. language and speakerName", () => {
     const json = generateExport(RESULT, { format: "json" });
     const back = parseImportedText("json", json);

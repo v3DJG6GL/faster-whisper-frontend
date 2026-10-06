@@ -48,6 +48,46 @@ function tokenize(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
 }
 
+/** Scripts written without spaces (kept local: cueSplit imports this module). */
+const UNSPACED_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+
+/** Tokens of an edited whitespace-free (CJK) text, cut where the original words were:
+ *  splitting on whitespace yields one token there, which matches no old word, so one
+ *  changed character used to collapse the whole line's timing into one word. A code-point
+ *  LCS against the old words' characters tags each new character with the word it came
+ *  from (or none); a token ends wherever that owner changes. */
+function charTokens(oldWords: TranscriptWord[], text: string): string[] {
+  const oldChars: string[] = [];
+  const owner: number[] = [];
+  oldWords.forEach((w, k) => {
+    for (const c of Array.from(w.word.trim())) {
+      oldChars.push(c);
+      owner.push(k);
+    }
+  });
+  const newChars = Array.from(text);
+  const m = oldChars.length;
+  const n = newChars.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      dp[i][j] = oldChars[i] === newChars[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    }
+  }
+  const own = new Array<number>(n).fill(-1);
+  for (let i = 0, j = 0; i < m && j < n; ) {
+    if (oldChars[i] === newChars[j]) own[j++] = owner[i++];
+    else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
+    else j++;
+  }
+  const toks: string[] = [];
+  newChars.forEach((c, j) => {
+    if (j && own[j] === own[j - 1]) toks[toks.length - 1] += c;
+    else toks.push(c);
+  });
+  return toks;
+}
+
 /** Align one edited segment's text to its original word timings.
  *  Matched words (longest common subsequence) keep word AND timing verbatim;
  *  each unmatched run of new tokens shares the time span of the old run it
@@ -57,7 +97,9 @@ export function alignSegmentWords(
   newText: string,
 ): TranscriptWord[] {
   if (!oldWords.length) return [];
-  const newToks = tokenize(newText);
+  const trimmed = newText.trim();
+  const newToks =
+    !/\s/.test(trimmed) && UNSPACED_RE.test(trimmed) ? charTokens(oldWords, trimmed) : tokenize(newText);
   if (!newToks.length) return [];
   const a = oldWords.map((w) => norm(w.word));
   const b = newToks.map(norm);

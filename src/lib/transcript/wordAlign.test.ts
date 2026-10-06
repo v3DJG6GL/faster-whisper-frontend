@@ -74,6 +74,24 @@ describe("alignSegmentWords", () => {
     expect(alignSegmentWords(LINE, "   ")).toEqual([]);
     expect(alignSegmentWords([], "Hallo Welt")).toEqual([]);
   });
+
+  it("keeps the untouched words' timings when one character of a CJK line changes", () => {
+    // Unspaced text: a whitespace split used to give one token that matched no old word,
+    // and the whole line collapsed into one segment-long word.
+    const ja: TranscriptWord[] = [
+      { word: "今日", start: 0, end: 0.4 },
+      { word: "は", start: 0.4, end: 0.6 },
+      { word: "晴れ", start: 0.6, end: 1.1 },
+      { word: "です", start: 1.1, end: 1.5 },
+    ];
+    const out = alignSegmentWords(ja, "今日は雨です");
+    expect(out.map((x) => x.word)).toEqual(["今日", "は", "雨", "です"]);
+    expect(out[0]).toBe(ja[0]);
+    expect(out[1]).toBe(ja[1]);
+    expect(out[3]).toBe(ja[3]);
+    expect(out[2].start).toBe(ja[2].start);
+    expect(out[2].end).toBeCloseTo(ja[2].end, 9);
+  });
 });
 
 describe("segmentWordRanges", () => {

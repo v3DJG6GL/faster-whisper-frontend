@@ -194,16 +194,32 @@ describe("buildCues", () => {
     const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
     expect(grid.own.ja.length).toBeGreaterThan(1);
     expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
+    expect(grid.own.ja.every((c) => !/^[」）。、]/.test(c.text.trim()))).toBe(true);
     expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
   });
 
   it("own timing: an opening bracket stays with its character in space-free text too", () => {
     const ja = "彼は「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
-    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
-    const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
-    expect(grid.own.ja.length).toBeGreaterThan(1);
-    expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
-    expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
+    for (const length of ["standard", "short"] as const) {
+      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const grid = buildCues(r, { ...STD, length, timing: "own" }, ["orig", "ja"]);
+      expect(grid.own.ja.length).toBeGreaterThan(1);
+      expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
+      // …and a closing bracket or stop stays with the character it closes.
+      expect(grid.own.ja.every((c) => !/^[」）。、]/.test(c.text.trim()))).toBe(true);
+      expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
+    }
+  });
+
+  it("own timing: a Latin word or number before an opening bracket never ends a cue on it", () => {
+    const ja = "iOS 18「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
+    for (const length of ["standard", "short"] as const) {
+      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const grid = buildCues(r, { ...STD, length, timing: "own" }, ["orig", "ja"]);
+      expect(grid.own.ja.length).toBeGreaterThan(1);
+      expect(grid.own.ja.every((c) => !/[「（]$/.test(c.text.trim()))).toBe(true);
+      expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
+    }
   });
 
   it("site tracks always keep their own timing", () => {
@@ -286,8 +302,9 @@ describe("wrapLines", () => {
       "Street, and the old bridge was closed.",
     ]);
     const ja = "今日は朝から雨が降っていて、駅までの道はとても混んでいました。電車も遅れていたので、会社に着いたのは十時過ぎでした。🎉それでも午後には晴れて、皆で外に出ました。";
+    // The 、 rides with the character before it (the old snapshot started line 2 with it).
     expect(wrapLines(ja, 16, 2)).toEqual([
-      "今日は朝から雨が降っていて", "、駅までの道はとても混んで", "いました。電車も遅れていた", "ので、会社に着いたのは十時過",
+      "今日は朝から雨が降ってい", "て、駅までの道はとても混ん", "でいました。電車も遅れていた", "ので、会社に着いたのは十時過",
       "ぎでした。🎉それでも午後に", "は晴れて、皆で外に出ました。",
     ]);
     // 1200 words used to take seconds (every candidate rejoined both halves).
@@ -307,6 +324,19 @@ describe("wrapLines", () => {
     // Pre-change snapshot: the candidate cut-off changes speed, never the chosen breaks.
     expect(lines.length).toBe(510);
     expect(lines[12]).toBe("Hello, Hello, the running so; of extraordinarily and world.");
+  });
+  it("a CJK line never ends on an opening bracket nor starts with a closer or stop", () => {
+    for (const t of [
+      "あいうえおかきくけこ「さしすせそたちつてとなに」",
+      "あいうえおかきくけこさ。しすせそたちつてとなにぬ",
+      "あいうえおかきくけこさ」しすせそたちつてとなにぬ、ねのはひふへほ（まみむめもやゆよ）",
+    ]) {
+      const lines = wrapLines(t, 13, 2);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines.every((l) => !/[「（]$/.test(l))).toBe(true);
+      expect(lines.every((l) => !/^[」）。、]/.test(l))).toBe(true);
+      expect(lines.join("")).toBe(t);
+    }
   });
   it("an over-long word left alone on the last line wraps per character", () => {
     const w = "x".repeat(50);
@@ -363,7 +393,9 @@ describe("cutByShare", () => {
       "彼は「新機能」と「新しい画面」と「便利な設定」と「速い通信」について説明します",
     ]) {
       for (let k = 1; k < 20; k++) {
-        expect(cutByShare(text, [k, 20 - k]).every((p) => !/[「（]$/.test(p))).toBe(true);
+        const parts = cutByShare(text, [k, 20 - k]);
+        expect(parts.every((p) => !/[「（]$/.test(p))).toBe(true);
+        expect(parts.every((p) => !/^[」）。、]/.test(p))).toBe(true);
       }
     }
   });

@@ -5,7 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueResult, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
+  buildCues, cueResult, edgeChar, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
   type CueGrid, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
@@ -199,12 +199,6 @@ interface Ctx {
   wrap: (text: string, track: string, reserve: number) => string;
 }
 
-/** The first (`end` false) or last code point of `s` — "" when empty. */
-function edgeChar(s: string, end: boolean): string {
-  if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
-  const lo = s.charCodeAt(s.length - 1);
-  return s.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
-}
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")`. */

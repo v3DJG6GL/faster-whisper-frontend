@@ -18,7 +18,7 @@ vi.mock("../api", async (importOriginal) => ({
 
 const {
   appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, loadHistory, patchRecord, recordDictation,
-  recordEditedResult, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
+  recordEditedResult, recordText, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
 
@@ -529,6 +529,38 @@ describe("recordEditedResult", () => {
     expect(jaOut.text).toBe("今日は晴れ。明日は雨。");
     const en = { text: "Hello there. Bye.", segments: [{ id: 0, start: 0, end: 1, text: "Hello there." }, { id: 1, start: 1, end: 2, text: "Bye." }] };
     expect(recordEditedResult({ id: "e", result: en, edits: { 1: "Goodbye." } } as Partial<TranscriptRecord> as TranscriptRecord).text).toBe("Hello there. Goodbye.");
+  });
+});
+
+describe("recordText", () => {
+  // History's copy, snippet and search read this: its seams must match the viewer's and
+  // the exports' (joinSegmentTexts), not a plain space-join.
+  const cjk = {
+    text: "你好。世界。",
+    segments: [
+      { id: 0, start: 0, end: 1, text: "你好。" },
+      { id: 1, start: 1, end: 2, text: "世界。" },
+      { id: 2, start: 2, end: 3, text: "再见。" },
+    ],
+  };
+  const rec = (result: unknown, over: Partial<TranscriptRecord> = {}) =>
+    ({ id: "r", result, ...over }) as TranscriptRecord;
+
+  it("joins unspaced-script segments without a space, corrections applied", () => {
+    expect(recordText(rec(cjk))).toBe("你好。世界。再见。");
+    expect(recordText(rec(cjk, { edits: { 1: "地球。" } }))).toBe("你好。地球。再见。");
+  });
+
+  it("keeps the bounded snippet's seams the same", () => {
+    expect(recordText(rec(cjk), 160)).toBe("你好。世界。再见。");
+    expect(recordText(rec(cjk), 5)).toBe("你好。世界");
+  });
+
+  it("space-joins spaced scripts exactly as before", () => {
+    const en = { text: "", segments: [{ id: 0, start: 0, end: 1, text: "Hello there." }, { id: 1, start: 1, end: 2, text: "Bye." }] };
+    expect(recordText(rec(en))).toBe("Hello there. Bye.");
+    expect(recordText(rec(en), 160)).toBe("Hello there. Bye.");
+    expect(recordText(rec(en), 8)).toBe("Hello th");
   });
 });
 

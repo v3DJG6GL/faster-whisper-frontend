@@ -4,7 +4,7 @@
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
 import { safeDisplayText, stripControlChars } from "../sanitize";
-import { unspacedChar } from "./cueSplit";
+import { edgeChar, unspacedChar } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -269,7 +269,8 @@ function parseLrc(body: string): ImportedText {
     // a tag-only line can't tell that apart from a foreign file, so those gain spaces.)
     const { text, speaker } = cueText([
       trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
-        unspacedChar(s[off - 1] ?? "") && unspacedChar(s[off + m.length] ?? "") ? "" : " "),
+        unspacedChar(edgeChar(s.slice(Math.max(0, off - 2), off), true)) &&
+        unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false)) ? "" : " "),
     ]);
     if (text) {
       for (const start of starts) segments.push({ start, text, speaker });

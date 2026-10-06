@@ -403,14 +403,18 @@ export function deleteRecord(id: string): void {
 export function recordText(rec: TranscriptRecord, max = Infinity): string {
   const segs = rec.result?.segments;
   if (!segs?.length) return rec.result?.text ?? "";
-  if (max === Infinity) return segs.map((s, i) => rec.edits?.[i] ?? s.text).join(" ");
+  // Joined as the viewer and the exports join them: no space between two CJK segments.
+  if (max === Infinity) return joinSegmentTexts(segs.map((s, i) => rec.edits?.[i] ?? s.text));
   // Bounded: a History snippet keeps 160 chars, so joining a 900-segment transcript per row
   // per keystroke defeated the sanitizer's own output bound.
-  let out = "";
-  for (let i = 0; i < segs.length && out.length < max; i++) {
-    out += (i ? " " : "") + (rec.edits?.[i] ?? segs[i].text);
+  const parts: string[] = [];
+  let n = 0;
+  for (let i = 0; i < segs.length && n < max; i++) {
+    const p = rec.edits?.[i] ?? segs[i].text;
+    parts.push(p);
+    n += p.length + 1;
   }
-  return out.slice(0, max);
+  return joinSegmentTexts(parts).slice(0, max);
 }
 
 /** The record's language tracks, original first, or null when it has none.

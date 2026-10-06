@@ -169,7 +169,7 @@ export function SiteSubtitlesPanel({
                         supported={supported}
                         modelName={modelName}
                         exclude={input.spoken ?? undefined}
-                        max={Number.MAX_SAFE_INTEGER}
+                        max={mtFull ? listed.length : Number.MAX_SAFE_INTEGER}
                         // A new language is machine-translated: at the server's target cap
                         // there is no room for one more.
                         disabled={disabled || mtFull}

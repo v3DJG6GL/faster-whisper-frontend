@@ -15,6 +15,7 @@ import {
   fetchUrlVideoOnDemand, getMediaStreams, onMediaExportProgress, packageMedia, revealSaved,
 } from "@/lib/api";
 import { safeDisplayText } from "@/lib/sanitize";
+import { errorText } from "@/lib/errors";
 import { langCode, trackLanguageName } from "@/lib/languages";
 import {
   cpsWarnings, cueGrid, exportFileGroups, exportOptionsFor, generateExports, isSubtitleFormat, previewExport, speakerName, tracksOf,
@@ -41,7 +42,7 @@ import {
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
-import { patchItem, useTranscribeRun } from "@/lib/transcribeRun";
+import { patchItem, useTranscribeRun, videoMaxHeightOf } from "@/lib/transcribeRun";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import type { Backend, BatchResult, Capabilities } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
@@ -311,6 +312,10 @@ export function TranscriptExport({
   }), [effMedia, effContainer, effSubtitleMode, exportFormat, exportOptions, editedResult, audioExt, videoTracks,
     hasVideoSource, copyExt]);
   const videoPlan = plan.primary.kind === "video";
+  /** The server muxes at most this many subtitle tracks into one video; more fails only
+   *  after the save dialog, writing nothing (sidecar mode embeds none). */
+  const embedCap = trCaps?.media_package?.max_tracks ?? 12;
+  const tooManyEmbedded = plan.embedded.length > embedCap;
   /** The sidecar files' names, one per video track (null = the tracks ride inside only). */
   const sideNames = useMemo(
     () => (plan.sidecars ? plan.files.filter((f) => f.kind === "text").map((f) => f.name) : null),
@@ -430,9 +435,12 @@ export function TranscriptExport({
     else if (urlVideoOnDemand) {
       setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
       try {
+        // The link card's quality and format picks, as the run's own on-demand fetch
+        // honours them; none = the Settings default.
         const got = await fetchUrlVideoOnDemand({
           serverUrl, backendId: trBackend.id, url: path,
-          maxHeight: settings.transcribe?.urlVideoMaxHeight ?? null,
+          maxHeight: videoMaxHeightOf(path),
+          formatId: useTranscribeRun.getState().urlMeta[path]?.videoFormat ?? null,
         });
         source = { sourceMediaId: got.mediaId };
         // Fetched: a wait in the queue below shows as Queued (with its Cancel), not as
@@ -455,7 +463,7 @@ export function TranscriptExport({
           .catch(() => {});
       } catch (e) {
         setMediaJob(null);
-        const msg = safeDisplayText(String(e), 300) || "The video could not be fetched.";
+        const msg = safeDisplayText(errorText(e), 300) || "The video could not be fetched.";
         if (mine()) setMediaError({ kind: "fetch", msg });
         else late(msg);
         return false;
@@ -635,8 +643,8 @@ export function TranscriptExport({
       }
     } catch (e) {
       setMediaJob(null);
-      if (mine()) setSaveError(String(e));
-      else late(String(e));
+      if (mine()) setSaveError(errorText(e));
+      else late(errorText(e));
       return;
     }
     if (mine()) {
@@ -1051,6 +1059,7 @@ export function TranscriptExport({
               ) : (
                 <SplitButton
                   onClick={doExport}
+                  disabled={tooManyEmbedded}
                   menuLabel="Save options"
                   options={[{
                     label: "Open folder after saving",
@@ -1063,6 +1072,11 @@ export function TranscriptExport({
                 </SplitButton>
               )}
             </div>
+            {tooManyEmbedded && (
+              <span className="mt-2 text-[12px] text-warn">
+                A video carries at most {embedCap} subtitle tracks — leave some out or save them as files.
+              </span>
+            )}
             {saveError && <span className="mt-2 text-[12px] text-warn">{safeDisplayText(saveError, 300)}</span>}
             {mediaError && (
               <span className="mt-2 text-[12px] text-warn">

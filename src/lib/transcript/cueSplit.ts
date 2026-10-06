@@ -77,6 +77,14 @@ const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
 /** An unspaced-script character or CJK/fullwidth punctuation — the one predicate the LRC
  *  export and import (and joinSegmentTexts) decide a seam's space with, so they agree. */
 export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
+/** The first (`end` false) or last code point of `s` — "" when empty. Seam tests go
+ *  through it: a lone surrogate half is never unspaced, so a per-UTF-16-unit look
+ *  misreads an astral (CJK Ext-B) character at the edge. */
+export function edgeChar(s: string, end: boolean): string {
+  if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
+  const lo = s.charCodeAt(s.length - 1);
+  return s.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
+}
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 
 /** Clamp an untrusted (synced / stored) limits object; undefined when unusable. */
@@ -223,17 +231,26 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
 
 /** CJK and fullwidth opening brackets: they stick to the character after them. */
 const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
-/** A token of spaced text: a word, or one unspaced (CJK) character with the opening
- *  brackets before it and its other punctuation after it — so a CJK translation holding one
- *  Latin word still splits between its characters, and never right after a 「 or （. */
+/** CJK and fullwidth closing brackets and stops: they stick to the character before them.
+ *  Listed, not the whole fullwidth block — fullwidth letters and digits stay breakable. */
+const CLOSE_PUNCT = "、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
+/** A token of spaced text: a word (with any opening brackets before it), or one unspaced
+ *  (CJK) character with the opening brackets before it and its other punctuation after it —
+ *  so a CJK translation holding one Latin word still splits between its characters, and
+ *  never right after a 「 or （ (a Latin word or number before 「 used to swallow it). A
+ *  bracket with nothing after it is its own token, so no character falls out of the spans. */
 const MIXED_TOKEN = new RegExp(
   `[${OPEN_PUNCT}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}](?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
-    + "|[^\\s\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]+",
+    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]+`
+    + `|[${OPEN_PUNCT}]+`,
   "gu",
 );
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
-/** One code point of whitespace-free text, with any opening brackets before it. */
-const OPENED_CHAR = new RegExp(`[${OPEN_PUNCT}]*\\S`, "gu");
+/** One code point of whitespace-free text with the opening brackets before it and the
+ *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
+ *  piece or line ends on 「 or starts with 」 or 。. */
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]*\\S[${CLOSE_PUNCT}]*`, "gu");
+const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
@@ -243,8 +260,8 @@ function spreadTokens(text: string, a: number, b: number): Tok[] {
   if (/\s/.test(text.trim())) {
     for (const m of text.matchAll(MIXED_TOKEN)) spans.push([m.index!, m.index! + m[0].length]);
   } else {
-    // An opening bracket rides with the code point it opens.
-    for (const m of text.matchAll(OPENED_CHAR)) spans.push([m.index!, m.index! + m[0].length]);
+    // An opening bracket rides with the code point it opens, a closer with the one it closes.
+    for (const m of text.matchAll(CJK_UNIT)) spans.push([m.index!, m.index! + m[0].length]);
   }
   const tot = spans.reduce((n, [f, t]) => n + t - f + 1, 0) || 1;
   let c = a;
@@ -273,13 +290,14 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
   let bi = -1;
   for (let i = 1; i < ts.length; i++) {
     if (ts.length >= 4 && (i < 2 || ts.length - i < 2)) continue; // no one-word side
-    const left = ts.slice(0, i);
-    const right = ts.slice(i);
     const gap = ts[i].s - ts[i - 1].e;
     let s = breakScore(text.slice(ts[i - 1].from, ts[i - 1].to).trim(), text.slice(ts[i].from, ts[i].to).trim());
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
-    s -= (30 * Math.abs(sliceOf(text, left).length - sliceOf(text, right).length)) / total;
-    if (left[left.length - 1].e - left[0].s < 1 || right[right.length - 1].e - right[0].s < 1) s -= 60;
+    // Both sides read by index: slicing the token array per candidate made every level O(n²).
+    const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
+    const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
+    s -= (30 * Math.abs(leftLen - rightLen)) / total;
+    if (ts[i - 1].e - ts[0].s < 1 || ts[ts.length - 1].e - ts[i].s < 1) s -= 60;
     if (s > best) {
       best = s;
       bi = i;
@@ -343,11 +361,12 @@ export function cutByShare(text: string, shares: number[]): string[] {
   // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may
   // still hold a CJK run (one Latin word in a Japanese line): it cuts between
   // its characters too — a lone surrogate is never UNSPACED, so no pair splits.
-  // Never right after an opening bracket: the cut goes before it instead.
+  // Never right after an opening bracket (the cut goes before it instead), nor right
+  // before a closing bracket or stop (the cut goes after it).
   const cand: number[] = [];
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
-    if (OPENER.test(text[i - 1])) continue;
+    if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
     if (
       spaced
         ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && (UNSPACED.test(text[i]) || OPENER.test(text[i])))
@@ -408,7 +427,7 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   const len = t.length + firstReserve;
   if (len <= cpl) return [t];
   const spaced = /\s/.test(t);
-  const toks = spaced ? t.split(/\s+/) : Array.from(t);
+  const toks = spaced ? t.split(/\s+/) : units(t);
   if (toks.length < 2) return [t];
   return wrapTokens(toks, spaced, cpl, len, firstReserve);
 }
@@ -458,21 +477,21 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
     if (
       bi === lo + 1 &&
       (UNSPACED.test(toks[lo]) ? width(lo, bi) + reserve : width(lo, bi)) > cpl &&
-      Array.from(toks[lo]).length >= 2
+      units(toks[lo]).length >= 2
     ) {
       // One over-long token on its own line (a CJK run before a Latin word): it
       // wraps per character too, not just a trailing one. A spaced-script word
       // pushed over only by the name prefix stays whole; an unspaced run has no
       // word to protect, so it still wraps to fit the prefixed line.
-      out.push(...wrapTokens(Array.from(toks[lo]), false, cpl, toks[lo].length + reserve, reserve));
+      out.push(...wrapTokens(units(toks[lo]), false, cpl, toks[lo].length + reserve, reserve));
     } else out.push(join(lo, bi));
     lo = bi;
     reserve = 0;
     len = width(lo, T);
     if (len <= cpl) return [...out, join(lo, T)];
     if (T - lo < 2) {
-      // One over-long word left: it wraps per character.
-      const chars = Array.from(toks[lo]);
+      // One over-long word left: it wraps per character (brackets kept with theirs).
+      const chars = units(toks[lo]);
       return chars.length < 2 ? [...out, toks[lo]] : [...out, ...wrapTokens(chars, false, cpl, len, 0)];
     }
   }
