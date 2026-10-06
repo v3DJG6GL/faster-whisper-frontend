@@ -106,7 +106,8 @@ function NavigationBridge() {
 // startup load-time notices (config reset from a corrupt file, or a failed load) — kind "load" —
 // which are self-contained and must NOT wear the save-failure framing (they'd read as a lie: nothing
 // failed to save). The app otherwise saves settings/backends/profiles silently (debounced), so
-// without this a non-write is invisible. Self-heals — the next successful save clears it. Dismissible.
+// without this a non-write is invisible. A save-kind notice self-heals — the next successful save
+// clears it; a load notice stays until dismissed. Dismissible.
 function SaveErrorBanner() {
   const saveError = useApp((s) => s.saveError);
   const saveErrorKind = useApp((s) => s.saveErrorKind);

@@ -224,6 +224,10 @@ export default function Overlay() {
   // defeated this guard for the motion term).
   const prevMotionRef = useRef<string>("");
   const prevThemeRef = useRef<ThemeName>("auto");
+  // The size refs below start from the REC placeholder; the first real payload (the
+  // overlay://ready reply) carries the SAVED sizes, which must seed them rather than read as
+  // a Settings adjustment (that would tuck the chip at once, or nudge it, at every launch).
+  const scalesSeeded = useRef(false);
 
   // Live updates from the Rust core when running under Tauri.
   useEffect(() => {
@@ -245,6 +249,11 @@ export default function Overlay() {
             prevMotionRef.current = motKey;
             prevThemeRef.current = theme;
             applyAccentAndTheme(hue, mot, theme);
+          }
+          if (!scalesSeeded.current) {
+            scalesSeeded.current = true;
+            lastChipScale.current = e.payload.chipScale ?? REC.chipScale;
+            lastDotScale.current = e.payload.dotScale ?? REC.dotScale;
           }
           setState({
             ...e.payload,
@@ -443,6 +452,9 @@ export default function Overlay() {
   // Mirrors `hovering` for the async dwell verify below (the state value would be stale
   // inside its closure).
   const hoveringRef = useRef(false);
+  // Bumped on every hover start and clear, so a pointer-over answer still in flight from an
+  // earlier hover (GDK enter/leave churn at the dot's edge) can't clear the current one.
+  const hoverEpoch = useRef(0);
   // After any hover, hold off the deep-idle peek for a grace period (anti-oscillation).
   const peekGraceUntil = useRef(0);
   // Deep-idle edge-peek: true when the chip has tucked to the screen edge (driven below).
@@ -483,6 +495,7 @@ export default function Overlay() {
   // Every "the cursor is definitely gone" path funnels here: a real pointerleave, the
   // lost-leave safety nets below (non-interactive reset, failed dwell verify, watchdog).
   const clearHover = useCallback(() => {
+    hoverEpoch.current++;
     hoveringRef.current = false;
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     setHovering(false);
@@ -490,6 +503,7 @@ export default function Overlay() {
     setHoverReveal(false);
   }, []);
   const onPointerEnter = () => {
+    hoverEpoch.current++;
     hoveringRef.current = true;
     setHovering(true);
     setPeekRestoring(peeked); // remember whether the chip was tucked when this hover began
@@ -503,8 +517,10 @@ export default function Overlay() {
     // flush against the screen edge. So confirm with the windowing system (immune to the
     // lost DOM event) that the cursor is still here; if it isn't, run the leave path instead.
     hoverTimer.current = setTimeout(() => {
+      const ep = hoverEpoch.current;
       void chipPointerOver().then((over) => {
-        if (!hoveringRef.current) return; // a real leave beat the round-trip
+        // A real leave (or a newer hover) beat the round-trip.
+        if (ep !== hoverEpoch.current || !hoveringRef.current) return;
         if (over) setHoverReveal(true);
         else clearHover();
       });
@@ -715,13 +731,12 @@ export default function Overlay() {
   // chip sticks at the hover anchor, never dims and never re-peeks until the next hover.
   useEffect(() => {
     if (!hovering || !isTauri) return;
-    const id = setInterval(
-      () =>
-        void chipPointerOver().then((over) => {
-          if (!over) clearHover();
-        }),
-      HOVER_WATCHDOG_MS,
-    );
+    const id = setInterval(() => {
+      const ep = hoverEpoch.current;
+      void chipPointerOver().then((over) => {
+        if (ep === hoverEpoch.current && !over) clearHover();
+      });
+    }, HOVER_WATCHDOG_MS);
     return () => clearInterval(id);
   }, [hovering, clearHover]);
 
@@ -871,11 +886,13 @@ export default function Overlay() {
     { timeout: "timed out", cancelled: "cancelled", error: "failed", empty: "came back empty" }[
       state.translateFailure ?? ""
     ] ?? "failed";
+  // "clipboard" means nothing was typed — the words only reached the clipboard.
+  const untranslatedVerb = state.sessionOutcome === "clipboard" ? "copied" : "inserted";
   // The "not inserted" note takes the slot the same way, for the same reason.
   const noteLabel = note === "not-inserted-saved" ? "not inserted · saved to History" : "not inserted";
   const label =
     pulse === "untranslated"
-      ? `inserted as spoken — translation ${failureLabel}`
+      ? `${untranslatedVerb} as spoken — translation ${failureLabel}`
       : note
         ? noteLabel
         : state.status === "idle"
@@ -1051,6 +1068,9 @@ export default function Overlay() {
     const eligible =
       !blocked && (standby || endFlash || (keepMin ? activeStatus : state.status === "listening"));
     if (!eligible) {
+      // A Dot-size tuck request only applies to the arming it was made for; left set, a much
+      // later eligible arming would tuck instantly.
+      tuckNow.current = false;
       setPeeked(false);
       return;
     }
@@ -1232,7 +1252,9 @@ export default function Overlay() {
             : pulse === "clipboard"
               ? "Copied to clipboard"
               : pulse === "untranslated"
-                ? "Inserted untranslated — the translation did not finish"
+                ? state.sessionOutcome === "clipboard"
+                  ? "Copied untranslated — the translation did not finish"
+                  : "Inserted untranslated — the translation did not finish"
                 : note
                   ? noteLabel
                   : ""}

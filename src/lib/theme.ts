@@ -31,7 +31,9 @@
 // A hidden window holds its drift (`setAccentDriftPaused`, fed by windowVisibility.ts) and
 // catches up from the clock when shown, so only the windows on screen pay for the motion.
 
-import type { ThemeName } from "./types";
+import type { AccentMotion, ThemeName } from "./types";
+
+export type { AccentMotion };
 
 const LIGHT_MQ = "(prefers-color-scheme: light)";
 const REDUCED_MOTION_MQ = "(prefers-reduced-motion: reduce)";
@@ -167,17 +169,6 @@ const ACCENT_VARS = [
 ] as const;
 
 /* ── Motion (the pure arithmetic every window runs) ───────────────────── */
-
-export interface AccentMotion {
-  /** Seconds per full turn of the wheel (or per breath, for an arc). 0 = Still. */
-  period: number;
-  range: "wheel" | "arc";
-  /** The near end of the arc, when `range` is "arc". Absent = the Signal colour (older
-   *  blobs, where the arc started from `accentHue`). */
-  arcFrom?: number;
-  /** The far end of the arc, when `range` is "arc". Absent = the Rose preset. */
-  arcHue?: number;
-}
 
 export const DEFAULT_ACCENT_MOTION: AccentMotion = { period: 0, range: "wheel" };
 /** The custom slider's span: 30 s … 7 d. Presets sit inside it. */
