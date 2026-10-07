@@ -172,6 +172,13 @@ export function TranscriptExport({
       : !urlSource && rec?.result?.sourceMediaId && (rec.result.sourceMediaExpiresAt ?? 0) > nowSec
         ? rec.result.sourceMediaId
         : null;
+  /** The server that issued `serverVideoId` (a stored id is only good there): stamped when
+   *  this panel stored it, else the record's own backend (a run's id). */
+  const serverVideoIssuer = !serverVideoId
+    ? null
+    : serverVideoId === rec?.result?.sourceVideoMediaId
+      ? rec.result.sourceVideoBackendId ?? rec.backendId ?? null
+      : rec?.result?.sourceMediaBackendId ?? rec?.backendId ?? null;
   // The local VIDEO: the app's copy of a link's video, or the file itself.
   const localVideo = rec?.videoPath ?? (!urlSource && !textSource && isVideoSourcePath(path) ? path : null);
   const packageOn = trCaps?.media_package_enabled === true;
@@ -194,6 +201,8 @@ export function TranscriptExport({
       && (rec.result.sourceMediaExpiresAt == null || rec.result.sourceMediaExpiresAt > nowSec)
       ? rec.result.sourceMediaId
       : null;
+  /** The server that issued `serverAudioId` — as `serverVideoIssuer`. */
+  const serverAudioIssuer = serverAudioId ? rec?.result?.sourceMediaBackendId ?? rec?.backendId ?? null : null;
   const audioExt = localAudio ? extOf(localAudio) || "m4a" : serverAudioId ? "m4a" : null;
   const audioAvailable = urlSource && !!(localAudio || serverAudioId);
   const videoWhy = !hasVideoSource
@@ -416,13 +425,13 @@ export function TranscriptExport({
         // Only when the asked server is the one that issued it: trBackend falls back to
         // the first backend for a record whose own one is gone (or unrecorded), and that
         // server's 404 says nothing about an id restoring the backend would make good again.
-        if (rec.backendId !== trBackend.id) {
+        if (serverAudioIssuer !== trBackend.id) {
           throw new Error("The selected server doesn't have this link's audio.");
         }
         patchRecord(rec.id, (r) => {
           if (r.result?.sourceMediaId !== sentId) return r;
           const res = { ...r.result };
-          delete res.sourceMediaId; delete res.sourceMediaExpiresAt;
+          delete res.sourceMediaId; delete res.sourceMediaExpiresAt; delete res.sourceMediaBackendId;
           return { ...r, result: res };
         });
         throw new Error("The server no longer has this link's audio.");
@@ -457,12 +466,15 @@ export function TranscriptExport({
     }
     if (!trBackend) throw new Error("No backend is selected.");
     const serverUrl = effectiveServerUrl(trBackend, settings);
+    // Every id this call stores is stamped with the server that issued it.
+    const issuer = trBackend.id;
     let source: { sourceMediaId?: string; sourcePath?: string };
-    // A stored server id is only good on the server that issued it. trBackend falls back to
-    // the first backend for a record whose own one is missing or unrecorded: there the local
-    // copy or an on-demand fetch is the reliable source, and the stored id is a last resort
-    // (kept on the record either way — restoring the backend makes it good again).
-    const storedId = serverVideoId && (rec.backendId === trBackend.id || (!localVideo && !urlVideoOnDemand))
+    // A stored server id is only good on the server that issued it (serverVideoIssuer).
+    // trBackend falls back to the first backend for a record whose own one is missing or
+    // unrecorded: there the local copy or an on-demand fetch is the reliable source, and
+    // the stored id is a last resort. The new copy's id then replaces it, stamped with
+    // trBackend, so the next Save on this server reuses it instead of uploading again.
+    const storedId = serverVideoId && (serverVideoIssuer === issuer || (!localVideo && !urlVideoOnDemand))
       ? serverVideoId
       : null;
     if (storedId) source = { sourceMediaId: storedId };
@@ -490,6 +502,7 @@ export function TranscriptExport({
             ...(r.result ?? { text: "" }),
             sourceVideoMediaId: got.mediaId,
             sourceVideoExpiresAt: got.expiresAt ?? undefined,
+            sourceVideoBackendId: issuer,
           },
         }));
         // Keep a local copy too (the Settings' video store), best effort.
@@ -523,7 +536,9 @@ export function TranscriptExport({
       ...r,
       result: {
         ...(r.result ?? { text: "" }),
-        ...(urlSource ? { sourceVideoMediaId: id, sourceVideoExpiresAt: exp } : { sourceMediaId: id, sourceMediaExpiresAt: exp }),
+        ...(urlSource
+          ? { sourceVideoMediaId: id, sourceVideoExpiresAt: exp, sourceVideoBackendId: issuer }
+          : { sourceMediaId: id, sourceMediaExpiresAt: exp, sourceMediaBackendId: issuer }),
       },
     }));
     // A busy answer after an upload names that upload's server copy (and its expiry,
@@ -582,12 +597,12 @@ export function TranscriptExport({
     if (outcome.kind === "expired") {
       // Only the server that issued a STORED id may say it is gone (as Save audio's guard):
       // trBackend falls back to the first backend for a record whose own one is missing or
-      // unrecorded, and that server's "expired" says nothing about an id restoring the
-      // backend would make good again. A foreign server only gets the stored id when no
+      // unrecorded, and that server's "expired" says nothing about an id its issuer may
+      // still hold. A foreign server only gets the stored id when no
       // other source exists (above), so there is nothing to suggest. An id this call
       // fetched or uploaded is trBackend's own (storedId is null then), so it may still be
       // forgotten below.
-      if (storedId && rec.backendId !== trBackend.id) {
+      if (storedId && serverVideoIssuer !== issuer) {
         const msg = "The selected server doesn't have this video.";
         if (mine()) setMediaError({ kind: "expired", msg });
         else late(msg);
@@ -602,8 +617,8 @@ export function TranscriptExport({
           return latest;
         }
         const r = { ...(latest.result ?? { text: "" }) };
-        delete r.sourceVideoMediaId; delete r.sourceVideoExpiresAt;
-        if (!urlSource) { delete r.sourceMediaId; delete r.sourceMediaExpiresAt; }
+        delete r.sourceVideoMediaId; delete r.sourceVideoExpiresAt; delete r.sourceVideoBackendId;
+        if (!urlSource) { delete r.sourceMediaId; delete r.sourceMediaExpiresAt; delete r.sourceMediaBackendId; }
         return { ...latest, result: r };
       });
       const msg = localVideo

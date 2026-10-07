@@ -2550,7 +2550,8 @@ export async function pushNow(manual = false): Promise<void> {
           await applyBlob(merged, applyNow);
           if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
-            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob, applied: applyNow,
+            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
+            applied: appliedAt(pushCats, applyNow),
             storeSig: await storeSignature(pushCats), gatesSig: gatesSignature(),
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
@@ -2616,7 +2617,8 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     await applyBlob(merged, applyNow);
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob, applied: applyNow,
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      applied: appliedAt(applyCats, applyNow),
       storeSig: await storeSignature(applyCats), gatesSig: gatesSignature(),
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
@@ -2725,6 +2727,17 @@ function catOf({ kind, category }: SecurityChange): SyncCategory {
   }
   if (kind === "history-retention") return "fileTranscriptions";
   return "backends";
+}
+
+/** What a raise's held-back apply (`applyNow`, under `applyCats`) actually landed, for
+ *  `PendingReview.applied`. The dictionary's pin applies only together with the backends list
+ *  (applyBlob's `cats.backends` check), so holding backends back also withholds the peer's pin:
+ *  the dictionary then did NOT fully land, and an edit to it while the review waits must ask. */
+function appliedAt(
+  applyCats: Record<SyncCategory, boolean>,
+  applyNow: Record<SyncCategory, boolean>,
+): Record<SyncCategory, boolean> {
+  return { ...applyNow, dictionary: applyNow.dictionary && (applyNow.backends || !applyCats.backends) };
 }
 
 /** `cats` with every category that has a held-back change switched OFF. */
@@ -2999,7 +3012,7 @@ interface PendingReview {
   /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. A relist
    *  keeps it — no apply ran since, so the store still lacks what the raise's gates stripped. */
   gatesSig: Record<SyncCategory, string>;
-  /** The categories the raise's apply landed (`heldBack(cats, changes)` THEN). Kept across a
+  /** The categories the raise's apply landed (`appliedAt` over `heldBack(cats, changes)` THEN). Kept across a
    *  relist: recomputing it from the relisted rows would count a category that was held back at
    *  the raise, and whose rows no longer show, as applied — and keep a live edit over a peer
    *  value the store never received. */
@@ -3126,6 +3139,23 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // use for that: it ran under the raise-time gates, which substitute a gated-off address / key
   // with the snapshot's — the peer's own value, so the repoint compares equal. Compose this
   // device afresh.
+  // The store signature is read BEFORE the compose it is paired with (a relist keeps it as the
+  // new `storeSig` next to a blob built from this compose): an edit landing during the compose's
+  // keyring wait is then in `localNow` and missing from `sigNow`, so the next approval still sees
+  // it as an edit. Read after, it was in the signature but not the relisted blob — "not edited"
+  // next time, and the reviewed value went back over it. Both snapshot the store when called, so
+  // an edit landing during the signature's own keyring wait is in `localNow` only: `movedMid`
+  // then counts every conflicting category as edited (keep the live value, or ask), never as the
+  // reviewed value going back over it.
+  const st0 = useApp.getState();
+  const sigNow = await storeSignature(r.cats);
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
+  const st1 = useApp.getState();
+  const movedMid =
+    st0.settings !== st1.settings ||
+    st0.backends !== st1.backends ||
+    st0.profiles !== st1.profiles ||
+    st0.appRules !== st1.appRules;
   let localNow = await composeLive(r.cats);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // `r.blob` was merged against the raise-time local: an edit made here since would be hydrated
@@ -3149,15 +3179,13 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   //    nothing lands unreviewed).
   const re = mergeBlobs(state.snapshot, localNow, r.remote);
   const appliedAtRaise = r.applied;
-  const sigNow = await storeSignature(r.cats);
-  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   const gatesNow = gatesSignature();
   const blobNow: SyncBlob = { ...re.merged };
   let ask = false;
   for (const cat of re.conflicts) {
     // A keyring read that failed at either end cannot rule out a key rotation: unclear = ask.
     const keysUnknown = cat === "backends" && (keysUnread(sigNow) || keysUnread(r.storeSig));
-    if (keysUnknown || !catEqual(sigNow[cat], r.storeSig[cat])) {
+    if (keysUnknown || movedMid || !catEqual(sigNow[cat], r.storeSig[cat])) {
       if (keysUnknown || !(appliedAtRaise[cat] && gatesNow[cat] === r.gatesSig[cat])) ask = true;
       continue;
     }
@@ -3373,7 +3401,7 @@ async function resolveLocked(
       blob: final,
       cats: applyCats,
       remote: c.remote,
-      applied: applyNow,
+      applied: appliedAt(applyCats, applyNow),
       storeSig: await storeSignature(applyCats),
       gatesSig: gatesSignature(),
       version: c.remoteVersion,

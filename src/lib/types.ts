@@ -1309,12 +1309,19 @@ export interface BatchResult {
    *  via fetchUrlMedia for local playback) + its advisory unix expiry. */
   sourceMediaId?: string;
   sourceMediaExpiresAt?: number;
+  /** The Backend that issued `sourceMediaId` when the export panel stored it (an upload);
+   *  absent = the run's own id, issued by the record's `backendId`. A server id is only
+   *  good on its issuer. */
+  sourceMediaBackendId?: string;
   /** keep_video runs: the retained VIDEO's id + expiry once the fetch
    *  finished before the transcript did; `sourceVideoPending` when it still
    *  runs (poll the progress id for `video.state`); `sourceVideoError` when
    *  it failed (client-safe text). */
   sourceVideoMediaId?: string;
   sourceVideoExpiresAt?: number;
+  /** The Backend that issued `sourceVideoMediaId` when the export panel stored it (an
+   *  upload or an on-demand fetch); absent = the record's `backendId`, as above. */
+  sourceVideoBackendId?: string;
   sourceVideoHeight?: number;
   sourceVideoContainer?: string;
   sourceVideoBytes?: number;

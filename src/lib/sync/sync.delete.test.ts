@@ -753,3 +753,128 @@ describe("approving a relisted review after an ordinary edit", () => {
     }
   });
 });
+
+// The pin applies only together with the backends list, so a review holding backends back also
+// withheld the peer's pin — yet the raise recorded the dictionary as applied. A dictionary edit
+// made while the review waited then kept the live dictionary (old pin) without asking, the base
+// was adopted and the follow-up push overwrote the peer's pin.
+describe("approving a backends review after a dictionary edit", () => {
+  it("asks instead of dropping the peer's withheld pin", async () => {
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(true);
+      const pinBefore = useApp.getState().settings.quickAddList ?? null;
+      const remote = structuredClone(base);
+      remote.backends = {
+        ...remote.backends!,
+        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
+      };
+      remote.dictionary = { ...remote.dictionary, quickAddList: { backendId: "b1", slug: "peer-list" } };
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["server-url"]);
+      expect(useApp.getState().settings.quickAddList ?? null).toEqual(pinBefore); // withheld
+      // A dictionary edit here while the review waits: a new quick-add chord.
+      const s = useApp.getState().settings;
+      useApp.setState({
+        settings: { ...s, general: { ...s.general, quickAddHotkey: ["ControlLeft", "KeyQ"] } },
+      });
+      const pushesBefore = api.pushes;
+      await approvePendingReview();
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()?.categories).toContain("dictionary");
+      expect(api.pushes).toBe(pushesBefore);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+});
+
+// The approval read its store signature AFTER the compose it is paired with, and a relist kept
+// that signature: an edit landing during the first keyring wait was in the new signature but not
+// in the relisted blob, so the next approval took it as "not edited" and put the peer's value
+// back over it.
+describe("an edit landing during an approval's keyring wait", () => {
+  it("survives the relist and the next approval", async () => {
+    let release: (v: Record<string, string>) => void = () => {};
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(false);
+      const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+      const remote = structuredClone(base);
+      remote.backends = {
+        ...remote.backends!,
+        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
+      };
+      remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      setServerAddressesGate(true);
+      // Park only the approval's FIRST keyring read; edit general while it waits.
+      api.readCalled = false;
+      api.park = new Promise((r) => (release = r));
+      const approving = approvePendingReview();
+      await vi.waitFor(() => expect(api.readCalled).toBe(true));
+      api.park = null;
+      const s = useApp.getState().settings;
+      const mine = !s.general.startMinimized;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      release({ b1: "sk-secret" });
+      await approving;
+      expect(getPendingReview()?.relisted).toBe(true);
+      await approvePendingReview();
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      const st = useApp.getState();
+      expect(st.settings.general.startMinimized).toBe(mine);
+      expect(st.settings.general.typeAsISpeak).toBe(peerTyping);
+    } finally {
+      release({ b1: "sk-secret" });
+      api.park = null;
+      api.keys = null;
+      api.pulled = null;
+      api.conflicts = [];
+    }
+  });
+  // The signature is now read first: the same edit is then in the compose only, and an approval
+  // that applies straight away must keep it rather than take the category as "not edited".
+  it("survives an approval that applies straight away", async () => {
+    let release: (v: Record<string, string>) => void = () => {};
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(true);
+      const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+      const remote = structuredClone(base);
+      remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      api.readCalled = false;
+      api.park = new Promise((r) => (release = r));
+      const approving = approvePendingReview();
+      await vi.waitFor(() => expect(api.readCalled).toBe(true));
+      api.park = null;
+      const s = useApp.getState().settings;
+      const mine = !s.general.startMinimized;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      release({ b1: "sk-secret" });
+      await approving;
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      const st = useApp.getState();
+      expect(st.settings.general.startMinimized).toBe(mine);
+      expect(st.settings.general.typeAsISpeak).toBe(peerTyping);
+      expect(st.settings.transcribe?.dictationRetentionDays).toBe(1);
+    } finally {
+      release({ b1: "sk-secret" });
+      api.park = null;
+      api.keys = null;
+      api.pulled = null;
+      api.conflicts = [];
+    }
+  });
+});
