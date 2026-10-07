@@ -539,46 +539,53 @@ pub async fn save_transcript_media(
 /// Storage readout for the Recording & history tab: per-type counts and
 /// sizes. `audio_base` is the settings' base-folder preference (None =
 /// default), same contract as `audio_dir_path`.
+/// async + spawn_blocking: it stats every entry of the media and recordings folders under a
+/// user-picked base (possibly a slow or offline network share), and a sync command would freeze
+/// every window for the scan. Read-only and lock-free, so it is safe beside saves and sweeps.
 #[tauri::command]
-pub fn transcript_store_stats(
+pub async fn transcript_store_stats(
     app: AppHandle,
     audio_base: Option<String>,
 ) -> Result<serde_json::Value, String> {
-    fn count_json(dir: &Path) -> u32 {
-        std::fs::read_dir(dir)
-            .map(|e| {
-                e.flatten()
-                    .filter(|x| x.path().extension().and_then(|s| s.to_str()) == Some("json"))
-                    .count() as u32
+    tauri::async_runtime::spawn_blocking(move || -> Result<serde_json::Value, String> {
+        fn count_json(dir: &Path) -> u32 {
+            std::fs::read_dir(dir)
+                .map(|e| {
+                    e.flatten()
+                        .filter(|x| x.path().extension().and_then(|s| s.to_str()) == Some("json"))
+                        .count() as u32
+                })
+                .unwrap_or(0)
+        }
+        let [files, links, video] = all_media_dirs(&app, audio_base.clone())?;
+        let (file_bytes, file_files) = owned_dir_bytes(&files, is_own_media);
+        let (link_bytes, link_files) = owned_dir_bytes(&links, is_own_media);
+        let (video_bytes, video_files) = owned_dir_bytes(&video, is_own_media);
+        let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
+            .map(|d| {
+                owned_dir_bytes(&d, |p| {
+                    p.file_name()
+                        .and_then(|n| n.to_str())
+                        .map(crate::audio::is_dictation_file)
+                        .unwrap_or(false)
+                })
             })
-            .unwrap_or(0)
-    }
-    let [files, links, video] = all_media_dirs(&app, audio_base.clone())?;
-    let (file_bytes, file_files) = owned_dir_bytes(&files, is_own_media);
-    let (link_bytes, link_files) = owned_dir_bytes(&links, is_own_media);
-    let (video_bytes, video_files) = owned_dir_bytes(&video, is_own_media);
-    let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
-        .map(|d| {
-            owned_dir_bytes(&d, |p| {
-                p.file_name()
-                    .and_then(|n| n.to_str())
-                    .map(crate::audio::is_dictation_file)
-                    .unwrap_or(false)
-            })
-        })
-        .unwrap_or((0, 0));
-    Ok(serde_json::json!({
-        "dictationCount": count_json(&dictations_dir(&app)?),
-        "fileCount": count_json(&transcripts_dir(&app)?),
-        "fileMediaBytes": file_bytes,
-        "fileMediaFiles": file_files,
-        "linkMediaBytes": link_bytes,
-        "linkMediaFiles": link_files,
-        "videoMediaBytes": video_bytes,
-        "videoMediaFiles": video_files,
-        "recordingsBytes": rec_bytes,
-        "recordingsFiles": rec_files,
-    }))
+            .unwrap_or((0, 0));
+        Ok(serde_json::json!({
+            "dictationCount": count_json(&dictations_dir(&app)?),
+            "fileCount": count_json(&transcripts_dir(&app)?),
+            "fileMediaBytes": file_bytes,
+            "fileMediaFiles": file_files,
+            "linkMediaBytes": link_bytes,
+            "linkMediaFiles": link_files,
+            "videoMediaBytes": video_bytes,
+            "videoMediaFiles": video_files,
+            "recordingsBytes": rec_bytes,
+            "recordingsFiles": rec_files,
+        }))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// "Delete all dictations now": every stored session record AND every app-owned

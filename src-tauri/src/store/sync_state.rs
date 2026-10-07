@@ -49,8 +49,11 @@ pub struct DeviceInfo {
 }
 
 /// Best-effort hostname: env vars first (COMPUTERNAME is always set on
-/// Windows; HOSTNAME only in some shells), then /etc/hostname (Linux).
-/// Falls back to a generic label — it's display metadata, not identity.
+/// Windows; HOSTNAME only in some shells), then /etc/hostname, then the
+/// kernel's /proc/sys/kernel/hostname (Linux; /etc/hostname is absent on
+/// some systemd-hostnamed / immutable setups). Falls back to "unknown device"
+/// (never "this device" — other machines render this label, where that would
+/// read as the viewer's own machine). Display metadata, not identity.
 fn hostname() -> String {
     for var in ["COMPUTERNAME", "HOSTNAME"] {
         if let Ok(v) = std::env::var(var) {
@@ -66,7 +69,14 @@ fn hostname() -> String {
             return text;
         }
     }
-    "this device".into()
+    #[cfg(target_os = "linux")]
+    if let Ok(text) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
+        let text = text.trim().to_string();
+        if !text.is_empty() {
+            return text;
+        }
+    }
+    "unknown device".into()
 }
 
 /// Return (creating + persisting on first call) this machine's device id, plus
@@ -118,5 +128,16 @@ mod tests {
         let saved = load(&dir).expect("the state is an object again");
         assert_eq!(saved["deviceId"], a);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_hostname_label_never_claims_to_be_the_viewers_machine() {
+        // Other machines render this as "Last synced from <label>" — "this device" there would
+        // point at the machine doing the looking. Linux always has the kernel hostname.
+        let name = hostname();
+        assert!(!name.is_empty());
+        assert_ne!(name, "this device");
+        #[cfg(target_os = "linux")]
+        assert_ne!(name, "unknown device");
     }
 }
