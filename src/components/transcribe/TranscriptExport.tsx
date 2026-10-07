@@ -32,7 +32,7 @@ import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { trackTone } from "@/lib/sourceTone";
 import {
-  TRACK_TITLE_MAX, cleanTrackTitle, planTracks, sourceWord, trackChipLabel, trackCode, trackInfo,
+  TRACK_TITLE_MAX, planTracks, sourceWord, trackChipLabel, trackCode, trackInfo,
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
@@ -126,6 +126,8 @@ export function TranscriptExport({
    *  only while its own record still shows. */
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
+  /** The record whose Save is running (dialog to last file); null = none. */
+  const exportingFor = useRef<typeof owner | null>(null);
   // One job slot PER record: another record's progress events never overwrite this one's.
   const [mediaJobs, setMediaJobs] = useState<Record<string, MediaExportProgress>>({});
   /** Set this record's job; null clears this record's only. */
@@ -271,13 +273,19 @@ export function TranscriptExport({
    *  ALWAYS the original — buildCues skips the original's split when it is
    *  absent under own timing, and the summary counts the original's cues. */
   const gridTracks = useMemo(() => ["orig", ...effTracks.filter((t) => t !== "orig")], [effTracks]);
+  // Only what the cue split reads (cues, renames, speaker names): colours, timestamps, word
+  // timing and SRT↔VTT toggles must not re-split the whole transcript for identical cues.
+  const gridOpts = useMemo(
+    (): ExportOptions => ({ format: "srt", cues: cueOpts, renames: fileRenames, speakerNames: showNames }),
+    [cueOpts, fileRenames, showNames],
+  );
   /** One cue split shared by the summary, the reading-speed scan and the
    *  preview, rather than each re-splitting the whole transcript. Cue
    *  splitting does not depend on srt vs vtt. Null unless a subtitle format
    *  shows in an open panel. */
   const subGrid = useMemo(
-    () => (open && subs ? cueGrid(editedResult, { ...exportOptions, format: "srt" }, gridTracks) : null),
-    [open, subs, editedResult, exportOptions, gridTracks],
+    () => (open && subs ? cueGrid(editedResult, gridOpts, gridTracks) : null),
+    [open, subs, editedResult, gridOpts, gridTracks],
   );
   /** Reading-speed scan over every cue the file carries — memoized so the
    *  summary in JSX doesn't re-walk the transcript at playhead cadence. */
@@ -313,8 +321,10 @@ export function TranscriptExport({
     hasVideoSource, copyExt]);
   const videoPlan = plan.primary.kind === "video";
   /** The server muxes at most this many subtitle tracks into one video; more fails only
-   *  after the save dialog, writing nothing (sidecar mode embeds none). */
-  const embedCap = trCaps?.media_package?.max_tracks ?? 12;
+   *  after the save dialog, writing nothing (sidecar mode embeds none). Never above 12:
+   *  the desktop shell's own media::MAX_TRACKS — package_media refuses more, whatever
+   *  the server advertises. */
+  const embedCap = Math.min(trCaps?.media_package?.max_tracks ?? 12, 12);
   const tooManyEmbedded = plan.embedded.length > embedCap;
   /** The sidecar files' names, one per video track (null = the tracks ride inside only). */
   const sideNames = useMemo(
@@ -381,6 +391,8 @@ export function TranscriptExport({
     let src = localAudio;
     if (!src && serverAudioId && !trBackend) throw new Error("No backend is selected.");
     if (!src && serverAudioId && rec && trBackend) {
+      // The id actually sent: a re-run may stamp a newer one meanwhile.
+      const sentId = serverAudioId;
       setMediaJob({ jobId: "", phase: "fetching-audio", done: 0, total: null });
       try {
         src = await fetchUrlMedia({
@@ -398,6 +410,16 @@ export function TranscriptExport({
         // The viewer's queue row too (as a run's own copy does), but only while it
         // still shows this record — a re-run of the link may own the row by now.
         if (useTranscribeRun.getState().openRecordId === rec.id) patchItem(path, { mediaPath: got });
+      } else {
+        // Nothing back = the server lost the file (a restart): forget the id, as the
+        // video's "expired" does, so the panel stops offering a save that can only fail.
+        patchRecord(rec.id, (r) => {
+          if (r.result?.sourceMediaId !== sentId) return r;
+          const res = { ...r.result };
+          delete res.sourceMediaId; delete res.sourceMediaExpiresAt;
+          return { ...r, result: res };
+        });
+        throw new Error("The server no longer has this link's audio.");
       }
     }
     if (!src) throw new Error("No audio is stored for this transcription.");
@@ -583,11 +605,22 @@ export function TranscriptExport({
 
   const doExport = async () => {
     // Over the embedded-track cap the server refuses the request after the save dialog:
-    // no path (the Save button, the "Save as MKV" retry) may get that far.
-    if (tooManyEmbedded) return;
+    // no path (the Save button, the "Save as MKV" retry) may get that far. Nor a second
+    // click while this record's Save is still running (a double-click opened two dialogs
+    // and could queue the same video twice) — keyed by record, since another record's
+    // Save must still work (and queue) while a long video export of this one runs.
+    if (tooManyEmbedded || exportingFor.current === owner) return;
+    exportingFor.current = owner;
     // The panel stays mounted across records: what this Save reports after an await
     // lands only while its record still shows.
     const started = owner;
+    try {
+      await runExport(started);
+    } finally {
+      if (exportingFor.current === started) exportingFor.current = null;
+    }
+  };
+  const runExport = async (started: typeof owner) => {
     const mine = () => ownerRef.current === started;
     // Another record on screen by then: its failure would land nowhere, so it goes to
     // the app's banner, naming the record (taken now, before the awaits).
@@ -838,10 +871,11 @@ export function TranscriptExport({
 
   // Track names (D89): what each track is called inside the video, its
   // sidecar's name and its flags. Only with a video.
+  // planTracks already read the name own-only and cleaned it (blank = the default), so a
+  // title off its default IS a rename.
+  const renamed = (t: (typeof planned)[number]) => t.title !== t.defaultTitle;
   // Read own-only (as planTracks does): a track id like "constructor" must not find a
   // function off Object.prototype, nor a hand-edited non-string name reach the input.
-  const renamed = (t: (typeof planned)[number]) =>
-    !!cleanTrackTitle(ownProp(trackNames, t.id)) && t.title !== t.defaultTitle;
   const nameValue = (t: (typeof planned)[number]) => {
     const raw = ownProp(trackNames, t.id);
     return typeof raw === "string" ? raw : t.defaultTitle;

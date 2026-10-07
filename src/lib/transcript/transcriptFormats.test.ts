@@ -851,8 +851,30 @@ describe("exportOptionsFor (the panel's and History's one builder)", () => {
     });
     expect(o).toEqual({
       format: "srt", renames: { SPEAKER_00: "Ann" }, speakerColors: "line", speakerNames: false, timestamps: true,
-      colors: { SPEAKER_01: DEFAULT_SPEAKER_COLORS[3] }, wordTimestamps: true, cues: undefined, tracks: ["orig", "en"],
+      colors: { SPEAKER_00: DEFAULT_SPEAKER_COLORS[0], SPEAKER_01: DEFAULT_SPEAKER_COLORS[3] }, wordTimestamps: true, cues: undefined, tracks: ["orig", "en"],
     });
+  });
+  it("unpicked speakers keep the viewer's colour after an edit changes first appearance", () => {
+    // An import carries no `speakers` list, so the fallback order is first appearance.
+    const original: BatchResult = {
+      text: "x", language: "en",
+      segments: [
+        { start: 0, end: 1, text: "One.", speaker: "A" },
+        { start: 1, end: 2, text: "Two.", speaker: "B" },
+      ],
+    };
+    const o = exportOptionsFor({
+      format: "srt", speakers: speakerOrder(original), renames: {}, colorPicks: {},
+      toggles: { showTs: false, showNames: false, colorize: true, wordTs: false }, cues: undefined,
+    });
+    const edited: BatchResult = {
+      ...original,
+      segments: (original.segments ?? []).map((s, i) => (i === 0 ? { ...s, speaker: "B" } : s)),
+    };
+    const out = generateExport(edited, o);
+    expect(speakerHex(speakerOrder(original), {}, "B")).toBe(DEFAULT_SPEAKER_COLORS[1]);
+    expect(out).toContain(DEFAULT_SPEAKER_COLORS[1]);
+    expect(out).not.toContain(DEFAULT_SPEAKER_COLORS[0]);
   });
   it("no speakers → no colour mode; no tracks → the original only", () => {
     const o = exportOptionsFor({ format: "txt", speakers: [], renames: {}, colorPicks: {}, toggles, cues: undefined, tracks: [] });

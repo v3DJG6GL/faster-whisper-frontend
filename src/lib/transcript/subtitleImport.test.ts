@@ -257,6 +257,10 @@ describe("site subtitle cleanup", () => {
     expect(dedupeRollingCues(cues)).toEqual(cues);
     expect(fixBroadcasterText(["E-", "Mail an a b"])).toEqual(["E-", "Mail an a b"]);
   });
+  it("a run of one-letter words is text, not letter-spaced emphasis", () => {
+    expect(fixBroadcasterText(["Il y a à boire"])).toEqual(["Il y a à boire"]);
+    expect(fixBroadcasterText(["m i t"])).toEqual(["mit"]);
+  });
   it("decoded references and JSON escapes cannot smuggle control or bidi characters", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\n&#x202E;abc &#27;x\n";
     expect(parseImportedText("srt", srt).segments[0].text).toBe("abc x");

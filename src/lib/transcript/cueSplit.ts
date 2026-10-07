@@ -204,6 +204,9 @@ interface Tok {
   to: number;
   s: number;
   e: number;
+  /** Cached breakScore of the gap before this token — it depends only on the two
+   *  adjacent tokens, which every recursion level of splitTokens shares. */
+  bs?: number;
 }
 
 /** Word timings mapped onto char spans of `text`; null when the words don't
@@ -248,8 +251,9 @@ const MIXED_TOKEN = new RegExp(
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
 /** One code point of whitespace-free text with the opening brackets before it and the
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
- *  piece or line ends on 「 or starts with 」 or 。. */
-const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]*\\S[${CLOSE_PUNCT}]*`, "gu");
+ *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors
+ *  and ZWJ sequences ride with their base (a Thai tone mark never opens a line). */
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]*\\S(?:[\\p{M}\\u200d]|(?<=\\u200d)\\S)*[${CLOSE_PUNCT}]*`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 
 /** Evenly spread token times over [a, b] by character share — for text that
@@ -291,7 +295,10 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
   for (let i = 1; i < ts.length; i++) {
     if (ts.length >= 4 && (i < 2 || ts.length - i < 2)) continue; // no one-word side
     const gap = ts[i].s - ts[i - 1].e;
-    let s = breakScore(text.slice(ts[i - 1].from, ts[i - 1].to).trim(), text.slice(ts[i].from, ts[i].to).trim());
+    let s = (ts[i].bs ??= breakScore(
+      text.slice(ts[i - 1].from, ts[i - 1].to).trim(),
+      text.slice(ts[i].from, ts[i].to).trim(),
+    ));
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
     // Both sides read by index: slicing the token array per candidate made every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
@@ -367,6 +374,8 @@ export function cutByShare(text: string, shares: number[]): string[] {
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
+    // Never between a base and its combining mark, nor inside a ZWJ sequence.
+    if (/[\p{M}\u200d]/u.test(text[i]) || text[i - 1] === "\u200d") continue;
     if (
       spaced
         ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && (UNSPACED.test(text[i]) || OPENER.test(text[i])))

@@ -368,6 +368,33 @@ describe("wrapLines", () => {
   });
 });
 
+/** Unspaced Thai with tone marks and vowel signs (combining marks, \p{M}). */
+const THAI = "วันนี้อากาศดีมากและฉันอยากไปเที่ยวทะเลกับเพื่อนๆที่น่ารักมากที่สุดในโลกนี้";
+
+describe("combining marks stay with their base", () => {
+  it("wrapLines never opens a line with a combining mark", () => {
+    for (let cpl = 28; cpl <= 60; cpl++) {
+      const lines = wrapLines(THAI, cpl, 2);
+      expect(lines.join("")).toBe(THAI);
+      expect(lines.every((l) => !/^\p{M}/u.test(l))).toBe(true);
+    }
+  });
+  it("cutByShare never cuts before a combining mark or inside a ZWJ sequence", () => {
+    const parts = cutByShare(THAI, [10, 10, 10]);
+    expect(parts.join("")).toBe(THAI);
+    expect(parts.every((p) => !/^\p{M}/u.test(p))).toBe(true);
+    for (let k = 1; k < 20; k++) {
+      expect(cutByShare(THAI, [k, 20 - k]).every((p) => !/^\p{M}/u.test(p))).toBe(true);
+    }
+    const family = "今日👨\u200d👩\u200d👧楽しい";
+    for (let k = 1; k < 10; k++) {
+      const p = cutByShare(family, [k, 10 - k]);
+      expect(p.join("")).toBe(family);
+      expect(p.every((x) => !x.startsWith("\u200d") && !x.endsWith("\u200d"))).toBe(true);
+    }
+  });
+});
+
 describe("cutByShare", () => {
   it("prefers punctuation near the share target", () => {
     expect(cutByShare("Erstens das hier, zweitens das dort.", [1, 1])).toEqual(["Erstens das hier,", "zweitens das dort."]);

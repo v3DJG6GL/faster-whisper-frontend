@@ -147,8 +147,13 @@ export function exportOptionsFor(a: {
     speakerColors: a.speakers.length && a.toggles.colorize ? "line" : "off",
     speakerNames: a.toggles.showNames,
     timestamps: a.toggles.showTs,
+    // Every known speaker gets its hex resolved against the ORIGINAL order (what the
+    // viewer's chips use) — an edit that changes first appearance must not recolour.
     colors: Object.fromEntries(
-      Object.keys(a.colorPicks).map((l) => [l, speakerHex(a.speakers, a.colorPicks, l)]),
+      [...new Set([...a.speakers, ...Object.keys(a.colorPicks)])].map((l) => [
+        l,
+        speakerHex(a.speakers, a.colorPicks, l),
+      ]),
     ),
     wordTimestamps: a.toggles.wordTs,
     cues: a.cues,

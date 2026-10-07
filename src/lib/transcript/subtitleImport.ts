@@ -151,6 +151,9 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
 const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
 /** Three or more single cased letters spaced apart ("m i t") — broadcaster emphasis. */
 const LETTER_SPACED = /(?<![\p{L}\p{N}])(?:[\p{Lu}\p{Ll}] ){2,}[\p{Lu}\p{Ll}](?![\p{L}\p{N}])/gu;
+/** Letters that are words on their own ("Il y a à boire"): a run made only of
+ *  these is ordinary text, not emphasis, and must not be glued together. */
+const ONE_LETTER_WORD = /^[aàáeéèioóuyAÀÁEÉÈIOÓUY]$/u;
 
 /** Broadcaster subtitles (SRF and friends) hyphenate words across lines ("journa-" /
  *  "listische") and letter-space emphasis ("m i t"). Rejoin both so the text reads — and
@@ -166,7 +169,11 @@ export function fixBroadcasterText(lines: string[]): string[] {
       out.push(line);
     }
   }
-  return out.map((l) => l.replace(LETTER_SPACED, (m) => m.replace(/ /g, "")));
+  return out.map((l) =>
+    l.replace(LETTER_SPACED, (m) =>
+      m.split(" ").every((c) => ONE_LETTER_WORD.test(c)) ? m : m.replace(/ /g, ""),
+    ),
+  );
 }
 
 /** The "start --> end [settings]" line of an SRT/VTT cue. */

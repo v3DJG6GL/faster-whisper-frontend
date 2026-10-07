@@ -64,6 +64,20 @@ describe("presets (v18, v31, v32)", () => {
     expect(v.rows[0].badges[1].tentative).toBe(true);
     expect(v.run).toEqual({ fetch: ["de-CH"], transcriptTrackId: null, mtTargets: ["en", "fr"] });
   });
+  it("an unknown spoken language: a track shown twice (candidate + its own row) switches off from either badge", () => {
+    const inp = input({ spoken: null, tracks: YT });
+    const st0 = initialSiteState(inp.targets);
+    const states = (i: SiteSubsInput, st: SiteSubsState, key: string) =>
+      derive(i, st).rows.flatMap((r) => r.badges).filter((b) => b.key === key).map((b) => b.state);
+    expect(states(inp, st0, "cand:de-CH")).toEqual(["active"]);
+    expect(states(inp, st0, "ex:de-CH")).toEqual(["active"]);
+    for (const key of ["cand:de-CH", "ex:de-CH"]) {
+      const [i1, st1] = apply(inp, flip(inp, st0, key));
+      expect(derive(i1, st1).run!.fetch).not.toContain("de-CH");
+      expect(states(i1, st1, "cand:de-CH")).toEqual(["off"]);
+      expect(states(i1, st1, "ex:de-CH")).toEqual(["off"]);
+    }
+  });
 });
 
 describe("badge clicks (v25, v27, v28)", () => {
