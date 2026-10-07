@@ -119,7 +119,9 @@ pub fn wav_header(data_len: u32, sample_rate: u32, channels: u16) -> [u8; 44] {
     h
 }
 
-/// Wrap interleaved 16-bit little-endian PCM in a minimal WAV container.
+/// Wrap interleaved 16-bit little-endian PCM in a minimal WAV container (a copy; the reference
+/// the tests check the copy-free paths against).
+#[cfg(test)]
 pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     let mut wav = Vec::with_capacity(44 + pcm.len());
     wav.extend_from_slice(&wav_header(pcm.len() as u32, sample_rate, channels));
@@ -127,9 +129,19 @@ pub fn wav_from_pcm16(pcm: &[u8], sample_rate: u32, channels: u16) -> Vec<u8> {
     wav
 }
 
+/// Turn interleaved 16-bit little-endian PCM into a WAV in place: the buffer grows by its 44-byte
+/// header instead of being copied, so a long clip is never held twice.
+pub fn into_wav_pcm16(pcm: Vec<u8>, sample_rate: u32, channels: u16) -> Vec<u8> {
+    let header = wav_header(pcm.len() as u32, sample_rate, channels);
+    let mut wav = pcm;
+    wav.splice(0..0, header);
+    wav
+}
+
 /// Ceiling on one session's in-memory recording: 4 h of 16 kHz mono s16le (32,000 B/s). A
-/// forgotten hands-free session otherwise grows its buffer without bound (~115 MB/h), and the WAV
-/// wrap copies it once more at save time. Shared by the batch buffer and the streaming saved copy.
+/// forgotten hands-free session otherwise grows its buffer without bound (~115 MB/h). Neither
+/// output copies it: the save writes header and PCM separately, and the batch POST grows the buffer
+/// in place by its 44-byte header. Shared by the batch buffer and the streaming saved copy.
 pub const MAX_RECORD_PCM_BYTES: usize = 4 * 60 * 60 * 32_000;
 
 /// Append PCM to a recording buffer without ever passing MAX_RECORD_PCM_BYTES. Returns false when
@@ -607,6 +619,18 @@ mod retention_tests {
         assert_eq!(&full[..44], &wav_header(n as u32, 44_100, 2)[..]);
         assert_eq!(&full[..4], b"RIFF");
         assert_eq!(&full[36..40], b"data");
+    }
+
+    /// The batch POST's in-place wrap must be byte-identical to the copying wrapper.
+    #[test]
+    fn in_place_wav_matches_the_full_wrapper() {
+        let pcm: Vec<u8> = (0..2000u32).map(|i| (i % 251) as u8).collect();
+        let reference = wav_from_pcm16(&pcm, 16_000, 1);
+        assert_eq!(into_wav_pcm16(pcm, 16_000, 1), reference);
+        assert_eq!(
+            into_wav_pcm16(Vec::new(), 16_000, 1),
+            wav_from_pcm16(&[], 16_000, 1)
+        );
     }
 
     /// The saved `.wav` goes out as header + PCM in two writes; the file must be byte-identical

@@ -134,13 +134,16 @@ pub fn cleanup_for_exit(app: &AppHandle) {
     // The drops above only ENQUEUED the unmute on the worker; wait (bounded) for it to actually run
     // before the process terminates, so quitting mid-dictation can't leave other apps muted.
     // The exit path runs this up to three times (the quit handler, then RunEvent::ExitRequested and
-    // RunEvent::Exit), but only one pass can take a session: flush once, plus again whenever a pass
-    // actually dropped one. Otherwise a wedged sound server (untimed pactl/wpctl on the worker)
-    // costs the full 2 s timeout on the main thread on every pass.
-    static EXIT_FLUSHED: AtomicBool = AtomicBool::new(false);
-    let first = !EXIT_FLUSHED.swap(true, Ordering::SeqCst);
-    if dropped || first {
-        flush_mute_worker(std::time::Duration::from_secs(2));
+    // RunEvent::Exit). A healthy worker is flushed on every pass (microseconds), which also catches
+    // the late Unmute of a stop_stream/stop_record already in flight (it took the session out of
+    // state before us and enqueues only after its capture join). A timed-out flush latches, so a
+    // wedged sound server (untimed pactl/wpctl on the worker) costs its 2 s only once, plus once per
+    // pass that actually dropped a session.
+    static EXIT_FLUSH_WEDGED: AtomicBool = AtomicBool::new(false);
+    if (dropped || !EXIT_FLUSH_WEDGED.load(Ordering::SeqCst))
+        && !flush_mute_worker(std::time::Duration::from_secs(2))
+    {
+        EXIT_FLUSH_WEDGED.store(true, Ordering::SeqCst);
     }
     // The remote-paste clipboard owner holds the last transcript DELAY-RENDERED: destroying its
     // window makes Windows ask it to render everything it still owes, so the text stays pasteable
@@ -1061,9 +1064,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         emit_if_active(&app, epoch, "stream://status", "closed");
         return;
     }
-    let wav = crate::audio::wav_from_pcm16(&pcm, 16_000, 1);
-    // Not read again: free it rather than hold a second copy of the clip across the POST.
-    drop(pcm);
+    // Wrapped in place (the buffer grows by the header), so the clip is never held twice across
+    // the POST.
+    let wav = crate::audio::into_wav_pcm16(pcm, 16_000, 1);
     match batch::transcribe_wav_bytes(
         &params.server_url,
         params.api_key.as_deref(),
@@ -1274,12 +1277,10 @@ fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {
 /// Block (up to `timeout`) until the worker has drained every queued command — used on app exit so a
 /// just-enqueued Unmute's blocking pactl/wpctl restore actually completes before the process dies
 /// (AppHandle::exit skips destructors and the worker is detached / never joined). Bounded so a wedged
-/// audio socket can't hang the quit.
-fn flush_mute_worker(timeout: std::time::Duration) {
+/// audio socket can't hang the quit. False when the worker did not answer in time.
+fn flush_mute_worker(timeout: std::time::Duration) -> bool {
     let (tx, rx) = std::sync::mpsc::channel();
-    if mute_worker().send(MuteCmd::Flush(tx)).is_ok() {
-        let _ = rx.recv_timeout(timeout);
-    }
+    mute_worker().send(MuteCmd::Flush(tx)).is_err() || rx.recv_timeout(timeout).is_ok()
 }
 
 struct SystemMuteGuard {

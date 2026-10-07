@@ -122,17 +122,22 @@ pub fn start_level_meter(
     // run() reports Ok once the stream plays; every Err it returns comes before that, so the
     // channel carries exactly one message and the one-slot buffer never blocks the sender.
     let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
-    let (app_ev, stop_ev) = (app.clone(), stop.clone());
+    // Raised by the starter once OPEN_WAIT ran out, before its last look at the channel.
+    let gave_up = Arc::new(AtomicBool::new(false));
+    let (app_ev, stop_ev, gave_up_t) = (app.clone(), stop.clone(), gave_up.clone());
     let join = std::thread::Builder::new()
         .name("mic-capture".into())
         .spawn(move || {
             if let Err(e) = run(app, device_id, stop_thread, clip, &ready_tx) {
                 tracing::warn!("[audio] capture ended: {e}");
-                // The send fails only when the starter stopped waiting after OPEN_WAIT and already
-                // resolved Ok, so nothing else would tell the Settings test it is over. Skip it on a
-                // user stop/replacement and on the lost-at-open path (both raise `stop`; the latter
+                // The send fails, or lands with `gave_up` raised, only when the starter stopped
+                // waiting after OPEN_WAIT, so it may already have resolved Ok and nothing else would
+                // tell the Settings test it is over (a doubled signal is harmless). Skip it on a user
+                // stop/replacement and on the lost-at-open path (both raise `stop`; the latter
                 // already emitted).
-                if ready_tx.send(Err(e)).is_err() && !stop_ev.load(Ordering::SeqCst) {
+                if (ready_tx.send(Err(e)).is_err() || gave_up_t.load(Ordering::SeqCst))
+                    && !stop_ev.load(Ordering::SeqCst)
+                {
                     let _ = app_ev.emit("audio://test-ended", "open-failed");
                 }
             }
@@ -142,14 +147,26 @@ pub fn start_level_meter(
         stop,
         join: Some(join),
     };
-    // Playing, still opening after OPEN_WAIT, or gone (Drop joins it): hand the handle back.
-    if let Ok(Err(e)) = ready_rx.recv_timeout(OPEN_WAIT) {
+    let failed = match ready_rx.recv_timeout(OPEN_WAIT) {
+        Ok(Err(e)) => Some(e),
+        // Raise `gave_up` first: a failure sent after this look is then emitted by the thread.
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            gave_up.store(true, Ordering::SeqCst);
+            match ready_rx.try_recv() {
+                Ok(Err(e)) => Some(e),
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+    if let Some(e) = failed {
         // The open failed and the thread is on its way out; join it before reporting.
         if let Some(j) = handle.join.take() {
             let _ = j.join();
         }
         return Err(e);
     }
+    // Playing, still opening after OPEN_WAIT, or gone (Drop joins it): hand the handle back.
     Ok(handle)
 }
 
