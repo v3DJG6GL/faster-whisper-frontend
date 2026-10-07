@@ -649,6 +649,14 @@ pub(crate) mod win_seed {
             return None;
         }
         let mut cb = arboard::Clipboard::new().ok()?;
+        // A paste dictated just before the chord may still have its 400ms restore pending
+        // (`inject::RestoreSlot`). Left alone it would fire mid-grab — faking the copy's
+        // sequence bump — and our own restore below would then write the transcript back over
+        // it. Land it NOW, like both paste paths do: `prev` becomes the user's real clipboard,
+        // and `seq0` is read after this write.
+        if let Some(p) = crate::inject::take_pending_restore() {
+            let _ = crate::inject::set_text_ext(&mut cb, &p, true, false);
+        }
         let prev = cb.get_text().ok(); // None = empty or non-text (image/files)
         #[cfg(windows)]
         let seq0 = clipboard_seq();

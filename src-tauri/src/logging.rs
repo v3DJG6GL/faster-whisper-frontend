@@ -366,39 +366,31 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
     });
 }
 
-/// The previous `apply_log_settings` call's "reset nobody has saved over" state. `save_config`
-/// writes `config.json` BEFORE calling in, so this is the state the save started from.
-static UNCONFIRMED_BEFORE: AtomicBool = AtomicBool::new(false);
-
 /// The pruning-hold line is logged once per session: `apply_log_settings` runs on every save.
 static LOGGED_PRUNE_HOLD: AtomicBool = AtomicBool::new(false);
 
-/// Whether log pruning waits — the same hold as the retention sweeps: the config is a reset
-/// nobody has saved over (this session's, or an earlier launch's), or this call is the save
-/// made over one. The defaults' `keep_days` would otherwise delete logs the user's real
-/// (backed-up or unreadable) settings kept — the very logs that explain the reset.
-fn pruning_held(app: &AppHandle) -> bool {
-    // (`reset_this_session` is sticky, so folding it into the swapped flag changes nothing.)
-    let held = app
-        .path()
-        .app_config_dir()
-        .is_ok_and(|dir| crate::config::retention_held(&dir));
-    let before = UNCONFIRMED_BEFORE.swap(held, Ordering::SeqCst);
-    crate::config::reset_this_session() || held || before
-}
-
 /// Config-save side effect (also run once in setup, after the config load): reload the level,
-/// move the session file if the folder changed, and prune old files (unless `pruning_held`).
-pub fn apply_log_settings(app: &AppHandle, config: &Config) {
+/// move the session file if the folder changed, and prune old files unless `held`: a reset
+/// nobody has saved over (`config::retention_held`), as the caller computed before any write —
+/// the same hold as the retention sweeps. The defaults' `keep_days` would otherwise delete logs
+/// the user's real (backed-up or unreadable) settings kept — the very logs that explain the reset.
+pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
     apply_log_level(config.settings.logging.log_level);
     let Some(dir) = log_dir(app, config) else {
         return;
     };
-    let prune = !pruning_held(app);
+    let prune = !held;
     if !prune && !LOGGED_PRUNE_HOLD.swap(true, Ordering::SeqCst) {
-        tracing::info!(
-            "[logging] settings were reset; log pruning skipped (held until a save after the reset)"
-        );
+        // A reset at this launch holds pruning for the whole session, saved over or not.
+        if crate::config::reset_this_session() {
+            tracing::info!(
+                "[logging] settings were reset at this launch; log pruning skipped for the rest of this session"
+            );
+        } else {
+            tracing::info!(
+                "[logging] settings were reset; log pruning skipped until the settings are saved"
+            );
+        }
     }
     let writer = app.state::<SwapWriter>();
     let ring = app.state::<LogRing>();

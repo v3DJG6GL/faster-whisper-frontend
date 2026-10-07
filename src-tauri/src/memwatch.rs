@@ -92,8 +92,12 @@ mod imp {
                 peak_mb: peak,
                 warned: false,
             });
+            // VmHWM never sits below Pss_Anon, so a first-seen process over the line would
+            // also trip the peak warning below: one event, one warn line.
+            let mut warned_now = false;
             if anon >= WARN_ANON_MB && !s.warned {
                 s.warned = true;
+                warned_now = true;
                 tracing::warn!(
                     "[mem] {name} (pid {pid}) holds {anon}M private memory — screen {route}"
                 );
@@ -101,9 +105,11 @@ mod imp {
                 s.warned = false;
             }
             if is_new && peak >= WARN_ANON_MB {
-                tracing::warn!(
-                    "[mem] {name} (pid {pid}) peaked at {peak}M since launch — screen {route}"
-                );
+                if !warned_now {
+                    tracing::warn!(
+                        "[mem] {name} (pid {pid}) peaked at {peak}M since launch — screen {route}"
+                    );
+                }
             } else if peak >= s.peak_mb + WARN_PEAK_JUMP_MB {
                 tracing::warn!(
                     "[mem] {name} (pid {pid}) peaked at {peak}M since the last sample (was {}M) — screen {route}",

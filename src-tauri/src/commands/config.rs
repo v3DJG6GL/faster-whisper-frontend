@@ -70,7 +70,7 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     }
     // Log level reload / session-file move / prune — so Settings changes
     // apply live, not at the next restart.
-    crate::logging::apply_log_settings(&app, &config);
+    crate::logging::apply_log_settings(&app, &config, reset);
     // Clipboard privacy is a process-wide switch every transcript write reads (see inject/mod.rs), so
     // it is applied here rather than carried on each insert.
     crate::inject::set_clipboard_privacy(config.settings.general.exclude_from_clipboard_history);

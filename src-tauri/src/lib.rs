@@ -148,7 +148,7 @@ pub fn run() {
             // Apply the saved log level, open this session's log file (ring
             // replayed in, so it's complete from launch), prune old ones (not
             // while `retention_held`), and start the batched log stream for the Logs screen.
-            logging::apply_log_settings(app.handle(), &cfg);
+            logging::apply_log_settings(app.handle(), &cfg, retention_held);
             logging::spawn_emit_pump(app.handle().clone());
             // "Keep dictated text out of clipboard history" — a process-wide switch every
             // transcript write reads; re-applied by save_config.
