@@ -1,12 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
 
 // The runtime flush posts through these; the pure state machine below never touches them.
-const post = vi.hoisted(() => ({ release: [] as (() => void)[], saves: [] as unknown[] }));
+const post = vi.hoisted(() => ({
+  release: [] as (() => void)[],
+  saves: [] as unknown[],
+  // When set, a save stays pending until `saveRelease` runs it out.
+  holdSaves: false,
+  saveRelease: [] as (() => void)[],
+}));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   isTauri: true,
-  saveUsageOutcomes: async (q: unknown) => {
+  saveUsageOutcomes: (q: unknown) => {
     post.saves.push(q);
+    return post.holdSaves ? new Promise<void>((res) => post.saveRelease.push(res)) : Promise.resolve();
   },
   postUsageOutcomes: () => new Promise((res) => post.release.push(() => res({ ok: true, status: 200 }))),
 }));
@@ -46,6 +53,16 @@ describe("usage outcome queue", () => {
     q = enqueue(q, { backendId: "b", serverUrl: "u", outcome: oc(hex(1), { delivery: "none" }) }, 2000);
     expect(q.items).toHaveLength(1);
     expect(q.items[0].outcome.delivery).toBe("none");
+  });
+
+  it("drops an app_id cut mid surrogate pair (serde_json would reject the whole batch)", () => {
+    const cut = "a".repeat(63) + "\u{1F600}".slice(0, 1);
+    let q = enqueue(EMPTY_QUEUE, { backendId: "b", serverUrl: "u", outcome: oc(hex(1), { app_id: cut }) }, 1000);
+    expect(q.items[0].outcome).not.toHaveProperty("app_id");
+    q = enqueue(q, { backendId: "b", serverUrl: "u", outcome: oc(hex(2), { app_id: "chat \u{1F600}" }) }, 1000);
+    expect(q.items[1].outcome.app_id).toBe("chat \u{1F600}");
+    const parsed = parseQueue({ version: 1, items: [{ backendId: "b", serverUrl: "u", outcome: oc(hex(3), { app_id: cut }) }] });
+    expect(parsed.items[0].outcome.app_id).toBeUndefined();
   });
 
   it("batches only due items of one backend + address, in order, up to the ceiling", () => {
@@ -151,6 +168,34 @@ describe("flushOutcomeSave", () => {
       vi.advanceTimersByTime(1000); // and the debounce was consumed
       expect(post.saves).toHaveLength(before + 1);
     } finally {
+      vi.useRealTimers();
+      while (post.release.length) post.release.shift()!();
+    }
+  });
+
+  it("waits for a save the debounce already started", async () => {
+    await flushOutcomeSave();
+    vi.useFakeTimers();
+    post.holdSaves = true;
+    try {
+      const before = post.saves.length;
+      enqueueOutcome("b", "u", oc(hex(3)));
+      vi.advanceTimersByTime(300); // the timer fires; its save is still in flight
+      expect(post.saves).toHaveLength(before + 1);
+      let landed = false;
+      const flushed = flushOutcomeSave().then(() => {
+        landed = true;
+      });
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(landed).toBe(false);
+      expect(post.saves).toHaveLength(before + 1); // awaited, not re-written
+      while (post.saveRelease.length) post.saveRelease.shift()!();
+      await flushed;
+      expect(landed).toBe(true);
+    } finally {
+      post.holdSaves = false;
+      while (post.saveRelease.length) post.saveRelease.shift()!();
       vi.useRealTimers();
       while (post.release.length) post.release.shift()!();
     }

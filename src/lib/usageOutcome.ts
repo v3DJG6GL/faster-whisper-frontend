@@ -51,13 +51,24 @@ export function backoffMs(attempts: number): number {
   return Math.min(MAX_BACKOFF_MS, BASE_BACKOFF_MS * 2 ** (a - 1));
 }
 
+/** A lone UTF-16 surrogate (an app id cut mid-pair) — serde_json rejects it, which would
+ *  fail the post of the whole batch AND every save of the persisted queue. */
+function hasLoneSurrogate(s: string): boolean {
+  return /[\uD800-\uDFFF]/.test(s.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ""));
+}
+
 /** Append (or replace by `job_id` — a session reports exactly once, so a second enqueue
- *  for the same id is a correction, not a duplicate). Oldest items fall off past the cap. */
+ *  for the same id is a correction, not a duplicate). Oldest items fall off past the cap.
+ *  An `app_id` that is not well-formed UTF-16 is dropped so one bad id cannot wedge the batch. */
 export function enqueue(
   q: OutcomeQueue,
   item: { backendId: string; serverUrl: string; outcome: UsageOutcome },
   now: number,
 ): OutcomeQueue {
+  if (item.outcome.app_id !== undefined && hasLoneSurrogate(item.outcome.app_id)) {
+    const { app_id: _bad, ...outcome } = item.outcome;
+    item = { ...item, outcome };
+  }
   const items = q.items.filter((x) => x.outcome.job_id !== item.outcome.job_id);
   items.push({ ...item, queuedAt: now, attempts: 0, nextAt: now });
   return { version: 1, items: items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items };
@@ -154,7 +165,9 @@ export function parseQueue(raw: unknown): OutcomeQueue {
       delivery: o.delivery as UsageOutcome["delivery"],
       translation: o.translation as UsageOutcome["translation"],
     };
-    if (typeof o.app_id === "string" && o.app_id.length > 0 && o.app_id.length <= 64) outcome.app_id = o.app_id;
+    if (typeof o.app_id === "string" && o.app_id.length > 0 && o.app_id.length <= 64 && !hasLoneSurrogate(o.app_id)) {
+      outcome.app_id = o.app_id;
+    }
     const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
     items.push({
       backendId: it.backendId,
@@ -179,7 +192,21 @@ let flushing = false;
 // must not refetch before the outcome it flushes has landed).
 let inflight: Promise<void> | undefined;
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
+// The save the debounce (or a flush) started and that has not settled yet, so the quit
+// handshake can wait for a write the timer began a moment earlier.
+let saveInFlight: Promise<void> | undefined;
 let flushAgain = false;
+
+/** Write the queue now, tracked in `saveInFlight` until it settles; never rejects. */
+function startSave(): Promise<void> {
+  const p: Promise<void> = saveUsageOutcomes(queue)
+    .catch((e) => console.error("usage outcome queue save failed:", e))
+    .finally(() => {
+      if (saveInFlight === p) saveInFlight = undefined;
+    });
+  saveInFlight = p;
+  return p;
+}
 
 /** Debounced persist — an enqueue and the flush that follows it a moment later would
  *  otherwise write the file twice. */
@@ -188,18 +215,18 @@ function persist(): void {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = undefined;
-    void saveUsageOutcomes(queue).catch((e) => console.error("usage outcome queue save failed:", e));
+    void startSave();
   }, 300);
 }
 
-/** Land a pending debounced save now (the quit handshake / session end: a real exit never
- *  fires beforeunload, so the timer would die with the process). Resolves at once when no
- *  save is pending; never rejects. */
+/** Land the debounced save now (the quit handshake / session end: a real exit never fires
+ *  beforeunload, so the timer would die with the process). A pending timer runs at once,
+ *  else an in-flight save is awaited; resolves at once when neither; never rejects. */
 export function flushOutcomeSave(): Promise<void> {
-  if (saveTimer === undefined) return Promise.resolve();
+  if (saveTimer === undefined) return saveInFlight ?? Promise.resolve();
   clearTimeout(saveTimer);
   saveTimer = undefined;
-  return saveUsageOutcomes(queue).catch((e) => console.error("usage outcome queue save failed:", e));
+  return startSave();
 }
 
 /** Load the persisted queue (once) and post whatever is due. */

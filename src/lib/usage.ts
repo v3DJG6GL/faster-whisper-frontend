@@ -35,6 +35,7 @@ import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 const POLL_MS = 30_000; // steady refresh cadence
 const HIDDEN_EVERY = 10; // while the main window is hidden: one pass per 5 minutes
 const AFTER_SESSION_MS = 1_500; // the server records usage in its post-request finally
+const EVICT_DEBOUNCE_MS = 1_000; // a dropped usage key (key rotation / URL override typed per keystroke)
 export const TREND_DAYS = 30; // the Home strip's and the chip's fixed window
 
 let started = false;
@@ -281,6 +282,7 @@ export function initUsageController(): void {
   });
 
   let afterTimer: ReturnType<typeof setTimeout> | undefined;
+  let evictTimer: ReturnType<typeof setTimeout> | undefined;
   useApp.subscribe((state, prev) => {
     // Refetch when the set of backends changes (added / removed / url, key presence or
     // server-type edited). The init-time refreshAll() above covers the first load, so
@@ -294,9 +296,12 @@ export function initUsageController(): void {
       state.backends.some((b) => hasOwn(prev.usage, b.id) && !hasOwn(state.usage, b.id))
     ) {
       // A live backend's cached usage was dropped without bKey moving — an API-key rotation
-      // (forgetBackendCaches) or a URL override (setUrlOverride): refetch it now, not on the
-      // next tick. refreshOne only ever adds keys, so this cannot loop.
-      void refreshAll();
+      // (forgetBackendCaches) or a URL override (setUrlOverride): refetch it soon, not on the
+      // next tick. Debounced: the override field writes on every keystroke, and a pass per
+      // half-typed address would send the key to each of them. refreshOne only ever adds
+      // keys, so this cannot loop.
+      clearTimeout(evictTimer);
+      evictTimer = setTimeout(() => void refreshAll(), EVICT_DEBOUNCE_MS);
     }
     // Refetch shortly after a dictation session ends (idle transition) — the server
     // records usage in its post-request finally, so today's totals just moved. The

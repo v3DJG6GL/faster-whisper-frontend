@@ -146,7 +146,9 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
       title={`Busy ${rhythm} · ${title}${kindWord}`}
       right={<Segmented value={rhythm} onChange={onRhythm} ariaLabel="Rhythm — weekday × hour, day of month × hour, or year × month" options={RHYTHMS.map((r) => ({ value: r, label: r }))} />}
     >
-      <div className="mb-2.5 truncate font-mono text-[11.5px] text-dim" title={peak ? `${metricText(metric, peak.value)} in the busiest ${rhythm === "months" ? "month" : "slot"}, ${L.cellName(peak.row * L.cols + peak.col)}${peakOcc > 1 ? `, summed over ${fmtFull(peakOcc)} ${rhythm === "hours" ? `${model.occWord(peak)}s` : "months"} in the range` : ""}` : undefined}>
+      {/* Only when the server sends this breakdown: otherwise every cell is 0, and "No … in
+          this range" would contradict the tiles and chart above the notice below. */}
+      {model.sent === "yes" && <div className="mb-2.5 truncate font-mono text-[11.5px] text-dim" title={peak ? `${metricText(metric, peak.value)} in the busiest ${rhythm === "months" ? "month" : "slot"}, ${L.cellName(peak.row * L.cols + peak.col)}${peakOcc > 1 ? `, summed over ${fmtFull(peakOcc)} ${rhythm === "hours" ? `${model.occWord(peak)}s` : "months"} in the range` : ""}` : undefined}>
         {peak ? (
           <>
             Peak {L.cellName(peak.row * L.cols + peak.col)} · <b className="font-semibold text-text">{metricText(metric, peak.value)}</b>
@@ -157,7 +159,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
         ) : (
           `No ${label.toLowerCase()} in this range`
         )}
-      </div>
+      </div>}
       {model.sent !== "yes" ? (
         <div className="rounded-[10px] border border-dashed border-line-strong px-3 py-2.5 text-[12.5px] text-dim">
           {model.sent === "no-grid" ? (

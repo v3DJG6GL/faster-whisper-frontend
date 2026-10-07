@@ -38,7 +38,8 @@ export function useCellTip() {
 
 
 /** Roving tabindex for a grid of `data-i` cells (D34): one tab stop, the arrow keys move by
- *  `dx` (left/right) and `dy` (up/down) indexes, Home/End jump. */
+ *  `dx` (left/right) and `dy` (up/down) indexes (a step off the grid does nothing),
+ *  Home/End jump. */
 export function useRovingGrid(count: number, dx: number, dy: number) {
   const [focusIdx, setFocusIdx] = useState(0);
   useEffect(() => { if (focusIdx >= count) setFocusIdx(0); }, [count, focusIdx]);
@@ -49,7 +50,9 @@ export function useRovingGrid(count: number, dx: number, dy: number) {
     const step = e.key === "ArrowLeft" ? -dx : e.key === "ArrowRight" ? dx : e.key === "ArrowUp" ? -dy : e.key === "ArrowDown" ? dy : e.key === "Home" ? -i : e.key === "End" ? count - 1 - i : null;
     if (step === null) return;
     e.preventDefault();
-    const next = Math.max(0, Math.min(count - 1, i + step));
+    // Off the grid's edge: stay put (a clamp would jump to the first / last cell instead).
+    const next = i + step;
+    if (next < 0 || next > count - 1) return;
     const target = e.currentTarget.querySelector<HTMLElement>(`[data-i="${next}"]`);
     if (target) { setFocusIdx(next); target.focus(); }
   }, [count, dx, dy]);

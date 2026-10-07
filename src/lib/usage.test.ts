@@ -137,7 +137,25 @@ describe("usage poll gates", () => {
     getUsageStats.mockClear();
     useApp.getState().forgetBackendCaches("b1"); // an API-key rotation: bKey does not move
     await settle();
+    expect(calls().fixed).toBe(0); // debounced (a URL override evicts per keystroke)
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
     expect(calls().fixed).toBe(1); // without waiting for the next tick
+  });
+
+  it("coalesces evictions inside the debounce into one pass", async () => {
+    getUsageStats.mockClear();
+    useApp.getState().forgetBackendCaches("b1");
+    await vi.advanceTimersByTimeAsync(500);
+    // The next keystroke: the cache holds the key again (a fast failure commits a null)…
+    useApp.setState((s) => ({ usage: { ...s.usage, b1: null } }));
+    useApp.getState().forgetBackendCaches("b1"); // …and the new value evicts it again
+    await vi.advanceTimersByTimeAsync(999);
+    await settle();
+    expect(calls().fixed).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(calls().fixed).toBe(1);
   });
 });
 

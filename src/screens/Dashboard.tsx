@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone } from "@/lib/dictation/dictationVisual";
 import { Button, Card, Notice, Toggle } from "@/components/ui";
-import { routeParts } from "@/lib/routeParts";
+import { ROUTE_TARGETS_SHOWN, routeParts } from "@/lib/routeParts";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/stats/UsageStats";
@@ -64,7 +64,7 @@ function profileRouteShort(p: Profile | undefined, backend: Backend | undefined)
   const lang = p?.language?.trim() ? p.language : (backend?.language ?? "");
   const source = lang && lang !== "auto" ? code(lang) : "auto";
   const targets = (configuredRouteTargets(p, backend) ?? []).filter((t) => typeof t === "string" && t.trim()).map(code);
-  return source + (targets.length ? ` → ${targets.slice(0, 3).join(", ")}${targets.length > 3 ? ` +${targets.length - 3}` : ""}` : "");
+  return source + (targets.length ? ` → ${targets.slice(0, ROUTE_TARGETS_SHOWN).join(", ")}${targets.length > ROUTE_TARGETS_SHOWN ? ` +${targets.length - ROUTE_TARGETS_SHOWN}` : ""}` : "");
 }
 
 /** The deck is ONE grid: the header and every row are subgrids of it, so each column is
