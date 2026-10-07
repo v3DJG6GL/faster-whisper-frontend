@@ -2,8 +2,20 @@
 // used by both the full Dictionary screen and the minimal QuickAdd window so the
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
-import type { PipelineFetch, PipelineRule } from "./types";
+import type { PipelineFetch, PipelineRule, PipelineSaveResult } from "./types";
 import { ownProp } from "./own";
+
+/** The setting names the server's environment pinned, so the save did not change them. `env_pinned_ignored`
+ *  is opaque server JSON: coerce it like `errors`/`conflicts`. In practice it is only ever `PIPELINE_RULES`
+ *  (the WHOLE rule list), never a rule name. */
+export function envPinnedOf(result: PipelineSaveResult): string[] {
+  return (Array.isArray(result.env_pinned_ignored) ? result.env_pinned_ignored : [])
+    .filter((s): s is string => typeof s === "string")
+    .slice(0, 16);
+}
+
+/** The setting that holds every rule: pinned, nothing in the save takes effect. */
+export const RULE_LIST_SETTING = "PIPELINE_RULES";
 
 /** The pipeline `rules` as PipelineRule[]. Rust forwards the server's payload opaque
  *  (#[serde(default)] serde_json::Value), so a buggy/old/proxied server can deliver a non-array

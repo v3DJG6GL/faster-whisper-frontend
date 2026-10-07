@@ -1521,7 +1521,7 @@ export default function Transcribe() {
                   title="Speaker diarization"
                   desc={
                     diarAvailable
-                      ? "Runs last — labels each segment with who is speaking."
+                      ? `${translationAvailable ? "Runs after transcription" : "Runs last"} — labels each segment with who is speaking.`
                       : "Not available on this server (DIARIZATION_ENABLED is off)."
                   }
                   disabled={!diarAvailable}
@@ -2140,13 +2140,18 @@ export default function Transcribe() {
               {stages.map((st, i) => {
                 // Skipped wins over pending too: the server may announce a
                 // decline for a stage the rail hasn't reached yet (diarization
-                // is declined moments before its slot).
+                // is declined moments before its slot). A plan stage the
+                // server marks "failed" (a soft failure the run survived —
+                // diarization, separation, translation) keeps its own state:
+                // folding it into "done" put a green check beside the
+                // warning that says it failed.
                 const planStage = planBy.get(st);
                 const state: StepState =
                   skipped.has(st) ? "skipped"
                     : planStage
                       ? planStage.state === "active" ? "active"
-                        : planStage.state === "pending" ? "pending" : "done"
+                        : planStage.state === "pending" ? "pending"
+                          : planStage.state === "failed" ? "failed" : "done"
                       : i === active ? "active"
                         : i > active ? "pending" : "done";
                 // The translate row's fraction is unit-weighted (done
@@ -2247,6 +2252,7 @@ export default function Transcribe() {
                         // error styling.
                         state === "skipped" &&
                           "border-[1.5px] border-dashed border-faint/70 text-faint",
+                        state === "failed" && "border-[1.5px] border-rec/70 text-rec",
                       )}
                       // Done / active rows wear their stage's timeline-strip
                       // hue so the rail and the overall bar read as one system.
@@ -2263,6 +2269,8 @@ export default function Transcribe() {
                         <Check className="size-3.5" />
                       ) : state === "skipped" ? (
                         <ChevronsRight className="size-3.5" />
+                      ) : state === "failed" ? (
+                        <X className="size-3.5" />
                       ) : state === "active" && frac === null ? (
                         <Loader2 className="size-3.5 animate-spin" />
                       ) : (
@@ -2308,6 +2316,7 @@ export default function Transcribe() {
                             </>
                           )}
                           {state === "skipped" && <span className="text-warn">skipped</span>}
+                          {state === "failed" && <span className="text-rec">failed</span>}
                           {frac !== null && (
                             <span className="text-text">{Math.round(frac * 100)}%</span>
                           )}
@@ -2336,6 +2345,11 @@ export default function Transcribe() {
                         <div className="mt-0.5 text-[12px] text-dim">
                           <span className="text-warn">Not enabled on this server</span>
                           {SKIPPED_EXPLANATIONS[st]}
+                        </div>
+                      )}
+                      {state === "failed" && (
+                        <div className="mt-0.5 text-[12px] text-dim">
+                          <span className="text-rec">Failed</span> — see the warning below.
                         </div>
                       )}
                       {/* One segment per unit, sized by what it took or
@@ -2548,6 +2562,7 @@ export default function Transcribe() {
                             {st === "diarizing" &&
                               state !== "pending" &&
                               state !== "skipped" &&
+                              state !== "failed" &&
                               ((lastOptions?.numSpeakers ?? 0) > 0 ||
                                 (lastOptions?.minSpeakers ?? 0) > 0) && (
                                 <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">

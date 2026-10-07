@@ -537,6 +537,25 @@ describe("reconcileJobs", () => {
     }
   });
 
+  it("deleting a headless link whose video is still downloading stops its video poll", async () => {
+    await seed(row(JOB_A, T0, "url"));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceVideoPending: true }));
+    getTranscribeProgress.mockImplementation(() =>
+      Promise.resolve({ stage: "done", video: { state: "downloading", downloaded: 1, total: 10 } }));
+    try {
+      await reconcileJobs();
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+      deleteRecord(JOB_A);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+    } finally {
+      getTranscribeProgress.mockImplementation(() => Promise.resolve({ stage: "unknown" }));
+      await vi.advanceTimersByTimeAsync(6_000);
+    }
+  });
+
   it("a lost request's job is watched headless and its transcript lands under the job id", async () => {
     await persistRow(row(JOB_A, Date.now()));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));

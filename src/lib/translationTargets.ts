@@ -72,7 +72,11 @@ export function pruneTranslationOverrides(
  *
  *  `glossary` carries the Backend default's own tri-state through untouched: an
  *  explicit "" is forwarded so the server's TRANSLATION_GLOSSARY is suppressed, and
- *  only an unset one is omitted. */
+ *  only an unset one is omitted.
+ *
+ *  The regime (mode/model/glossary/context) rides along even with an empty list: a link's
+ *  frozen site targets can still translate (`runLink` → `linkTranslateTo`), and the Rust
+ *  form drops every translation_* field when there are no targets, so it is wire-safe. */
 export function translationRunOptions(args: {
   /** The backend runs a translating stage (full backend, translation_enabled). */
   available: boolean;
@@ -90,7 +94,6 @@ export function translationRunOptions(args: {
   "translateTo" | "translationMode" | "translationModel" | "translationGlossary" | "translationContextSegments"
 > {
   if (!args.available) return {};
-  if (!args.targets.length) return { translateTo: [] };
   return {
     translateTo: args.targets,
     translationMode: args.mode,

@@ -37,6 +37,7 @@ import {
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, lostContact, translateParsed, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
+  SITE_TRANSCRIPT_FALLBACK,
 } from "./transcribeRun";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
@@ -1035,6 +1036,14 @@ describe("withSiteTracks", () => {
     expect(out.timedTracks).toBeUndefined();
     expect(out.warnings).toEqual(["w1", "The site's subtitles could not be downloaded: Subtitle download requires the desktop app."]);
     expect(await withSiteTracks(res, "https://youtu.be/q", undefined, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false })).toBe(res);
+  });
+  it("a link ledgered with a site transcript is the audio fallback: it keeps that warning and gains no extra track", async () => {
+    const res = { text: "x" };
+    const meta = { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } };
+    const out = await withSiteTracks(res, "https://youtu.be/q", meta, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+    expect(out.timedTracks).toBeUndefined();
+    expect(out.warnings).toContain(SITE_TRANSCRIPT_FALLBACK);
+    expect(out.warnings?.filter((w) => w === SITE_TRANSCRIPT_FALLBACK)).toHaveLength(1);
   });
 });
 

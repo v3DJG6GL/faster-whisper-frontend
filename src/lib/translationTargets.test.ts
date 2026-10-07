@@ -92,7 +92,7 @@ describe("translationRunOptions — what a batch run puts on the wire", () => {
   it("sends an EMPTY target list rather than omitting it", () => {
     // Absent = "inherit the server profile's TRANSLATE_TO"; the screen's chips are
     // authoritative, so an empty list has to be said out loud.
-    expect(translationRunOptions({ ...base, targets: [] })).toEqual({ translateTo: [] });
+    expect(translationRunOptions({ ...base, targets: [] })).toEqual({ translateTo: [], translationMode: "fluent" });
   });
 
   it("omits everything for a backend with no translating stage", () => {
@@ -106,8 +106,13 @@ describe("translationRunOptions — what a batch run puts on the wire", () => {
     expect(translationRunOptions({ ...base, targets: ["de"], contextSegments: 0 }).translationContextSegments).toBe(0);
     expect(translationRunOptions({ ...base, targets: ["de"], contextSegments: 5 }).translationContextSegments).toBe(5);
     expect(translationRunOptions({ ...base, targets: ["de"] })).not.toHaveProperty("translationContextSegments");
-    // No targets = no translating stage: nothing about it rides along.
-    expect(translationRunOptions({ ...base, targets: [], contextSegments: 5 })).toEqual({ translateTo: [] });
+    // No targets still carries the regime: a link's frozen site targets can translate, and
+    // the Rust form drops translation_* when there are no targets.
+    expect(translationRunOptions({ ...base, targets: [], contextSegments: 5 })).toEqual({
+      translateTo: [],
+      translationMode: "fluent",
+      translationContextSegments: 5,
+    });
   });
 
   it("forwards an explicitly cleared glossary and omits an unset one", () => {
@@ -122,15 +127,15 @@ describe("translationRunOptions — what a batch run puts on the wire", () => {
     ).toBe("a = b");
   });
 
-  it("carries the mode and an explicit model only alongside real targets", () => {
+  it("carries the mode and an explicit model, with or without targets", () => {
     expect(translationRunOptions({ ...base, targets: ["de", "fr"], model: "m" })).toEqual({
       translateTo: ["de", "fr"],
       translationMode: "fluent",
       translationModel: "m",
     });
-    // Nothing to configure when the stage is off — just the "off" itself.
+    // An empty list keeps the regime for a link's frozen site targets.
     expect(
-      translationRunOptions({ ...base, targets: [], model: "m", glossary: "a = b" }),
-    ).toEqual({ translateTo: [] });
+      translationRunOptions({ ...base, mode: "faithful", targets: [], model: "m", glossary: "" }),
+    ).toEqual({ translateTo: [], translationMode: "faithful", translationModel: "m", translationGlossary: "" });
   });
 });

@@ -216,8 +216,9 @@ export function activeRailIndex(
 
 /** A rail row's visual state. "skipped" is first-class: a requested stage the
  *  server declined to run is neither done nor pending, and must not read as
- *  either. */
-export type StepState = "pending" | "active" | "done" | "skipped";
+ *  either. "failed" is its own state too: a server soft failure (the plan stage
+ *  reports it) must not read as done. */
+export type StepState = "pending" | "active" | "done" | "skipped" | "failed";
 
 /** Requested stages the server won't run. Two sources, authoritative first:
  *  the progress payload's `skipped` list (newer backends name the stages they
@@ -931,6 +932,8 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
  *  only holds a video the user asked for) and stamp it on the record as
  *  `videoPath`, merged onto the record's latest copy like the audio copy. */
 function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
+  // A record deleted meanwhile: downloading its video would only leave an orphan file.
+  if (!registeredIds.has(rec.id)) return;
   const s = useApp.getState().settings;
   void fetchUrlVideo({
     serverUrl: ctx.serverUrl,
@@ -967,6 +970,11 @@ function awaitRunUrlVideo(
   let skip = 0;
   const timer = window.setInterval(() => {
     if (inFlight) return;
+    // The record was deleted: nothing is left to take the video.
+    if (!registeredIds.has(rec.id)) {
+      window.clearInterval(timer);
+      return;
+    }
     if (Date.now() - startedAt > 2 * 60 * 60 * 1000) {
       window.clearInterval(timer);
       return;
@@ -1743,7 +1751,10 @@ function attachFetched(
 }
 
 /** A transcription result + the link's site tracks (D86). Shared by the run and
- *  by a job result ingested after a restart. */
+ *  by a job result ingested after a restart. Only a link whose site transcript
+ *  fell back to the audio is ever ledgered with a transcript track named, so that
+ *  track never rides along as an extra site track (it may download fine now) and
+ *  the result always carries the fallback warning, as the live run's does. */
 export async function withSiteTracks(
   res: BatchResult,
   url: string,
@@ -1752,7 +1763,8 @@ export async function withSiteTracks(
 ): Promise<BatchResult> {
   const site = meta?.siteSubs;
   if (!site?.fetch.length) return res;
-  const got = await fetchSiteSubs(url, { ...site, transcriptTrackId: null }, ctx);
+  const got = await fetchSiteSubs(url, site, ctx);
+  if (site.transcriptTrackId && !got.warnings.includes(SITE_TRANSCRIPT_FALLBACK)) got.warnings.push(SITE_TRANSCRIPT_FALLBACK);
   return attachFetched(res, got, url, meta);
 }
 

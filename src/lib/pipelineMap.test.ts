@@ -2,8 +2,8 @@
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
-import { applyMap, collapseCounts, mapBodyFromRows, mapRowsFromRule, ruleListOf } from "./pipelineMap";
-import type { PipelineFetch, PipelineRule } from "./types";
+import { applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleListOf } from "./pipelineMap";
+import type { PipelineFetch, PipelineRule, PipelineSaveResult } from "./types";
 
 function fetchWith(rules: unknown): PipelineFetch {
   return { ok: true, state: { rules } } as unknown as PipelineFetch;
@@ -93,5 +93,13 @@ describe("applyMap", () => {
 
   it("finds no boundary between an astral letter and a key", () => {
     expect(applyMap("\u{1D400}ok", [{ id: 1, k: "ok", v: "Y" }])).toBe("\u{1D400}ok");
+  });
+});
+
+describe("envPinnedOf", () => {
+  it("keeps only string names from an array and ignores any other shape", () => {
+    expect(envPinnedOf({ env_pinned_ignored: ["PIPELINE_RULES", 3] } as unknown as PipelineSaveResult)).toEqual(["PIPELINE_RULES"]);
+    expect(envPinnedOf({ env_pinned_ignored: "PIPELINE_RULES" } as unknown as PipelineSaveResult)).toEqual([]);
+    expect(envPinnedOf({} as PipelineSaveResult)).toEqual([]);
   });
 });

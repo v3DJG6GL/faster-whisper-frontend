@@ -95,11 +95,15 @@ export const SegmentRow = memo(function SegmentRow({
       {showTs && (
         <button
           type="button"
-          title="Jump here"
-          onClick={() => seekTo(seg.start)}
+          // No playable audio: the timestamp stays as a label, like the
+          // line's own seek affordances below.
+          title={canSeek ? "Jump here" : undefined}
+          disabled={!canSeek}
+          onClick={canSeek ? () => seekTo(seg.start) : undefined}
           className={cn(
-            "ring-signal shrink-0 cursor-pointer self-start pt-0.5 font-mono text-[12px] tabular-nums",
-            isActive ? "text-accent" : "text-faint hover:text-dim",
+            "ring-signal shrink-0 self-start pt-0.5 font-mono text-[12px] tabular-nums",
+            canSeek && "cursor-pointer",
+            isActive ? "text-accent" : cn("text-faint", canSeek && "hover:text-dim"),
           )}
         >
           {fmtTimestamp(seg.start)}
@@ -168,8 +172,10 @@ export const SegmentRow = memo(function SegmentRow({
             // pasted markup (bold, a link, an image — none of it in textContent)
             // would stay on screen though only the plain text is stored. Only
             // then, though: a bare blur (Alt-Tab mid-correction) must keep the span,
-            // so the caret comes back when the window regains focus.
-            if (shown !== typed || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
+            // so the caret comes back when the window regains focus. The stored
+            // text is trimmed, so compare against the trimmed typing — a trailing
+            // space just typed is no reason to remount.
+            if (shown !== typed.trim() || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
