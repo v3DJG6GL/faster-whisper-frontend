@@ -19,12 +19,13 @@
 //! render-for-exit). Drop this module once the app builds against tao >= 0.37.
 //!
 //! The query also asks the main window (`app://session-ending`, fire-and-forget) to land its
-//! pending writes early — the debounced History edits, the coalesced History writes and the
-//! debounced config save — which the quit handshake (quit.rs) lands on every other exit. It is
-//! not `app://before-quit`: that handler answers `quit_ready`, which latches the handshake for
-//! good, so a cancelled shutdown would make a later tray Quit skip its wait. Landing them is
-//! idempotent and harmless if the user cancels, and best-effort: the writes are sync commands
-//! that need the main thread between the query and `WM_ENDSESSION`, and nothing waits for them.
+//! pending writes early — the debounced History edits, the coalesced History writes, the
+//! debounced config save and the debounced usage-outcome queue save — which the quit
+//! handshake (quit.rs) lands on every other exit. It is not `app://before-quit`: that handler
+//! answers `quit_ready`, which latches the handshake for good, so a cancelled shutdown would
+//! make a later tray Quit skip its wait. Landing them is idempotent and harmless if the user
+//! cancels, and best-effort: the writes are sync commands that need the main thread between
+//! the query and `WM_ENDSESSION`, and nothing waits for them.
 //!
 //! Message-only windows (the raw-input hotkey window) never receive these broadcasts, and
 //! `WM_CLOSE` is not sent at session end — so close-to-tray's `prevent_close` plays no part.

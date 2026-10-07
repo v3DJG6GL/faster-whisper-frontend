@@ -233,27 +233,63 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 #[cfg(windows)]
                 crate::aux_windows::overlay::repair_topmost(&app);
                 // Keep the node set current across the resume. The apply above just enumerated, so
-                // what was pending is moot here; a keyboard that re-attaches AFTER it still shows up
-                // as a new node and is picked up once the set settles on a later tick.
+                // what was pending is moot; the watch re-baselines on this listing, and a node new
+                // relative to the last pre-suspend tick (a keyboard re-enumerated across the
+                // suspend, or one that re-attached after the apply's enumerate) stays pending and
+                // gets one settled-tick keyboard probe. A failed listing keeps the old baseline.
                 #[cfg(target_os = "linux")]
-                nodes.after_apply(input_event_nodes());
+                match input_event_nodes() {
+                    Some(now) => nodes.after_apply(now),
+                    None => nodes.forget_pending(),
+                }
                 let _ = app.emit("system://resumed", ());
             }
         });
 }
 
-/// The `/dev/input/event*` node names (no device is opened). Empty when the directory can't be
-/// read, which only ever reads as removals — and removals never trigger a re-scan.
+/// The `/dev/input/event*` node names (no device is opened). None when the directory can't be
+/// read: the caller skips that tick and keeps its last good set, since an empty set as the
+/// baseline would make every existing node read as new on the next good listing.
 #[cfg(target_os = "linux")]
-fn input_event_nodes() -> std::collections::BTreeSet<String> {
-    std::fs::read_dir("/dev/input")
-        .map(|rd| {
-            rd.filter_map(|e| e.ok())
-                .filter_map(|e| e.file_name().into_string().ok())
-                .filter(|n| n.starts_with("event"))
-                .collect()
-        })
-        .unwrap_or_default()
+fn input_event_nodes() -> Option<std::collections::BTreeSet<String>> {
+    std::fs::read_dir("/dev/input").ok().map(|rd| {
+        rd.filter_map(|e| e.ok())
+            .filter_map(|e| e.file_name().into_string().ok())
+            .filter(|n| n.starts_with("event"))
+            .collect()
+    })
+}
+
+/// What a re-scan's apply did.
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum RescanApply {
+    Applied,
+    /// A binding capture holds the bindings suspended; the capture's re-register enumerates.
+    Capturing,
+    /// A push-to-talk hold started since the decision; a restart now would end it.
+    Held,
+    /// The loss that asked for it was already re-armed by a concurrent apply.
+    Covered,
+}
+
+/// The re-scan's apply, with the capture, hold and loss gates re-checked under the same APPLY_LOCK
+/// hold as the apply: the decision was made before the keyboard probes and the lock wait (seconds,
+/// when a plugin-mode re-register holds it), so a hold or a re-apply may have landed since.
+#[cfg(target_os = "linux")]
+fn apply_bindings_for_rescan(app: &AppHandle, loss: bool) -> RescanApply {
+    let _guard = APPLY_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    if CAPTURE_SUSPENDED.load(Ordering::SeqCst) {
+        return RescanApply::Capturing;
+    }
+    if crate::hotkeys::evdev::any_hold_active() || crate::hotkeys::triggers::any_hold_active() {
+        return RescanApply::Held;
+    }
+    if loss && !crate::hotkeys::evdev::reader_lost() {
+        return RescanApply::Covered;
+    }
+    apply_bindings_locked(app);
+    RescanApply::Applied
 }
 
 /// One suspend-watch tick of evdev's device re-scan. A re-apply is a full evdev restart — it aborts
@@ -264,9 +300,10 @@ fn input_event_nodes() -> std::collections::BTreeSet<String> {
 /// and the keyboard arriving later is what switches the backend back to evdev.
 #[cfg(target_os = "linux")]
 fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
-    let Some(reader_lost) =
-        nodes.observe(input_event_nodes(), crate::hotkeys::evdev::reader_lost())
-    else {
+    let Some(now) = input_event_nodes() else {
+        return;
+    };
+    let Some(reader_lost) = nodes.observe(now, crate::hotkeys::evdev::reader_lost()) else {
         return;
     };
     let wanted = config_dir(app)
@@ -287,21 +324,31 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
         // Kept pending: the next settled tick asks again, once the hold has ended.
         RescanStep::Defer => {}
         RescanStep::Skip => nodes.pending.clear(),
-        RescanStep::Apply => {
-            nodes.pending.clear();
-            if reader_lost {
-                nodes.note_loss_apply();
-            }
-            tracing::info!(
-                "[evdev] {}; re-scanning keyboards",
+        RescanStep::Apply => match apply_bindings_for_rescan(app, reader_lost) {
+            RescanApply::Applied => {
+                nodes.pending.clear();
                 if reader_lost {
-                    "a keyboard stream ended"
-                } else {
-                    "keyboard added"
+                    nodes.note_loss_apply();
                 }
-            );
-            apply_bindings_unless_capturing(app);
-        }
+                tracing::info!(
+                    "[evdev] {}; re-scanning keyboards",
+                    if reader_lost {
+                        "a keyboard stream ended"
+                    } else {
+                        "keyboard added"
+                    }
+                );
+            }
+            RescanApply::Capturing => {
+                nodes.pending.clear();
+                tracing::info!(
+                    "[evdev] binding capture in progress; the capture's re-register will enumerate keyboards"
+                );
+            }
+            // As Defer: kept pending, the next settled tick asks again.
+            RescanApply::Held => {}
+            RescanApply::Covered => nodes.pending.clear(),
+        },
     }
 }
 
@@ -401,11 +448,20 @@ impl InputNodeWatch {
         self.loss_wait = self.loss_backoff;
     }
 
-    /// An apply just enumerated: what was pending is covered; re-baseline on `now`.
+    /// An apply just enumerated: clears `pending` and the loss latch, then re-baselines on `now`
+    /// via observe — so nodes new relative to the last pre-apply listing stay pending and get one
+    /// settled-tick keyboard probe, which also covers a node that appeared between the apply's
+    /// enumerate and this listing.
     fn after_apply(&mut self, now: std::collections::BTreeSet<String>) {
+        self.forget_pending();
+        let _ = self.observe(now, false);
+    }
+
+    /// An apply just enumerated but this tick's listing failed: drop what was pending and the loss
+    /// latch, and keep the last good baseline.
+    fn forget_pending(&mut self) {
         self.pending.clear();
         self.lost_seen = false;
-        let _ = self.observe(now, false);
     }
 }
 
@@ -699,6 +755,23 @@ mod tests {
         w.observe(set(&["event0"]), false);
         w.observe(set(&["event0", "event5"]), false);
         w.after_apply(set(&["event0", "event5"]));
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
+    }
+
+    #[test]
+    fn input_node_watch_after_apply_keeps_nodes_new_since_the_last_tick() {
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0"]), false);
+        w.after_apply(set(&["event0", "event7"]));
+        assert_eq!(w.observe(set(&["event0", "event7"]), false), Some(false));
+    }
+
+    #[test]
+    fn input_node_watch_forget_pending_keeps_the_baseline() {
+        let mut w = InputNodeWatch::default();
+        w.observe(set(&["event0"]), false);
+        w.observe(set(&["event0", "event5"]), false);
+        w.forget_pending();
         assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
     }
 
