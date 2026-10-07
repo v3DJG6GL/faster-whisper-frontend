@@ -1451,6 +1451,17 @@ export function registerPendingStartRunner(run: (profileId: string) => void): vo
   pendingStartRunner = run;
 }
 
+/** A queued re-press that consumePendingHoldStart would still act on (one is queued, it is
+ *  not too old, and a runner is registered). Its held-check is async, so this cannot promise
+ *  the start fires — only that settling must not void it. */
+function pendingHoldStartFresh(): boolean {
+  return (
+    pendingHoldStart !== null &&
+    pendingStartRunner !== null &&
+    performance.now() - pendingHoldStart.at <= PENDING_START_MAX_AGE_MS
+  );
+}
+
 function consumePendingHoldStart(): void {
   const pending = pendingHoldStart;
   pendingHoldStart = null;
@@ -1488,9 +1499,12 @@ function settleIdle(keepError = false): void {
   // A short session (stream://incomplete) decides its surface here, after the whole tail
   // ran: the docs and the delivery flags are final. Not over a kept error (keepError): the
   // chip already shows why this session failed.
+  // A queued fast re-press outranks the flash: flashError voids it, and the user is holding
+  // the chord and speaking — so the lost session falls back to the note (plus the doorway)
+  // and consumePendingHoldStart below starts the new one.
   const incomplete = keepError
     ? null
-    : incompleteSurface(sessionIncomplete !== null, bankedDoc + committedDoc, endOutcome());
+    : incompleteSurface(sessionIncomplete !== null, bankedDoc + committedDoc, endOutcome(), pendingHoldStartFresh());
   // NO cancelDictationTranslate() here, deliberately. Settling is the SUCCESS
   // path: we only reach it after the injection queue drained, which means every
   // translate already resolved and maybeTranslate's finally dropped the handle.
@@ -1547,9 +1561,10 @@ function settleIdle(keepError = false): void {
   askTargetsAtSettle = null;
   if (incomplete === "flash" && sessionIncomplete) {
     // Nothing of this dictation survived: say so on the chip. AFTER the bookkeeping above
-    // (history, outcome "none", lease), and BEFORE the hold-start below — flashError voids a
-    // queued re-press rather than stamping its fresh session "error". Its own doorway line
-    // is the generic one; put the specific notice back.
+    // (history, outcome "none", lease), and BEFORE the hold-start below. Only reached with no
+    // fresh re-press queued (incompleteSurface turns that case into the note), so the void
+    // inside flashError drops nothing the user is waiting on. Its own doorway line is the
+    // generic one; put the specific notice back.
     flashError(sessionIncomplete);
     useApp.getState().setLogsDoorway({ msg: sessionIncomplete, showLogs: true });
   }
@@ -1598,14 +1613,17 @@ let sessionIncomplete: string | null = null;
 /** How a session that ended SHORT (stream://incomplete) is surfaced once its tail ran.
  *  Nothing committed and nothing landed → the whole dictation is gone, so it is an error
  *  (`flash`; the session is over, so no insert is skipped by it). Anything landed or kept
- *  → a chip note: the text stands, only its last phrase may be missing. */
+ *  → a chip note: the text stands, only its last phrase may be missing. A queued fast
+ *  re-press (`rePressQueued`) also gets the note: the error flash voids that press, and the
+ *  user is already dictating again — the doorway keeps the specific notice. */
 export function incompleteSurface(
   incomplete: boolean,
   doc: string,
   outcome: "typed" | "clipboard" | "none",
+  rePressQueued = false,
 ): "flash" | "note" | null {
   if (!incomplete) return null;
-  return !doc.trim() && outcome === "none" ? "flash" : "note";
+  return !doc.trim() && outcome === "none" && !rePressQueued ? "flash" : "note";
 }
 
 /** A dictation's targets, at most the server's per-request cap: the text route answers a

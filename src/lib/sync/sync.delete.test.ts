@@ -32,6 +32,8 @@ const api = vi.hoisted(() => ({
   /** When set, a GET waits on it before answering with `pulled`. */
   pullPark: null as null | Promise<void>,
   pullCalled: false,
+  /** Every keyring write, in order (the real one is a no-op outside Tauri). */
+  keyWrites: [] as [string, string][],
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -41,6 +43,9 @@ vi.mock("../api", async (importOriginal) => {
     readBackendKeys: (ids: string[]) => {
       api.readCalled = true;
       return api.park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
+    },
+    setBackendKey: async (id: string, key: string) => {
+      api.keyWrites.push([id, key]);
     },
     syncPush: async (args: { blob: unknown; baseVersion: number }) => {
       api.pushes++;
@@ -660,6 +665,90 @@ describe("a review raised on a push's second 409", () => {
       expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping);
     } finally {
       api.keys = null;
+      api.conflicts = [];
+    }
+  });
+});
+
+const setServerAddressesGate = (on: boolean) => {
+  const settings = structuredClone(useApp.getState().settings);
+  settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+  useApp.setState({ settings });
+};
+
+// The edit check compared the store without the keyring: the store's backends carry only
+// `hasApiKey`, so a key rotated while a backends review waited read as "not edited". The approval
+// put the raise-time key back, relisted it as an "api-key" row for the user's own backend as if
+// the peer had changed it, and a second approval wrote the old key over the rotation.
+describe("approving a review after rotating an API key", () => {
+  it("asks instead of relisting the old key", async () => {
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(true);
+      const localUrl = useApp.getState().backends[0].serverUrl;
+      const remote = structuredClone(base);
+      remote.backends = {
+        ...remote.backends!,
+        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
+      };
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["server-url"]);
+      api.keys = { b1: "sk-rotated" }; // Backends → new key for b1 while the review waits
+      api.keyWrites = [];
+      const pushesBefore = api.pushes;
+      await approvePendingReview();
+      // No relisted api-key row: the rotation is the user's own edit, so ask.
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()?.categories).toContain("backends");
+      expect(api.keyWrites.filter(([id]) => id === "b1")).toEqual([]);
+      expect(useApp.getState().backends[0].serverUrl).toBe(localUrl);
+      expect(api.pushes).toBe(pushesBefore);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      api.keyWrites = [];
+    }
+  });
+});
+
+// The gate check compared the WHOLE gate set, and a relisted review kept it: once a gate had
+// been turned on (the reason for the relist), any edit to an applied category that the peer also
+// changed turned every later approval into a conflict, though nothing in it had been stripped.
+describe("approving a relisted review after an ordinary edit", () => {
+  it("lands without asking", async () => {
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(false);
+      const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+      const remote = structuredClone(base);
+      remote.backends = {
+        ...remote.backends!,
+        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
+      };
+      remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      setServerAddressesGate(true);
+      await approvePendingReview();
+      expect(getPendingReview()?.relisted).toBe(true);
+      // An edit to general (applied at the raise; its gates never moved) on top of the peer's.
+      const s = useApp.getState().settings;
+      const mine = !s.general.startMinimized;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      await approvePendingReview();
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      const st = useApp.getState();
+      expect(st.settings.general.startMinimized).toBe(mine);
+      expect(st.settings.general.typeAsISpeak).toBe(peerTyping);
+      expect(st.backends[0].serverUrl).toBe("http://evil:9");
+      expect(st.settings.transcribe?.dictationRetentionDays).toBe(1);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
       api.conflicts = [];
     }
   });

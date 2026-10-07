@@ -2272,13 +2272,26 @@ function composeLive(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
   );
 }
 
-/** What the store holds for every synced setting, with NO gate or sub-toggle substitution (and no
- *  keyring read). A review records it right after its held-back apply, so an approval can tell an
- *  edit made while it waited from a gate turned on since: that changes the gated compose (a
- *  stripped field now carries this device's value) without anything in the store changing. */
-function storeSignature(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
+/** Stands in for the API-key fingerprints in a `storeSignature` whose keyring read came back
+ *  failed or partial: nothing can be said about a key rotation then, so an approval that finds it
+ *  on either side treats a conflicting backends category as edited and asks. */
+const KEYS_UNREAD = "\u0000unread";
+
+/** A change-detection token for one API key (two FNV-1a passes, 64 bits) — what a review keeps
+ *  in memory instead of the key itself. NOT crypto: it only tells "same key as at the raise". */
+const keyPrint = (key: string): string => hashBlob(["k1", key]) + hashBlob(["k2", key]);
+
+/** What the store holds for every synced setting, with NO gate or sub-toggle substitution. A
+ *  review records it right after its held-back apply, so an approval can tell an edit made while
+ *  it waited from a gate turned on since: that changes the gated compose (a stripped field now
+ *  carries this device's value) without anything in the store changing. The keyring is part of
+ *  the store: the store's backends carry only `hasApiKey`, so rotating an existing backend's key
+ *  is invisible in the list — `backends.secrets` holds a fingerprint per key read back instead
+ *  (never the key; this lives in the PendingReview), or `KEYS_UNREAD` when the read failed or
+ *  came back partial. */
+async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
   const s = useApp.getState();
-  return composeBlob(
+  const sig = await composeBlob(
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     cats,
     state.snapshot,
@@ -2288,11 +2301,49 @@ function storeSignature(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> 
       gates: Object.fromEntries(MANIFEST.map((d) => [d.id, true])) as Gates,
     },
   );
+  if (cats.backends && isPlainObject(sig.backends)) {
+    const keys = await withTimeout(
+      readBackendKeys(s.backends.map((b) => b.id)).catch(() => null),
+      10_000,
+      null as Record<string, string> | null,
+    );
+    // Same completeness rule as composeBlob: `read_backend_keys` drops what it cannot read.
+    const complete =
+      isPlainObject(keys) && s.backends.every((b) => !b.hasApiKey || ownProp(keys, b.id) !== undefined);
+    const prints: Record<string, string> = {};
+    if (complete) {
+      for (const [id, key] of Object.entries(keys)) prints[id] = keyPrint(String(key));
+    } else {
+      prints[KEYS_UNREAD] = "1";
+    }
+    sig.backends = { ...sig.backends, secrets: prints };
+  }
+  return sig;
 }
 
-/** The gates + sub-toggles composeLive / applyBlob read, as one comparable string. */
-function gatesSignature(): string {
-  return stableStringify({ gates: settingGates(), sub: subSettings() });
+/** Did this `storeSignature` fail to read the keyring (see `KEYS_UNREAD`)? */
+function keysUnread(sig: SyncBlob): boolean {
+  const secrets = sig.backends?.secrets;
+  return isPlainObject(secrets) && ownProp(secrets, KEYS_UNREAD) !== undefined;
+}
+
+/** Which category a legacy sub-toggle key (one that is not a manifest id) feeds. */
+const LEGACY_SUB_CATEGORY: Partial<Record<string, SyncCategory>> = { recordingsDir: "recording" };
+
+/** The gates + sub-toggles composeLive / applyBlob read, split per category: what the held-back
+ *  apply stripped from a category depends only on its own switches, so a gate flipped for an
+ *  unrelated category must not turn an ordinary edit into a conflict. A key this cannot place
+ *  goes into every category (an unclear change asks rather than keeps). */
+function gatesSignature(): Record<SyncCategory, string> {
+  const catOfId = new Map<string, SyncCategory>(MANIFEST.map((d) => [d.id, d.category]));
+  const place = (key: string): SyncCategory | undefined => catOfId.get(key) ?? LEGACY_SUB_CATEGORY[key];
+  const per = (src: Record<string, unknown>, cat: SyncCategory) =>
+    Object.fromEntries(Object.entries(src).filter(([k]) => (place(k) ?? cat) === cat));
+  const gates = settingGates() as Record<string, unknown>;
+  const sub = subSettings() as unknown as Record<string, unknown>;
+  return Object.fromEntries(
+    ALL_CATEGORIES.map((cat) => [cat, stableStringify({ gates: per(gates, cat), sub: per(sub, cat) })]),
+  ) as Record<SyncCategory, string>;
 }
 
 /** Take the engine's `inFlight` lock for a user-driven apply (review approval, conflict
@@ -2495,10 +2546,11 @@ export async function pushNow(manual = false): Promise<void> {
         // A 409 merge adopts remote values too, so it gets the same consent gate as a pull.
         const riskyPush = gatedSecurityCheck(merged, blob, pushCats);
         if (riskyPush.length > 0) {
-          await applyBlob(merged, heldBack(pushCats, riskyPush));
+          const applyNow = heldBack(pushCats, riskyPush);
+          await applyBlob(merged, applyNow);
           if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
-            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
+            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob, applied: applyNow,
             storeSig: await storeSignature(pushCats), gatesSig: gatesSignature(),
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
@@ -2560,10 +2612,11 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // Everything else still applies — only the backends category waits. Deliberately no
     // persistState here: adopting the server's version as the new base would drop the held-back
     // change, so the next pull re-offers it until the user decides.
-    await applyBlob(merged, heldBack(applyCats, risky));
+    const applyNow = heldBack(applyCats, risky);
+    await applyBlob(merged, applyNow);
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob, applied: applyNow,
       storeSig: await storeSignature(applyCats), gatesSig: gatesSignature(),
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
@@ -2943,8 +2996,14 @@ interface PendingReview {
    *  compose — a gate turned on since changes that with no edit (a stripped field now carries
    *  this device's value), and a push's retry raise has no compose of this device at all. */
   storeSig: SyncBlob;
-  /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. */
-  gatesSig: string;
+  /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. A relist
+   *  keeps it — no apply ran since, so the store still lacks what the raise's gates stripped. */
+  gatesSig: Record<SyncCategory, string>;
+  /** The categories the raise's apply landed (`heldBack(cats, changes)` THEN). Kept across a
+   *  relist: recomputing it from the relisted rows would count a category that was held back at
+   *  the raise, and whose rows no longer show, as applied — and keep a live edit over a peer
+   *  value the store never received. */
+  applied: Record<SyncCategory, boolean>;
   version: number;
   updatedAt: number | null;
   device: string | null;
@@ -3077,24 +3136,29 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   //  - not edited: the reviewed value (the peer's change being consented to, a resolve's pick,
   //    or a field the raise stripped under a gate that is on now) — the security re-check below
   //    then judges it under today's gates and relists what the raise could not show.
-  //  - edited, in a category the raise already APPLIED, under the raise's gates: `r.blob`'s value
+  //  - edited (an API key rotated counts: the signature carries key fingerprints), in a category
+  //    the raise already APPLIED, under that category's raise-time gates: `r.blob`'s value
   //    landed then, so the live value is it plus the user's edits on top — keep the live value
   //    (re.merged's conflict placeholder). Putting `r.blob` back reverted the edit, and the
   //    adopted base + follow-up push shipped the revert.
-  //  - edited otherwise (a held-back category, or the gates changed so the live value also
-  //    carries fields the raise stripped): neither side can win silently — the approval would
+  //  - edited otherwise (a held-back category, that category's gates changed so the live value
+  //    also carries fields the raise stripped, or the keyring could not be read at either end so
+  //    a key rotation cannot be ruled out): neither side can win silently — the approval would
   //    discard the edit, keeping it would push this device's values over the peer's change.
   //    Ask, as a conflict at the review's version (its resolve re-runs the security check, so
   //    nothing lands unreviewed).
   const re = mergeBlobs(state.snapshot, localNow, r.remote);
-  const appliedAtRaise = heldBack(r.cats, r.changes);
+  const appliedAtRaise = r.applied;
   const sigNow = await storeSignature(r.cats);
-  const gatesSame = gatesSignature() === r.gatesSig;
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
+  const gatesNow = gatesSignature();
   const blobNow: SyncBlob = { ...re.merged };
   let ask = false;
   for (const cat of re.conflicts) {
-    if (!catEqual(sigNow[cat], r.storeSig[cat])) {
-      if (!(appliedAtRaise[cat] && gatesSame)) ask = true;
+    // A keyring read that failed at either end cannot rule out a key rotation: unclear = ask.
+    const keysUnknown = cat === "backends" && (keysUnread(sigNow) || keysUnread(r.storeSig));
+    if (keysUnknown || !catEqual(sigNow[cat], r.storeSig[cat])) {
+      if (keysUnknown || !(appliedAtRaise[cat] && gatesNow[cat] === r.gatesSig[cat])) ask = true;
       continue;
     }
     const v = r.blob[cat];
@@ -3122,7 +3186,9 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   const now = gatedSecurityCheck(blobNow, localNow, r.cats);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
-    raiseReview({ ...r, blob: blobNow, changes: now, relisted: true });
+    // Judged against the store as it is now: a later approval compares against that. The gates
+    // and `applied` stay the raise's — the store still holds that apply, stripped fields and all.
+    raiseReview({ ...r, blob: blobNow, changes: now, relisted: true, storeSig: sigNow });
     return "prompt";
   }
   pendingReview = null;
@@ -3299,13 +3365,15 @@ async function resolveLocked(
   // persist no base so a rejection is re-offered on the next pull.
   const risky = gatedSecurityCheck(final, judgeLocal, applyCats);
   if (risky.length > 0) {
-    await applyBlob(final, heldBack(applyCats, risky));
+    const applyNow = heldBack(applyCats, risky);
+    await applyBlob(final, applyNow);
     if (myGen !== gen) return false;
     raiseReview({
       changes: risky,
       blob: final,
       cats: applyCats,
       remote: c.remote,
+      applied: applyNow,
       storeSig: await storeSignature(applyCats),
       gatesSig: gatesSignature(),
       version: c.remoteVersion,

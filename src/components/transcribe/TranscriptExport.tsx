@@ -458,7 +458,14 @@ export function TranscriptExport({
     if (!trBackend) throw new Error("No backend is selected.");
     const serverUrl = effectiveServerUrl(trBackend, settings);
     let source: { sourceMediaId?: string; sourcePath?: string };
-    if (serverVideoId) source = { sourceMediaId: serverVideoId };
+    // A stored server id is only good on the server that issued it. trBackend falls back to
+    // the first backend for a record whose own one is missing or unrecorded: there the local
+    // copy or an on-demand fetch is the reliable source, and the stored id is a last resort
+    // (kept on the record either way — restoring the backend makes it good again).
+    const storedId = serverVideoId && (rec.backendId === trBackend.id || (!localVideo && !urlVideoOnDemand))
+      ? serverVideoId
+      : null;
+    if (storedId) source = { sourceMediaId: storedId };
     else if (localVideo) source = { sourcePath: localVideo };
     else if (urlVideoOnDemand) {
       setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
@@ -576,9 +583,11 @@ export function TranscriptExport({
       // Only the server that issued a STORED id may say it is gone (as Save audio's guard):
       // trBackend falls back to the first backend for a record whose own one is missing or
       // unrecorded, and that server's "expired" says nothing about an id restoring the
-      // backend would make good again. An id this call fetched or uploaded is trBackend's
-      // own (serverVideoId is null then), so it may still be forgotten below.
-      if (serverVideoId && rec.backendId !== trBackend.id) {
+      // backend would make good again. A foreign server only gets the stored id when no
+      // other source exists (above), so there is nothing to suggest. An id this call
+      // fetched or uploaded is trBackend's own (storedId is null then), so it may still be
+      // forgotten below.
+      if (storedId && rec.backendId !== trBackend.id) {
         const msg = "The selected server doesn't have this video.";
         if (mine()) setMediaError({ kind: "expired", msg });
         else late(msg);

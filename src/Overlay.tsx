@@ -897,14 +897,19 @@ export default function Overlay() {
       : note === "not-inserted-saved"
         ? "not inserted · saved to History"
         : "not inserted";
+  // "incomplete" outranks the untranslated pulse (as the sr-only status does): both land on
+  // the same edge with the same 2600 ms hold, so the pulse first would never paint it — and
+  // a possibly lost phrase is the bigger news than an untranslated one.
   const label =
-    pulse === "untranslated"
-      ? `${untranslatedVerb} as spoken — translation ${failureLabel}`
-      : note
-        ? noteLabel
-        : state.status === "idle"
-          ? ""
-          : vis.label;
+    note === "incomplete"
+      ? noteLabel
+      : pulse === "untranslated"
+        ? `${untranslatedVerb} as spoken — translation ${failureLabel}`
+        : note
+          ? noteLabel
+          : state.status === "idle"
+            ? ""
+            : vis.label;
   // The states whose dot colour comes from the tone map rather than the armed/standby tokens.
   const toneOwnsDot = vis.state === "error" || vis.state === "speaking" || vis.state === "processing";
   const dotColorClass =

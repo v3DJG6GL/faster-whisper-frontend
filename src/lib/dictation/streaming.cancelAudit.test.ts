@@ -350,6 +350,21 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(incompleteSurface(true, "hello", "none")).toBe("note");
     expect(incompleteSurface(true, "hello", "typed")).toBe("note");
     expect(incompleteSurface(true, "", "clipboard")).toBe("note");
+    // A queued fast re-press: the flash would void it (flashError), so the note stands in.
+    expect(incompleteSurface(true, "", "none", true)).toBe("note");
+    expect(incompleteSurface(true, "", "none", false)).toBe("flash");
+    expect(incompleteSurface(false, "", "none", true)).toBeNull();
+  });
+
+  it("the incomplete flash never drops a queued fast re-press", () => {
+    // flashError voids pendingHoldStart; settleIdle must ask about a queued press BEFORE it
+    // picks the flash, and still hand the press to consumePendingHoldStart afterwards.
+    const settle = mask(bodyAfter(streamingSrc, "function settleIdle("));
+    const read = settle.indexOf("incompleteSurface(");
+    expect(read).toBeGreaterThanOrEqual(0);
+    const call = settle.slice(read, settle.indexOf(";", read));
+    expect(call).toContain("pendingHoldStartFresh()");
+    expect(settle.indexOf("consumePendingHoldStart(")).toBeGreaterThan(settle.indexOf("flashError("));
   });
 
   it("a rejected stop flashes the error before awaiting the recovery copy", () => {
