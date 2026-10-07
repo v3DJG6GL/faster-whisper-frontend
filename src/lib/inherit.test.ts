@@ -104,6 +104,14 @@ describe("serverInherited", () => {
     expect(serverInherited(dd()).values.multilingual).toBe(false);
     expect(serverInherited(dd()).locked.has("multilingual")).toBe(true);
   });
+  it("reads a backend's explicit \"\" on a single-line text key as none, like the server's", () => {
+    const s = serverInherited(null, { output_prefix: "", hotwords: "" }, "batch", "Backend default");
+    expect(s.values.output_prefix).toBe("none");
+    expect(s.values.hotwords).toBe("none");
+    expect(s.sources.output_prefix).toBe("Backend default");
+    // A multiline key's "" is itself the value (glue), never the word "none".
+    expect(serverInherited(null, { streaming_hard_break_separator: "" }).values.streaming_hard_break_separator).toBe("");
+  });
   it("lets the backend beat the server, except where the server locks", () => {
     const s = serverInherited(dd(), { beam_size: 3, patience: 2 }, "batch", "Backend default");
     expect(s.values.beam_size).toBe(3);

@@ -9,9 +9,10 @@ import { useDebounced } from "@/lib/useDebounced";
  * model and override profile — feed it to serverInherited() for the editor's "Inherit · X".
  *
  * Fetched when an editor opens and again whenever the backend, typed address/key, model or
- * profile changes; never polled. Cleared while a new fetch is in flight so a switch never ghosts
- * the previous server's values. Skipped on a standard server or without a backend; any failure
- * leaves undefined (the editor shows the bare word).
+ * profile changes; never polled. Values are withheld at render time for any request other than
+ * the one they were fetched for, so a switch never ghosts the previous server's values — not even
+ * in the render that commits the switch, before any effect has run. Skipped on a standard server
+ * or without a backend; any failure leaves undefined (the editor shows the bare word).
  */
 export function useDecodeDefaults(args: {
   serverUrl: string;
@@ -34,28 +35,30 @@ export function useDecodeDefaults(args: {
   const settled = useDebounced(JSON.stringify([target, rawProfile]), 400);
   const [settledTarget, settledProfile] = JSON.parse(settled) as [string, string | null];
   const profileName = settledTarget === target ? settledProfile : rawProfile;
-  const [dd, setDd] = useState<DecodeDefaults | undefined>(undefined);
+  const [st, setSt] = useState<{ key: string; dd?: DecodeDefaults }>();
 
   // Keyed on "standard" (skip) and on each rise to "full": a successful connection test after an
   // outage (unknown → full) must refetch, or labels that failed at mount stay bare until a
   // remount. Only the rise — the kind also drops to unknown on every address keystroke.
   const standard = serverKind === "standard";
   const full = useRisesToFull(serverKind);
+  // The request the values belong to. `full` stays out: a reconnect refetch for the same request
+  // may keep showing that same server's values meanwhile.
+  const key = JSON.stringify([serverUrl, backendId ?? null, apiKey ?? null, model, profileName, standard]);
   useEffect(() => {
-    setDd(undefined);
     if (standard || !backendId) return;
     let cancelled = false;
     void getDecodeDefaults({ serverUrl, backendId, apiKey, model, overrideProfile: profileName })
       .catch(() => null)
       .then((r) => {
-        if (!cancelled) setDd(r ?? undefined);
+        if (!cancelled) setSt({ key, dd: r ?? undefined });
       });
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, backendId, apiKey, model, profileName, standard, full]);
+  }, [key, serverUrl, backendId, apiKey, model, profileName, standard, full]);
 
-  return dd;
+  return st?.key === key ? st.dd : undefined;
 }
 
 /** Counts the times `kind` became "full" after mount: an effect keyed on it re-runs when a

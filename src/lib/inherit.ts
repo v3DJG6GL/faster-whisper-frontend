@@ -179,7 +179,11 @@ export function serverInherited(
       ignored.push(key);
       continue;
     }
-    values[key] = v;
+    // A backend's explicit "" on a single-line text key reads as that key's "none", exactly as
+    // the server's own "" does in shownValue — copied verbatim, the field showed a bare
+    // "Inherit" (value unknown) under a "Backend default" tooltip. A multiline "" is a value.
+    const spec = keySpec(key);
+    values[key] = v === "" && spec.kind === "text" && !spec.multiline ? (NULL_TEXT[key] ?? "none") : v;
     sources[key] = belowSource;
   }
   const p = dd?.prompt;

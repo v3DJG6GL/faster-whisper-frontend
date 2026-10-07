@@ -181,11 +181,16 @@ function Editor({
   // Capture checks a chord only against the activation it was recorded under; flipping
   // Activation afterwards can turn a designed hold⊂hands-free nesting into a real shadow
   // that, once saved, pauses every config save. Re-check the committed chord here
-  // (display only — the user fixes it by changing the shortcut, or the activation for a shadow).
+  // (display only — the user fixes it by changing the shortcut, or the activation for a shadow
+  // only when the flipped activation clears every clash: just hold⊂hands-free is exempt, so a
+  // quick-add peer, a hands-free sub-chord or a second clash further down the list stays).
   const liveClash =
     !capturing && !capture.pending && p.enabled && p.hotkey.length > 0
       ? findChordConflict(p.hotkey, peers, !lowLevelActive, selfKind)
       : null;
+  const flipClears =
+    liveClash?.kind === "shadow" &&
+    !findChordConflict(p.hotkey, peers, !lowLevelActive, selfKind === "hold" ? "handsfree" : "hold");
 
   const Glyph = ACTIVATION[p.activation].icon;
 
@@ -301,8 +306,8 @@ function Editor({
           ) : (
             <>
               Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60) || "another profile"}” as{" "}
-              {ACTIVATION[p.activation].label} — saving would pause all settings saves. Change the shortcut or the
-              activation.
+              {ACTIVATION[p.activation].label} — saving would pause all settings saves.{" "}
+              {flipClears ? "Change the shortcut or the activation." : "Change the shortcut."}
             </>
           )}
         </Notice>

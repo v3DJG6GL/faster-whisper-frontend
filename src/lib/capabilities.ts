@@ -23,8 +23,16 @@ import type { Backend, Capabilities } from "./types";
  *  each one would be its own request to /v1/me. */
 const MIN_INTERVAL_MS = 2_000;
 
-const lastFetchAt = new Map<string, number>();
-const inFlight = new Map<string, Promise<void>>();
+/** Both keyed by Backend id and stamped with the address the request went to: the floor and
+ *  the coalescing below apply only to a request for the SAME target. Keyed by id alone, the
+ *  forced refresh after fixing an unreachable address joined the run still hanging on the OLD
+ *  host (up to the client timeout), whose answer the guards then discarded — so the corrected
+ *  server's caps stayed absent until some later dictation. */
+const lastFetchAt = new Map<string, { at: number; target: string }>();
+const inFlight = new Map<
+  string,
+  { run: Promise<void>; target: string; hasKey: boolean; gen: number }
+>();
 /** Bumped by `forgetCaps`: a fetch that started under an older generation was sent with a
  *  credential that is no longer this Backend's, so its answer must not land in the store. */
 const generation = new Map<string, number>();
@@ -47,12 +55,23 @@ export function forgetCaps(id: string): void {
  *  is starting and the freshness of `loaded` is the whole point). */
 export async function refreshCaps(backend: Backend, opts?: { force?: boolean }): Promise<void> {
   const now = Date.now();
+  const target = effectiveServerUrl(backend, useApp.getState().settings);
+  const gen = generation.get(backend.id) ?? 0;
   const prev = lastFetchAt.get(backend.id);
-  if (!opts?.force && prev !== undefined && now - prev < MIN_INTERVAL_MS) return;
+  if (!opts?.force && prev?.target === target && now - prev.at < MIN_INTERVAL_MS) return;
   // Share one in-flight request rather than starting a second: `force` should skip
   // the interval, not multiply the requests when several triggers land together.
+  // Only a request for the same target, key presence and generation is shareable; any
+  // other one is superseded below (its answer is discarded by the guards in `run`).
   const running = inFlight.get(backend.id);
-  if (running) return running;
+  if (
+    running &&
+    running.target === target &&
+    running.hasKey === backend.hasApiKey &&
+    running.gen === gen
+  ) {
+    return running.run;
+  }
 
   const { connections, caps, setCaps } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/me); "unknown" ⇒ try anyway — the
@@ -66,9 +85,7 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
     return;
   }
 
-  const target = effectiveServerUrl(backend, useApp.getState().settings);
-  lastFetchAt.set(backend.id, now);
-  const gen = generation.get(backend.id) ?? 0;
+  lastFetchAt.set(backend.id, { at: now, target });
   const run = (async () => {
     const fetched = await getCapabilities({ serverUrl: target, backendId: backend.id }).catch(
       () => null,
@@ -89,12 +106,12 @@ export async function refreshCaps(backend: Backend, opts?: { force?: boolean }):
     if (effectiveServerUrl(cur, st.settings) !== target) return;
     if (fetched !== null) st.setCaps(backend.id, fetched);
   })();
-  inFlight.set(backend.id, run);
+  inFlight.set(backend.id, { run, target, hasKey: backend.hasApiKey, gen });
   try {
     await run;
   } finally {
-    // Only our own entry: after forgetCaps a newer run may already own the slot.
-    if (inFlight.get(backend.id) === run) inFlight.delete(backend.id);
+    // Only our own entry: after forgetCaps or a target change a newer run may own the slot.
+    if (inFlight.get(backend.id)?.run === run) inFlight.delete(backend.id);
   }
 }
 

@@ -158,3 +158,22 @@ describe("forgetCaps", () => {
     expect(useApp.getState().caps[b.id]).toBe(fresh);
   });
 });
+
+describe("refreshCaps after an address change", () => {
+  it("does not join a fetch still hanging on the old address", async () => {
+    getCapabilities.mockClear();
+    const a = { ...newBackendDraft(), serverUrl: "http://10.0.0.1:8000" };
+    useApp.setState({ backends: [a], connections: {}, caps: {} });
+    // The old host never answers (an unreachable address hangs to the client timeout).
+    getCapabilities.mockImplementationOnce(() => new Promise(() => {}));
+    void refreshCaps(a);
+    const b = { ...a, serverUrl: "http://10.0.0.2:8000" };
+    useApp.setState({ backends: [b] });
+    const fresh = { server_info: { version: "fixed" } };
+    getCapabilities.mockImplementationOnce(async () => fresh);
+    await refreshCaps(b, { force: true });
+    expect(getCapabilities).toHaveBeenCalledTimes(2);
+    expect(getCapabilities.mock.calls[1][0].serverUrl).toBe("http://10.0.0.2:8000");
+    expect(useApp.getState().caps[b.id]).toBe(fresh);
+  });
+});

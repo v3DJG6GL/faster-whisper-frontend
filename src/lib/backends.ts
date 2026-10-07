@@ -32,6 +32,17 @@ export function normalizeUrl(raw: string): string {
   return isSchemelessAddress(t) ? `http://${t}` : "";
 }
 
+/** A Server URL typed in the Backend editor → the form to STORE and send: a schemeless
+ *  `host:8000` gains `http://` (as the connect step and the sync sanitizer already store it),
+ *  because the Rust transport only trims and reqwest rejects an address without a scheme —
+ *  the field showed it as valid while Test, Save and every transcription failed. An http(s)
+ *  URL is kept as typed (no trailing-slash stripping, so a stored URL is not re-evicted on
+ *  an unchanged save), and anything else stays verbatim so the connect error still names it. */
+export function storedTypedUrl(raw: string): string {
+  const t = stripUrlNoise(raw.trim());
+  return !t || /^https?:\/\//i.test(t) ? t : normalizeUrl(t) || t;
+}
+
 /** Does this string carry NO scheme, so that prefixing `http://` is honest?
  *
  *  The two-slash test above is not the same rule the parsers use. WHATWG (the browser's `URL`,

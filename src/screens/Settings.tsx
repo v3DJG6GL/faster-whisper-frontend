@@ -103,6 +103,16 @@ const subscribeBusy = (f: () => void) => {
     busySubs.delete(f);
   };
 };
+// A failed move parks its message here for the same reason: the screen (or the tab) that
+// started it may be gone when it settles, and a per-mount message was dropped or wiped by the
+// tab reset — a failed or partial move of the whole store went unreported. The live mount shows
+// it once the Recording & history tab is open, then clears it.
+let moveError: string | null = null;
+function reportMoveError(e: unknown) {
+  console.error("audio folder move failed:", e);
+  moveError = `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`;
+  busySubs.forEach((f) => f());
+}
 
 
 
@@ -124,17 +134,20 @@ export default function Settings() {
   const basePref = audioBasePref(s.recording);
   // Per-type storage readout (the folder row's bar + the action rows' counts).
   const [storeStats, setStoreStats] = useState<TranscriptStoreStats | null>(null);
-  // Takes the base to measure: the copy `changeRecDir`/`resetRecDir` close over is built
-  // from the PRE-move base, so calling it bare after a move measured the folder the audio
-  // had just left (all zeros) and could settle after the effect's correct read.
-  const refreshStoreStats = useCallback(
-    (base: string | null = basePref) => {
-      void transcriptStoreStats(base)
-        .then(setStoreStats)
-        .catch(() => {});
-    },
-    [basePref],
-  );
+  // Only the latest read may land: a slow walk started mid-operation (a mount with no stats
+  // yet reads while busy) must not settle after the read the busy edge starts.
+  const statsSeq = useRef(0);
+  const haveStatsRef = useRef(false);
+  const refreshStoreStats = useCallback(() => {
+    const my = ++statsSeq.current;
+    void transcriptStoreStats(basePref)
+      .then((st) => {
+        if (my !== statsSeq.current) return;
+        haveStatsRef.current = true;
+        setStoreStats(st);
+      })
+      .catch(() => {});
+  }, [basePref]);
   const dirBusy = useSyncExternalStore(subscribeBusy, () => busy.dir);
   // One store action in flight (`busy.store`): the confirm stays mounted until it settles, and a
   // second click re-ran the wipe — that call found nothing, settled last and reported "Removed 0".
@@ -143,9 +156,14 @@ export default function Settings() {
   const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
   // Re-read on the busy true->false edge too: a wipe or move outlives the screen, so the mount
   // that started it may be gone when it settles — this effect refreshes whichever mount is live
-  // (a wipe or a failed move leaves basePref unchanged, so nothing else would re-run it).
+  // (a wipe or a failed move leaves basePref unchanged, so nothing else would re-run it). It is
+  // also the one re-read after a successful move: basePref flips while busy, so the edge reads
+  // the new base. A mount with no stats yet reads even while busy (else a screen opened during
+  // a move or wipe showed zero counts until it ended); storeStats stays out of the deps — every
+  // read sets a new object, so the effect would loop.
   useEffect(() => {
-    if (tab === "Recording & history" && !dirBusy && !storeBusy) refreshStoreStats();
+    if (tab === "Recording & history" && ((!dirBusy && !storeBusy) || !haveStatsRef.current))
+      refreshStoreStats();
   }, [tab, refreshStoreStats, dirBusy, storeBusy]);
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
@@ -157,6 +175,14 @@ export default function Settings() {
     setConfirming(null);
     setStoreMsg(null);
   }, [tab]);
+  // After the reset above, so a move that failed while away survives the trip back to the tab.
+  const pendingMoveErr = useSyncExternalStore(subscribeBusy, () => moveError);
+  useEffect(() => {
+    if (tab === "Recording & history" && moveError) {
+      setStoreMsg({ text: moveError, error: true });
+      moveError = null;
+    }
+  }, [tab, pendingMoveErr]);
   // An action that resolves after the user left the tab must not re-set what the reset above cleared.
   const tabRef = useRef(tab);
   tabRef.current = tab;
@@ -209,6 +235,10 @@ export default function Settings() {
   const dictDays =
     dictDaysA === 0 ? dictDaysB : dictDaysB === 0 ? dictDaysA : Math.min(dictDaysA, dictDaysB);
   const dictOff = s.transcribe?.keepDictationHistory === false && !s.recording.saveRecordings;
+  // "Delete all dictations" also removes every dictation-* audio file, which outlives its
+  // record when history is off but audio is kept — name both, or the confirm said "0".
+  const dictN = storeStats?.dictationCount ?? 0;
+  const dictAudioN = storeStats?.recordingsFiles ?? 0;
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
@@ -264,6 +294,7 @@ export default function Settings() {
           setStoreMsg({ text: "A cleanup is still running — try the move again when it finishes.", error: true });
           return;
         }
+        moveError = null;
         setBusy("dir", true);
         try {
           // A coalesced record write captured BEFORE the move would land after it and put
@@ -278,7 +309,6 @@ export default function Settings() {
             throw e;
           }
           updateRecording({ audioBaseDir: picked });
-          refreshStoreStats(picked);
           // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
           // mirror still holds the pre-move paths — and would write them back on edit.
           // The workbench registry holds them too (an overlay edit persists through it).
@@ -288,15 +318,15 @@ export default function Settings() {
           setBusy("dir", false);
         }
       })
-      .catch((e) => setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true }));
+      .catch(reportMoveError);
   const resetRecDir = () => {
     if (busy.dir || busy.store) return;
+    moveError = null;
     setBusy("dir", true);
     dropPendingWrites();
     void moveAudioBase(basePref, null)
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
-        refreshStoreStats(null);
         forgetRecord(null);
         void loadHistory(true).catch(() => {});
       })
@@ -304,7 +334,7 @@ export default function Settings() {
         // A partial move already rewrote the records that did move: reload either way.
         forgetRecord(null);
         void loadHistory(true).catch(() => {});
-        setStoreMsg({ text: `Could not move the audio folder: ${safeDisplayText(String(e), 200)}`, error: true });
+        reportMoveError(e);
       })
       .finally(() => setBusy("dir", false));
   };
@@ -671,13 +701,15 @@ export default function Settings() {
 
             <SettingRow
               title="Delete all dictations"
-              desc={`Removes all ${storeStats?.dictationCount ?? 0} stored dictations and their audio. The retention clock stays as set.`}
+              desc={`Removes all ${dictN} stored dictations${dictAudioN > 0 ? ` and ${dictAudioN} audio file(s)` : " and their audio"}. The retention clock stays as set.`}
               last
             >
               {confirming === "dict" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")}>
-                    Delete {storeStats?.dictationCount ?? 0} dictations
+                    {dictN > 0
+                      ? `Delete ${dictN} dictations${dictAudioN > 0 ? ` + ${dictAudioN} audio files` : ""}`
+                      : `Delete ${dictAudioN} audio files`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel

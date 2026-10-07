@@ -24,6 +24,7 @@ export function MicPicker({
   value,
   savedLabel,
   advanced,
+  pathsListed = true,
   onAdvancedChange,
   onPick,
   disabled,
@@ -33,6 +34,9 @@ export function MicPicker({
   value: string | null;
   savedLabel: string | null | undefined;
   advanced: boolean;
+  /** False while `inv` is a listing fetched without the paths: the toggle shows `advanced`, but
+   *  the path rows wait for the listing that carries them. */
+  pathsListed?: boolean;
   onAdvancedChange: (on: boolean) => void;
   onPick: (id: string | null) => void;
   disabled?: boolean;
@@ -44,7 +48,8 @@ export function MicPicker({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
   const uid = useId();
-  const view = useMemo(() => buildMicView(inv, value, savedLabel, advanced), [inv, value, savedLabel, advanced]);
+  const showPaths = advanced && pathsListed;
+  const view = useMemo(() => buildMicView(inv, value, savedLabel, showPaths), [inv, value, savedLabel, showPaths]);
   const choices = view.rows.filter(isSelectable);
   const selectedIndex = Math.max(
     0,

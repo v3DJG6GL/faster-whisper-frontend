@@ -25,7 +25,9 @@ import { plural } from "@/lib/format";
 import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
-import { type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf } from "@/lib/pipelineMap";
+import {
+  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, envPinnedOf, RULE_LIST_SETTING,
+} from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
@@ -253,8 +255,9 @@ function RuleCard({
           )}
         </button>
         <div className="flex shrink-0 items-center gap-1.5">
-          {(rule.tags ?? []).slice(0, 3).map((t) => (
-            <Badge key={t} tone="dim">{safeDisplayText(t, 40)}</Badge>
+          {/* ruleListOf does not de-duplicate tags (an admin rule can repeat one): key by position. */}
+          {(rule.tags ?? []).slice(0, 3).map((t, i) => (
+            <Badge key={`${i}-${t}`} tone="dim">{safeDisplayText(t, 40)}</Badge>
           ))}
         </div>
         {rule.type === "callback:map" && onTogglePin && (
@@ -1161,18 +1164,6 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
       return { title: `Server error (HTTP ${fetch.status})`, body: fetch.error ?? "The server returned an unexpected error." };
   }
 }
-
-/** The setting names the server's environment pinned, so the save did not change them. `env_pinned_ignored`
- *  is opaque server JSON: coerce it like `errors`/`conflicts`. In practice it is only ever `PIPELINE_RULES`
- *  (the WHOLE rule list), never a rule name. */
-function envPinnedOf(result: PipelineSaveResult): string[] {
-  return (Array.isArray(result.env_pinned_ignored) ? result.env_pinned_ignored : [])
-    .filter((s): s is string => typeof s === "string")
-    .slice(0, 16);
-}
-
-/** The setting that holds every rule: pinned, nothing in the save takes effect. */
-const RULE_LIST_SETTING = "PIPELINE_RULES";
 
 function SaveBanner({
   result,

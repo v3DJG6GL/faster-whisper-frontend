@@ -29,6 +29,11 @@ export function AudioTab() {
   // (those rows only exist with the paths listed).
   const [advanced, setAdvanced] = useState(() => isAlsaPin(microphoneId));
   const withPaths = advanced || isAlsaPin(microphoneId);
+  // Whether the listing on screen was fetched WITH the paths: the flip sets `advanced` at once,
+  // but until the paths reply lands every path list is empty and the picker said "No other
+  // audio paths found." — the path rows show only once the listing carries them.
+  const [invHasPaths, setInvHasPaths] = useState(false);
+  const showPaths = advanced && invHasPaths;
 
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(0);
@@ -59,7 +64,10 @@ export function AudioTab() {
     const my = ++invSeq.current;
     try {
       const next = await listAudioDevices(withPaths);
-      if (my === invSeq.current) setInv(next);
+      if (my === invSeq.current) {
+        setInv(next);
+        setInvHasPaths(withPaths);
+      }
     } catch (e) {
       console.error("listing audio devices failed:", e); // keep prior list; don't float the rejection
     }
@@ -270,7 +278,7 @@ export function AudioTab() {
     await stopAndReplay();
   }, [testing, stopAndReplay]);
 
-  const view = buildMicView(inv, microphoneId, microphoneLabel, advanced);
+  const view = buildMicView(inv, microphoneId, microphoneLabel, showPaths);
 
   return (
     <Card className="px-6">
@@ -292,6 +300,7 @@ export function AudioTab() {
             value={microphoneId}
             savedLabel={microphoneLabel}
             advanced={advanced}
+            pathsListed={invHasPaths}
             onAdvancedChange={setAdvanced}
             onPick={(id) =>
               updateSettings({

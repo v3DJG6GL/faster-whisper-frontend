@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, insecureUrlWarning, newBackendDraft } from "./backends";
+import { backendPrompt, backendPromptFields, effectiveLanguage, insecureUrlWarning, newBackendDraft, storedTypedUrl } from "./backends";
 import type { Backend } from "./types";
 
 describe("newBackendDraft", () => {
@@ -88,5 +88,17 @@ describe("backendPrompt — the Backend default's tri-state", () => {
     // up to .bak and load defaults — a downgrade wiping every backend and hotkey).
     expect(backendPromptFields(undefined).prompt).toBe("");
     expect(backendPromptFields("").prompt).toBe("");
+  });
+});
+
+describe("storedTypedUrl", () => {
+  it("gives a schemeless LAN address the http:// the transport needs", () => {
+    expect(storedTypedUrl("host:8000")).toBe("http://host:8000");
+    expect(storedTypedUrl("  192.168.1.5:8000 ")).toBe("http://192.168.1.5:8000");
+  });
+  it("keeps an http(s) URL as typed, a blank field blank and an unsupported scheme verbatim", () => {
+    expect(storedTypedUrl("https://h/")).toBe("https://h/");
+    expect(storedTypedUrl("")).toBe("");
+    expect(storedTypedUrl("ftp://x")).toBe("ftp://x");
   });
 });

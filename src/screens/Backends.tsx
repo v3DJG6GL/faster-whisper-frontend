@@ -28,7 +28,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { ALL_CATEGORIES, migrateBlob } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
+import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -90,6 +90,9 @@ function Editor({
   // chosen was then sent to the other one. `Profiles.tsx` already resolves the override for
   // exactly this reason, and Q13/J8 fixed the same divergence on `runTest` and the card's address.
   const debouncedUrl = useDebounced(effUrl, 400);
+  // What the probes send: a schemeless `host:8000` in Server URL gets the `http://` it is saved
+  // with (storedTypedUrl), or reqwest refuses it. The override goes to the transport as typed.
+  const probeUrl = urlOverride.trim() ? debouncedUrl : storedTypedUrl(debouncedUrl);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
@@ -158,7 +161,7 @@ function Editor({
   const hookKind = hookKindRef.current;
   // Caller capabilities, for gating the decode editor.
   const { caps: ctxCaps } = useOverrideContext({
-    serverUrl: debouncedUrl,
+    serverUrl: probeUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
     serverKind: hookKind,
@@ -171,7 +174,7 @@ function Editor({
   // What the server gives this backend's requests (its model + override profile) — the values
   // its blank decode fields and prompt inherit. Batch terms: the backend serves both.
   const decodeDefaults = useDecodeDefaults({
-    serverUrl: debouncedUrl,
+    serverUrl: probeUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
     model: debouncedModel,
@@ -206,7 +209,9 @@ function Editor({
     setTesting(true);
     try {
       const info = await testConnection({
-        serverUrl: testedUrl,
+        // The guards keep comparing the raw `testedUrl`; only the request gets the stored form
+        // (a schemeless Server URL gains http://, as doSave stores it; the override is verbatim).
+        serverUrl: urlOverride.trim() ? testedUrl : storedTypedUrl(testedUrl),
         backendId: b.id,
         apiKey: testedKey || null,
       });
@@ -289,7 +294,7 @@ function Editor({
       // (an EXISTING backend's blank field still means "keep the stored key").
       hasApiKey: key.length > 0 || (initialKey ? false : cur.hasApiKey),
       name: cur.name.trim() || "Untitled backend",
-      serverUrl: cur.serverUrl.trim(),
+      serverUrl: storedTypedUrl(cur.serverUrl),
       model: cur.model.trim(),
       overrideProfile: cur.overrideProfile?.trim() ? cur.overrideProfile.trim() : undefined,
     });
@@ -487,7 +492,7 @@ function Editor({
           <OverrideHeader title="Server override profile" env={false} overridden={!!b.overrideProfile} last>
             <div className={OVERRIDE_CONTROL_W}>
               <OverrideProfilePicker
-                serverUrl={debouncedUrl}
+                serverUrl={probeUrl}
                 backendId={b.id}
                 apiKey={debouncedKey || null}
                 serverKind={hookKind}

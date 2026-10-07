@@ -188,6 +188,9 @@ export function DecodeFields({
       return <TextInput aria-label={spec.env} aria-describedby={described} title={title} disabled value="" placeholder={fixedLabel} />;
     // The app's own −/+ stepper (never the browser's spinner); unset = the inherited value, greyed.
     const inhNum = typeof inherited?.[k] === "number" ? (inherited[k] as number) : undefined;
+    // The step is the −/+ increment, not a precision limit: typed floats keep up to 3 decimals
+    // (the server takes any float). Int keys keep 0.
+    const decimals = spec.kind === "float" ? Math.max(stepDecimals(spec.step), 3) : stepDecimals(spec.step);
     return (
       <div title={[title, range].filter(Boolean).join(" · ") || undefined}>
         <Stepper
@@ -197,7 +200,7 @@ export function DecodeFields({
           min={spec.min}
           max={spec.max}
           step={spec.step}
-          decimals={stepDecimals(spec.step)}
+          decimals={decimals}
           unit={spec.unit}
           zeroLabel={spec.zeroOff ? spec.nullText : undefined}
           inherited={inhNum}
