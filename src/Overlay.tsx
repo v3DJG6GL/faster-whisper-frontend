@@ -107,6 +107,9 @@ interface ChipState {
   // "Dot size" — factor for the status dot while it is tucked at the screen edge (see dotK).
   dotScale: number;
   quickLaunch: OverlayQuickAction[];
+  // False while the payload is built from the store's defaults (the saved config has not
+  // landed yet); absent from an older core = treat as loaded.
+  configLoaded?: boolean;
 }
 
 // Maps a dictationVisual() tone token → the chip's dot fill class. The chip layers
@@ -224,9 +227,10 @@ export default function Overlay() {
   // defeated this guard for the motion term).
   const prevMotionRef = useRef<string>("");
   const prevThemeRef = useRef<ThemeName>("auto");
-  // The size refs below start from the REC placeholder; the first real payload (the
-  // overlay://ready reply) carries the SAVED sizes, which must seed them rather than read as
-  // a Settings adjustment (that would tuck the chip at once, or nudge it, at every launch).
+  // The size refs below start from the REC placeholder and follow every payload until one built
+  // from the loaded config arrives: that one carries the SAVED sizes, which must seed them rather
+  // than read as a Settings adjustment (that would tuck the chip at once, or nudge it, at launch).
+  // The overlay://ready reply can predate the config load, so its default sizes don't seed.
   const scalesSeeded = useRef(false);
 
   // Live updates from the Rust core when running under Tauri.
@@ -251,9 +255,9 @@ export default function Overlay() {
             applyAccentAndTheme(hue, mot, theme);
           }
           if (!scalesSeeded.current) {
-            scalesSeeded.current = true;
             lastChipScale.current = e.payload.chipScale ?? REC.chipScale;
             lastDotScale.current = e.payload.dotScale ?? REC.dotScale;
+            if (e.payload.configLoaded !== false) scalesSeeded.current = true;
           }
           setState({
             ...e.payload,

@@ -34,6 +34,13 @@ import AppRules from "@/screens/AppRules";
 import Statistics from "@/screens/Statistics";
 import Settings from "@/screens/Settings";
 
+// Land every debounced / coalesced write: History edits (first — they feed the record writes),
+// History writes, config save, usage-outcome queue save. None of the flushes rejects.
+function flushPendingWrites(): Promise<PromiseSettledResult<void>[]> {
+  flushPersistEdits();
+  return Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
+}
+
 // Subscribe to a Tauri event for the component's lifetime via the StrictMode-safe cancelled-guard.
 // React StrictMode (dev) mounts → unmounts → remounts and runs the cleanup BEFORE the listen()
 // promise resolves; without the guard the first listener is never removed and a second is added, so
@@ -255,12 +262,11 @@ export default function App() {
     void migrateLegacyMicPin();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
-    // History coalesces rapid record writes (chunked translate) and debounces edits; land both on
-    // a reload. A real quit never fires beforeunload — that goes through the `app://before-quit`
-    // handshake below.
+    // A reload lands the same four writes as a quit (History edits, History writes, config save,
+    // usage-outcome queue save). A real quit never fires beforeunload — that goes through the
+    // `app://before-quit` handshake below.
     const onUnload = () => {
-      flushPersistEdits();
-      void flushRecordWrites();
+      void flushPendingWrites();
     };
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
@@ -275,8 +281,7 @@ export default function App() {
       onBeforeQuit(() => {
         void (async () => {
           try {
-            flushPersistEdits();
-            await Promise.allSettled([flushRecordWrites(), flushConfigSave(), flushOutcomeSave()]);
+            await flushPendingWrites();
           } finally {
             void quitReady().catch(() => {});
           }
@@ -291,10 +296,7 @@ export default function App() {
   useTauriListener(
     () =>
       onSessionEnding(() => {
-        flushPersistEdits();
-        void flushRecordWrites();
-        void flushConfigSave();
-        void flushOutcomeSave();
+        void flushPendingWrites();
       }),
     [],
   );

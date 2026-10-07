@@ -18,7 +18,9 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
-import { type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf } from "@/lib/pipelineMap";
+import {
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, envPinnedOf, RULE_LIST_SETTING,
+} from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { safeDisplayText, wellFormedAppRules } from "@/lib/sanitize";
 import {
@@ -41,14 +43,14 @@ type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
 type SaveState = "idle" | "saving" | "saved" | "error";
 
-function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
+function SaveStatus({ state, listPinned, onRetry }: { state: SaveState; listPinned: boolean; onRetry: () => void }) {
   if (state === "saving")
     return <span className="flex items-center gap-1.5 text-[11.5px] text-faint"><Loader2 className="size-3.5 animate-spin" /> saving…</span>;
   if (state === "saved")
     return <span className="flex items-center gap-1.5 text-[11.5px] text-ok"><Check className="size-3.5" /> saved</span>;
   if (state === "error")
     return (
-      <button type="button" onClick={onRetry} className="ring-signal flex items-center gap-1.5 text-[11.5px] text-warn hover:underline" title="Retry save">
+      <button type="button" onClick={onRetry} className="ring-signal flex items-center gap-1.5 text-[11.5px] text-warn hover:underline" title={listPinned ? "The server's environment pins the rule list, so this change does not take effect" : "Retry save"}>
         <AlertTriangle className="size-3.5" /> retry
       </button>
     );
@@ -91,6 +93,8 @@ export default function QuickAdd() {
   // Mirror saveState into a ref so the summon listener (a stale-closure-prone callback) reads the
   // latest value. A fired-but-failed save leaves saveTimer null yet the local rows are still unsaved.
   const saveStateRef = useRef<SaveState>("idle");
+  /** The last reported save was a 2xx the server's environment ignored (rule list pinned). */
+  const [listPinned, setListPinned] = useState(false);
   useEffect(() => {
     saveStateRef.current = saveState;
   }, [saveState]);
@@ -257,17 +261,26 @@ export default function QuickAdd() {
         backendId: t.backendId,
         patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
       });
+      // A 2xx can still change nothing: the server's environment pins the whole rule list, so the
+      // next summon's refresh would silently drop this mapping. Report it as unsaved, like Dictionary.
+      const pinned = res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
       // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).
-      if (saveTimer.current === null) setSaveState(res.ok ? "saved" : "error");
-      return res.ok;
+      if (saveTimer.current === null) {
+        setListPinned(pinned);
+        setSaveState(res.ok && !pinned ? "saved" : "error");
+      }
+      return res.ok && !pinned;
     } catch (e) {
       // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
       // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
       // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
       console.error("quick-add save failed:", e);
-      if (saveTimer.current === null) setSaveState("error");
+      if (saveTimer.current === null) {
+        setListPinned(false);
+        setSaveState("error");
+      }
       return false;
     }
   }, []);
@@ -478,7 +491,7 @@ export default function QuickAdd() {
           <span className="truncate font-display text-[15px] font-semibold text-text">{label}</span>
           <span className="font-mono text-[10px] uppercase tracking-wider text-faint">quick add</span>
           <span className="ml-auto flex items-center gap-2">
-            <SaveStatus state={saveState} onRetry={() => void flushSave()} />
+            <SaveStatus state={saveState} listPinned={listPinned} onRetry={() => void flushSave()} />
             <button
               type="button"
               onClick={closeNow}
