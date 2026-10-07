@@ -6,7 +6,7 @@ import { safeDisplayText } from "./sanitize";
 
 // How many targets are spelled out before the rest become "+N". Three is what fits
 // beside a profile's name, model and endpoint badges without wrapping the row.
-const ROUTE_TARGETS_SHOWN = 3;
+export const ROUTE_TARGETS_SHOWN = 3;
 
 /** The pieces of a `source → targets` route, bounded for display.
  *

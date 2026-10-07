@@ -204,6 +204,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // entry — `applyBlob` may have replaced the backends list, orphaning the key that
       // was written under `gateBackend.id`. Mirrors Backends.RestoreOffer.finishRestore.
       if (match && key) await setBackendKey(match.id, key);
+      // Once the key sits under the bound backend, drop the gate's own entry if the restore left
+      // no backend referencing it — otherwise a second copy of the key lingers in the keyring.
+      const gate = gateBackend.current;
+      if (key && gate && match && match.id !== gate.id && !st.getState().backends.some((b) => b.id === gate.id)) {
+        void deleteBackendKey(gate.id).catch(() => {});
+      }
       s.updateSync({ enabled: true, backendId: match?.id ?? null });
       finish();
     } catch (e) {

@@ -23,6 +23,7 @@ import {
 } from "@/components/ui";
 import { useApp } from "@/lib/store";
 import { fmtDuration, fmtTimestamp } from "@/lib/format";
+import { seekKeyTarget } from "@/lib/seekKeys";
 import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
   appChipLabel, appLabel, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks,
@@ -231,10 +232,17 @@ function RecordingPlayer({ path }: { path: string }) {
           if (e.currentTarget.hasPointerCapture(e.pointerId)) seekTo(e);
         }}
         onKeyDown={(e) => {
+          // The shared slider contract (arrows, Page, Home/End, Space), as the transcript viewer's.
           const a = audioRef.current;
           if (!a) return;
-          if (e.key === "ArrowLeft") a.currentTime = Math.max(0, a.currentTime - 5);
-          if (e.key === "ArrowRight") a.currentTime = Math.min(len, a.currentTime + 5);
+          const next = seekKeyTarget(e.key, a.currentTime, len || 0, e.shiftKey);
+          if (next === null) return;
+          e.preventDefault();
+          if (next === "toggle") toggle();
+          else {
+            a.currentTime = next;
+            setCur(next);
+          }
         }}
       >
         <div className="absolute left-0 top-1/2 h-1 w-full -translate-y-1/2 rounded-full bg-line" />
@@ -1017,9 +1025,11 @@ export default function History() {
       )}
       {loaded && records.length > 0 && !visible.length && (
         <Card className="mt-6 p-8 text-center text-[13px] text-dim">
+          {/* The app filter only narrows the Dictations segment — name it in both branches, or a
+              search hidden by it reads "No dictations match" beside a segment count of 1. */}
           {query.trim()
-            ? `No ${segment === "all" ? "entries" : segLabel} match "${safeDisplayText(query, 80)}".`
-            : `No ${segment === "all" ? "entries" : segLabel}${appFilter ? " for this app" : ""} yet.`}
+            ? `No ${segment === "all" ? "entries" : segLabel}${appFilter && segment === "dictation" ? " for this app" : ""} match "${safeDisplayText(query, 80)}".`
+            : `No ${segment === "all" ? "entries" : segLabel}${appFilter && segment === "dictation" ? " for this app" : ""} yet.`}
           <div className="mt-3 flex items-center justify-center gap-2">
             {hiddenMatches > 0 && (
               <Button variant="default" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
