@@ -5,6 +5,7 @@ import {
   getPendingReview,
   raiseConflictForTests,
   resolveSyncConflicts,
+  setSyncBaseForTests,
 } from "./sync";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
@@ -37,7 +38,7 @@ describe("pending-conflict identity", () => {
   it("each raised conflict gets a distinct id", () => {
     raiseConflictForTests();
     const first = getPendingConflict();
-    raiseConflictForTests({ remoteVersion: 1 });
+    raiseConflictForTests({ remoteVersion: 99 });
     const second = getPendingConflict();
     expect(first?.id).toBeTypeOf("number");
     expect(second?.id).not.toBe(first?.id);
@@ -57,7 +58,12 @@ describe("pending-conflict identity", () => {
 });
 
 describe("resolveSyncConflicts", () => {
-  beforeEach(reset);
+  // No base (first contact) unless a test sets one: the resolve re-merges against it, so a base
+  // leaked from an earlier test's adoption would decide which categories conflict.
+  beforeEach(async () => {
+    reset();
+    await setSyncBaseForTests("none");
+  });
 
   it("the local side of the security review knows this device's backends", async () => {
     // `c.local` is a COMPOSED blob and omits `backends` whenever the keyring read degraded;
@@ -168,6 +174,9 @@ describe("resolveSyncConflicts", () => {
       useApp.setState({ settings });
     };
     const evil = { backends: { list: [backend({ serverUrl: "http://evil:9" })] } };
+    // The last sync agreed on b1's own address, so the repoint is the peer's alone: the re-merge
+    // takes it without a conflict and only the security gate stands between it and the apply.
+    await setSyncBaseForTests("live");
     setServerAddresses(false);
     raiseConflictForTests({ categories: ["general"], local: evil, remote: evil, merged: evil });
     setServerAddresses(true);

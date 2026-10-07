@@ -167,6 +167,19 @@ describe("completeGates migration", () => {
     expect(g.autoHideToEdge).toBe(true); // saved gate beats the OFF category fold
     expect(g.liveTranscript).toBe(false); // unfolded member stays category-off
   });
+
+  it("a pre-manifest sub map refines only within an ON category (its defaults were auto-persisted)", async () => {
+    const { completeGates } = await import("./settingsManifest");
+    const { catsFromGates } = await import("./sync/syncGates");
+    const legacy = { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false };
+    const g = completeGates(legacy, { general: true, dictionary: false });
+    expect(g.quickAddHotkey).toBe(false); // the OFF dictionary fold wins over the auto-persisted true
+    expect(catsFromGates(g).dictionary).toBe(false);
+    expect(g.profileHotkeys).toBe(true); // ON category: the legacy key still applies
+    const r = completeGates({ ...legacy, recordingsDir: true }, { recording: false });
+    expect(r.audioFolder).toBe(false); // recordingsDir → audioFolder, but the category is OFF
+    expect(completeGates({ ...legacy, recordingsDir: true }, { recording: true }).audioFolder).toBe(true);
+  });
 });
 
 describe("store completion of a pre-split config", () => {
@@ -180,6 +193,17 @@ describe("store completion of a pre-split config", () => {
     expect(sub.quickAddHotkey).toBe(false);
     expect(sub.pinnedMappings).toBe(false);
     expect(sub.backendList).toBe(true); // unrelated category untouched
+  });
+
+  it("a pre-manifest sub map does not re-enable the quick-add chord of an OFF pre-split General", async () => {
+    const { withSettingsDefaults } = await import("./store");
+    const sub = withSettingsDefaults({
+      sync: {
+        categories: { general: false },
+        sub: { recordingsDir: false, profileHotkeys: true, quickAddHotkey: true, transcribePicks: false },
+      },
+    }).sync!.sub!;
+    expect(sub.quickAddHotkey).toBe(false);
   });
 
   it("legacy latchAutoStop survives a completion round-trip (downgrade keeps the intent)", async () => {

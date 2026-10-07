@@ -332,3 +332,93 @@ describe("approving a review while a pull re-raises it", () => {
     }
   });
 });
+
+/** Seed a version-1 base from a clean push with sync on and the keyring answering. */
+async function seedBase(): Promise<SyncBlob> {
+  await resetSyncState();
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+  useApp.setState({ settings, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+  api.keys = { b1: "sk-secret" };
+  await pushNow(true);
+  return structuredClone(api.pushed) as SyncBlob;
+}
+
+/** A synced chip setting (not machine-specific, so the chip category carries it). */
+function bumpChipScale(): number {
+  const s = useApp.getState().settings;
+  const next = s.recording.chipScale === 1.5 ? 1.25 : 1.5;
+  useApp.setState({ settings: { ...s, recording: { ...s.recording, chipScale: next } } });
+  return next;
+}
+
+// A review or conflict adopts no base, so only the user's answer cleared it: after the peer took
+// the change back (a clean pull at a NEWER version) the dialog stayed up next to "Synced", and its
+// Apply re-landed the withdrawn change and moved the base backwards.
+describe("a pending review the server moved past", () => {
+  it("is dropped by the clean pull that adopts the newer version", async () => {
+    try {
+      const base = await seedBase();
+      const before = useApp.getState().settings.transcribe?.dictationRetentionDays;
+      const risky = structuredClone(base);
+      risky.recording = { ...risky.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: risky };
+      await pullNow(true);
+      expect(getPendingReview()).not.toBeNull();
+      api.pulled = { version: 3, updated_ts: 3, device: "peer", blob: base }; // taken back
+      await pullNow(true);
+      expect(getPendingReview()).toBeNull();
+      await approvePendingReview(); // a stray click on the stale dialog
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+      await pushNow(true);
+      expect(api.pushedBase).toBe(3);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+});
+
+// The resolve / approve applied the blob merged against the raise-time local: an edit made here
+// while the dialog waited, to a category only this device changed, was hydrated back.
+describe("an edit made while a sync prompt waits", () => {
+  it("survives resolving the conflict", async () => {
+    try {
+      const base = await seedBase();
+      const s = useApp.getState().settings;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: !s.general.startMinimized } } });
+      const remote = structuredClone(base);
+      remote.general = { ...remote.general, typeAsISpeak: !s.general.typeAsISpeak } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      const scale = bumpChipScale();
+      await resolveSyncConflicts({ general: "remote" });
+      expect(getPendingConflict()).toBeNull();
+      expect(useApp.getState().settings.recording.chipScale).toBe(scale);
+      expect(useApp.getState().settings.general.typeAsISpeak).toBe(!s.general.typeAsISpeak);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+
+  it("survives approving the review", async () => {
+    try {
+      const base = await seedBase();
+      const remote = structuredClone(base);
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()).not.toBeNull();
+      const scale = bumpChipScale();
+      await approvePendingReview();
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
+      expect(useApp.getState().settings.recording.chipScale).toBe(scale);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+});

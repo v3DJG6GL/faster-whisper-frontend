@@ -2425,6 +2425,7 @@ export async function pushNow(manual = false): Promise<void> {
           snapshot: blob,
         });
         if (myGen !== gen) return; // superseded during the keyring stash wait
+        dropSupersededPending(res.state.version);
         setRuntime({
           syncStatus: "ok",
           syncUnsupported: false,
@@ -2573,6 +2574,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // persistState can park in the keyring stash; a reset/sync-off in that window must not get
   // this epoch's "ok" written over it.
   if (myGen !== gen) return;
+  dropSupersededPending(remote.version);
   setRuntime({
     syncStatus: "ok",
     lastSyncedAt: Date.now(),
@@ -2938,11 +2940,22 @@ export function getPendingReview(): {
 
 function raiseReview(r: PendingReview): void {
   pendingReview = r;
+  // A conflict against an older server version is moot now: the server moved past it.
+  if (pendingConflict && pendingConflict.remoteVersion < r.version) pendingConflict = null;
   setRuntime({
     syncStatus: "error",
     syncError:
       "A pulled update wants to change where your dictation is sent, what it types, or what is kept on this device — review it in Settings → Sync.",
   });
+}
+
+/** A base at `version` was just adopted (a clean pull, or a push the server accepted): a review
+ *  or conflict raised against that version or an older one describes a server state that is
+ *  gone — another device took the change back, or this one now agrees. Left up, the dialog sat
+ *  next to "Synced" and its Apply re-landed the withdrawn change and moved the base backwards. */
+function dropSupersededPending(version: number): void {
+  if (pendingReview && pendingReview.version <= version) pendingReview = null;
+  if (pendingConflict && pendingConflict.remoteVersion <= version) pendingConflict = null;
 }
 
 /** A change's identity for "was this row on the list the user saw". */
@@ -2982,17 +2995,28 @@ export async function approvePendingReview(): Promise<void> {
     // content (as resolveSyncConflicts does by id) and go on with the current one when it is
     // the review the user saw; a different one aborts.
     const cur = pendingReview;
-    if (!cur || !sameReview(cur, r) || useApp.getState().status !== "idle") return;
-    pushAfter = await approveLocked(cur, myGen);
+    if (cur && sameReview(cur, r) && useApp.getState().status === "idle") {
+      pushAfter = await approveLocked(cur, myGen);
+    }
   } finally {
     if (myGen === gen) inFlight = false;
   }
-  // After the release: the push takes the lock itself.
+  if (myGen !== gen) return;
+  // After the release: the push takes the lock itself. Every other arm still re-arms the
+  // debounced push: a store edit made just before the click fired its pushNow into this lock
+  // and was dropped, and nothing else re-sends it (the hash check makes it a no-op otherwise).
   if (pushAfter) schedulePush(0);
+  else schedulePush();
 }
 
 /** approvePendingReview's body, run under the engine lock. True when the caller should push. */
 async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> {
+  // A base at or past the reviewed version was adopted meanwhile: the review is moot.
+  if ((state.version ?? 0) >= r.version) {
+    pendingReview = null;
+    setRuntime({ syncStatus: "ok", syncError: null });
+    return false;
+  }
   // applyBlob reads the gates LIVE, but the list was judged under the gates at raise time: with
   // "Server addresses" / "API keys" off then, a repoint or key swap was left off the list (the
   // apply would strip it). Turning the gate on since does not supersede the review, so approving
@@ -3003,19 +3027,30 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> 
   // device afresh.
   let localNow = await composeLive(r.cats);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return false;
+  // `r.blob` was merged against the raise-time local: an edit made here since (to a category
+  // only this device changed) would be hydrated back to its old value. Re-merge against the live
+  // compose; a category that conflicts keeps the reviewed value (a resolve's "local" pick, the
+  // held-back backends category), every other one is refreshed.
+  const re = mergeBlobs(state.snapshot, localNow, r.remote);
+  const blobNow: SyncBlob = { ...re.merged };
+  for (const cat of re.conflicts) {
+    const v = r.blob[cat];
+    if (v === undefined) delete blobNow[cat];
+    else (blobNow as Record<string, unknown>)[cat] = v;
+  }
   // A degraded keyring re-sends the snapshot's backends category (the peer's view, again): judge
   // against the live list with no keys instead, so every incoming address / key still raises.
   if (backendsDegraded(localNow, r.cats)) {
     localNow = { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } };
   }
-  const now = gatedSecurityCheck(r.blob, localNow, r.cats);
+  const now = gatedSecurityCheck(blobNow, localNow, r.cats);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
-    raiseReview({ ...r, changes: now, relisted: true });
+    raiseReview({ ...r, blob: blobNow, changes: now, relisted: true });
     return false;
   }
   pendingReview = null;
-  const applied = await applyBlob(r.blob, r.cats);
+  const applied = await applyBlob(blobNow, r.cats);
   if (myGen !== gen) return false;
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it): put
@@ -3035,7 +3070,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> 
   });
   if (myGen !== gen) return false;
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: r.device });
-  return r.pushAfter && hashBlob(r.blob) !== hashBlob(r.remote);
+  return r.pushAfter && hashBlob(blobNow) !== hashBlob(r.remote);
 }
 
 /** Reject the held-back pull. Nothing is applied and NO base is adopted, so the next pull
@@ -3051,7 +3086,8 @@ export function rejectPendingReview(): void {
 // ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
 
 /** Test seam: raise a minimal conflict so the id contract is pinnable without
- *  a transport (mirrors resetWarmDebounceForTests in preload.ts). */
+ *  a transport (mirrors resetWarmDebounceForTests in preload.ts). The default version is one
+ *  past the current base, as a real conflict's is — one at or below it is moot (resolveLocked). */
 export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void {
   raiseConflict({
     categories: ["general"],
@@ -3059,10 +3095,16 @@ export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void
     local: {},
     remote: {},
     merged: {},
-    remoteVersion: 0,
+    remoteVersion: (state.version ?? 0) + 1,
     remoteUpdatedAt: null,
     ...over,
   } as unknown as PendingConflict);
+}
+
+/** Test seam: set the 3-way merge base (in memory only) — none, as on first contact, or this
+ *  device's live compose, as right after a sync that changed nothing. */
+export async function setSyncBaseForTests(base: "none" | "live"): Promise<void> {
+  state = base === "live" ? { snapshot: await composeLive(syncCats()) } : {};
 }
 
 /** Test seam: is a deferred apply parked for the end of the dictation session? */
@@ -3082,6 +3124,8 @@ function raiseConflict(c: PendingConflict): void {
     pendingConflict.categories.join() === c.categories.join();
   if (!same) pendingConflictId = ++conflictSeq;
   pendingConflict = c;
+  // Same rule as raiseReview: a review against an older server version is moot now.
+  if (pendingReview && pendingReview.version < c.remoteVersion) pendingReview = null;
   setRuntime({
     syncStatus: "error",
     syncError:
@@ -3104,13 +3148,17 @@ export async function resolveSyncConflicts(
   let pushAfter = false;
   try {
     const c = pendingConflict;
-    if (!c || pendingConflictId !== id || useApp.getState().status !== "idle") return;
-    pushAfter = await resolveLocked(c, choices, myGen);
+    if (c && pendingConflictId === id && useApp.getState().status === "idle") {
+      pushAfter = await resolveLocked(c, choices, myGen);
+    }
   } finally {
     if (myGen === gen) inFlight = false;
   }
-  // After the release, or pushNow would no-op on the lock this call held.
+  if (myGen !== gen) return;
+  // After the release, or pushNow would no-op on the lock this call held. Otherwise re-arm the
+  // debounced push for an edit whose pushNow hit this lock (as approvePendingReview does).
   if (pushAfter) void pushNow(true);
+  else schedulePush();
 }
 
 /** resolveSyncConflicts' body, run under the engine lock. True when the caller should push. */
@@ -3119,6 +3167,12 @@ async function resolveLocked(
   choices: Record<string, "local" | "remote">,
   myGen: number,
 ): Promise<boolean> {
+  // Same moot-conflict rule as approveLocked.
+  if ((state.version ?? 0) >= c.remoteVersion) {
+    pendingConflict = null;
+    setRuntime({ syncStatus: "ok", syncError: null });
+    return false;
+  }
   // `c.local` was composed under the raise-time gates: with "Server addresses" / "API keys" off
   // then, a gated-off address / key was substituted with the snapshot's — the peer's own value.
   // The gates may be on now (turning one on does not supersede the conflict) and applyBlob reads
@@ -3128,8 +3182,16 @@ async function resolveLocked(
   const syncedCats = syncCats();
   const localNow = await composeLive(syncedCats);
   if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return false;
+  // `c.merged` was merged against the raise-time local: an edit made here since (to a category
+  // only this device changed) would be hydrated back to its old value. Re-merge against the live
+  // compose, and if that conflicts on a category the user was never asked about, ask again.
+  const re = mergeBlobs(state.snapshot, localNow, c.remote);
+  if (re.conflicts.some((cat) => !c.categories.includes(cat))) {
+    raiseConflict({ ...c, categories: re.conflicts, merged: re.merged, local: localNow });
+    return false;
+  }
   pendingConflict = null;
-  const final: SyncBlob = { ...c.merged };
+  const final: SyncBlob = { ...re.merged };
   for (const cat of c.categories) {
     const src = choices[cat] === "remote" ? c.remote : localNow;
     const val = src[cat];
@@ -3139,8 +3201,8 @@ async function resolveLocked(
   // Degraded keyring (see `backendsDegraded`): a degraded compose carries the base's backends
   // category, not this device's list, so `final` holds the remote/base list whichever side won —
   // applying it deleted every backend added here. Hold the category out, as the two sibling adopt
-  // sites do. Either compose counts: `c.merged` was merged against `c.local`, a "local" pick
-  // comes from `localNow`.
+  // sites do. Either compose counts: the raise-time `c.local`, and `localNow` (the re-merge
+  // and every "local" pick).
   const degradedNow = backendsDegraded(localNow, syncedCats);
   const degraded = backendsDegraded(c.local, syncedCats) || degradedNow;
   const applyCats = degraded ? { ...syncedCats, backends: false } : syncedCats;

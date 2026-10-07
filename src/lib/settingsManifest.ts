@@ -504,6 +504,9 @@ export function settingsOfCategory(cat: WireCategory): SettingDef[] {
 
 /* ── Value access (changed-detection / reset) ──────────────────────────── */
 
+/** The sub-toggle keys the pre-manifest store persisted (always all four). */
+const LEGACY_SUB_KEYS = new Set(["recordingsDir", "profileHotkeys", "quickAddHotkey", "transcribePicks"]);
+
 /** Complete a persisted (possibly older-version) gate set to one boolean per
  *  manifest entry. Precedence, lowest to highest:
  *  1. manifest defaults (on unless machine-specific);
@@ -512,7 +515,10 @@ export function settingsOfCategory(cat: WireCategory): SettingDef[] {
  *     upgrade to per-setting gates;
  *  3. legacy sub-toggle keys mapped onto their new ids (recordingsDir →
  *     audioFolder, latchAutoStop → handsFreeAutoStop; the others kept their
- *     names);
+ *     names) — a PRE-MANIFEST map (only the four old sub keys) refines only
+ *     within an ON category: the old store persisted those four with their
+ *     defaults whether or not the user touched them, and the old engine read
+ *     them only inside an ON category, so they must not beat the OFF fold;
  *  4. explicitly saved per-setting values. */
 export function completeGates(
   saved?: Partial<Record<string, boolean>>,
@@ -526,7 +532,20 @@ export function completeGates(
       }
     }
   }
-  if (saved) {
+  // A manifest-era map always holds other manifest ids too (completeSub persists
+  // the full gate set), so "only the old four keys" identifies a pre-manifest one.
+  const preManifest = !!saved && Object.keys(saved).every((k) => LEGACY_SUB_KEYS.has(k));
+  const categoryOn = (id: SettingId) =>
+    savedCategories?.[DEFS.find((d) => d.id === id)!.category] !== false;
+  if (saved && preManifest) {
+    if (typeof saved.recordingsDir === "boolean" && categoryOn("audioFolder")) {
+      gates.audioFolder = saved.recordingsDir;
+    }
+    for (const id of ["profileHotkeys", "quickAddHotkey", "transcribePicks"] as const) {
+      const v = saved[id];
+      if (typeof v === "boolean" && categoryOn(id)) gates[id] = v;
+    }
+  } else if (saved) {
     if (typeof saved.recordingsDir === "boolean") gates.audioFolder = saved.recordingsDir;
     // `latchAutoStop` is the pre-rename id of `handsFreeAutoStop`. Without this remap a
     // user who had deliberately switched that row's sync OFF would have it silently come
