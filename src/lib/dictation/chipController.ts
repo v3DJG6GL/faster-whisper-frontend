@@ -31,7 +31,7 @@ const CHIP_ROUTE_TARGETS = 2;
  *  A RUNNING session wins: it publishes what it actually resolved, which is the only
  *  authority once anything can change the targets for one session. The Profile's own
  *  config is the fallback, and it is what the idle standby dock previews — "what happens
- *  if I press the chord" — so `null` (no session) and `[]` (a session that doesn't
+ *  if I press the chord" (`chipRoute` passes it only while idle) — so `null` (no session) and `[]` (a session that doesn't
  *  translate) must stay distinguishable, and they are: `??` only takes the fallback for
  *  the former.
  *
@@ -92,6 +92,9 @@ export function chipRoutePending(
 /** The chip's whole route slot: the pending stand-in (`chipRoutePending`) plus the targets
  *  and overflow count. An "ask" preview sends NO targets — the configured list is only the
  *  picker's preselection, so showing it would promise a route the user has not chosen yet.
+ *  The configured fallback is the IDLE standby preview only: a non-idle status with no
+ *  session targets is a failed start's error linger (or the prologue that follows it), where
+ *  there is no session and so no route — the same no-fallback rule `trayRoute` keeps.
  *  Pure, so that pairing is unit-tested rather than living only inside `chipPayload`. */
 export function chipRoute(
   sessionTargets: string[] | null,
@@ -102,10 +105,11 @@ export function chipRoute(
 ): { routePending: "" | "ask" | "undecided" | "choosing" | "original"; translateTo: string[]; translateMore: number } {
   const rp = chipRoutePending(routePending, status, profileAsks);
   if (rp === "ask") return { routePending: rp, translateTo: [], translateMore: 0 };
+  const preview = status === "idle" ? configured : undefined;
   return {
     routePending: rp,
-    translateTo: chipRouteTargets(sessionTargets, configured),
-    translateMore: chipRouteMore(sessionTargets, configured),
+    translateTo: chipRouteTargets(sessionTargets, preview),
+    translateMore: chipRouteMore(sessionTargets, preview),
   };
 }
 
@@ -268,6 +272,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // change and come out of hiding. dotScale is the chip's own CSS (minimized dot only).
     chipScale: rec.chipScale ?? REC_DEFAULTS.chipScale,
     dotScale: rec.dotScale ?? REC_DEFAULTS.dotScale,
+    // Whether these settings are the loaded config or still the store defaults: the chip keeps
+    // re-seeding its size refs until a loaded payload arrives, so hydration is not read as a
+    // Settings adjustment (tuck / nudge at launch).
+    configLoaded: state.configLoaded,
     // The shared default array is only serialized here, never mutated.
     quickLaunch: rec.quickLaunch ?? REC_DEFAULTS.quickLaunch,
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
@@ -363,6 +371,7 @@ export async function initOverlayController(): Promise<void> {
       state.sessionNote !== prev.sessionNote || // "not inserted" qualifier for a "none" outcome
       state.translateFailure !== prev.translateFailure || // qualifies the done marker
       state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
+      state.configLoaded !== prev.configLoaded || // the chip latches its size seed on the loaded config
       state.settings !== prev.settings) // theme / position / preview / show-profile toggles
     ) {
       void emit("dictation://update", chipPayload(state)).catch((e) => console.error("overlay emit failed:", e));

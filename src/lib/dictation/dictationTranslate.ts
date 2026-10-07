@@ -99,6 +99,11 @@ export interface DictationTranslateRequest {
   glossary?: string;
   mode?: "fluent" | "faithful";
   contextSegments?: number;
+  /** The server's own TRANSLATION_CONTEXT_SEGMENTS, when known (`/v1/decode-defaults`),
+   *  for a session that inherits the depth. Bounds only what is SUBMITTED — the wire
+   *  still carries no depth, so the server keeps deciding. Absent = unknown (older
+   *  backend / not fetched yet): submit everything the stream kept. */
+  inheritedContextSegments?: number;
   serverUrl: string;
   backendId: string;
   /** The capture whose server-side log receipt is waiting on this call. */
@@ -248,12 +253,17 @@ export async function runDictationTranslate(
   // The server translates EVERY submitted segment into every target and uses the
   // depth only to pick context lines, so phrases beyond the profile's depth would
   // cost full passes (and still lend implicit context with context turned off).
-  // No depth = inherit: submit what the stream kept, but send no depth, so the server
-  // applies its own TRANSLATION_CONTEXT_SEGMENTS (off or lower than what was kept).
-  const depth =
+  // No depth = inherit: send no depth, so the server applies its own
+  // TRANSLATION_CONTEXT_SEGMENTS, and submit only that many when the caller knows it
+  // (`inheritedContextSegments`) — else everything the stream kept, and the server
+  // discards what it does not use.
+  const depthSrc =
     typeof req.contextSegments === "number"
-      ? Math.max(0, Math.floor(req.contextSegments))
-      : req.context.length;
+      ? req.contextSegments
+      : typeof req.inheritedContextSegments === "number"
+        ? req.inheritedContextSegments
+        : req.context.length;
+  const depth = Math.max(0, Math.floor(depthSrc));
   const context = depth > 0 ? req.context.slice(-depth) : [];
   // Every character the server will actually translate, not just this phrase's.
   const submittedChars =

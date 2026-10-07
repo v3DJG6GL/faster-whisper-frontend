@@ -1,8 +1,10 @@
 // The chip's translation-route resolution. Pure, so it can be exercised without the
 // store or the cross-window payload it normally rides in.
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { useApp } from "../store";
 import {
+  initOverlayController,
   chipRoute,
   chipRouteMore,
   chipRoutePending,
@@ -11,6 +13,19 @@ import {
   trayRoute,
   trayStatus,
 } from "./chipController";
+
+// Only initOverlayController touches these: the rest of this file is pure.
+const emit = vi.hoisted(() => vi.fn((_event: string, _payload?: unknown) => Promise.resolve()));
+vi.mock("@tauri-apps/api/event", () => ({ emit, listen: vi.fn(() => Promise.resolve(() => {})) }));
+vi.mock("../api", async (orig) => ({
+  ...(await orig<typeof import("../api")>()),
+  isTauri: true,
+  showOverlay: vi.fn(() => Promise.resolve()),
+  setOverlayScale: vi.fn(() => Promise.resolve()),
+  hideOverlay: vi.fn(() => Promise.resolve()),
+  setTrayState: vi.fn(() => Promise.resolve()),
+  playCue: vi.fn(() => Promise.resolve()),
+}));
 
 describe("configuredRouteTargets", () => {
   // The Backend's translation defaults under the Profile's overrides — the session's merge.
@@ -111,6 +126,20 @@ describe("chipRoutePending", () => {
     });
   });
 
+  it("previews nothing beside a failed start's error, where there is no session", () => {
+    // flashError leaves status "error" with sessionTargets null; the configured targets are
+    // the idle standby preview only (the tray shows no route there either).
+    for (const asks of [true, false]) {
+      expect(chipRoute(null, ["fr", "it"], null, "error", asks)).toEqual({
+        routePending: "",
+        translateTo: [],
+        translateMore: 0,
+      });
+    }
+    // A running session's own targets still show under a non-idle status.
+    expect(chipRoute(["de"], ["fr", "it"], null, "listening", false).translateTo).toEqual(["de"]);
+  });
+
   it("previews the configured route for a Profile that does not ask", () => {
     expect(chipRoutePending(null, "idle", false)).toBe("");
     expect(chipRoutePending(null, "idle", undefined)).toBe("");
@@ -171,5 +200,23 @@ describe("trayRoute", () => {
     // A failed start's error linger keeps activeProfile but nulls sessionTargets: nothing
     // runs, so the Profile's configured targets must not read as a live route.
     expect(trayRoute(state({ sessionTargets: null }))).toBe("");
+  });
+});
+
+describe("initOverlayController — configLoaded reaches the chip", () => {
+  it("sends configLoaded and re-emits when the config finishes loading", async () => {
+    const s = useApp.getState().settings;
+    useApp.setState({ configLoaded: false, settings: { ...s, recording: { ...s.recording, indicatorPosition: "top" } } });
+    await initOverlayController();
+    const updates = () =>
+      emit.mock.calls.filter((c) => c[0] === "dictation://update").map((c) => c[1] as { configLoaded?: boolean });
+    const last = () => updates()[updates().length - 1];
+    // The startup push carries the not-yet-loaded flag, so the chip keeps re-seeding its sizes.
+    expect(last()?.configLoaded).toBe(false);
+    const before = updates().length;
+    // setConfigLoaded alone (same settings object) must still reach the chip, or it never latches.
+    useApp.getState().setConfigLoaded();
+    expect(updates().length).toBe(before + 1);
+    expect(last()?.configLoaded).toBe(true);
   });
 });

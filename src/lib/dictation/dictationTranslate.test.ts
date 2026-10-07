@@ -174,6 +174,27 @@ describe("runDictationTranslate", () => {
     expect(await run(undefined)).toEqual({ texts: ["eins", "zwei", "drei"], ctx: null });
   });
 
+  it("bounds an inheriting session's submitted context by the server's own depth", async () => {
+    // The server translates every submitted segment for every target, so context it
+    // will not use as context is a discarded pass. The wire still sends no depth.
+    const run = async (contextSegments: number | undefined, inheritedContextSegments: number | undefined) => {
+      const seen: { texts: string[]; ctx: number | null | undefined }[] = [];
+      const d = deps((a) => {
+        seen.push({ texts: a.texts, ctx: a.contextSegments });
+        return Promise.resolve(answer(a.texts));
+      });
+      await runDictationTranslate(
+        req({ text: "vier", context: ["eins", "zwei", "drei"], contextSegments, inheritedContextSegments }),
+        d,
+      );
+      return seen[0];
+    };
+    expect(await run(undefined, 0)).toEqual({ texts: ["vier"], ctx: null });
+    expect(await run(undefined, 1)).toEqual({ texts: ["drei", "vier"], ctx: null });
+    // An explicit profile depth wins over the inherited one, and is sent.
+    expect(await run(2, 0)).toEqual({ texts: ["zwei", "drei", "vier"], ctx: 2 });
+  });
+
   it("drops a target the server kept as the source text", async () => {
     // `kept` is aligned with the full texts array (context + original).
     const d = deps((a) =>

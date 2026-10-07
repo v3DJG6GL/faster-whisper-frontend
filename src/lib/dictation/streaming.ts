@@ -31,6 +31,7 @@ import { effectiveServerKind } from "../serverKind";
 import { maxTranslationTargets, refreshCaps, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
 import { ownProp } from "../own";
+import { serverContextSegments } from "../inherit";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   display as pendingDisplay, holdRemainingMs, isLive as pendingIsLive, msUntilStale, newUtterancePending,
@@ -59,6 +60,7 @@ import {
   translateText,
   cancelTextTranslation,
   getTranscribeProgress,
+  getDecodeDefaults,
   logLine,
 } from "../api";
 import {
@@ -71,7 +73,7 @@ import { newCaptureIdBook } from "./captureIds";
 import type { ActivationKind, AppRule, BatchProgress, Backend, DecodeOverrides, EndpointKind, FocusedApp, GeneralSettings, InsertionOverrides, InsertMethod, MicFallback, Profile, ServerWork } from "../types";
 import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isActiveDictation } from "./dictationVisual";
-import { appRuleKey } from "../sanitize";
+import { appRuleKey, stripControlChars } from "../sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
 import { newProgressId } from "../ids";
 
@@ -365,7 +367,9 @@ function reportSessionOutcome(delivery: "typed" | "clipboard" | "none"): void {
         ? "translated"
         : "kept_original";
   const reportApp = useApp.getState().settings.recording.reportTargetApp !== false;
-  const appId = reportApp && !meta.blocked ? meta.appId?.trim().slice(0, 64) : undefined;
+  // stripControlChars bounds the UTF-16 length WITHOUT splitting a surrogate pair: a lone
+  // surrogate makes serde_json reject the whole outcome batch and the persisted queue.
+  const appId = reportApp && !meta.blocked && meta.appId ? stripControlChars(meta.appId.trim(), 64) : undefined;
   enqueueOutcome(meta.backendId, meta.serverUrl, {
     job_id: meta.clientJob,
     activation: meta.activation ?? "hold",
@@ -440,6 +444,10 @@ let sessionTranslation: {
   glossary?: string;
   mode?: "fluent" | "faithful";
   contextSegments?: number;
+  /** The server's own TRANSLATION_CONTEXT_SEGMENTS when `contextSegments` inherits it: bounds
+   *  how many context phrases are SUBMITTED (the wire still says null). Filled in after session
+   *  start by a best-effort decode-defaults read; undefined = unknown, submit them all. */
+  inheritedContextSegments?: number;
   serverUrl: string;
   backendId: string;
   /** Is this server's translation model resident? Seeded at session start from
@@ -674,6 +682,7 @@ async function maybeTranslate(
         // editor greys it out and says so when this session types as it speaks.
         mode: translateModeFor(oneShot, tr.mode),
         contextSegments: tr.contextSegments,
+        inheritedContextSegments: tr.inheritedContextSegments,
         serverUrl: tr.serverUrl,
         backendId: tr.backendId,
         // Completes the server-side receipt THIS utterance is waiting on.
@@ -1690,9 +1699,11 @@ function armStuckWatchdog(): void {
         void (async () => {
           await cancelled;
           const onClipboard = await recoverUnguarded(pending, "stuck-finalize");
-          // Notify in BOTH branches, mirroring the stream://error / stopLive-reject siblings: on a
-          // double failure (link died AND the clipboard copy threw) the text is genuinely lost, so
-          // surface it rather than silently idling. (No error payload here — it's a watchdog timeout.)
+          // Notify in BOTH branches. Unlike the stream://error / stopLive-reject siblings, which
+          // flash the error BEFORE the copy and so can return silently when it fails, this watchdog
+          // path has not flashed yet: on a double failure (link died AND the clipboard copy threw)
+          // the text is genuinely lost, so surface it rather than silently idling. (No error
+          // payload here — it's a watchdog timeout.)
           //
           // Unless a NEW session started while we awaited: cancelLive idled the chip synchronously,
           // so a press in that window is admitted, and flashError would stamp IT "error" — inSession()
@@ -1917,8 +1928,10 @@ async function ensureListeners(): Promise<void> {
     // (idle) and post-error (error) late emits are dropped.
     if (!inSession()) return;
     // A final is the terminal frame of whatever utterance the server had announced — any final
-    // that CARRIES an ordinal: the socket is ordered, and such a final only ever comes from the
-    // finalize of the utterance in flight, so matching ordinals would buy nothing. A release
+    // that CARRIES an ordinal: the socket is ordered, and such a final comes from the finalize of
+    // the utterance in flight, so matching ordinals would buy nothing. The one exception is the
+    // closing `last` final, whose phantom next ordinal (see FinalFrame) arrives after close() has
+    // already finalized the in-flight utterance; ending it there only settles the paint. A release
     // final (no ordinal, see FinalFrame) ends nothing: it can arrive while the NEXT utterance is
     // already open, and ending that one here would blank its working state and release the
     // per-phrase Enter it is holding back. With nothing open it is harmless to call (it only
@@ -3230,6 +3243,22 @@ async function startLiveInner(
       warm: null,
     };
     sessionTranslation = trTargets.length ? { ...sessionTranslationBase, targets: trTargets } : null;
+    // An inheriting session sends context_segments null, so the server picks its own depth —
+    // but the phrases it does not use as context are still translated (and discarded). Learn
+    // that depth in the background to bound what is submitted; session start never waits on it
+    // and an unknown/older backend leaves it undefined (submit every context phrase).
+    if (trOv.contextSegments === undefined && (trTargets.length > 0 || askTargetsAtSettle)) {
+      const base = sessionTranslationBase;
+      void getDecodeDefaults({ serverUrl: base.serverUrl, backendId: backend.id, model: model ?? "", overrideProfile })
+        .then((dd) => {
+          const n = serverContextSegments(dd);
+          // Only for the session that asked: a newer one has its own base.
+          if (n === undefined || sessionTranslationBase !== base) return;
+          base.inheritedContextSegments = n;
+          if (sessionTranslation) sessionTranslation.inheritedContextSegments = n;
+        })
+        .catch(() => {});
+    }
     sessionTranslatedText = null;
     sessionByLang = Object.create(null) as Record<string, string[]>;
     clipByLang = undefined;
