@@ -369,8 +369,10 @@ interface AppState {
   /** Qualifies a "none" outcome that was NOT a cancel: the user aborted the translate-to
    *  picker after release, so the transcript was kept but nothing was inserted. Set in the
    *  SAME call as `sessionOutcome` (the chip is edge-triggered on that), "-saved" only when
-   *  a History record was actually written. null = no such note. */
-  sessionNote: "not-inserted" | "not-inserted-saved" | null;
+   *  a History record was actually written. "incomplete": the stream ended short (the
+   *  drain timed out before the server's last final) but some text landed or was kept —
+   *  the last phrase may be missing. null = no such note. */
+  sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
   /** The RESOLVED translation targets of the active session — what will actually be injected,
    *  not what the Profile is configured with. The two diverge once a per-session picker can
    *  change them, and the authoritative value (`sessionTranslation` in streaming.ts) lives in
@@ -556,7 +558,7 @@ interface AppState {
       targetSkip: "blocked" | "notEditable" | null;
       lastInsert: { kind: "typed" | "clipboard"; seq: number } | null;
       sessionOutcome: "typed" | "clipboard" | "none" | null;
-      sessionNote: "not-inserted" | "not-inserted-saved" | null;
+      sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
       sessionTargets: string[] | null;
       routePending: "undecided" | "choosing" | "original" | null;
       translateFailure: TranslateFailure | null;

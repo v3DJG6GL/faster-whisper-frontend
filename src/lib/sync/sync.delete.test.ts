@@ -555,3 +555,112 @@ describe("a relisted review", () => {
     }
   });
 });
+
+// The approval kept the LIVE value of every applied category that conflicted, taking any
+// difference for a user edit. A field the raise-time apply stripped (its gate was off) makes the
+// live compose differ too once the gate is turned on, with no edit: the repoint was never
+// relisted and the follow-up push sent this device's address over the peer's.
+describe("approving a review after turning a sync gate on", () => {
+  const setServerAddresses = (on: boolean) => {
+    const settings = structuredClone(useApp.getState().settings);
+    settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+    useApp.setState({ settings });
+  };
+  /** The peer renames b1 AND repoints it, and lowers the retention (held for review). The
+   *  "Server addresses" gate is off here, so the rename applies and the repoint is stripped. */
+  async function raise(): Promise<string> {
+    const base = await seedBase();
+    setServerAddresses(false);
+    const localUrl = useApp.getState().backends[0].serverUrl;
+    const remote = structuredClone(base);
+    remote.backends = {
+      ...remote.backends!,
+      list: remote.backends!.list.map((b) => ({ ...b, name: "renamed-by-peer", serverUrl: "http://evil:9" })),
+    };
+    remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+    await pullNow(true);
+    expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+    expect(useApp.getState().backends[0].name).toBe("renamed-by-peer");
+    expect(useApp.getState().backends[0].serverUrl).toBe(localUrl);
+    return localUrl;
+  }
+  const cleanup = () => {
+    api.keys = null;
+    api.pulled = null;
+    api.conflicts = [];
+  };
+
+  it("relists the repoint instead of pushing this device's address over it", async () => {
+    try {
+      const localUrl = await raise();
+      setServerAddresses(true);
+      const pushesBefore = api.pushes;
+      await approvePendingReview();
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()?.relisted).toBe(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind).sort()).toEqual(["dictation-retention", "server-url"]);
+      expect(useApp.getState().backends[0].serverUrl).toBe(localUrl);
+      expect(api.pushes).toBe(pushesBefore); // nothing went over the peer's repoint
+      // Approving the list the user has now seen lands the repoint, nothing else asks.
+      await approvePendingReview();
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()).toBeNull();
+      expect(useApp.getState().backends[0].serverUrl).toBe("http://evil:9");
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("asks when the user also edited that category", async () => {
+    try {
+      const localUrl = await raise();
+      setServerAddresses(true);
+      useApp.setState({ backends: useApp.getState().backends.map((b) => ({ ...b, name: "renamed-here" })) });
+      const pushesBefore = api.pushes;
+      await approvePendingReview();
+      // Keeping the live list would push this device's address over the peer's repoint;
+      // putting the peer's back would drop the rename. Neither wins silently.
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()?.categories).toContain("backends");
+      const st = useApp.getState();
+      expect(st.backends[0].name).toBe("renamed-here");
+      expect(st.backends[0].serverUrl).toBe(localUrl);
+      expect(api.pushes).toBe(pushesBefore);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// A review raised on a push's SECOND 409 recorded the first attempt's merge (the reassigned
+// push blob) as "this device", not a compose of it: an approval with no edit could find the
+// held-back category "edited" and turn into a conflict.
+describe("a review raised on a push's second 409", () => {
+  it("approves without a conflict when nothing was edited", async () => {
+    try {
+      const base = await seedBase();
+      const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+      const v2 = structuredClone(base);
+      v2.general = { ...v2.general, typeAsISpeak: peerTyping } as never;
+      const v3 = structuredClone(v2);
+      v3.recording = { ...v3.recording, dictationRetentionDays: 1 } as never;
+      api.conflicts = [
+        { version: 2, updated_ts: 2, device: "peer", blob: v2 },
+        { version: 3, updated_ts: 3, device: "peer", blob: v3 },
+      ];
+      await pushNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping);
+      await approvePendingReview();
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
+      expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping);
+    } finally {
+      api.keys = null;
+      api.conflicts = [];
+    }
+  });
+});

@@ -1485,6 +1485,12 @@ function settleIdle(keepError = false): void {
   // with cancelDictationTranslate — releasing a lease stops a renew timer, it
   // never interrupts server-side work.
   releaseWarmLease();
+  // A short session (stream://incomplete) decides its surface here, after the whole tail
+  // ran: the docs and the delivery flags are final. Not over a kept error (keepError): the
+  // chip already shows why this session failed.
+  const incomplete = keepError
+    ? null
+    : incompleteSurface(sessionIncomplete !== null, bankedDoc + committedDoc, endOutcome());
   // NO cancelDictationTranslate() here, deliberately. Settling is the SUCCESS
   // path: we only reach it after the injection queue drained, which means every
   // translate already resolved and maybeTranslate's finally dropped the handle.
@@ -1510,13 +1516,23 @@ function settleIdle(keepError = false): void {
   // Without it a session that inserted the ORIGINAL because the translate timed out shows
   // an unqualified "typed" — indistinguishable from one that translated successfully.
   useApp.getState().setDictation({
-    ...(keepError ? {} : { status: "idle" as const }),
+    // A "flash" settle hands the status straight to flashError below — never an idle tick
+    // in between that a re-press could start on.
+    ...(keepError || incomplete === "flash" ? {} : { status: "idle" as const }),
     sessionOutcome: endOutcome(),
     translateFailure: sessionTranslateFailure,
     // A push-to-talk session whose picker was aborted ends with outcome "none" like a
     // cancel — but it is NOT a cancel: the transcript was kept. The note rides the same
     // call as the outcome so the chip can tell the two apart on the very edge it reads.
-    sessionNote: sessionInsertSkipped ? (saved ? "not-inserted-saved" : "not-inserted") : null,
+    // "incomplete" ranks below the picker's note: a kept-but-not-inserted transcript is
+    // the bigger surprise, and its words are in History either way.
+    sessionNote: sessionInsertSkipped
+      ? saved
+        ? "not-inserted-saved"
+        : "not-inserted"
+      : incomplete === "note"
+        ? "incomplete"
+        : null,
     activeProfile: null,
     dictationPhase: null,
     serverWork: null, // already cleared by whichever stop got here; idle must never carry one
@@ -1529,6 +1545,14 @@ function settleIdle(keepError = false): void {
   // The settle picker is armed per session by dictation.ts; a consumed or unused arming
   // must not survive into a session started by a path that doesn't arm (overlay, Home).
   askTargetsAtSettle = null;
+  if (incomplete === "flash" && sessionIncomplete) {
+    // Nothing of this dictation survived: say so on the chip. AFTER the bookkeeping above
+    // (history, outcome "none", lease), and BEFORE the hold-start below — flashError voids a
+    // queued re-press rather than stamping its fresh session "error". Its own doorway line
+    // is the generic one; put the specific notice back.
+    flashError(sessionIncomplete);
+    useApp.getState().setLogsDoorway({ msg: sessionIncomplete, showLogs: true });
+  }
   consumePendingHoldStart();
 }
 
@@ -1564,6 +1588,25 @@ export function setRouteHint(hint: "original" | null): void {
 /** True when this session's end-of-session insert was skipped because the user aborted the
  *  translate-to picker. Read by settleIdle to stamp `sessionNote`; reset per session. */
 let sessionInsertSkipped = false;
+
+/** The stream://incomplete notice this session got (the Rust drain timed out before the
+ *  server's last final), or null. Read by settleIdle — the closed tail's single end — to put
+ *  the warning where a user dictating into another app can see it: the main window's Logs
+ *  doorway is hidden in the tray then. Reset per session, like `sessionInsertSkipped`. */
+let sessionIncomplete: string | null = null;
+
+/** How a session that ended SHORT (stream://incomplete) is surfaced once its tail ran.
+ *  Nothing committed and nothing landed → the whole dictation is gone, so it is an error
+ *  (`flash`; the session is over, so no insert is skipped by it). Anything landed or kept
+ *  → a chip note: the text stands, only its last phrase may be missing. */
+export function incompleteSurface(
+  incomplete: boolean,
+  doc: string,
+  outcome: "typed" | "clipboard" | "none",
+): "flash" | "note" | null {
+  if (!incomplete) return null;
+  return !doc.trim() && outcome === "none" ? "flash" : "note";
+}
 
 /** A dictation's targets, at most the server's per-request cap: the text route answers a
  *  request over TRANSLATION_MAX_TARGETS with a 422, which would fail every phrase of the
@@ -2963,9 +3006,13 @@ async function ensureListeners(): Promise<void> {
   // follows must still run the normal tail (stop-mode insert, the pending phrase-end Enter, the
   // clipboard restore). So none of the stream://error teardown here: no flashError, no
   // abandonSessionWork, no insertCfg reset, no epoch retire. Just say the last phrase may be gone.
+  // The doorway alone is invisible while dictating into another app (the main window sits in
+  // the tray), so the session is also MARKED: settleIdle — the end of that tail — turns the mark
+  // into a chip note, or into a chip error when nothing of the dictation survived.
   await reg<string>("stream://incomplete", (e) => {
     if (!inSession()) return; // a cancelled session's late drain — same guard as the siblings
     console.warn("[dictation] stream incomplete:", e.payload);
+    sessionIncomplete = e.payload;
     useApp.getState().setLogsDoorway({ msg: e.payload, showLogs: true });
   });
   } catch (e) {
@@ -3400,6 +3447,7 @@ async function startLiveInner(
   sessionTyped = false;
   sessionClipboard = false;
   sessionInsertSkipped = false;
+  sessionIncomplete = null;
   clearPhraseEnd();
   injectChain = Promise.resolve();
   injectDepth = { n: 0 }; // a new generation — the old chain's finallys decrement their own counter
@@ -3767,6 +3815,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   sessionTyped = false;
   sessionClipboard = false;
   sessionInsertSkipped = false;
+  sessionIncomplete = null;
   resetServerWork();
   insertCfg = null;
   injectChain = Promise.resolve();

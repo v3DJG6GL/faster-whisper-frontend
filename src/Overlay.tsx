@@ -92,8 +92,10 @@ interface ChipState {
   sessionOutcome?: "typed" | "clipboard" | "none" | null;
   // Qualifies a "none" outcome that was NOT a cancel: the translate-to picker was aborted
   // after release, so the words were kept (and, "-saved", recorded to History) but nothing
-  // was inserted. Shown once, briefly, in the status-label slot.
-  sessionNote?: "not-inserted" | "not-inserted-saved" | null;
+  // was inserted. Shown once, briefly, in the status-label slot. "incomplete": the stream
+  // ended short (the server's last final never came) but text landed or was kept — the
+  // last phrase may be missing. Shown the same way, a little longer, as a warning.
+  sessionNote?: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
   // Overlay-chip behaviour, forwarded from settings via dictation://update.
   persistentDock: boolean;
   overlayPeek: boolean;
@@ -850,7 +852,7 @@ export default function Overlay() {
   // was aborted after release, the words were kept. Its own edge + timer (like the
   // untranslated pulse): it qualifies an outcome the pulse machinery above deliberately
   // treats as "nothing to show", so it cannot ride `pulse`.
-  const [note, setNote] = useState<"not-inserted" | "not-inserted-saved" | null>(null);
+  const [note, setNote] = useState<"not-inserted" | "not-inserted-saved" | "incomplete" | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastNote = useRef(state.sessionNote);
   useEffect(() => {
@@ -862,7 +864,8 @@ export default function Overlay() {
     noteTimer.current = null;
     if (n) {
       setNote(n);
-      noteTimer.current = setTimeout(() => setNote(null), 2000);
+      // "incomplete" carries a reason to read, like the untranslated pulse: held longer.
+      noteTimer.current = setTimeout(() => setNote(null), n === "incomplete" ? 2600 : 2000);
     } else {
       setNote(null); // a fresh session clears it
     }
@@ -888,7 +891,12 @@ export default function Overlay() {
   // "clipboard" means nothing was typed — the words only reached the clipboard.
   const untranslatedVerb = state.sessionOutcome === "clipboard" ? "copied" : "inserted";
   // The "not inserted" note takes the slot the same way, for the same reason.
-  const noteLabel = note === "not-inserted-saved" ? "not inserted · saved to History" : "not inserted";
+  const noteLabel =
+    note === "incomplete"
+      ? "last phrase may be missing"
+      : note === "not-inserted-saved"
+        ? "not inserted · saved to History"
+        : "not inserted";
   const label =
     pulse === "untranslated"
       ? `${untranslatedVerb} as spoken — translation ${failureLabel}`
@@ -1242,17 +1250,19 @@ export default function Overlay() {
         {/* Screen-reader announcement of the insert outcome — present empty up-front so AT
             speaks the change; non-urgent → polite. */}
         <span role="status" aria-live="polite" className="sr-only">
-          {pulse === "typed"
-            ? "Inserted"
-            : pulse === "clipboard"
-              ? "Copied to clipboard"
-              : pulse === "untranslated"
-                ? state.sessionOutcome === "clipboard"
-                  ? "Copied untranslated — the translation did not finish"
-                  : "Inserted untranslated — the translation did not finish"
-                : note
-                  ? noteLabel
-                  : ""}
+          {note === "incomplete"
+            ? "The last phrase may be missing — the server did not finish the transcript in time"
+            : pulse === "typed"
+              ? "Inserted"
+              : pulse === "clipboard"
+                ? "Copied to clipboard"
+                : pulse === "untranslated"
+                  ? state.sessionOutcome === "clipboard"
+                    ? "Copied untranslated — the translation did not finish"
+                    : "Inserted untranslated — the translation did not finish"
+                  : note
+                    ? noteLabel
+                    : ""}
         </span>
         <motion.div
           ref={chipRef}
@@ -1401,8 +1411,9 @@ export default function Overlay() {
                             <div
                               className={cn(
                                 "whitespace-nowrap font-mono text-[11px] uppercase tracking-[0.14em]",
-                                // The note is a quiet qualifier, not a warning: faint, not dim.
-                                pulse === "untranslated" ? "text-dim" : "text-faint",
+                                // The not-inserted note is a quiet qualifier, not a warning: faint,
+                                // not dim. "incomplete" IS a warning (words may be lost): dim.
+                                pulse === "untranslated" || note === "incomplete" ? "text-dim" : "text-faint",
                               )}
                             >
                               {label}

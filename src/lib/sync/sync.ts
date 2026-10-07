@@ -2272,6 +2272,29 @@ function composeLive(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
   );
 }
 
+/** What the store holds for every synced setting, with NO gate or sub-toggle substitution (and no
+ *  keyring read). A review records it right after its held-back apply, so an approval can tell an
+ *  edit made while it waited from a gate turned on since: that changes the gated compose (a
+ *  stripped field now carries this device's value) without anything in the store changing. */
+function storeSignature(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
+  const s = useApp.getState();
+  return composeBlob(
+    { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
+    cats,
+    state.snapshot,
+    {
+      includeSecrets: false,
+      sub: { recordingsDir: true, profileHotkeys: true, quickAddHotkey: true, transcribePicks: true },
+      gates: Object.fromEntries(MANIFEST.map((d) => [d.id, true])) as Gates,
+    },
+  );
+}
+
+/** The gates + sub-toggles composeLive / applyBlob read, as one comparable string. */
+function gatesSignature(): string {
+  return stableStringify({ gates: settingGates(), sub: subSettings() });
+}
+
 /** Take the engine's `inFlight` lock for a user-driven apply (review approval, conflict
  *  resolution), WAITING for a running pull/push instead of dropping the click. Those applies
  *  park in the keyring for seconds; a focus pull racing them re-raised the review/conflict over
@@ -2475,7 +2498,8 @@ export async function pushNow(manual = false): Promise<void> {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
-            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob, local: blob,
+            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
+            storeSig: await storeSignature(pushCats), gatesSig: gatesSignature(),
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
           });
@@ -2539,7 +2563,8 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     await applyBlob(merged, heldBack(applyCats, risky));
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob, local,
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      storeSig: await storeSignature(applyCats), gatesSig: gatesSignature(),
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
     });
@@ -2913,9 +2938,13 @@ interface PendingReview {
   blob: SyncBlob;
   cats: Record<SyncCategory, boolean>;
   remote: SyncBlob;
-  /** This device's compose the review was raised over (before the held-back apply), so an
-   *  approval can tell a held-back category the user edited since from one left as it was. */
-  local: SyncBlob;
+  /** `storeSignature` right after the raise's held-back apply: an approval takes a category as
+   *  edited while the review waited only when the store's value moved off this one. Not a gated
+   *  compose — a gate turned on since changes that with no edit (a stripped field now carries
+   *  this device's value), and a push's retry raise has no compose of this device at all. */
+  storeSig: SyncBlob;
+  /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. */
+  gatesSig: string;
   version: number;
   updatedAt: number | null;
   device: string | null;
@@ -3042,32 +3071,37 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // `r.blob` was merged against the raise-time local: an edit made here since would be hydrated
   // back to its old value. Re-merge against the live compose (no base was adopted, so a category
-  // the peer changed still differs from the base). Where that conflicts:
-  //  - a category the raise already APPLIED (everything but the held-back ones): `r.blob`'s value
+  // the peer changed still differs from the base). Where that conflicts, "edited" means the
+  // store moved off what the raise left in it (`r.storeSig`) — not "the live compose differs",
+  // which a gate turned on since also makes true:
+  //  - not edited: the reviewed value (the peer's change being consented to, a resolve's pick,
+  //    or a field the raise stripped under a gate that is on now) — the security re-check below
+  //    then judges it under today's gates and relists what the raise could not show.
+  //  - edited, in a category the raise already APPLIED, under the raise's gates: `r.blob`'s value
   //    landed then, so the live value is it plus the user's edits on top — keep the live value
   //    (re.merged's conflict placeholder). Putting `r.blob` back reverted the edit, and the
   //    adopted base + follow-up push shipped the revert.
-  //  - a held-back category the user has not touched since the raise: the reviewed value (the
-  //    peer's change being consented to, or a resolve's pick).
-  //  - a held-back category the user edited while the review waited: neither side can win
-  //    silently — the approval would discard the edit, keeping it would discard the change the
-  //    user is approving. Ask, as a conflict at the review's version (its resolve re-runs the
-  //    security check, so nothing lands unreviewed).
+  //  - edited otherwise (a held-back category, or the gates changed so the live value also
+  //    carries fields the raise stripped): neither side can win silently — the approval would
+  //    discard the edit, keeping it would push this device's values over the peer's change.
+  //    Ask, as a conflict at the review's version (its resolve re-runs the security check, so
+  //    nothing lands unreviewed).
   const re = mergeBlobs(state.snapshot, localNow, r.remote);
   const appliedAtRaise = heldBack(r.cats, r.changes);
+  const sigNow = await storeSignature(r.cats);
+  const gatesSame = gatesSignature() === r.gatesSig;
   const blobNow: SyncBlob = { ...re.merged };
-  let editedHeld = false;
+  let ask = false;
   for (const cat of re.conflicts) {
-    if (appliedAtRaise[cat]) continue;
-    if (!catEqual(localNow[cat], r.local[cat])) {
-      editedHeld = true;
+    if (!catEqual(sigNow[cat], r.storeSig[cat])) {
+      if (!(appliedAtRaise[cat] && gatesSame)) ask = true;
       continue;
     }
     const v = r.blob[cat];
     if (v === undefined) delete blobNow[cat];
     else (blobNow as Record<string, unknown>)[cat] = v;
   }
-  if (editedHeld) {
+  if (ask) {
     pendingReview = null;
     raiseConflict({
       categories: re.conflicts,
@@ -3272,7 +3306,8 @@ async function resolveLocked(
       blob: final,
       cats: applyCats,
       remote: c.remote,
-      local: localNow,
+      storeSig: await storeSignature(applyCats),
+      gatesSig: gatesSignature(),
       version: c.remoteVersion,
       updatedAt: c.remoteUpdatedAt ?? null,
       device: c.remoteDevice ?? null,

@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
+import { incompleteSurface } from "./streaming";
 
 /** Blank out comments, strings and template literals — same length, so indexes
  *  into the original stay valid — so the brace scan can't be thrown off by a
@@ -318,6 +319,37 @@ describe("work that must wait for the queue or the cancel", () => {
     for (const fatal of ["flashError(", "abandonSessionWork(", "retireSessionEpoch(", "insertCfg = null", "clearPhraseEnd("]) {
       expect(body, `stream://incomplete must not call ${fatal}`).not.toContain(fatal);
     }
+  });
+
+  it("the drain-timeout warning reaches the chip, not only the main window's doorway", () => {
+    // The doorway lives in the main window, which sits in the tray while dictating into
+    // another app: the notice must mark the session, and the settle must turn the mark into a
+    // chip note or (nothing survived) a chip error — after the bookkeeping, before a re-press.
+    const handler = mask(bodyAfter(streamingSrc, 'reg<string>("stream://incomplete"'));
+    expect(handler).toContain("sessionIncomplete = e.payload");
+    const settle = mask(bodyAfter(streamingSrc, "function settleIdle("));
+    const read = settle.indexOf("incompleteSurface(");
+    const history = settle.indexOf("captureDictationHistory(");
+    const flash = settle.indexOf("flashError(");
+    const holdStart = settle.indexOf("consumePendingHoldStart(");
+    expect(read).toBeGreaterThanOrEqual(0);
+    expect(flash, "settleIdle must flash when nothing survived").toBeGreaterThan(history);
+    expect(holdStart).toBeGreaterThan(flash);
+    expect(bodyAfter(streamingSrc, "function settleIdle(")).toContain('"incomplete"');
+    for (const end of ["async function startLiveInner(", "async function cancelLive("]) {
+      expect(mask(bodyAfter(streamingSrc, end)), `${end} must reset the mark`).toContain("sessionIncomplete = null");
+    }
+  });
+
+  it("an incomplete session errors only when nothing of it survived", () => {
+    expect(incompleteSurface(false, "", "none")).toBeNull();
+    expect(incompleteSurface(false, "hello", "typed")).toBeNull();
+    // Nothing committed, nothing landed: the dictation is gone — say so as an error.
+    expect(incompleteSurface(true, "  ", "none")).toBe("flash");
+    // Committed text (stop mode, about to be / already inserted) or a landed phrase: a note.
+    expect(incompleteSurface(true, "hello", "none")).toBe("note");
+    expect(incompleteSurface(true, "hello", "typed")).toBe("note");
+    expect(incompleteSurface(true, "", "clipboard")).toBe("note");
   });
 
   it("a rejected stop flashes the error before awaiting the recovery copy", () => {

@@ -573,6 +573,17 @@ export function TranscriptExport({
     }
     if (outcome.kind === "ok") return true;
     if (outcome.kind === "expired") {
+      // Only the server that issued a STORED id may say it is gone (as Save audio's guard):
+      // trBackend falls back to the first backend for a record whose own one is missing or
+      // unrecorded, and that server's "expired" says nothing about an id restoring the
+      // backend would make good again. An id this call fetched or uploaded is trBackend's
+      // own (serverVideoId is null then), so it may still be forgotten below.
+      if (serverVideoId && rec.backendId !== trBackend.id) {
+        const msg = "The selected server doesn't have this video.";
+        if (mine()) setMediaError({ kind: "expired", msg });
+        else late(msg);
+        return false;
+      }
       // The server dropped it: forget the id; a local copy carries on. Judged
       // against the id actually sent (an on-demand fetch's, or a busy retry's)
       // and the latest copy — the upload may have stored a newer id since.
