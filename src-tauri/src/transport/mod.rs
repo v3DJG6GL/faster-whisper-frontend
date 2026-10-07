@@ -807,6 +807,11 @@ pub const MAX_ERROR_BODY: usize = 256 * 1024;
 /// a transcription (`batch`) or a T2T translation (`text`).
 pub const MAX_META_BODY: usize = 1024 * 1024;
 
+/// Per-request bound on the metadata probes ([`get_json_status`]): they read at most
+/// [`MAX_META_BODY`] and must fail fast on a black-holed host instead of riding the shared
+/// client's 120 s ceiling — a forced capabilities refresh would otherwise join the hung probe.
+pub(crate) const META_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// A finite, non-negative server number (seconds, a count, a size, a unix time) — anything else
 /// is dropped (absent) rather than rendered as "NaNs left" or clamped into a different claim.
 pub(crate) fn fin_nonneg(v: Option<f64>) -> Option<f64> {
@@ -1114,7 +1119,11 @@ pub async fn get_json_status<T: serde::de::DeserializeOwned>(
     url: String,
     api_key: Option<&str>,
 ) -> Result<T, Option<u16>> {
-    match with_auth(client().get(url), api_key).send().await {
+    match with_auth(client().get(url), api_key)
+        .timeout(META_TIMEOUT)
+        .send()
+        .await
+    {
         Ok(resp) if resp.status().is_success() => {
             let code = resp.status().as_u16();
             json_capped_to::<T>(resp, MAX_META_BODY)

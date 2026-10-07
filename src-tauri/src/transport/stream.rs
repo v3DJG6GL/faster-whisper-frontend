@@ -701,6 +701,13 @@ pub async fn run<F>(
                 "[stream] drain idle window hit ({}) — no frame from the server; pending transcript discarded",
                 if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
             );
+            // Surface it too: a bare `Closed` reads as a clean close in the UI, so the last
+            // phrase would vanish silently. Error-then-Closed is the order the UI's stream
+            // error handler expects (it banks + copies what was committed).
+            on_event(StreamEvent::Error(
+                "The server did not finish the transcript in time; the last phrase may be missing."
+                    .into(),
+            ));
         }
     }
 

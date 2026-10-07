@@ -346,20 +346,17 @@ async fn until_epoch_bumps<T, E: std::fmt::Display>(
     epoch: u64,
     fut: impl std::future::Future<Output = Result<T, E>>,
 ) -> Result<T, String> {
-    // A cancel that landed before the first poll (e.g. while the keyring prompt was up)
-    // must not start the request at all: the future is lazy, so nothing has been sent yet.
-    if counter.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-        return Err("cancelled".into());
-    }
     tokio::pin!(fut);
     loop {
+        // Checked before every poll, the first included: a cancel that landed before it
+        // (e.g. while the keyring prompt was up) must not start the request at all — the
+        // future is lazy, so nothing has been sent yet.
+        if counter.load(std::sync::atomic::Ordering::SeqCst) != epoch {
+            return Err("cancelled".into());
+        }
         tokio::select! {
             r = &mut fut => return r.map_err(|e| format!("{e:#}")),
-            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {
-                if counter.load(std::sync::atomic::Ordering::SeqCst) != epoch {
-                    return Err("cancelled".into());
-                }
-            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
         }
     }
 }
@@ -672,9 +669,21 @@ fn claim_no_clobber(dest: &Path, tmp: &Path) -> std::io::Result<Option<NoClobber
     Ok(Some(NoClobberClaim(dest.to_path_buf())))
 }
 
+/// Byte-copy `src` into a freshly created `dest`, not `fs::copy`: that would carry the
+/// store's owner-only mode onto an export a media server or another user must read.
+/// Still copy_file_range on Linux.
+fn copy_into_fresh(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<u64> {
+    let mut r = std::fs::File::open(src)?;
+    let mut w = std::fs::File::create(dest)?;
+    let n = std::io::copy(&mut r, &mut w)?;
+    w.sync_all()?;
+    Ok(n)
+}
+
 /// Copy one of a record's media files (its source, its audio copy or its
 /// video copy — or any file inside the app's media folders) to a user-picked
-/// path. Plain copy via tmp + rename; returns the bytes copied. The
+/// path. Plain copy via tmp + rename (the export gets plain umask permissions,
+/// not the store's 0600); returns the bytes copied. The
 /// destination must lie OUTSIDE the app's own storage. `no_clobber`: write only
 /// when nothing is at `dest` yet, else leave it alone and return None (a name the
 /// save dialog never showed, so no overwrite was approved for it).
@@ -735,24 +744,18 @@ pub async fn copy_media_to(
         } else {
             None
         };
-        let n = match std::fs::copy(&src_real, &tmp) {
-            Ok(n) => n,
+        let copied = copy_into_fresh(&src_real, &tmp)
+            .and_then(|n| std::fs::rename(&tmp, &dest_path).map(|()| n));
+        match copied {
+            Ok(n) => Ok(Some(n)),
             Err(e) => {
                 let _ = std::fs::remove_file(&tmp);
                 if no_clobber {
                     let _ = std::fs::remove_file(&dest_path);
                 }
-                return Err(e.to_string());
+                Err(e.to_string())
             }
-        };
-        if let Err(e) = std::fs::rename(&tmp, &dest_path) {
-            let _ = std::fs::remove_file(&tmp);
-            if no_clobber {
-                let _ = std::fs::remove_file(&dest_path);
-            }
-            return Err(e.to_string());
         }
-        Ok(Some(n))
     })
     .await
     .map_err(|e| e.to_string())?
@@ -864,6 +867,28 @@ mod tests {
         .await;
         assert_eq!(r.unwrap_err(), "cancelled");
         assert!(!started.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_media_export_does_not_inherit_the_stores_owner_only_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("mode");
+        let src = dir.join("store.m4a");
+        let dest = dir.join("export.m4a");
+        std::fs::write(&src, b"audio bytes").unwrap();
+        std::fs::set_permissions(&src, std::fs::Permissions::from_mode(0o600)).unwrap();
+        // What a plain File::create gets under this process's umask.
+        let probe = dir.join("probe");
+        std::fs::File::create(&probe).unwrap();
+        let plain = std::fs::metadata(&probe).unwrap().permissions().mode() & 0o777;
+        assert_eq!(copy_into_fresh(&src, &dest).unwrap(), 11);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"audio bytes");
+        assert_eq!(
+            std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777,
+            plain
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
