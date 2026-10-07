@@ -25,7 +25,8 @@
 //! answers `quit_ready`, which latches the handshake for good, so a cancelled shutdown would
 //! make a later tray Quit skip its wait. Landing them is idempotent and harmless if the user
 //! cancels, and best-effort: the writes are sync commands that need the main thread between
-//! the query and `WM_ENDSESSION`, and nothing waits for them.
+//! the query and `WM_ENDSESSION`, and nothing waits for them. A last-second edit can be lost
+//! (accepted: waiting here would need a nested message pump).
 //!
 //! Message-only windows (the raw-input hotkey window) never receive these broadcasts, and
 //! `WM_CLOSE` is not sent at session end — so close-to-tray's `prevent_close` plays no part.
