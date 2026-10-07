@@ -2475,7 +2475,7 @@ export async function pushNow(manual = false): Promise<void> {
           await applyBlob(merged, heldBack(pushCats, riskyPush));
           if (myGen !== gen) return; // superseded during the apply wait
           raiseReview({
-            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
+            changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob, local: blob,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
           });
@@ -2539,7 +2539,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     await applyBlob(merged, heldBack(applyCats, risky));
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     raiseReview({
-      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
+      changes: risky, blob: merged, cats: applyCats, remote: remoteBlob, local,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
     });
@@ -2913,6 +2913,9 @@ interface PendingReview {
   blob: SyncBlob;
   cats: Record<SyncCategory, boolean>;
   remote: SyncBlob;
+  /** This device's compose the review was raised over (before the held-back apply), so an
+   *  approval can tell a held-back category the user edited since from one left as it was. */
+  local: SyncBlob;
   version: number;
   updatedAt: number | null;
   device: string | null;
@@ -2939,6 +2942,10 @@ export function getPendingReview(): {
 }
 
 function raiseReview(r: PendingReview): void {
+  // A review adopts no base, so every push / focus pull re-raises it: keep the "the list changed
+  // since you read it" notice while it is still the same list, or the next re-raise (a debounced
+  // push 409s right back into the review) wiped it seconds after it appeared.
+  if (pendingReview?.relisted && !r.relisted && sameReview(pendingReview, r)) r = { ...r, relisted: true };
   pendingReview = r;
   // A conflict against an older server version is moot now: the server moved past it.
   if (pendingConflict && pendingConflict.remoteVersion < r.version) pendingConflict = null;
@@ -2988,7 +2995,7 @@ export async function approvePendingReview(): Promise<void> {
   // Hold the engine lock across the compose + apply: a focus pull landing in the keyring waits
   // would re-raise this review over the approval (or stamp "ok" while it is still pending).
   if (!(await takeSyncLock(myGen))) return;
-  let pushAfter = false;
+  let outcome: ApproveOutcome = "done";
   try {
     // The wait may have let a pull replace or clear the review, or a dictation start. A review
     // adopts no base, so the pull it waited for re-raises it as a NEW object: judge it by
@@ -2996,7 +3003,7 @@ export async function approvePendingReview(): Promise<void> {
     // the review the user saw; a different one aborts.
     const cur = pendingReview;
     if (cur && sameReview(cur, r) && useApp.getState().status === "idle") {
-      pushAfter = await approveLocked(cur, myGen);
+      outcome = await approveLocked(cur, myGen);
     }
   } finally {
     if (myGen === gen) inFlight = false;
@@ -3005,17 +3012,23 @@ export async function approvePendingReview(): Promise<void> {
   // After the release: the push takes the lock itself. Every other arm still re-arms the
   // debounced push: a store edit made just before the click fired its pushNow into this lock
   // and was dropped, and nothing else re-sends it (the hash check makes it a no-op otherwise).
-  if (pushAfter) schedulePush(0);
-  else schedulePush();
+  // Not when the approval put a new prompt up instead: a push then only 409s back into it (the
+  // edit goes out with the answer), re-running the held-back apply for nothing.
+  if (outcome === "push") schedulePush(0);
+  else if (outcome === "done") schedulePush();
 }
 
-/** approvePendingReview's body, run under the engine lock. True when the caller should push. */
-async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> {
+/** What approveLocked left behind: "push" — applied, and the merged doc differs from the
+ *  server's; "done" — nothing more to do; "prompt" — a relisted review or a conflict is up. */
+type ApproveOutcome = "push" | "done" | "prompt";
+
+/** approvePendingReview's body, run under the engine lock. */
+async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOutcome> {
   // A base at or past the reviewed version was adopted meanwhile: the review is moot.
   if ((state.version ?? 0) >= r.version) {
     pendingReview = null;
     setRuntime({ syncStatus: "ok", syncError: null });
-    return false;
+    return "done";
   }
   // applyBlob reads the gates LIVE, but the list was judged under the gates at raise time: with
   // "Server addresses" / "API keys" off then, a repoint or key swap was left off the list (the
@@ -3026,17 +3039,46 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> 
   // with the snapshot's — the peer's own value, so the repoint compares equal. Compose this
   // device afresh.
   let localNow = await composeLive(r.cats);
-  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return false;
-  // `r.blob` was merged against the raise-time local: an edit made here since (to a category
-  // only this device changed) would be hydrated back to its old value. Re-merge against the live
-  // compose; a category that conflicts keeps the reviewed value (a resolve's "local" pick, the
-  // held-back backends category), every other one is refreshed.
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
+  // `r.blob` was merged against the raise-time local: an edit made here since would be hydrated
+  // back to its old value. Re-merge against the live compose (no base was adopted, so a category
+  // the peer changed still differs from the base). Where that conflicts:
+  //  - a category the raise already APPLIED (everything but the held-back ones): `r.blob`'s value
+  //    landed then, so the live value is it plus the user's edits on top — keep the live value
+  //    (re.merged's conflict placeholder). Putting `r.blob` back reverted the edit, and the
+  //    adopted base + follow-up push shipped the revert.
+  //  - a held-back category the user has not touched since the raise: the reviewed value (the
+  //    peer's change being consented to, or a resolve's pick).
+  //  - a held-back category the user edited while the review waited: neither side can win
+  //    silently — the approval would discard the edit, keeping it would discard the change the
+  //    user is approving. Ask, as a conflict at the review's version (its resolve re-runs the
+  //    security check, so nothing lands unreviewed).
   const re = mergeBlobs(state.snapshot, localNow, r.remote);
+  const appliedAtRaise = heldBack(r.cats, r.changes);
   const blobNow: SyncBlob = { ...re.merged };
+  let editedHeld = false;
   for (const cat of re.conflicts) {
+    if (appliedAtRaise[cat]) continue;
+    if (!catEqual(localNow[cat], r.local[cat])) {
+      editedHeld = true;
+      continue;
+    }
     const v = r.blob[cat];
     if (v === undefined) delete blobNow[cat];
     else (blobNow as Record<string, unknown>)[cat] = v;
+  }
+  if (editedHeld) {
+    pendingReview = null;
+    raiseConflict({
+      categories: re.conflicts,
+      merged: re.merged,
+      local: localNow,
+      remote: r.remote,
+      remoteVersion: r.version,
+      remoteDevice: r.device,
+      remoteUpdatedAt: r.updatedAt,
+    });
+    return "prompt";
   }
   // A degraded keyring re-sends the snapshot's backends category (the peer's view, again): judge
   // against the live list with no keys instead, so every incoming address / key still raises.
@@ -3047,20 +3089,20 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> 
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
     raiseReview({ ...r, blob: blobNow, changes: now, relisted: true });
-    return false;
+    return "prompt";
   }
   pendingReview = null;
   const applied = await applyBlob(blobNow, r.cats);
-  if (myGen !== gen) return false;
+  if (myGen !== gen) return "done";
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it): put
     // the review back so the approval isn't consumed by an apply that never happened.
     pendingReview = r;
-    return false;
+    return "prompt";
   }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
   // it left the backends category alone, or the next unlocked push reverts the peer's change.
-  if (r.degraded && degradedBaseWithheld(r.remote)) return false;
+  if (r.degraded && degradedBaseWithheld(r.remote)) return "done";
   await persistState({
     version: r.version,
     updatedAt: r.updatedAt,
@@ -3068,9 +3110,12 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<boolean> 
     hash: hashBlob(r.remote),
     snapshot: r.remote,
   });
-  if (myGen !== gen) return false;
+  if (myGen !== gen) return "done";
+  // The adopted base moves past a conflict raised at this same version (a debounced push 409ing
+  // next to the review): its categories were re-merged above, a live edit kept and pushed below.
+  dropSupersededPending(r.version);
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: r.device });
-  return r.pushAfter && hashBlob(blobNow) !== hashBlob(r.remote);
+  return r.pushAfter && hashBlob(blobNow) !== hashBlob(r.remote) ? "push" : "done";
 }
 
 /** Reject the held-back pull. Nothing is applied and NO base is adopted, so the next pull
@@ -3227,6 +3272,7 @@ async function resolveLocked(
       blob: final,
       cats: applyCats,
       remote: c.remote,
+      local: localNow,
       version: c.remoteVersion,
       updatedAt: c.remoteUpdatedAt ?? null,
       device: c.remoteDevice ?? null,
@@ -3258,6 +3304,9 @@ async function resolveLocked(
     snapshot: c.remote,
   });
   if (myGen !== gen) return false;
+  // Same as approveLocked: a review at this version is answered by the adopted base (its held-back
+  // category either came out of the security check clean, or the user picked this device's side).
+  dropSupersededPending(c.remoteVersion);
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: c.remoteDevice ?? null });
   // The resolved doc differs from what the server holds unless "remote" won
   // everywhere — push it (base = the server version the conflict reported).

@@ -422,3 +422,136 @@ describe("an edit made while a sync prompt waits", () => {
     }
   });
 });
+
+// The approval re-merged against the live compose but put the reviewed value back on every
+// category that conflicted — including ones the raise had already applied, where the only way to
+// conflict is an edit made on top of the peer's value while the dialog waited. The apply reverted
+// it, the base moved to the peer's version and the follow-up push shipped the revert.
+describe("approving a review after editing a category the peer changed", () => {
+  /** The peer flips general.typeAsISpeak and lowers the dictation retention (held for review). */
+  async function raise(): Promise<{ base: SyncBlob; peerTyping: boolean }> {
+    const base = await seedBase();
+    const remote = structuredClone(base);
+    const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+    remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
+    remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+    await pullNow(true);
+    expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+    expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping); // general applied
+    return { base, peerTyping };
+  }
+  const toggleStartMinimized = (): boolean => {
+    const s = useApp.getState().settings;
+    const next = !s.general.startMinimized;
+    useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: next } } });
+    return next;
+  };
+  const cleanup = () => {
+    api.keys = null;
+    api.pulled = null;
+    api.conflicts = [];
+  };
+
+  it("keeps the edit, adopts the peer's version and pushes the edit", async () => {
+    try {
+      const { peerTyping } = await raise();
+      const mine = toggleStartMinimized();
+      const pushesBefore = api.pushes;
+      await approvePendingReview();
+      const st = useApp.getState();
+      expect(getPendingReview()).toBeNull();
+      expect(st.settings.general.startMinimized).toBe(mine);
+      expect(st.settings.general.typeAsISpeak).toBe(peerTyping);
+      expect(st.settings.transcribe?.dictationRetentionDays).toBe(1);
+      // The follow-up push (scheduled at 0 ms) carries the edit on the adopted base.
+      await vi.waitFor(() => expect(api.pushes).toBe(pushesBefore + 1));
+      expect(api.pushedBase).toBe(2);
+      expect((api.pushed as SyncBlob).general?.startMinimized).toBe(mine);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("asks when the edit is to the held-back category itself", async () => {
+    try {
+      const { base } = await raise();
+      const s = useApp.getState().settings;
+      const days = base.recording?.handsFreeAutoStopMin === 45 ? 50 : 45;
+      useApp.setState({ settings: { ...s, recording: { ...s.recording, handsFreeAutoStopMin: days } } });
+      await approvePendingReview();
+      // Neither the approval nor the edit may win silently: a conflict at the peer's version.
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()?.categories).toEqual(["recording"]);
+      const st = useApp.getState();
+      expect(st.settings.recording.handsFreeAutoStopMin).toBe(days);
+      expect(st.settings.transcribe?.dictationRetentionDays).not.toBe(1);
+      // Taking the peer's side goes back through the security review, not straight in.
+      await resolveSyncConflicts({ recording: "remote" });
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      await approvePendingReview(); // no further edit: the pick stands, no second conflict
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(1);
+    } finally {
+      cleanup();
+    }
+  });
+
+  // The edit's debounced push 409s at the review's version and raises a conflict NEXT to the
+  // review (same version, so neither raise drops the other). Approving adopted the base but left
+  // the conflict up beside "Synced"; its "keep mine" then hit the moot guard and was dropped.
+  it("also answers a conflict raised at the same version", async () => {
+    try {
+      const { peerTyping } = await raise();
+      const mine = toggleStartMinimized();
+      api.conflicts = [api.pulled];
+      await pushNow();
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      expect(getPendingReview()).not.toBeNull();
+      await approvePendingReview();
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().settings.general.startMinimized).toBe(mine);
+      expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping);
+      await vi.waitFor(() => expect(api.pushedBase).toBe(2));
+      expect((api.pushed as SyncBlob).general?.startMinimized).toBe(mine);
+      expect(useApp.getState().syncStatus).toBe("ok");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// An approval that finds rows the user never saw re-raises the review as "relisted", and the
+// dialog says the list changed. A review adopts no base, so the next push / focus pull re-raised
+// the same list without the flag and the notice vanished while the dialog stayed up.
+describe("a relisted review", () => {
+  it("keeps its notice when the same list is raised again", async () => {
+    const setServerAddresses = (on: boolean) => {
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, serverAddresses: on } };
+      useApp.setState({ settings });
+    };
+    try {
+      const base = await seedBase();
+      setServerAddresses(false);
+      const remote = structuredClone(base);
+      remote.backends = { ...remote.backends!, list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })) };
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      setServerAddresses(true);
+      await approvePendingReview();
+      expect(getPendingReview()?.relisted).toBe(true);
+      await pullNow(true); // a focus pull re-raises the same review
+      expect(getPendingReview()?.changes.map((c) => c.kind).sort()).toEqual(["dictation-retention", "server-url"]);
+      expect(getPendingReview()?.relisted).toBe(true);
+      expect(useApp.getState().backends[0].serverUrl).toBe("http://10.0.0.2:8000");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+});

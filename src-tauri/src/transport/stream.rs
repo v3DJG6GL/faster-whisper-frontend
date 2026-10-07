@@ -79,6 +79,11 @@ pub enum StreamEvent {
         state: UtteranceState,
         utterance: Option<u32>,
     },
+    /// The session ENDED SHORT but not failed: a non-terminal warning the UI shows without
+    /// leaving its normal close path (the `Closed` that follows still inserts what was
+    /// committed). Emitted when the drain idle window expires before the server's last final.
+    /// Never route this through `Error` — the UI treats that as fatal and skips the insert tail.
+    Incomplete(String),
     Error(String),
     Closed,
 }
@@ -702,9 +707,10 @@ pub async fn run<F>(
                 if saw_frame { "10s since the last frame" } else { "30s, nothing all session" }
             );
             // Surface it too: a bare `Closed` reads as a clean close in the UI, so the last
-            // phrase would vanish silently. Error-then-Closed is the order the UI's stream
-            // error handler expects (it banks + copies what was committed).
-            on_event(StreamEvent::Error(
+            // phrase would vanish silently. A WARNING, not an `Error`: everything committed
+            // before the timeout is good, and the UI's error path would skip the normal close
+            // tail (no stop-mode insert, no pending phrase-end Enter) for one slow final.
+            on_event(StreamEvent::Incomplete(
                 "The server did not finish the transcript in time; the last phrase may be missing."
                     .into(),
             ));

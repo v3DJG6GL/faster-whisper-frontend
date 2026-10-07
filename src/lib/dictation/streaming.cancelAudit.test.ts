@@ -310,6 +310,16 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(body.indexOf("flashError(", copy)).toBe(-1);
   });
 
+  it("the drain-timeout warning stays non-fatal so the closed tail still inserts", () => {
+    // stream://incomplete (Rust drain idle window hit) must only warn: routing it through the
+    // fatal teardown skipped the stop-mode insert and dropped the pending phrase-end Enter.
+    const body = mask(bodyAfter(streamingSrc, 'reg<string>("stream://incomplete"'));
+    expect(body).toContain("setLogsDoorway(");
+    for (const fatal of ["flashError(", "abandonSessionWork(", "retireSessionEpoch(", "insertCfg = null", "clearPhraseEnd("]) {
+      expect(body, `stream://incomplete must not call ${fatal}`).not.toContain(fatal);
+    }
+  });
+
   it("a rejected stop flashes the error before awaiting the recovery copy", () => {
     // The chip sits on "transcribing" until the flash; a flash deferred behind the copy lets a
     // cancel + fresh press land in between, and the late flash then stamps the new session "error".

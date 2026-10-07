@@ -325,6 +325,22 @@ fn owned_dir_bytes(dir: &Path, own: impl Fn(&Path) -> bool) -> (u64, u32) {
     (bytes, files)
 }
 
+/// The recordings folder's readout: bytes and count of every file "Delete all dictations" removes
+/// (`dictation-*.wav` and the `.txt` sidecar beside each), plus how many of them are audio — the
+/// delete confirm names audio files, and counting the sidecars there doubled the number.
+fn recordings_usage(dir: &Path) -> (u64, u32, u32) {
+    let own = |p: &Path| {
+        p.file_name()
+            .and_then(|n| n.to_str())
+            .map(crate::audio::is_dictation_file)
+            .unwrap_or(false)
+    };
+    let is_wav = |p: &Path| p.extension().and_then(|e| e.to_str()) == Some("wav");
+    let (wav_bytes, wav_files) = owned_dir_bytes(dir, |p| own(p) && is_wav(p));
+    let (side_bytes, side_files) = owned_dir_bytes(dir, |p| own(p) && !is_wav(p));
+    (wav_bytes + side_bytes, wav_files + side_files, wav_files)
+}
+
 /// Does the transcript store hold ANY `.json` record? Cheap (a directory listing), so the
 /// startup migration can skip the full read+parse heal on a fresh install. Checks both
 /// `transcripts/` and `transcripts/dictation/` — the same directories `heal_media_paths`
@@ -561,16 +577,10 @@ pub async fn transcript_store_stats(
         let (file_bytes, file_files) = owned_dir_bytes(&files, is_own_media);
         let (link_bytes, link_files) = owned_dir_bytes(&links, is_own_media);
         let (video_bytes, video_files) = owned_dir_bytes(&video, is_own_media);
-        let (rec_bytes, rec_files) = crate::commands::resolve_recordings_dir(&app, audio_base)
-            .map(|d| {
-                owned_dir_bytes(&d, |p| {
-                    p.file_name()
-                        .and_then(|n| n.to_str())
-                        .map(crate::audio::is_dictation_file)
-                        .unwrap_or(false)
-                })
-            })
-            .unwrap_or((0, 0));
+        let (rec_bytes, rec_files, rec_audio_files) =
+            crate::commands::resolve_recordings_dir(&app, audio_base)
+                .map(|d| recordings_usage(&d))
+                .unwrap_or((0, 0, 0));
         Ok(serde_json::json!({
             "dictationCount": count_json(&dictations_dir(&app)?),
             "fileCount": count_json(&transcripts_dir(&app)?),
@@ -582,6 +592,7 @@ pub async fn transcript_store_stats(
             "videoMediaFiles": video_files,
             "recordingsBytes": rec_bytes,
             "recordingsFiles": rec_files,
+            "recordingsAudioFiles": rec_audio_files,
         }))
     })
     .await
@@ -876,6 +887,21 @@ mod tests {
         std::fs::write(dir.join(format!("{own}.m4a.tmp")), b"1234567").unwrap();
         std::fs::write(dir.join("holiday video.mp4"), b"123456789").unwrap();
         assert_eq!(owned_dir_bytes(&dir, is_own_media), (5, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_recordings_readout_counts_sidecars_as_files_but_not_as_audio() {
+        let dir = std::env::temp_dir().join(format!("fwf-rec-stats-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for stem in ["dictation-1", "dictation-2"] {
+            std::fs::write(dir.join(format!("{stem}.wav")), b"1234").unwrap();
+            std::fs::write(dir.join(format!("{stem}.txt")), b"12").unwrap();
+        }
+        std::fs::write(dir.join("dictation-3.wav.tmp"), b"1234567").unwrap();
+        std::fs::write(dir.join("song.wav"), b"123456789").unwrap();
+        assert_eq!(recordings_usage(&dir), (12, 4, 2));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

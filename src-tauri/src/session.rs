@@ -414,6 +414,11 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
             tracing::info!("[stream] session {epoch} boundary (hard break)");
             emit_if_active(&appc, epoch, "stream://boundary", separator);
         }
+        StreamEvent::Incomplete(m) => {
+            // Non-terminal: the UI shows a warning and still runs its normal `closed` tail.
+            tracing::warn!("[stream] session {epoch} incomplete: {m}");
+            emit_if_active(&appc, epoch, "stream://incomplete", m);
+        }
         StreamEvent::Error(m) => {
             // Log it here (not just emit): a superseded session's error is epoch-
             // suppressed from the UI and would otherwise vanish entirely.

@@ -413,6 +413,12 @@ export function TranscriptExport({
       } else {
         // Nothing back = the server lost the file (a restart): forget the id, as the
         // video's "expired" does, so the panel stops offering a save that can only fail.
+        // Only when the asked server is the one that issued it: trBackend falls back to
+        // the first backend for a record whose own one is gone (or unrecorded), and that
+        // server's 404 says nothing about an id restoring the backend would make good again.
+        if (rec.backendId !== trBackend.id) {
+          throw new Error("The selected server doesn't have this link's audio.");
+        }
         patchRecord(rec.id, (r) => {
           if (r.result?.sourceMediaId !== sentId) return r;
           const res = { ...r.result };

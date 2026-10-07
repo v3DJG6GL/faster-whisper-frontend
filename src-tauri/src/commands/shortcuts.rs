@@ -395,15 +395,24 @@ struct InputNodeWatch {
     prev: Option<std::collections::BTreeSet<String>>,
     pending: std::collections::BTreeSet<String>,
     lost_seen: bool,
-    /// Ticks the next loss-triggered re-apply waits; doubles per consecutive one, reset once a
-    /// tick sees no loss (the re-apply's readers stayed up).
+    /// Ticks the next loss-triggered re-apply waits; doubles per consecutive one, reset only once
+    /// the readers stayed up for `LOSS_STABLE_TICKS` ticks in a row — a keyboard that fails a few
+    /// seconds after every open shows a clean tick or two between losses, and resetting on those
+    /// would restart evdev every few ticks without bound.
     loss_backoff: u32,
     loss_wait: u32,
+    /// Consecutive ticks without a lost reader.
+    clean_run: u32,
 }
 
 /// Cap on `InputNodeWatch::loss_backoff`, in ticks (~2 min at the 2 s tick).
 #[cfg(target_os = "linux")]
 const LOSS_BACKOFF_MAX: u32 = 64;
+
+/// Clean ticks in a row (~1 min at the 2 s tick) after which a loss counts as new again and the
+/// backoff resets.
+#[cfg(target_os = "linux")]
+const LOSS_STABLE_TICKS: u32 = 30;
 
 #[cfg(target_os = "linux")]
 impl InputNodeWatch {
@@ -422,9 +431,14 @@ impl InputNodeWatch {
         self.prev = Some(now);
         // A loss already seen on an earlier tick: its keyboard may have come straight back under
         // the same name, so it gets the same one-tick grace as a new node.
-        if !lost {
-            self.loss_backoff = 0;
-            self.loss_wait = 0;
+        if lost {
+            self.clean_run = 0;
+        } else {
+            self.clean_run = self.clean_run.saturating_add(1);
+            if self.clean_run >= LOSS_STABLE_TICKS {
+                self.loss_backoff = 0;
+                self.loss_wait = 0;
+            }
         }
         let lost_due = lost && self.lost_seen && self.loss_wait == 0;
         if lost && self.loss_wait > 0 {
@@ -734,10 +748,36 @@ mod tests {
         }
         // Waits of 1, 2, 4, 8, 16 ticks between re-applies, not one every tick.
         assert_eq!(applied_at, vec![0, 2, 5, 10, 19, 36]);
-        // Once the readers stay up the backoff resets: the next loss is acted on after its grace.
-        assert_eq!(w.observe(s(), false), None);
+        // Once the readers stay up for a sustained run the backoff resets: the next loss is acted
+        // on after its grace.
+        for _ in 0..LOSS_STABLE_TICKS {
+            assert_eq!(w.observe(s(), false), None);
+        }
         assert_eq!(w.observe(s(), true), None, "grace tick");
         assert_eq!(w.observe(s(), true), Some(true));
+    }
+
+    #[test]
+    fn input_node_watch_keeps_backing_off_across_short_clean_gaps() {
+        // A keyboard whose stream ends a few seconds after every open: each re-apply buys one
+        // clean tick, then the loss is back. The clean tick must not reset the backoff.
+        let mut w = InputNodeWatch::default();
+        let s = || set(&["event0", "event5"]);
+        w.observe(s(), false);
+        let mut applied_at = Vec::new();
+        let mut since_apply = None::<u32>;
+        for tick in 0..80 {
+            let lost = since_apply != Some(0);
+            if w.observe(s(), lost) == Some(true) {
+                applied_at.push(tick);
+                w.note_loss_apply();
+                since_apply = Some(0);
+            } else {
+                since_apply = since_apply.map(|n| n + 1);
+            }
+        }
+        // Gaps grow (3, 4, 6, 10, 18, 34 ticks), not a re-apply every third tick.
+        assert_eq!(applied_at, vec![1, 4, 8, 14, 24, 42, 76]);
     }
 
     #[test]

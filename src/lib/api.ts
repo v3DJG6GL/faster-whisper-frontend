@@ -1508,13 +1508,16 @@ export interface TranscriptStoreStats {
   videoMediaBytes: number;
   videoMediaFiles: number;
   recordingsBytes: number;
+  /** Every app-owned file in the recordings folder (audio + `.txt` sidecars). */
   recordingsFiles: number;
+  /** The `dictation-*.wav` files among `recordingsFiles`. */
+  recordingsAudioFiles: number;
 }
 
 const EMPTY_STORE_STATS: TranscriptStoreStats = {
   dictationCount: 0, fileCount: 0, fileMediaBytes: 0, fileMediaFiles: 0,
   linkMediaBytes: 0, linkMediaFiles: 0, videoMediaBytes: 0, videoMediaFiles: 0,
-  recordingsBytes: 0, recordingsFiles: 0,
+  recordingsBytes: 0, recordingsFiles: 0, recordingsAudioFiles: 0,
 };
 
 export async function transcriptStoreStats(

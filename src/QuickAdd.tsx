@@ -41,16 +41,25 @@ const MAX_RECENT_WORDS = 500;
 
 type Target = { serverUrl: string; backendId: string; slug: string };
 type Phase = "loading" | "nopin" | "error" | "ok";
-type SaveState = "idle" | "saving" | "saved" | "error";
+/** "pinned": the PATCH answered 2xx but the server's environment pins the rule list, so nothing
+ *  changed — terminal, not a failure: a retry can never land, so it is neither auto-retried nor
+ *  allowed to hold off the summon's re-sync (the rows the server really serves). */
+type SaveState = "idle" | "saving" | "saved" | "error" | "pinned";
 
-function SaveStatus({ state, listPinned, onRetry }: { state: SaveState; listPinned: boolean; onRetry: () => void }) {
+function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
   if (state === "saving")
     return <span className="flex items-center gap-1.5 text-[11.5px] text-faint"><Loader2 className="size-3.5 animate-spin" /> saving…</span>;
   if (state === "saved")
     return <span className="flex items-center gap-1.5 text-[11.5px] text-ok"><Check className="size-3.5" /> saved</span>;
+  if (state === "pinned")
+    return (
+      <span className="flex items-center gap-1.5 text-[11.5px] text-warn" title="The server's environment pins the rule list, so this change does not take effect">
+        <AlertTriangle className="size-3.5" /> not applied
+      </span>
+    );
   if (state === "error")
     return (
-      <button type="button" onClick={onRetry} className="ring-signal flex items-center gap-1.5 text-[11.5px] text-warn hover:underline" title={listPinned ? "The server's environment pins the rule list, so this change does not take effect" : "Retry save"}>
+      <button type="button" onClick={onRetry} className="ring-signal flex items-center gap-1.5 text-[11.5px] text-warn hover:underline" title="Retry save">
         <AlertTriangle className="size-3.5" /> retry
       </button>
     );
@@ -93,8 +102,6 @@ export default function QuickAdd() {
   // Mirror saveState into a ref so the summon listener (a stale-closure-prone callback) reads the
   // latest value. A fired-but-failed save leaves saveTimer null yet the local rows are still unsaved.
   const saveStateRef = useRef<SaveState>("idle");
-  /** The last reported save was a 2xx the server's environment ignored (rule list pinned). */
-  const [listPinned, setListPinned] = useState(false);
   useEffect(() => {
     saveStateRef.current = saveState;
   }, [saveState]);
@@ -262,25 +269,22 @@ export default function QuickAdd() {
         patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
       });
       // A 2xx can still change nothing: the server's environment pins the whole rule list, so the
-      // next summon's refresh would silently drop this mapping. Report it as unsaved, like Dictionary.
+      // next summon's refresh drops this mapping. Say so ("pinned", like Dictionary's notice) — but
+      // not as "error": that state skips the summon re-sync and auto-retries, and against a pin
+      // every retry ends the same way (a PATCH per summon, rows never re-synced, and once the pin
+      // is lifted the retry would push these stale rows over the stored rule unasked).
       const pinned = res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
       // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).
-      if (saveTimer.current === null) {
-        setListPinned(pinned);
-        setSaveState(res.ok && !pinned ? "saved" : "error");
-      }
+      if (saveTimer.current === null) setSaveState(pinned ? "pinned" : res.ok ? "saved" : "error");
       return res.ok && !pinned;
     } catch (e) {
       // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
       // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
       // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
       console.error("quick-add save failed:", e);
-      if (saveTimer.current === null) {
-        setListPinned(false);
-        setSaveState("error");
-      }
+      if (saveTimer.current === null) setSaveState("error");
       return false;
     }
   }, []);
@@ -305,7 +309,8 @@ export default function QuickAdd() {
       // it. A PENDING save (timer armed), an IN-FLIGHT one (timer fired/null, saveState still
       // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
       // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
-      // which would drop the only retry signal). Let the save flush / retry.
+      // which would drop the only retry signal). Let the save flush / retry. A "pinned" save is
+      // not among them: the server will never take those rows, so re-sync to what it serves.
       // Unconditionally, ahead of the branch below: the policy this window types under must
       // never be older than the last summon, whatever the save state is doing.
       void refreshLocalConfig();
@@ -491,7 +496,7 @@ export default function QuickAdd() {
           <span className="truncate font-display text-[15px] font-semibold text-text">{label}</span>
           <span className="font-mono text-[10px] uppercase tracking-wider text-faint">quick add</span>
           <span className="ml-auto flex items-center gap-2">
-            <SaveStatus state={saveState} listPinned={listPinned} onRetry={() => void flushSave()} />
+            <SaveStatus state={saveState} onRetry={() => void flushSave()} />
             <button
               type="button"
               onClick={closeNow}

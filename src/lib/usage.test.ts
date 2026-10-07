@@ -157,6 +157,27 @@ describe("usage poll gates", () => {
     await settle();
     expect(calls().fixed).toBe(1);
   });
+  it("runs the eviction pass 1 s after the LAST override keystroke, not the first", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    getUsageStats.mockClear();
+    // Only the first keystroke evicts the usage key; the rest change the override alone.
+    useApp.getState().setUrlOverride("b1", "http://1");
+    await vi.advanceTimersByTimeAsync(600);
+    useApp.getState().setUrlOverride("b1", "http://10");
+    await vi.advanceTimersByTimeAsync(600);
+    useApp.getState().setUrlOverride("b1", "http://10.0");
+    await vi.advanceTimersByTimeAsync(999);
+    await settle();
+    expect(calls().fixed).toBe(0); // 2.2 s after the first keystroke, still waiting
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(calls().fixed).toBe(1);
+    // Restore, and let the pass it arms run before the next case.
+    useApp.getState().setUrlOverride("b1", null);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

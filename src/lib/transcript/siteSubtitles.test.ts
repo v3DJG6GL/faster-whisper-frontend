@@ -78,6 +78,16 @@ describe("presets (v18, v31, v32)", () => {
       expect(states(i1, st1, "ex:de-CH")).toEqual(["off"]);
     }
   });
+  it("an unknown spoken language: a candidate switched off and on again leaves the translation targets alone", () => {
+    const inp0 = input({ spoken: null, tracks: YT, targets: ["en"] });
+    const [inp, st0] = apply(inp0, toggleTarget(inp0, initialSiteState(inp0.targets), "de", false));
+    const targets = [...inp.targets];
+    expect(targets).not.toContain("de");
+    const [i1, st1] = apply(inp, flip(inp, st0, "cand:de-CH"));
+    const [i2] = apply(i1, flip(i1, st1, "cand:de-CH"));
+    expect(i1.targets).toEqual(targets);
+    expect(i2.targets).toEqual(targets);
+  });
 });
 
 describe("badge clicks (v25, v27, v28)", () => {

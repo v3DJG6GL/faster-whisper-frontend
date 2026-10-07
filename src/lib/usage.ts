@@ -292,16 +292,22 @@ export function initUsageController(): void {
     if (bKey(state.backends) !== bKey(prev.backends)) {
       void refreshAll();
     } else if (
-      state.usage !== prev.usage &&
-      state.backends.some((b) => hasOwn(prev.usage, b.id) && !hasOwn(state.usage, b.id))
+      (state.usage !== prev.usage &&
+        state.backends.some((b) => hasOwn(prev.usage, b.id) && !hasOwn(state.usage, b.id))) ||
+      (evictTimer !== undefined && state.settings.sync?.urlOverrides !== prev.settings.sync?.urlOverrides)
     ) {
       // A live backend's cached usage was dropped without bKey moving — an API-key rotation
       // (forgetBackendCaches) or a URL override (setUrlOverride): refetch it soon, not on the
       // next tick. Debounced: the override field writes on every keystroke, and a pass per
-      // half-typed address would send the key to each of them. refreshOne only ever adds
+      // half-typed address would send the key to each of them. Only the FIRST keystroke
+      // evicts (the key is already gone for the rest), so a pending pass is re-armed on every
+      // override change too — it runs 1 s after the LAST one. refreshOne only ever adds
       // keys, so this cannot loop.
       clearTimeout(evictTimer);
-      evictTimer = setTimeout(() => void refreshAll(), EVICT_DEBOUNCE_MS);
+      evictTimer = setTimeout(() => {
+        evictTimer = undefined;
+        void refreshAll();
+      }, EVICT_DEBOUNCE_MS);
     }
     // Refetch shortly after a dictation session ends (idle transition) — the server
     // records usage in its post-request finally, so today's totals just moved. The

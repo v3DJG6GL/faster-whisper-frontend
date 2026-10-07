@@ -31,7 +31,6 @@ import { effectiveServerKind } from "../serverKind";
 import { maxTranslationTargets, refreshCaps, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
 import { ownProp } from "../own";
-import { serverContextSegments } from "../inherit";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   display as pendingDisplay, holdRemainingMs, isLive as pendingIsLive, msUntilStale, newUtterancePending,
@@ -60,7 +59,6 @@ import {
   translateText,
   cancelTextTranslation,
   getTranscribeProgress,
-  getDecodeDefaults,
   logLine,
 } from "../api";
 import {
@@ -444,10 +442,6 @@ let sessionTranslation: {
   glossary?: string;
   mode?: "fluent" | "faithful";
   contextSegments?: number;
-  /** The server's own TRANSLATION_CONTEXT_SEGMENTS when `contextSegments` inherits it: bounds
-   *  how many context phrases are SUBMITTED (the wire still says null). Filled in after session
-   *  start by a best-effort decode-defaults read; undefined = unknown, submit them all. */
-  inheritedContextSegments?: number;
   serverUrl: string;
   backendId: string;
   /** Is this server's translation model resident? Seeded at session start from
@@ -682,7 +676,6 @@ async function maybeTranslate(
         // editor greys it out and says so when this session types as it speaks.
         mode: translateModeFor(oneShot, tr.mode),
         contextSegments: tr.contextSegments,
-        inheritedContextSegments: tr.inheritedContextSegments,
         serverUrl: tr.serverUrl,
         backendId: tr.backendId,
         // Completes the server-side receipt THIS utterance is waiting on.
@@ -2965,6 +2958,16 @@ async function ensureListeners(): Promise<void> {
     if (!inSession()) return;
     setDictation({ overridesIgnored: e.payload });
   });
+  // The Rust drain's idle window ran out before the server's last final: the session ended SHORT,
+  // not failed. A WARNING only — everything committed before it is good, and the `closed` that
+  // follows must still run the normal tail (stop-mode insert, the pending phrase-end Enter, the
+  // clipboard restore). So none of the stream://error teardown here: no flashError, no
+  // abandonSessionWork, no insertCfg reset, no epoch retire. Just say the last phrase may be gone.
+  await reg<string>("stream://incomplete", (e) => {
+    if (!inSession()) return; // a cancelled session's late drain — same guard as the siblings
+    console.warn("[dictation] stream incomplete:", e.payload);
+    useApp.getState().setLogsDoorway({ msg: e.payload, showLogs: true });
+  });
   } catch (e) {
     // A mid-sequence import/listen reject: roll back every listener already registered so none are
     // orphaned (wired stays false below → the next startLive retries with a clean single set), then
@@ -3243,22 +3246,11 @@ async function startLiveInner(
       warm: null,
     };
     sessionTranslation = trTargets.length ? { ...sessionTranslationBase, targets: trTargets } : null;
-    // An inheriting session sends context_segments null, so the server picks its own depth —
-    // but the phrases it does not use as context are still translated (and discarded). Learn
-    // that depth in the background to bound what is submitted; session start never waits on it
-    // and an unknown/older backend leaves it undefined (submit every context phrase).
-    if (trOv.contextSegments === undefined && (trTargets.length > 0 || askTargetsAtSettle)) {
-      const base = sessionTranslationBase;
-      void getDecodeDefaults({ serverUrl: base.serverUrl, backendId: backend.id, model: model ?? "", overrideProfile })
-        .then((dd) => {
-          const n = serverContextSegments(dd);
-          // Only for the session that asked: a newer one has its own base.
-          if (n === undefined || sessionTranslationBase !== base) return;
-          base.inheritedContextSegments = n;
-          if (sessionTranslation) sessionTranslation.inheritedContextSegments = n;
-        })
-        .catch(() => {});
-    }
+    // An inheriting session (contextSegments undefined) submits every context phrase the stream
+    // kept and sends no depth. Do NOT bound it by a request-default-settings read: /v1/translate
+    // resolves TRANSLATION_CONTEXT_SEGMENTS with no override profile and no model, while that
+    // endpoint always resolves under a model (model "" = the server's default model) — a per-model
+    // rule would trim the context to a depth the translate request never uses.
     sessionTranslatedText = null;
     sessionByLang = Object.create(null) as Record<string, string[]>;
     clipByLang = undefined;

@@ -371,13 +371,16 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   // One site track can show twice — as the original row's candidate (cand:) and on its own
   // language's row (ex:) — and either lit badge downloads it: both flip together, or a
   // click shows it struck while the run still fetches it. The candidate has no language
-  // of its own, so it takes its twin's: the fallbacks below apply to its click too.
+  // of its own, so it takes its twin's — but only for the switch-off fallbacks below: a
+  // candidate rides along on the Original row, and switching it back on must not make its
+  // language a translation target the user removed (off → on stays a round trip).
   const mm = /^(ex|cand):(.+)$/.exec(key);
   const sib = mm ? (mm[1] === "ex" ? "cand:" : "ex:") + mm[2] : null;
   if (sib && sib in m.snap) next[sib] = next[key];
   const tg = allTargets(m);
-  const c = m.codeOf[key] ?? (sib ? m.codeOf[sib] : undefined);
-  if (c && next[key]) tg[c] = true; // switching any source on makes the language wanted
+  const own = m.codeOf[key];
+  const c = own ?? (sib ? m.codeOf[sib] : undefined);
+  if (own && next[key]) tg[own] = true; // switching any source on makes the language wanted
   if (c && tg[c] && !next[key]) {
     const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k]);
     if (!left.length) {

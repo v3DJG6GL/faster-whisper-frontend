@@ -238,7 +238,8 @@ export default function Settings() {
   // "Delete all dictations" also removes every dictation-* audio file, which outlives its
   // record when history is off but audio is kept — name both, or the confirm said "0".
   const dictN = storeStats?.dictationCount ?? 0;
-  const dictAudioN = storeStats?.recordingsFiles ?? 0;
+  // Audio only: recordingsFiles also counts each .wav's .txt sidecar.
+  const dictAudioN = storeStats?.recordingsAudioFiles ?? 0;
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
   const [evdevMsg, setEvdevMsg] = useState<string | null>(null);
   const [evdevBusy, setEvdevBusy] = useState(false);
@@ -709,7 +710,9 @@ export default function Settings() {
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")}>
                     {dictN > 0
                       ? `Delete ${dictN} dictations${dictAudioN > 0 ? ` + ${dictAudioN} audio files` : ""}`
-                      : `Delete ${dictAudioN} audio files`}
+                      : dictAudioN > 0
+                        ? `Delete ${dictAudioN} audio files`
+                        : "Delete"}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
