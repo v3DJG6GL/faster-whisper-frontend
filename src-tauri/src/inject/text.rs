@@ -641,40 +641,15 @@ pub(crate) async fn inject_text(
             // X11 twin does: a user cancel restores `prev`, an error abort keeps the transcript
             // for the recovery block.
             let cancelled_in_settle = crate::inject::injection_cancelled(epoch);
-            if cancelled_in_settle {
+            // The chord-time own-window probe answers `NothingWritten`, exactly as the portal
+            // job's own pre-job probe does one queue hop later, so both take the single divert
+            // arm below rather than two copies of it that can drift apart.
+            let r = if cancelled_in_settle {
                 tracing::info!("[clip] paste: cancelled during the settle — not pasting");
+                Ok(crate::inject::Landed::Yes)
             } else if own_window_focused(&app) {
                 tracing::info!("[inject] skipped at the paste chord: our own window took focus");
-                // Re-set through the PERSISTENT owner first, unless the write above already went
-                // through it (`persisted`). Otherwise it was the plain `set_clipboard`, which does
-                // not stick on Wayland once the setter returns — so reporting the divert without
-                // this promises a clipboard that no longer holds the text, and the caller has
-                // already advanced past that phrase. Same rule the X11 twin follows at its own
-                // chord guard.
-                // With an answer available, the comment above becomes enforceable rather than
-                // aspirational: if the persistent re-set fails, the plain `set_clipboard` above is
-                // exactly the write that does not stick, so promising a divert would be the false
-                // confirmation this arm was added to avoid. No chord was pressed, so the caller's
-                // re-send is safe.
-                if !persisted {
-                    if let Err(e) = persist_off_runtime(text.clone()).await {
-                        tracing::warn!("[inject] divert at the paste chord failed: {e}");
-                        return Ok(InjectOutcome {
-                            landed: false,
-                            diverted: false,
-                        });
-                    }
-                }
-                // Delivered — and after this paste's `note_paste_target` above, which cleared the
-                // flag: the session-end restore must not serve the snapshot over it.
-                crate::inject::note_delivered_unless_user_cancelled(epoch);
-                return Ok(InjectOutcome {
-                    landed: true,
-                    diverted: true,
-                });
-            }
-            let r = if cancelled_in_settle {
-                Ok(crate::inject::Landed::Yes)
+                Ok(crate::inject::Landed::NothingWritten)
             } else {
                 crate::inject::wayland::paste(
                     &app,
@@ -685,26 +660,46 @@ pub(crate) async fn inject_text(
                 )
                 .await
             };
-            // The portal job's own pre-job own-window probe (`wayland.rs`) answers
-            // `NothingWritten` — but by then THIS arm has already written the transcript and
-            // noted the paste target. Treating it as a landed paste would schedule the `prev`
-            // restore over a phrase nobody pasted and report it as never written, with nothing
-            // keeping the session snapshot. It is the chord-time own-window divert above, one
-            // queue hop later: hand the transcript to the persistent owner and report the divert.
-            // The recovery block below cannot apply — the job checks the epoch before focus.
-            if matches!(r, Ok(crate::inject::Landed::NothingWritten)) {
+            // `NothingWritten` here means our own window took focus before the chord — at the
+            // chord-time probe above or at the portal job's pre-job probe (`wayland.rs`) — but by
+            // then THIS arm has already written the transcript and noted the paste target.
+            // Treating it as a landed paste would schedule the `prev` restore over a phrase nobody
+            // pasted and report it as never written, with nothing keeping the session snapshot:
+            // hand the transcript to the persistent owner and report the divert.
+            //
+            // Unless the job was cancelled. Both probes are event-loop round trips, and the
+            // portal job asks the epoch BEFORE its probe, so a cancel can land during either one.
+            // A cancelled job falls through to the restore/recovery logic below, as a cancel in
+            // the settle does via `cancelled_in_settle`: a user cancel restores `prev` and reports
+            // nothing written, an error abort skips the restore and the recovery block at the end
+            // of this function persists the transcript and arms `note_recovery_on_clipboard`.
+            if matches!(r, Ok(crate::inject::Landed::NothingWritten))
+                && !crate::inject::injection_cancelled(epoch)
+            {
                 tracing::info!(
-                    "[inject] skipped at the portal job: our own window took focus — left on the clipboard"
+                    "[inject] our own window took focus before the paste chord — left on the clipboard"
                 );
+                // Re-set through the PERSISTENT owner first, unless the write above already went
+                // through it (`persisted`). Otherwise it was the plain `set_clipboard`, which does
+                // not stick on Wayland once the setter returns — so reporting the divert without
+                // this promises a clipboard that no longer holds the text, and the caller has
+                // already advanced past that phrase. Same rule the X11 twin follows at its own
+                // chord guard. If the persistent re-set fails, the plain `set_clipboard` above is
+                // exactly the write that does not stick, so promising a divert would be a false
+                // confirmation. No chord was pressed, so the caller's re-send is safe.
                 if !persisted {
                     if let Err(e) = persist_off_runtime(text.clone()).await {
-                        tracing::warn!("[inject] divert at the portal job failed: {e}");
+                        tracing::warn!(
+                            "[inject] divert before the paste chord failed (our own window took focus): {e}"
+                        );
                         return Ok(InjectOutcome {
                             landed: false,
                             diverted: false,
                         });
                     }
                 }
+                // Delivered — and after this paste's `note_paste_target` above, which cleared the
+                // flag: the session-end restore must not serve the snapshot over it.
                 crate::inject::note_delivered_unless_user_cancelled(epoch);
                 return Ok(InjectOutcome {
                     landed: true,

@@ -213,7 +213,8 @@ pub fn clear_paste_target() {
 ///
 /// Armed by the clipboard-only/divert writes in `inject_text` and by every `diverted: true` it
 /// reports (`text::settle_outcome`, the Wayland chord divert), cleared by every paste write
-/// (`note_paste_target`) — that paste replaced the delivered text — and consumed by `end_injection`
+/// (`note_paste_target`) — that paste replaced the delivered text — and by a write a user cancel
+/// superseded (`note_delivered_unless_user_cancelled`), and consumed by `end_injection`
 /// or dropped by `discard_injection_snapshot` (both via `clear_paste_target`).
 static DELIVERED_ON_CLIPBOARD: AtomicBool = AtomicBool::new(false);
 
@@ -229,8 +230,15 @@ pub fn note_delivered_on_clipboard() {
 /// leaving the discarded transcript on the clipboard and the user's own clipboard lost. A user
 /// cancel owes that restore. An error abort (`cancel_wants_recovery`) still arms it: its text is
 /// meant to stay recoverable.
+///
+/// A user cancel CLEARS the flag rather than leaving it alone: every caller has just written this
+/// job's transcript, which superseded any earlier delivered text — and only paste writes clear the
+/// flag themselves (`note_paste_target`), not the clipboard-only or divert writes. Left alone, an
+/// earlier phrase's delivery would survive under the discarded transcript and the session-end
+/// restore would still be skipped.
 pub fn note_delivered_unless_user_cancelled(epoch: u64) {
     if injection_cancelled(epoch) && !cancel_wants_recovery(epoch) {
+        DELIVERED_ON_CLIPBOARD.store(false, Ordering::SeqCst);
         return;
     }
     note_delivered_on_clipboard();
@@ -1631,13 +1639,15 @@ mod tests {
             "a chord divert left it unarmed"
         );
         // A user cancel that landed during the write owes the session-end restore, so the
-        // divert must not arm it. A never-reached epoch reads as cancelled (and not as an error
+        // divert must not arm it — nor leave an EARLIER phrase's delivery armed: the write
+        // replaced that text. A never-reached epoch reads as cancelled (and not as an error
         // abort) without bumping the shared `INJECT_EPOCH` other tests read.
         let stale = u64::MAX - 7;
+        note_delivered_on_clipboard();
         let _ = settle_outcome(Ok(Landed::OnClipboard), false, stale);
         assert!(
             !take_delivered_on_clipboard(),
-            "a user-cancelled divert armed it"
+            "a user-cancelled divert left an earlier delivery armed"
         );
         let o = settle_outcome(Ok(Landed::NothingWritten), true, live).unwrap();
         assert!(o.landed && o.diverted);
