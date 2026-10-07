@@ -132,12 +132,16 @@ export async function initConfig(): Promise<void> {
     // leaves the binding signature alone — a rebind would tear down a held push-to-talk) OR the
     // evdev backend is toggled (which owner — plugin vs evdev — must switch), or when a quick-add list is
     // designated or cleared (apply_bindings arms the quick-add chord only while one is set).
+    // The quick-add chord is compared by content too, for the same held-push-to-talk reason: a
+    // sync pull hands over a freshly parsed (new-ref) copy of an unchanged chord.
     // reregister runs after the save resolves, so the Rust side reads the just-persisted
     // config (no race).
     if (
       (state.profiles !== prev.profiles && bindingSig(state.profiles) !== bindingSig(prev.profiles)) ||
       state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled ||
-      state.settings.general.quickAddHotkey !== prev.settings.general.quickAddHotkey ||
+      (state.settings.general.quickAddHotkey !== prev.settings.general.quickAddHotkey &&
+        JSON.stringify(state.settings.general.quickAddHotkey) !==
+          JSON.stringify(prev.settings.general.quickAddHotkey)) ||
       (state.settings.quickAddList == null) !== (prev.settings.quickAddList == null)
     ) {
       pendingBindingChange = true;

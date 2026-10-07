@@ -858,7 +858,8 @@ export interface PipelineSaveResult {
   saved: string[];
   conflicts: RuleConflict[];
   requires_restart: boolean;
-  /** Rules the server's environment pins: the PATCH skipped them, so their change never applies. */
+  /** Env-pinned SETTING names among those the save wrote (in practice only `PIPELINE_RULES`, the
+   *  whole rule list), never rule names. When present, nothing in this save takes effect. */
   env_pinned_ignored?: string[];
   errors?: { loc?: string; msg?: string }[];
   detail?: string;

@@ -745,7 +745,8 @@ export const useApp = create<AppState>((set) => ({
         backends: s.backends.filter((b) => b.id !== id),
         // Only build a new profiles array if a profile actually referenced the removed backend —
         // map() always returns a fresh reference, and the auto-save subscriber treats any new
-        // profiles ref as a chord change and re-registers the OS global hotkeys for nothing.
+        // profiles ref as a change: a needless config save + sync push (re-registration itself is
+        // gated on the binding signature, persistence.ts bindingSig).
         profiles: s.profiles.some((p) => p.backendId === id)
           ? s.profiles.map((p) => (p.backendId === id ? { ...p, backendId: null } : p))
           : s.profiles,
