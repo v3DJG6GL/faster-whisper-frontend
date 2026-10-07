@@ -114,7 +114,7 @@ export function fmtBytes(n: number): string {
   return `${(n / 1e9).toFixed(2)} GB`;
 }
 
-/** "0.7 Mbit/s" / "129 kbit/s" — whole kbit/s below 1 000, one decimal above. */
+/** "1.5 Mbit/s" / "129 kbit/s" — whole kbit/s below 1 000, one decimal above. */
 export function fmtBitrate(kbps: number | null | undefined): string {
   if (kbps == null || !Number.isFinite(kbps) || kbps <= 0) return "";
   // Classify on the ROUNDED value, as fmtBytes does, or 999.5 reads "1000 kbit/s".
