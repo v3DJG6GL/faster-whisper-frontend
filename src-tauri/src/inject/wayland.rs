@@ -1063,7 +1063,8 @@ mod imp {
 
         #[test]
         fn a_caseless_script_letter_diverts_even_in_a_mostly_latin_line() {
-            // 12 typeable Latin letters vs 3 Han characters: the Han words must not be dropped.
+            // 9 typeable letters vs 6 unreachable (P, P, M and 3 Han): not a majority, so only the
+            // caseless rule diverts it. The Han words must not be dropped.
             assert!(unreachable_caseless(
                 "我在用iPhone 15 Pro Max",
                 &us_letters()
@@ -1082,6 +1083,10 @@ mod imp {
                 "I flew to Hawai\u{2bb}i today",
                 &us_letters()
             ));
+            // Latin Extended-D's caseless letters (U+A7F7 sideways I) stay with the per-character
+            // skip too; Hebrew, just above the U+0590 floor, does not.
+            assert!(!unreachable_caseless("a\u{a7f7}b", &us_letters()));
+            assert!(unreachable_caseless("a\u{05d0}b", &us_letters()));
         }
     }
 }
