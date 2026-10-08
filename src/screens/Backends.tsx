@@ -28,7 +28,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { ALL_CATEGORIES, migrateBlob } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "@/lib/backends";
+import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -786,11 +786,15 @@ function ConnectStep({
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
       // Say so — a bare return left the flow's first button dead and silent for
       // `ftp://host` or a lone `http://`. The latter has a supported scheme and no host: name the
-      // missing host, not the scheme.
+      // missing host, not the scheme. Only a scheme followed by a slash is called one — `host:80o0`,
+      // `host:port` or `host:` is a bad port, and blaming the scheme pointed at the wrong part.
+      const typed = stripUrlNoise(typedUrl.trim());
       setError(
         /^https?:/i.test(storedTypedUrl(typedUrl))
           ? "Enter the server’s host too, like http://host:8000."
-          : "Enter an address like http://host:8000 — that scheme isn’t supported.",
+          : /^[a-z][a-z0-9+.-]*:[\\/]/i.test(typed)
+            ? "Enter an address like http://host:8000 — that scheme isn’t supported."
+            : "Enter an address like http://host:8000 — the port after “:” must be a number.",
       );
       return;
     }

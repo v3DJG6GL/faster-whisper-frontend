@@ -17,7 +17,7 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "@/lib/backends";
+import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
@@ -97,11 +97,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       !abandoned.current && typedServerUrl(urlRef.current) === serverUrl && keyRef.current === keyAtTest;
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
       // A lone `http://` has a supported scheme and no host: name the missing host, as the
-      // Backends connect step does.
+      // Backends connect step does — and, as it does, a bad port (`host:80o0`, `host:`) is not
+      // blamed on the scheme.
+      const typed = stripUrlNoise(url.trim());
       setError(
         /^https?:/i.test(storedTypedUrl(url))
           ? "Enter the server’s host too, like http://host:8000."
-          : "Enter an address like http://host:8000 — that scheme isn’t supported.",
+          : /^[a-z][a-z0-9+.-]*:[\\/]/i.test(typed)
+            ? "Enter an address like http://host:8000 — that scheme isn’t supported."
+            : "Enter an address like http://host:8000 — the port after “:” must be a number.",
       );
       return;
     }
