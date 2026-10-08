@@ -191,6 +191,11 @@ fn offset_vk(s: &str, lo: u8, hi: u8, base: u16) -> Option<u16> {
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn fn_vk(f: &str) -> Option<u16> {
+    // Canonical form only ("F1".."F24"), as evdev's exact-match `fn_key`: `u16::parse`
+    // alone would also take "F01" / "F+1", which would fire here and never on Linux.
+    if f.is_empty() || f.starts_with('0') || !f.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
     match f.parse::<u16>() {
         Ok(n @ 1..=24) => Some(0x70 + (n - 1)), // VK_F1..VK_F24
         _ => None,
@@ -1495,6 +1500,11 @@ mod tests {
                 super::code_to_vk(code).is_some(),
                 "bindable code {code:?} has no Windows VK mapping — its hotkey would silently never fire on Windows"
             );
+        }
+        // Non-canonical F-key spellings must be rejected, as evdev's `fn_key` does —
+        // otherwise a hand-edited binding fires on Windows and silently never on Linux.
+        for bad in ["F01", "F+1", "F0", "F25", "F", "F1a"] {
+            assert!(super::code_to_vk(bad).is_none(), "{bad:?} must not map");
         }
     }
 

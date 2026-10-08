@@ -557,7 +557,8 @@ struct SleepClock {
 
 #[cfg(not(target_os = "linux"))]
 impl SleepClock {
-    /// A gap this far beyond the tick means a real sleep, not scheduler jitter.
+    /// Wall time since the previous tick (the 2 s tick sleep included) beyond which it counts
+    /// as a real sleep, not scheduler jitter.
     const GAP: std::time::Duration = std::time::Duration::from_secs(8);
 
     fn new() -> Self {
