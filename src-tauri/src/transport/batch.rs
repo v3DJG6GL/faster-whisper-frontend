@@ -280,6 +280,22 @@ fn batch_decode_overrides(v: &serde_json::Value) -> Option<String> {
     serde_json::to_string(&batch).ok()
 }
 
+/// The top-level `temperature` form value for a STANDARD (OpenAI-style) server, which never reads
+/// `decode_overrides` — temperature is the one decode setting its API takes. A finite number is
+/// used as is; a string ladder ("0.2,0.4") sends its first rung. Clamped to the API's 0..=1.
+/// `None` = nothing usable to send (missing, non-numeric, non-finite).
+fn standard_temperature(overrides: &serde_json::Value) -> Option<String> {
+    let v = match overrides.get("temperature")? {
+        serde_json::Value::Number(n) => n.as_f64()?,
+        serde_json::Value::String(s) => s.split(',').next()?.trim().parse::<f64>().ok()?,
+        _ => return None,
+    };
+    if !v.is_finite() {
+        return None;
+    }
+    Some(format!("{}", v.clamp(0.0, 1.0)))
+}
+
 #[cfg(test)]
 mod media_tmp_tests {
     use super::media_tmp_pid;
@@ -301,9 +317,33 @@ mod media_tmp_tests {
 mod wire_field_tests {
     use super::{
         batch_decode_overrides, bound_language_check, bound_progress, bound_rung, bound_subtitles,
-        bound_tracks, is_format_id, is_track_id, to_batch_result, translate_to_field,
-        BatchProgress, UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
+        bound_tracks, is_format_id, is_track_id, standard_temperature, to_batch_result,
+        translate_to_field, BatchProgress, UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
     };
+
+    /// A standard server gets the temperature as its own form field: a number as is, a ladder's
+    /// first rung, clamped to 0..=1; nothing usable → no field.
+    #[test]
+    fn a_standard_server_gets_a_plain_temperature() {
+        let t =
+            |v: serde_json::Value| standard_temperature(&serde_json::json!({ "temperature": v }));
+        assert_eq!(t(serde_json::json!(0.3)).as_deref(), Some("0.3"));
+        assert_eq!(t(serde_json::json!(0)).as_deref(), Some("0"));
+        assert_eq!(t(serde_json::json!("0.2,0.4")).as_deref(), Some("0.2"));
+        assert_eq!(t(serde_json::json!(" 0.5 ")).as_deref(), Some("0.5"));
+        assert_eq!(t(serde_json::json!(1.7)).as_deref(), Some("1"));
+        assert_eq!(t(serde_json::json!(-0.5)).as_deref(), Some("0"));
+        assert_eq!(t(serde_json::json!("abc")), None);
+        assert_eq!(t(serde_json::json!("NaN")), None);
+        assert_eq!(t(serde_json::json!("inf")), None);
+        assert_eq!(t(serde_json::json!(null)), None);
+        assert_eq!(t(serde_json::json!(true)), None);
+        assert_eq!(
+            standard_temperature(&serde_json::json!({"beam_size": 5})),
+            None
+        );
+        assert_eq!(standard_temperature(&serde_json::json!("x")), None);
+    }
 
     /// The webview's `translationContextSegments` reaches the run options (serde drops a
     /// misspelled key silently), and the URL preview keeps its duration limit.
@@ -407,8 +447,8 @@ mod wire_field_tests {
     #[test]
     fn language_check_is_bounded() {
         let raw = serde_json::json!({
-            "language": "de", "probability": 0.97, "verdict": "maybe", "also": ["en", "<b>"],
-            "pieces": [{"at": 289.0, "language": "en", "probability": 0.91}, {"at": 963.0, "language": "x x", "probability": 1.0}],
+            "language": "de", "probability": 7.3, "verdict": "maybe", "also": ["en", "<b>"],
+            "pieces": [{"at": 289.0, "language": "en", "probability": 0.91}, {"at": -40.0, "language": "x x", "probability": -2.0}],
             "media_id": "../../etc", "media_expires_at": 1_700_000_000
         });
         let c = bound_language_check(serde_json::from_value::<UrlLanguageCheck>(raw).unwrap());
@@ -417,6 +457,11 @@ mod wire_field_tests {
         assert_eq!(c.also, vec!["en"]);
         assert_eq!(c.pieces[0].language.as_deref(), Some("en"));
         assert_eq!(c.pieces[1].language, None);
+        // Fractions and offsets clamped: no "730% sure", no negative time.
+        assert_eq!(c.probability, 1.0);
+        assert_eq!(c.pieces[0].probability, 0.91);
+        assert_eq!(c.pieces[1].probability, 0.0);
+        assert_eq!(c.pieces[1].at, 0.0);
         assert_eq!(c.media_id, None);
         assert_eq!(c.media_expires_at, Some(1_700_000_000));
         // Re-emitted to the webview as camelCase.
@@ -1245,6 +1290,13 @@ async fn post(
     if let Some(s) = overrides.and_then(batch_decode_overrides) {
         form = form.text("decode_overrides", s);
     }
+    // A standard server ignores `decode_overrides`; temperature is the one decode setting its API
+    // takes as a field of its own (the decode editor says it is honoured there).
+    if opts.standard == Some(true) {
+        if let Some(t) = overrides.and_then(standard_temperature) {
+            form = form.text("temperature", t);
+        }
+    }
     // Per-request server override-profile name (only when non-empty).
     if let Some(p) = override_profile {
         if !p.is_empty() {
@@ -1724,8 +1776,10 @@ pub struct UrlLanguageCheck {
     pub media_expires_at: Option<i64>,
 }
 
-/// The check downloads a whole link's audio before it listens.
-const URL_LANGUAGE_TIMEOUT: Duration = Duration::from_secs(240);
+/// The check downloads a whole link's audio before it listens, then waits for
+/// the GPU: like `url_audio_download`, give it room past the server's own
+/// download clock (`URL_DOWNLOAD_TIMEOUT_S`, 900 s by default) plus a queue wait.
+const URL_LANGUAGE_TIMEOUT: Duration = FILE_TRANSCRIBE_TIMEOUT;
 /// Most other languages / sampled pieces one check lists (the server samples three).
 const MAX_HEARD: usize = 8;
 
@@ -1763,6 +1817,7 @@ fn bound_language_check(parsed: UrlLanguageCheck) -> UrlLanguageCheck {
     let lang = |l: Option<String>| l.filter(|l| super::is_lang_code(l));
     UrlLanguageCheck {
         language: lang(parsed.language),
+        probability: parsed.probability.clamp(0.0, 1.0),
         verdict: match parsed.verdict.as_str() {
             "detected" | "mixed" => parsed.verdict,
             _ => "unknown".into(),
@@ -1779,7 +1834,8 @@ fn bound_language_check(parsed: UrlLanguageCheck) -> UrlLanguageCheck {
             .take(MAX_HEARD)
             .map(|p| LanguagePiece {
                 language: lang(p.language),
-                ..p
+                probability: p.probability.clamp(0.0, 1.0),
+                at: p.at.max(0.0),
             })
             .collect(),
         media_id: parsed.media_id.filter(|m| is_progress_id(m)),

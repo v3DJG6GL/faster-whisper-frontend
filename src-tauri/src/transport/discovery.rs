@@ -72,27 +72,19 @@ fn bounded_name(s: &str) -> String {
 
 pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> ConnectionInfo {
     let base = base_url(server_url);
-    let http = client();
 
     // The two probes are independent: fire them concurrently so the happy path
     // costs one round trip instead of two, and a black-holed server stalls for
-    // one default timeout instead of doubling it.
+    // one META_TIMEOUT instead of doubling it (or riding the client's 120 s).
     let whoami_fut = async {
-        let (mut open_mode, mut username) = (false, None);
-        if let Ok(resp) = with_auth(http.get(format!("{base}/auth/whoami")), api_key)
-            .send()
+        get_json::<WhoAmI>(format!("{base}/auth/whoami"), api_key)
             .await
-        {
-            if resp.status().is_success() {
-                if let Ok(who) = super::json_capped_to::<WhoAmI>(resp, super::MAX_META_BODY).await {
-                    open_mode = who.open_mode;
-                    username = who.username.map(|u| bounded_name(&u));
-                }
-            }
-        }
-        (open_mode, username)
+            .map(|w| (w.open_mode, w.username.map(|u| bounded_name(&u))))
+            .unwrap_or((false, None))
     };
-    let models_fut = with_auth(http.get(format!("{base}/v1/models")), api_key).send();
+    let models_fut = with_auth(client().get(format!("{base}/v1/models")), api_key)
+        .timeout(super::META_TIMEOUT)
+        .send();
     let ((open_mode, username), models_result) = tokio::join!(whoami_fut, models_fut);
 
     // /v1/models is the actual connectivity gate.
