@@ -724,8 +724,9 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     const opts = { translateTo: ["fr"], translationMode: "fluent" as const, translationModel: "m", diarize: true };
     expect(reconcileRetryOptions(opts, true)).toEqual({ standard: true, diarize: true });
     expect(linkTranslateTo(reconcileRetryOptions(opts, true)!, { siteSubs: { mtTargets: ["fr"] } as never })).toBeUndefined();
-    // A full backend keeps it.
+    // A full backend keeps it — unless its translation is switched off.
     expect(reconcileRetryOptions(opts, false)).toEqual({ ...opts, standard: undefined });
+    expect(reconcileRetryOptions(opts, false, false)).toEqual({ diarize: true, standard: undefined });
   });
 
   it("no last options: a standard server still gets its flag", () => {

@@ -499,6 +499,10 @@ export interface RunContext {
   /** The server can keep a link's video (caps.url_video_enabled): only then
    *  does a URL item's keep-video choice go on the wire. */
   urlVideoEnabled?: boolean;
+  /** The server runs a translating stage (caps.translation_enabled on a full backend): a retry
+   *  that lands on one without it drops the last run's translation settings. Unset = only a
+   *  standard server lacks it. */
+  translationAvailable?: boolean;
   /** The server packages subtitles (caps.media_package_enabled): a local
    *  VIDEO file then asks the server to retain the upload for a while, so
    *  an export right after needs no second upload. */
@@ -2201,12 +2205,14 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
 /** A retry replays the last run's options, but a failed row survives a backend switch, so
  *  the wire-shaping keys follow the server the retry goes to: `standard` (how an "auto"
  *  language goes out), for Whisper's translate task the endpoint it is routed to, and on a
- *  standard server no T2T slice at all — `translateTo` undefined is "no translating stage"
- *  (as `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
+ *  server without a translating stage (any standard one, or a full one with translation off)
+ *  no T2T slice at all — `translateTo` undefined is "no translating stage" (as
+ *  `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
  *  frozen targets. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
+  translationAvailable: boolean = !standard,
 ): TranscribeOptions | undefined {
   if (!opts) return standard ? { standard: true } : undefined;
   const out: TranscribeOptions = {
@@ -2214,7 +2220,7 @@ export function reconcileRetryOptions(
     standard: standard || undefined,
     ...(opts.task === "translate" ? { useTranslationsEndpoint: standard } : {}),
   };
-  if (standard) {
+  if (standard || !translationAvailable) {
     delete out.translateTo;
     delete out.translationMode;
     delete out.translationModel;
@@ -2241,7 +2247,7 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // the old job lands a second record (and transcribes the file twice).
   stopOrphans([path]);
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
-  void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard), ctx);
+  void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable), ctx);
 }
 
 export function cancelRun() {

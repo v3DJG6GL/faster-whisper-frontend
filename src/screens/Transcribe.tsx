@@ -834,6 +834,7 @@ export default function Transcribe() {
       standard:
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
+      translationAvailable,
       mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
       jobsEnabled: !isStandard && caps?.jobs_enabled === true,
       mediaMaxBytes: caps?.media_max_bytes,
