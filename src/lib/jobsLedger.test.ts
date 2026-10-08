@@ -85,8 +85,11 @@ describe("addRow / pruneLedger / removeRow", () => {
     // A week-long server keeps a 5-day-old row; a default (72 h) one drops its 7-day-old row.
     let l = addRow(EMPTY_LEDGER, row("aaaaaaaa", NOW - 5 * 24 * H, 7 * 86_400), NOW - 5 * 24 * H);
     l = addRow(l, row("bbbbbbbb", NOW - 7 * 24 * H), NOW - 7 * 24 * H);
-    l = addRow(l, row("cccccccc", NOW - 4 * H, 3600), NOW - 4 * H);
+    // A 1 h server still runs a job up to 24 h from its start, then keeps the result 1 h.
+    l = addRow(l, row("cccccccc", NOW - 27 * H, 3600), NOW - 27 * H);
     expect(pruneLedger(l, NOW).rows.map((r) => r.jobId)).toEqual(["aaaaaaaa"]);
+    expect(maxAgeMs(row("ffffffff", NOW, 3600))).toBe(26 * H);
+    expect(pruneLedger(addRow(EMPTY_LEDGER, row("ffffffff", NOW - 4 * H, 3600), NOW - 4 * H), NOW).rows).toHaveLength(1);
     // The default is twice the server's 72 h (a TTL from the start, re-stamped at the
     // finish) plus an hour of slack: a 100-hour-old row may still hold a finished result.
     expect(maxAgeMs(row("dddddddd"))).toBe(145 * H);

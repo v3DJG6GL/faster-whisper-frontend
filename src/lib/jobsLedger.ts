@@ -61,14 +61,18 @@ export function clampJobsTtl(ttlS: unknown): number | undefined {
   return Math.min(ttlS, MAX_TTL_S);
 }
 
-/** A row older than twice ITS server's TTL (frozen into the row's context at post time)
- *  plus slack names a job the server has already swept — nothing to ask about. Twice:
- *  the server keeps a running job a TTL from its start and re-stamps a TTL at its
- *  finish, so a finished result can live up to two TTLs after the request left (a row
- *  past the real horizon costs one 404). Re-clamped here because the row came back
- *  from disk. */
+/** The server keeps a running job at least this long from its start, whatever its TTL
+ *  (mirrors faster-whisper-backend jobs_store._RUNNING_FLOOR_S). */
+const RUNNING_FLOOR_S = 24 * 3600;
+
+/** A row older than ITS server's horizon (TTL frozen into the row's context at post time)
+ *  plus slack names a job the server has already swept — nothing to ask about. The server
+ *  keeps a running job max(TTL, 24 h) from its start and re-stamps a TTL at its finish, so
+ *  a finished result can live that long plus one TTL after the request left (a row past
+ *  the real horizon costs one 404). Re-clamped here because the row came back from disk. */
 export function maxAgeMs(row: LedgerRow): number {
-  return 2 * (clampJobsTtl(row.ctx.jobsTtlS) ?? DEFAULT_TTL_S) * 1000 + SLACK_MS;
+  const ttl = clampJobsTtl(row.ctx.jobsTtlS) ?? DEFAULT_TTL_S;
+  return (Math.max(ttl, RUNNING_FLOOR_S) + ttl) * 1000 + SLACK_MS;
 }
 
 const JOB_ID_RE = /^[0-9a-f]{8,64}$/;

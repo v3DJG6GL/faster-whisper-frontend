@@ -1004,8 +1004,13 @@ function awaitRunUrlVideo(
     getTranscribeProgress({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid })
       .then((p) => {
         failures = 0;
-        // A headless poll (epoch -1) paints nothing: match the headless watcher's 5 s cadence.
-        if (epoch === -1) skip = 4;
+        // The epoch stays the same across the files of one run: only the link
+        // the rail is showing may take this video's progress.
+        const painting = epoch === get().epoch && get().lastRunPath === rec.sourcePath;
+        // A poll that paints nothing (headless, epoch -1, or its link no longer
+        // on screen) only feeds the terminal check: match the headless watcher's
+        // 5 s cadence. Recomputed each poll, so a link back on screen resumes 1 s.
+        if (!painting) skip = 4;
         if (p.stage === "unknown" || !p.stage) {
           // Entry gone without a terminal state: the fetch is lost to us
           // (the export panel can still fetch on demand).
@@ -1014,10 +1019,8 @@ function awaitRunUrlVideo(
             return;
           }
         }
-        // The epoch stays the same across the files of one run: only the link
-        // the rail is showing may take this video's progress.
         const video = p.video;
-        if (video && epoch === get().epoch && get().lastRunPath === rec.sourcePath) {
+        if (video && painting) {
           set((s) => ({
             stageMeta: {
               ...s.stageMeta,

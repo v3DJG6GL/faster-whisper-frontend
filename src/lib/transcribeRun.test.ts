@@ -14,6 +14,8 @@ const translateText = vi.fn<(args: Parameters<typeof import("./api").translateTe
 // Unset = the real outside-Tauri commands; the site-transcript fallback test answers them.
 const transcribeUrl = vi.fn<(args: Parameters<typeof import("./api").transcribeUrl>[0]) => Promise<never>>();
 const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUrlSubtitles>[0]) => Promise<never>>();
+// Unset = the real outside-Tauri command; the video-poll cadence test answers it.
+const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
 vi.mock("./api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./api")>();
   return {
@@ -27,6 +29,8 @@ vi.mock("./api", async (importOriginal) => {
       transcribeUrl.getMockImplementation() ? transcribeUrl(a) : orig.transcribeUrl(a),
     fetchUrlSubtitles: (a: Parameters<typeof orig.fetchUrlSubtitles>[0]) =>
       fetchUrlSubtitles.getMockImplementation() ? fetchUrlSubtitles(a) : orig.fetchUrlSubtitles(a),
+    getTranscribeProgress: (a: Parameters<typeof orig.getTranscribeProgress>[0]) =>
+      getTranscribeProgress.getMockImplementation() ? getTranscribeProgress(a) : orig.getTranscribeProgress(a),
   };
 });
 
@@ -1064,6 +1068,49 @@ describe("an on-demand video that fails outright shows on the Video row", () => 
       await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
       expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("Video download requires the desktop app.");
     } finally {
+      vi.unstubAllGlobals();
+      useTranscribeRun.setState({ stageMeta: {} });
+    }
+  });
+});
+
+describe("a pending video's poll slows down once its link is off screen", () => {
+  it("polls every second while painting, every fifth tick once another link is shown", async () => {
+    let tick: (() => void) | null = null;
+    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({
+      stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
+    } as import("./types").BatchProgress));
+    const url = "https://youtu.be/cadence";
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      openHistoryRecord({
+        schemaVersion: 1, kind: "url", id: "rec-cadence", createdAt: "2026-10-05T12:00:00Z",
+        sourcePath: url, sourceName: "Talk", status: "done",
+      });
+      useTranscribeRun.setState({ lastRunPath: url,
+        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+      // On screen: one GET per tick.
+      await run(3);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(3);
+      // Another link takes the panel: the poll paints nothing, so it drops to every fifth tick.
+      useTranscribeRun.setState({ lastRunPath: "https://youtu.be/other" });
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(4);
+      await run(4);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(4);
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(5);
+      // Back on screen: the next poll resumes the 1 s cadence.
+      useTranscribeRun.setState({ lastRunPath: url });
+      await run(5);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(6);
+      await run(2);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(8);
+    } finally {
+      getTranscribeProgress.mockReset();
       vi.unstubAllGlobals();
       useTranscribeRun.setState({ stageMeta: {} });
     }
