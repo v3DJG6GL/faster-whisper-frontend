@@ -57,7 +57,7 @@ import { ExportTrackChips } from "@/components/transcribe/ExportTrackChips";
 import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 import { TranscriptExport } from "@/components/transcribe/TranscriptExport";
-import { SubtitleList } from "@/components/transcribe/SubtitleList";
+import { SubtitleList, TIME_ANCHOR_ID } from "@/components/transcribe/SubtitleList";
 import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/transcript/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
@@ -257,6 +257,8 @@ export function TranscriptViewer({
   // loop below, so they are separate state.
   const [curTime, setCurTime] = useState(0);
   const [activeSegIdx, setActiveSegIdx] = useState(-1);
+  /** Subtitles view with only site tracks: the playhead's cue row (SubtitleList's TIME_ANCHOR_ID). */
+  const [timeAnchor, setTimeAnchor] = useState<number | null>(null);
   const [activeWordIdx, setActiveWordIdx] = useState(-1);
   /** Last word whose END is behind the playhead. Separate from activeWordIdx
    *  on purpose: the active word goes to -1 in gaps (end-of-line, pauses), and
@@ -1215,9 +1217,11 @@ export function TranscriptViewer({
     // Not while editing: the highlight is not drawn in Edit mode, and a scroll on every
     // segment boundary would pull the transcript out from under the caret. Not in
     // Export either: the list isn't there, and playback (Space) keeps running.
-    if (!follow || !playing || editMode || !reading || activeSegIdx < 0) return;
+    // Only site tracks in the Subtitles view: follow the cue under the playhead (timeAnchor).
+    const byTime = timeAnchor !== null;
+    if (!follow || !playing || editMode || !reading || (!byTime && activeSegIdx < 0)) return;
     const box = transcriptBoxRef.current;
-    const row = document.getElementById(`seg-row-${activeSegIdx}`);
+    const row = document.getElementById(byTime ? TIME_ANCHOR_ID : `seg-row-${activeSegIdx}`);
     if (!box || !row) return;
     const boxRect = box.getBoundingClientRect();
     const rowRect = row.getBoundingClientRect();
@@ -1299,7 +1303,7 @@ export function TranscriptViewer({
         followAnimRef.current = null;
       }
     };
-  }, [activeSegIdx, follow, playing, editMode, reading]);
+  }, [activeSegIdx, timeAnchor, follow, playing, editMode, reading]);
   // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
   // re-arms); scrolling anywhere else on the page leaves it armed — a stray
   // tick over the sidebar used to kill it. Listener-level, not onScroll:
@@ -2066,6 +2070,7 @@ export function TranscriptViewer({
                 cues={cueOpts}
                 curTime={curTime}
                 activeSeg={activeSegIdx}
+                onTimeAnchor={setTimeAnchor}
                 scrollRef={transcriptBoxRef}
                 canSeek={canSeek}
                 seekTo={seekTo}

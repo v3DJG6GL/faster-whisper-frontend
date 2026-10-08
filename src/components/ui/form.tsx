@@ -433,7 +433,9 @@ export function Stepper({
   const stepBy = (d: number) => {
     const base = stepBase(textRef.current, focusedRef.current, valueRef.current);
     const next = round(clamp(base + d));
-    if (next === base) {
+    // Not moving in the step's direction is a bound too: an untouched out-of-range base (500 with
+    // max 100) would otherwise clamp to the far bound, so ↑ lowered it.
+    if (d > 0 ? next <= base : next >= base) {
       // Hit a bound — still commit a typed number that differs, then stop repeating. Only a typed
       // one: an untouched field showing an out-of-range value (own or inherited) must not be
       // pulled to the bound — that would change it and pin an override on an inheriting field.

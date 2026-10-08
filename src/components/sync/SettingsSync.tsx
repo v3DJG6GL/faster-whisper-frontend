@@ -307,7 +307,9 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         {result.hasSecrets && sel.backends && (
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
         )}
-        {sel.backends && categories.backends && <IncomingAddresses list={installBackends} />}
+        {sel.backends && categories.backends && (
+          <IncomingAddresses list={installBackends.map((b) => ({ ...b, serverUrl: dest(b) }))} />
+        )}
         {missingKeys.length > 0 && (
           <Notice tone="warn">
             {missingKeys.map((b) => `“${safeText(b.name, 60)}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
@@ -405,8 +407,13 @@ export function RestoreFromServer({
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The list applyBlob installs, as ImportPreview counts and lists it.
+  const installBackends = useMemo(
+    () => (blob.backends ? sanitizeBackends(blob.backends.list) : []),
+    [blob],
+  );
   const counts: Partial<Record<SyncCategory, string>> = {
-    backends: blob.backends ? `${arr(blob.backends.list).length}` : undefined,
+    backends: blob.backends ? `${installBackends.length}` : undefined,
     profiles: blob.profiles ? `${arr(blob.profiles.list).length}` : undefined,
     appRules: blob.appRules
       ? `${arr(blob.appRules[MY_BUCKET]).length} this OS · ${arr(blob.appRules[OTHER_BUCKET]).length} other OS`
@@ -495,7 +502,13 @@ export function RestoreFromServer({
             {joinNames(replaced)} are overwritten.
           </Notice>
         )}
-        {sel.backends && blob.backends && <IncomingAddresses list={blob.backends.list} />}
+        {sel.backends && blob.backends && (
+          // Where dictation goes: a surviving id's "Address on this device" override wins, as in
+          // ImportPreview.
+          <IncomingAddresses
+            list={installBackends.map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, st.settings) }))}
+          />
+        )}
         <Notice tone="ok">
           After restoring, settings sync turns on for this device against this server.
         </Notice>

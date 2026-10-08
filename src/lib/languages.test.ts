@@ -196,7 +196,9 @@ describe("trackLanguageName", () => {
     expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
   });
   it("a base with a fixed name keeps it over the runtime's name for the script pair", () => {
-    expect(trackLanguageName("bn-Beng")).toBe("Bengali (BENG)");
+    expect(trackLanguageName("bn-Beng")).toBe("Bengali (Bangla)");
+    expect(trackLanguageName("yue-Hant")).toBe("Cantonese (Traditional)");
+    expect(trackLanguageName("yue-Hans-HK")).toBe("Cantonese (Simplified, HK)");
     expect(trackLanguageName("bn")).toBe("Bengali");
   });
 });

@@ -7,7 +7,7 @@
 // transcript box: a long video's ~2000 cue rows cost WebKitGTK its frame rate
 // in style/layout/paint alone, even with React idle.
 
-import { memo, useCallback, useMemo, useRef, useState, type RefObject } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
@@ -199,8 +199,12 @@ const widths = (n: number, fixed: string) => ({
   maxWidth: `calc(${fixed} + ${n} * 60ch)`,
 });
 
+/** The id the time-pinned cue carries when only site tracks show (see `onTimeAnchor`). */
+export const TIME_ANCHOR_ID = "sub-time-anchor";
+
 export function SubtitleList({
   result, grid, tracks, cues, curTime, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg, showNames, colorize, displayName, colorOf,
+  onTimeAnchor,
 }: {
   result: BatchResult;
   /** Memoized by the viewer on edits, options and tracks — never on curTime. */
@@ -223,6 +227,9 @@ export function SubtitleList({
   colorize: boolean;
   displayName: (label: string) => string;
   colorOf: (label: string) => string;
+  /** Only site tracks shown: the index of the cue under the playhead (it carries
+   *  TIME_ANCHOR_ID), so follow can track cues rather than segments; null otherwise. */
+  onTimeAnchor?: (pin: number | null) => void;
 }) {
   const lanes = tracks.some((t) => hasOwn(grid.own, t));
   const layout = useMemo(() => {
@@ -295,14 +302,18 @@ export function SubtitleList({
     return m;
   }, [layout, lanes]);
   // Only site tracks shown: no lane is keyed to segments, so no row carries a
-  // segment id for follow to find. Hand the active segment's id to the idLane
-  // cue under the playhead instead (no end grace: a gap between site cues
-  // still anchors the one before it).
+  // segment id for follow to find. The idLane cue under the playhead carries
+  // TIME_ANCHOR_ID instead (no end grace: a gap between site cues still anchors
+  // the one before it), and the viewer follows it cue by cue — a segment can
+  // span several site cues, and the playhead can sit between segments.
   const segKeyed = !lanes || tracks.some((t) => t === "orig" || !timedTrack(result, t));
   const pin = segKeyed
     ? (firstOf.get(activeSeg) ?? -1)
     : lastStartedAt(layout.lanes[layout.idLane]?.rows ?? [], curTime);
-  const anchorId = !segKeyed && activeSeg >= 0 ? `seg-row-${activeSeg}` : undefined;
+  const anchorId = segKeyed ? undefined : TIME_ANCHOR_ID;
+  const timePin = segKeyed || pin < 0 ? null : pin;
+  useEffect(() => { onTimeAnchor?.(timePin); }, [onTimeAnchor, timePin]);
+  useEffect(() => () => onTimeAnchor?.(null), [onTimeAnchor]);
 
   /** The cue under the playhead (binary search; a short grace after its end). */
   const activeIn = (rows: Row[]) => {

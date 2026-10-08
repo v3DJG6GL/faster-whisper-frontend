@@ -3506,11 +3506,8 @@ async function resolveLocked(
   const degradedNow = backendsDegraded(localNow, syncedCats);
   const degraded = backendsDegraded(c.local, syncedCats) || degradedNow;
   const applyCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
-  // Judged against the live list with no keys when degraded, so every incoming address / key
-  // still raises.
-  const judgeLocal = degradedNow
-    ? { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } }
-    : localNow;
+  // Judged under applyCats, as approveLocked does: a degraded keyring holds backends out of both
+  // the judge and the apply.
   // The security gate has to run HERE too, not just on the clean-merge path. `final` starts as
   // `c.merged`, which already contains every NON-conflicting category auto-resolved in the
   // server's favour — so a peer that also touches some category the user happened to edit
@@ -3518,7 +3515,7 @@ async function resolveLocked(
   // unreviewed. The conflict dialog only ever showed the CONFLICTING category names, never the
   // address change. Same shape as reconcileRemote: apply everything else, hold backends, and
   // persist no base so a rejection is re-offered on the next pull.
-  const risky = gatedSecurityCheck(final, judgeLocal, applyCats);
+  const risky = gatedSecurityCheck(final, localNow, applyCats);
   if (risky.length > 0) {
     const applyNow = heldBack(applyCats, risky);
     await applyBlob(final, applyNow);

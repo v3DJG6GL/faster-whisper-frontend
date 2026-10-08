@@ -82,7 +82,11 @@ export function withSettingsDefaults(raw: unknown): AppSettings {
       )
       // First entry per id wins: the editor keys rows and removes by id, so a foreign blob's
       // duplicate ids would make Remove delete both rows (and collide React keys in editor and chip).
-      .filter((e, i, a) => a.findIndex((x) => (x as { id: string }).id === (e as { id: string }).id) === i)
+      // One pass (a Set): it runs before the ceiling below, on whatever length the blob carries.
+      .filter(((seen) => (e: unknown) => {
+        const id = (e as { id: string }).id;
+        return seen.has(id) ? false : (seen.add(id), true);
+      })(new Set<string>()))
       // The one sync-supplied list with no entry ceiling anywhere — the three list sanitizers all
       // have one. It is re-serialized into the overlay payload on every level tick, rendered one
       // button per entry in the always-on-top chip and one row per entry in the editor, and

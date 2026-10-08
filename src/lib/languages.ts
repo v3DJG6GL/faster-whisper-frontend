@@ -44,6 +44,23 @@ const LABEL_FIX: Record<string, string> = {
   "zh-Hant": "Traditional Chinese",
 };
 
+// English script names ("Latin" for Latn), built lazily like the language names below.
+let scriptNames: Intl.DisplayNames | null | undefined;
+function scriptName(code: string): string | undefined {
+  if (scriptNames === undefined) {
+    try {
+      scriptNames = new Intl.DisplayNames(["en"], { type: "script", fallback: "none" });
+    } catch {
+      scriptNames = null;
+    }
+  }
+  try {
+    return scriptNames?.of(code) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // English names, built lazily; null where the runtime lacks Intl.DisplayNames.
 let displayNames: Intl.DisplayNames | null | undefined;
 function intlName(code: string): string | undefined {
@@ -97,10 +114,12 @@ export function trackLanguageName(code: string): string {
   const key = second !== undefined && /^[A-Za-z]{4}$/.test(second)
     ? `${b}-${second[0].toUpperCase()}${second.slice(1).toLowerCase()}`
     : undefined;
-  // A base whose name LABEL_FIX corrects keeps that name unless the pair has its own fix:
-  // "bn-Beng" is "Bengali (BENG)", not the runtime's "Bangla (Bangla)".
-  if (key !== undefined && (!ownProp(LABEL_FIX, b) || ownProp(LABEL_FIX, key) !== undefined)) {
-    const scripted = languageLabel(key);
+  if (key !== undefined) {
+    // A base whose name LABEL_FIX corrects keeps that name, with the runtime's script name, unless
+    // the pair has its own fix: "bn-Beng" is "Bengali (Bangla)", not the runtime's "Bangla (Bangla)".
+    const fixed = ownProp(LABEL_FIX, key) === undefined ? ownProp(LABEL_FIX, b) : undefined;
+    const script = fixed !== undefined ? scriptName(key.slice(b.length + 1)) : undefined;
+    const scripted = fixed === undefined ? languageLabel(key) : script ? `${fixed} (${script})` : key;
     if (scripted !== key) {
       if (third === undefined) return scripted;
       const region = third.toUpperCase();
