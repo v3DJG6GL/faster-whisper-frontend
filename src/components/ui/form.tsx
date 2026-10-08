@@ -472,6 +472,12 @@ export function Stepper({
       setText(String(value));
       return;
     }
+    // Nor does focusing and leaving an own value untouched: a stored value outside [min, max]
+    // must survive unclamped (a step made while focused already committed in stepBy).
+    if (!inheriting && !editedRef.current) {
+      setText(String(value));
+      return;
+    }
     const next = Number.isFinite(n) ? round(clamp(n)) : value;
     onChange(next);
     setText(String(next));
@@ -488,8 +494,10 @@ export function Stepper({
 
   // −/+ step from the typed text while focused (stepBy), so their bounds must too.
   const cur = stepBase(text, focused, value);
-  const showZero = !focused && zeroLabel != null && value === 0;
   const showInheritedText = !focused && inheriting && inherited === undefined && inheritedText != null;
+  // The inherited text wins over the zero label: an unset field with no numeric inherited value
+  // shows `min` (often 0) only as a placeholder, not as a value the user set to "off".
+  const showZero = !focused && zeroLabel != null && value === 0 && !showInheritedText;
   const btn =
     "ring-signal grid h-full w-9 shrink-0 place-items-center text-dim transition-colors hover:bg-line/40 hover:text-text disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
 
