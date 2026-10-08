@@ -71,7 +71,9 @@ export interface MicView {
   /** The pinned mic isn't in the list (only decided once a list has loaded). */
   missing: boolean;
   /** The missing pin is a pre-ids display name that Rust still opens through its sound card while
-   *  plugged in — Linux only (the ALSA card fallback); elsewhere it really is not connected. */
+   *  plugged in — Linux with a sound server listing the mics only (the ALSA card fallback);
+   *  elsewhere, or with no server (AudioTab migrates the name to its card path once listed), it
+   *  really is not connected. */
   legacy: boolean;
   /** What the closed picker reads. */
   triggerLabel: string;

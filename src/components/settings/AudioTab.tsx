@@ -302,10 +302,10 @@ export function AudioTab() {
         title="Microphone"
         desc="Audio input device used for dictation."
         expand={
-          view.missing && view.legacy ? (
+          view.legacy ? (
             <Notice className="mb-3">
               {safeDisplayText(view.pinnedLabel ?? "", 80)} isn't offered by{" "}
-              {inv?.server ? safeDisplayText(inv.server, 40) : "the sound server"}. Dictation opens it through its
+              {safeDisplayText(inv?.server ?? "", 40)}. Dictation opens it through its
               sound card while it is plugged in, otherwise it uses System default
               {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, 80)})` : ""}.
             </Notice>

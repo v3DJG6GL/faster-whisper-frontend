@@ -13,6 +13,7 @@ import { useApp } from "./store";
 
 let done = false;
 let retrying = false;
+let again = false;
 
 export async function migrateLegacyMicPin(): Promise<void> {
   if (done) return;
@@ -22,19 +23,29 @@ export async function migrateLegacyMicPin(): Promise<void> {
 }
 
 /** Move the current pin to its device id if it is still a legacy name and that mic is listed now.
- *  Overlapping calls collapse into the one in flight. */
+ *  Overlapping calls coalesce into one trailing rerun once the in-flight one settles (a call made
+ *  mid-lookup may be for a mic that got listed, or a pin that changed, after that lookup began). */
 export async function retryLegacyMicPin(): Promise<void> {
-  const old = useApp.getState().settings.microphoneId;
-  if (retrying || !isLegacyPin(old)) return;
+  if (retrying) {
+    again = true;
+    return;
+  }
   retrying = true;
   try {
-    const hit = await resolveLegacyMic(old);
-    // Only if the user didn't pick another mic meanwhile.
-    if (hit && useApp.getState().settings.microphoneId === old) {
-      useApp.getState().updateSettings({ microphoneId: hit.id, microphoneLabel: hit.label });
-    }
-  } catch (e) {
-    console.error("microphone pin migration failed:", e);
+    do {
+      again = false;
+      const old = useApp.getState().settings.microphoneId;
+      if (!isLegacyPin(old)) break;
+      try {
+        const hit = await resolveLegacyMic(old);
+        // Only if the user didn't pick another mic meanwhile.
+        if (hit && useApp.getState().settings.microphoneId === old) {
+          useApp.getState().updateSettings({ microphoneId: hit.id, microphoneLabel: hit.label });
+        }
+      } catch (e) {
+        console.error("microphone pin migration failed:", e);
+      }
+    } while (again);
   } finally {
     retrying = false;
   }
