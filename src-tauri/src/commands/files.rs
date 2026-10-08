@@ -41,11 +41,9 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
         return Ok(());
     }
     std::fs::copy(src, dest)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(dest, std::fs::Permissions::from_mode(0o600));
-    }
+    // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
+    // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
+    crate::audio::restrict_file_private(dest);
     std::fs::remove_file(src)
 }
 

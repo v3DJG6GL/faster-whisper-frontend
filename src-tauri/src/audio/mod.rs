@@ -274,6 +274,28 @@ fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     Ok(())
 }
 
+/// Make an already-written file owner-only — 0600 on Unix, the owner-only DACL on Windows.
+///
+/// For files that arrive by copy (`std::fs::copy` keeps the source's mode on Unix; on Windows the
+/// copy takes the destination folder's inherited DACL, and `create_dir_private` leaves a folder
+/// that already existed alone). Best-effort like `write_new_private`'s DACL: logged, not fatal.
+pub(crate) fn restrict_file_private(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    #[cfg(windows)]
+    if let Err(e) = windows_owner_only_dacl(path) {
+        tracing::warn!(
+            "[audio] could not restrict {} to the current user: {e}",
+            path.display()
+        );
+    }
+    #[cfg(not(any(unix, windows)))]
+    let _ = path;
+}
+
 /// Create the recordings directory owner-only — 0700 on Unix, an owner-only inheritable DACL on
 /// Windows.
 ///

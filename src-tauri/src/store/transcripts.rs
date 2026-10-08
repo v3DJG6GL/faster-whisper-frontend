@@ -197,6 +197,27 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
     }
 }
 
+/// The subfolders `heal_media_paths` may find `key`'s file in, most likely first.
+///
+/// A link keeps its audio in `links/` and its video in `video/` under the SAME `<id>.<ext>`
+/// name (and audio/webm and video/webm share `webm`), so a basename search in plain
+/// `AUDIO_SUBDIRS` order re-pointed a stale `videoPath` at the audio-only copy. A video lives
+/// only in `video/`, and audio never does; among the rest, the subfolder the stale path itself
+/// named goes first.
+fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a str> {
+    const VIDEO: &str = "video";
+    let fits = |s: &str| (key == "videoPath") == (s == VIDEO);
+    let own = old_path
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .and_then(|n| subs.iter().copied().find(|s| *s == n))
+        .filter(|s| fits(s));
+    own.into_iter()
+        .chain(subs.iter().copied().filter(|s| fits(s) && Some(*s) != own))
+        .collect()
+}
+
 /// Repair records whose stored audio path no longer exists but whose file
 /// lives under one of the audio-base subfolders (same basename). Heals
 /// records a past move rewrote incompletely — earlier builds only rewrote
@@ -248,8 +269,8 @@ pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
                 let Some(name) = old_path.file_name() else {
                     continue;
                 };
-                if let Some(found) = subs
-                    .iter()
+                if let Some(found) = heal_candidates(key, old_path, &subs)
+                    .into_iter()
                     .map(|s| base.join(s).join(name))
                     .find(|c| c.exists())
                 {
@@ -581,18 +602,7 @@ pub async fn save_transcript_media(
         // Owner-only like the records themselves (copy inherits source perms). On Windows the
         // file inherits the DACL of a `files/` folder that may have pre-existed the pick (a
         // restored or synced tree), so it gets the same per-file DACL the recordings get.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-        }
-        #[cfg(windows)]
-        if let Err(e) = crate::audio::windows_owner_only_dacl(&tmp) {
-            tracing::warn!(
-                "[transcripts] could not restrict {} to the current user: {e}",
-                tmp.display()
-            );
-        }
+        crate::audio::restrict_file_private(&tmp);
         if let Err(e) = std::fs::rename(&tmp, &dest) {
             let _ = std::fs::remove_file(&tmp);
             return Err(e.to_string());
@@ -887,6 +897,26 @@ fn wipe_records(dir: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heal_keeps_video_and_audio_apart() {
+        let subs = crate::commands::AUDIO_SUBDIRS;
+        // A link's video and audio share `<id>.webm`; the video must never heal to `links/`.
+        assert_eq!(
+            heal_candidates("videoPath", Path::new("/gone/video/r1.webm"), &subs),
+            vec!["video"]
+        );
+        let media = heal_candidates("mediaPath", Path::new("/gone/links/r1.webm"), &subs);
+        assert_eq!(media.first(), Some(&"links"));
+        assert!(!media.contains(&"video"));
+        let source = heal_candidates("sourcePath", Path::new("/gone/video/r1.webm"), &subs);
+        assert_eq!(source, vec!["dictations", "files", "links"]);
+        // A path outside any known subfolder falls back to the plain order.
+        assert_eq!(
+            heal_candidates("mediaPath", Path::new("/old/r1.wav"), &subs),
+            vec!["dictations", "files", "links"]
+        );
+    }
 
     #[test]
     fn record_rewrite_is_atomic_and_leaves_no_tmp() {
