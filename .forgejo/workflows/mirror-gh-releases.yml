@@ -36,9 +36,13 @@
 #   * Assets are matched by name and compared by size (neither the Forgejo nor
 #     the GitHub release API exposes a digest for an attachment); every
 #     downloaded byte is then verified against the release's own SHA256SUMS
-#     file before it is pushed on. A size mismatch means an interrupted upload,
-#     so the GitHub copy is replaced. An asset with no published digest (a
-#     release older than SHA256SUMS) is skipped with a warning, never uploaded.
+#     file before it is pushed on. A size mismatch means an interrupted upload
+#     or a rebuilt release, so the GitHub copy is replaced. The SHA256SUMS files
+#     themselves are compared by CONTENT instead: their size never changes within
+#     a tag (fixed-width digests + version-stamped names), so a rebuild would
+#     otherwise leave GitHub holding the old sums next to the new installers.
+#     An asset with no published digest (a release older than SHA256SUMS) is
+#     skipped with a warning, never uploaded.
 #   * Releases are processed oldest-first so GitHub's "latest release"
 #     badge lands on the newest non-prerelease after a backfill.
 
@@ -182,6 +186,9 @@ jobs:
             # the API exposes no digest of its own on either side (verified: Forgejo's Attachment
             # schema has none, and neither does GitHub's).
             : > allsums.txt
+            # Each fetched sums file is also kept as src-<name> for the content comparison in
+            # the asset loop below; clear the previous release's copies first.
+            rm -f src-SHA256SUMS*
             sumsfound=0
             # `done < <(jq …)` is a PROCESS SUBSTITUTION, whose exit status `set -euo pipefail`
             # does not observe either — the same class of exemption as the if-condition noted
@@ -203,9 +210,8 @@ jobs:
               # 404 or a persistent 5xx used to leave allsums.txt short and the per-asset check
               # below then silently degraded to a size comparison — exactly the failure someone
               # tampering with a release would induce. Fail the job instead.
-              sget -o sums.txt "$(jq -r '.browser_download_url' <<<"$sasset")"
-              cat sums.txt >> allsums.txt
-              rm -f sums.txt
+              sget -o "src-$sname" "$(jq -r '.browser_download_url' <<<"$sasset")"
+              cat "src-$sname" >> allsums.txt
             done <<<"$assets"
 
             while IFS= read -r asset; do
@@ -214,10 +220,26 @@ jobs:
               asize=$(jq -r '.size' <<<"$asset")
               match=$(jq -c --arg n "$aname" '.[] | select(.name == $n)' <<<"$dassets")
               if [ -n "$match" ]; then
-                if [ "$(jq -r '.size' <<<"$match")" = "$asize" ]; then
-                  fresh=$((fresh + 1))
-                  continue
-                fi
+                case "$aname" in
+                  SHA256SUMS*)
+                    # Size says nothing here (see header): a rebuilt tag keeps the same byte
+                    # count with different digests. Compare the GitHub copy's bytes instead.
+                    dget -L -H 'Accept: application/octet-stream' -o gh-sums.txt \
+                      "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")"
+                    if cmp -s gh-sums.txt "src-$aname"; then
+                      rm -f gh-sums.txt
+                      fresh=$((fresh + 1))
+                      continue
+                    fi
+                    rm -f gh-sums.txt
+                    ;;
+                  *)
+                    if [ "$(jq -r '.size' <<<"$match")" = "$asize" ]; then
+                      fresh=$((fresh + 1))
+                      continue
+                    fi
+                    ;;
+                esac
               fi
               want=$(awk -v n="$aname" '$2 == n { print $1; exit }' allsums.txt)
               if [ -z "$want" ] && [ "${aname#SHA256SUMS}" = "$aname" ]; then
@@ -240,7 +262,7 @@ jobs:
               fi
               # After the digest gate above, so a skipped asset keeps whatever copy GitHub has.
               if [ -n "$match" ]; then
-                echo "[$tag] $aname size drifted — replacing"
+                echo "[$tag] $aname drifted — replacing"
                 dput -X DELETE "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")"
               fi
               echo "[$tag] uploading $aname ($asize bytes)"
