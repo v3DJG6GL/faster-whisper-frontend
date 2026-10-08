@@ -495,6 +495,7 @@ export default function Transcribe() {
         multi: linkLang.sp.multi,
         targets: translationAvailable ? translateTo : [],
         site: previewSite,
+        maxTargets: maxTranslationTargets(caps),
       }
     : null;
   const siteView = siteInput && siteState ? derive(siteInput, siteState) : null;

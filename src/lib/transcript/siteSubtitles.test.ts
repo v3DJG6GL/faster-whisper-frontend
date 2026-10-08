@@ -246,6 +246,37 @@ describe("tracks and switches", () => {
     // The site-only overflow languages still drop out.
     expect(v.chips.map((c) => c.code)).not.toContain("fi");
   });
+  it("a preset machine-translates into at most the server's limit, your targets first", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da", "nb", "cs"];
+    const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: ["ja", "fi"], maxTargets: 5 });
+    for (const policy of ["generate", "both"] as const) {
+      const [i1, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), policy));
+      const v = derive(i1, st);
+      expect(v.run!.mtTargets).toEqual(["ja", "fi", "en", "fr", "it"]);
+      const da = v.rows.find((r) => r.code === "da")!;
+      expect([da.badges[0].state, da.badges[0].title]).toEqual(["idle", "Over the 5-language translation limit"]);
+      // Its greyed badge's click changes nothing — not even the preset.
+      expect(flip(i1, st, "mt:da")).toEqual({ state: st, targets: i1.targets });
+      // Machine translation was its only source left: the site language drops out.
+      expect(da.sub).toBe("over the translation limit");
+      expect(v.chips.map((c) => c.code)).not.toContain("da");
+      if (policy === "generate") {
+        expect(v.chips.map((c) => c.code)).toEqual(["ja", "fi", "en", "fr", "it"]);
+        // Custom starts from what is on screen: the dropped languages are not written into the targets.
+        const [ci, cu] = apply(i1, pickPolicy(i1, st, "custom"));
+        expect(ci.targets).toEqual(["ja", "fi", "en", "fr", "it"]);
+        expect(derive(ci, cu).run!.mtTargets).toEqual(["ja", "fi", "en", "fr", "it"]);
+      } else {
+        // Side by side: a downloaded site track still brings the language (da's fell past the 8-download cap).
+        const es = v.rows.find((r) => r.code === "es")!;
+        expect([es.sub, es.badges.map((x) => x.state)]).toEqual(["from the site", ["idle", "active"]]);
+        expect(v.chips.map((c) => c.code)).toContain("es");
+      }
+    }
+    // Without a known limit nothing is cut.
+    const [i2, st2] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "generate"));
+    expect(derive({ ...i2, maxTargets: undefined }, st2).run!.mtTargets).toHaveLength(13);
+  });
   it("Custom: a machine-translation badge the rules switch keeps a title that matches its state", () => {
     const inp = input({ tracks: [tr("en", "en"), tr("de-orig", "de", { kind: "auto" })], spoken: "en", targets: ["de"] });
     // German's only track is auto-generated and the auto switch went off: translation fills in.

@@ -39,6 +39,8 @@ export interface SiteSubsInput {
   targets: readonly string[];
   /** The site's display name ("YouTube", siteDisplayName) for the source words; absent = "Site". */
   site?: string;
+  /** How many languages one run may machine-translate into (maxTranslationTargets); absent = no cap. */
+  maxTargets?: number;
 }
 
 /** The panel's own state for one link. */
@@ -122,6 +124,8 @@ export interface SiteSubsView {
 }
 
 const uniq = <T,>(xs: T[]) => [...new Set(xs)];
+/** The site track an ex:/cand: badge key names, else null. */
+const keyTrack = (key: string | undefined): string | null => (key ? /^(?:ex|cand):(.+)$/.exec(key)?.[1] ?? null : null);
 
 /** The source words every place uses for a subtitle (D88): our transcript, a machine
  *  translation, and the site's own — by the site's name. */
@@ -202,7 +206,8 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const mk = (b: Omit<SiteBadge, "state">, state0: BadgeState): SiteBadge => {
     const state = decide(b.key, state0);
     if (b.key) snap[b.key] = state === "active";
-    if (b.key && state === "active" && /^(ex|cand):/.test(b.key)) shown.add(b.key.split(":")[1]);
+    const tid = keyTrack(b.key);
+    if (tid && state === "active") shown.add(tid);
     const title = custom && b.key ? (state === "active" ? "Click to switch it off" : "Click to switch it on") : b.title;
     return { ...b, state, title };
   };
@@ -328,8 +333,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   // Rows share these badge objects; the chips, the counter and mtTargets are built after this.
   const capped = new Set(ids.filter((id) => !kept.has(id)));
   for (const id of capped) shown.delete(id);
-  const overCap = (b: SiteBadge) =>
-    b.state === "active" && !!b.key && /^(ex|cand):/.test(b.key) && !kept.has(b.key.split(":")[1]);
+  const overCap = (b: SiteBadge) => {
+    const tid = keyTrack(b.key);
+    return b.state === "active" && !!tid && !kept.has(tid);
+  };
   const capOff = (b: SiteBadge, fills: boolean) => {
     b.state = "idle";
     b.title = `Over the 8-subtitle download limit — ${fills ? "machine translation fills in" : "not downloaded"}`;
@@ -352,6 +359,32 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     }
   }
   for (const r of rows) if (r.code && cutOut.has(r.code)) r.sub = "over the download limit";
+  // The server machine-translates into at most `maxTargets` languages per run and drops the rest,
+  // but a preset lights machine translation for every language the site brings (Side by side,
+  // Generate). Past the limit it greys out: the languages you translate into keep it first, then
+  // the site's in row order. A site language left without a source drops out, as above.
+  const mtCapped = new Set<string>();
+  const maxMt = input.maxTargets;
+  if (maxMt !== undefined) {
+    const live = targets.filter((c) => !cutOut.has(c));
+    const prio = uniq([
+      ...input.targets.filter((c) => live.includes(c)),
+      ...codes.filter((c) => live.includes(c)),
+      ...live,
+    ]);
+    let n = 0;
+    for (const code of prio) {
+      const [mtB, ...exBs] = langSources(code).badges;
+      if (mtB.state !== "active") continue;
+      if (++n <= maxMt) continue;
+      mtB.state = "idle";
+      mtB.title = `Over the ${maxMt}-language translation limit`;
+      snap[mtB.key!] = false;
+      mtCapped.add(code);
+      if (tmap[code] !== true && !exBs.some((b) => b.state === "active")) cutOut.add(code);
+    }
+    for (const r of rows) if (r.code && mtCapped.has(r.code) && cutOut.has(r.code)) r.sub = "over the translation limit";
+  }
   const wanted = targets.filter((c) => !cutOut.has(c));
   const chips = codes.filter((c) => wanted.includes(c)).map((code) => {
     const name = languageLabel(code);
@@ -362,7 +395,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     const parts: ChipPart[] = [{
       kind: "mt", on: mtOn, key: mtB.key!,
       text: MT_WORD,
-      title: mtOn ? `Stop machine-translating into ${name}` : `Machine-translate into ${name} as well`,
+      // Over the translation limit its click does nothing (flip): say why.
+      title: mtCapped.has(code)
+        ? mtB.title
+        : mtOn ? `Stop machine-translating into ${name}` : `Machine-translate into ${name} as well`,
     }];
     if (exB) {
       const exOn = exB.state === "active";
@@ -371,7 +407,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
         kind: exB.kind, hoh: exB.hoh, on: exOn, key: exB.key!,
         text: word,
         // A capped track's click does nothing (flip): say why rather than offer to add it.
-        title: capped.has(exB.key!.split(":")[1])
+        title: capped.has(keyTrack(exB.key) ?? "")
           ? exB.title
           : exOn ? `Leave out the ${word} ${name} subtitles` : `Add the ${word} ${name} subtitles`,
       });
@@ -390,11 +426,12 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     } satisfies SiteSubsView,
     snap,
     codeOf,
-    // Without the languages the cap dropped: entering Custom must not write them into the targets.
+    // Without the languages the caps dropped: entering Custom must not write them into the targets.
     targets: wanted,
     tmap,
     codes,
     capped,
+    mtCapped,
   };
 }
 
@@ -414,10 +451,13 @@ function allTargets(m: ReturnType<typeof model>): Record<string, boolean> {
  *  take over (an existing subtitle went) or drops the language (machine translation went, v28). */
 export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): SiteChange {
   const m = model(input, st);
-  // A greyed over-cap badge: switching it on would be greyed again by the same cap, so the
-  // click would only flip a preset to Custom with nothing visible changed. Free a slot first.
-  const capKey = /^(?:ex|cand):(.+)$/.exec(key);
-  if (capKey && m.capped.has(capKey[1])) return { state: st, targets: [...input.targets] };
+  // A greyed over-cap badge (the download or the translation limit): switching it on would be
+  // greyed again by the same cap, so the click would only flip a preset to Custom with nothing
+  // visible changed. Free a slot first.
+  const mm = /^(ex|cand):(.+)$/.exec(key);
+  if ((mm && m.capped.has(mm[2])) || (key.startsWith("mt:") && m.mtCapped.has(key.slice(3)))) {
+    return { state: st, targets: [...input.targets] };
+  }
   const next = { ...m.snap, [key]: !m.snap[key] };
   // One site track can show twice — as the original row's candidate (cand:) and on its own
   // language's row (ex:) — and either lit badge downloads it: both flip together, or a
@@ -425,7 +465,6 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   // of its own, so it takes its twin's — but only for the switch-off fallbacks below: a
   // candidate rides along on the Original row, and switching it back on must not make its
   // language a translation target the user removed (off → on stays a round trip).
-  const mm = /^(ex|cand):(.+)$/.exec(key);
   const sib = mm ? (mm[1] === "ex" ? "cand:" : "ex:") + mm[2] : null;
   if (sib && sib in m.snap) next[sib] = next[key];
   const tg = allTargets(m);
