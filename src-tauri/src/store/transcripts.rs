@@ -21,7 +21,9 @@ use tauri::{AppHandle, Manager};
 /// thread while saves and sweeps stay live, so an unlocked rewrite could overwrite a newer save
 /// with the stale copy it read, or resurrect a record a sweep or the user's delete just removed.
 /// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
-/// the two rewriters, and `delete_transcript_record` (across its sourcePath read + unlink).
+/// the two rewriters, and `delete_transcript_record` (across its record read + unlink only —
+/// a dictation's recordings-folder unlink runs after release, so a slow share there cannot
+/// stall a main-thread save).
 /// The destructive commands (`delete_transcript_record`, `delete_all_dictations`,
 /// `clear_file_transcriptions`, `remove_transcript_media`) run on the blocking pool, so they
 /// too may overlap a save or sweep and rely on this per-entry lock, not on IPC ordering.
@@ -306,6 +308,15 @@ fn is_own_media(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Is this a recordings-folder file THIS app wrote (`dictation-*.wav` / `.txt`)? The one
+/// predicate the readout, the wipe and the per-record delete share, so a non-UTF-8 name is
+/// judged the same (lossily) by all three and the readout keeps matching the wipe.
+fn is_own_recording(path: &Path) -> bool {
+    path.file_name()
+        .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
+        .unwrap_or(false)
+}
+
 /// Bytes and count of the files in `dir` that `own` claims — the same predicate the delete
 /// commands use, so the "Frees N MB / Delete N files" readout promises exactly what a wipe
 /// does. In-progress `.tmp` copies are skipped like every sweep skips them.
@@ -346,13 +357,7 @@ fn owned_dir_tally(
 /// (`dictation-*.wav` and the `.txt` sidecar beside each), plus how many of them are audio — the
 /// delete confirm names audio files, and counting the sidecars there doubled the number.
 fn recordings_usage(dir: &Path) -> (u64, u32, u32) {
-    let own = |p: &Path| {
-        p.file_name()
-            .and_then(|n| n.to_str())
-            .map(crate::audio::is_dictation_file)
-            .unwrap_or(false)
-    };
-    owned_dir_tally(dir, own, is_wav)
+    owned_dir_tally(dir, is_own_recording, is_wav)
 }
 
 /// Is this a `.wav` — the audio half of a dictation's `.wav` + `.txt` pair.
@@ -380,11 +385,7 @@ pub fn has_any_records(app: &AppHandle) -> bool {
 /// never lose foreign files.
 fn remove_dictation_audio(source_path: &str) {
     let p = Path::new(source_path);
-    let own = p
-        .file_name()
-        .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
-        .unwrap_or(false);
-    if own && p.is_absolute() {
+    if is_own_recording(p) && p.is_absolute() {
         let _ = std::fs::remove_file(p);
         let _ = std::fs::remove_file(p.with_extension("txt"));
     }
@@ -487,10 +488,10 @@ pub async fn delete_transcript_record(
         }
         let name = format!("{id}.json");
         let file_path = transcripts_dir(&app)?.join(&name);
-        // Held across both branches' read + unlink — see `RECORD_IO`: a media-path rewrite that
-        // read this record before the unlink would otherwise rename its copy back into place
-        // afterwards.
-        let _io = record_io_lock();
+        // Held across both branches' record read + unlink — see `RECORD_IO`: a media-path
+        // rewrite that read this record before the unlink would otherwise rename its copy back
+        // into place afterwards.
+        let io = record_io_lock();
         if file_path.exists() {
             return std::fs::remove_file(file_path).map_err(|e| e.to_string());
         }
@@ -499,14 +500,19 @@ pub async fn delete_transcript_record(
         // take the .wav and its .txt sidecar with the record, or "delete from disk"
         // leaves a verbatim recording of the user's speech (and the deleted text)
         // behind with nothing referencing it.
-        if let Some(src) = std::fs::read_to_string(&rec_path)
+        let src: Option<String> = std::fs::read_to_string(&rec_path)
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
-        {
+            .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned));
+        let res = std::fs::remove_file(rec_path).map_err(|e| e.to_string());
+        // The audio unlink touches no record file and the record is gone, so no rewriter can
+        // re-point it: release the lock first, or a slow recordings share would hold every
+        // (main-thread) save hostage.
+        drop(io);
+        if let Some(src) = src {
             remove_dictation_audio(&src);
         }
-        std::fs::remove_file(rec_path).map_err(|e| e.to_string())
+        res
     })
     .await
     .map_err(|e| e.to_string())?
@@ -658,11 +664,7 @@ fn remove_own_recordings(dir: &Path) -> u32 {
             let path = entry.path();
             // Only the app's own files (same invariant as prune): a user-chosen
             // folder may hold other people's .wav/.txt.
-            let own = path
-                .file_name()
-                .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
-                .unwrap_or(false);
-            if own && std::fs::remove_file(&path).is_ok() && is_wav(&path) {
+            if is_own_recording(&path) && std::fs::remove_file(&path).is_ok() && is_wav(&path) {
                 removed += 1;
             }
         }
@@ -954,6 +956,22 @@ mod tests {
         std::fs::write(dir.join("dictation-3.wav.tmp"), b"1234567").unwrap();
         std::fs::write(dir.join("song.wav"), b"123456789").unwrap();
         assert_eq!(recordings_usage(&dir), (12, 4, 2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_non_utf8_recording_name_is_counted_and_wiped_alike() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = std::env::temp_dir().join(format!("fwf-rec-lossy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let odd = dir.join(std::ffi::OsStr::from_bytes(b"dictation-\xff.wav"));
+        std::fs::write(&odd, b"1234").unwrap();
+        // The readout promises exactly what the wipe then removes.
+        assert_eq!(recordings_usage(&dir), (4, 1, 1));
+        assert_eq!(remove_own_recordings(&dir), 1);
+        assert!(!odd.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
