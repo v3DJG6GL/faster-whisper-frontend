@@ -1005,6 +1005,7 @@ export function TranscriptViewer({
         if (!mediaPath) {
           setAudioBroken(true);
           setBrokenWhy("gone");
+          setBrokenDetail(`could not read the file: ${String(e)}`);
           return;
         }
         return readMediaFile(mediaPath)
@@ -1018,6 +1019,7 @@ export function TranscriptViewer({
             if (isTooLargeToBuffer(e2)) return onAudioError(String(e2));
             setAudioBroken(true);
             setBrokenWhy("gone");
+            setBrokenDetail(`could not read the stored copy: ${String(e2)}`);
           });
       })
       .finally(() => { if (!stale()) bufferPendingRef.current = false; });
@@ -1365,7 +1367,8 @@ export function TranscriptViewer({
       }
       if ((e.key === "f" || e.key === "F") && !e.ctrlKey && !e.metaKey && !e.altKey && !inPopup) {
         e.preventDefault();
-        toggleFocus();
+        // A held key auto-repeats: toggle once per press, not at the repeat rate.
+        if (!e.repeat) toggleFocus();
         return;
       }
       // A focused control owns Space and the arrows: every switch/segment/chip in this
@@ -1382,7 +1385,7 @@ export function TranscriptViewer({
       if (!reading && e.key !== " ") return;
       if (e.key === " ") {
         e.preventDefault();
-        togglePlay();
+        if (!e.repeat) togglePlay();
       } else if (e.key === "ArrowLeft") {
         e.preventDefault();
         stepWord(-1);
@@ -1447,8 +1450,10 @@ export function TranscriptViewer({
       const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
       const edit = t && t !== orig ? t : null;
       setSegmentEdit(okey, i, edit);
-      // What the row renders from now on (`fileEdits[i] ?? seg.text`, trimmed).
-      return (edit ?? result.segments?.[i]?.text ?? "").trim();
+      // What the row renders from now on (`fileEdits[i] ?? seg.text`, stripped and
+      // trimmed) — the raw server text would never match the stripped display, so
+      // every bare blur on a line with bidi marks would remount and lose the caret.
+      return edit ?? orig;
     },
     [okey, result],
   );
@@ -1699,7 +1704,8 @@ export function TranscriptViewer({
                   const next = seekKeyTarget(e.key, curTime, audioLen || 0, e.shiftKey);
                   if (next === "toggle") {
                     e.preventDefault();
-                    togglePlay();
+                    // Arrows keep repeating (they step); Space toggles once per press.
+                    if (!e.repeat) togglePlay();
                     return;
                   }
                   if (next === null) return;

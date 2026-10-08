@@ -1782,14 +1782,16 @@ export async function withSiteTracks(
 }
 
 /** The translation targets a link run actually sends: with the site's own tracks in use, only
- *  the targets the site lacks (`mtTargets`, possibly none); else the run's own. Shared by runLink
- *  and the run panel's rail, so the rail never shows a Translating stage the run skips. */
+ *  the targets the site lacks (`mtTargets`, possibly none); else the run's own. A backend without
+ *  a T2T stage (`translateTo` undefined) sends nothing, even with a site plan frozen at Add link on
+ *  one that had it; chips cleared after Add (`[]`) still send the frozen `mtTargets`. Shared by
+ *  runLink and the run panel's rail, so the rail never shows a Translating stage the run skips. */
 export function linkTranslateTo(
   opts: TranscribeOptions,
   meta?: { siteSubs?: SiteSubsRun },
 ): string[] | undefined {
   const site = meta?.siteSubs;
-  return site && (site.mtTargets.length || opts.translateTo) ? site.mtTargets : opts.translateTo;
+  return site && opts.translateTo !== undefined ? site.mtTargets : opts.translateTo;
 }
 
 /** The link card's prefetched media id, only when the run goes to the backend that issued it:
@@ -1859,7 +1861,7 @@ async function runLink(
     }
   }
   const parsed = { ...got.transcript.parsed, language: primarySubtag(got.transcript.lang) };
-  const res = await translateParsed(parsed, { ...options, translateTo: site.mtTargets }, ctx, pid, epoch);
+  const res = await translateParsed(parsed, { ...options, translateTo: translateTo ?? [] }, ctx, pid, epoch);
   let videoPid: string | undefined;
   if (options.keepVideo && epoch === get().epoch) {
     videoPid = newProgressId();

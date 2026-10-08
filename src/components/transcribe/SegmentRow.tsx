@@ -185,14 +185,19 @@ export const SegmentRow = memo(function SegmentRow({
               // Revert to the last SAVED text (seg.text = fileEdits[i] ?? server
               // text), not the raw server text: the blur commit compares to the
               // original and would delete an earlier saved correction.
-              e.currentTarget.textContent = seg.text.trim();
+              // Stripped like the display below, or Escape re-injects bidi marks
+              // that reorder the line against what Read shows and what is stored.
+              e.currentTarget.textContent = stripControlChars(seg.text).trim();
               e.currentTarget.blur();
             }
           }}
           className="-mx-1 min-w-0 flex-1 whitespace-pre-wrap rounded px-1 outline-none focus:bg-surface-2/70"
           style={lineColor}
         >
-          {seg.text.trim()}
+          {/* Same cleaning (and order) as onCommitEdit's original, so a bare blur
+              compares equal and keeps the span; raw bidi marks here would show the
+              line in a different visual order than Read and the stored text. */}
+          {stripControlChars(seg.text).trim()}
         </span>
       ) : karaoke ? (
         <span className="block min-w-0 whitespace-pre-wrap" style={lineColor}>

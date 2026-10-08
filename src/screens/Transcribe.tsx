@@ -755,8 +755,11 @@ export default function Transcribe() {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);
-      const final = liveClamp(start + ev.clientX - startX);
       setRailDrag(null);
+      // A cancelled drag (browser gesture takeover; coordinates may be zeroed) snaps back
+      // to the persisted width instead of committing a width the user never released on.
+      if (ev.type === "pointercancel") return;
+      const final = liveClamp(start + ev.clientX - startX);
       persistOptions({ studioRailPx: final });
     };
     el.addEventListener("pointermove", move);

@@ -113,8 +113,11 @@ describe("railStages", () => {
     const to = linkTranslateTo(opts, { siteSubs: site });
     expect(to).toEqual([]);
     expect(railStages({ ...opts, translateTo: to }, true, false)).not.toContain("translating");
-    // The site lacks a target the run did not ask for itself: still translated.
-    expect(linkTranslateTo({}, { siteSubs: { ...site, mtTargets: ["fr"] } })).toEqual(["fr"]);
+    // The site lacks a target the run did not ask for itself (chips cleared after Add on a T2T
+    // server): still translated.
+    expect(linkTranslateTo({ translateTo: [] }, { siteSubs: { ...site, mtTargets: ["fr"] } })).toEqual(["fr"]);
+    // The backend has no T2T stage: nothing is translated.
+    expect(linkTranslateTo({}, { siteSubs: { ...site, mtTargets: ["fr"] } })).toBeUndefined();
     // No site plan: the run's own targets.
     expect(linkTranslateTo(opts, {})).toEqual(["de"]);
   });
