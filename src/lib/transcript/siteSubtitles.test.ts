@@ -203,6 +203,22 @@ describe("tracks and switches", () => {
     // The site's order holds; the overflow drops from the end.
     expect(run.fetch).toEqual(["en", "fr", "it", "es", "pt", "nl", "pl", "de"]);
     expect(v.counter.used).toBe(8);
+    // The overflow languages are still wanted: their site badges grey out and machine
+    // translation fills in — in the run, the rows and the chips alike.
+    expect(run.mtTargets).toEqual(["sv", "fi", "da"]);
+    for (const code of ["sv", "fi", "da"]) {
+      const [mt, ex] = v.rows.find((r) => r.code === code)!.badges;
+      expect([mt.state, ex.state]).toEqual(["active", "idle"]);
+      expect(ex.title).toMatch(/8-subtitle download limit/);
+      expect(v.chips.find((c) => c.code === code)!.parts.map((p) => p.on)).toEqual([true, false]);
+    }
+    // A kept language keeps its site track and needs no machine translation.
+    expect(v.rows.find((r) => r.code === "en")!.badges.map((b) => b.state)).toEqual(["idle", "active"]);
+    // Custom starts from what is on screen: the overflow tracks stay out, translation stays on.
+    const [ci, cu] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    const vc = derive(ci, cu);
+    expect(vc.run!.fetch).toEqual(run.fetch);
+    expect(vc.run!.mtTargets).toEqual(["sv", "fi", "da"]);
   });
   it("counter counts the tracks in use", () => {
     const inp = input();

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, edgeChar, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "../types";
@@ -392,6 +392,15 @@ describe("combining marks stay with their base", () => {
       expect(p.join("")).toBe(family);
       expect(p.every((x) => !x.startsWith("\u200d") && !x.endsWith("\u200d"))).toBe(true);
     }
+  });
+});
+
+describe("edgeChar", () => {
+  it("skips trailing combining marks and variation selectors at the end", () => {
+    expect(edgeChar("か\u3099", true)).toBe("か");
+    expect(edgeChar("葛\u{E0100}", true)).toBe("葛");
+    expect(edgeChar("𠀋", true)).toBe("𠀋");
+    expect(edgeChar("\u3099", true)).toBe("");
   });
 });
 

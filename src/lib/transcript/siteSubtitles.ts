@@ -304,6 +304,39 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       deletable: !siteCodes.includes(code),
     });
   }
+  // Every wanted language has its badges by now (a target can lack a row), so `shown` is complete.
+  for (const c of targets) langSources(c);
+  // A run downloads at most 8 tracks, kept in the site's order — and the transcript's own
+  // track is always one of them (cut off, the run would transcribe after all).
+  const ids = avail.filter((t) => shown.has(t.id)).map((t) => t.id);
+  const kept = new Set([
+    ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => id !== transcriptTrackId),
+  ].slice(0, 8));
+  const fetch = ids.filter((id) => kept.has(id));
+  // A lit badge over the cap would claim a track the run never downloads: it greys out, and a
+  // wanted language it leaves without a source gets machine translation (the v28/v30 fill-in).
+  // Rows share these badge objects; the chips, the counter and mtTargets are built after this.
+  for (const id of ids) if (!kept.has(id)) shown.delete(id);
+  const overCap = (b: SiteBadge) =>
+    b.state === "active" && !!b.key && /^(ex|cand):/.test(b.key) && !kept.has(b.key.split(":")[1]);
+  const capOff = (b: SiteBadge, fills: boolean) => {
+    b.state = "idle";
+    b.title = `Over the 8-subtitle download limit — ${fills ? "machine translation fills in" : "not downloaded"}`;
+    snap[b.key!] = false;
+  };
+  for (const b of origBadges) if (overCap(b)) capOff(b, false);
+  for (const [code, src] of sourcesCache) {
+    const [mtB, ...exBs] = src.badges;
+    const cut = exBs.filter(overCap);
+    if (!cut.length) continue;
+    const fills = src.isTarget && !exBs.some((b) => b.state === "active" && !cut.includes(b));
+    for (const b of cut) capOff(b, fills);
+    if (fills && mtB.state !== "active") {
+      mtB.state = "active";
+      mtB.title = custom ? "Click to switch it off" : `Click to stop translating into ${languageLabel(code)}`;
+      snap["mt:" + code] = true;
+    }
+  }
   const chips = codes.filter((c) => targets.includes(c)).map((code) => {
     const name = languageLabel(code);
     const [mtB, ...exBs] = langSources(code).badges;
@@ -327,13 +360,6 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     return { code, parts };
   });
   const mtTargets = targets.filter((c) => langSources(c).badges[0].state === "active");
-  // A run downloads at most 8 tracks, kept in the site's order — and the transcript's own
-  // track is always one of them (cut off, the run would transcribe after all).
-  const ids = avail.filter((t) => shown.has(t.id)).map((t) => t.id);
-  const kept = new Set([
-    ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => id !== transcriptTrackId),
-  ].slice(0, 8));
-  const fetch = ids.filter((id) => kept.has(id));
   const runOn = st.subs && input.tracks.length > 0;
   return {
     view: {

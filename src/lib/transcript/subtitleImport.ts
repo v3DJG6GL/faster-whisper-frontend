@@ -135,7 +135,9 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 && repeatsNeighbour(i);
   // The rolling signature: without a freeze cue, a cue that only repeats the one before
   // is a line said twice, not a roll.
-  const rolling = cues.some(isFreeze);
+  // Only a freeze cue with text counts: an empty cue (our export writes one for an empty
+  // segment) "repeats" its neighbours vacuously and would make any file look rolling.
+  const rolling = cues.some((c, i) => isFreeze(c, i) && c.lines.some((l) => stripMarkup(l)));
   for (const [i, cue] of cues.entries()) {
     if (isFreeze(cue, i)) continue;
     const prev = out[out.length - 1];
@@ -235,16 +237,34 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
   return { segments };
 }
 
+/** A blank or whitespace-only line (CR is gone after stripControlChars). */
+const BLANK_LINE = /\n[^\S\n]*\n\s*/;
+
 /** An SRT/VTT body as raw cues: blank-line separated blocks, each with its
- *  "start --> end" line at `timesAt(lines)` (-1 = not a cue) and its text below. */
+ *  "start --> end" line at `timesAt(lines)` (-1 = not a cue) and its text below.
+ *  A whitespace-only line ends a cue too, but only where its own times line follows: a
+ *  stray space on the separator must not merge every later cue into one, while YouTube's
+ *  auto captions put " " lines inside a cue. */
 function blocksToCues(body: string, timesAt: (lines: string[]) => number): RawCue[] {
-  const cues: RawCue[] = [];
-  for (const block of body.split(/\r?\n\r?\n+/)) {
-    const lines = block.split(/\r?\n/).filter((l) => l.trim().length);
+  const timesOf = (lines: string[]) => {
     const i = lines.length ? timesAt(lines) : -1;
     const times = i >= 0 ? CUE_TIMES.exec(lines[i] ?? "") : null;
-    if (!times) continue;
-    cues.push({ start: parseClock(times[1]), end: parseClock(times[2]), lines: lines.slice(i + 1) });
+    return times ? { i, times } : null;
+  };
+  const blocks: string[][] = [];
+  for (const block of body.split(/\r?\n\r?\n+/)) {
+    let prev: string[] | undefined;
+    for (const part of block.split(BLANK_LINE)) {
+      const lines = part.split(/\r?\n/).filter((l) => l.trim().length);
+      if (prev && !timesOf(lines)) prev.push(...lines);
+      else blocks.push((prev = lines));
+    }
+  }
+  const cues: RawCue[] = [];
+  for (const lines of blocks) {
+    const t = timesOf(lines);
+    if (!t) continue;
+    cues.push({ start: parseClock(t.times[1]), end: parseClock(t.times[2]), lines: lines.slice(t.i + 1) });
   }
   return cues;
 }
@@ -290,7 +310,7 @@ function parseLrc(body: string): ImportedText {
     // a tag-only line can't tell that apart from a foreign file, so those gain spaces.)
     const { text, speaker } = cueText([
       trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
-        unspacedChar(edgeChar(s.slice(Math.max(0, off - 2), off), true)) &&
+        unspacedChar(edgeChar(s.slice(Math.max(0, off - 8), off), true)) &&
         unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false)) ? "" : " "),
     ]);
     if (text) {
@@ -317,7 +337,7 @@ function parsePlainText(body: string): ImportedText {
   // Paragraphs (blank-line separated) become segments; single-paragraph
   // files fall back to one segment per line.
   const paras = body
-    .split(/\r?\n\r?\n+/)
+    .split(BLANK_LINE)
     .map((p) => p.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const parts =

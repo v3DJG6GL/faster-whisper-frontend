@@ -79,11 +79,14 @@ const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
 export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
 /** The first (`end` false) or last code point of `s` — "" when empty. Seam tests go
  *  through it: a lone surrogate half is never unspaced, so a per-UTF-16-unit look
- *  misreads an astral (CJK Ext-B) character at the edge. */
+ *  misreads an astral (CJK Ext-B) character at the edge. At the end, trailing combining
+ *  marks and variation selectors (a decomposed "が", a "葛" + selector) are skipped so the
+ *  base character judges the seam. */
 export function edgeChar(s: string, end: boolean): string {
   if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
-  const lo = s.charCodeAt(s.length - 1);
-  return s.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
+  const t = s.replace(/\p{M}+$/u, "");
+  const lo = t.charCodeAt(t.length - 1);
+  return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
 }
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 

@@ -676,6 +676,9 @@ describe("joinSegmentTexts", () => {
     expect(joinSegmentTexts(["日", "", "本"])).toBe("日  本");
     expect(joinSegmentTexts(["日本", "abc", "語"])).toBe("日本 abc 語");
     expect(joinSegmentTexts(["𠀋", "日"])).toBe("𠀋日");
+    // A trailing combining mark / variation selector: the base character judges the seam.
+    expect(joinSegmentTexts(["今日はか\u3099", "次"])).toBe("今日はか\u3099次");
+    expect(joinSegmentTexts(["葛\u{E0100}", "城"])).toBe("葛\u{E0100}城");
     const latin = ["one", "two", "", "three"];
     expect(joinSegmentTexts(latin)).toBe(latin.join(" "));
   });

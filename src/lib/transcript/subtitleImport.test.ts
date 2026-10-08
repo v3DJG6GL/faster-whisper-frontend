@@ -152,6 +152,14 @@ describe("plain text + errors", () => {
     expect([seg(" de "), plain(" de ")]).toEqual(["de", "de"]);
     expect([seg("  "), plain("  ")]).toEqual([undefined, undefined]);
   });
+  it("a whitespace-only line separates paragraphs", () => {
+    expect(parseImportedText("txt", "One para.\n \t\nTwo para.").segments.map((s) => s.text))
+      .toEqual(["One para.", "Two para."]);
+  });
+  it("lrc: a word tag after a trailing mark or variation selector joins unspaced", () => {
+    expect(parseImportedText("lrc", "[00:00.00]葛\u{E0100}<00:00.50>城").segments[0].text).toBe("葛\u{E0100}城");
+    expect(parseImportedText("lrc", "[00:00.00]か\u3099<00:00.50>次").segments[0].text).toBe("か\u3099次");
+  });
   it("lrc: a text-less timestamp line ends the line before it (instrumental break)", () => {
     const back = parseImportedText("lrc", "[00:10.00]Hello\n[00:13.00]\n[00:40.00]World\n[00:44.00]");
     expect(back.segments).toEqual([
@@ -329,6 +337,30 @@ describe("site subtitle cleanup", () => {
     expect(segs[0].start).toBeUndefined();
     expect(segs[0].end).toBeUndefined();
     expect(segs[1]).toMatchObject({ start: 1, end: 2 });
+  });
+  it("an empty cue does not make a file look rolling", () => {
+    // srtExport writes an empty segment as an empty zero-length cue: it "repeats" its
+    // neighbours vacuously and used to merge the line said twice.
+    const srt =
+      "1\n00:00:00,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:04,000\nThank you.\n\n"
+      + "3\n00:00:04,000 --> 00:00:04,000\n\n4\n00:00:04,000 --> 00:00:06,000\nBye.\n";
+    expect(parseImportedText("srt", srt).segments).toEqual([
+      { start: 0, end: 2, text: "Thank you.", speaker: undefined },
+      { start: 2, end: 4, text: "Thank you.", speaker: undefined },
+      { start: 4, end: 6, text: "Bye.", speaker: undefined },
+    ]);
+  });
+  it("a whitespace-only separator line still ends a cue", () => {
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nHello there\n \n2\n00:00:03,000 --> 00:00:04,000\nSecond line\n";
+    expect(parseImportedText("srt", srt).segments).toMatchObject([
+      { start: 1, end: 2, text: "Hello there" },
+      { start: 3, end: 4, text: "Second line" },
+    ]);
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nHello there\n\t\n00:00:03.000 --> 00:00:04.000\nSecond line\n";
+    expect(parseImportedText("vtt", vtt).segments).toMatchObject([
+      { start: 1, end: 2, text: "Hello there" },
+      { start: 3, end: 4, text: "Second line" },
+    ]);
   });
   it("cleanup runs for SRT too", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
