@@ -405,6 +405,15 @@ describe("site subtitle cleanup", () => {
       ]);
     }
   });
+  it("an empty cue inside a rolling file does not stretch the line before it", () => {
+    const vtt =
+      "WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello\n\n00:00:02.000 --> 00:00:02.010\nhello\n\n"
+      + "00:00:02.010 --> 00:00:06.000\n\n00:00:06.500 --> 00:00:08.000\nnext\n";
+    expect(parseImportedText("vtt", vtt).segments).toMatchObject([
+      { start: 0, end: 2, text: "hello" },
+      { start: 6.5, end: 8, text: "next" },
+    ]);
+  });
   it("cleanup runs for SRT too", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);

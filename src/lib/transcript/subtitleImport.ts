@@ -141,9 +141,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
   const rolling = cues.some((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c));
   for (const [i, cue] of cues.entries()) {
-    // Outside a rolling file only a text-less cue goes: it yields no segment, and kept it
-    // would stretch the line before it through its silence.
-    if (rolling ? isFreeze(cue, i) : !hasText(cue)) continue;
+    // A text-less cue goes in every file: it yields no segment, and kept it would stretch
+    // the line before it through its silence (or, in a rolling file, become the baseline the
+    // next cue's repeat is checked against).
+    if (!hasText(cue) || (rolling && isFreeze(cue, i))) continue;
     const prev = out[out.length - 1];
     let lines = cue.lines;
     const contiguous =

@@ -77,6 +77,11 @@ const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
 /** An unspaced-script character or CJK/fullwidth punctuation — the one predicate the LRC
  *  export and import (and joinSegmentTexts) decide a seam's space with, so they agree. */
 export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
+/** Scripts (and CJK punctuation) a line may break between any two characters of. Text
+ *  without spaces and without any of these is one word ("Ja.", "Привет!"): it stays whole
+ *  rather than being cut into letters. */
+const BREAKS_ANYWHERE =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}\u3000-\u303f\uff00-\uffef]/u;
 /** The first (`end` false) or last code point of `s` — "" when empty. Seam tests go
  *  through it: a lone surrogate half is never unspaced, so a per-UTF-16-unit look
  *  misreads an astral (CJK Ext-B) character at the edge. At the end, trailing combining
@@ -268,11 +273,14 @@ const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
- *  without spaces (CJK) splits per code point. */
+ *  without spaces splits per code point when it is CJK/Thai-like; otherwise it
+ *  is one word and one token. */
 function spreadTokens(text: string, a: number, b: number): Tok[] {
   const spans: [number, number][] = [];
   if (/\s/.test(text.trim())) {
     for (const m of text.matchAll(MIXED_TOKEN)) spans.push([m.index!, m.index! + m[0].length]);
+  } else if (!BREAKS_ANYWHERE.test(text)) {
+    spans.push([0, text.length]);
   } else {
     // An opening bracket rides with the code point it opens, a closer with the one it closes.
     for (const m of text.matchAll(CJK_UNIT)) spans.push([m.index!, m.index! + m[0].length]);
@@ -374,6 +382,8 @@ function timedPieces(
 export function cutByShare(text: string, shares: number[]): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
+  // One word of a spaced script ("Ja."): nothing to cut — it goes to the first part.
+  if (!spaced && !BREAKS_ANYWHERE.test(text)) return [text.trim(), ...shares.slice(1).map(() => "")];
   // Candidate cut positions: a space (dropped) or, for CJK, any code-point
   // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may
   // still hold a CJK run (one Latin word in a Japanese line): it cuts between

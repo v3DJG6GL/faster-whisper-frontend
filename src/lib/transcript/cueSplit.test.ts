@@ -178,6 +178,16 @@ describe("buildCues", () => {
     expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
   });
 
+  it("a one-word translation of a split segment stays one word, never cut into letters", () => {
+    const text = "We walked along the river for hours and nobody said a word";
+    for (const timing of ["same", "own"] as const) {
+      const r = seg1(text, 0, 18, { segments: [{ start: 0, end: 18, text: " " + text, translations: { de: "Ja." } }] });
+      const grid = buildCues(r, { ...STD, timing }, ["orig", "de"]);
+      expect(trackCues(grid, "orig").length).toBeGreaterThan(1);
+      expect(trackCues(grid, "de").map((c) => c.text)).toEqual(["Ja."]);
+    }
+  });
+
   it("own timing: a CJK translation with one Latin word still splits between its characters", () => {
     const ja = "今日は朝から iPhone の新しい機能について説明しますが駅までの道はとても混んでいて電車も遅れていました";
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
@@ -437,6 +447,9 @@ describe("skin tones and flags stay whole", () => {
 describe("cutByShare", () => {
   it("prefers punctuation near the share target", () => {
     expect(cutByShare("Erstens das hier, zweitens das dort.", [1, 1])).toEqual(["Erstens das hier,", "zweitens das dort."]);
+  });
+  it("keeps one unspaced word of a spaced script whole, in the first part", () => {
+    expect(cutByShare("Hallo.", [40, 40, 30])).toEqual(["Hallo.", "", ""]);
   });
   it("cuts CJK text at character boundaries", () => {
     expect(cutByShare("今日は晴れ。明日は雨。", [1, 1])).toEqual(["今日は晴れ。", "明日は雨。"]);
