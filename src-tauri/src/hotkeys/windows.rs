@@ -1039,11 +1039,16 @@ mod imp {
     /// chord with any modifier arms the latch regardless: a false arm diverts one phrase to the
     /// clipboard, a missed one types it into Ctrl/Shift still held on the remote.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
+        // A chord with no shortcut modifier is never asked about (the latch keys on modifiers),
+        // so its log line must not claim the OS reported it released.
+        let has_mod = keys.iter().any(|&k| vk_to_evdev_mod(k).is_some());
         if chord_mod_still_down(keys) {
             crate::hotkeys::held_keys::arm_chord_lost();
-        } else if keys.iter().any(|&k| vk_to_evdev_mod(k).is_some()) && focus_is_remote(app) {
+        } else if has_mod && focus_is_remote(app) {
             tracing::info!("[winhook] teardown stop with a remote-desktop client focused (OS key state blind there); arming the loss latch");
             crate::hotkeys::held_keys::arm_chord_lost();
+        } else if !has_mod {
+            tracing::info!("[winhook] teardown stop for a chord with no shortcut modifier; the loss latch does not apply");
         } else {
             tracing::info!("[winhook] teardown stop for a chord the OS reports released; not arming the loss latch");
         }

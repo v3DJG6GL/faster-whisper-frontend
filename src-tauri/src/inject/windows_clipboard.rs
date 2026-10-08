@@ -384,7 +384,8 @@ mod imp {
     }
 
     static OWNER: OnceLock<Option<Owner>> = OnceLock::new();
-    /// Set by the shutdown handler: no new offers after this, the legacy path takes over.
+    /// Set by `shutdown()` before it posts WM_SHUTDOWN: no new offers after this, the legacy
+    /// path takes over.
     static DOWN: AtomicBool = AtomicBool::new(false);
 
     /// Where `await_target_fetch` waits. Written by the owner thread on the first post-chord
@@ -604,7 +605,6 @@ mod imp {
                 Some(0)
             }
             WM_SHUTDOWN => {
-                DOWN.store(true, Ordering::SeqCst);
                 publish_fetch(|s| s.closed = true);
                 // Sends WM_RENDERALLFORMATS while we still own unrendered data, so the text the
                 // user may still paste survives our exit. No borrow is held here.

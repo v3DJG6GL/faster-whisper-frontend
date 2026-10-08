@@ -30,3 +30,23 @@ pub fn center_on_monitor(win: &WebviewWindow, w: f64, h: f64) {
     let y = m_pos.y + ((m_size.height as i32 - ph) / 2).max(0);
     let _ = win.set_position(PhysicalPosition::new(x, y));
 }
+
+/// Whether two screen rectangles `(left, top, right, bottom)` overlap. Edges that merely
+/// touch do not count. Lives here (not in the Windows-only `topmost`) so its test runs on
+/// the Linux CI leg.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn rects_overlap(a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)) -> bool {
+    a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rects_overlap;
+
+    #[test]
+    fn touching_edges_do_not_count_as_overlap() {
+        assert!(!rects_overlap((0, 0, 10, 10), (10, 0, 20, 10)));
+        assert!(!rects_overlap((0, 0, 10, 10), (0, 10, 10, 20)));
+        assert!(rects_overlap((0, 0, 10, 10), (9, 9, 20, 20)));
+    }
+}

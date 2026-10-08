@@ -8,7 +8,7 @@
 //!
 //! - `DeviceNotAvailable` / `StreamInvalidated` are terminal: the caller stops the stream.
 //! - Everything else is logged, throttled: the first one at once, then one summary line with the
-//!   number suppressed at most every [`LOG_EVERY`].
+//!   number suppressed at most every [`LOG_EVERY`]; a terminal line reports any still pending.
 //! - An error storm (more than [`STORM_PER_SEC`] errors in each of [`STORM_SECS`] consecutive
 //!   seconds) is treated as terminal too — no healthy stream reports errors at that rate.
 //! - Terminal latches: once the gate has said so, every later error is Terminal again without
@@ -60,7 +60,8 @@ impl ErrorGate {
             kind,
             ErrorKind::DeviceNotAvailable | ErrorKind::StreamInvalidated
         ) {
-            tracing::warn!("[{}] device lost ({kind:?}): {msg}", self.tag);
+            let pending = self.take_pending();
+            tracing::warn!("[{}] device lost ({kind:?}): {msg}{pending}", self.tag);
             self.tripped = true;
             return Verdict::Terminal;
         }
@@ -84,8 +85,9 @@ impl ErrorGate {
         }
         self.sec_count = self.sec_count.saturating_add(1);
         if self.hot_secs >= STORM_SECS {
+            let pending = self.take_pending();
             tracing::warn!(
-                "[{}] error storm ({kind:?}, >{STORM_PER_SEC}/s for {STORM_SECS}s, last: {msg}); stopping the stream",
+                "[{}] error storm ({kind:?}, >{STORM_PER_SEC}/s for {STORM_SECS}s, last: {msg}); stopping the stream{pending}",
                 self.tag
             );
             self.tripped = true;
@@ -109,6 +111,17 @@ impl ErrorGate {
             }
         }
         Verdict::Continue
+    }
+
+    /// The throttled errors not yet reported, as a suffix for the terminal line (which is the
+    /// gate's last), and resets the count.
+    fn take_pending(&mut self) -> String {
+        let n = std::mem::take(&mut self.suppressed);
+        if n > 0 {
+            format!(" (+{n} earlier errors not logged)")
+        } else {
+            String::new()
+        }
     }
 }
 
@@ -149,6 +162,24 @@ mod tests {
     }
 
     #[test]
+    fn device_loss_reports_the_throttled_errors_still_pending() {
+        let mut g = ErrorGate::new("t");
+        let t0 = Instant::now();
+        for i in 0..10u64 {
+            let now = t0 + Duration::from_millis(i * 100);
+            assert_eq!(g.on_error(ErrorKind::Xrun, "x", now), Verdict::Continue);
+        }
+        assert_eq!(g.suppressed, 9);
+        let lost = t0 + Duration::from_secs(2);
+        assert_eq!(
+            g.on_error(ErrorKind::DeviceNotAvailable, "gone", lost),
+            Verdict::Terminal
+        );
+        // The terminal line carried the pending count, so nothing is left unreported.
+        assert_eq!(g.suppressed, 0);
+    }
+
+    #[test]
     fn a_tripped_storm_stays_terminal_without_counting() {
         let mut g = ErrorGate::new("t");
         let t0 = Instant::now();
@@ -160,6 +191,8 @@ mod tests {
             }
             i += 1;
         }
+        // The storm line reported the throttled errors of the two hot seconds.
+        assert_eq!(g.suppressed, 0);
         let (count, suppressed) = (g.sec_count, g.suppressed);
         for j in 1..100u64 {
             let now = t0 + Duration::from_millis(i + j);

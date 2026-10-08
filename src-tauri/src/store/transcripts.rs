@@ -22,8 +22,8 @@ use tauri::{AppHandle, Manager};
 /// with the stale copy it read, or resurrect a record a sweep or the user's delete just removed.
 /// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
 /// the two rewriters, and `delete_transcript_record` (across its record read + unlink only —
-/// a dictation's recordings-folder unlink runs after release, so a slow share there cannot
-/// stall a main-thread save).
+/// its media-copy and recordings-folder unlinks both run after release, so a slow share there
+/// cannot stall a main-thread save).
 /// The destructive commands (`delete_transcript_record`, `delete_all_dictations`,
 /// `clear_file_transcriptions`, `remove_transcript_media`) run on the blocking pool, so they
 /// too may overlap a save or sweep and rely on this per-entry lock, not on IPC ordering.
@@ -468,7 +468,7 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
 
 /// Delete one record's file. The user-facing "Delete" — actually removes data.
 /// Tries both stores: ids are UUIDs, so the same id can only exist in one.
-/// The record's audio copy (if any) goes with it.
+/// The record's audio copy (if any) goes with it, only once the record is gone.
 /// async + spawn_blocking like the other destructive store commands: it walks the media folders
 /// under a user-picked base (possibly a slow or offline share), which must not freeze every window.
 #[tauri::command]
@@ -481,11 +481,16 @@ pub async fn delete_transcript_record(
         return Err("malformed record id".into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        if let Ok(dirs) = all_media_dirs(&app, audio_base) {
-            for dir in dirs {
-                remove_media_for(&dir, &id);
+        // The `files/`/`links/`/video copies go only once the record is gone: a failed unlink
+        // (Windows briefly locking the file) keeps the History entry, and it must keep its
+        // playable media too. Runs after the lock is released, like the recordings unlink.
+        let drop_media = || {
+            if let Ok(dirs) = all_media_dirs(&app, audio_base.clone()) {
+                for dir in dirs {
+                    remove_media_for(&dir, &id);
+                }
             }
-        }
+        };
         let name = format!("{id}.json");
         let file_path = transcripts_dir(&app)?.join(&name);
         // Held across both branches' record read + unlink — see `RECORD_IO`: a media-path
@@ -493,9 +498,16 @@ pub async fn delete_transcript_record(
         // into place afterwards.
         let io = record_io_lock();
         if file_path.exists() {
-            return std::fs::remove_file(file_path).map_err(|e| e.to_string());
+            let res = std::fs::remove_file(file_path).map_err(|e| e.to_string());
+            drop(io);
+            if res.is_ok() {
+                drop_media();
+            }
+            return res;
         }
         let rec_path = dictations_dir(&app)?.join(&name);
+        // Absent from both stores: there is no entry to keep, so stray copies still go.
+        let existed = rec_path.exists();
         // A dictation's audio lives in the recordings folder, not `files/`/`links/`:
         // take the .wav and its .txt sidecar with the record, or "delete from disk"
         // leaves a verbatim recording of the user's speech (and the deleted text)
@@ -515,6 +527,9 @@ pub async fn delete_transcript_record(
             if let Some(src) = src {
                 remove_dictation_audio(&src);
             }
+        }
+        if res.is_ok() || !existed {
+            drop_media();
         }
         res
     })

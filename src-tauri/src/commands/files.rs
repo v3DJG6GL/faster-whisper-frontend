@@ -423,11 +423,64 @@ pub async fn read_text_file(path: String) -> Result<String, String> {
             return Err("file is larger than 10 MB — not a subtitle/text source".into());
         }
         let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
-        // Lossy: a stray invalid byte must not block a whole subtitle file.
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        Ok(decode_text_source(&bytes))
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Windows-1252 code points for bytes 0x80–0x9F; the five undefined slots are U+FFFD.
+#[rustfmt::skip]
+const CP1252_HIGH: [char; 32] = [
+    '\u{20AC}', '\u{FFFD}', '\u{201A}', '\u{0192}', '\u{201E}', '\u{2026}', '\u{2020}', '\u{2021}',
+    '\u{02C6}', '\u{2030}', '\u{0160}', '\u{2039}', '\u{0152}', '\u{FFFD}', '\u{017D}', '\u{FFFD}',
+    '\u{FFFD}', '\u{2018}', '\u{2019}', '\u{201C}', '\u{201D}', '\u{2022}', '\u{2013}', '\u{2014}',
+    '\u{02DC}', '\u{2122}', '\u{0161}', '\u{203A}', '\u{0153}', '\u{FFFD}', '\u{017E}', '\u{0178}',
+];
+
+/// Decode a subtitle/text source. Subtitle files in the wild are not all UTF-8: Windows
+/// "Unicode" saves are UTF-16 with a BOM, and older files are Windows-1252. Decoding those as
+/// lossy UTF-8 turned UTF-16's NUL bytes into extra line breaks (every cue split apart) and
+/// every umlaut into U+FFFD.
+fn decode_text_source(bytes: &[u8]) -> String {
+    if let Some(rest) = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8_lossy(rest).into_owned();
+    }
+    let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| -> String {
+        // An odd trailing byte is dropped by chunks_exact.
+        let units = rest.chunks_exact(2).map(|c| from([c[0], c[1]]));
+        char::decode_utf16(units)
+            .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect()
+    };
+    if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
+        return utf16(rest, u16::from_le_bytes);
+    }
+    if let Some(rest) = bytes.strip_prefix(&[0xFE, 0xFF]) {
+        return utf16(rest, u16::from_be_bytes);
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_owned(),
+        Err(_) => {
+            let lossy = String::from_utf8_lossy(bytes);
+            // Real multi-byte UTF-8 survived around the bad bytes: this is a UTF-8 file with a
+            // stray invalid byte, which must not block (or mojibake) the whole file.
+            if lossy
+                .chars()
+                .any(|c| !c.is_ascii() && c != char::REPLACEMENT_CHARACTER)
+            {
+                return lossy.into_owned();
+            }
+            // No valid multi-byte sequence anywhere: a single-byte (Windows-1252) file.
+            bytes
+                .iter()
+                .map(|&b| match b {
+                    0x80..=0x9F => CP1252_HIGH[usize::from(b - 0x80)],
+                    _ => char::from(b),
+                })
+                .collect()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -495,5 +548,29 @@ mod tests {
         assert!(map[0].0.ends_with("a.wav") && map[0].1.ends_with("a.wav"));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn text_source_decodes_utf16_cp1252_and_keeps_stray_byte_utf8() {
+        use super::decode_text_source;
+        let srt = "1\r\n00:00:01,000 --> 00:00:02,000\r\nMädchen\r\n";
+
+        let mut le = vec![0xFF, 0xFE];
+        le.extend(srt.encode_utf16().flat_map(u16::to_le_bytes));
+        assert_eq!(decode_text_source(&le), srt, "UTF-16LE keeps plain CRLF");
+
+        let mut be = vec![0xFE, 0xFF];
+        be.extend("Grüße\n".encode_utf16().flat_map(u16::to_be_bytes));
+        assert_eq!(decode_text_source(&be), "Grüße\n");
+
+        assert_eq!(decode_text_source(b"M\xe4dchen \x80"), "Mädchen €");
+
+        let mut stray = "ä ".as_bytes().to_vec();
+        stray.push(0xFF);
+        assert_eq!(decode_text_source(&stray), "ä \u{FFFD}");
+
+        let mut bom = vec![0xEF, 0xBB, 0xBF];
+        bom.extend_from_slice("ä".as_bytes());
+        assert_eq!(decode_text_source(&bom), "ä", "UTF-8 BOM is stripped");
     }
 }

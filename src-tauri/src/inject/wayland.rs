@@ -310,6 +310,18 @@ mod imp {
         }
     }
 
+    /// How many of `text`'s non-whitespace characters the active layout can type, and how many it
+    /// cannot — `(reachable, unreachable)`. Whitespace is left out of both: a transcript of only
+    /// spaces and newlines says nothing about whether the layout fits its script.
+    fn layout_reach(text: &str, map: &HashMap<char, KeySpec>) -> (usize, usize) {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .fold((0, 0), |(yes, no), c| match key_spec_for(c, map) {
+                Some(_) => (yes + 1, no),
+                None => (yes, no + 1),
+            })
+    }
+
     /// Is this key a normal case-pair (its Shift level is the case-inverse of its base glyph)? Used so
     /// the live-Caps-Lock compensation knows whether pressing Shift actually cancels KWin's
     /// capitalization. A non-alphabetic base (digits, symbols) is unaffected by Caps → safe. A
@@ -631,6 +643,32 @@ mod imp {
                     continue;
                 }
             };
+            // A transcript the active layout cannot type AT ALL (Chinese on a US layout) used to
+            // skip every character in the loop below, still press auto-Enter on the empty field
+            // and report `Landed::Yes` — so the caller's failed-insert recovery (clipboard) never
+            // ran and the text was lost. Answer it as a failure instead, before any key is
+            // synthesized; like the keymap failure above it does not end the portal session. A
+            // PARTLY reachable transcript still types what it can (curly quotes, an em dash or an
+            // emoji in an otherwise Latin sentence) — that skip stays silent per character below.
+            if !job.paste && !job.text.is_empty() && !crate::inject::injection_cancelled(job.epoch)
+            {
+                let (reachable, unreachable) = layout_reach(&job.text, &charmap);
+                if unreachable > 0 && reachable == 0 {
+                    tracing::warn!(
+                        "[wayland-inject] none of the {unreachable} character(s) exist on the active keyboard layout — nothing typed"
+                    );
+                    let _ = job.reply.send(Err(
+                        "none of the transcript's characters exist on the active keyboard layout"
+                            .into(),
+                    ));
+                    continue;
+                }
+                if unreachable > 0 {
+                    tracing::warn!(
+                        "[wayland-inject] {unreachable} character(s) not on the active layout will be skipped"
+                    );
+                }
+            }
             // Every keycode we press is recorded here so we can GUARANTEE a matching
             // release even if a portal call fails mid-chord. Without this, a failure
             // after `Ctrl↓`/`Shift↓` leaves that modifier logically DOWN system-wide
@@ -936,6 +974,44 @@ mod imp {
             }
         }
         Ok(())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        fn us_letters() -> HashMap<char, KeySpec> {
+            ('a'..='z')
+                .enumerate()
+                .map(|(i, c)| {
+                    let spec = KeySpec {
+                        keycode: 16 + i as i32,
+                        shift: false,
+                        altgr: false,
+                        lock: false,
+                        caps_safe: true,
+                    };
+                    (c, spec)
+                })
+                .collect()
+        }
+
+        #[test]
+        fn layout_reach_counts_a_script_the_layout_cannot_type_as_wholly_unreachable() {
+            // Chinese on a US layout: nothing to type, so the job must fail rather than land.
+            assert_eq!(layout_reach("你好 世界\n", &us_letters()), (0, 4));
+        }
+
+        #[test]
+        fn layout_reach_keeps_a_partly_reachable_transcript_typeable() {
+            // An em dash in a Latin sentence is skipped, not a reason to fail the whole job.
+            assert_eq!(layout_reach("ab — c", &us_letters()), (3, 1));
+        }
+
+        #[test]
+        fn layout_reach_ignores_whitespace() {
+            assert_eq!(layout_reach(" \n\t ", &us_letters()), (0, 0));
+        }
     }
 }
 

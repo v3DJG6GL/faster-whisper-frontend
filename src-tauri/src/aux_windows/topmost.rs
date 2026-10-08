@@ -56,10 +56,6 @@ pub fn assert_topmost(win: &WebviewWindow) {
     set_band(hwnd, HWND_TOPMOST);
 }
 
-fn intersects(a: &RECT, b: &RECT) -> bool {
-    a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom
-}
-
 /// The first ordinary (non-topmost) visible window that sits ABOVE `hwnd` and overlaps it,
 /// if any — i.e. proof that the window is mis-ordered. Walks up the z-order only, so the
 /// common case (we are at or near the top) is a handful of calls.
@@ -93,7 +89,12 @@ fn covering_window(hwnd: HWND) -> Option<HWND> {
             right: 0,
             bottom: 0,
         };
-        if unsafe { GetWindowRect(cur, &mut r) } != 0 && intersects(&ours, &r) {
+        if unsafe { GetWindowRect(cur, &mut r) } != 0
+            && super::position::rects_overlap(
+                (ours.left, ours.top, ours.right, ours.bottom),
+                (r.left, r.top, r.right, r.bottom),
+            )
+        {
             return Some(cur);
         }
     }
@@ -126,35 +127,5 @@ pub fn repair_if_covered(win: &WebviewWindow) {
         );
         set_band(hwnd, HWND_NOTOPMOST);
         set_band(hwnd, HWND_TOPMOST);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::intersects;
-    use windows_sys::Win32::Foundation::RECT;
-
-    #[test]
-    fn touching_edges_do_not_count_as_overlap() {
-        let a = RECT {
-            left: 0,
-            top: 0,
-            right: 10,
-            bottom: 10,
-        };
-        let beside = RECT {
-            left: 10,
-            top: 0,
-            right: 20,
-            bottom: 10,
-        };
-        let over = RECT {
-            left: 9,
-            top: 9,
-            right: 20,
-            bottom: 20,
-        };
-        assert!(!intersects(&a, &beside));
-        assert!(intersects(&a, &over));
     }
 }
