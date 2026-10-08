@@ -235,7 +235,7 @@ export const SegmentRow = memo(function SegmentRow({
           onClick={canSeek ? () => seekTo(seg.start) : undefined}
         >
           {visLangs.length > 0 && <LangTag code={origLang} orig />}
-          {stripControlChars(seg.text.trim())}
+          {stripControlChars(seg.text).trim()}
           {seg.edited && (
             <span className="ml-2 align-middle font-mono text-[10.5px] text-ok">· edited</span>
           )}
@@ -245,7 +245,11 @@ export const SegmentRow = memo(function SegmentRow({
         // Own-property read: a language code like `valueOf` would otherwise
         // return an inherited function and `.trim()` would throw mid-render.
         const tr = ownProp(translations, lang);
-        if (!tr?.trim()) return null;
+        // Stripped BEFORE trimming (like the Edit span): whitespace inside a
+        // leading/trailing bidi mark would otherwise survive as an indent and
+        // an empty first word that shifts the follow-along highlight.
+        const trText = stripControlChars(tr ?? "").trim();
+        if (!trText) return null;
         // The quality guard kept the SOURCE text for this target: don't
         // present it as a translation — neutral faint line, flagged inline,
         // no follow-along (its "translation" is the original's words).
@@ -257,7 +261,7 @@ export const SegmentRow = memo(function SegmentRow({
               onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
             >
               <LangTag code={safeDisplayText(lang, 16)} color="var(--c-faint)" />
-              {stripControlChars(tr.trim())}
+              {trText}
               <span className="ml-2 align-middle font-mono text-[10.5px]">
                 · kept original — re-translate in Edit
               </span>
@@ -269,7 +273,7 @@ export const SegmentRow = memo(function SegmentRow({
         // the translated words proportionally — an honest approximation
         // (the same char-share philosophy the fluent redistributor uses).
         const followable = isActive && !stale && range && range[1] > range[0];
-        const trWords = followable ? stripControlChars(tr.trim()).split(/\s+/) : null;
+        const trWords = followable ? trText.split(/\s+/) : null;
         let trCur = -1;
         let trPassed = -1;
         if (trWords && range) {
@@ -298,7 +302,7 @@ export const SegmentRow = memo(function SegmentRow({
           >
             <LangTag code={safeDisplayText(lang, 16)} color={mtAccent} />
             {stale ? (
-              <s>{stripControlChars(tr.trim())}</s>
+              <s>{trText}</s>
             ) : trWords ? (
               trWords.map((w, k) => (
                 <span
@@ -324,7 +328,7 @@ export const SegmentRow = memo(function SegmentRow({
                 </span>
               ))
             ) : (
-              stripControlChars(tr.trim())
+              trText
             )}
             {stale && (
               <span className="ml-2 align-middle font-mono text-[10.5px] not-italic text-warn">

@@ -1218,8 +1218,11 @@ export function TranscriptViewer({
   // scrollTo({behavior:"smooth"}) and jumps instantly.
   const followAnimRef = useRef<number | null>(null);
   // Time mode follows the cue, not the segment: a segment boundary mid-glide
-  // must not restart the animation toward the same row.
-  const followKey = timeAnchor !== null ? `t${timeAnchor}` : `s${activeSegIdx}`;
+  // must not restart the animation toward the same row. The row layout (view
+  // and its picked tracks) is part of the key: a Segments<->Subtitles switch
+  // or a track pick re-lays the box while the active row stays the same.
+  const followLayout = subtitlesView ? `v${visibleTracks.join(",")}` : `s${segVisible.join(",")}`;
+  const followKey = `${followLayout}|${timeAnchor !== null ? `t${timeAnchor}` : `s${activeSegIdx}`}`;
   useEffect(() => {
     // Not while editing: the highlight is not drawn in Edit mode, and a scroll on every
     // segment boundary would pull the transcript out from under the caret. Not in
