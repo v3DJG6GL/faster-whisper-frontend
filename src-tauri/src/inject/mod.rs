@@ -674,11 +674,14 @@ pub fn inject(
                     .into_iter()
                     .enumerate()
                 {
+                    // Before EVERY segment, the first included: at i == 0 this covers the gap
+                    // across `Enigo::new` and the focus probe above, as `paste` does at its
+                    // clipboard-write check.
+                    if injection_cancelled(epoch) {
+                        tracing::info!("[inject] cancelled mid-typing — stopping");
+                        return Ok(Landed::Yes);
+                    }
                     if i > 0 {
-                        if injection_cancelled(epoch) {
-                            tracing::info!("[inject] cancelled mid-typing — stopping");
-                            return Ok(Landed::Yes);
-                        }
                         // Focus is re-asked per segment, not only before the first one: a 512-char
                         // chunk is tens of milliseconds of typing, so a click into one of our own
                         // windows part-way through a long transcript otherwise lands every
