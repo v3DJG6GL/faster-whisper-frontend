@@ -206,6 +206,14 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     const title = custom && b.key ? (state === "active" ? "Click to switch it off" : "Click to switch it on") : b.title;
     return { ...b, state, title };
   };
+  // A machine-translation badge switched after mk(): its state, snapshot and title move together.
+  const setMt = (b: SiteBadge, code: string, on: boolean) => {
+    b.state = on ? "active" : "off";
+    snap["mt:" + code] = on;
+    b.title = custom
+      ? on ? "Click to switch it off" : "Click to switch it on"
+      : on ? `Click to stop translating into ${languageLabel(code)}` : `Click to translate into ${languageLabel(code)}`;
+  };
   const exState = (t: T, wanted: boolean): BadgeState => (!use(t) ? "off" : wanted ? "active" : "idle");
   const exBadge = (t: T, state: BadgeState, tentative: boolean, prefix = ""): SiteBadge => {
     const why = state === "off"
@@ -242,9 +250,9 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
         ? `Not needed: existing subtitles cover ${name} — click to machine-translate anyway`
         : `Click to stop translating into ${name}`;
     const mtB = mk({ key: "mt:" + code, kind: "mt", text: MT_WORD, title: mtTitle }, mtState);
-    if (custom && !isTarget && mtB.state === "active") { mtB.state = "off"; snap["mt:" + code] = false; }
+    if (custom && !isTarget && mtB.state === "active") setMt(mtB, code, false);
     // A wanted language never ends up without a source: machine translation fills in (v28/v30).
-    if (isTarget && mtB.state !== "active" && !used) { mtB.state = "active"; snap["mt:" + code] = true; }
+    if (isTarget && mtB.state !== "active" && !used) setMt(mtB, code, true);
     const out = { badges: [mtB, ...exBadges], isTarget };
     sourcesCache.set(code, out);
     return out;
@@ -313,8 +321,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => id !== transcriptTrackId),
   ].slice(0, 8));
   const fetch = ids.filter((id) => kept.has(id));
-  // A lit badge over the cap would claim a track the run never downloads: it greys out, and a
-  // wanted language it leaves without a source gets machine translation (the v28/v30 fill-in).
+  // A lit badge over the cap would claim a track the run never downloads: it greys out. A
+  // language you translate into that it leaves without a source gets machine translation (the
+  // v28/v30 fill-in); a language wanted only because the site brings it drops out of the wanted
+  // set instead — Prefer means existing subtitles, not machine translation nobody asked for.
   // Rows share these badge objects; the chips, the counter and mtTargets are built after this.
   const capped = new Set(ids.filter((id) => !kept.has(id)));
   for (const id of capped) shown.delete(id);
@@ -325,20 +335,25 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     b.title = `Over the 8-subtitle download limit — ${fills ? "machine translation fills in" : "not downloaded"}`;
     snap[b.key!] = false;
   };
+  const cutOut = new Set<string>();
   for (const b of origBadges) if (overCap(b)) capOff(b, false);
   for (const [code, src] of sourcesCache) {
     const [mtB, ...exBs] = src.badges;
     const cut = exBs.filter(overCap);
     if (!cut.length) continue;
-    const fills = src.isTarget && !exBs.some((b) => b.state === "active" && !cut.includes(b));
+    const bare = src.isTarget && !exBs.some((b) => b.state === "active" && !cut.includes(b));
+    // Side by side already translates a site language: that stays its source.
+    const fills = bare && (tmap[code] === true || mtB.state === "active");
     for (const b of cut) capOff(b, fills);
-    if (fills && mtB.state !== "active") {
-      mtB.state = "active";
-      mtB.title = custom ? "Click to switch it off" : `Click to stop translating into ${languageLabel(code)}`;
-      snap["mt:" + code] = true;
+    if (fills && mtB.state !== "active") setMt(mtB, code, true);
+    else if (bare && !fills) {
+      cutOut.add(code);
+      setMt(mtB, code, false);
     }
   }
-  const chips = codes.filter((c) => targets.includes(c)).map((code) => {
+  for (const r of rows) if (r.code && cutOut.has(r.code)) r.sub = "over the download limit";
+  const wanted = targets.filter((c) => !cutOut.has(c));
+  const chips = codes.filter((c) => wanted.includes(c)).map((code) => {
     const name = languageLabel(code);
     const [mtB, ...exBs] = langSources(code).badges;
     const exB = exBs.find((b) => !b.hoh) ?? exBs[0];
@@ -355,12 +370,15 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       parts.push({
         kind: exB.kind, hoh: exB.hoh, on: exOn, key: exB.key!,
         text: word,
-        title: exOn ? `Leave out the ${word} ${name} subtitles` : `Add the ${word} ${name} subtitles`,
+        // A capped track's click does nothing (flip): say why rather than offer to add it.
+        title: capped.has(exB.key!.split(":")[1])
+          ? exB.title
+          : exOn ? `Leave out the ${word} ${name} subtitles` : `Add the ${word} ${name} subtitles`,
       });
     }
     return { code, parts };
   });
-  const mtTargets = targets.filter((c) => langSources(c).badges[0].state === "active");
+  const mtTargets = wanted.filter((c) => langSources(c).badges[0].state === "active");
   const runOn = st.subs && input.tracks.length > 0;
   return {
     view: {
@@ -372,7 +390,8 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     } satisfies SiteSubsView,
     snap,
     codeOf,
-    targets,
+    // Without the languages the cap dropped: entering Custom must not write them into the targets.
+    targets: wanted,
     tmap,
     codes,
     capped,

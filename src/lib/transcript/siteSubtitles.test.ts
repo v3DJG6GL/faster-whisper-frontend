@@ -203,26 +203,58 @@ describe("tracks and switches", () => {
     // The site's order holds; the overflow drops from the end.
     expect(run.fetch).toEqual(["en", "fr", "it", "es", "pt", "nl", "pl", "de"]);
     expect(v.counter.used).toBe(8);
-    // The overflow languages are still wanted: their site badges grey out and machine
-    // translation fills in — in the run, the rows and the chips alike.
-    expect(run.mtTargets).toEqual(["sv", "fi", "da"]);
+    // The overflow languages were wanted only because the site brings them: cut off, they
+    // drop out — no machine translation nobody asked for, no chips; their site badges grey out.
+    expect(run.mtTargets).toEqual([]);
     for (const code of ["sv", "fi", "da"]) {
-      const [mt, ex] = v.rows.find((r) => r.code === code)!.badges;
-      expect([mt.state, ex.state]).toEqual(["active", "idle"]);
-      expect(ex.title).toMatch(/8-subtitle download limit/);
-      expect(v.chips.find((c) => c.code === code)!.parts.map((p) => p.on)).toEqual([true, false]);
+      const row = v.rows.find((r) => r.code === code)!;
+      const [mt, ex] = row.badges;
+      expect([mt.state, ex.state]).toEqual(["off", "idle"]);
+      expect(ex.title).toBe("Over the 8-subtitle download limit — not downloaded");
+      expect(mt.title).toBe(`Click to translate into ${row.label}`);
+      expect(row.sub).toBe("over the download limit");
+      expect(v.chips.map((c) => c.code)).not.toContain(code);
     }
     // A kept language keeps its site track and needs no machine translation.
     expect(v.rows.find((r) => r.code === "en")!.badges.map((b) => b.state)).toEqual(["idle", "active"]);
-    // Custom starts from what is on screen: the overflow tracks stay out, translation stays on.
+    // Custom starts from what is on screen: the overflow tracks stay out, nothing is translated,
+    // and the cut languages are not written into the targets.
     const [ci, cu] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
     const vc = derive(ci, cu);
     expect(vc.run!.fetch).toEqual(run.fetch);
-    expect(vc.run!.mtTargets).toEqual(["sv", "fi", "da"]);
+    expect(vc.run!.mtTargets).toEqual([]);
+    expect(ci.targets).not.toContain("sv");
     // Clicking a greyed over-cap badge changes nothing — not even the preset.
     const st0 = initialSiteState(inp.targets);
     const exSv = v.rows.find((r) => r.code === "sv")!.badges[1].key!;
     expect(flip(inp, st0, exSv)).toEqual({ state: st0, targets: inp.targets });
+  });
+  it("a language you translate into keeps machine translation when the cap cuts its site track", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da"];
+    const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: ["sv"] });
+    const v = derive(inp, initialSiteState(inp.targets));
+    expect(v.run!.fetch).not.toContain("sv");
+    expect(v.run!.mtTargets).toEqual(["sv"]);
+    const [mt, ex] = v.rows.find((r) => r.code === "sv")!.badges;
+    expect([mt.state, ex.state]).toEqual(["active", "idle"]);
+    expect(mt.title).toBe("Click to stop translating into Swedish");
+    expect(ex.title).toBe("Over the 8-subtitle download limit — machine translation fills in");
+    const chip = v.chips.find((c) => c.code === "sv")!;
+    expect(chip.parts.map((p) => p.on)).toEqual([true, false]);
+    // The faint site part says why it is off — its click does nothing.
+    expect(chip.parts[1].title).toMatch(/8-subtitle download limit/);
+    // The site-only overflow languages still drop out.
+    expect(v.chips.map((c) => c.code)).not.toContain("fi");
+  });
+  it("Custom: a machine-translation badge the rules switch keeps a title that matches its state", () => {
+    const inp = input({ tracks: [tr("en", "en"), tr("de-orig", "de", { kind: "auto" })], spoken: "en", targets: ["de"] });
+    // German's only track is auto-generated and the auto switch went off: translation fills in.
+    const st: SiteSubsState = { ...initialSiteState(["de", "fr"]), policy: "custom", sel: { "mt:de": false, "mt:fr": true } };
+    const de = badge(inp, st, "de", "mt:de");
+    expect([de.state, de.title]).toEqual(["active", "Click to switch it off"]);
+    // A stale pick for a language you do not translate into stays off.
+    const fr = badge(inp, st, "fr", "mt:fr");
+    expect([fr.state, fr.title]).toEqual(["off", "Click to switch it on"]);
   });
   it("counter counts the tracks in use", () => {
     const inp = input();
