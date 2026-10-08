@@ -29,22 +29,16 @@ export function passesThreshold(level: LogLine["level"], t: LevelThreshold): boo
 /** Combined row filter: threshold AND tag set (empty set = all tags) AND
  *  case-insensitive substring over tag + message.
  *
- *  For hot-path bulk filtering (10k-line buffer), prefer `makeLogFilter` which
- *  pre-trims/lowercases the query once instead of per line. */
+ *  A single-line convenience wrapper over `makeLogFilter` — the predicate the
+ *  Logs screen actually uses — so this function's tests cover the production
+ *  filter. For bulk filtering, build the predicate once with `makeLogFilter`. */
 export function matchesFilters(
   l: LogLine,
   t: LevelThreshold,
   tags: ReadonlySet<string>,
   text: string,
 ): boolean {
-  if (!passesThreshold(l.level, t)) return false;
-  if (tags.size > 0 && (!l.tag || !tags.has(l.tag))) return false;
-  const q = text.trim().toLowerCase();
-  if (q) {
-    const hay = `${l.tag ?? ""} ${l.msg}`.toLowerCase();
-    if (!hay.includes(q)) return false;
-  }
-  return true;
+  return makeLogFilter(t, tags, text)(l);
 }
 
 /** Allocate-once filter: pre-trims/lowercases the query so 10k-line scans

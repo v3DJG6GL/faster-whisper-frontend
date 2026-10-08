@@ -38,6 +38,8 @@ const api = vi.hoisted(() => ({
   pullCalled: false,
   /** Every keyring write, in order (the real one is a no-op outside Tauri). */
   keyWrites: [] as [string, string][],
+  /** Every keyring delete, in order (the real one is a no-op outside Tauri). */
+  keyDeletes: [] as string[],
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -52,6 +54,9 @@ vi.mock("../api", async (importOriginal) => {
     },
     setBackendKey: async (id: string, key: string) => {
       api.keyWrites.push([id, key]);
+    },
+    deleteBackendKey: async (id: string) => {
+      api.keyDeletes.push(id);
     },
     syncPush: async (args: { blob: unknown; baseVersion: number }) => {
       api.pushes++;
@@ -480,6 +485,21 @@ describe("a pending review when the server copy is gone", () => {
       api.conflicts = [];
     }
   });
+  // The forget clears the stash itself; its state write then saw the old stash ids still set and
+  // deleted the same keyring entry again — a second 10 s wait under a locked wallet.
+  it("clears the snapshot's keyring stash once when the server copy is gone", async () => {
+    try {
+      await seedBase();
+      expect(api.keyWrites.length).toBeGreaterThan(0); // the base's keys were stashed
+      api.keyDeletes = [];
+      api.pulled = { version: 0, updated_ts: null, device: null, blob: null };
+      await pullNow(true);
+      expect(api.keyDeletes).toHaveLength(1);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
   it("is dropped by a push whose 409 finds no server document", async () => {
     try {
       await raiseAtV5();
@@ -491,6 +511,76 @@ describe("a pending review when the server copy is gone", () => {
       api.keys = null;
       api.pulled = null;
       api.conflicts = [];
+    }
+  });
+});
+
+// With the dead base forgotten there was nothing to pass through: the gates deleted every field
+// this device does not sync, the first-contact merge took the re-seed's copy of them for a
+// conflicting edit, and "Keep mine" pushed them erased — the server's API keys among them.
+describe("a re-created document reconciled with no base", () => {
+  /** Seed a base, adopt a clean v5, then gate `sub` off here: a re-seed at v1 forgets the base. */
+  async function atV5(sub: Record<string, boolean>): Promise<SyncBlob> {
+    const base = await seedBase();
+    api.pulled = { version: 5, updated_ts: 5, device: "peer", blob: base };
+    await pullNow(true);
+    const s = useApp.getState().settings;
+    useApp.setState({ settings: { ...s, sync: { ...s.sync!, sub: { ...s.sync!.sub!, ...sub } } } });
+    return base;
+  }
+  it("passes a gated-off setting the re-seed keeps through instead of conflicting it", async () => {
+    try {
+      const base = await atV5({ soundCues: false });
+      const peer = (base.general as { soundEffects: boolean }).soundEffects;
+      const s = useApp.getState().settings;
+      useApp.setState({ settings: { ...s, general: { ...s.general, soundEffects: !peer } } });
+      api.pulled = { version: 1, updated_ts: 6, device: "peer", blob: structuredClone(base) };
+      await pullNow();
+      expect(getPendingConflict()).toBeNull();
+      await pushNow(true);
+      expect(api.pushedBase).toBe(1);
+      expect((api.pushed as SyncBlob).general).toHaveProperty("soundEffects", peer);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+  it("passes the re-seed's API keys through while the API keys gate is off", async () => {
+    try {
+      const base = await atV5({ apiKeys: false });
+      const reseeded = structuredClone(base);
+      reseeded.backends = { ...reseeded.backends!, secrets: { b1: "sk-peer" } };
+      api.pulled = { version: 1, updated_ts: 6, device: "peer", blob: reseeded };
+      await pullNow();
+      expect(getPendingConflict()).toBeNull();
+      expect(getPendingReview()).toBeNull();
+      await pushNow(true);
+      expect(api.pushedBase).toBe(1);
+      expect((api.pushed as SyncBlob).backends?.secrets).toEqual({ b1: "sk-peer" });
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+  // Server versions only grow, but a re-seed restarts at 1 and can climb back to exactly this
+  // base's number. The same version under a different write stamp is a different document: it
+  // took the "nothing new" shortcut, and the next push at that base overwrote the peer's re-seed.
+  it("treats a re-seed that lands on the base's own version as a new document", async () => {
+    try {
+      const base = await seedBase(); // v1, written at updated_ts 1
+      const reseeded = structuredClone(base);
+      const peerType = !useApp.getState().settings.general.typeAsISpeak;
+      reseeded.general = { ...reseeded.general, typeAsISpeak: peerType } as never;
+      api.pulled = { version: 1, updated_ts: 7, device: "peer", blob: reseeded };
+      await pullNow();
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      bumpChipScale();
+      const pushesBefore = api.pushes;
+      await pushNow();
+      expect(api.pushes === pushesBefore || api.pushedBase !== 1).toBe(true);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
     }
   });
 });

@@ -2261,13 +2261,21 @@ async function ensureStateFor(backendId: string): Promise<void> {
 
 /** Compose this device as it is NOW (live store, gates, sub-settings, keyring). Every raiser and
  *  every consent re-judge goes through this one call: a re-judge is only sound if it composes
- *  exactly as the raisers do. */
-function composeLive(cats: Record<SyncCategory, boolean>): Promise<SyncBlob> {
+ *  exactly as the raisers do. `passThrough` fills what this device does not sync (OFF
+ *  categories, gated-off fields, the other OS's rules, a degraded backends list): the base by
+ *  default. A compose merged against a remote with NO base (first contact, or a re-created
+ *  document's forgotten one) passes `state.snapshot ?? remote` instead — with nothing to pass
+ *  through, the gates delete those fields, the first-contact merge counts every one the remote
+ *  carries as a local edit, and "Keep mine" pushed them erased (the API keys among them). */
+function composeLive(
+  cats: Record<SyncCategory, boolean>,
+  passThrough: SyncBlob | undefined = state.snapshot,
+): Promise<SyncBlob> {
   const s = useApp.getState();
   return composeBlob(
     { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
     cats,
-    state.snapshot,
+    passThrough,
     { includeSecrets: true, sub: subSettings(), gates: settingGates() },
   );
 }
@@ -2420,7 +2428,7 @@ export async function pullNow(manual = false): Promise<void> {
     // Before the "nothing new" check too: a re-created document can climb back to this base's
     // version number while a prompt from the deleted one still waits above it. The base is then
     // version 0, so this falls through to a first-contact reconcile against the new document.
-    if (serverRecreated(remote.version) && !(await forgetDeadDocument(myGen))) return;
+    if (serverRecreated(remote.version, remote.updated_ts) && !(await forgetDeadDocument(myGen))) return;
     if (!manual && remote.version === state.version) {
       // Nothing new; a local drift (edits while offline) still pushes via the
       // hash check on the next push tick.
@@ -2528,23 +2536,26 @@ export async function pushNow(manual = false): Promise<void> {
         }
         // Same as pullNow: a re-created document drops the dead base, so the merge below is a
         // first-contact one (no snapshot) instead of a 3-way merge against the deleted document.
-        if (serverRecreated(remote.version)) {
+        if (serverRecreated(remote.version, remote.updated_ts)) {
           if (!(await forgetDeadDocument(myGen))) return;
-          // Recompose: the blob above filled its pass-through slots (categories and fields this
-          // device does not sync, the other-OS rules, a degraded backends list WITH its keys)
-          // from the dead snapshot, and a first-contact merge would count them as local edits
-          // and push the deleted document's values back. pullNow's reconcile composes after the
-          // forget the same way. No keyring-refusal re-check: the forget cleared the stash latch
-          // with the snapshot it guarded, and with no snapshot there is nothing to pass through —
-          // a locked keyring now composes the live list without keys, which the first-contact
-          // merge either conflicts against a re-seed that carries keys (the user decides) or
-          // sends where the server holds no list (nothing to erase), as on a first sync.
-          blob = await composeLive(syncCats());
-          if (myGen !== gen) return;
         }
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
+        if (state.snapshot === undefined) {
+          // No base (first contact, or the re-created document's just forgotten): recompose with
+          // the remote as the pass-through. The blob above filled its pass-through slots
+          // (categories and fields this device does not sync, the other-OS rules, a degraded
+          // backends list WITH its keys) from the dead snapshot or from nothing, and a
+          // first-contact merge counts either as local edits — pushing the deleted document's
+          // values back, or erasing the remote's gated-off ones. pullNow's reconcile composes
+          // the same way, and so does every retry here (no base is adopted between attempts).
+          // No keyring-refusal re-check: the forget cleared the stash latch with the snapshot it
+          // guarded, and a locked keyring now passes the REMOTE's backends through (marked
+          // degraded), which the arms below hold out of the apply and withhold as a base.
+          blob = await composeLive(syncCats(), remoteBlob);
+          if (myGen !== gen) return;
+        }
         const { merged, conflicts } = mergeBlobs(state.snapshot, blob, remoteBlob);
         if (conflicts.length > 0) {
           raiseConflict({ categories: conflicts, merged, local: blob, remote: remoteBlob,
@@ -2611,10 +2622,11 @@ export async function pushNow(manual = false): Promise<void> {
  *  supersede happened while the transport call was in flight. */
 async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<void> {
   const cats = syncCats();
-  const local = await composeLive(cats);
-  if (myGen !== gen) return; // superseded — don't apply the old server's blob
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
   const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
+  // With no base, the remote fills what this device does not sync (see `composeLive`).
+  const local = await composeLive(cats, state.snapshot ?? remoteBlob);
+  if (myGen !== gen) return; // superseded — don't apply the old server's blob
   const { merged, conflicts } = mergeBlobs(state.snapshot, local, remoteBlob);
   if (conflicts.length > 0) {
     raiseConflict({ categories: conflicts, merged, local, remote: remoteBlob,
@@ -3094,10 +3106,19 @@ function dropSupersededPending(version: number): void {
 /** The server's document at `version` is not the one this device's base or pending prompts were
  *  built on: server versions only grow, so a version BELOW the base or below a pending prompt's
  *  means the document was deleted and re-created — a peer's "Delete server copy" followed by its
- *  re-seed, seen by a device that missed the empty window. */
-function serverRecreated(version: number): boolean {
+ *  re-seed, seen by a device that missed the empty window. A re-seed can also land EXACTLY on the
+ *  base's number: the server stamps `updated_ts` on every write and every base persists its own
+ *  write's stamp, so the same version with a different stamp is a different document. Missed,
+ *  that took the "nothing new" shortcut and the next push at that base overwrote the re-seed. */
+function serverRecreated(version: number, updatedTs: number | null | undefined): boolean {
+  const base = state.version ?? 0;
   return (
-    version < (state.version ?? 0) ||
+    version < base ||
+    (version > 0 &&
+      version === base &&
+      typeof state.updatedAt === "number" &&
+      typeof updatedTs === "number" &&
+      updatedTs !== state.updatedAt) ||
     (pendingReview !== null && pendingReview.version > version) ||
     (pendingConflict !== null && pendingConflict.remoteVersion > version)
   );
@@ -3113,7 +3134,16 @@ function serverRecreated(version: number): boolean {
 async function forgetDeadDocument(myGen: number): Promise<boolean> {
   await clearSnapshotSecrets();
   if (myGen !== gen) return false;
-  await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
+  // `snapshotSecretIds` too: left set, persistState sees a stash to drop and runs a second
+  // keyring delete (another 10 s timeout under a locked wallet) for the one cleared above.
+  await persistState({
+    version: 0,
+    updatedAt: null,
+    device: null,
+    hash: undefined,
+    snapshot: undefined,
+    snapshotSecretIds: undefined,
+  });
   if (myGen !== gen) return false;
   pendingReview = null;
   pendingConflict = null;
@@ -3212,7 +3242,8 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     st0.backends !== st1.backends ||
     st0.profiles !== st1.profiles ||
     st0.appRules !== st1.appRules;
-  let localNow = await composeLive(r.cats);
+  // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
+  let localNow = await composeLive(r.cats, state.snapshot ?? r.remote);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // `r.blob` was merged against the raise-time local: an edit made here since would be hydrated
   // back to its old value. Re-merge against the live compose (no base was adopted, so a category
@@ -3411,7 +3442,8 @@ async function resolveLocked(
   // as it is NOW, or a "keep mine" lands the peer's repoint with no review row. Same rule as
   // approvePendingReview.
   const syncedCats = syncCats();
-  const localNow = await composeLive(syncedCats);
+  // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
+  const localNow = await composeLive(syncedCats, state.snapshot ?? c.remote);
   if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return "done";
   // `c.merged` was merged against the raise-time local: an edit made here since (to a category
   // only this device changed) would be hydrated back to its old value. Re-merge against the live

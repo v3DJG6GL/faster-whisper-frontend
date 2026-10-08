@@ -516,10 +516,14 @@ export function IncomingAddresses({ list }: { list: unknown }) {
       <div className="font-medium">Dictation would be sent to:</div>
       <ul className="mt-1 space-y-0.5">
         {backends.map((b, i) => {
-          const auth = authorityOf(String(b.serverUrl ?? ""));
-          const warn = insecureUrlWarning(String(b.serverUrl ?? ""));
+          // Type-checked, not `String()`-coerced: these are raw server values, and both
+          // `String({toString: 0})` and a template literal over such an `id` throw in this
+          // render body. A non-string URL falls to the "unreadable address" label below.
+          const url = typeof b.serverUrl === "string" ? b.serverUrl : "";
+          const auth = authorityOf(url);
+          const warn = insecureUrlWarning(url);
           return (
-            <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(String(b.serverUrl ?? ""), 300)}>
+            <li key={`${typeof b.id === "string" ? b.id : ""}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
               {safeText(b.name || b.id, 60)} →{" "}
               {/* The host through the IDENTITY helper, which marks a truncation. The plain display
                   filter cuts at 80 code points with no ellipsis, and `serverUrl` has no length cap
