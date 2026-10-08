@@ -506,8 +506,8 @@ mod imp {
                 // On the timeout arm no Running was stored, so Running::drop can never
                 // reach the thread — a slow setup would otherwise leave it pumping (and
                 // re-arming a global LL hook) for the process lifetime, one zombie per
-                // apply_bindings. Tell it to tear itself down: the 250 ms re-arm timer wakes
-                // it within one tick, or — if SetTimer failed (warned in input_thread) — the
+                // apply_bindings. Tell it to tear itself down: the re-arm timer wakes it within
+                // one tick (≤3 s in steady state), or — if SetTimer failed (warned in input_thread) — the
                 // next raw-input message does, so on a fully idle machine the teardown can be
                 // deferred until someone presses a key.
                 abandoned.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -587,7 +587,7 @@ mod imp {
             // Second feed: the observation LL hook, re-armed on every foreground
             // change so it stays above mstsc's capture hook (see module docs).
             // Both the WinEvent callback and WM_TIMER fire on THIS thread (its
-            // message pump), so the hook handle can live in a thread-local.
+            // message pump), so the hook handle and the timer id can live in thread-locals.
             arm_ll_hook();
             let fg_hook: HWINEVENTHOOK = SetWinEventHook(
                 EVENT_SYSTEM_FOREGROUND,
@@ -598,13 +598,16 @@ mod imp {
                 0,
                 WINEVENT_OUTOFCONTEXT,
             );
-            let timer = SetTimer(std::ptr::null_mut(), 0, TICK_MS, None);
+            // Starts at the slow watchdog period; fg_changed speeds it up for a burst.
+            let timer = SetTimer(std::ptr::null_mut(), 0, WATCHDOG_MS, None);
+            TIMER.with(|t| t.set(timer));
             if timer == 0 {
-                // Without the tick there is no burst and no watchdog: the hook is armed once,
-                // here, and never re-installed — so the first RDP/VM client to install a
-                // capture hook silences this feed permanently. Nothing recovers it short of a
-                // rebind, so it has to be visible in the support log.
-                tracing::warn!("[winhook] no re-arm timer; the keyboard hook will never be re-installed above a capture hook");
+                // Without the tick there is no burst and no watchdog: the hook is re-installed
+                // only at the instant of each foreground change — so a capture hook the
+                // activated RDP/VM client installs after that event, or a silent removal by the
+                // OS, leaves this feed deaf until the next focus change. That has to be visible
+                // in the support log.
+                tracing::warn!("[winhook] no re-arm timer; the keyboard hook is re-armed only on foreground changes (no burst, no watchdog)");
             }
             let _ = ready.send(Some(GetCurrentThreadId()));
             // WM_INPUT arrives here and is routed to wndproc by DispatchMessageW.
@@ -622,6 +625,7 @@ mod imp {
                 }
                 DispatchMessageW(&msg);
             }
+            let timer = TIMER.with(|t| t.replace(0));
             if timer != 0 {
                 KillTimer(std::ptr::null_mut(), timer);
             }
@@ -635,16 +639,17 @@ mod imp {
         }
     }
 
-    /// Re-arm scheduling. The timer ticks every TICK_MS; normally we only re-arm
-    /// every WATCHDOG_TICKS ticks (silent-removal insurance — each re-arm has a
-    /// µs blind gap, so steady-state re-arms are kept rare). A foreground change
-    /// arms immediately AND starts a BURST of per-tick re-arms: the
-    /// EVENT_SYSTEM_FOREGROUND callback can run BEFORE the newly-activated app
-    /// (mstsc) finishes installing its own capture hook, so the immediate re-arm
-    /// alone can lose the newest-hook race — the burst covers the late install.
+    /// Re-arm scheduling. In steady state the timer ticks every WATCHDOG_MS and each
+    /// tick re-arms (silent-removal insurance — each re-arm has a µs blind gap, so
+    /// steady-state re-arms are kept rare, and an idle app wakes no more often than
+    /// that). A foreground change arms immediately AND switches the timer to TICK_MS
+    /// for a BURST of per-tick re-arms: the EVENT_SYSTEM_FOREGROUND callback can run
+    /// BEFORE the newly-activated app (mstsc) finishes installing its own capture
+    /// hook, so the immediate re-arm alone can lose the newest-hook race — the burst
+    /// covers the late install. The last burst tick drops back to WATCHDOG_MS.
     const TICK_MS: u32 = 250;
     const BURST_TICKS: u32 = 6; // per-tick re-arms for 1.5 s after a fg change
-    const WATCHDOG_TICKS: u32 = 12; // steady-state re-arm every 3 s
+    const WATCHDOG_MS: u32 = 3_000; // steady-state re-arm every 3 s
 
     thread_local! {
         /// The LL hook installed by THIS thread (0 = none). Thread-local, not a
@@ -654,41 +659,45 @@ mod imp {
         static LL_HOOK: Cell<isize> = const { Cell::new(0) };
         /// Remaining burst re-arms (set by fg_changed, consumed per tick).
         static BURST: Cell<u32> = const { Cell::new(0) };
-        /// Ticks since the last steady-state re-arm.
-        static TICKS: Cell<u32> = const { Cell::new(0) };
+        /// The re-arm timer's id (0 = SetTimer failed, so there is none to re-period).
+        static TIMER: Cell<usize> = const { Cell::new(0) };
         /// Whether the last install attempt failed — the WARN is logged once per transition
-        /// into that state, not once per 250 ms tick (a persistent failure otherwise wrote
+        /// into that state, not once per re-arm attempt (a persistent failure otherwise wrote
         /// ~1200 lines an hour into the support log).
         static HOOK_FAILED: Cell<bool> = const { Cell::new(false) };
     }
 
-    /// One timer tick: burst re-arm after a recent foreground change, else the
-    /// slow watchdog re-arm.
+    /// One timer tick — a burst re-arm after a recent foreground change, else the
+    /// slow watchdog re-arm; either way it re-arms. The last burst tick puts the
+    /// timer back on the watchdog period.
     fn on_rearm_tick() {
-        let bursting = BURST.with(|b| {
+        arm_ll_hook();
+        let burst_ended = BURST.with(|b| {
             let v = b.get();
             if v > 0 {
                 b.set(v - 1);
             }
-            v > 0
+            v == 1
         });
-        if bursting {
-            arm_ll_hook();
-            return;
+        if burst_ended {
+            set_tick(WATCHDOG_MS);
         }
-        let due = TICKS.with(|t| {
-            let v = t.get() + 1;
-            if v >= WATCHDOG_TICKS {
-                t.set(0);
-                true
-            } else {
-                t.set(v);
-                false
+    }
+
+    /// Re-period the re-arm timer: SetTimer with the SAME id on a null hwnd replaces it
+    /// in place. A no-op when SetTimer failed at start — id 0 would CREATE a second
+    /// timer instead of changing this one's period.
+    fn set_tick(period_ms: u32) {
+        TIMER.with(|t| unsafe {
+            let id = t.get();
+            if id == 0 {
+                return;
+            }
+            let new = SetTimer(std::ptr::null_mut(), id, period_ms, None);
+            if new != 0 {
+                t.set(new);
             }
         });
-        if due {
-            arm_ll_hook();
-        }
     }
 
     /// (Re-)install the observation hook so it is the NEWEST — LL hooks run
@@ -710,10 +719,11 @@ mod imp {
             // us the hook we already have. The old code stored the null and unhooked the
             // working one regardless, which took the feed down for a whole watchdog period on
             // top of whatever caused the failure — the exact blind window this function
-            // exists to close. Keep the incumbent; the next tick tries again.
+            // exists to close. Keep the incumbent; the next scheduled re-arm (a burst tick
+            // or the 3 s watchdog) tries again.
             if hook.is_null() {
                 if !HOOK_FAILED.replace(true) {
-                    tracing::warn!("[winhook] could not re-arm the keyboard hook; keeping the current one (retrying every tick, logged once)");
+                    tracing::warn!("[winhook] could not re-arm the keyboard hook; keeping the current one (retried at the next re-arm: every tick during a focus-change burst, else every 3 s; logged once)");
                 }
                 return;
             }
@@ -751,7 +761,7 @@ mod imp {
     ) {
         arm_ll_hook();
         BURST.with(|b| b.set(BURST_TICKS));
-        TICKS.with(|t| t.set(0));
+        set_tick(TICK_MS);
     }
 
     /// The observation hook: forward key transitions (physical + third-party
