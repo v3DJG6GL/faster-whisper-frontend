@@ -785,6 +785,9 @@ pub async fn run<F>(
     // We own the write half; the reader owns the read half. Once draining is done,
     // drop (= abort) the reader so it can't linger after we return.
     drop(reader);
+    // The drain's one decision point: every clip cut is done, so retire this session's slot and
+    // read the Cancel under its lock (see `session::settle_detached_stream`).
+    let discarded = crate::session::settle_detached_stream(&discard);
 
     if let Some(c) = clips.as_mut().filter(|c| c.cut_any) {
         // Per-utterance clips: the last one's text is complete now, and what is still
@@ -796,7 +799,7 @@ pub async fn run<F>(
                 pcm_duration_ms(saved.len())
             );
         }
-    } else if discard.load(Ordering::SeqCst) {
+    } else if discarded {
         if save_dir.is_some() && !saved.is_empty() {
             tracing::info!(
                 "[stream] cancelled after stop — {} ms recording discarded",
@@ -865,10 +868,15 @@ fn forward_saved<F: Fn(StreamEvent)>(
     on_event: &F,
 ) {
     let mut clip = None;
-    // A Cancel after stop (see `StreamParams::discard`): cut no further clip.
-    if let Some(dir) = save_dir.filter(|_| !discard.load(Ordering::SeqCst)) {
+    if let Some(dir) = save_dir {
         if let Some(c) = clips {
-            clip = c.observe(&e, saved, current, dir);
+            // A Cancel after stop (see `StreamParams::discard`) cuts no further clip, but the
+            // transcript still folds in, so the clip already kept gets its complete `.txt`.
+            if discard.load(Ordering::SeqCst) {
+                c.observe_discarded(&e, current);
+            } else {
+                clip = c.observe(&e, saved, current, dir);
+            }
         }
         accumulate_transcript(&e, docs, current);
     }
@@ -994,6 +1002,22 @@ impl ClipCutter {
             _ => {}
         }
         None
+    }
+
+    /// [`Self::observe`] for a drain a Cancel after stop discarded: no clip is cut, but the kept
+    /// clip's text still ends where `observe` would have ended it — at the next utterance's
+    /// ordinal `final` or a hard break — so a later utterance's words never land in its `.txt`.
+    fn observe_discarded(&mut self, e: &StreamEvent, doc: &str) {
+        if matches!(
+            e,
+            StreamEvent::Final {
+                utterance: Some(_),
+                last: false,
+                ..
+            } | StreamEvent::Boundary { .. }
+        ) {
+            self.flush_txt(doc);
+        }
     }
 
     /// The decode mark of utterance `n`, retiring it and any older ones.
@@ -1407,33 +1431,69 @@ mod clip_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// A Cancel after stop: the draining session cuts no further clip (the batch path's discard).
+    /// A Cancel after stop: the draining session cuts no further clip (the batch path's discard),
+    /// but the clip already kept still gets its complete `.txt` — the release final's words, and
+    /// none of a later utterance's.
     #[test]
     fn a_discarded_drain_cuts_no_clip() {
         let dir = std::env::temp_dir().join(format!("fwf-discard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let saw_clip = RefCell::new(false);
+        let clips_seen = RefCell::new(Vec::new());
         let on_event = |e: StreamEvent| {
-            if matches!(e, StreamEvent::RecordingSaved { .. }) {
-                *saw_clip.borrow_mut() = true;
+            if let StreamEvent::RecordingSaved { path, .. } = e {
+                clips_seen.borrow_mut().push(path);
             }
         };
         let mut saved = vec![0u8; 64_000];
         let mut clips = Some(ClipCutter::new());
         let (mut docs, mut cur) = (Vec::new(), String::new());
-        let discard = AtomicBool::new(true);
-        forward_saved(
-            fin(" Hallo Welt", Some(1)),
-            Some(&dir),
-            &discard,
+        let discard = AtomicBool::new(false);
+        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
+            forward_saved(
+                e,
+                Some(&dir),
+                &discard,
+                saved,
+                clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
+        };
+        // Utterance 1 is cut and kept before the Cancel.
+        feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
+        assert_eq!(clips_seen.borrow().len(), 1);
+        discard.store(true, std::sync::atomic::Ordering::SeqCst);
+        saved.extend(vec![0u8; 32_000]);
+        // The drain's release final still belongs to utterance 1…
+        feed(fin(" Hallo Welt Komma", None), &mut saved, &mut clips);
+        // …and utterance 2's final ends that text but cuts no clip of its own.
+        feed(
+            fin(" Hallo Welt Komma und weiter", Some(2)),
             &mut saved,
             &mut clips,
-            &mut docs,
-            &mut cur,
-            &on_event,
         );
-        assert!(!*saw_clip.borrow());
-        assert!(!dir.exists());
+        clips.as_mut().unwrap().flush_txt(&cur);
+        assert_eq!(
+            cur, " Hallo Welt Komma und weiter",
+            "the transcript still folds in"
+        );
+        let seen = clips_seen.into_inner();
+        assert_eq!(seen.len(), 1, "no clip after the Cancel");
+        let wav = std::path::Path::new(&seen[0]);
+        assert_eq!(
+            std::fs::read_to_string(wav.with_extension("txt")).unwrap(),
+            "Hallo Welt Komma\n"
+        );
+        let wavs = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter(|f| {
+                f.as_ref()
+                    .is_ok_and(|f| f.path().extension().is_some_and(|x| x == "wav"))
+            })
+            .count();
+        assert_eq!(wavs, 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A gate-dropped utterance (no decode mark) takes its buffered burst with it instead of

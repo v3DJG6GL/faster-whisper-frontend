@@ -949,8 +949,8 @@ let beganInjection = false;
 let phraseDirty = false;
 // Whether the LAST delivered live phrase was diverted to the clipboard (focus moved, chord held).
 // Read IN the queue by every Enter producer: they arm off `phraseDirty` synchronously, before the
-// phrase task that diverts has run, so its `phraseDirty = false` comes too late to stop them —
-// the queued Enter would then submit the partial message or press Return in the new window.
+// phrase task that diverts has run, so only this in-queue flag can stop them — the queued Enter
+// would otherwise submit the partial message or press Return in the new window.
 let lastPhraseDiverted = false;
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
@@ -2310,9 +2310,11 @@ async function ensureListeners(): Promise<void> {
               clipHoldsOurs = true;
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
               // dictation (this phrase sits on the clipboard), and Enter would submit that part —
-              // or, when focus moved, press Return in whatever window took it. `grew` armed it
-              // before this queued insert ran — so also flag it for the Enter tasks queued behind us.
-              phraseDirty = false;
+              // or, when focus moved, press Return in whatever window took it. Every Enter producer
+              // is queued behind us and stands down on `lastPhraseDiverted`. `phraseDirty` is
+              // deliberately NOT cleared here: a later phrase's final may already have re-armed it
+              // synchronously while this task awaited, and clearing it would rob that typed phrase
+              // of its own Enter.
               lastPhraseDiverted = true;
             } else if (t.method === "paste" && delivered) {
               // The latest paste owns the clipboard, so ITS window's rule decides the restore —
@@ -2694,8 +2696,9 @@ async function ensureListeners(): Promise<void> {
       // From here the hasTail branch moves to "injecting" while the transcript is written out.
       resetServerWork();
       setDictation({ level: 0, warming: false, serverWork: null, status: "transcribing" });
-      // (The saved recording's transcript .txt sidecar is written in Rust, in the streaming drain —
-      // ungated, so a cancelled/superseded session still gets it, matching the batch path.)
+      // (The saved recording and its transcript .txt sidecar are written in Rust, in the streaming
+      // drain — a superseded or errored session still gets them; a user's Cancel after stop
+      // discards both, matching the batch path; a recovery cancel (keepRecording) keeps them.)
       // Release a session that reached `closed` WITHOUT a user stop (capture-thread death / a
       // server-initiated close): stopLive's finish() already removed the session from Rust state, so
       // this is a no-op on a normal stop — but on a never-stopped session it drops the parked session
@@ -3666,8 +3669,9 @@ export interface CancelOpts {
   /** Skip the shortcut re-registration — for the chord-family restart, which cancels while
    *  the user is still holding the chord (re-enumerating keyboards then would lose its keys). */
   keepShortcuts?: boolean;
-  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: a stream session still
-   *  draining after stop keeps its saved recording — it may be the only copy of what was said. */
+  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: a session still
+   *  draining (stream) or transcribing (batch) after stop keeps its saved recording — it may be
+   *  the only copy of what was said. */
   keepRecording?: boolean;
 }
 
@@ -3905,7 +3909,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
     // `true`: the user pressed Cancel, so Rust also aborts a transcript that is being typed
     // right now — in stop-timing mode the session is already gone by then, and the flag is
     // the only thing that distinguishes this from the closed-handler's release below.
-    if (endpoint === "batch") await cancelRecord(true);
+    if (endpoint === "batch") await cancelRecord(true, !opts?.keepRecording);
     else await cancelStream(true, !opts?.keepRecording);
   } catch (e) {
     console.error("cancelLive: cancel failed:", e);

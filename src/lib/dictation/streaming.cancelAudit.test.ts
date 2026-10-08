@@ -133,7 +133,8 @@ describe("dictation teardowns cancel the in-flight translate", () => {
     // after the session is gone (stop-timing); the closed handler's idempotent release must
     // NOT, or the end-of-session insert queued moments later would be aborted.
     const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
-    expect(cancelLive).toContain("cancelRecord(true)");
+    // A recovery cancel (keepRecording) keeps a detached batch's .wav/.txt, as it does a stream's.
+    expect(cancelLive).toContain("cancelRecord(true, !opts?.keepRecording)");
     expect(cancelLive).toContain("cancelStream(true, !opts?.keepRecording)");
     const closedRelease = streamingSrc.match(/\(activeEndpoint === "batch" \? cancelRecord\(([^)]*)\) : cancelStream\(([^)]*)\)\)/);
     expect(closedRelease, "the closed-handler release moved — update streaming.cancelAudit.test.ts").not.toBeNull();
@@ -271,7 +272,9 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
 
   it("a diverted live phrase disarms the per-phrase and tail Enter", () => {
     const diverted = mask(bodyAfter(finalBody, "if (delivered && diverted) "));
-    expect(/\bphraseDirty = false;/.test(diverted)).toBe(true);
+    // NOT cleared here: a later phrase's final arms `phraseDirty` synchronously while this queued
+    // task awaits, and an in-queue clear would wipe that typed phrase's own Enter.
+    expect(/\bphraseDirty = false;/.test(diverted)).toBe(false);
     // The Enter producers arm off `phraseDirty` synchronously — before this queued task runs —
     // so the queued Enter tasks themselves must see the divert, or Return submits the partial
     // message / lands in the window that took focus.

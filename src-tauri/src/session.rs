@@ -107,14 +107,47 @@ fn batch_cancelled(epoch: u64) -> bool {
 /// the UI showed a clean cancel (the batch path discards there since 1be5966). One slot is
 /// enough: a cancel that finds a live session is aimed at that one and never reaches this, so
 /// only the newest detached drain can be the one the user means.
+///
+/// The drain retires its own entry at its one decision point ([`settle_detached_stream`]), so a
+/// Cancel after the recording was already written finds the slot empty instead of logging a
+/// discard that never happens. Every access holds the lock across the flag's store/load, which
+/// totally orders a Cancel against that decision.
 static DETACHED_STREAM: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 
 /// Discard the recording of the stream session still draining after a stop, if any. Called by
-/// `cancel_stream` only for a user's Cancel that found no live session.
+/// `cancel_stream` only for a user's Cancel that found no live session. The guard is held across
+/// the store so the drain's [`settle_detached_stream`] sees either the flag set or an empty slot.
 pub fn cancel_detached_stream() {
-    if let Some(flag) = DETACHED_STREAM.lock().ok().and_then(|mut s| s.take()) {
-        flag.store(true, Ordering::SeqCst);
-        tracing::info!("[stream] cancel after stop: the draining session's recording is discarded");
+    if let Ok(mut s) = DETACHED_STREAM.lock() {
+        if let Some(flag) = s.take() {
+            flag.store(true, Ordering::SeqCst);
+            tracing::info!(
+                "[stream] cancel after stop: the draining session will save no recording"
+            );
+        }
+    }
+}
+
+/// Release the detached drain WITHOUT discarding it — a recovery cancel's keep is final, so no
+/// later stray Cancel (the next session's start window, its end-of-session insert) reaches it.
+pub fn forget_detached_stream() {
+    if let Ok(mut s) = DETACHED_STREAM.lock() {
+        s.take();
+    }
+}
+
+/// The drain's single decision point: retire its own slot entry (by `Arc` identity, so a newer
+/// session's claim is never wiped) and return whether a Cancel discarded it — read under the
+/// lock, so a Cancel either landed before this (discard) or finds the slot empty (no-op).
+pub fn settle_detached_stream(flag: &Arc<AtomicBool>) -> bool {
+    match DETACHED_STREAM.lock() {
+        Ok(mut s) => {
+            if s.as_ref().is_some_and(|f| Arc::ptr_eq(f, flag)) {
+                *s = None;
+            }
+            flag.load(Ordering::SeqCst)
+        }
+        Err(_) => flag.load(Ordering::SeqCst),
     }
 }
 
@@ -1711,24 +1744,74 @@ Sink Input #12\n\
 
     #[test]
     fn a_cancel_after_stop_discards_only_the_newest_detached_stream() {
-        use super::{cancel_detached_stream, DETACHED_STREAM};
+        // Everything touching the DETACHED_STREAM static stays in this ONE fn: tests run in
+        // parallel, and a second fn would race the global.
+        use super::{
+            cancel_detached_stream, forget_detached_stream, settle_detached_stream, DETACHED_STREAM,
+        };
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
         let claim = |f: &Arc<AtomicBool>| *DETACHED_STREAM.lock().unwrap() = Some(f.clone());
-        let (a, b) = (
-            Arc::new(AtomicBool::new(false)),
-            Arc::new(AtomicBool::new(false)),
-        );
+        let flag = || Arc::new(AtomicBool::new(false));
+        let (a, b) = (flag(), flag());
         claim(&a);
         claim(&b);
         cancel_detached_stream();
         assert!(b.load(Ordering::SeqCst), "the newest drain is discarded");
         assert!(!a.load(Ordering::SeqCst), "an earlier drain is left alone");
         // The slot is consumed: a second Cancel with nothing detached does nothing.
-        let c = Arc::new(AtomicBool::new(false));
+        assert!(DETACHED_STREAM.lock().unwrap().is_none());
+        b.store(false, Ordering::SeqCst);
         cancel_detached_stream();
+        assert!(
+            !b.load(Ordering::SeqCst),
+            "a consumed slot discards nothing again"
+        );
+
+        // The drain settles its own entry: a Cancel after that decision is a no-op.
+        let d = flag();
+        claim(&d);
+        assert!(
+            !settle_detached_stream(&d),
+            "no Cancel came: the drain keeps its recording"
+        );
+        assert!(
+            DETACHED_STREAM.lock().unwrap().is_none(),
+            "the drain retired its slot"
+        );
+        cancel_detached_stream();
+        assert!(
+            !d.load(Ordering::SeqCst),
+            "a Cancel after the drain decided reaches nothing"
+        );
+
+        // A Cancel before the decision is the one the drain reads.
+        claim(&d);
+        cancel_detached_stream();
+        assert!(
+            settle_detached_stream(&d),
+            "a Cancel before the decision discards"
+        );
+
+        // An older drain settling never wipes a newer session's claim.
+        let e = flag();
+        claim(&e);
+        settle_detached_stream(&a);
+        assert!(DETACHED_STREAM
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|f| Arc::ptr_eq(f, &e)));
+
+        // A recovery cancel's keep is final: a later stray Cancel cannot reach that drain.
+        let c = flag();
         claim(&c);
-        assert!(!c.load(Ordering::SeqCst));
+        forget_detached_stream();
+        cancel_detached_stream();
+        assert!(
+            !c.load(Ordering::SeqCst),
+            "a forgotten drain is never discarded"
+        );
         *DETACHED_STREAM.lock().unwrap() = None;
     }
 

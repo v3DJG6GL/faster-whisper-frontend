@@ -963,10 +963,12 @@ export async function stopRecord(): Promise<void> {
 
 /** Hard-abort the record session WITHOUT transcribing (no wasted server POST; releases the system
  *  mute). Used by cancelLive (`userInitiated: true`), and as the closed-handler's idempotent
- *  release of a parked session (`false`) — see `cancelStream` for what the flag decides. */
-export async function cancelRecord(userInitiated = false): Promise<void> {
+ *  release of a parked session (`false`) — see `cancelStream` for what the flag decides.
+ *  `discardRecording`: a cancel during "transcribing…" disowns the detached transcription and
+ *  its saved .wav/.txt; a recovery cancel passes false to keep them. */
+export async function cancelRecord(userInitiated = false, discardRecording = true): Promise<void> {
   if (!isTauri) return;
-  await invoke("cancel_record", { userInitiated });
+  await invoke("cancel_record", { userInitiated, discardRecording });
 }
 
 /** Retire the active session epoch WITHOUT draining/aborting — the error/fatal-inject teardown keeps

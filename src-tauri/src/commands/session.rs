@@ -129,9 +129,14 @@ pub async fn cancel_stream(
             // No live session: the user's Cancel is aimed at the one still draining after a stop —
             // discard its recording, as cancel_record does for a detached batch. Not for the
             // closed-handler release, nor for a recovery cancel (stuck finalize, wake from sleep)
-            // where the saved audio may be the only copy of what was said.
-            if sess.is_none() && user_initiated && discard_recording {
-                session::cancel_detached_stream();
+            // where the saved audio may be the only copy of what was said: that one RELEASES the
+            // drain instead, so its keep is final and no later stray Cancel can still reach it.
+            if sess.is_none() && user_initiated {
+                if discard_recording {
+                    session::cancel_detached_stream();
+                } else {
+                    session::forget_detached_stream();
+                }
             }
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
             // this prevents a race where a new session claims epoch N+1, the lock drops, and THEN
@@ -251,8 +256,14 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 /// transcribing, releases the system-mute guard). Unlike `stop_record`, it does NOT spawn the
 /// transcribe POST — a cancel should discard the clip, not fire a wasted server transcription. Also
 /// the idempotent teardown the `closed` handler calls to release a parked session on capture death.
+/// `discard_recording: false` (a recovery cancel: wake from sleep) leaves a transcription already
+/// detached by a stop alone, so its saved `.wav` and `.txt` survive — the stream path's rule.
 #[tauri::command]
-pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), String> {
+pub async fn cancel_record(
+    app: AppHandle,
+    user_initiated: bool,
+    discard_recording: bool,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<RecordState>();
         // The take AND the no-live-session decision happen under ONE lock. Reading the state and
@@ -267,14 +278,16 @@ pub async fn cancel_record(app: AppHandle, user_initiated: bool) -> Result<(), S
         //
         // Only when there was no live session: a cancel that DID find one is aimed at that
         // session, and disowning here would instead kill a legitimate earlier transcription that
-        // is still in flight (stop A → start B → cancel B would have discarded A's result).
+        // is still in flight (stop A → start B → cancel B would have discarded A's result). Nor
+        // for a recovery cancel (`discard_recording: false`), where the saved audio may be the
+        // only copy of what was said.
         let sess = {
             let mut guard = state
                 .0
                 .lock()
                 .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
-            if sess.is_none() {
+            if sess.is_none() && discard_recording {
                 session::cancel_detached_batch();
             }
             session::retire_active_epoch();
