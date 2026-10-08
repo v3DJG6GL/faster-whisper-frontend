@@ -552,6 +552,12 @@ describe("selectPath keeps a same-path open record", () => {
     openHistoryRecord(recOf("rec-5", "/c.mp3"));
     expect(useTranscribeRun.getState().lastOverrides).toEqual({});
   });
+
+  it("opening a record without options drops an earlier run's options (its retry must not inherit them)", () => {
+    useTranscribeRun.setState({ lastOptions: { diarize: true } });
+    openHistoryRecord(recOf("rec-6", "/d.mp3"));
+    expect(useTranscribeRun.getState().lastOptions).toBeUndefined();
+  });
 });
 
 describe("mergeSegmentTranslations kept-original marks", () => {
@@ -727,11 +733,33 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     // A full backend keeps it — unless its translation is switched off.
     expect(reconcileRetryOptions(opts, false)).toEqual({ ...opts, standard: undefined });
     expect(reconcileRetryOptions(opts, false, false)).toEqual({ diarize: true, standard: undefined });
+    // Caps not loaded yet (unknown): a full backend keeps the slice, as before caps gated it.
+    expect(reconcileRetryOptions(opts, false, undefined)).toEqual({ ...opts, standard: undefined });
+  });
+
+  it("a retry onto a translating server sends a missing slice as an explicit empty list", () => {
+    // Absent translate_to would inherit the server's override-profile TRANSLATE_TO.
+    expect(reconcileRetryOptions({ diarize: true }, false, true))
+      .toEqual({ diarize: true, standard: undefined, translateTo: [] });
+    expect(reconcileRetryOptions(undefined, false, true)).toEqual({ translateTo: [] });
+    // Unknown caps fill nothing in (a fresh run sends no slice then either).
+    expect(reconcileRetryOptions({ diarize: true }, false)).toEqual({ diarize: true, standard: undefined });
   });
 
   it("no last options: a standard server still gets its flag", () => {
     expect(reconcileRetryOptions(undefined, true)).toEqual({ standard: true });
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
+  });
+
+  it("a text source retried on a full server with translation off names the server, not a hidden switch", async () => {
+    useTranscribeRun.setState({
+      queue: [{ path: "/s.srt", status: "failed", kind: "text" }] as QueueItem[],
+      lastOptions: { translateTo: ["de"] },
+      running: false,
+    });
+    retryFile("/s.srt", { serverUrl: "http://x", backendId: "b", standard: false, translationAvailable: false } as never);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().queue[0].status).toBe("failed"));
+    expect(useTranscribeRun.getState().queue[0].error).toBe("Text files need a full backend with translation enabled.");
   });
 });
 

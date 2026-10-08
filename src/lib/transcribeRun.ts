@@ -500,8 +500,8 @@ export interface RunContext {
    *  does a URL item's keep-video choice go on the wire. */
   urlVideoEnabled?: boolean;
   /** The server runs a translating stage (caps.translation_enabled on a full backend): a retry
-   *  that lands on one without it drops the last run's translation settings. Unset = only a
-   *  standard server lacks it. */
+   *  that lands on one without it drops the last run's translation settings. Unset = unknown
+   *  (caps not loaded): only a standard server is assumed to lack it. */
   translationAvailable?: boolean;
   /** The server packages subtitles (caps.media_package_enabled): a local
    *  VIDEO file then asks the server to retain the upload for a while, so
@@ -1143,9 +1143,10 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     progress: null,
     stageTimes: {},
     stageMeta: {},
-    lastOptions: rec.options ?? s.lastOptions,
-    // The record stores no decode overrides: an earlier run's set must not ride along
-    // into a retry (or the rail's VAD line).
+    // The record stores its options verbatim (undefined = a run with no stage options) but
+    // no decode overrides: an earlier run's set of either must not ride along into a retry
+    // (or the rail's stages and VAD line).
+    lastOptions: rec.options,
     lastOverrides: {},
     // Overlay slots keyed by record ID — the path can't do it, two records
     // of the same URL share theirs (edits used to bleed between them).
@@ -1917,7 +1918,8 @@ async function pump(
       // A text source runs the translation stage ONLY — it needs targets and
       // a full backend with the T2T endpoint.
       if (isText && (ctx.standard || !options?.translateTo?.length)) {
-        const error = ctx.standard
+        // A full server with translation off has no Translation section to turn on.
+        const error = ctx.standard || ctx.translationAvailable === false
           ? "Text files need a full backend with translation enabled."
           : "Text files need at least one translation target — turn on Translation.";
         failFile(next.path, error);
@@ -2208,25 +2210,29 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  server without a translating stage (any standard one, or a full one with translation off)
  *  no T2T slice at all — `translateTo` undefined is "no translating stage" (as
  *  `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
- *  frozen targets. */
+ *  frozen targets. On a server known to translate, a missing slice goes out as an explicit
+ *  empty list, as `translationRunOptions` sends it: an absent `translate_to` would inherit
+ *  the server's override-profile TRANSLATE_TO. `translationAvailable` unset = unknown (caps
+ *  not loaded): only a standard server is assumed to lack it, and nothing is filled in. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
-  translationAvailable: boolean = !standard,
+  translationAvailable?: boolean,
 ): TranscribeOptions | undefined {
-  if (!opts) return standard ? { standard: true } : undefined;
+  const fillNone = !standard && translationAvailable === true;
+  if (!opts) return standard ? { standard: true } : fillNone ? { translateTo: [] } : undefined;
   const out: TranscribeOptions = {
     ...opts,
     standard: standard || undefined,
     ...(opts.task === "translate" ? { useTranslationsEndpoint: standard } : {}),
   };
-  if (standard || !translationAvailable) {
+  if (standard || !(translationAvailable ?? !standard)) {
     delete out.translateTo;
     delete out.translationMode;
     delete out.translationModel;
     delete out.translationGlossary;
     delete out.translationContextSegments;
-  }
+  } else if (fillNone && out.translateTo === undefined) out.translateTo = [];
   return out;
 }
 
