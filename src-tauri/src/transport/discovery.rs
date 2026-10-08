@@ -305,9 +305,9 @@ fn bound_codes(v: Vec<String>, max: usize) -> Vec<String> {
         .collect()
 }
 
-/// The packaging detail block carries two server strings rendered as UI
-/// labels (the off-reason and the ffmpeg version) and a container list the
-/// export panel matches by name — bound all three, clamp the counts.
+/// The packaging detail block carries one server string rendered as a UI
+/// label (the off-reason) and a container list the export panel matches by
+/// name — bound both, clamp the counts.
 fn bound_media_package(m: super::MediaPackageCaps) -> super::MediaPackageCaps {
     super::MediaPackageCaps {
         containers: m
@@ -317,10 +317,8 @@ fn bound_media_package(m: super::MediaPackageCaps) -> super::MediaPackageCaps {
             .take(2)
             .collect(),
         max_tracks: m.max_tracks.min(64),
-        max_srt_bytes: m.max_srt_bytes,
         max_upload_bytes: m.max_upload_bytes,
         reason: m.reason.map(|r| super::bounded_server_text(&r, 200)),
-        ffmpeg_version: m.ffmpeg_version.map(|v| super::bounded_server_text(&v, 32)),
     }
 }
 
@@ -834,7 +832,9 @@ mod tests {
     }
 
     /// The typed mirror drops what it does not name: the video/packaging
-    /// keys the frontend gates its UI on must survive the round trip.
+    /// keys the frontend gates its UI on must survive the round trip, and
+    /// the keys no screen reads (height ceiling, SRT cap, ffmpeg version)
+    /// parse without error but never reach the webview.
     #[test]
     fn capabilities_keep_the_video_and_packaging_keys() {
         let raw = serde_json::json!({
@@ -858,13 +858,11 @@ mod tests {
         assert_eq!(caps.url_video_enabled, Some(true));
         assert_eq!(caps.url_subtitles_enabled, Some(true));
         assert_eq!(caps.url_language_check_enabled, Some(false));
-        assert_eq!(caps.url_video_default_max_height, None);
         assert_eq!(caps.media_max_bytes, Some(10_000_000_000));
         assert_eq!(caps.media_package_enabled, Some(true));
         let pk = super::bound_media_package(caps.media_package.unwrap());
         assert_eq!(pk.containers, vec!["mkv", "mp4"]);
         assert_eq!(pk.max_tracks, 12);
-        assert_eq!(pk.ffmpeg_version.as_deref(), Some("7.0.2"));
         let out = serde_json::to_value(super::super::Capabilities {
             media_package: Some(pk),
             ..serde_json::from_value(serde_json::json!({})).unwrap()
@@ -874,6 +872,9 @@ mod tests {
             out["media_package"]["containers"],
             serde_json::json!(["mkv", "mp4"])
         );
+        assert!(out["media_package"].get("ffmpeg_version").is_none());
+        assert!(out["media_package"].get("max_srt_bytes").is_none());
+        assert!(out["media_package"].get("reason").is_none());
     }
 
     /// The typed mirror drops what it does not name: every `server_info` leaf must survive the

@@ -223,8 +223,8 @@ pub async fn save_pipeline_rules(
                 let parsed: Option<serde_json::Value> = serde_json::from_str(&body).ok();
                 let errors = parsed.as_ref().and_then(|v| v.get("errors").cloned());
                 // Bounded and control-folded like every other server-supplied string: the fallback
-                // arm is the whole response body (32 MiB), and this one is both rendered in a
-                // wrapping paragraph and written to the log.
+                // arm is the whole response body (up to MAX_ERROR_BODY, 256 KiB), and this one is
+                // both rendered in a wrapping paragraph and written to the log.
                 let detail = crate::transport::bounded_server_text(
                     &parsed
                         .as_ref()

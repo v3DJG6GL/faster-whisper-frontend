@@ -93,9 +93,6 @@ pub struct Capabilities {
     /// so every additive key the frontend reads must be listed here.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_video_enabled: Option<bool>,
-    /// Server-side height ceiling for kept videos; `null` = best available.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub url_video_default_max_height: Option<u32>,
     /// Whether a link's own subtitle tracks can be listed and fetched
     /// (POST /v1/audio/url-subtitles), and whether the spoken-language check
     /// runs (POST /v1/audio/url-language). Same `Some(true)`-only contract.
@@ -234,13 +231,9 @@ pub struct MediaPackageCaps {
     #[serde(default)]
     pub max_tracks: u32,
     #[serde(default)]
-    pub max_srt_bytes: u64,
-    #[serde(default)]
     pub max_upload_bytes: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ffmpeg_version: Option<String>,
 }
 
 /// One inherited decode value from `GET /v1/request-default-settings`: what the server uses when the

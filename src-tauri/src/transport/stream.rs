@@ -792,7 +792,9 @@ pub async fn run<F>(
         if !saved.is_empty() {
             if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
                 // Label the .wav with the session transcript IN RUST (ungated), so a cancelled/
-                // superseded recording still gets its sibling .txt — matching the batch path.
+                // superseded recording still gets its sibling .txt. Unlike the batch path, a
+                // Cancel after stop keeps the recording: the drain is detached and most of the
+                // transcript was already typed live.
                 // The last document goes through bank_doc, under the Boundary arm's budget.
                 bank_doc(&mut transcript_docs, &transcript_cur);
                 let transcript = transcript_docs.join("\n");

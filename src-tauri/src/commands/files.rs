@@ -462,16 +462,21 @@ fn decode_text_source(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
         Ok(s) => s.to_owned(),
         Err(_) => {
-            let lossy = String::from_utf8_lossy(bytes);
-            // Real multi-byte UTF-8 survived around the bad bytes: this is a UTF-8 file with a
-            // stray invalid byte, which must not block (or mojibake) the whole file.
-            if lossy
-                .chars()
-                .any(|c| !c.is_ascii() && c != char::REPLACEMENT_CHARACTER)
-            {
-                return lossy.into_owned();
+            // Valid multi-byte UTF-8 outnumbers the bad runs: a UTF-8 file with a stray invalid
+            // byte, which must not block (or mojibake) the whole file. A plain "any valid
+            // multi-byte char" test is not enough: Windows-1252 pairs like "ß…" (DF 85) happen
+            // to be valid UTF-8, and one of them flipped a whole German file to U+FFFD umlauts.
+            let (mut good, mut bad) = (0usize, 0usize);
+            for chunk in bytes.utf8_chunks() {
+                good += chunk.valid().chars().filter(|c| !c.is_ascii()).count();
+                if !chunk.invalid().is_empty() {
+                    bad += 1;
+                }
             }
-            // No valid multi-byte sequence anywhere: a single-byte (Windows-1252) file.
+            if good > bad {
+                return String::from_utf8_lossy(bytes).into_owned();
+            }
+            // Mostly undecodable high bytes: a single-byte (Windows-1252) file.
             bytes
                 .iter()
                 .map(|&b| match b {
@@ -565,9 +570,15 @@ mod tests {
 
         assert_eq!(decode_text_source(b"M\xe4dchen \x80"), "Mädchen €");
 
-        let mut stray = "ä ".as_bytes().to_vec();
+        let mut stray = "äöü ".as_bytes().to_vec();
         stray.push(0xFF);
-        assert_eq!(decode_text_source(&stray), "ä \u{FFFD}");
+        assert_eq!(decode_text_source(&stray), "äöü \u{FFFD}");
+
+        // "ß…" in Windows-1252 (DF 85) is also a valid UTF-8 pair; it must not outvote the rest.
+        assert_eq!(
+            decode_text_source(b"Ich wei\xdf\x85 nicht, M\xe4dchen \xfcber \xf6l"),
+            "Ich weiß… nicht, Mädchen über öl"
+        );
 
         let mut bom = vec![0xEF, 0xBB, 0xBF];
         bom.extend_from_slice("ä".as_bytes());

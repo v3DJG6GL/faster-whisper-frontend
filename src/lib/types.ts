@@ -650,8 +650,6 @@ export interface Capabilities {
   /** Whether a link's VIDEO can be kept/fetched. ABSENT means the feature
    *  does not exist — the switch shows only on `=== true`. */
   url_video_enabled?: boolean;
-  /** Server-side height ceiling for kept videos; null = best available. */
-  url_video_default_max_height?: number | null;
   /** Whether a link's own subtitle tracks can be fetched, and whether the
    *  spoken-language check runs. ABSENT = the feature does not exist. */
   url_subtitles_enabled?: boolean;
@@ -665,10 +663,8 @@ export interface Capabilities {
   media_package?: {
     containers: ("mkv" | "mp4")[];
     max_tracks: number;
-    max_srt_bytes: number;
     max_upload_bytes: number;
-    reason: string | null;
-    ffmpeg_version: string | null;
+    reason?: string;
   };
   /** Whether the server keeps a durable job resource (`GET /v1/jobs*`)
    *  the app can re-attach to after losing its connection. ABSENT = the
