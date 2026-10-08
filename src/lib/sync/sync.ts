@@ -2401,23 +2401,14 @@ export async function pullNow(manual = false): Promise<void> {
       // Nothing stored server-side: first-ever contact, or the server copy was deleted (a
       // peer's "Delete server copy", or a wipe) — seed it.
       if ((state.version ?? 0) > 0 || state.snapshot !== undefined) {
-        // The old base is meaningless against an empty document: keeping it makes the next
-        // push skip on the hash match (server stays empty, status reads synced) and a later
-        // PUT carry a stale baseVersion whose 409 merges against a null remote. Re-seed from
-        // version 0, as resetSyncState does for the deleting device.
-        await clearSnapshotSecrets();
-        if (myGen !== gen) return;
-        await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
-        if (myGen !== gen) return;
-        setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
+        if (!(await forgetDeadDocument(myGen))) return;
+      } else {
+        // No base to forget, but any review / conflict / parked apply still describes a server
+        // document that no longer exists.
+        pendingReview = null;
+        pendingConflict = null;
+        pendingApply = null;
       }
-      // Any review / conflict / parked apply describes a server document that no longer exists.
-      // Left up, it sat beside "Synced" and survived the re-seed: numbering restarts at 1, so
-      // dropSupersededPending never drops a v5 prompt and its moot check never fires — approving
-      // it re-landed the deleted doc's change and recorded the dead version as the base.
-      pendingReview = null;
-      pendingConflict = null;
-      pendingApply = null;
       setRuntime({ syncStatus: "ok" });
       schedulePush(0);
       return;
@@ -2427,8 +2418,9 @@ export async function pullNow(manual = false): Promise<void> {
       return;
     }
     // Before the "nothing new" check too: a re-created document can climb back to this base's
-    // version number while a prompt from the deleted one still waits above it.
-    dropRecreatedPending(remote.version);
+    // version number while a prompt from the deleted one still waits above it. The base is then
+    // version 0, so this falls through to a first-contact reconcile against the new document.
+    if (serverRecreated(remote.version) && !(await forgetDeadDocument(myGen))) return;
     if (!manual && remote.version === state.version) {
       // Nothing new; a local drift (edits while offline) still pushes via the
       // hash check on the next push tick.
@@ -2529,20 +2521,14 @@ export async function pushNow(manual = false): Promise<void> {
           // wipe): the 409 body is the zero-state. Merging `{}` against the stale snapshot drops
           // every unchanged category and conflicts the changed ones — re-seed from version 0
           // instead, as pullNow's null-blob arm does, and let the follow-up push send it all.
-          await clearSnapshotSecrets();
-          if (myGen !== gen) return;
-          await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
-          if (myGen !== gen) return;
-          // Same as pullNow's null-blob arm: every pending prompt is for the deleted document.
-          pendingReview = null;
-          pendingConflict = null;
-          pendingApply = null;
-          setRuntime({ syncStatus: "ok", lastSyncedAt: null, lastSyncDevice: null });
+          if (!(await forgetDeadDocument(myGen))) return;
+          setRuntime({ syncStatus: "ok" });
           schedulePush(0);
           return;
         }
-        // Same as pullNow: a prompt above the server's version is for a deleted document.
-        dropRecreatedPending(remote.version);
+        // Same as pullNow: a re-created document drops the dead base, so the merge below is a
+        // first-contact one (no snapshot) instead of a 3-way merge against the deleted document.
+        if (serverRecreated(remote.version) && !(await forgetDeadDocument(myGen))) return;
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
@@ -3092,20 +3078,35 @@ function dropSupersededPending(version: number): void {
   if (pendingConflict && pendingConflict.remoteVersion <= version) pendingConflict = null;
 }
 
-/** The server's document is at `version`, BELOW a pending prompt's: server versions only grow,
- *  so the document the prompt describes was deleted and re-created — a peer's "Delete server
- *  copy" followed by its re-seed, seen by a device that missed the empty window. Drop every
- *  prompt as the null-blob arms do; otherwise neither dropSupersededPending (5 <= 1) nor the moot
- *  checks (1 >= 5) ever fire, and approving re-lands the deleted doc's change at the dead version. */
-function dropRecreatedPending(version: number): void {
-  if (
-    (pendingReview && pendingReview.version > version) ||
-    (pendingConflict && pendingConflict.remoteVersion > version)
-  ) {
-    pendingReview = null;
-    pendingConflict = null;
-    pendingApply = null;
-  }
+/** The server's document at `version` is not the one this device's base or pending prompts were
+ *  built on: server versions only grow, so a version BELOW the base or below a pending prompt's
+ *  means the document was deleted and re-created — a peer's "Delete server copy" followed by its
+ *  re-seed, seen by a device that missed the empty window. */
+function serverRecreated(version: number): boolean {
+  return (
+    version < (state.version ?? 0) ||
+    (pendingReview !== null && pendingReview.version > version) ||
+    (pendingConflict !== null && pendingConflict.remoteVersion > version)
+  );
+}
+
+/** Forget a base (and every prompt) that describes a server document which no longer exists, and
+ *  re-seed from version 0, as resetSyncState does for the deleting device. A kept base made the
+ *  next push skip on the hash match or carry a stale baseVersion — at a re-created document's
+ *  matching number it overwrote the peer's re-seed blind — and a 3-way merge against the dead
+ *  snapshot dropped or conflicted the wrong categories; a kept prompt was never dropped
+ *  (numbering restarts at 1) and approving it re-landed the deleted doc's change. False when
+ *  superseded during the keyring or state writes. */
+async function forgetDeadDocument(myGen: number): Promise<boolean> {
+  await clearSnapshotSecrets();
+  if (myGen !== gen) return false;
+  await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
+  if (myGen !== gen) return false;
+  pendingReview = null;
+  pendingConflict = null;
+  pendingApply = null;
+  setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
+  return true;
 }
 
 /** A change's identity for "was this row on the list the user saw". */

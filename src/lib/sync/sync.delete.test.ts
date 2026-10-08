@@ -410,16 +410,25 @@ describe("a pending review when the server copy is gone", () => {
       api.pulled = null;
     }
   });
-  it("is dropped by a focus pull whose re-created document reached this base's version", async () => {
+  it("is dropped by a focus pull whose re-created document reached this base's version, which is then reconciled", async () => {
     try {
       const before = await raiseAtV5();
       const reseeded = structuredClone(api.pulled as { blob: SyncBlob }).blob;
       reseeded.recording = { ...reseeded.recording, dictationRetentionDays: before } as never;
+      const peerType = !useApp.getState().settings.general.typeAsISpeak;
+      reseeded.general = { ...reseeded.general, typeAsISpeak: peerType } as never;
       api.pulled = { version: 1, updated_ts: 6, device: "peer", blob: reseeded }; // base is v1 too
       await pullNow();
       expect(getPendingReview()).toBeNull();
       await approvePendingReview();
       expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+      // The dead base is forgotten, so the matching number is not "nothing new": the re-seeded
+      // document is reconciled first-contact (the differing category is asked about), and no
+      // push blind-overwrites the peer's re-seed at base 1.
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      const pushesBefore = api.pushes;
+      await pushNow();
+      expect(api.pushes === pushesBefore || api.pushedBase !== 1).toBe(true);
     } finally {
       api.keys = null;
       api.pulled = null;
