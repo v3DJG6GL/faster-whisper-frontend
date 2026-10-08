@@ -6,6 +6,7 @@ import {
   getPendingReview,
   pullNow,
   pushNow,
+  rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
 } from "./sync";
@@ -21,6 +22,9 @@ import { backend } from "./syncTestFixtures";
  *  `pulled` is what a GET returns, and `pushed` records the last PUT's blob. */
 const api = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
+  /** When set, `park` holds only the keyring read with this 1-based number (counted in `reads`). */
+  parkOn: null as null | number,
+  reads: 0,
   keys: null as null | Record<string, string>,
   readCalled: false,
   pushes: 0,
@@ -42,7 +46,9 @@ vi.mock("../api", async (importOriginal) => {
     isTauri: true,
     readBackendKeys: (ids: string[]) => {
       api.readCalled = true;
-      return api.park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
+      api.reads++;
+      const park = api.parkOn === null || api.reads === api.parkOn ? api.park : null;
+      return park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
     },
     setBackendKey: async (id: string, key: string) => {
       api.keyWrites.push([id, key]);
@@ -356,6 +362,87 @@ function bumpChipScale(): number {
   useApp.setState({ settings: { ...s, recording: { ...s.recording, chipScale: next } } });
   return next;
 }
+
+// After a peer's "Delete server copy" this device re-seeds from version 0, and numbering restarts
+// at 1 — so a review raised against the deleted doc's v5 was never dropped (1 < 5) and never moot:
+// the dialog sat beside "Synced", and approving it re-landed the deleted doc's change.
+describe("a pending review when the server copy is gone", () => {
+  /** Seed a base, then raise a review at v5 (a retention change is always held for consent). */
+  async function raiseAtV5(): Promise<number | undefined> {
+    const base = await seedBase();
+    const before = useApp.getState().settings.transcribe?.dictationRetentionDays;
+    const risky = structuredClone(base);
+    risky.recording = { ...risky.recording, dictationRetentionDays: 1 } as never;
+    api.pulled = { version: 5, updated_ts: 5, device: "peer", blob: risky };
+    await pullNow(true);
+    expect(getPendingReview()).not.toBeNull();
+    return before;
+  }
+  it("is dropped by a pull that finds no server document", async () => {
+    try {
+      const before = await raiseAtV5();
+      api.pulled = { version: 0, updated_ts: null, device: null, blob: null };
+      await pullNow(true);
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().syncStatus).toBe("ok");
+      await approvePendingReview(); // a stray click on the stale dialog
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+  it("is dropped by a push whose 409 finds no server document", async () => {
+    try {
+      await raiseAtV5();
+      api.conflicts = [{ version: 0, updated_ts: null, device: null, blob: null }];
+      await pushNow(true);
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().syncStatus).toBe("ok");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      api.conflicts = [];
+    }
+  });
+});
+
+// The raise's store signature reads the keyring (up to 10 s) AFTER the epoch check: a "Delete
+// server copy" / sync off during that wait dropped every prompt, and the raise then put the old
+// server's review back up — approving it adopted that server's blob and version as the new base.
+describe("a review raised across a reset", () => {
+  it("is not revived when the reset lands during the signature's keyring read", async () => {
+    let release: (v: Record<string, string>) => void = () => {};
+    try {
+      const base = await seedBase();
+      const risky = structuredClone(base);
+      risky.recording = { ...risky.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: risky };
+      // Count the keyring reads one raise makes: the signature's is the last.
+      api.reads = 0;
+      await pullNow(true);
+      const reads = api.reads;
+      expect(getPendingReview()).not.toBeNull();
+      rejectPendingReview();
+      api.reads = 0;
+      api.parkOn = reads;
+      api.park = new Promise((r) => (release = r));
+      const pulling = pullNow(true);
+      await vi.waitFor(() => expect(api.reads).toBe(reads));
+      await resetSyncState();
+      release({ b1: "sk-secret" });
+      await pulling;
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().syncStatus).not.toBe("error");
+    } finally {
+      release({ b1: "sk-secret" });
+      api.park = null;
+      api.parkOn = null;
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+});
 
 // A review or conflict adopts no base, so only the user's answer cleared it: after the peer took
 // the change back (a clean pull at a NEWER version) the dialog stayed up next to "Synced", and its

@@ -2411,6 +2411,13 @@ export async function pullNow(manual = false): Promise<void> {
         if (myGen !== gen) return;
         setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
       }
+      // Any review / conflict / parked apply describes a server document that no longer exists.
+      // Left up, it sat beside "Synced" and survived the re-seed: numbering restarts at 1, so
+      // dropSupersededPending never drops a v5 prompt and its moot check never fires — approving
+      // it re-landed the deleted doc's change and recorded the dead version as the base.
+      pendingReview = null;
+      pendingConflict = null;
+      pendingApply = null;
       setRuntime({ syncStatus: "ok" });
       schedulePush(0);
       return;
@@ -2523,6 +2530,10 @@ export async function pushNow(manual = false): Promise<void> {
           if (myGen !== gen) return;
           await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
           if (myGen !== gen) return;
+          // Same as pullNow's null-blob arm: every pending prompt is for the deleted document.
+          pendingReview = null;
+          pendingConflict = null;
+          pendingApply = null;
           setRuntime({ syncStatus: "ok", lastSyncedAt: null, lastSyncDevice: null });
           schedulePush(0);
           return;
@@ -2549,10 +2560,16 @@ export async function pushNow(manual = false): Promise<void> {
           const applyNow = heldBack(pushCats, riskyPush);
           await applyBlob(merged, applyNow);
           if (myGen !== gen) return; // superseded during the apply wait
+          // The gates the apply ran under, then the keyring read — which parks up to 10 s, so the
+          // epoch is checked AGAIN after it: a supersede meanwhile dropped every pending prompt on
+          // purpose, and raising this one would revive the old server's review in the new state.
+          const gatesSig = gatesSignature();
+          const storeSig = await storeSignature(pushCats);
+          if (myGen !== gen) return;
           raiseReview({
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
             applied: appliedAt(pushCats, applyNow),
-            storeSig: await storeSignature(pushCats), gatesSig: gatesSignature(),
+            storeSig, gatesSig,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
           });
@@ -2616,10 +2633,14 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     const applyNow = heldBack(applyCats, risky);
     await applyBlob(merged, applyNow);
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
+    // Same re-check after the keyring read as pushNow's 409 twin.
+    const gatesSig = gatesSignature();
+    const storeSig = await storeSignature(applyCats);
+    if (myGen !== gen) return;
     raiseReview({
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
       applied: appliedAt(applyCats, applyNow),
-      storeSig: await storeSignature(applyCats), gatesSig: gatesSignature(),
+      storeSig, gatesSig,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
     });
@@ -3318,33 +3339,35 @@ export async function resolveSyncConflicts(
   // so the picks still apply to it.
   const id = pendingConflictId;
   if (!(await takeSyncLock(myGen))) return;
-  let pushAfter = false;
+  let outcome: ApproveOutcome = "done";
   try {
     const c = pendingConflict;
     if (c && pendingConflictId === id && useApp.getState().status === "idle") {
-      pushAfter = await resolveLocked(c, choices, myGen);
+      outcome = await resolveLocked(c, choices, myGen);
     }
   } finally {
     if (myGen === gen) inFlight = false;
   }
   if (myGen !== gen) return;
   // After the release, or pushNow would no-op on the lock this call held. Otherwise re-arm the
-  // debounced push for an edit whose pushNow hit this lock (as approvePendingReview does).
-  if (pushAfter) void pushNow(true);
-  else schedulePush();
+  // debounced push for an edit whose pushNow hit this lock (as approvePendingReview does) — but
+  // not when a prompt went back up: the push would only 409 into it and re-run the held-back
+  // apply and keyring read for nothing (approvePendingReview's same rule).
+  if (outcome === "push") void pushNow(true);
+  else if (outcome === "done") schedulePush();
 }
 
-/** resolveSyncConflicts' body, run under the engine lock. True when the caller should push. */
+/** resolveSyncConflicts' body, run under the engine lock. Same outcomes as approveLocked. */
 async function resolveLocked(
   c: PendingConflict,
   choices: Record<string, "local" | "remote">,
   myGen: number,
-): Promise<boolean> {
+): Promise<ApproveOutcome> {
   // Same moot-conflict rule as approveLocked.
   if ((state.version ?? 0) >= c.remoteVersion) {
     pendingConflict = null;
     setRuntime({ syncStatus: "ok", syncError: null });
-    return false;
+    return "done";
   }
   // `c.local` was composed under the raise-time gates: with "Server addresses" / "API keys" off
   // then, a gated-off address / key was substituted with the snapshot's — the peer's own value.
@@ -3354,14 +3377,14 @@ async function resolveLocked(
   // approvePendingReview.
   const syncedCats = syncCats();
   const localNow = await composeLive(syncedCats);
-  if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return false;
+  if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return "done";
   // `c.merged` was merged against the raise-time local: an edit made here since (to a category
   // only this device changed) would be hydrated back to its old value. Re-merge against the live
   // compose, and if that conflicts on a category the user was never asked about, ask again.
   const re = mergeBlobs(state.snapshot, localNow, c.remote);
   if (re.conflicts.some((cat) => !c.categories.includes(cat))) {
     raiseConflict({ ...c, categories: re.conflicts, merged: re.merged, local: localNow });
-    return false;
+    return "prompt";
   }
   pendingConflict = null;
   const final: SyncBlob = { ...re.merged };
@@ -3395,32 +3418,36 @@ async function resolveLocked(
   if (risky.length > 0) {
     const applyNow = heldBack(applyCats, risky);
     await applyBlob(final, applyNow);
-    if (myGen !== gen) return false;
+    if (myGen !== gen) return "done";
+    // Same re-check after the keyring read as pushNow's 409 twin.
+    const gatesSig = gatesSignature();
+    const storeSig = await storeSignature(applyCats);
+    if (myGen !== gen) return "done";
     raiseReview({
       changes: risky,
       blob: final,
       cats: applyCats,
       remote: c.remote,
       applied: appliedAt(applyCats, applyNow),
-      storeSig: await storeSignature(applyCats),
-      gatesSig: gatesSignature(),
+      storeSig,
+      gatesSig,
       version: c.remoteVersion,
       updatedAt: c.remoteUpdatedAt ?? null,
       device: c.remoteDevice ?? null,
       pushAfter: true,
       degraded,
     });
-    return false;
+    return "prompt";
   }
   const applied = await applyBlob(final, applyCats);
-  if (myGen !== gen) return false;
+  if (myGen !== gen) return "done";
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it):
     // restore the conflict so the picks are re-offered, not a base that never landed.
     pendingConflict = c;
-    return false;
+    return "prompt";
   }
-  if (degraded && degradedBaseWithheld(c.remote)) return false;
+  if (degraded && degradedBaseWithheld(c.remote)) return "done";
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
   // later automatic pushes still see a difference and retry.
@@ -3434,14 +3461,14 @@ async function resolveLocked(
     hash: hashBlob(c.remote),
     snapshot: c.remote,
   });
-  if (myGen !== gen) return false;
+  if (myGen !== gen) return "done";
   // Same as approveLocked: a review at this version is answered by the adopted base (its held-back
   // category either came out of the security check clean, or the user picked this device's side).
   dropSupersededPending(c.remoteVersion);
   setRuntime({ syncStatus: "ok", syncError: null, lastSyncedAt: Date.now(), lastSyncDevice: c.remoteDevice ?? null });
   // The resolved doc differs from what the server holds unless "remote" won
   // everywhere — push it (base = the server version the conflict reported).
-  return hashBlob(final) !== hashBlob(c.remote);
+  return hashBlob(final) !== hashBlob(c.remote) ? "push" : "done";
 }
 
 export function dismissSyncConflict(): void {
