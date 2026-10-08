@@ -671,6 +671,14 @@ describe("joinSegmentTexts", () => {
     expect(joinSegmentTexts(["今日は晴れ。", "明日は雨。"])).toBe("今日は晴れ。明日は雨。");
     expect(joinSegmentTexts(["今日は", "iPhone"])).toBe("今日は iPhone");
   });
+
+  it("keeps the seam rules with empty parts, mixed scripts and astral chars", () => {
+    expect(joinSegmentTexts(["日", "", "本"])).toBe("日  本");
+    expect(joinSegmentTexts(["日本", "abc", "語"])).toBe("日本 abc 語");
+    expect(joinSegmentTexts(["𠀋", "日"])).toBe("𠀋日");
+    const latin = ["one", "two", "", "three"];
+    expect(joinSegmentTexts(latin)).toBe(latin.join(" "));
+  });
 });
 
 // ── subtitle cues (D83/D84) ─────────────────────────────────────────────────

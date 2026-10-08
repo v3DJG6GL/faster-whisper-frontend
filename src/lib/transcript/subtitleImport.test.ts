@@ -249,6 +249,15 @@ describe("site subtitle cleanup", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nper Re-Prompting&nbsp; vergleichen,&nbsp;&nbsp;\nTom &amp; Jerry &#39;&#x263A;&#39; &lt;i&gt; &bogus;\n";
     expect(parseImportedText("vtt", vtt).segments[0].text).toBe("per Re-Prompting vergleichen, Tom & Jerry '\u263A' <i> &bogus;");
   });
+  it("a zero-length cue with its own text survives a re-import", () => {
+    const srt =
+      "1\n00:00:28,000 --> 00:00:29,980\nFirst line.\n\n"
+      + "2\n00:00:29,980 --> 00:00:29,980\nA blink of a line.\n\n"
+      + "3\n00:00:29,980 --> 00:00:32,000\nLast line.\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
+      "First line.", "A blink of a line.", "Last line.",
+    ]);
+  });
   it("ordinary cues pass through: no repeated lines, no short cues", () => {
     const cues = [
       { start: 0, end: 2, lines: ["Hello there."] },

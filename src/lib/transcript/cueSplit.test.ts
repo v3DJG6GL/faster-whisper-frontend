@@ -395,6 +395,36 @@ describe("combining marks stay with their base", () => {
   });
 });
 
+describe("skin tones and flags stay whole", () => {
+  const EMOJI = "今日は👍🏽ですね🇯🇵いい天気🇺🇸🇯🇵です";
+  const broken = (p: string) => /^\p{Emoji_Modifier}/u.test(p) || [...p.matchAll(/\p{RI}+/gu)].some((m) => [...m[0]].length % 2);
+  it("cutByShare never cuts before a skin tone or inside a flag", () => {
+    for (let n = 2; n <= 12; n++) {
+      const parts = cutByShare(EMOJI, Array(n).fill(1));
+      expect(parts.join("")).toBe(EMOJI);
+      expect(parts.some(broken)).toBe(false);
+    }
+  });
+  it("wrapLines never opens a line with a skin tone or a flag half", () => {
+    for (let cpl = 2; cpl <= 12; cpl++) {
+      const lines = wrapLines(EMOJI, cpl, 2);
+      expect(lines.join("")).toBe(EMOJI);
+      expect(lines.some(broken)).toBe(false);
+    }
+  });
+  it("own timing: a decomposed kana or a variation selector stays with its base", () => {
+    // Slide the marked characters across the cut so one lands right where it falls.
+    for (let n = 0; n < 30; n++) {
+      const ja = "iOS の" + "あ".repeat(n) + "か\u3099葛\u{E0100}" + "い".repeat(40 - n);
+      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
+      expect(grid.own.ja.length).toBeGreaterThan(1);
+      expect(grid.own.ja.every((c) => !/^\p{M}/u.test(c.text.trim()))).toBe(true);
+      expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
+    }
+  });
+});
+
 describe("cutByShare", () => {
   it("prefers punctuation near the share target", () => {
     expect(cutByShare("Erstens das hier, zweitens das dort.", [1, 1])).toEqual(["Erstens das hier,", "zweitens das dort."]);

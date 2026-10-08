@@ -208,11 +208,16 @@ interface Ctx {
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")`. */
 export function joinSegmentTexts(parts: string[]): string {
-  let out = "";
+  // Pieces + one join, tracking the last char: reading the growing string's tail each step
+  // made this quadratic (≈1 s at 6000 segments, rerun on every edit of a long transcript).
+  const out: string[] = [];
+  let last = "";
   parts.forEach((p, i) => {
-    out += i && !(unspacedChar(edgeChar(out, true)) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
+    const piece = i && !(unspacedChar(last) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
+    out.push(piece);
+    if (piece) last = edgeChar(piece, true);
   });
-  return out;
+  return out.join("");
 }
 
 /** A segment's translation for one track (trText), cleaned; null when there is none. */

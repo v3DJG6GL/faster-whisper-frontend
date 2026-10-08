@@ -118,13 +118,21 @@ export interface RawCue {
 
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
- *  two or three times. Drop cues of ≤100 ms, strip leading lines a contiguous cue repeats
- *  from the cue before, and extend that cue when nothing new is left. Ordinary files have
- *  neither, so they pass through unchanged. */
+ *  two or three times. Drop a ≤100 ms cue that only repeats a neighbour, strip leading lines
+ *  a contiguous cue repeats from the cue before, and extend that cue when nothing new is
+ *  left. Ordinary files have neither, so they pass through unchanged — a short cue with
+ *  text of its own (our own exports keep a zero-length segment) is kept. */
 export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const out: RawCue[] = [];
-  for (const cue of cues) {
-    if (cue.start !== undefined && cue.end !== undefined && cue.end - cue.start <= 0.1) continue;
+  // Compared against the neighbours' RAW lines: `out` may already have lost the repeat.
+  const repeatsNeighbour = (i: number): boolean => {
+    const have = new Set([...(cues[i - 1]?.lines ?? []), ...(cues[i + 1]?.lines ?? [])].map(stripMarkup));
+    return cues[i].lines.map(stripMarkup).every((l) => !l || have.has(l));
+  };
+  for (const [i, cue] of cues.entries()) {
+    if (cue.start !== undefined && cue.end !== undefined && cue.end - cue.start <= 0.1 && repeatsNeighbour(i)) {
+      continue;
+    }
     const prev = out[out.length - 1];
     let lines = cue.lines;
     const contiguous =

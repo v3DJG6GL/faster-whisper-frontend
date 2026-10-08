@@ -928,6 +928,9 @@ export function TranscriptExport({
     setPrefs({ names: next });
   };
   const resetIcon = <RotateCcw className="size-3" />;
+  // Flags describe the saved video's own tracks: sidecar mode embeds none, and the
+  // backend drops the "original" disposition in MP4. SDH stays — sidecar names carry it.
+  const inVideo = plan.embedded.length > 0;
   const namesBox = videoPlan && (
     <PanelBox title="Track names" right={planned.some(renamed) && (
       <button type="button" onClick={() => setPrefs({ names: {} })} title="Every track back to its default name"
@@ -960,7 +963,7 @@ export function TranscriptExport({
           <span className="col-start-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-faint">
             {sideNames && <span className="min-w-0 truncate">{sideNames[i](stem)}</span>}
             <span className={cn("rounded-pill px-1.5 font-sans leading-4", trackTone(t))}>{sourceWord(t)}</span>
-            {([[t.original, "original"], [t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
+            {([[inVideo && plan.primaryExt !== "mp4" && t.original, "original"], [inVideo && t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
               <span key={flag} className="rounded-pill border border-line px-1.5 leading-4">{flag}</span>
             ))}
           </span>

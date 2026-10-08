@@ -237,13 +237,17 @@ const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
 /** CJK and fullwidth closing brackets and stops: they stick to the character before them.
  *  Listed, not the whole fullwidth block — fullwidth letters and digits stay breakable. */
 const CLOSE_PUNCT = "、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
+/** What rides after a base character: combining marks, emoji skin tones, ZWJ + next. */
+const UNIT_TAIL = "(?:[\\p{M}\\p{Emoji_Modifier}\\u200d]|(?<=\\u200d)\\S)*";
 /** A token of spaced text: a word (with any opening brackets before it), or one unspaced
  *  (CJK) character with the opening brackets before it and its other punctuation after it —
  *  so a CJK translation holding one Latin word still splits between its characters, and
  *  never right after a 「 or （ (a Latin word or number before 「 used to swallow it). A
- *  bracket with nothing after it is its own token, so no character falls out of the spans. */
+ *  bracket with nothing after it is its own token, so no character falls out of the spans.
+ *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
+ *  variation selector) — they are Script=Inherited and would otherwise split off. */
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}](?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
+  `[${OPEN_PUNCT}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]${UNIT_TAIL}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
     + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
@@ -251,10 +255,13 @@ const MIXED_TOKEN = new RegExp(
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
 /** One code point of whitespace-free text with the opening brackets before it and the
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
- *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors
- *  and ZWJ sequences ride with their base (a Thai tone mark never opens a line). */
-const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]*\\S(?:[\\p{M}\\u200d]|(?<=\\u200d)\\S)*[${CLOSE_PUNCT}]*`, "gu");
+ *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors,
+ *  skin tones and ZWJ sequences ride with their base (a Thai tone mark never opens a line),
+ *  and a flag's two regional indicators stay one unit. */
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}[${CLOSE_PUNCT}]*`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
+/** A regional indicator (half of a flag emoji). */
+const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
@@ -376,6 +383,15 @@ export function cutByShare(text: string, shares: number[]): string[] {
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
     // Never between a base and its combining mark, nor inside a ZWJ sequence.
     if (/[\p{M}\u200d]/u.test(text[i]) || text[i - 1] === "\u200d") continue;
+    // Nor before a skin tone, nor between a flag's two regional indicators (an odd
+    // run of indicators right before i means i is the second half of a pair).
+    const cp = text.codePointAt(i)!;
+    if (/\p{Emoji_Modifier}/u.test(String.fromCodePoint(cp))) continue;
+    if (isRI(cp)) {
+      let n = 0;
+      for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
+      if (n % 2) continue;
+    }
     if (
       spaced
         ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && (UNSPACED.test(text[i]) || OPENER.test(text[i])))

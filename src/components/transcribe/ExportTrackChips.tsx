@@ -105,11 +105,16 @@ export function ExportTrackChips({
       reorder(d.kind === "lang" ? moveLanguage(result, order, d.id, d.slot) : moveTrack(result, order, d.id, d.slot));
     }
   };
+  // An aborted gesture (system pen/touch takeover) moves nothing, and no click follows it.
+  const cancel = () => {
+    drag.current = null;
+    setShown(null);
+  };
   const dragProps = (kind: Drag["kind"], id: string) => ({
     onPointerDown: press(kind, id),
     onPointerMove: slide,
     onPointerUp: release,
-    onPointerCancel: release,
+    onPointerCancel: cancel,
   });
   /** Alt+←/→: one step left or right. */
   const keyMove = (e: KeyboardEvent<HTMLElement>, from: number, move: (slot: number) => string[]) => {
