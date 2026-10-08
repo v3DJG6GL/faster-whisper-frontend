@@ -59,6 +59,13 @@ export function ruleListOf(res: PipelineFetch): PipelineRule[] {
 
 const MAX_RULES = 500;
 
+/** How many rules the server sent, before `ruleListOf`'s cap — the same object filter, no slice
+ *  (the "first N of M" note's M). 0 unless ok AND rules is an array. */
+export function ruleCountOf(res: PipelineFetch): number {
+  const r = res.ok ? res.state?.rules : undefined;
+  return Array.isArray(r) ? r.filter((x) => !!x && typeof x === "object").length : 0;
+}
+
 /** A server-supplied field that the editors treat as a plain string→value record.
  *  Anything else (a string, an array, a scalar) becomes undefined rather than being
  *  enumerated. The entry ceiling is deliberately generous — this map is the user's own

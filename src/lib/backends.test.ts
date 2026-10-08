@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, insecureUrlWarning, newBackendDraft, storedTypedUrl } from "./backends";
-import type { Backend } from "./types";
+import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, storedTypedUrl } from "./backends";
+import type { AppSettings, Backend } from "./types";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
@@ -100,5 +100,17 @@ describe("storedTypedUrl", () => {
     expect(storedTypedUrl("https://h/")).toBe("https://h/");
     expect(storedTypedUrl("")).toBe("");
     expect(storedTypedUrl("ftp://x")).toBe("ftp://x");
+  });
+});
+
+describe("effectiveServerUrl", () => {
+  const b = { ...newBackendDraft(), id: "b1", serverUrl: "http://canonical:8000" };
+  const withOverride = (v: string) => ({ sync: { urlOverrides: { b1: v } } }) as unknown as AppSettings;
+  it("gives a schemeless per-device override the http:// the transport needs", () => {
+    expect(effectiveServerUrl(b, withOverride("192.168.1.5:8000"))).toBe("http://192.168.1.5:8000");
+  });
+  it("keeps an https override as typed and falls back to serverUrl for a blank one", () => {
+    expect(effectiveServerUrl(b, withOverride("https://x"))).toBe("https://x");
+    expect(effectiveServerUrl(b, withOverride("   "))).toBe("http://canonical:8000");
   });
 });

@@ -2,7 +2,7 @@
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
-import { applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleListOf } from "./pipelineMap";
+import { applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleCountOf, ruleListOf } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineSaveResult } from "./types";
 
 function fetchWith(rules: unknown): PipelineFetch {
@@ -30,6 +30,12 @@ describe("ruleListOf", () => {
     const [rule] = ruleListOf(fetchWith([{ name: "m", type: "callback:map", map: "abc", map_meta: [1] }]));
     expect(rule.map).toBeUndefined();
     expect(rule.map_meta).toBeUndefined();
+  });
+
+  it("caps the list while ruleCountOf still counts every rule the server sent", () => {
+    const res = fetchWith([...Array.from({ length: 600 }, (_, i) => ({ name: `r${i}`, type: "callback:map" })), "junk", null]);
+    expect(ruleListOf(res)).toHaveLength(500);
+    expect(ruleCountOf(res)).toBe(600);
   });
 });
 

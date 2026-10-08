@@ -153,7 +153,9 @@ export function MicPicker({
           {r.type === "default" && <span className="block text-[11.5px] text-dim">{r.sub}</span>}
           {r.type === "mic" && r.missing && (
             <span className="block text-[11.5px] text-warn">
-              Not connected — using System default until it is back
+              {view.legacy
+                ? "Not offered by the sound server — opens through its sound card while plugged in"
+                : "Not connected — using System default until it is back"}
             </span>
           )}
           {r.type === "path" && (

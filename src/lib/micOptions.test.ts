@@ -87,6 +87,7 @@ describe("buildMicView", () => {
     expect(v.missing).toBe(true);
     expect(v.rows[1]).toEqual({ type: "mic", value: gone, label: "Blue Yeti", bluetooth: false, missing: true });
     expect(v.triggerLabel).toBe("Blue Yeti (not connected)");
+    expect(v.legacy).toBe(false);
   });
 
   it("does not call a pin missing before the list has loaded", () => {
@@ -98,7 +99,9 @@ describe("buildMicView", () => {
 
   it("names a legacy pin by its own text when it can't be found", () => {
     const v = buildMicView(inv(), "Old USB Mic, USB Audio", null, false);
-    expect(v.triggerLabel).toBe("Old USB Mic, USB Audio (not connected)");
+    // Not "(not connected)": Rust still opens a legacy name through its sound card.
+    expect(v.triggerLabel).toBe("Old USB Mic, USB Audio");
+    expect(v.legacy).toBe(true);
   });
 
   it("adds grouped, labelled paths only with the advanced switch", () => {

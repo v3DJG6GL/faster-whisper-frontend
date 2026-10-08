@@ -11,6 +11,7 @@ import type { MicInventory } from "@/lib/types";
 import { MicPicker } from "@/components/settings/MicPicker";
 import { buildMicView, isAlsaPin, labelForPick } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
+import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 
 // Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
 // cold/Bluetooth mic can be open but silent for ~1–2s first). A live mic has a faint
@@ -25,9 +26,12 @@ export function AudioTab() {
   const microphoneLabel = useApp((s) => s.settings.microphoneLabel);
   const updateSettings = useApp((s) => s.updateSettings);
   const [inv, setInv] = useState<MicInventory | null>(null);
-  // "Show all audio paths": view state only, open from the start when the pin IS a raw path
-  // (those rows only exist with the paths listed).
-  const [advanced, setAdvanced] = useState(() => isAlsaPin(microphoneId));
+  // "Show all audio paths": view state only. Until the user flips it, it is open when the pin
+  // IS a raw path (those rows only exist with the paths listed) — an ALSA id the listing shows
+  // as an ordinary mic row (no sound server: every mic row's id is its sysdefault path) is not.
+  const [advancedChoice, setAdvanced] = useState<boolean | null>(null);
+  const pinIsPath = isAlsaPin(microphoneId) && !inv?.mics.some((m) => m.id === microphoneId);
+  const advanced = advancedChoice ?? pinIsPath;
   const withPaths = advanced || isAlsaPin(microphoneId);
   // Whether the listing on screen was fetched WITH the paths: the flip sets `advanced` at once,
   // but until the paths reply lands every path list is empty and the picker said "No other
@@ -75,19 +79,20 @@ export function AudioTab() {
 
   // Keep the list current while this tab is on screen: plugging a mic in or out, or changing the
   // system default, shows up within a few seconds. Listing never opens a mic (a Bluetooth headset
-  // would switch profile). Paused while the window is hidden; gone with the tab.
+  // would switch profile). Paused while the window is hidden — closed to the tray (Rust's
+  // show/hide; WebView2 never fires visibilitychange for a hidden window) or minimized/unmapped
+  // (the document signal); gone with the tab.
   useEffect(() => {
     void refresh();
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refresh();
+      if (!isWindowHidden()) void refresh();
     }, 3000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void refresh();
-    };
-    document.addEventListener("visibilitychange", onVisible);
+    const off = onWindowHiddenChange((hidden) => {
+      if (!hidden) void refresh();
+    });
     return () => {
       clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisible);
+      off();
       invSeq.current++;
     };
   }, [refresh]);
@@ -286,7 +291,14 @@ export function AudioTab() {
         title="Microphone"
         desc="Audio input device used for dictation."
         expand={
-          view.missing ? (
+          view.missing && view.legacy ? (
+            <Notice className="mb-3">
+              {safeDisplayText(view.pinnedLabel ?? "", 80)} isn't offered by{" "}
+              {inv?.server ? safeDisplayText(inv.server, 40) : "the sound server"}. Dictation opens it through its
+              sound card while it is plugged in, otherwise it uses System default
+              {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, 80)})` : ""}.
+            </Notice>
+          ) : view.missing ? (
             <Notice className="mb-3">
               {safeDisplayText(view.pinnedLabel ?? "", 80)} is not connected. Dictation uses System default
               {inv?.defaultLabel ? ` (${safeDisplayText(inv.defaultLabel, 80)})` : ""} until it is plugged back in.

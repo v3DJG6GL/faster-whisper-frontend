@@ -90,9 +90,11 @@ function Editor({
   // chosen was then sent to the other one. `Profiles.tsx` already resolves the override for
   // exactly this reason, and Q13/J8 fixed the same divergence on `runTest` and the card's address.
   const debouncedUrl = useDebounced(effUrl, 400);
-  // What the probes send: a schemeless `host:8000` in Server URL gets the `http://` it is saved
-  // with (storedTypedUrl), or reqwest refuses it. The override goes to the transport as typed.
-  const probeUrl = urlOverride.trim() ? debouncedUrl : storedTypedUrl(debouncedUrl);
+  // What the probes send: a schemeless `host:8000` gets the `http://` it is saved with
+  // (storedTypedUrl), or reqwest refuses it — in Server URL and in "Address on this device" alike,
+  // as `effectiveServerUrl` resolves the override. One rule for both, so the live and debounced
+  // values can never pick different branches mid-debounce.
+  const probeUrl = storedTypedUrl(debouncedUrl);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
@@ -103,10 +105,13 @@ function Editor({
   // mount, where a "first run" flag would already be spent on the second pass and wipe it.
   // `runTest` moves this ref onto the target it actually tested, and `doSave` only writes the
   // result to the store when the ref still matches what was just persisted.
-  const resultTarget = useRef({ url: effUrl, key });
+  // `gen` = the backend's credential generation when the verdict was earned: a sync pull that
+  // rotates the STORED key (forgetCaps) changes neither the address nor the blank key field, so a
+  // blank-key verdict is only still true while the generation is unchanged.
+  const resultTarget = useRef({ url: effUrl, key, gen: credentialGeneration(initial.id) });
   useEffect(() => {
     if (resultTarget.current.url === effUrl && resultTarget.current.key === key) return;
-    resultTarget.current = { url: effUrl, key };
+    resultTarget.current = { url: effUrl, key, gen: credentialGeneration(initial.id) };
     setResult(null);
     // Keyed on the EFFECTIVE address, not the canonical one. Q13 moved `liveTarget` and
     // `runTest` onto `effectiveServerUrl` (which prefers `settings.sync.urlOverrides`) precisely
@@ -206,12 +211,15 @@ function Editor({
   const runTest = async () => {
     const testedUrl = effUrl;
     const testedKey = key;
+    // Taken BEFORE the await, as the list card's handleTest does: a pull that rotates the stored
+    // key mid-test makes a blank-key verdict describe the old caller.
+    const gen = credentialGeneration(b.id);
     setTesting(true);
     try {
       const info = await testConnection({
         // The guards keep comparing the raw `testedUrl`; only the request gets the stored form
-        // (a schemeless Server URL gains http://, as doSave stores it; the override is verbatim).
-        serverUrl: urlOverride.trim() ? testedUrl : storedTypedUrl(testedUrl),
+        // (a schemeless address gains http://, as doSave and `effectiveServerUrl` store/resolve it).
+        serverUrl: storedTypedUrl(testedUrl),
         backendId: b.id,
         apiKey: testedKey || null,
       });
@@ -220,7 +228,7 @@ function Editor({
       // the URL, Test, Cancel → `connections[X]` held the other host's answer while X still routed
       // to the old one (and a tested-then-cancelled connect-first draft left an orphan entry).
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
-        resultTarget.current = { url: testedUrl, key: testedKey };
+        resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult(info);
         // The one case the store may take it now: the tested target is exactly the persisted
         // one (stored keyring key, same effective address, backend already saved), so the
@@ -228,7 +236,12 @@ function Editor({
         // backend still refreshes "server came back / went away".
         const live = useApp.getState();
         const stored = live.backends.find((x) => x.id === b.id);
-        if (stored && !testedKey && normalizeUrl(testedUrl) === normalizeUrl(effectiveServerUrl(stored, live.settings))) {
+        if (
+          stored &&
+          !testedKey &&
+          normalizeUrl(testedUrl) === normalizeUrl(effectiveServerUrl(stored, live.settings)) &&
+          credentialGeneration(b.id) === gen
+        ) {
           setConnection(b.id, info);
         }
       }
@@ -236,7 +249,7 @@ function Editor({
       // IPC reject (same guard the list card's handleTest carries) — surface the
       // failure so the editor doesn't just silently stop.
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
-        resultTarget.current = { url: testedUrl, key: testedKey };
+        resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
     } finally {
@@ -284,6 +297,10 @@ function Editor({
     const savedUrl = liveTarget.current.url;
     // Before onSave: a NEW key on a backend that already exists is a rotation the store can't see.
     const existed = useApp.getState().backends.some((x) => x.id === cur.id);
+    // A blank-key verdict was earned with the STORED key: still valid only if no sync pull has
+    // rotated that key since (taken before the forgetCaps below bumps the generation itself). A
+    // typed-key verdict is exempt — it was tested with the key just saved.
+    const genOk = !!key || resultTarget.current.gen === credentialGeneration(cur.id);
     // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
     // the override-profile name → undefined when blank — so stray whitespace isn't persisted, sent to
     // the server (a padded value never matches a real profile), or shown as a blank card.
@@ -309,7 +326,7 @@ function Editor({
     // Now that the target is persisted (upsertBackend's eviction has run inside onSave, and a
     // typed key reached the keyring above), cache the in-editor verdict — only if it still
     // describes the address + key that were just saved.
-    if (verdict && resultTarget.current.url === savedUrl && resultTarget.current.key === key) {
+    if (verdict && resultTarget.current.url === savedUrl && resultTarget.current.key === key && genOk) {
       setConnection(cur.id, verdict);
     }
     return true;
@@ -439,8 +456,8 @@ function Editor({
                 backend. Clear the field to go back to the address above.
               </Notice>
             )}
-            {/* This field bypasses normalizeUrl entirely — it goes to the transport verbatim — so
-                it needs the warning at least as much as the canonical URL above. NOT gated on
+            {/* This field gets only the stored-form `http://` default (`effectiveServerUrl`), no
+                other normalisation, so it needs the warning at least as much as the canonical URL above. NOT gated on
                 syncEnabled: `effectiveServerUrl` consults the override regardless of whether sync
                 is on, and turning sync off does not clear it. The warning must track the address
                 actually in use, not the toggle. */}
@@ -988,7 +1005,7 @@ export default function Backends() {
   // prototype-inherited value, and this open-coded twin threw identically.
   const effectiveUrl = (b: Backend) => {
     const raw = urlOverrides?.[b.id];
-    return (typeof raw === "string" ? raw.trim() : "") || b.serverUrl;
+    return (typeof raw === "string" ? storedTypedUrl(raw) : "") || b.serverUrl;
   };
   const upsertBackend = useApp((s) => s.upsertBackend);
   const removeBackend = useApp((s) => s.removeBackend);

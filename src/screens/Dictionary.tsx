@@ -26,7 +26,7 @@ import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
 import {
-  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, envPinnedOf, RULE_LIST_SETTING,
+  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, envPinnedOf, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
@@ -144,7 +144,8 @@ const monoInput = "font-mono text-[12.5px]";
 // it came from the server's own `map_collapse_after`, so the payload chose its own limit.
 // RENDER-ONLY, never applied to `edit.pairs` / `edit.entries` — the save path PATCHes those back
 // as the ENTIRE map, so capping the state would delete every server entry past the cap.
-const MAX_SHOWN_RULES = 500;
+// The rule list itself needs none here: `ruleListOf` already caps it, so the "first N of M"
+// note counts the server's rules BEFORE that cap (ruleCountOf).
 const MAX_SHOWN_MAP_ROWS = 500;
 const MAX_SHOWN_ENTRIES = 500;
 const MAX_RECENT_WORDS = 500;
@@ -832,6 +833,7 @@ export default function Dictionary() {
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
 
   const role = fetchRes?.state?.role;
+  const totalRules = useMemo(() => (fetchRes ? ruleCountOf(fetchRes) : rules.length), [fetchRes, rules.length]);
 
   // The save in flight, if any. The sticky Save is disabled while saving, but `dirty` stays true until
   // the reload lands, so "Save and leave" from the leave dialog could start a second PATCH with the
@@ -1077,7 +1079,7 @@ export default function Dictionary() {
             </div>
           )}
 
-          {rules.slice(0, MAX_SHOWN_RULES).map((r) => (
+          {rules.map((r) => (
             <RuleCard
               key={r.name}
               rule={r}
@@ -1112,9 +1114,9 @@ export default function Dictionary() {
               onReset={() => resetRule(r.name)}
             />
           ))}
-          {rules.length > MAX_SHOWN_RULES && (
+          {totalRules > rules.length && (
             <p className="py-2 text-center text-[12px] text-faint">
-              Showing the first {MAX_SHOWN_RULES} of {rules.length} rules.
+              Showing the first {rules.length} of {totalRules} rules.
             </p>
           )}
         </Stack>

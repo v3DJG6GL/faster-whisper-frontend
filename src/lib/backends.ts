@@ -204,7 +204,10 @@ export function effectiveServerUrl(backend: Backend, settings: AppSettings): str
   // body, in a tree with no error boundary, so the window unmounted. The `__..__` filter that
   // polices ids only rejects the keyring namespace, so those ids survive sanitization.
   const raw = settings.sync?.urlOverrides?.[backend.id];
-  const override = typeof raw === "string" ? raw.trim() : "";
+  // Stored form, as Server URL is saved: a schemeless `host:8000` typed into "Address on this
+  // device" gains `http://`. The Rust transport only trims and reqwest refuses an address without
+  // a scheme, so every request for the backend failed while the card showed the address as fine.
+  const override = typeof raw === "string" ? storedTypedUrl(raw) : "";
   return override ? override : backend.serverUrl;
 }
 

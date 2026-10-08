@@ -189,7 +189,9 @@ export function TargetLanguagePicker({
       }}
       onClose={flush}
       renderRow={(r, { selected }) => <TargetRow row={r} on={selected} />}
-      rowTitle={untestedTitle}
+      // At the cap the popover stays open but an unticked row's tick is a no-op, and the trigger's
+      // tooltip is hidden under the popover (or absent on a custom trigger): say why on the row.
+      rowTitle={(r) => (full && !value.includes(r.value) ? fullTitle : untestedTitle(r))}
       renderTrigger={
         renderTrigger ??
         ((p) => (

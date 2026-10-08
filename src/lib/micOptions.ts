@@ -69,6 +69,8 @@ export interface MicView {
   rows: MicRow[];
   /** The pinned mic isn't in the list (only decided once a list has loaded). */
   missing: boolean;
+  /** The missing pin is a pre-ids display name: Rust still opens it through its sound card while plugged in. */
+  legacy: boolean;
   /** What the closed picker reads. */
   triggerLabel: string;
   /** What the pinned mic is called (for the "not connected" line). */
@@ -97,6 +99,7 @@ export function buildMicView(
   const selMic = selectedId ? mics.find((m) => m.id === selectedId) : undefined;
   const selPath = selectedId && !selMic ? paths.find((p) => p.path.id === selectedId) : undefined;
   const missing = !!inv && !!selectedId && !selMic && !selPath;
+  const legacy = missing && isLegacyPin(selectedId);
 
   const rows: MicRow[] = [
     {
@@ -138,10 +141,10 @@ export function buildMicView(
   if (!selectedId) triggerLabel = "System default";
   else if (selMic) triggerLabel = selMic.label;
   else if (selPath) triggerLabel = `${selPath.mic} · ${techId(selPath.path.id)}`;
-  else if (missing) triggerLabel = `${name} (not connected)`;
+  else if (missing) triggerLabel = legacy ? name! : `${name} (not connected)`;
   else triggerLabel = name ?? "System default"; // list not loaded yet
 
-  return { rows, missing, triggerLabel, pinnedLabel: name };
+  return { rows, missing, legacy, triggerLabel, pinnedLabel: name };
 }
 
 /** The label to save with a pick (so an unplugged pin can still be named). */

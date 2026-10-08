@@ -31,7 +31,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { backendOptions, backendPrompt, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveLanguage, effectiveServerUrl } from "@/lib/backends";
 import { withBackendChips } from "@/lib/backendChipLabels";
 import { backendForProfile } from "@/lib/dictation/dictation";
 import { liveAllowed } from "@/lib/dictation/streaming";
@@ -735,7 +735,7 @@ function ProfileRow({
   const updateProfile = useApp((s) => s.updateProfile);
   const meta = ACTIVATION[p.activation];
   const Glyph = meta.icon;
-  const effLangCode = p.language?.trim() ? p.language : backendLanguage;
+  const effLangCode = effectiveLanguage(p.language, backendLanguage);
   const effLang = effLangCode ? languageLabel(effLangCode) : "";
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
