@@ -94,8 +94,12 @@ export function trackLanguageName(code: string): string {
   if (exact) return exact;
   const [base, second, third] = code.split("-");
   const b = base.toLowerCase();
-  if (second !== undefined && /^[A-Za-z]{4}$/.test(second)) {
-    const key = `${b}-${second[0].toUpperCase()}${second.slice(1).toLowerCase()}`;
+  const key = second !== undefined && /^[A-Za-z]{4}$/.test(second)
+    ? `${b}-${second[0].toUpperCase()}${second.slice(1).toLowerCase()}`
+    : undefined;
+  // A base whose name LABEL_FIX corrects keeps that name unless the pair has its own fix:
+  // "bn-Beng" is "Bengali (BENG)", not the runtime's "Bangla (Bangla)".
+  if (key !== undefined && (!ownProp(LABEL_FIX, b) || ownProp(LABEL_FIX, key) !== undefined)) {
     const scripted = languageLabel(key);
     if (scripted !== key) {
       if (third === undefined) return scripted;
