@@ -173,8 +173,16 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // What `applyBlob` would install, not the raw file list: `sanitizeBackends` dedupes ids, drops
+  // reserved ones, blanks unusable addresses and caps the count, so the row count and the address
+  // list below disclose the same entries the key notices are judged on.
+  const installBackends = useMemo(
+    () => (categories.backends ? sanitizeBackends(categories.backends.list) : []),
+    [categories],
+  );
+
   const counts: Partial<Record<SyncCategory, string>> = {
-    backends: categories.backends ? `${arr(categories.backends.list).length}` : undefined,
+    backends: categories.backends ? `${installBackends.length}` : undefined,
     profiles: categories.profiles ? `${arr(categories.profiles.list).length}` : undefined,
     appRules: categories.appRules
       ? `${arr(categories.appRules[MY_BUCKET]).length} this OS · ${arr(categories.appRules[OTHER_BUCKET]).length} other OS`
@@ -211,13 +219,18 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // Judged on what the apply installs (sanitized, as above). Import never deletes a stored key
   // and the apply re-derives `hasApiKey` from the keyring by id, so a same-id backend this
   // device holds a key for keeps it: nothing to re-enter — but if the file moves it to another
-  // server, that key goes there, whatever the file's own `hasApiKey` says.
-  const incoming = sel.backends && categories.backends ? sanitizeBackends(categories.backends.list) : [];
+  // server, that key goes there, whatever the file's own `hasApiKey` says. "Server" is where the
+  // app CONNECTS (`effectiveServerUrl`): an "Address on this device" override wins over the
+  // canonical address, and the import leaves a surviving id's override in place, so the current
+  // settings are also the post-import ones. Comparing canonical addresses warned that the key
+  // goes to a host an overridden backend never reaches.
+  const incoming = sel.backends ? installBackends : [];
+  const dest = (x: Backend) => effectiveServerUrl(x, st.settings);
   const keyHere = (b: Backend) => st.backends.find((x) => x.id === b.id && x.hasApiKey);
   const missingKeys = incoming.filter((b) => b.hasApiKey && !ownProp(result.secrets, b.id) && !keyHere(b));
   const movedKeys = incoming.filter((b) => {
     const here = keyHere(b);
-    return !!here && !ownProp(result.secrets, b.id) && normalizeUrl(here.serverUrl) !== normalizeUrl(b.serverUrl);
+    return !!here && !ownProp(result.secrets, b.id) && normalizeUrl(dest(here)) !== normalizeUrl(dest(b));
   });
 
   // Same helper `RestoreFromServer` uses for its own replace warning — see the notice below.
@@ -294,21 +307,40 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         {result.hasSecrets && sel.backends && (
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
         )}
-        {sel.backends && categories.backends && (
-          <IncomingAddresses list={categories.backends.list} />
-        )}
+        {sel.backends && categories.backends && <IncomingAddresses list={installBackends} />}
         {missingKeys.length > 0 && (
           <Notice tone="warn">
             {missingKeys.map((b) => `“${safeText(b.name, 60)}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
             API key re-entered after importing (not included in the file).
           </Notice>
         )}
-        {movedKeys.map((b) => (
-          <Notice key={`moved-${b.id}`} tone="warn">
-            &ldquo;{safeText(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
-            {safeText(authorityOf(b.serverUrl)?.host || b.serverUrl || "an empty address", 120)}.
-          </Notice>
-        ))}
+        {movedKeys.map((b) => {
+          const to = dest(b);
+          // An empty address (the sanitizer blanks a scheme this app does not speak) is the
+          // "not configured" state: nothing is sent, so say that rather than "sent to an empty
+          // address".
+          if (!to) {
+            return (
+              <Notice key={`moved-${b.id}`} tone="warn">
+                &ldquo;{safeText(b.name, 60)}&rdquo; is left without a usable server address — its
+                API key stays on this device and nothing is sent until you set one.
+              </Notice>
+            );
+          }
+          // The host through the IDENTITY helper, like `IncomingAddresses`: `serverUrl` is uncapped
+          // on the import path, and the markerless display cut let a padded host show a
+          // trusted-looking prefix of itself on the line that says where the key goes.
+          const auth = authorityOf(to);
+          return (
+            <Notice key={`moved-${b.id}`} tone="warn">
+              &ldquo;{safeText(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
+              <span className="font-mono font-semibold">
+                {auth ? safeIdentityText(auth.host, 80) : "an unreadable address"}
+              </span>
+              {auth?.hasUserinfo ? " (the address hides the real host behind a username)" : ""}.
+            </Notice>
+          );
+        })}
         {/* These interpolate a backend name straight out of the imported file. The missing-keys
             line above renders the same field through safeText; this one did not, so a bidi
             override could rewrite the sentence the user reads to decide whether to import. */}
