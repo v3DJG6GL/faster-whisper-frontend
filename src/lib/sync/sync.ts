@@ -2434,10 +2434,6 @@ export async function pullNow(manual = false): Promise<void> {
   }
 }
 
-/** Why a push was refused rather than sent with a keyless backends list. */
-const PUSH_KEYS_UNREADABLE =
-  "Your API keys couldn't be read from the keyring, so settings weren't pushed. Unlock it and restart the app to resume syncing.";
-
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
@@ -2474,7 +2470,7 @@ export async function pushNow(manual = false): Promise<void> {
       // user knows why nothing is leaving this device.
       setRuntime({
         syncStatus: "error",
-        syncError: PUSH_KEYS_UNREADABLE,
+        syncError: "Your API keys couldn't be read from the keyring, so settings weren't pushed. Unlock it and restart the app to resume syncing.",
       });
       return;
     }
@@ -2538,16 +2534,13 @@ export async function pushNow(manual = false): Promise<void> {
           // device does not sync, the other-OS rules, a degraded backends list WITH its keys)
           // from the dead snapshot, and a first-contact merge would count them as local edits
           // and push the deleted document's values back. pullNow's reconcile composes after the
-          // forget the same way.
+          // forget the same way. No keyring-refusal re-check: the forget cleared the stash latch
+          // with the snapshot it guarded, and with no snapshot there is nothing to pass through —
+          // a locked keyring now composes the live list without keys, which the first-contact
+          // merge either conflicts against a re-seed that carries keys (the user decides) or
+          // sends where the server holds no list (nothing to erase), as on a first sync.
           blob = await composeLive(syncCats());
           if (myGen !== gen) return;
-          if (backendsPushBlocked() && backendsBlobIncomplete(blob)) {
-            setRuntime({
-              syncStatus: "error",
-              syncError: PUSH_KEYS_UNREADABLE,
-            });
-            return;
-          }
         }
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
