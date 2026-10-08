@@ -124,8 +124,7 @@ export function MicPicker({
     const selected = r.value === value;
     const isActive = idx === activeIdx;
     const prev = view.rows[i - 1];
-    const divider =
-      (r.type === "mic" && prev?.type === "default") || (r.type === "path" && prev?.type === "mic");
+    const divider = r.type === "mic" && prev?.type === "default";
     return (
       <li
         key={`${r.type}:${r.value ?? "default"}`}

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef, useSyncExternalStore } from "
 import { useSearchParams } from "react-router-dom";
 import { Mic, Check, FolderOpen, Settings as SettingsIcon } from "lucide-react";
 import { useApp } from "@/lib/store";
-import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, StatusDot, Toggle } from "@/components/ui";
+import { Button, Card, Segmented, SectionLabel, Select, SettingRow, Stepper, Toggle } from "@/components/ui";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
@@ -1188,10 +1188,13 @@ export default function Settings() {
 
         {tab === "Permissions" && (
           <Card className="px-6">
-            <SettingRow title="Microphone access" desc="Required to capture your voice." last={!IS_LINUX}>
-              <span className="inline-flex items-center gap-1.5 text-[12.5px] text-ok">
-                <StatusDot tone="ok" /> Granted
-              </span>
+            <SettingRow
+              title="Microphone access"
+              desc="Required to capture your voice. Use Audio → Test microphone to check it works."
+              last={!IS_LINUX}
+            >
+              {/* No IPC reads the OS permission, so claim nothing — point at the real test instead. */}
+              <span className="text-[12.5px] text-faint">Managed by your system</span>
             </SettingRow>
             {IS_LINUX && (
               // The evdev backend can never exist off Linux (/dev/input) — hide, don't dead-switch.
