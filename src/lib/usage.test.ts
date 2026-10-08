@@ -139,10 +139,11 @@ describe("usage poll gates", () => {
     setHidden(true);
     await vi.advanceTimersByTimeAsync(10 * 30_000); // the hidden pass skips the open page
     await settle();
-    close();
-    setHidden(false); // one catch-up pass; no page is open to take the flag
-    await settle();
     getUsageStats.mockClear();
+    close();
+    setHidden(false); // no catch-up pass: the closed page took the flag with it
+    await settle();
+    expect(calls()).toEqual({ fixed: 0, page: 0 });
     setHidden(true);
     setHidden(false); // nothing was passed over since
     await settle();

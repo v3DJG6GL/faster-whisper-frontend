@@ -77,6 +77,9 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
             if (!c.month) return null;
             let span = 1;
             while (i + span < cols.length && !cols[i + span].month) span++;
+            // A partial leading month has no room and nothing to its left to borrow, so it
+            // goes unlabelled, as in GitHub's grid.
+            if (i === 0 && span === 1) return null;
             // The year's last month may own one or two week columns — too narrow for its
             // name — so it borrows columns to its LEFT (they hold no text at their right
             // end) and aligns to the right edge instead of being clipped.

@@ -649,15 +649,17 @@ export function sumKinds(cells: readonly KindSplit[]): UsageKinds {
 
 const daysInMonth = (y: number, m: number) => new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
 
-function rhythmLayout(rhythm: Rhythm, from: number, to: number): RhythmLayout & { y0: number } {
+/** `loose` (days only): the document does not fit `from`..`to` — a stand-in span, or data
+ *  the window never reaches — so all 31 days, none hatched, each occurring once. */
+function rhythmLayout(rhythm: Rhythm, from: number, to: number, loose = false): RhythmLayout & { y0: number } {
   const [fy, fm] = ymdOf(from);
   const [ty, tm] = ymdOf(to);
   if (rhythm === "days") {
-    const oneMonth = fy === ty && fm === tm;
+    const oneMonth = !loose && fy === ty && fm === tm;
     const cols = oneMonth ? daysInMonth(fy, fm) : 31;
-    const colOcc = new Array<number>(cols).fill(0);
+    const colOcc = new Array<number>(cols).fill(loose ? 1 : 0);
     const end = Math.min(to, from + MAX_SPAN_DAYS + 31);
-    for (let d = from; d <= end; d++) colOcc[ymdOf(d)[2] - 1]++;
+    if (!loose) for (let d = from; d <= end; d++) colOcc[ymdOf(d)[2] - 1]++;
     const dayName = (c: number) => (oneMonth ? `${c + 1} ${MONTH[fm]}` : `the ${ordinal(c + 1)}`);
     return {
       rows: 24, cols, y0: fy, colOcc,
@@ -732,7 +734,8 @@ function rhythmPhrase(rhythm: Rhythm, values: readonly number[], colTot: readonl
  *  levelled by quartiles of the active ones, the peak, the side-bar totals relative to a
  *  flat distribution, occurrences, the phrase, and whether this server sent what it needs.
  *  `bounded` = `from`..`to` is the window the document really covers; false for a stand-in
- *  (all time before the server named its first day), which must not hatch weekday rows. */
+ *  (all time before the server named its first day), which must not hatch weekday rows or
+ *  days of the month. */
 export function rhythmModel(
   rhythm: Rhythm,
   src: RhythmSource,
@@ -745,7 +748,23 @@ export function rhythmModel(
   const ok = isDay(from) && isDay(to) && from <= to;
   const f = ok ? from : 0;
   const t = ok ? to : 0;
-  const L = rhythmLayout(rhythm, f, t);
+  const hourOk = (h: UsageHourCell) => Number.isInteger(h.hour) && h.hour >= 0 && h.hour <= 23;
+  const domOk = (h: UsageHourCell) => Number.isInteger(h.dom) && (h.dom as number) >= 1 && (h.dom as number) <= 31;
+  let L = rhythmLayout(rhythm, f, t);
+  // Days: as with the weekday rows below, never hatch over data. A stand-in span, or an older
+  // document kept up while a new window loads, may fill days the span never reaches (or the
+  // 29th–31st of a shorter month) — the grid then takes all 31 days, none out of the window.
+  if (
+    rhythm === "days" &&
+    (!bounded ||
+      (src.dom_hours ?? []).some((h) => {
+        if (!h || !hourOk(h) || !domOk(h) || !(metricValue(slotKinds(h)[scope], metric) > 0)) return false;
+        const dom = h.dom as number;
+        return dom > L.cols || L.colOcc?.[dom - 1] === 0;
+      }))
+  ) {
+    L = rhythmLayout(rhythm, f, t, true);
+  }
   const N = L.rows * L.cols;
   const comp = companionMetric(metric);
   const grid: (UsageKinds | undefined)[] = new Array(N);
@@ -755,7 +774,6 @@ export function rhythmModel(
     for (const k of ["all", ...KINDS] as const) addTotals(cur[k], add[k]);
     grid[i] = cur;
   };
-  const hourOk = (h: UsageHourCell) => Number.isInteger(h.hour) && h.hour >= 0 && h.hour <= 23;
   let sent: RhythmSent = "yes";
   if (rhythm === "hours") {
     for (const h of src.hours ?? []) {
@@ -765,7 +783,7 @@ export function rhythmModel(
   } else if (rhythm === "days") {
     if (!src.dom_hours) sent = "no-grid";
     for (const h of src.dom_hours ?? []) {
-      if (!h || !hourOk(h) || !Number.isInteger(h.dom) || (h.dom as number) < 1 || (h.dom as number) > L.cols) continue;
+      if (!h || !hourOk(h) || !domOk(h) || (h.dom as number) > L.cols) continue;
       put(h.hour * L.cols + ((h.dom as number) - 1), slotKinds(h));
     }
   } else {

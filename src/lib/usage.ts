@@ -72,7 +72,8 @@ export function openStatisticsPage(): () => void {
   return () => {
     if (closed) return;
     closed = true;
-    statsPagesOpen--;
+    // No page left to want the skipped documents; the next mount fetches fresh.
+    if (--statsPagesOpen === 0) pageMissed = false;
   };
 }
 
@@ -277,10 +278,6 @@ async function refreshAll(): Promise<void> {
         // Hidden with the page open — whichever pass this is (tick, after-session, backend
         // edit): the show handler fetches the page's documents then.
         pageMissed = true;
-      } else {
-        // No page open: its next mount fetches fresh (openStatisticsPage). A flag left set here
-        // would make every later show run a full extra pass.
-        pageMissed = false;
       }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {

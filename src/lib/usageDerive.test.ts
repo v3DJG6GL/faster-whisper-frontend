@@ -269,12 +269,13 @@ describe("usageDerive", () => {
     expect(m.phrase).toBe("mostly 21st–31st");
     // A window inside February: 28 columns, the 29th–31st never rendered.
     const feb1 = 20_485, feb28 = 20_512;
-    const f = rhythmModel("days", { dom_hours }, "all", "words", feb1, feb28);
+    const early = dom_hours.filter((h) => (h.dom as number) <= 28); // only days February reaches
+    const f = rhythmModel("days", { dom_hours: early }, "all", "words", feb1, feb28);
     expect(f.layout.cols).toBe(28);
     expect(f.colLive).toEqual(f.layout.colOcc!.map((n) => n > 0));
     expect(m.colLive).toEqual(m.layout.colOcc!.map((n) => n > 0));
     // 5–20 Aug: the days the window never reaches keep no top bar.
-    const part = rhythmModel("days", { dom_hours }, "all", "words", aug1 + 4, aug1 + 19);
+    const part = rhythmModel("days", { dom_hours: [{ dom: 6, hour: 1, all: 10, dictation: 10, file: 0, url: 0, text: 0 }] }, "all", "words", aug1 + 4, aug1 + 19);
     expect(part.colLive).toEqual(Array.from({ length: 31 }, (_, c) => c >= 4 && c <= 19));
     expect(f.peak?.value).toBe(100);
     // Across many months: 31 columns, "the 29th", occurrences per day of month.
@@ -284,6 +285,32 @@ describe("usageDerive", () => {
     expect(y.occOf(y.cells[5 * 31 + 28])).toBe(11); // no 29 Feb 2025
     expect(y.occOf(y.cells[30])).toBe(7); // seven 31-day months in a year
     expect(y.occWord(y.cells[30])).toBe("month");
+  });
+
+  it("rhythmModel days: never hatches a day the document fills, whatever the window says", () => {
+    const aug1 = 20_666, feb1 = 20_485;
+    const dom_hours: UsageHourCell[] = [
+      { dom: 29, hour: 5, all: 900, dictation: 900, file: 0, url: 0, text: 0 },
+      { dom: 2, hour: 20, all: 100, dictation: 100, file: 0, url: 0, text: 0 },
+    ];
+    // An older document kept up while 5–20 Aug loads: the 29th holds data.
+    const part = rhythmModel("days", { dom_hours }, "all", "words", aug1 + 4, aug1 + 19);
+    expect(part.layout.cols).toBe(31);
+    expect(part.cells.every((c) => c.inWindow)).toBe(true);
+    expect(part.peak).toMatchObject({ row: 5, col: 28, value: 900 });
+    expect(part.layout.colLong(28)).toBe("the 29th of each month");
+    // 1–28 Feb with data on the 31st: 31 columns, the slot counted.
+    const feb = rhythmModel("days", { dom_hours: [{ dom: 31, hour: 0, all: 50, dictation: 50, file: 0, url: 0, text: 0 }] }, "all", "words", feb1, feb1 + 27);
+    expect(feb.layout.cols).toBe(31);
+    expect(feb.sum).toBe(50);
+    expect(feb.colLive[30]).toBe(true);
+    // The all-time stand-in (today..today): no column hatched.
+    const stand = rhythmModel("days", { dom_hours: dom_hours.slice(1) }, "all", "words", aug1 + 1, aug1 + 1, false);
+    expect(stand.layout.cols).toBe(31);
+    expect(stand.cells.every((c) => c.inWindow)).toBe(true);
+    // Zero-valued slots outside the window do not loosen it.
+    const zero = rhythmModel("days", { dom_hours: [{ dom: 29, hour: 1, all: 0, dictation: 0, file: 0, url: 0, text: 0 }] }, "all", "words", aug1 + 4, aug1 + 19);
+    expect(zero.cells.filter((c) => !c.inWindow).length).toBeGreaterThan(0);
   });
 
   it("rhythmModel months: year rows × month columns folded from the per-day series", () => {
