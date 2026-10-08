@@ -109,10 +109,15 @@ export function msUntilStale(p: UtterancePending, now: number): number | null {
 
 /** How much longer the working state must stay PAINTED if the utterance ended right now. Zero
  *  when it isn't on screen at all: nothing announced, already stale, or the user is speaking
- *  (green is showing, and green is never delayed). Call BEFORE onTerminal. */
+ *  (green is showing, and green is never delayed). A `decoding` that arrived after its `open`
+ *  had gone stale (noise holding the server's VAD open) was painted afresh when it arrived, so
+ *  it is measured from then. Call BEFORE onTerminal. */
 export function holdRemainingMs(p: UtterancePending, now: number): number {
   if (p.speaking || !isLive(p, now)) return 0;
-  const paintedSince = Math.max(p.announcedAt, p.quietSince);
+  let paintedSince = Math.max(p.announcedAt, p.quietSince);
+  // For the same ordinal this is exactly "the preceding open was stale when decoding came in";
+  // speech that stopped after the decoding frame makes the difference negative.
+  if (p.state === "decoding" && p.since - paintedSince >= OPEN_STALE_MS) paintedSince = p.since;
   return Math.max(0, MIN_SHOW_MS - (now - paintedSince));
 }
 

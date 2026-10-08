@@ -125,6 +125,15 @@ describe("baselineDivergence", () => {
     });
   });
 
+  it("classifies an astral character whole, not by its lone surrogate", () => {
+    // 😀 and 😃 share a high surrogate: the divergence backs onto it, index 1.
+    const d = baselineDivergence("a😀", "a😃")!;
+    expect(d.at).toBe(1);
+    expect(d.typedCh).toBe("punct");
+    expect(d.docCh).toBe("punct");
+    expect(baselineDivergence("𠀀", "x")!.typedCh).toBe("letter");
+  });
+
   it("never carries text in its answer", () => {
     const d = baselineDivergence("geheim A", "geheim B")!;
     expect(JSON.stringify(d)).not.toContain("geheim");

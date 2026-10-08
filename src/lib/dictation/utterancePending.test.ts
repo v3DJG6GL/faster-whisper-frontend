@@ -122,6 +122,13 @@ describe("utterancePending", () => {
       expect(holdRemainingMs(p, 120)).toBe(0);
     });
 
+    it("measures a decoding that followed a stale open from when it was painted", () => {
+      const p = newUtterancePending();
+      onFrame(p, "open", 0, 0); // noise keeps the server's VAD open; blue goes stale at 3 s
+      onFrame(p, "decoding", 0, 9000); // repainted blue here
+      expect(holdRemainingMs(p, 9050)).toBe(MIN_SHOW_MS - 50);
+    });
+
     it("asks for nothing when the state had already gone stale", () => {
       const p = newUtterancePending();
       onFrame(p, "open", 0, 0);

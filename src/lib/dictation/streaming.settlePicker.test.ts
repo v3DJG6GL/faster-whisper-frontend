@@ -66,6 +66,14 @@ describe("the settle picker is armed for exactly one session", () => {
     expect(mask(bodyAfter(streamingSrc, "async function cancelLive("))).toContain("askTargetsAtSettle = null");
   });
 
+  it("cancelLive takes down a settle picker that is still on screen", () => {
+    // The ask is awaited inside the stop-mode inject task; disarming alone leaves the
+    // always-on-top window up with buttons whose answer the stale task then ignores.
+    expect(mask(bodyAfter(streamingSrc, "async function cancelLive("))).toContain("abortLangPick(");
+    const ask = mask(streamingSrc).indexOf("await askTargetsAtSettle()");
+    expect(mask(streamingSrc).lastIndexOf("settlePickerOpen = asking", ask)).toBeGreaterThanOrEqual(0);
+  });
+
   it("dictate() disarms before the hands-free branch can return early", () => {
     const body = mask(bodyAfter(dictationSrc, "export function dictate("));
     const disarm = body.indexOf("setSettleTargetPicker(null)");

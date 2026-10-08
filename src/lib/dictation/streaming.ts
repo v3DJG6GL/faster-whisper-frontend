@@ -53,6 +53,7 @@ import {
   restoreClipboardSnapshot,
   discardInjectionSnapshot,
   getFocusedApp,
+  abortLangPick,
   reregisterShortcutsUnlessCapturing,
   shortcutModsHeld,
   audioBasePref,
@@ -1585,6 +1586,8 @@ export type TargetPick =
  *  module, so the dependency can only go this way. Armed BEFORE startLive, which is how
  *  startLiveInner knows to publish the route as "undecided" (`routePending`). */
 let askTargetsAtSettle: (() => Promise<TargetPick>) | null = null;
+/** The settle picker currently on screen (a per-ask token), for cancelLive to abort. */
+let settlePickerOpen: object | null = null;
 export function setSettleTargetPicker(fn: (() => Promise<TargetPick>) | null): void {
   askTargetsAtSettle = fn;
 }
@@ -2221,8 +2224,9 @@ async function ensureListeners(): Promise<void> {
             }
             // A cancel (insertCfg→null) OR cancel-then-restart (insertCfg→a new object) landing during
             // the awaited beginInjection above must not paste this discarded phrase into the now-
-            // refocused / next session's window — mirrors the post-resolveTarget (549) and injectText-
-            // catch (631) guards; beginInjection was the lone await between guard and paste left open.
+            // refocused / next session's window — mirrors the post-resolveTarget / post-translate guards
+            // above and the injectText catch's guard below; beginInjection was the lone await between
+            // guard and paste left open.
             // Any snapshot taken is restored by cancelLive's unconditional chained endInjection.
             if (insertCfg !== cfg) return;
             let landed = true;
@@ -2568,9 +2572,15 @@ async function ensureListeners(): Promise<void> {
             if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed) {
               if (beganInjection) {
                 // A prior paste snapshotted the user's clipboard — put it back (mirrors the per-phrase
-                // restore contract); the snapshot survives in Rust and isn't consumed.
-                await restoreClipboardSnapshot();
+                // restore contract); the snapshot survives in Rust and isn't consumed. Cleared
+                // BEFORE the await (as the sibling restore links do): a cancel-then-restart swaps
+                // the chain meanwhile, and a late write here would wipe session B's own flag.
                 clipHoldsOurs = false;
+                try {
+                  await restoreClipboardSnapshot();
+                } catch (e) {
+                  console.error("restore clipboard snapshot failed:", e);
+                }
               } else {
                 // No prior snapshot: `sep` (OUR text) is on the clipboard. Mark clipHoldsOurs so a later
                 // phrase's begin_injection (gated on !clipHoldsOurs) won't snapshot `sep` as the user's
@@ -2793,7 +2803,17 @@ async function ensureListeners(): Promise<void> {
           // "not inserted" note (settleIdle reads `sessionInsertSkipped`). Nothing is
           // inserted, so there is no outcome to book and no clipboard fallback to offer.
           if (askTargetsAtSettle) {
-            const pick = await askTargetsAtSettle();
+            // Booked while the picker is up so cancelLive can take it down — otherwise the
+            // always-on-top window outlives the cancelled session with buttons that do nothing.
+            // A per-ask token, so a late finally never clears a NEXT session's booking.
+            const asking = {};
+            settlePickerOpen = asking;
+            let pick: TargetPick;
+            try {
+              pick = await askTargetsAtSettle();
+            } finally {
+              if (settlePickerOpen === asking) settlePickerOpen = null;
+            }
             if (insertCfg !== cfg) return;
             if (pick.kind === "picked") applySessionTargets(pick.targets);
             else if (pick.kind === "aborted") {
@@ -3851,6 +3871,12 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   insertCfg = null;
   injectChain = Promise.resolve();
   injectDepth = { n: 0 };
+  // A push-to-talk picker still open over this session: take it down. The asker then resolves
+  // "aborted" and its stale task returns on the insertCfg guard.
+  if (settlePickerOpen) {
+    settlePickerOpen = null;
+    void abortLangPick().catch((e) => console.error("lang pick abort failed:", e));
+  }
   askTargetsAtSettle = null; // see settleIdle
   routeHint = null;
   useApp

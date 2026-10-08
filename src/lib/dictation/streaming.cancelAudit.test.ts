@@ -497,4 +497,17 @@ describe("work that must wait for the queue or the cancel", () => {
       expect(boundary.split(step).length, `${step} must not run synchronously in the boundary`).toBe(inLink);
     }
   });
+
+  it("the separator task clears clipHoldsOurs before its awaited restore", () => {
+    // A cancel-then-restart swaps the chain during the await; a clear AFTER it would wipe the
+    // new session's own clipHoldsOurs (set by its first paste) — same rule as the sibling links.
+    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
+    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const at = task.indexOf("if (beganInjection)");
+    expect(at, "the separator's restore branch moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const branch = task.slice(at, task.indexOf("} else {", at));
+    const clear = branch.indexOf("clipHoldsOurs = false");
+    expect(clear, "the restore branch must clear clipHoldsOurs").toBeGreaterThanOrEqual(0);
+    expect(branch.indexOf("restoreClipboardSnapshot(")).toBeGreaterThan(clear);
+  });
 });

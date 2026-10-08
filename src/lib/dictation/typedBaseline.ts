@@ -76,6 +76,13 @@ export function charClass(c: string | undefined): CharClass {
   return "other";
 }
 
+/** The whole character at `i` — both halves of a surrogate pair. `commonPrefixLen` can back the
+ *  divergence onto a high surrogate, and a lone surrogate matches no class (it would log "other"). */
+function chAt(s: string, i: number): string | undefined {
+  const cp = s.codePointAt(i);
+  return cp === undefined ? undefined : String.fromCodePoint(cp);
+}
+
 /** Where `doc` stops extending `typed`, or null when it does extend it (the normal, append-only
  *  case — including an empty `typed`). Indices and lengths in UTF-16 code units; the two
  *  characters at the divergence are reported as CLASSES only. A `doc` that is a strict prefix of
@@ -90,7 +97,7 @@ export function baselineDivergence(
     at,
     typedLen: typed.length,
     docLen: doc.length,
-    typedCh: charClass(typed[at]),
-    docCh: charClass(doc[at]),
+    typedCh: charClass(chAt(typed, at)),
+    docCh: charClass(chAt(doc, at)),
   };
 }
