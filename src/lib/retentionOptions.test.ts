@@ -29,8 +29,10 @@ describe("withCurrentDay", () => {
   });
 
   it("the three retention lists agree with the day the app would persist", () => {
-    // 14 is a dictation value older configs carry; the dictation list lacks it.
+    // Each value is one an older config can carry and its own list lacks.
     const out = withCurrentDay(DICTATION_RETENTION_OPTIONS, 14);
     expect(out.map((o) => o.value)).toContain("14");
+    expect(withCurrentDay(HISTORY_RETENTION_OPTIONS, 14).map((o) => o.value)).toContain("14");
+    expect(withCurrentDay(LOG_RETENTION_OPTIONS, 365).map((o) => o.value)).toContain("365");
   });
 });
