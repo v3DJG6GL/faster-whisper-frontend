@@ -169,6 +169,18 @@ describe("buildCues", () => {
     expect(grid.own.de.map((c) => c.text).join(" ")).toBe(de);
   });
 
+  it("own timing: a translation stays in the spoken stretches, never over a pause", () => {
+    const es = "Ocurrió hace medio siglo. Durante casi mil días, estos paisajes se vieron asolados por una cruel guerra civil.";
+    const de = "Es geschah vor einem halben Jahrhundert. Fast tausend Tage lang wurden diese Landschaften von einem grausamen Bürgerkrieg verwüstet.";
+    const r = seg1(es, 152.5, 188.8, { segments: [{ start: 152.5, end: 188.8, text: " " + es, translations: { de } }] }, { 3: 30 });
+    const grid = buildCues(r, { ...STD, timing: "own" }, ["de"]);
+    const pause = [r.words![3].end, r.words![4].start];
+    expect(grid.own.de.every((c) => c.end <= pause[0] || c.start >= pause[1])).toBe(true);
+    expect(grid.own.de.find((c) => c.end <= pause[0])?.text).toBe("Es geschah vor einem halben Jahrhundert.");
+    expect(grid.own.de.map((c) => c.text).join(" ")).toBe(de);
+    expect(grid.own.de[grid.own.de.length - 1].end).toBe(188.8);
+  });
+
   it("own timing: spaceless text splits per code point, never inside an emoji", () => {
     const ja = "🎉".repeat(4) + "今日は朝から雨が降っていて🎉駅までの道はとても混んでいました🎉電車も遅れていました🎉";
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });

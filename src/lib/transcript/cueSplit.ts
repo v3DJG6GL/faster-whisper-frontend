@@ -388,6 +388,19 @@ function timedPieces(
   return out;
 }
 
+/** Runs of pieces with no gap between them, each with its span and text length. */
+function stretchesOf(pieces: { start: number; end: number; text: string }[]): { start: number; end: number; len: number }[] {
+  const out: { start: number; end: number; len: number }[] = [];
+  for (const p of pieces) {
+    const last = out[out.length - 1];
+    if (last && p.start <= last.end) {
+      last.end = p.end;
+      last.len += p.text.length + 1;
+    } else out.push({ start: p.start, end: p.end, len: Math.max(1, p.text.length) });
+  }
+  return out;
+}
+
 // ── translation cutting (same timing) ───────────────────────────────────────
 
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
@@ -579,25 +592,37 @@ export function buildCues(
   const own: Record<string, Cue[]> = {};
   const ownMt = !!o && o.timing === "own";
   if (ownMt) for (const l of mtLangs) own[l] = [];
-  // Only the original itself and same-timed translations read its split.
+  // The original itself and same-timed translations show its split; own-timed ones
+  // only read where it pauses.
   const needMine = tracks.includes("orig") || (!ownMt && mtLangs.length > 0);
+  const needSplit = needMine || (ownMt && mtLangs.length > 0);
   const cues: Cue[] = [];
 
   segs.forEach((seg, si) => {
     const toks = ranges && L ? tokensOf(seg.text, words.slice(ranges[si][0], ranges[si][1])) : null;
-    const pieces = toks && L && needMine
+    const split = toks && L && needSplit
       ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg) })
-      : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
+      : null;
+    const pieces = split && needMine ? split : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
     const mine: Cue[] = pieces.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} }));
+    // Spoken stretches: the original's cues joined until it shows a gap (a pause
+    // timedPieces left open), so an own-timed translation never runs over silence.
+    const spans = split && ownMt ? stretchesOf(split) : [];
     for (const lang of mtLangs) {
       const t = trText(seg, lang);
       if (t === null) continue;
       if (ownMt) {
         const LL = { ...trackLimits(result, o, lang)!, reserve: reserve(seg) };
-        const parts = toks ? timedPieces(t, spreadTokens(t, seg.start, seg.end), seg.start, seg.end, LL) : [
-          { start: seg.start, end: seg.end, text: t },
-        ];
-        own[lang].push(...parts.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} })));
+        if (!spans.length) {
+          own[lang].push({ seg: si, start: seg.start, end: seg.end, text: t, speaker: seg.speaker, tr: {} });
+          continue;
+        }
+        const texts = cutByShare(t, spans.map((sp) => sp.len));
+        spans.forEach((sp, k) => {
+          if (!texts[k]) return;
+          const parts = timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end), sp.start, sp.end, LL);
+          own[lang].push(...parts.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} })));
+        });
       } else {
         const parts = cutByShare(t, mine.map((c) => Math.max(1, c.text.length)));
         mine.forEach((c, k) => {
