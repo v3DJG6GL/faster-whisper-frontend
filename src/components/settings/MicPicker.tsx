@@ -12,6 +12,7 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 
 import { Bluetooth, Check, Mic, SlidersHorizontal } from "lucide-react";
 import { Badge, FieldTrigger, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
+import { navKey } from "@/lib/listNav";
 import { buildMicView, isSelectable, type MicRow, type SelectableRow } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useOutsidePress } from "@/lib/useOutsidePress";
@@ -85,12 +86,13 @@ export function MicPicker({
   };
 
   const onListKey = (e: KeyboardEvent) => {
-    const last = choices.length - 1;
-    if (e.key === "ArrowDown") setActive(Math.min(last, activeIdx + 1));
-    else if (e.key === "ArrowUp") setActive(Math.max(0, activeIdx - 1));
-    else if (e.key === "Home") setActive(0);
-    else if (e.key === "End") setActive(last);
-    else if (e.key === "Enter" || e.key === " ") {
+    const next = navKey(e.key, activeIdx, choices.length);
+    if (next !== null) {
+      e.preventDefault();
+      setActive(next);
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
       const r = choices[activeIdx];
       if (r) pick(r);
     } else if (e.key === "Escape") close(true);

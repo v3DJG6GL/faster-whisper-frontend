@@ -194,6 +194,11 @@ function RuleCard({
   const [mapShowAll, setMapShowAll] = useState(false);
   // The just-added cb:map row — auto-focus its key so suggestions open at once.
   const [justAddedId, setJustAddedId] = useState<number | null>(null);
+  // One-shot: the new row takes focus on its mount; a later remount (collapse + re-expand) must not.
+  // Effects run after the row's mount-time autoFocus, so clearing here keeps that first focus.
+  useEffect(() => {
+    if (justAddedId !== null) setJustAddedId(null);
+  }, [justAddedId]);
 
   const setEntries = (fn: (rows: EntryRow[]) => EntryRow[]) =>
     onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));

@@ -299,10 +299,18 @@ export default function Settings() {
   const changeRecDir = () =>
     void pickRecordingsDir()
       .then(async (picked) => {
-        if (!picked || busy.dir) return;
-        // The buttons are disabled during a wipe, but the native picker may have opened before it.
-        if (busy.store) {
-          setStoreMsg({ text: "A cleanup is still running — try the move again when it finishes.", error: true });
+        if (!picked) return;
+        // The buttons are disabled during a move or a wipe, but the native picker may have opened
+        // before it — say why the picked folder was not used instead of dropping it silently.
+        if (busy.dir || busy.store) {
+          if (tabRef.current === "Recording & history") {
+            setStoreMsg({
+              text: busy.dir
+                ? "Another folder move is still running — pick the folder again when it finishes."
+                : "A cleanup is still running — try the move again when it finishes.",
+              error: true,
+            });
+          }
           return;
         }
         moveError = null;

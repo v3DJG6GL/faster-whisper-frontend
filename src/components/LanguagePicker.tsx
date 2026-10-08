@@ -75,6 +75,10 @@ function useRecent(key: "recentSpokenLanguages" | "recentTranslationTargets") {
     use: (code: string) => {
       used.current = [code, ...used.current.filter((c) => c !== code)];
     },
+    /** Undo `use` for a code unticked again before the popover closed (a mis-tick is not a Recent). */
+    forget: (code: string) => {
+      used.current = used.current.filter((c) => c !== code);
+    },
     flush: () => {
       rememberRecent(key, used.current);
       used.current = [];
@@ -168,7 +172,7 @@ export function TargetLanguagePicker({
   disabled?: boolean;
   renderTrigger?: (p: TriggerProps) => ReactNode;
 }) {
-  const { recent, use, flush } = useRecent("recentTranslationTargets");
+  const { recent, use, forget, flush } = useRecent("recentTranslationTargets");
   // At the cap the "+ language" button rests: remove a chip to pick another. The cap is the
   // server's or the app's own ceiling (targetCap), so the wording names neither.
   const full = value.length >= max;
@@ -185,6 +189,7 @@ export function TargetLanguagePicker({
         // was really added counts as a Recent target.
         const next = toggleCode(value, r.value, max);
         if (next.includes(r.value) && !value.includes(r.value)) use(r.value);
+        else if (!next.includes(r.value) && value.includes(r.value)) forget(r.value);
         onChange(next);
       }}
       onClose={flush}
