@@ -245,11 +245,20 @@ fn bound_server_info(i: super::ServerInfo) -> super::ServerInfo {
         limits: i.limits.map(|l| ServerLimits {
             translation_max_targets: super::fin_nonneg(l.translation_max_targets),
             url_max_duration_s: super::fin_nonneg(l.url_max_duration_s),
-            url_allowed_extractors: l.url_allowed_extractors.map(|v| {
-                v.into_iter()
+            // A list whose every entry is malformed is dropped (absent), not kept as [] — the
+            // UI reads [] as "all dedicated", the opposite of a server that matches none.
+            url_allowed_extractors: l.url_allowed_extractors.and_then(|v| {
+                let had = !v.is_empty();
+                let kept: Vec<String> = v
+                    .into_iter()
                     .filter(|e| is_extractor_name(e))
                     .take(64)
-                    .collect()
+                    .collect();
+                if had && kept.is_empty() {
+                    None
+                } else {
+                    Some(kept)
+                }
             }),
             url_allow_direct_media: l.url_allow_direct_media,
         }),
@@ -937,6 +946,24 @@ mod tests {
             .unwrap()
             .get("server_info")
             .is_none());
+    }
+
+    /// A list whose every entry is filtered out is absent, never [] ("all dedicated"); a
+    /// genuinely empty list stays [].
+    #[test]
+    fn an_all_malformed_extractor_list_is_dropped_not_emptied() {
+        let bound = |list: serde_json::Value| {
+            let info: super::super::ServerInfo = serde_json::from_value(
+                serde_json::json!({"limits": {"url_allowed_extractors": list}}),
+            )
+            .unwrap();
+            super::bound_server_info(info)
+                .limits
+                .unwrap()
+                .url_allowed_extractors
+        };
+        assert_eq!(bound(serde_json::json!(["bad name"])), None);
+        assert_eq!(bound(serde_json::json!([])), Some(vec![]));
     }
 
     /// A model's device survives the typed mirror as a short token; anything else is dropped,

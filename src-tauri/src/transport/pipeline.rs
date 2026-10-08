@@ -96,7 +96,11 @@ struct SaveBody {
 pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> PipelineFetch {
     let base = base_url(server_url);
     let url = format!("{base}/v1/pipeline-rules");
-    match with_auth(client().get(url), api_key).send().await {
+    match with_auth(client().get(url), api_key)
+        .timeout(super::META_TIMEOUT)
+        .send()
+        .await
+    {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
@@ -287,7 +291,11 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
     // quick-add dropdown is otherwise indistinguishable from "no recent words yet".
     // `debug` (not warn) is deliberate — a standard/old server 404s this endpoint on every
     // summon, and that expected miss must not spam the default-on info/warn log.
-    match with_auth(client().get(url), api_key).send().await {
+    match with_auth(client().get(url), api_key)
+        .timeout(super::META_TIMEOUT)
+        .send()
+        .await
+    {
         Ok(resp) if resp.status().is_success() => {
             match json_capped_to::<RecentWords>(resp, MAX_META_BODY).await {
                 // The COUNT is capped in both webviews; the per-word LENGTH never was, and
