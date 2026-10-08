@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Select, TextInput } from "@/components/ui";
 import { listOverrideProfiles } from "@/lib/api";
-import { credentialGeneration } from "@/lib/capabilities";
+import { requestCredentialGen } from "@/lib/capabilities";
 import { NO_OVERRIDE_PROFILE } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 
@@ -25,7 +25,6 @@ export function OverrideProfilePicker({
   backendId,
   apiKey = null,
   serverKind,
-  credentialGen,
   canRequest,
   value,
   inheritLabel,
@@ -36,10 +35,6 @@ export function OverrideProfilePicker({
   backendId: string;
   apiKey?: string | null;
   serverKind: ServerKind;
-  /** Bumped when the backend's stored key is replaced elsewhere (a sync pull): the names are
-   *  per caller, so they are refetched as the new one. Omitted ⇒ the stored key's generation is
-   *  read at render time (0 with a typed `apiKey`), as in useDecodeDefaults. */
-  credentialGen?: number;
   /** Per-identity capability: when false, this caller may not request override-
    *  profiles — show a disabled hint. undefined ("unknown") = permitted. */
   canRequest?: boolean;
@@ -54,7 +49,9 @@ export function OverrideProfilePicker({
   const [names, setNames] = useState<string[]>([]);
   const [showCustom, setShowCustom] = useState(false);
   const blocked = canRequest === false;
-  const gen = credentialGen ?? (backendId && !apiKey ? credentialGeneration(backendId) : 0);
+  // Bumped when the backend's stored key is replaced elsewhere (a sync pull): the names are per
+  // caller, so they are refetched as the new one (as in useDecodeDefaults).
+  const gen = requestCredentialGen(backendId, apiKey);
 
   useEffect(() => {
     if (serverKind === "standard" || blocked) return; // no endpoint / not permitted

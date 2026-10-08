@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { getDecodeDefaults } from "@/lib/api";
-import { credentialGeneration } from "@/lib/capabilities";
+import { requestCredentialGen } from "@/lib/capabilities";
 import type { DecodeDefaults } from "@/lib/types";
 import type { ServerKind } from "@/lib/serverKind";
 import { useDebounced } from "@/lib/useDebounced";
@@ -24,15 +24,13 @@ export function useDecodeDefaults(args: {
   /** The override profile the request will name (NO_OVERRIDE_PROFILE included). */
   profileName?: string | null;
   serverKind: ServerKind;
-  /** Bumped when the backend's stored key is replaced elsewhere (a sync pull): values fetched as
-   *  the old caller are withheld and refetched. Omitted ⇒ the stored key's generation is read at
-   *  render time (0 with a typed `apiKey`, which is the request's credential instead). */
-  credentialGen?: number;
 }): DecodeDefaults | undefined {
   const { serverUrl, backendId, apiKey, serverKind } = args;
-  // Read on every render: the eviction that bumps it (forgetBackendCaches) also replaces the
-  // store's `connections`, which re-renders every screen that shows these values.
-  const credentialGen = args.credentialGen ?? (backendId && !apiKey ? credentialGeneration(backendId) : 0);
+  // Bumped when the backend's stored key is replaced elsewhere (a sync pull): values fetched as
+  // the old caller are withheld and refetched. Read on every render: the eviction that bumps it
+  // (forgetBackendCaches) also replaces the store's `connections`, which re-renders every screen
+  // that shows these values.
+  const credentialGen = requestCredentialGen(backendId, apiKey);
   const model = args.model?.trim() ?? "";
   // Debounced here, once for every caller: the override-profile picker's custom name reports each
   // keystroke, and each one cleared the inherited values and fired a credentialed fetch. Only the

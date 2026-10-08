@@ -32,7 +32,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, in
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { credentialGeneration, forgetCaps, refreshCaps } from "@/lib/capabilities";
+import { credentialGeneration, forgetCaps, refreshCaps, requestCredentialGen } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer } from "@/components/sync/SettingsSync";
@@ -169,8 +169,9 @@ function Editor({
   if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
   const hookKind = hookKindRef.current;
   // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
-  // generation, and both hooks below must then re-ask as the new caller (as resultLive does).
-  const liveGen = debouncedKey ? 0 : credentialGeneration(b.id);
+  // generation, and the hooks below must then re-ask as the new caller (as resultLive does).
+  // useDecodeDefaults and the override-profile picker apply the same rule themselves.
+  const liveGen = requestCredentialGen(b.id, debouncedKey || null);
   // Caller capabilities, for gating the decode editor.
   const { caps: ctxCaps } = useOverrideContext({
     serverUrl: probeUrl,
@@ -193,7 +194,6 @@ function Editor({
     model: debouncedModel,
     profileName: b.overrideProfile,
     serverKind: hookKind,
-    credentialGen: liveGen,
   });
   const server = serverInherited(decodeDefaults);
   // The backend's own model, if it names one: on a full server the `whisper-1` alias (a new
@@ -205,7 +205,9 @@ function Editor({
     canOverride: caps?.can_request_decode_overrides,
     locked: server.locked.has("multilingual"),
     standard: kind === "standard",
-    model: debouncedModel,
+    // The model the server resolved when known: on the default model it is DEFAULT_MODEL, which
+    // may be English-only.
+    model: decodeDefaults?.model || debouncedModel,
   });
   const spoken = spokenField(b.language, b.decodeOverrides, server.values.multilingual, multiOffered);
   const promptLocked = server.prompt?.locked === true;
@@ -528,7 +530,6 @@ function Editor({
                 backendId={b.id}
                 apiKey={debouncedKey || null}
                 serverKind={hookKind}
-                credentialGen={liveGen}
                 canRequest={caps?.can_request_override_profile}
                 value={b.overrideProfile ?? ""}
                 inheritLabel="Server default"

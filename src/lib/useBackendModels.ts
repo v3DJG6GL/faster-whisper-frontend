@@ -22,11 +22,17 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   // re-run the probe — keyed on `[id, conn]` alone, a failed probe (conn stays undefined)
   // left the model picker empty for the rest of the mount after the user fixed the URL.
   const url = useApp((s) => (backend ? effectiveServerUrl(backend, s.settings) : ""));
+  // Key presence too: a sync pull that adds a key to a keyless backend (or removes one) moves no
+  // credential generation, and `conn` is already undefined — keyed on it, the probe re-runs as
+  // the current caller and the keyless probe's verdict is dropped.
+  const hasKey = backend?.hasApiKey ?? false;
   useEffect(() => {
     if (!backend || !isTauri || conn) return;
     let stale = false;
     // A key rotated and saved mid-probe empties `conn` again (already undefined here, so the deps
-    // don't change and this run isn't cancelled): the old key's verdict must not land. Nothing
+    // don't change and this run isn't cancelled): the old key's verdict must not land. A key
+    // added or removed re-runs the effect (`hasKey`) and is checked against the store as well,
+    // since the cleanup may not have run yet when the old probe answers. Nothing
     // else re-runs this effect then, so re-probe with the current credential instead of dropping
     // the answer — once per generation move, capped so a credential that keeps rotating can't
     // keep the probe looping for the life of the mount.
@@ -43,6 +49,7 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
             if (retries++ < MAX_ROTATION_REPROBES) probe();
             return;
           }
+          if ((useApp.getState().backends.find((x) => x.id === backend.id)?.hasApiKey ?? false) !== hasKey) return;
           useApp.getState().setConnection(backend.id, info);
         })
         .catch(() => {});
@@ -52,6 +59,6 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
       stale = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id, conn, url]);
+  }, [id, conn, url, hasKey]);
   return conn?.models ?? [];
 }

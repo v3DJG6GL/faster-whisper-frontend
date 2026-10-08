@@ -55,6 +55,13 @@ export function credentialGeneration(id: string): number {
   return generation.get(id) ?? 0;
 }
 
+/** The credential generation a request is made under: the stored key's when the request uses it
+ *  (no typed `apiKey`), else 0 — a typed key is the request's credential itself. One rule for
+ *  every hook that refetches per caller, so they can't drift apart. */
+export function requestCredentialGen(backendId: string | null | undefined, apiKey: string | null | undefined): number {
+  return backendId && !apiKey ? credentialGeneration(backendId) : 0;
+}
+
 /** Refresh a Backend's cached capabilities. Best-effort and never throws: a
  *  standard/old server stores null ("fetched and unsupported"); a transient error
  *  leaves the cache entry absent so the next trigger re-probes instead of latching

@@ -32,7 +32,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, backendPrompt, effectiveLanguage, effectiveServerUrl } from "@/lib/backends";
-import { withBackendChips } from "@/lib/backendChipLabels";
+import { WHISPER_ALIAS, withBackendChips } from "@/lib/backendChipLabels";
 import { backendForProfile } from "@/lib/dictation/dictation";
 import { liveAllowed } from "@/lib/dictation/streaming";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
@@ -141,12 +141,18 @@ function Editor({
   const server = serverInherited(decodeDefaults, backend?.decodeOverrides, streams ? "stream" : "batch", "Backend default");
   // "Multiple languages" is the profile's `multilingual` decode override over its backend's —
   // sent with every request, the streaming handshake included.
+  // Judge the model the server resolved when known: a backend on the default model runs the
+  // server's DEFAULT_MODEL, which may be English-only.
   const multiOffered = offersMultilingual({
     canOverride: caps?.can_request_decode_overrides,
     locked: server.locked.has("multilingual"),
     standard: serverKind === "standard",
-    model: p.model?.trim() || backend?.model,
+    model: decodeDefaults?.model || p.model?.trim() || backend?.model,
   });
+  // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
+  // loads the server's DEFAULT_MODEL, so it reads as inherited (as on the Backends screen).
+  const backendOwnModel =
+    backend && !(backend.model.trim() === WHISPER_ALIAS && serverKind !== "standard") ? backend.model.trim() : "";
   const multiInherited = typeof server.values.multilingual === "boolean" ? server.values.multilingual : undefined;
   const spoken = spokenField(p.language ?? "", p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
@@ -403,7 +409,7 @@ function Editor({
               onChange={(v) => set({ model: v || undefined })}
               models={models}
               defaultLabel={inheritLabel(
-                backend?.model || (p.model ? undefined : decodeDefaults?.model) || (backend ? "server model" : undefined),
+                backendOwnModel || (p.model ? undefined : decodeDefaults?.model) || (backend ? "server model" : undefined),
               )}
             />
           </div>

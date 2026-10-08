@@ -47,7 +47,7 @@ import {
 } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
-import { withBackendChips } from "@/lib/backendChipLabels";
+import { WHISPER_ALIAS, withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
@@ -402,7 +402,10 @@ export default function Transcribe() {
   const inheritedBaseline = server.values;
   // The model a blank Model field runs with: the Backend's, else the server's default (named by
   // request-default-settings — only while no per-run model is picked, else it names that one).
-  const defaultModelName = backend?.model || (model ? undefined : decodeDefaults?.model) || "server model";
+  // On a non-standard server the `whisper-1` alias loads DEFAULT_MODEL, so it is no name of its own.
+  const backendOwnModel =
+    backend && !(backend.model.trim() === WHISPER_ALIAS && serverKind !== "standard") ? backend.model.trim() : "";
+  const defaultModelName = backendOwnModel || (model ? undefined : decodeDefaults?.model) || "server model";
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
   const serverLang = serverLanguageLabel(decodeDefaults);
   // The source a run's translation starts from: the picked language, else the server's
@@ -435,12 +438,13 @@ export default function Transcribe() {
   // whole file for the same result.
   const vadRetryable = !vadLocked && caps?.can_request_decode_overrides !== false;
   // "Multiple languages" is this run's `multilingual` decode override (not persisted, like the
-  // rest of runOverrides), offered where the server would honour it.
+  // rest of runOverrides), offered where the server would honour it. Judged on the model the
+  // server resolved when known (a default model may be English-only).
   const multiOffered = offersMultilingual({
     canOverride: caps?.can_request_decode_overrides,
     locked: server.locked.has("multilingual"),
     standard: isStandard,
-    model: model || backend?.model,
+    model: decodeDefaults?.model || model || backend?.model,
   });
   const spoken = spokenField(language, runOverrides, inheritedBaseline.multilingual, multiOffered);
 
