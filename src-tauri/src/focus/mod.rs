@@ -90,6 +90,14 @@ struct Snapshot {
     /// a background Electron app's stray focus from hijacking detection (the "chromium ghost").
     #[cfg_attr(windows, allow(dead_code))] // only the Linux AT-SPI listener filters on it
     active_app: Option<String>,
+    /// The D-Bus unique name (`:1.42`) of the window that set `active_app`, set and cleared in
+    /// lockstep with it. A `window:deactivate` carries its sender's bus name with no I/O, so the
+    /// mark clears even when the departing app is too busy (or already gone) to answer the
+    /// app-id resolve — otherwise the stale mark would reject every focus from an Electron app,
+    /// which never emits `window:activate`. `None` = unknown → the deactivate falls back to the
+    /// resolve. Linux-only (only the AT-SPI listener tracks it).
+    #[cfg(target_os = "linux")]
+    active_bus: Option<String>,
     /// The focused TEXT element behind `current` / `last_other`, retained so a lazy command can
     /// read its current selection via the AT-SPI Text interface WITHOUT walking the tree — the
     /// per-event tree walk is what froze apps. Moved current→last_other in lockstep with the
@@ -319,6 +327,35 @@ mod tests {
         assert!(should_log(30));
         assert!(!should_log(31));
         assert!(should_log(60));
+    }
+
+    #[test]
+    fn a_deactivate_clears_the_foreground_mark_by_its_bus_name_without_a_resolve() {
+        use super::atspi::{note_activate, note_deactivate, note_deactivate_bus};
+        let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        note_activate(&snap, "org.kde.konsole".into(), Some(":1.42".into()));
+        // Another app's (stale) deactivate: decided by the bus alone, the mark stays.
+        assert!(!note_deactivate_bus(&snap, Some(":1.7")));
+        assert_eq!(snap.lock().active_app.as_deref(), Some("org.kde.konsole"));
+        // The marked app's own deactivate clears it with no resolve — a busy terminal that
+        // can't answer in time no longer leaves the Electron gate shut.
+        assert!(!note_deactivate_bus(&snap, Some(":1.42")));
+        assert_eq!(snap.lock().active_app, None);
+        assert_eq!(snap.lock().active_bus, None);
+        // No bus on the event → fall back to the resolve, which clears both.
+        note_activate(&snap, "org.kde.kate".into(), Some(":1.9".into()));
+        assert!(note_deactivate_bus(&snap, None));
+        note_deactivate(&snap, "org.kde.kate");
+        assert_eq!(snap.lock().active_app, None);
+        assert_eq!(snap.lock().active_bus, None);
+        // No bus recorded for the mark → fall back too.
+        note_activate(&snap, "org.kde.kate".into(), None);
+        assert!(note_deactivate_bus(&snap, Some(":1.9")));
+        assert_eq!(snap.lock().active_app.as_deref(), Some("org.kde.kate"));
+        // A shell window's activate neither takes the mark nor swaps its bus.
+        note_activate(&snap, "org.kde.kate".into(), Some(":1.9".into()));
+        note_activate(&snap, "plasmashell".into(), Some(":1.3".into()));
+        assert_eq!(snap.lock().active_bus.as_deref(), Some(":1.9"));
     }
 
     #[test]

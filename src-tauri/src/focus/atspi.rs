@@ -149,7 +149,11 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     // snapshot across reconnects), so a kept foreground mark may name an app the user has
     // since left — and note_focus would reject every focus from the app actually in front.
     // Fail open until the next window:activate, like "the moment after a switch".
-    snapshot.lock().active_app = None;
+    {
+        let mut snap = snapshot.lock();
+        snap.active_app = None;
+        snap.active_bus = None;
+    }
     tracing::info!("[atspi] focus listener started");
 
     // Resolve focus OFF the event loop, in a single COALESCING task that always works on
@@ -207,21 +211,26 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                         .await
                         {
                             if active != Some(false) {
-                                note_activate(&snapshot, app_id);
+                                let sender = item.name_as_str().map(str::to_owned);
+                                note_activate(&snapshot, app_id, sender);
                             }
                         }
                     }
                 };
                 // window:deactivate → if it's the app we had marked foreground, clear the mark.
+                // Matched by the sender's bus name first (no I/O): the departing app is the one
+                // most likely too busy — or already gone — to answer the resolve in time.
                 let deactivate = async {
                     if let Some((_, item)) = deact {
-                        if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
-                            std::time::Duration::from_millis(1000),
-                            resolve_focus(&item, &bus, deep, false, false),
-                        )
-                        .await
-                        {
-                            note_deactivate(&snapshot, &app_id);
+                        if note_deactivate_bus(&snapshot, item.name_as_str()) {
+                            if let Ok(Some((app_id, _, _))) = tokio::time::timeout(
+                                std::time::Duration::from_millis(1000),
+                                resolve_focus(&item, &bus, deep, false, false),
+                            )
+                            .await
+                            {
+                                note_deactivate(&snapshot, &app_id);
+                            }
                         }
                     }
                 };
@@ -488,7 +497,13 @@ pub(super) async fn read_selection(el: ObjectRefOwned) -> super::SelRead {
 
 /// A genuine `window:activate`: mark `app_id` foreground and fold it into the snapshot. The
 /// element is the window FRAME (not a text field), so no selection source is stored here.
-fn note_activate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: String) {
+/// `sender` is the activating window's D-Bus unique name, kept beside the mark so the matching
+/// `window:deactivate` can clear it without a resolve (see `note_deactivate_bus`).
+pub(super) fn note_activate(
+    snapshot: &parking_lot::Mutex<super::Snapshot>,
+    app_id: String,
+    sender: Option<String>,
+) {
     let mut snap = snapshot.lock();
     // A desktop-shell app (plasmashell/kwin/…) taking window focus must NOT become the
     // foreground gate: shell noise is filtered everywhere else (focused_app output,
@@ -498,17 +513,41 @@ fn note_activate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: String)
     // set_current already demotes a real current into last_other.
     if super::is_self(&app_id) || !super::is_noise(&app_id) {
         snap.active_app = Some(app_id.clone());
+        snap.active_bus = sender;
     }
     set_current(&mut snap, app_id, None, None);
+}
+
+/// A `window:deactivate`, matched by its sender's bus name — no D-Bus round-trip, so a busy or
+/// quitting app can't leave its foreground mark behind. The mark's own bus clears it; a
+/// different bus is a different app, so the mark stays. Returns `true` only when the bus can't
+/// decide (no bus recorded for the mark, or none on the event) — the caller then falls back to
+/// resolving the app id for `note_deactivate`.
+pub(super) fn note_deactivate_bus(
+    snapshot: &parking_lot::Mutex<super::Snapshot>,
+    sender: Option<&str>,
+) -> bool {
+    let mut snap = snapshot.lock();
+    match (snap.active_bus.as_deref(), sender) {
+        (Some(marked), Some(sender)) => {
+            if marked == sender {
+                snap.active_app = None;
+                snap.active_bus = None;
+            }
+            false
+        }
+        _ => true,
+    }
 }
 
 /// A `window:deactivate`: if it's the app currently marked foreground, clear the mark — so the
 /// next element focus (incl. switching INTO an Electron app, which never emits window:activate)
 /// is accepted rather than rejected as a background ghost.
-fn note_deactivate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: &str) {
+pub(super) fn note_deactivate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: &str) {
     let mut snap = snapshot.lock();
     if snap.active_app.as_deref() == Some(app_id) {
         snap.active_app = None;
+        snap.active_bus = None;
     }
 }
 
