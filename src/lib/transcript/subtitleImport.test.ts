@@ -418,4 +418,20 @@ describe("site subtitle cleanup", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);
   });
+  it("cleans a longer roll-up file without freeze cues", () => {
+    const cue = (n: number, a: string, b?: string) =>
+      `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;
+    const srt = cue(1, "one") + cue(2, "one", "two") + cue(3, "two", "three") + cue(4, "three", "four");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["one", "two", "three", "four"]);
+  });
+  it("keeps a word said at the end of one cue and the start of the next in an ordinary file", () => {
+    // Our own export of "Wait." / "Wait. Did you hear that?" among other two-line cues.
+    const cue = (n: number, a: string, b?: string) =>
+      `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;
+    const srt = cue(1, "Wait.") + cue(2, "Wait.", "Did you hear that?") + cue(3, "It came from", "the attic.")
+      + cue(4, "Let's go", "and look.");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
+      "Wait.", "Wait. Did you hear that?", "It came from the attic.", "Let's go and look.",
+    ]);
+  });
 });

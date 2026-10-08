@@ -121,9 +121,12 @@ export interface RawCue {
  *  two or three times. Drop a ≤100 ms cue that only repeats a neighbour, strip leading lines
  *  a contiguous cue repeats from the cue before, and — only in a file that has such a
  *  freeze cue — extend that cue when nothing new is left: an ordinary file may say
- *  "Thank you." twice back to back, and both lines stay. Ordinary files pass through
- *  unchanged — a short cue with text of its own (our own exports keep a zero-length
- *  segment, even one repeating its neighbour) is kept; only an empty cue goes. */
+ *  "Thank you." twice back to back, and both lines stay. Broadcast roll-up captions have no
+ *  freeze cue but open most two-line cues with the line before; such a file gets the leading-
+ *  line strip too. Ordinary files pass through unchanged — a word said at the end of one cue
+ *  and the start of the next stays twice, and a short cue with text of its own (our own
+ *  exports keep a zero-length segment, even one repeating its neighbour) is kept; only an
+ *  empty cue goes. */
 export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const out: RawCue[] = [];
   // Compared against the neighbours' RAW lines: `out` may already have lost the repeat.
@@ -140,6 +143,22 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   // own export's segment, not a 10 ms freeze — either would make any file look rolling.
   const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
   const rolling = cues.some((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c));
+  const contiguousAfter = (prev: RawCue, cue: RawCue): boolean =>
+    prev.start !== undefined && prev.end !== undefined && cue.start !== undefined
+    && cue.start >= prev.start && cue.start <= prev.end + 0.25;
+  // The roll-up signature, judged on the whole file: one cue cannot tell a roll from a word
+  // said twice across a cue boundary, but in a roll-up file MOST contiguous multi-line cues
+  // open with the line before, and in an ordinary file only the odd one does.
+  let multi = 0;
+  let opensWithPrev = 0;
+  const texted = cues.filter(hasText);
+  for (let i = 1; i < texted.length; i++) {
+    const [prev, cue] = [texted[i - 1], texted[i]];
+    if (cue.lines.length < 2 || !contiguousAfter(prev, cue)) continue;
+    multi++;
+    if (stripMarkup(cue.lines[0]) === stripMarkup(prev.lines[prev.lines.length - 1])) opensWithPrev++;
+  }
+  const rollUp = rolling || opensWithPrev * 2 > multi;
   for (const [i, cue] of cues.entries()) {
     // A text-less cue goes in every file: it yields no segment, and kept it would stretch
     // the line before it through its silence (or, in a rolling file, become the baseline the
@@ -147,10 +166,7 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     if (!hasText(cue) || (rolling && isFreeze(cue, i))) continue;
     const prev = out[out.length - 1];
     let lines = cue.lines;
-    const contiguous =
-      prev?.start !== undefined && prev.end !== undefined && cue.start !== undefined
-      && cue.start >= prev.start && cue.start <= prev.end + 0.25;
-    if (prev && contiguous) {
+    if (prev && rollUp && contiguousAfter(prev, cue)) {
       // Compared markup-free and whitespace-collapsed.
       const mine = lines.map(stripMarkup);
       const before = prev.lines.map(stripMarkup);
