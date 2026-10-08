@@ -123,7 +123,7 @@ export interface RawCue {
  *  freeze cue — extend that cue when nothing new is left: an ordinary file may say
  *  "Thank you." twice back to back, and both lines stay. Ordinary files pass through
  *  unchanged — a short cue with text of its own (our own exports keep a zero-length
- *  segment) is kept. */
+ *  segment, even one repeating its neighbour) is kept; only an empty cue goes. */
 export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const out: RawCue[] = [];
   // Compared against the neighbours' RAW lines: `out` may already have lost the repeat.
@@ -135,11 +135,15 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 && repeatsNeighbour(i);
   // The rolling signature: without a freeze cue, a cue that only repeats the one before
   // is a line said twice, not a roll.
-  // Only a freeze cue with text counts: an empty cue (our export writes one for an empty
-  // segment) "repeats" its neighbours vacuously and would make any file look rolling.
-  const rolling = cues.some((c, i) => isFreeze(c, i) && c.lines.some((l) => stripMarkup(l)));
+  // Only a freeze cue with text and a length counts: an empty cue (our export writes one for
+  // an empty segment) "repeats" its neighbours vacuously, and a zero-length repeat is our
+  // own export's segment, not a 10 ms freeze — either would make any file look rolling.
+  const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
+  const rolling = cues.some((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c));
   for (const [i, cue] of cues.entries()) {
-    if (isFreeze(cue, i)) continue;
+    // Outside a rolling file only a text-less cue goes: it yields no segment, and kept it
+    // would stretch the line before it through its silence.
+    if (rolling ? isFreeze(cue, i) : !hasText(cue)) continue;
     const prev = out[out.length - 1];
     let lines = cue.lines;
     const contiguous =
@@ -256,7 +260,11 @@ function blocksToCues(body: string, timesAt: (lines: string[]) => number): RawCu
     let prev: string[] | undefined;
     for (const part of block.split(BLANK_LINE)) {
       const lines = part.split(/\r?\n/).filter((l) => l.trim().length);
-      if (prev && !timesOf(lines)) prev.push(...lines);
+      // Only a times line with real clocks starts a cue: cue text holding " --> " after a
+      // " " line is text, not a cue of its own (which would lose it).
+      const t = timesOf(lines);
+      const real = !!t && parseClock(t.times[1]) !== undefined && parseClock(t.times[2]) !== undefined;
+      if (prev && !real) prev.push(...lines);
       else blocks.push((prev = lines));
     }
   }

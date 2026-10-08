@@ -398,7 +398,11 @@ export function cutByShare(text: string, shares: number[]): string[] {
     }
     if (
       spaced
-        ? /\s/.test(text[i]) || (unspacedChar(text[i - 1]) && (UNSPACED.test(text[i]) || OPENER.test(text[i])))
+        ? /\s/.test(text[i])
+          // Seam judged by code point (edgeChar): an Ext-B character or a decomposed "が"
+          // before i is unspaced too, as at every other seam.
+          || (unspacedChar(edgeChar(text.slice(Math.max(0, i - 8), i), true))
+            && (UNSPACED.test(edgeChar(text.slice(i, i + 2), false)) || OPENER.test(text[i])))
         : c < 0xdc00 || c > 0xdfff
     ) cand.push(i);
   }

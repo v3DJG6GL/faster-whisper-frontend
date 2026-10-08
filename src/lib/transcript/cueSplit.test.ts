@@ -453,6 +453,16 @@ describe("cutByShare", () => {
     expect(parts.every((p) => p.length > 0)).toBe(true);
     expect(parts.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
   });
+  it("judges a spaced line's CJK seams by code point (decomposed kana, Ext-B)", () => {
+    const pre = cutByShare("AI \u304c\u6b21\u306e\u6587", [1, 1]);
+    expect(pre).toEqual(["AI \u304c", "\u6b21\u306e\u6587"]);
+    // A decomposed "が" (か + U+3099) cuts like the precomposed one.
+    expect(cutByShare("AI \u304b\u3099\u6b21\u306e\u6587", [1, 1])).toEqual(["AI \u304b\u3099", "\u6b21\u306e\u6587"]);
+    // An Ext-B Han character (a surrogate pair) can be followed — and preceded — by a cut.
+    const extB = cutByShare("AI \u{20B9F}\u6b21\u306e\u6587", [1, 1]);
+    expect(extB).toEqual(["AI \u{20B9F}", "\u6b21\u306e\u6587"]);
+    expect(extB.every(wellFormed)).toBe(true);
+  });
   it("never cuts right after an opening bracket", () => {
     for (const text of [
       "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」について",

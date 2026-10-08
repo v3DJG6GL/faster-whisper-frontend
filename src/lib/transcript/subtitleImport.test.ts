@@ -362,6 +362,49 @@ describe("site subtitle cleanup", () => {
       { start: 3, end: 4, text: "Second line" },
     ]);
   });
+  it("an arrow in cue text after a whitespace-only line stays text", () => {
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nfirst\n \nthen A --> B\n\n2\n00:00:03,000 --> 00:00:04,000\nNext\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["first then A --> B", "Next"]);
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\nfirst\n \nthen A --> B\n\n00:00:03.000 --> 00:00:04.000\nNext\n";
+    expect(parseImportedText("vtt", vtt).segments.map((s) => s.text)).toEqual(["first then A --> B", "Next"]);
+  });
+  it("a zero-length repeat in our own export is a segment, not a rolling freeze", () => {
+    const r: BatchResult = {
+      text: "",
+      segments: [
+        { start: 0, end: 2, text: " Thank you." },
+        { start: 2, end: 2, text: " Thank you." },
+        { start: 2, end: 4, text: " Bye." },
+        { start: 10, end: 12, text: " Yes." },
+        { start: 12, end: 14, text: " Yes." },
+      ],
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      expect(parseImportedText(format, generateExport(r, { format })).segments).toMatchObject([
+        { start: 0, end: 2, text: "Thank you." },
+        { start: 2, end: 2, text: "Thank you." },
+        { start: 2, end: 4, text: "Bye." },
+        { start: 10, end: 12, text: "Yes." },
+        { start: 12, end: 14, text: "Yes." },
+      ]);
+    }
+  });
+  it("an empty cue outside a rolling file does not stretch the line before it", () => {
+    const r: BatchResult = {
+      text: "",
+      segments: [
+        { start: 0, end: 2, text: " Hello" },
+        { start: 2, end: 5, text: "" },
+        { start: 5, end: 6, text: " Bye" },
+      ],
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      expect(parseImportedText(format, generateExport(r, { format })).segments).toMatchObject([
+        { start: 0, end: 2, text: "Hello" },
+        { start: 5, end: 6, text: "Bye" },
+      ]);
+    }
+  });
   it("cleanup runs for SRT too", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);
