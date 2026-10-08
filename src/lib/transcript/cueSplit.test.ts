@@ -293,6 +293,15 @@ describe("wrapLines", () => {
     expect(lines.join(" ")).toBe(LONG);
     expect(lines.length).toBeGreaterThan(2);
   });
+  it("keeps one spaced-script word whole when only the prefix pushes it over", () => {
+    expect(wrapLines("감사합니다.", 16, 2, 11)).toEqual(["감사합니다."]);
+    expect(wrapLines("Okay.", 42, 2, 45)).toEqual(["Okay."]);
+    // An unspaced run has no word to protect: it still wraps to fit the prefixed line.
+    const kana = "あいうえおかきくけこさしすせ";
+    const lines = wrapLines(kana, 16, 2, 11);
+    expect(lines.length).toBeGreaterThan(1);
+    expect(lines.join("")).toBe(kana);
+  });
   it("reserves room for a prefix on the first line", () => {
     const lines = wrapLines("one two three four five six seven eight", 20, 2, 10);
     expect(lines[0].length).toBeLessThanOrEqual(10);
@@ -401,6 +410,34 @@ describe("combining marks stay with their base", () => {
       const p = cutByShare(family, [k, 10 - k]);
       expect(p.join("")).toBe(family);
       expect(p.every((x) => !x.startsWith("\u200d") && !x.endsWith("\u200d"))).toBe(true);
+    }
+  });
+});
+
+describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
+  const LEAD = /[\u0e40-\u0e44]$/u;
+  const TRAIL = /^[\u0e30\u0e32\u0e33]/u;
+  it("cutByShare never strands a leading vowel or orphans a following one", () => {
+    for (let k = 1; k < 20; k++) {
+      const [a, b] = cutByShare(THAI, [k, 20 - k]);
+      expect(a + b).toBe(THAI);
+      expect(a).not.toMatch(LEAD);
+      expect(b).not.toMatch(TRAIL);
+    }
+  });
+  it("cutByShare never cuts right after a stacking virama", () => {
+    const my = "ကမ္ဘာကမ္ဘာကမ္ဘာ";
+    for (let k = 1; k < 10; k++) {
+      const p = cutByShare(my, [k, 10 - k]);
+      expect(p.join("")).toBe(my);
+      expect(p[0].endsWith("\u1039")).toBe(false);
+    }
+  });
+  it("wrapLines never ends a line on a leading vowel", () => {
+    for (let cpl = 28; cpl <= 60; cpl++) {
+      const lines = wrapLines(THAI + THAI, cpl, 2);
+      expect(lines.join("")).toBe(THAI + THAI);
+      expect(lines.some((l) => LEAD.test(l) || TRAIL.test(l))).toBe(false);
     }
   });
 });

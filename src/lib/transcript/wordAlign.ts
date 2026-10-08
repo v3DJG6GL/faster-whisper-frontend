@@ -48,8 +48,11 @@ function tokenize(text: string): string[] {
   return text.split(/\s+/).filter(Boolean);
 }
 
-/** Scripts written without spaces (kept local: cueSplit imports this module). */
-const UNSPACED_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
+/** Scripts written without spaces (kept local: cueSplit imports this module). Must list
+ *  the same scripts as cueSplit's BREAKS_ANYWHERE: a Thai, Lao, Khmer or Burmese line is
+ *  unspaced too, and one changed character used to collapse its timing into one word. */
+const UNSPACED_RE =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
 /** Tokens of an edited whitespace-free (CJK) text, cut where the original words were:
  *  splitting on whitespace yields one token there, which matches no old word, so one
@@ -82,11 +85,19 @@ function charTokens(oldWords: TranscriptWord[], text: string): string[] {
   }
   const toks: string[] = [];
   newChars.forEach((c, j) => {
-    if (j && own[j] === own[j - 1]) toks[toks.length - 1] += c;
+    if (j && (own[j] === own[j - 1] || clings(newChars[j - 1], c))) toks[toks.length - 1] += c;
     else toks.push(c);
   });
   return toks;
 }
+
+/** `c` never starts a token after `prev`: a combining mark (a Thai tone mark, a decomposed
+ *  "が"'s U+3099), a ZWJ or what follows one, a Thai/Lao following vowel (ะ า ำ ๅ), or
+ *  anything after a Thai/Lao leading vowel (เ-ไ) or a Burmese/Khmer stacking virama —
+ *  an inserted "ค่ะ" stays one word, not "ค" + "่ะ". */
+const clings = (prev: string, c: string): boolean =>
+  /[\p{M}\u200d\u0e30\u0e32\u0e33\u0e45\u0eb0\u0eb2\u0eb3]/u.test(c)
+  || /[\u200d\u0e40-\u0e44\u0ec0-\u0ec4\u1039\u17d2]/.test(prev);
 
 /** Align one edited segment's text to its original word timings.
  *  Matched words (longest common subsequence) keep word AND timing verbatim;

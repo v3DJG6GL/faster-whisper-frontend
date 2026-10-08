@@ -245,8 +245,19 @@ const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
 /** CJK and fullwidth closing brackets and stops: they stick to the character before them.
  *  Listed, not the whole fullwidth block — fullwidth letters and digits stay breakable. */
 const CLOSE_PUNCT = "、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
-/** What rides after a base character: combining marks, emoji skin tones, ZWJ + next. */
-const UNIT_TAIL = "(?:[\\p{M}\\p{Emoji_Modifier}\\u200d]|(?<=\\u200d)\\S)*";
+/** Thai/Lao leading vowels (เ แ โ ใ ไ): written before the consonant they follow in
+ *  speech, so they stick to the character after them. */
+const LEADS = "\\u0e40-\\u0e44\\u0ec0-\\u0ec4";
+/** Thai/Lao following vowels that are letters, not marks (ะ า ำ ๅ): they stick to the
+ *  character before them. */
+const TRAILS = "\\u0e30\\u0e32\\u0e33\\u0e45\\u0eb0\\u0eb2\\u0eb3";
+/** Burmese/Khmer stacking viramas: the consonant after one is stacked under the one before. */
+const STACKERS = "\\u1039\\u17d2";
+const LEAD_OR_STACKER = new RegExp(`[${LEADS}${STACKERS}]`);
+const TRAIL = new RegExp(`[${TRAILS}]`);
+/** What rides after a base character: combining marks, emoji skin tones, Thai/Lao following
+ *  vowels, ZWJ + next, a stacking virama + the consonant it stacks. */
+const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S)*`;
 /** A token of spaced text: a word (with any opening brackets before it), or one unspaced
  *  (CJK) character with the opening brackets before it and its other punctuation after it —
  *  so a CJK translation holding one Latin word still splits between its characters, and
@@ -265,8 +276,10 @@ const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
  *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors,
  *  skin tones and ZWJ sequences ride with their base (a Thai tone mark never opens a line),
- *  and a flag's two regional indicators stay one unit. */
-const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}[${CLOSE_PUNCT}]*`, "gu");
+ *  a flag's two regional indicators stay one unit, a Thai/Lao leading vowel rides with the
+ *  consonant after it and a following vowel with the one before, and a Burmese/Khmer
+ *  stacked consonant stays with the virama above it. */
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}[${CLOSE_PUNCT}]*`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** A regional indicator (half of a flag emoji). */
 const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
@@ -401,6 +414,9 @@ export function cutByShare(text: string, shares: number[]): string[] {
     // second half of a pair).
     const cp = text.codePointAt(i)!;
     if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") continue;
+    // Nor inside a Thai/Lao syllable (after a leading vowel, before a following vowel)
+    // or a Burmese/Khmer consonant stack (right after the virama).
+    if (LEAD_OR_STACKER.test(text[i - 1]) || TRAIL.test(text[i])) continue;
     if (isRI(cp)) {
       let n = 0;
       for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
@@ -470,6 +486,9 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   const len = t.length + firstReserve;
   if (len <= cpl) return [t];
   const spaced = /\s/.test(t);
+  // One word of a spaced script ("Okay.", "감사합니다.") pushed over only by the prefix
+  // stays whole, as in wrapTokens; a word longer than cpl by itself still wraps per character.
+  if (!spaced && t.length <= cpl && !BREAKS_ANYWHERE.test(t)) return [t];
   const toks = spaced ? t.split(/\s+/) : units(t);
   if (toks.length < 2) return [t];
   return wrapTokens(toks, spaced, cpl, len, firstReserve);

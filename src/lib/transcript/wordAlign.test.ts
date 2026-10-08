@@ -111,6 +111,22 @@ describe("alignSegmentWords", () => {
     ];
     expect(alignSegmentWords(mixed, "今日MLです").map((x) => x.word)).toEqual([" 今日", " ML", "です"]);
   });
+
+  it("keeps the untouched words' timings when one syllable of a Thai line changes", () => {
+    // Thai is unspaced too: the edit used to collapse the line into one 0-3 word.
+    const th: TranscriptWord[] = [
+      { word: "สวัสดี", start: 0, end: 1 },
+      { word: "ครับ", start: 1, end: 2 },
+      { word: "วันนี้", start: 2, end: 3 },
+    ];
+    const out = alignSegmentWords(th, "สวัสดีค่ะวันนี้");
+    // The inserted ค่ะ stays one word (its tone mark and vowel never open a token of their own).
+    expect(out.map((x) => x.word)).toEqual(["สวัสดี", "ค่ะ", "วันนี้"]);
+    expect(out[0]).toBe(th[0]);
+    expect(out[2]).toBe(th[2]);
+    expect(out[1].start).toBe(1);
+    expect(out[1].end).toBeCloseTo(2, 9);
+  });
 });
 
 describe("segmentWordRanges", () => {
