@@ -338,6 +338,10 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
       text.slice(ts[i].from, ts[i].to).trim(),
     ));
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
+    // Between two syllables of a Thai/Lao/Khmer/Burmese run (no space): a fallback seam, so
+    // a spaced line still breaks at its phrase spaces first (cutByShare does the same).
+    const at = ts[i].from;
+    if (BRK_SYL.test(text[at - 1] ?? "") && BRK_SYL.test(text[at] ?? "")) s -= 40;
     // Both sides read by index: slicing the token array per candidate made every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
     const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
@@ -456,6 +460,9 @@ export function cutByShare(text: string, shares: number[]): string[] {
         : c < 0xdc00 || c > 0xdfff
     ) cand.push(i);
   }
+  // In spaced Thai/Lao/Khmer/Burmese the spaces are the phrase breaks: a cut between two
+  // syllables is the fallback when no space lies near the target, not an equal choice.
+  const sylSpaced = spaced && BRK_SYL.test(text);
   const tot = shares.reduce((a, b) => a + b, 0) || 1;
   const cuts: number[] = [];
   let done = 0;
@@ -475,7 +482,8 @@ export function cutByShare(text: string, shares: number[]): string[] {
       const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase() : "";
       const s =
         -Math.abs(i - target) +
-        (/[.?!。？！]/.test(ch) ? 16 : /[,;:，；、]/.test(ch) ? 9 : 0) -
+        (/[.?!。？！]/.test(ch) ? 16 : /[,;:，；、]/.test(ch) ? 9 : 0) +
+        (sylSpaced && /\s/.test(text[i]) ? 9 : 0) -
         (NOBREAK.has(prevWord) ? 12 : 0);
       if (s > best) {
         best = s;

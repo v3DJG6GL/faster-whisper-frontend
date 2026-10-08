@@ -728,18 +728,23 @@ export default function Transcribe() {
     wideEnough && (layoutPref === "studio" || (layoutPref !== "stacked" && !!result));
 
   const persistOptions = patchTranscribe;
+  /** The site-subtitle panel held the chips since the last re-prune (it may have grown them). */
+  const panelHeldChips = useRef(false);
   // The picker and backend-switch prunes see the source of THAT moment; a server's
   // DEFAULT_LANGUAGE arrives later (decode defaults load async), so re-prune when the known
   // source settles — else a chip equal to it survives hidden and runs a source→source no-op.
   // Not while the site-subtitle panel owns the chips: translateTo must stay its mirror. The
   // panel may grow it past the server's translation limit (a language a site track serves is
-  // free there, freeAdds); released, it is cut back to the limit, or every other run sends the
-  // over-cap list (a subtitle or text file's translation is rejected outright). The panel's
-  // free adds come last, so the first ones stay.
+  // free there, freeAdds); once released, it is cut back to the limit (first ones in list
+  // order kept), or every other run sends the over-cap list (a subtitle or text file's
+  // translation is rejected outright). Only on that release: a list chosen on a backend with
+  // a higher limit must survive a visit or a run on a lower one.
   useEffect(() => {
+    if (siteChips) panelHeldChips.current = true;
     if (busy || siteChips) return;
     let next = knownSource ? pruneTargets(translateTo, knownSource) : translateTo;
-    if (translationAvailable) next = next.slice(0, maxTranslationTargets(caps));
+    if (panelHeldChips.current && translationAvailable) next = next.slice(0, maxTranslationTargets(caps));
+    panelHeldChips.current = false;
     if (next.length !== translateTo.length) {
       setTranslateTo(next);
       persistOptions({ translateTo: next });

@@ -280,7 +280,13 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const skip = enter.indexOf("if (lastPhraseDiverted) return;");
     expect(skip, "auto-Enter task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
     expect(skip).toBeLessThan(enter.indexOf("injectText("));
-    expect(mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"))).toContain("if (dirtyAtBreak && !lastPhraseDiverted)");
+    // The boundary task stands down before BOTH its Enter and its separator (a newline
+    // separator presses a real Return too).
+    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const bskip = boundary.indexOf("if (lastPhraseDiverted) return;");
+    expect(bskip, "boundary task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
+    expect(bskip).toBeLessThan(boundary.indexOf("if (t.autoEnter)"));
+    expect(bskip).toBeLessThan(boundary.indexOf("if (!sep) return;"));
     // A later phrase that really typed re-arms it; a session reset starts clean.
     expect(mask(bodyAfter(finalBody, "if (delivered) "))).toContain("lastPhraseDiverted = false;");
     expect(mask(fns.clearPhraseEnd)).toContain("lastPhraseDiverted = false;");

@@ -727,7 +727,7 @@ async function replaceSelectionAfterClose(
     remoteDesktop,
   });
   // Neither outcome throws, so closeNow's catch never sees them — log them like the skips above.
-  if (!out.landed) console.info("[quick-add] correct-on-close skipped: one of our own windows still had focus");
+  if (!out.landed) console.info("[quick-add] correct-on-close wrote nothing (our own window had focus, or the insert could not run — see the inject log)");
   else if (out.diverted) console.info("[quick-add] correct-on-close diverted: the correction is on the clipboard, the selection was not replaced");
 }
 

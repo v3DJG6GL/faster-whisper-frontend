@@ -617,7 +617,9 @@ export function TranscriptViewer({
     const groups: string[][] = [];
     for (let at = 0; at < targets.length; at += cap) groups.push(targets.slice(at, at + cap));
     const pid = newProgressId();
-    const ctl = { pid, cancelled: false, serverUrl, backendId: backend.id };
+    // group/groupAt: the request of a split chunk now in flight (see translate below) and
+    // when it was sent, so the shared progress id's per-request 0→1 maps onto the chunk.
+    const ctl = { pid, cancelled: false, serverUrl, backendId: backend.id, group: 0, groupAt: 0 };
     trCtls.set(okey, ctl);
     window.clearTimeout(trDoneTimers.get(okey));
     trDoneTimers.delete(okey);
@@ -637,7 +639,15 @@ export function TranscriptViewer({
       const sentAt = Date.now();
       getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
         .then((p) => {
-          if (trCtls.get(okey) === ctl) setTrRun((s) => (s ? foldTranslatePoll(s, p, Date.now(), sentAt) : s));
+          if (trCtls.get(okey) !== ctl) return;
+          if (groups.length > 1 && p.stage === "translating") {
+            // Each group's request restarts the shared id at 0: scale it into the group's share
+            // of the chunk (a poll sent before this group began reports the one before).
+            if (sentAt < ctl.groupAt) return;
+            const done = typeof p.progress === "number" ? p.progress : 0;
+            p = { ...p, progress: (ctl.group + done) / groups.length, targetProgress: undefined };
+          }
+          setTrRun((s) => (s ? foldTranslatePoll(s, p, Date.now(), sentAt) : s));
         })
         .catch((e) => {
           if (trCtls.get(okey) !== ctl) return;
@@ -668,8 +678,10 @@ export function TranscriptViewer({
           // More languages than one request may carry: ask per group, in turn, and fold
           // the answers into one — every language is still translated, none dropped.
           const parts: TextTranslationResult[] = [];
-          for (const g of groups) {
+          for (const [k, g] of groups.entries()) {
             if (ctl.cancelled) break; // the loop drops this chunk's answer anyway
+            ctl.group = k;
+            ctl.groupAt = Date.now();
             parts.push(await ask(g));
           }
           return {

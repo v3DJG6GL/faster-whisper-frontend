@@ -101,6 +101,21 @@ describe("round-trips against generateExport", () => {
     expect(bracket).toContain("彼は<00:00.50>「新機能」");
     expect(parseImportedText("lrc", bracket).segments[0].text).toBe("彼は「新機能」です");
   });
+  it("lrc: a spaced Thai line round-trips with only its own spaces", () => {
+    const text = "สวัสดี ครับ";
+    const th: BatchResult = {
+      text,
+      language: "th",
+      segments: [{ start: 0, end: 1.5, text }],
+      words: [
+        { word: "สวัส", start: 0, end: 0.5 },
+        { word: "ดี", start: 0.5, end: 1 },
+        { word: "ครับ", start: 1, end: 1.5 },
+      ],
+    };
+    const lrc = generateExport(th, { format: "lrc", wordTimestamps: true });
+    expect(parseImportedText("lrc", lrc).segments[0].text).toBe(text);
+  });
   it("lrc: an astral (Ext-B) Han character at a word-tag seam round-trips without a space", () => {
     // 𠮷 is a surrogate pair: the seam test used to look at one UTF-16 unit and miss it.
     const text = "私は𠮷野家に行った山𠮷";
@@ -439,6 +454,13 @@ describe("site subtitle cleanup", () => {
       + cue(4, "Let's go", "and look.");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
       "Wait.", "Wait. Did you hear that?", "It came from the attic.", "Let's go and look.",
+    ]);
+  });
+  it("a cue repeated whole does not make an ordinary file a roll-up", () => {
+    const cue = (n: number, ...lines: string[]) => `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${lines.join("\n")}\n\n`;
+    const srt = cue(1, "Na na na", "Hey hey") + cue(2, "Na na na", "Hey hey") + cue(3, "Hey hey", "goodbye");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
+      "Na na na Hey hey", "Na na na Hey hey", "Hey hey goodbye",
     ]);
   });
 });

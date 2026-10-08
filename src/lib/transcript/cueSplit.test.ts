@@ -463,6 +463,10 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     expect(parts.join("").replace(/\s/g, "")).toBe(THAI2.replace(/\s/g, ""));
     expect(parts.every((p, k) => (k === 3 || !LEAD.test(p)) && !TRAIL.test(p) && !/^\p{M}/u.test(p))).toBe(true);
   });
+  it("cutByShare prefers a phrase space of a spaced Thai text over a syllable seam", () => {
+    expect(cutByShare("ขอบคุณมากครับ วันนี้อากาศดี", [1, 1])).toEqual(["ขอบคุณมากครับ", "วันนี้อากาศดี"]);
+    expect(cutByShare("สวัสดีครับ ยินดีที่ได้รู้จักคุณ", [1, 1])).toEqual(["สวัสดีครับ", "ยินดีที่ได้รู้จักคุณ"]);
+  });
   it("wrapLines never ends a line on a leading vowel", () => {
     for (let cpl = 28; cpl <= 60; cpl++) {
       const lines = wrapLines(THAI + THAI, cpl, 2);

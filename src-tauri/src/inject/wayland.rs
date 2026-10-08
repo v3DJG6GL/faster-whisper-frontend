@@ -334,9 +334,16 @@ mod imp {
     }
 
     /// Does `text` hold a letter of a caseless script that the active layout cannot type?
+    /// Scripts from Hebrew (U+0590) up; the Latin-context modifier letters a Latin line may
+    /// carry (Hawaiʻi's ʻokina U+02BB, phonetic extensions, Latin Extended-D) are caseless
+    /// too but stay with the per-character skip.
     fn unreachable_caseless(text: &str, map: &HashMap<char, KeySpec>) -> bool {
         text.chars().any(|c| {
-            c.is_alphabetic()
+            let u = c as u32;
+            u >= 0x0590
+                && !(0x1D00..=0x1DBF).contains(&u)
+                && !(0xA700..=0xA7FF).contains(&u)
+                && c.is_alphabetic()
                 && !c.is_lowercase()
                 && !c.is_uppercase()
                 && key_spec_for(c, map).is_none()
@@ -1066,6 +1073,15 @@ mod imp {
             // A stray accented cased letter is still skipped per character.
             assert!(!unreachable_caseless("caf\u{e9}", &us_letters()));
             assert!(!divert_unreachable("Caf\u{c9} au lait", &us_letters()));
+            // A Latin-context modifier letter (the ʻokina) is not a caseless-script word.
+            assert!(!unreachable_caseless(
+                "I flew to Hawai\u{2bb}i today",
+                &us_letters()
+            ));
+            assert!(!divert_unreachable(
+                "I flew to Hawai\u{2bb}i today",
+                &us_letters()
+            ));
         }
     }
 }

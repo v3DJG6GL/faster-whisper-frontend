@@ -2569,11 +2569,14 @@ async function ensureListeners(): Promise<void> {
           // travels INSIDE the carry (joinCarry) and lands between it and the next phrase; an
           // Enter now would submit the half-typed message.
           if (carryText) return;
+          // The last phrase went to the clipboard, not into the window (see enqueueAutoEnter):
+          // neither its Enter nor a separator — a newline separator is a real Return too — may
+          // follow, into whatever window focus moved to.
+          if (lastPhraseDiverted) return;
           // Enter wins over the separator when this target wants it — the same precedence the
           // synchronous fork had, just evaluated against the window actually being typed into.
           if (t.autoEnter) {
-            // Not after a diverted last phrase (see enqueueAutoEnter); still no separator either.
-            if (dirtyAtBreak && !lastPhraseDiverted) {
+            if (dirtyAtBreak) {
               await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             }
             return;

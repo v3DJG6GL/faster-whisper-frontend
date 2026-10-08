@@ -166,7 +166,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     const [prev, cue] = [texted[i - 1], texted[i]];
     if (cue.lines.length < 2 || !contiguousAfter(prev, cue)) continue;
     multi++;
-    if (leadOverlap(prev.lines, cue.lines) > 0) opensWithPrev++;
+    // A roll adds a line: a cue that repeats the one before WHOLE (a sung chorus, a held
+    // caption) is no roll evidence — the strip below never removes it in an ordinary file.
+    const k = leadOverlap(prev.lines, cue.lines);
+    if (k > 0 && k < cue.lines.length) opensWithPrev++;
   }
   const rollUp = rolling || opensWithPrev * 2 > multi;
   // The RAW lines of the last cue kept: its stripped `out` entry has lost the lines it
@@ -338,15 +341,20 @@ function parseLrc(body: string): ImportedText {
       lastTagEnd = tagRe.lastIndex;
     }
     if (starts.length === 0) continue; // metadata tags ([ti:…]) and blanks
-    // Enhanced-LRC inline <mm:ss.xx> word tags reduce to plain text: a space,
-    // except between two unspaced (CJK) characters or CJK punctuation — our export's
-    // per-seam rule, so "<t>word<t>word" files elsewhere still get theirs. (The export
-    // also joins every word of a whitespace-free segment, e.g. Thai or CJK with digits;
-    // a tag-only line can't tell that apart from a foreign file, so those gain spaces.)
+    // Enhanced-LRC inline <mm:ss.xx> word tags reduce to plain text. A line whose text
+    // already holds whitespace before a tag carries its own spaces (our export writes a
+    // seam's space only where the segment text has one, e.g. a spaced Thai line): every
+    // tag is dropped. A tag-only line becomes a space per tag, except between two unspaced
+    // (CJK) characters or CJK punctuation, so "<t>word<t>word" files elsewhere still get
+    // theirs. (The export also joins every word of a whitespace-free segment, e.g. Thai or
+    // CJK with digits; a tag-only line can't tell that apart from a foreign file, so those
+    // gain spaces.)
+    const body = trimmed.slice(lastTagEnd);
+    const ownSpaces = /\s<\d+:\d+(?:\.\d+)?>/.test(body);
     const { text, speaker } = cueText([
-      trimmed.slice(lastTagEnd).replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
-        unspacedChar(edgeChar(s.slice(Math.max(0, off - 8), off), true)) &&
-        unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false)) ? "" : " "),
+      body.replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
+        ownSpaces || (unspacedChar(edgeChar(s.slice(Math.max(0, off - 8), off), true)) &&
+        unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false))) ? "" : " "),
     ]);
     if (text) {
       for (const start of starts) segments.push({ start, text, speaker });
