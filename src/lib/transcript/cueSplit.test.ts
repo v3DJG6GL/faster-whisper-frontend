@@ -467,6 +467,13 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     expect(cutByShare("ขอบคุณมากครับ วันนี้อากาศดี", [1, 1])).toEqual(["ขอบคุณมากครับ", "วันนี้อากาศดี"]);
     expect(cutByShare("สวัสดีครับ ยินดีที่ได้รู้จักคุณ", [1, 1])).toEqual(["สวัสดีครับ", "ยินดีที่ได้รู้จักคุณ"]);
   });
+  it("own timing: a spaced Thai line breaks at its phrase spaces before any syllable seam", () => {
+    const en = Array(18).fill("w").join(" ");
+    const phrases = ["ขอบคุณมากครับสำหรับทุกอย่าง", "วันนี้อากาศดีมากเลยนะครับ", "เราไปเที่ยวทะเลกันดีไหม"];
+    const r = seg1(en, 0, 9, { segments: [{ start: 0, end: 9, text: " " + en, translations: { th: phrases.join(" ") } }] });
+    const grid = buildCues(r, { length: "short", timing: "own" }, ["orig", "th"]);
+    expect(trackCues(grid, "th").map((c) => c.text)).toEqual(phrases);
+  });
   it("wrapLines never ends a line on a leading vowel", () => {
     for (let cpl = 28; cpl <= 60; cpl++) {
       const lines = wrapLines(THAI + THAI, cpl, 2);
