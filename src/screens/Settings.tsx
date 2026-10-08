@@ -194,7 +194,6 @@ export default function Settings() {
     // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
     // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
     if (kind === "dict" || kind === "clear") dropPendingWrites();
-    if (kind === "clear") forgetRecord(null, { deleted: true });
     const done = (n: number, what: string) => {
       if (tabRef.current === "Recording & history") {
         setStoreMsg({ text: `Removed ${n} ${what}.` });
@@ -218,7 +217,18 @@ export default function Settings() {
             ? [removeTranscriptMedia("url", basePref), "downloaded file(s)"]
             : kind === "video"
               ? [removeTranscriptMedia("video", basePref), "video file(s)"]
-              : [clearFileTranscriptions(basePref), "transcript(s)"];
+              : [
+                  // forgetRecord's deleted path reads an earlier launch's lost requests from the
+                  // history mirror, which only the Transcribe/History/Logs screens load: load it
+                  // first (it never rejects), with the pre-wipe ids. Drop again after the await:
+                  // an edit debounce firing meanwhile may have parked a write.
+                  loadHistory().then(() => {
+                    dropPendingWrites();
+                    forgetRecord(null, { deleted: true });
+                    return clearFileTranscriptions(basePref);
+                  }),
+                  "transcript(s)",
+                ];
     void op
       .then((n) => done(n, what))
       .catch(fail)

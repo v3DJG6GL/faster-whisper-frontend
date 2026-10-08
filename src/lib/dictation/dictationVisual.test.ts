@@ -12,7 +12,7 @@ import homeSrc from "../../screens/Dashboard.tsx?raw";
 import overlaySrc from "../../Overlay.tsx?raw";
 import feedbackSrc from "../../components/ui/feedback.tsx?raw";
 import {
-  dictationVisual, isActiveDictation, isGracefulStop, isProcessing, sessionNoteHoldMs,
+  collapseLingerMs, dictationVisual, isActiveDictation, isGracefulStop, isProcessing, sessionNoteHoldMs,
   SESSION_NOTE_HOLD_MS, SESSION_WARN_HOLD_MS, type DictationTone,
 } from "./dictationVisual";
 import type { DictationStatus } from "../types";
@@ -204,5 +204,30 @@ describe("sessionNoteHoldMs — one hold rule for the chip and the window", () =
     expect(sessionNoteHoldMs({ sessionNote: "not-inserted", sessionOutcome: "none" })).toBe(SESSION_NOTE_HOLD_MS);
     expect(sessionNoteHoldMs({ translateFailure: "cancelled", sessionOutcome: "none" })).toBe(0);
     expect(sessionNoteHoldMs({ sessionNote: null, translateFailure: null, sessionOutcome: "typed" })).toBe(0);
+  });
+});
+
+describe("collapseLingerMs — the docked chip holds only what is still showing", () => {
+  it("holds a note / untranslated pulse that is still up until it expires", () => {
+    expect(collapseLingerMs(10_000 + SESSION_WARN_HOLD_MS, 0, 10_000)).toBe(SESSION_WARN_HOLD_MS);
+    expect(collapseLingerMs(10_000 + SESSION_WARN_HOLD_MS, 2000, 10_000)).toBe(SESSION_WARN_HOLD_MS);
+    expect(collapseLingerMs(10_000 + 500, 2000, 10_000)).toBe(2000);
+  });
+  it("collapses at once when the note expired long ago and there are no words (error → idle)", () => {
+    // The settle stamped a note under an error flash; 4 s later the error clears to idle.
+    expect(collapseLingerMs(10_000 + SESSION_WARN_HOLD_MS, 0, 14_000)).toBe(0);
+    expect(collapseLingerMs(0, 0, 14_000)).toBe(0);
+    expect(collapseLingerMs(0, 2000, 14_000)).toBe(2000);
+  });
+  it("the chip's collapse effect keys on the live hold deadline, not the persistent payload", () => {
+    const m = /const linger = collapseLingerMs\(([\s\S]*?)\);/.exec(overlaySrc);
+    expect(m).not.toBeNull();
+    expect(m![1]).toContain("noteHoldUntil.current");
+    expect(m![1]).toContain("pulseHoldUntil.current");
+    expect(overlaySrc).not.toMatch(/sessionNoteHoldMs\(state\)/);
+    // Declared after the note effect, so a settle edge's stamp is in before the linger reads it.
+    expect(overlaySrc.indexOf("const linger = collapseLingerMs(")).toBeGreaterThan(
+      overlaySrc.indexOf("noteHoldUntil.current = Date.now() + hold;"),
+    );
   });
 });

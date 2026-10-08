@@ -17,12 +17,13 @@ pub async fn list_audio_devices(
 }
 
 /// One-time migration of a microphone saved by display name (before pins were device ids):
-/// today's `{id, label}`, or None while that mic isn't connected (the name keeps working through
-/// the same lookup at dictation start, and the migration retries next launch).
+/// today's `{id, label}`, or None while that mic isn't connected or the sound server doesn't serve
+/// it (the name keeps working through the same lookup at dictation start, which may still take the
+/// card's ALSA path, and the migration retries next launch).
 #[tauri::command]
 pub async fn resolve_legacy_mic(name: String) -> Result<Option<LegacyMic>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        audio::device::resolve_legacy(&name).map(|(id, label)| LegacyMic { id, label })
+        audio::device::resolve_legacy(&name, true).map(|(id, label)| LegacyMic { id, label })
     })
     .await
     .map_err(|e| e.to_string())

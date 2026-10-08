@@ -155,8 +155,9 @@ export const SESSION_NOTE_HOLD_MS = 2000;
 
 /**
  * THE one rule for how long an end-of-session note stays readable, shared by the chip's own
- * timers and collapse linger (Overlay.tsx, dock on) and the window's hide linger
- * (chipController.ts, dock off) so neither surface cuts the other short: the "incomplete"
+ * note/pulse holds (Overlay.tsx, dock on — the collapse linger follows those via
+ * collapseLingerMs) and the window's hide linger (chipController.ts, dock off) so neither
+ * surface cuts the other short: the "incomplete"
  * note or a failed translate on a typed/clipboard outcome (the untranslated pulse) →
  * SESSION_WARN_HOLD_MS; any other note → SESSION_NOTE_HOLD_MS; nothing to read → 0.
  */
@@ -168,4 +169,17 @@ export function sessionNoteHoldMs(s: {
   const untranslated = !!s.translateFailure && (s.sessionOutcome === "typed" || s.sessionOutcome === "clipboard");
   if (s.sessionNote === "incomplete" || untranslated) return SESSION_WARN_HOLD_MS;
   return s.sessionNote ? SESSION_NOTE_HOLD_MS : 0;
+}
+
+/**
+ * How long the docked chip waits before collapsing once nothing wants it expanded: until the
+ * end-of-session note / untranslated pulse that is still SHOWING expires (`holdUntil`, the
+ * deadline the chip's own note/pulse timers were armed with on their edge — 0 or past when
+ * none is up), or the words linger, whichever is longer. Keyed on the live deadline rather
+ * than on sessionNoteHoldMs of the payload: those fields persist until the next session's
+ * reset, so a collapse that happens long after the settle (an error flash clearing to idle)
+ * would otherwise hold an EMPTY expanded pill for the full note hold.
+ */
+export function collapseLingerMs(holdUntil: number, wordsLingerMs: number, now: number): number {
+  return Math.max(0, holdUntil - now, wordsLingerMs);
 }

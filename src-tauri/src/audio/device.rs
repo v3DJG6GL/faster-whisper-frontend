@@ -303,7 +303,8 @@ fn parse_pin(pin: &str) -> Option<DeviceId> {
 pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
     let pin = pin.filter(|p| !p.is_empty() && *p != "default");
     if let Some(pin) = pin {
-        let id = parse_pin(pin).or_else(|| resolve_legacy(pin).and_then(|(id, _)| parse_pin(&id)));
+        let id = parse_pin(pin)
+            .or_else(|| resolve_legacy(pin, false).and_then(|(id, _)| parse_pin(&id)));
         if let Some(device) = id.as_ref().and_then(host::input_by_id) {
             let watch_source = id
                 .as_ref()
@@ -408,12 +409,14 @@ pub fn capture_config(
 /// Map a pre-ids pin (a device's display name) to today's `(id, label)`. On Linux the old names
 /// were ALSA descriptions "<card>, <pcm>"; the sound server reports the same two as source
 /// properties, so the match is exact. Elsewhere the old name is the device's own name.
-pub fn resolve_legacy(name: &str) -> Option<(String, String)> {
+/// `persist` = the answer is saved as the new pin (the one-time migration), not just recorded from.
+pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
     if parse_pin(name).is_some() {
         return None;
     }
     #[cfg(target_os = "linux")]
     {
+        let mut served = false;
         if let Some(snap) = super::pulse::snapshot() {
             let mics: Vec<_> = snap.microphones().collect();
             if let Some(s) = legacy_match(name, &mics) {
@@ -422,19 +425,13 @@ pub fn resolve_legacy(name: &str) -> Option<(String, String)> {
                     s.label.clone(),
                 ));
             }
-            // A server that answers and serves inputs without this mic means it isn't connected
-            // (or its card's input is off there): an ALSA pin would bypass the server for good.
-            // None = the migration retries next launch, as list_input_devices shows the server.
-            if host::on_sound_server() {
-                return None;
-            }
+            // Asked only by the migration (the record path still wants the card's ALSA path).
+            served = persist && host::on_sound_server();
         }
-        // A server that is held after a timeout is there, just not answering: an ALSA pin now
-        // would be persisted for good and fight it. None = the migration retries next launch.
-        if super::pulse::held() {
+        if !legacy_alsa_fallback(persist, served, super::pulse::held()) {
             return None;
         }
-        // Only when no sound server serves inputs: the card's shared ALSA path.
+        // The card's shared ALSA path.
         let card = alsa_paths::card_label(name);
         alsa_cards()
             .into_iter()
@@ -443,11 +440,26 @@ pub fn resolve_legacy(name: &str) -> Option<(String, String)> {
     }
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = persist;
         host::native_inputs().into_iter().find_map(|d| {
             let label = host::device_label(&d)?;
             (label == name).then(|| Some((d.id().ok()?.to_string(), label)))?
         })
     }
+}
+
+/// May a legacy name the sound server did not map fall back to its card's ALSA path?
+/// - Held after a timeout: the server is there, just not answering — an ALSA pin now would be
+///   persisted for good and fight it, and the record path's held branch records through the default
+///   input without the "not connected" notice. None = the migration retries next launch.
+/// - Persisting while the server answers and serves inputs without this mic: it isn't connected (or
+///   its card's input is off there), and a saved ALSA pin would bypass the server for good. None =
+///   the migration retries next launch, as list_input_devices shows the server.
+/// - Recording (not persisting): the card may still be on ALSA with its server input off, so record
+///   from the named mic rather than the default input with a misleading "not connected" notice.
+#[cfg(target_os = "linux")]
+fn legacy_alsa_fallback(persist: bool, server_serves_inputs: bool, server_held: bool) -> bool {
+    !server_held && !(persist && server_serves_inputs)
 }
 
 #[cfg(target_os = "linux")]
@@ -541,6 +553,21 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
+    fn legacy_alsa_fallback_is_refused_only_for_a_persisted_pin_on_a_serving_server() {
+        // Migration while the server serves inputs without this mic: retry next launch.
+        assert!(!legacy_alsa_fallback(true, true, false));
+        // Record path, same server: the card's ALSA path, not the default input.
+        assert!(legacy_alsa_fallback(false, true, false));
+        // No sound server: both take the ALSA path.
+        assert!(legacy_alsa_fallback(true, false, false));
+        assert!(legacy_alsa_fallback(false, false, false));
+        // Held after a timeout: neither (the record path's held branch takes over).
+        assert!(!legacy_alsa_fallback(true, false, true));
+        assert!(!legacy_alsa_fallback(false, false, true));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
     fn alsa_paths_group_per_card_shared_first() {
         let f = |c: &str, k, id: &str| (c.to_string(), format!("{c} label"), k, id.to_string());
         let cards = group_cards(vec![
@@ -566,7 +593,7 @@ fn live_inventory() {
     let inv = list_input_devices(true).unwrap();
     println!("{}", serde_json::to_string_pretty(&inv).unwrap());
     if let Ok(name) = std::env::var("LEGACY_PIN") {
-        println!("legacy {name:?} -> {:?}", resolve_legacy(&name));
+        println!("legacy {name:?} -> {:?}", resolve_legacy(&name, true));
     }
 }
 

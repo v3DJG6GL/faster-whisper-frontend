@@ -1,11 +1,11 @@
 // The link card's "Spoken language" row (D86): the spoken picker, where the value comes from
 // (from YouTube / detected in 3 of 3 pieces / detected · also English / edited), the sampled
-// pieces once the check is done, and two fixed icon buttons — ⟳ check the audio with Whisper,
-// ↺ back to what the link speaks. The check runs on its own after the preview when the site
+// pieces once the check is done, and two fixed icon buttons — ⟳ check the audio with Whisper
+// (■ stop, while a check runs), ↺ back to what the link speaks. The check runs on its own after the preview when the site
 // names no language; it downloads the audio, which the run then reuses.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, RefreshCw, RotateCcw } from "lucide-react";
+import { Loader2, RefreshCw, RotateCcw, Square } from "lucide-react";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { IconButton } from "@/components/ui";
 import { cancelTextTranslation, urlLanguageCheck } from "@/lib/api";
@@ -24,6 +24,9 @@ export interface LinkLanguage {
   pick: (v: string) => void;
   reset: () => void;
   recheck: () => void;
+  /** Stop a running check (server side too): a long link can keep it — and Add — waiting up to
+   *  an hour, so the user can give up on it and pick the language by hand or check again. */
+  stop: () => void;
   /** The audio the finished check downloaded, for the run to reuse. */
   prefetchMediaId: string | null;
   /** The backend that issued `prefetchMediaId`: a media id is only good on the server that
@@ -105,6 +108,11 @@ export function useLinkLanguage(args: {
     pick: (v) => setEdited(v),
     reset: () => setEdited(null),
     recheck: start,
+    stop: () => {
+      if (check.state !== "running") return;
+      cancel(); // bumps the sequence (the answer never lands) and cancels the server-side work
+      setCheck({ state: "idle" });
+    },
     prefetchMediaId: check.state === "done" ? check.result?.mediaId ?? null : null,
     prefetchBackendId: check.state === "done" ? checkedOn : null,
   };
@@ -129,7 +137,7 @@ export function SpokenLanguageRow({
   const pill = spokenPill(sp, check, site);
   const r = check.state === "done" ? check.result : undefined;
   const checkLabel = running
-    ? "Checking the audio…"
+    ? "Stop checking the audio"
     : check.state === "done"
       ? "Check the audio again"
       : "Check the audio with Whisper";
@@ -183,13 +191,16 @@ export function SpokenLanguageRow({
         </span>
       )}
       <span className="ml-auto flex gap-1">
+        {/* While a check runs, the same slot stops it: the check can take as long as the link
+            (up to an hour) and Add waits on it. Stopping is harmless during a run, so it is
+            not gated on `disabled`. */}
         <IconButton
           label={checkLabel}
-          className={cn(!lang.enabled && "invisible")}
-          disabled={running || disabled || !lang.enabled}
-          onClick={lang.recheck}
+          className={cn(!lang.enabled && !running && "invisible")}
+          disabled={running ? false : disabled || !lang.enabled}
+          onClick={running ? lang.stop : lang.recheck}
         >
-          <RefreshCw className={cn("size-3.5", running && "animate-spin")} />
+          {running ? <Square className="size-3.5" /> : <RefreshCw className="size-3.5" />}
         </IconButton>
         <IconButton
           label={resetLabel}

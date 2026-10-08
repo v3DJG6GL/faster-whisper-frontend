@@ -392,6 +392,56 @@ describe("a pending review when the server copy is gone", () => {
       api.pulled = null;
     }
   });
+  // The peer that deleted usually re-seeds at once: a device pulling after that never sees the
+  // empty document, only a NEW one at a version below the prompt's.
+  it("is dropped by a pull that finds the re-created document at a lower version", async () => {
+    try {
+      const before = await raiseAtV5();
+      const reseeded = structuredClone(api.pulled as { blob: SyncBlob }).blob;
+      reseeded.recording = { ...reseeded.recording, dictationRetentionDays: before } as never;
+      api.pulled = { version: 1, updated_ts: 6, device: "peer", blob: reseeded };
+      await pullNow(true);
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().syncStatus).toBe("ok");
+      await approvePendingReview(); // a stray click on the stale dialog
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+  it("is dropped by a focus pull whose re-created document reached this base's version", async () => {
+    try {
+      const before = await raiseAtV5();
+      const reseeded = structuredClone(api.pulled as { blob: SyncBlob }).blob;
+      reseeded.recording = { ...reseeded.recording, dictationRetentionDays: before } as never;
+      api.pulled = { version: 1, updated_ts: 6, device: "peer", blob: reseeded }; // base is v1 too
+      await pullNow();
+      expect(getPendingReview()).toBeNull();
+      await approvePendingReview();
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+  it("is dropped by a push whose 409 carries the re-created document at a lower version", async () => {
+    try {
+      const before = await raiseAtV5();
+      const reseeded = structuredClone(api.pulled as { blob: SyncBlob }).blob;
+      reseeded.recording = { ...reseeded.recording, dictationRetentionDays: before } as never;
+      api.conflicts = [{ version: 1, updated_ts: 6, device: "peer", blob: reseeded }];
+      await pushNow(true);
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()).toBeNull();
+      await approvePendingReview();
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      api.conflicts = [];
+    }
+  });
   it("is dropped by a push whose 409 finds no server document", async () => {
     try {
       await raiseAtV5();

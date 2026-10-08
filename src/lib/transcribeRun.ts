@@ -788,7 +788,6 @@ export function forgetRecord(id: string | null, opts?: { deleted?: boolean }): v
       for (const jobId of ids) orphanForget?.(jobId);
     }
     registeredIds.clear();
-    registeredIds.clear();
     for (const k of Object.keys(idByPath)) delete idByPath[k];
     for (const t of persistTimers.values()) window.clearTimeout(t);
     persistTimers.clear();

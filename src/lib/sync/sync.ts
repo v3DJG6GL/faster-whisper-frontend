@@ -2426,6 +2426,9 @@ export async function pullNow(manual = false): Promise<void> {
       handleTransportFailure(0, "The server sent settings this app cannot read.");
       return;
     }
+    // Before the "nothing new" check too: a re-created document can climb back to this base's
+    // version number while a prompt from the deleted one still waits above it.
+    dropRecreatedPending(remote.version);
     if (!manual && remote.version === state.version) {
       // Nothing new; a local drift (edits while offline) still pushes via the
       // hash check on the next push tick.
@@ -2538,6 +2541,8 @@ export async function pushNow(manual = false): Promise<void> {
           schedulePush(0);
           return;
         }
+        // Same as pullNow: a prompt above the server's version is for a deleted document.
+        dropRecreatedPending(remote.version);
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
@@ -3085,6 +3090,22 @@ function raiseReview(r: PendingReview): void {
 function dropSupersededPending(version: number): void {
   if (pendingReview && pendingReview.version <= version) pendingReview = null;
   if (pendingConflict && pendingConflict.remoteVersion <= version) pendingConflict = null;
+}
+
+/** The server's document is at `version`, BELOW a pending prompt's: server versions only grow,
+ *  so the document the prompt describes was deleted and re-created — a peer's "Delete server
+ *  copy" followed by its re-seed, seen by a device that missed the empty window. Drop every
+ *  prompt as the null-blob arms do; otherwise neither dropSupersededPending (5 <= 1) nor the moot
+ *  checks (1 >= 5) ever fire, and approving re-lands the deleted doc's change at the dead version. */
+function dropRecreatedPending(version: number): void {
+  if (
+    (pendingReview && pendingReview.version > version) ||
+    (pendingConflict && pendingConflict.remoteVersion > version)
+  ) {
+    pendingReview = null;
+    pendingConflict = null;
+    pendingApply = null;
+  }
 }
 
 /** A change's identity for "was this row on the list the user saw". */

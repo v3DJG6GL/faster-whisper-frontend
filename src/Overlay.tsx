@@ -12,7 +12,7 @@ import {
   dictationVisual,
   isActiveDictation,
   isProcessing,
-  sessionNoteHoldMs,
+  collapseLingerMs,
   SESSION_NOTE_HOLD_MS,
   SESSION_WARN_HOLD_MS,
   type DictationTone,
@@ -444,24 +444,8 @@ export default function Overlay() {
     now: Date.now(),
   });
 
-  // Expand instantly when speech (or a state change) wants it; collapse only after a
-  // linger, so the final words linger on screen rather than snapping shut on a pause.
-  useEffect(() => {
-    if (wantExpanded) {
-      setExpanded(true);
-      return;
-    }
-    // Linger so the FINAL words stay readable — but only when there ARE words. With nothing
-    // to show (a no-speech session ending), collapse at once instead of holding an empty pill
-    // that would fall through to the "listening" label after the session is already over —
-    // unless there is a note or reason to read: the label lives in the expanded body, so with
-    // live transcript off (no words) a 0 linger never painted it. sessionNoteHoldMs is the one
-    // hold rule the note/pulse timers below (and the dock-off window hide) use, so the linger
-    // matches. Read from the payload: `note`/`pulse` are derived further down, on the same edge.
-    const linger = Math.max(sessionNoteHoldMs(state), state.partial ? COLLAPSE_LINGER_MS : 0);
-    const t = setTimeout(() => setExpanded(false), linger);
-    return () => clearTimeout(t);
-  }, [wantExpanded, state.partial, state.sessionNote, state.translateFailure, state.sessionOutcome]);
+  // The collapse-linger effect lives below the note / pulse effects: it reads the hold deadline
+  // they stamp, and effects run in declaration order, so on a settle edge it sees this commit's.
 
   // Hover-to-reveal: holding the cursor over the chip for the configured delay
   // (hoverRevealMs, default 500 ms) expands it to show
@@ -829,6 +813,11 @@ export default function Overlay() {
   const lastOutcome = useRef(state.sessionOutcome);
   const [pulse, setPulse] = useState<"typed" | "clipboard" | "untranslated" | null>(null);
   const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // When the untranslated pulse / the session note now showing expires (Date.now() clock; 0 =
+  // nothing to read is up). Stamped on the same edges as their timers, so the collapse linger
+  // below holds exactly as long as there is something to read — never off the persistent payload.
+  const pulseHoldUntil = useRef(0);
+  const noteHoldUntil = useRef(0);
 
   // Per-phrase pulse: keyed on the monotonic `seq` so identical consecutive kinds retrigger.
   const lastSeq = useRef<number | undefined>(state.lastInsert?.seq);
@@ -837,6 +826,7 @@ export default function Overlay() {
     if (!li || li.seq === lastSeq.current) return;
     lastSeq.current = li.seq;
     setPulse(li.kind);
+    pulseHoldUntil.current = 0; // a per-phrase tick replaces any untranslated pulse
     if (pulseTimer.current) clearTimeout(pulseTimer.current);
     pulseTimer.current = setTimeout(() => setPulse(null), 600);
   }, [state.lastInsert]);
@@ -855,11 +845,13 @@ export default function Overlay() {
       // surprising half. Held longer still, because it carries a reason to read.
       const failed = !!state.translateFailure;
       setPulse(failed ? "untranslated" : o);
+      pulseHoldUntil.current = failed ? Date.now() + SESSION_WARN_HOLD_MS : 0;
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
       pulseTimer.current = setTimeout(() => setPulse(null), failed ? SESSION_WARN_HOLD_MS : 1100);
     } else {
       // null (fresh session) or "none" (cancelled / nothing landed) → clear any lingering pulse.
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
+      pulseHoldUntil.current = 0;
       setPulse(null);
     }
   }, [state.sessionOutcome, state.translateFailure]);
@@ -881,14 +873,40 @@ export default function Overlay() {
     if (n) {
       setNote(n);
       // "incomplete" carries a reason to read, like the untranslated pulse: held longer.
-      noteTimer.current = setTimeout(
-        () => setNote(null),
-        n === "incomplete" ? SESSION_WARN_HOLD_MS : SESSION_NOTE_HOLD_MS,
-      );
+      const hold = n === "incomplete" ? SESSION_WARN_HOLD_MS : SESSION_NOTE_HOLD_MS;
+      noteHoldUntil.current = Date.now() + hold;
+      noteTimer.current = setTimeout(() => setNote(null), hold);
     } else {
+      noteHoldUntil.current = 0;
       setNote(null); // a fresh session clears it
     }
   }, [state.sessionNote]);
+
+  // Expand instantly when speech (or a state change) wants it; collapse only after a
+  // linger, so the final words linger on screen rather than snapping shut on a pause.
+  useEffect(() => {
+    if (wantExpanded) {
+      setExpanded(true);
+      return;
+    }
+    // Linger so the FINAL words stay readable — but only when there ARE words. With nothing
+    // to show (a no-speech session ending), collapse at once instead of holding an empty pill
+    // that would fall through to the "listening" label after the session is already over —
+    // unless a note or the untranslated pulse is still SHOWING: the label lives in the expanded
+    // body, so with live transcript off (no words) a 0 linger never painted it. Keyed on the
+    // deadline the note/pulse timers above were armed with (declared after them, so a settle
+    // edge's stamp is already in), NOT on the payload fields: those persist until the next
+    // session's reset, so an error flash clearing to idle seconds after the settle would hold
+    // an empty pill for the full note hold. The payload deps only re-run this when a note
+    // lands in a later write than the idle edge.
+    const linger = collapseLingerMs(
+      Math.max(noteHoldUntil.current, pulseHoldUntil.current),
+      state.partial ? COLLAPSE_LINGER_MS : 0,
+      Date.now(),
+    );
+    const t = setTimeout(() => setExpanded(false), linger);
+    return () => clearTimeout(t);
+  }, [wantExpanded, state.partial, state.sessionNote, state.translateFailure, state.sessionOutcome]);
 
   // Status dot colour: `vis` (the shared dictationVisual() mapping, computed above next to
   // srvBusy). The chip layers its own presentation on top: a tucked (peeked) dot is SOLID so
