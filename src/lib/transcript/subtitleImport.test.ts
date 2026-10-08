@@ -306,6 +306,30 @@ describe("site subtitle cleanup", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v.loud Alice>Hi\n";
     expect(parseImportedText("vtt", vtt).segments).toEqual([{ start: 1, end: 2, text: "Hi", speaker: "Alice" }]);
   });
+  it("a line said twice back to back stays two cues outside a rolling file", () => {
+    const r: BatchResult = {
+      text: "Thank you. Thank you. Bye.",
+      segments: [
+        { start: 0, end: 2, text: " Thank you." },
+        { start: 2, end: 4, text: " Thank you." },
+        { start: 4, end: 6, text: " Bye." },
+      ],
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      expect(parseImportedText(format, generateExport(r, { format })).segments).toEqual([
+        { start: 0, end: 2, text: "Thank you." },
+        { start: 2, end: 4, text: "Thank you." },
+        { start: 4, end: 6, text: "Bye." },
+      ]);
+    }
+  });
+  it("a JSON clock that is not finite is no clock", () => {
+    const json = '{"segments":[{"text":"Hi","start":1e999,"end":-1},{"text":"Yo","start":1,"end":2}]}';
+    const segs = parseImportedText("json", json).segments;
+    expect(segs[0].start).toBeUndefined();
+    expect(segs[0].end).toBeUndefined();
+    expect(segs[1]).toMatchObject({ start: 1, end: 2 });
+  });
   it("cleanup runs for SRT too", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);

@@ -804,10 +804,14 @@ export function previewExport(
   // timing, everything before the n-th cue ends.
   const until = !last ? Math.min(n, segs.length) : last.seg >= 0 ? last.seg + 1 : segs.filter((s) => s.start < last.end).length;
   const end = (last && last.seg < 0 ? last.end : segs[until - 1]?.end ?? 0) + 0.05;
+  // The sample's last segment has no `next`, so segmentWordRanges would let the
+  // slack admit the cut-off segment's first word: cap at that segment's start,
+  // as the full export does.
+  const cap = segs[until]?.start ?? Infinity;
   const sample: BatchResult = {
     ...result,
     segments: segs.slice(0, until),
-    words: result.words?.filter((w) => w.start < end),
+    words: result.words?.filter((w) => w.start < end && w.start < cap),
     text: textPrefix(result.text ?? "", segs, until),
     timedTracks: result.timedTracks?.map((t) => ({ ...t, cues: t.cues.filter((c) => c.start < end) })),
   };

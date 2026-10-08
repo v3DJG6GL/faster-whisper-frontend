@@ -811,6 +811,29 @@ describe("subtitle cues", () => {
     expect([txt.count, txt.total]).toEqual([1, 1]);
   });
 
+  it("the preview's last segment never takes the next segment's boundary word", () => {
+    const w0 = "This is a fairly long first line that keeps going on and on so that the cue splitter has to cut it into more than one subtitle".split(" ");
+    const w1 = ["Second", "line", "here."];
+    const r: BatchResult = {
+      text: ` ${w0.join(" ")} ${w1.join(" ")}`,
+      segments: [
+        { start: 0, end: 8, text: ` ${w0.join(" ")}` },
+        { start: 8, end: 10, text: ` ${w1.join(" ")}` },
+      ],
+      words: [
+        ...w0.map((w, i) => ({ word: ` ${w}`, start: (i * 8) / w0.length, end: ((i + 1) * 8) / w0.length })),
+        ...w1.map((w, i) => ({ word: ` ${w}`, start: 8 + i * 0.6, end: 8 + (i + 1) * 0.6 })),
+      ],
+    };
+    const opts: ExportOptions = { format: "srt", cues: STANDARD };
+    const preview = previewExport(r, opts, 1).text;
+    // Split like the saved file: the first segment's cues, then the file goes on.
+    expect(generateExport(r, opts).startsWith(preview)).toBe(true);
+    expect(preview).toContain("\n\n2\n");
+    const lrc = previewExport(r, { format: "lrc", wordTimestamps: true }, 1).text;
+    expect(lrc).not.toContain("Second");
+  });
+
   it("the TXT preview keeps the text's own spacing (CJK has none between sentences)", () => {
     const zh: BatchResult = {
       text: "你好。世界。",

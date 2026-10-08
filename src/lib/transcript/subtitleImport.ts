@@ -119,9 +119,11 @@ export interface RawCue {
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
  *  two or three times. Drop a ≤100 ms cue that only repeats a neighbour, strip leading lines
- *  a contiguous cue repeats from the cue before, and extend that cue when nothing new is
- *  left. Ordinary files have neither, so they pass through unchanged — a short cue with
- *  text of its own (our own exports keep a zero-length segment) is kept. */
+ *  a contiguous cue repeats from the cue before, and — only in a file that has such a
+ *  freeze cue — extend that cue when nothing new is left: an ordinary file may say
+ *  "Thank you." twice back to back, and both lines stay. Ordinary files pass through
+ *  unchanged — a short cue with text of its own (our own exports keep a zero-length
+ *  segment) is kept. */
 export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   const out: RawCue[] = [];
   // Compared against the neighbours' RAW lines: `out` may already have lost the repeat.
@@ -129,10 +131,13 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     const have = new Set([...(cues[i - 1]?.lines ?? []), ...(cues[i + 1]?.lines ?? [])].map(stripMarkup));
     return cues[i].lines.map(stripMarkup).every((l) => !l || have.has(l));
   };
+  const isFreeze = (c: RawCue, i: number): boolean =>
+    c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 && repeatsNeighbour(i);
+  // The rolling signature: without a freeze cue, a cue that only repeats the one before
+  // is a line said twice, not a roll.
+  const rolling = cues.some(isFreeze);
   for (const [i, cue] of cues.entries()) {
-    if (cue.start !== undefined && cue.end !== undefined && cue.end - cue.start <= 0.1 && repeatsNeighbour(i)) {
-      continue;
-    }
+    if (isFreeze(cue, i)) continue;
     const prev = out[out.length - 1];
     let lines = cue.lines;
     const contiguous =
@@ -144,6 +149,7 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
       const before = prev.lines.map(stripMarkup);
       let k = Math.min(mine.length, before.length);
       while (k > 0 && before.slice(-k).join("\n") !== mine.slice(0, k).join("\n")) k--;
+      if (k === mine.length && !rolling) k = 0;
       if (k === mine.length) {
         if (cue.end !== undefined) prev.end = Math.max(prev.end ?? cue.end, cue.end);
         continue;
@@ -354,8 +360,9 @@ function parseJsonExport(body: string): ImportedText {
             : undefined;
       segments.push({
         text,
-        start: typeof seg.start === "number" ? seg.start : undefined,
-        end: typeof seg.end === "number" ? seg.end : undefined,
+        // JSON.parse turns `1e999` into Infinity: a non-finite or negative clock is none.
+        start: typeof seg.start === "number" && Number.isFinite(seg.start) && seg.start >= 0 ? seg.start : undefined,
+        end: typeof seg.end === "number" && Number.isFinite(seg.end) && seg.end >= 0 ? seg.end : undefined,
         speaker: name === undefined ? undefined : safeDisplayText(name, 40).trim() || undefined,
       });
     }

@@ -462,6 +462,14 @@ describe("cutByShare", () => {
     for (let k = 1; k < 20; k++) cuts.add(cutByShare(text, [k, 20 - k])[0]);
     expect(cuts.has("iPhone の新機能と")).toBe(true);
   });
+  it("never cuts before an astral variation selector (a surrogate-pair mark)", () => {
+    const text = "今日は葛\u{E0100}城さんが来ました";
+    for (let k = 1; k < 20; k++) {
+      const parts = cutByShare(text, [k, 20 - k]);
+      expect(parts.join("")).toBe(text);
+      expect(parts.every((p) => !p.startsWith("\u{E0100}") && wellFormed(p))).toBe(true);
+    }
+  });
   it("still avoids a cut right after an article past the bounded look-back", () => {
     const text = "Understandably everyone waited for the announcement";
     expect(cutByShare(text, [38, 13]).every((p) => !/\bthe$/.test(p))).toBe(true);

@@ -381,12 +381,13 @@ export function cutByShare(text: string, shares: number[]): string[] {
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
-    // Never between a base and its combining mark, nor inside a ZWJ sequence.
-    if (/[\p{M}\u200d]/u.test(text[i]) || text[i - 1] === "\u200d") continue;
-    // Nor before a skin tone, nor between a flag's two regional indicators (an odd
-    // run of indicators right before i means i is the second half of a pair).
+    // Never between a base and its combining mark (tested on the code point: an
+    // astral mark such as the variation selector U+E0100 is a surrogate pair), nor
+    // inside a ZWJ sequence, nor before a skin tone, nor between a flag's two
+    // regional indicators (an odd run of indicators right before i means i is the
+    // second half of a pair).
     const cp = text.codePointAt(i)!;
-    if (/\p{Emoji_Modifier}/u.test(String.fromCodePoint(cp))) continue;
+    if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") continue;
     if (isRI(cp)) {
       let n = 0;
       for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
