@@ -411,7 +411,15 @@ mod imp {
     /// chord is still physically down. A chord the kernel reports released is safe to type into,
     /// and arming on it diverted the next phrase to the clipboard for nothing.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
-        if chord_mod_still_down(keys) {
+        // A chord with no shortcut modifier is never asked about (the latch keys on modifiers),
+        // so its log line must not claim the kernel reported it released — and checking first
+        // skips the blocking device enumeration for an answer already known to be "no".
+        let has_mod = keys
+            .iter()
+            .any(|k| crate::hotkeys::held_keys::SHORTCUT_MOD_CODES.contains(k));
+        if !has_mod {
+            tracing::info!("[evdev] teardown stop for a chord with no shortcut modifier; the loss latch does not apply");
+        } else if chord_mod_still_down(keys) {
             crate::hotkeys::held_keys::arm_chord_lost();
         } else {
             tracing::info!("[evdev] teardown stop for a chord the kernel reports released; not arming the loss latch");
