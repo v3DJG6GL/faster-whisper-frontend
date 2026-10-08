@@ -1209,9 +1209,11 @@ export async function getQuickAddSeed(): Promise<string | null> {
   }
 }
 
-/** Read the focused element's CURRENT text selection (accessibility only — no highlight-buffer
- *  fallback). null when nothing is selected or it can't be read. The correct-on-close guard uses
- *  this to confirm the same word is still highlighted before replacing it. */
+/** Read the source app's CURRENT text selection for the correct-on-close guard (it confirms the
+ *  same word is still highlighted before replacing it): on Linux accessibility first, PRIMARY only
+ *  to read the text of a confirmed rich-text (opaque) selection; on Windows a copy-chord re-grab
+ *  (win_seed) that touches and restores the clipboard. null when nothing is selected or it can't
+ *  be read. */
 export async function getFocusedSelection(): Promise<string | null> {
   if (!isTauri) return null;
   try {

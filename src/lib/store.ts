@@ -946,6 +946,10 @@ export const useApp = create<AppState>((set) => ({
           delete connections[id];
           delete usage[id];
           delete caps[id];
+        } else if (before.kind !== after.kind) {
+          // A pulled Server type change on the same target: same caps-only drop as
+          // `upsertBackend`, so the Backends list re-probes under the new kind.
+          delete caps[id];
         }
       }
       return {
