@@ -134,7 +134,7 @@ describe("dictation teardowns cancel the in-flight translate", () => {
     // NOT, or the end-of-session insert queued moments later would be aborted.
     const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
     expect(cancelLive).toContain("cancelRecord(true)");
-    expect(cancelLive).toContain("cancelStream(true)");
+    expect(cancelLive).toContain("cancelStream(true, !opts?.keepRecording)");
     const closedRelease = streamingSrc.match(/\(activeEndpoint === "batch" \? cancelRecord\(([^)]*)\) : cancelStream\(([^)]*)\)\)/);
     expect(closedRelease, "the closed-handler release moved — update streaming.cancelAudit.test.ts").not.toBeNull();
     expect(closedRelease![1]).toBe("");
@@ -355,7 +355,9 @@ describe("work that must wait for the queue or the cancel", () => {
     // check). endInjection is only void-chained by cancelLive; it is a no-op in stop mode, the only
     // mode with a pending transcript here.
     const body = mask(fns.armStuckWatchdog);
-    expect(body).not.toMatch(/void cancelLive\(\)/);
+    expect(body).not.toMatch(/void cancelLive\(/);
+    // A recovery cancel: the draining stream keeps its recording (the transcript is lost).
+    expect(body).toContain("cancelLive({ keepRecording: true })");
     const wait = body.indexOf("await cancelled");
     expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
     expect(body.indexOf("recoverUnguarded(")).toBeGreaterThan(wait);

@@ -317,7 +317,7 @@ export default function App() {
         // A live session's mic/WS is dead after resume → reset it. A session still mid-START
         // (status not yet "listening") reads "idle", so cancelLive wouldn't catch it; mark it to
         // tear down on go-live instead, else its prologue completes against the dead mic and wedges.
-        if (useApp.getState().status !== "idle") void cancelLive();
+        if (useApp.getState().status !== "idle") void cancelLive({ keepRecording: true });
         else requestStopIfStarting();
       }),
     [],

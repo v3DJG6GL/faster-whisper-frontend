@@ -86,11 +86,18 @@ pub async fn start_stream(
 pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
-        let sess = state
-            .0
-            .lock()
-            .map_err(|_| "stream state poisoned".to_string())?
-            .take();
+        let sess = {
+            let mut guard = state
+                .0
+                .lock()
+                .map_err(|_| "stream state poisoned".to_string())?;
+            let sess = guard.take();
+            // Under the lock, so a Cancel that lands before finish() reaches THIS drain.
+            if let Some(s) = &sess {
+                s.claim_detached();
+            }
+            sess
+        };
         if let Some(s) = sess {
             s.finish(); // drain in the background to deliver the last utterance
         }
@@ -106,7 +113,11 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 /// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
 /// server-initiated close that never went through stop_stream): a no-op when already taken.
 #[tauri::command]
-pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), String> {
+pub async fn cancel_stream(
+    app: AppHandle,
+    user_initiated: bool,
+    discard_recording: bool,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<StreamState>();
         let sess = {
@@ -115,6 +126,13 @@ pub async fn cancel_stream(app: AppHandle, user_initiated: bool) -> Result<(), S
                 .lock()
                 .map_err(|_| "stream state poisoned".to_string())?;
             let sess = guard.take();
+            // No live session: the user's Cancel is aimed at the one still draining after a stop —
+            // discard its recording, as cancel_record does for a detached batch. Not for the
+            // closed-handler release, nor for a recovery cancel (stuck finalize, wake from sleep)
+            // where the saved audio may be the only copy of what was said.
+            if sess.is_none() && user_initiated && discard_recording {
+                session::cancel_detached_stream();
+            }
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
             // this prevents a race where a new session claims epoch N+1, the lock drops, and THEN
             // the stale retire bumps to N+2 — silencing the new session's emissions.

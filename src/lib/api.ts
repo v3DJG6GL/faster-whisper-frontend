@@ -918,10 +918,12 @@ export async function stopStream(): Promise<void> {
 /** Hard-abort the stream session WITHOUT draining (no wasted server work; releases the system mute).
  *  Used by cancelLive (`userInitiated: true` — also aborts a transcript already being typed, even
  *  in stop-timing mode where the session is long gone), and as the closed-handler's idempotent
- *  release of a parked session (`false`, so the end-of-session insert queued moments later lives). */
-export async function cancelStream(userInitiated = false): Promise<void> {
+ *  release of a parked session (`false`, so the end-of-session insert queued moments later lives).
+ *  `discardRecording`: a user's Cancel after stop also drops the recording the detached drain
+ *  would save (the batch path's rule); a recovery cancel passes false to keep that audio. */
+export async function cancelStream(userInitiated = false, discardRecording = userInitiated): Promise<void> {
   if (!isTauri) return;
-  await invoke("cancel_stream", { userInitiated });
+  await invoke("cancel_stream", { userInitiated, discardRecording });
 }
 
 export async function startRecord(args: ServerTarget & {

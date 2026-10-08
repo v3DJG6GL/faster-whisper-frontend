@@ -101,6 +101,23 @@ fn batch_cancelled(epoch: u64) -> bool {
             .unwrap_or(false)
 }
 
+/// The discard flag of the stream session most recently DETACHED by `stop_stream` — the stream
+/// twin of [`DETACHED_BATCH_EPOCH`]. `finish()` detaches the WS drain, so a Cancel pressed while
+/// it finalizes found no session and the drain went on to write the `.wav` and its `.txt` while
+/// the UI showed a clean cancel (the batch path discards there since 1be5966). One slot is
+/// enough: a cancel that finds a live session is aimed at that one and never reaches this, so
+/// only the newest detached drain can be the one the user means.
+static DETACHED_STREAM: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+
+/// Discard the recording of the stream session still draining after a stop, if any. Called by
+/// `cancel_stream` only for a user's Cancel that found no live session.
+pub fn cancel_detached_stream() {
+    if let Some(flag) = DETACHED_STREAM.lock().ok().and_then(|mut s| s.take()) {
+        flag.store(true, Ordering::SeqCst);
+        tracing::info!("[stream] cancel after stop: the draining session's recording is discarded");
+    }
+}
+
 /// Emit a `stream://*` event only if `epoch` is still the active session (see [`ACTIVE_EPOCH`]).
 fn emit_if_active<S: Serialize + Clone>(app: &AppHandle, epoch: u64, event: &str, payload: S) {
     if ACTIVE_EPOCH.load(Ordering::SeqCst) == epoch {
@@ -184,11 +201,22 @@ pub struct StreamSession {
     capture_join: Option<JoinHandle<()>>,
     ws_stop: watch::Sender<bool>,
     ws_task: Option<tauri::async_runtime::JoinHandle<()>>,
+    /// Shared with the WS task's `StreamParams::discard` (see [`cancel_detached_stream`]).
+    discard: Arc<AtomicBool>,
     // Unmutes system audio on drop (after the Drop body below runs).
     _mute: SystemMuteGuard,
 }
 
 impl StreamSession {
+    /// Claim this session as the detached drain BEFORE the state lock is released, as
+    /// `RecordSession::claim_detached` does: a Cancel landing between stop and finish must
+    /// reach this session, not the one before it.
+    pub fn claim_detached(&self) {
+        if let Ok(mut s) = DETACHED_STREAM.lock() {
+            *s = Some(self.discard.clone());
+        }
+    }
+
     /// User-requested stop: stop capture, then let the WS task drain (flush, stop,
     /// final) in the background so the last utterance is still delivered. Takes
     /// the task out first so the `Drop` below won't abort it.
@@ -272,6 +300,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
 
     let (pcm_tx, pcm_rx) = mpsc::unbounded_channel::<Vec<f32>>();
     let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
+    let discard = Arc::new(AtomicBool::new(false));
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
     announce_mic(
@@ -317,6 +346,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         save_dir: p.save_dir,
         trim_silence: p.trim_silence,
         per_utterance_clips: p.per_utterance_clips,
+        discard: discard.clone(),
     };
 
     let appc = app.clone();
@@ -448,6 +478,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         capture_join: Some(capture_join),
         ws_stop: ws_stop_tx,
         ws_task: Some(ws_task),
+        discard,
         _mute: mute,
     })
 }
@@ -1676,6 +1707,29 @@ Sink Input #12\n\
     fn empty_or_garbage_input_mutes_nothing() {
         assert!(streams_to_mute("", 1).is_empty());
         assert!(streams_to_mute("no sink inputs here\nSink Input #notanumber\n", 1).is_empty());
+    }
+
+    #[test]
+    fn a_cancel_after_stop_discards_only_the_newest_detached_stream() {
+        use super::{cancel_detached_stream, DETACHED_STREAM};
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let claim = |f: &Arc<AtomicBool>| *DETACHED_STREAM.lock().unwrap() = Some(f.clone());
+        let (a, b) = (
+            Arc::new(AtomicBool::new(false)),
+            Arc::new(AtomicBool::new(false)),
+        );
+        claim(&a);
+        claim(&b);
+        cancel_detached_stream();
+        assert!(b.load(Ordering::SeqCst), "the newest drain is discarded");
+        assert!(!a.load(Ordering::SeqCst), "an earlier drain is left alone");
+        // The slot is consumed: a second Cancel with nothing detached does nothing.
+        let c = Arc::new(AtomicBool::new(false));
+        cancel_detached_stream();
+        claim(&c);
+        assert!(!c.load(Ordering::SeqCst));
+        *DETACHED_STREAM.lock().unwrap() = None;
     }
 
     #[test]

@@ -9,6 +9,8 @@ use crate::audio::resample::Resampler16k;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::json;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -142,6 +144,10 @@ pub struct StreamParams {
     /// When saving: one `.wav` per finished utterance instead of one per session (live
     /// hands-free sessions, which keep one History record per utterance). See [`ClipCutter`].
     pub per_utterance_clips: bool,
+    /// Set by a Cancel that arrives after Stop, while this session drains detached: from then on
+    /// the drain writes no recording file (no session `.wav`/`.txt`, no further clip) — the same
+    /// discard the batch path gives a Cancel during "transcribing…".
+    pub discard: Arc<AtomicBool>,
 }
 
 /// Case-insensitive `strip_prefix` for an ASCII prefix. `s.get(..len)` returns None on a
@@ -410,6 +416,7 @@ pub async fn run<F>(
     let mut transcript_docs: Vec<String> = Vec::new();
     let mut transcript_cur = String::new();
     let save_dir = params.save_dir.as_deref();
+    let discard = params.discard.clone();
     let mut clips = (saving && params.per_utterance_clips).then(ClipCutter::new);
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long hands-free session doesn't store hours
@@ -563,7 +570,7 @@ pub async fn run<F>(
                 match from {
                     Some(FromReader::Event(e)) => {
                         if matches!(e, StreamEvent::Partial { .. }) { partials_seen += 1; }
-                        forward_saved(e, save_dir, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
+                        forward_saved(e, save_dir, &discard, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
                     }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
@@ -689,6 +696,7 @@ pub async fn run<F>(
                     forward_saved(
                         e,
                         save_dir,
+                        &discard,
                         &mut saved,
                         &mut clips,
                         &mut transcript_docs,
@@ -735,6 +743,7 @@ pub async fn run<F>(
                     forward_saved(
                         e,
                         save_dir,
+                        &discard,
                         &mut saved,
                         &mut clips,
                         &mut transcript_docs,
@@ -764,6 +773,7 @@ pub async fn run<F>(
         forward_saved(
             e,
             save_dir,
+            &discard,
             &mut saved,
             &mut clips,
             &mut transcript_docs,
@@ -786,15 +796,21 @@ pub async fn run<F>(
                 pcm_duration_ms(saved.len())
             );
         }
+    } else if discard.load(Ordering::SeqCst) {
+        if save_dir.is_some() && !saved.is_empty() {
+            tracing::info!(
+                "[stream] cancelled after stop — {} ms recording discarded",
+                pcm_duration_ms(saved.len())
+            );
+        }
     } else if let Some(dir) = save_dir {
         // Skip empties (a quick tap that drained without audio, or a session the silence-trim
         // reduced to nothing). Emit the saved path so the client can label it with the transcript.
         if !saved.is_empty() {
             if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
-                // Label the .wav with the session transcript IN RUST (ungated), so a cancelled/
-                // superseded recording still gets its sibling .txt. Unlike the batch path, a
-                // Cancel after stop keeps the recording: the drain is detached and most of the
-                // transcript was already typed live.
+                // Label the .wav with the session transcript IN RUST (ungated), so a superseded
+                // recording still gets its sibling .txt (a Cancel after stop discards it above,
+                // matching the batch path).
                 // The last document goes through bank_doc, under the Boundary arm's budget.
                 bank_doc(&mut transcript_docs, &transcript_cur);
                 let transcript = transcript_docs.join("\n");
@@ -837,9 +853,11 @@ fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
 /// Fold one server event into the saved recording (when saving), then forward it — followed by
 /// the per-utterance clip it cut, so the client already holds the utterance's record when the
 /// clip's path arrives. The clip cutter sees the transcript BEFORE the event is folded in.
+#[allow(clippy::too_many_arguments)]
 fn forward_saved<F: Fn(StreamEvent)>(
     e: StreamEvent,
     save_dir: Option<&std::path::Path>,
+    discard: &AtomicBool,
     saved: &mut Vec<u8>,
     clips: &mut Option<ClipCutter>,
     docs: &mut Vec<String>,
@@ -847,7 +865,8 @@ fn forward_saved<F: Fn(StreamEvent)>(
     on_event: &F,
 ) {
     let mut clip = None;
-    if let Some(dir) = save_dir {
+    // A Cancel after stop (see `StreamParams::discard`): cut no further clip.
+    if let Some(dir) = save_dir.filter(|_| !discard.load(Ordering::SeqCst)) {
         if let Some(c) = clips {
             clip = c.observe(&e, saved, current, dir);
         }
@@ -1286,6 +1305,7 @@ mod emit_message_tests {
 mod clip_tests {
     use super::{clip_stem, forward_saved, split_at_cut, ClipCutter, StreamEvent, UtteranceState};
     use std::cell::RefCell;
+    use std::sync::atomic::AtomicBool;
 
     #[test]
     fn a_cut_is_clamped_and_sample_aligned() {
@@ -1340,8 +1360,18 @@ mod clip_tests {
         let mut saved = vec![0u8; 64_000]; // 2 s
         let mut clips = Some(ClipCutter::new());
         let (mut docs, mut cur) = (Vec::new(), String::new());
+        let keep = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(e, Some(&dir), saved, clips, &mut docs, &mut cur, &on_event);
+            forward_saved(
+                e,
+                Some(&dir),
+                &keep,
+                saved,
+                clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
         };
         feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
         saved.extend(vec![0u8; 32_000]); // 1 s after the mark: the next utterance's
@@ -1377,6 +1407,35 @@ mod clip_tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A Cancel after stop: the draining session cuts no further clip (the batch path's discard).
+    #[test]
+    fn a_discarded_drain_cuts_no_clip() {
+        let dir = std::env::temp_dir().join(format!("fwf-discard-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let saw_clip = RefCell::new(false);
+        let on_event = |e: StreamEvent| {
+            if matches!(e, StreamEvent::RecordingSaved { .. }) {
+                *saw_clip.borrow_mut() = true;
+            }
+        };
+        let mut saved = vec![0u8; 64_000];
+        let mut clips = Some(ClipCutter::new());
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let discard = AtomicBool::new(true);
+        forward_saved(
+            fin(" Hallo Welt", Some(1)),
+            Some(&dir),
+            &discard,
+            &mut saved,
+            &mut clips,
+            &mut docs,
+            &mut cur,
+            &on_event,
+        );
+        assert!(!*saw_clip.borrow());
+        assert!(!dir.exists());
+    }
+
     /// A gate-dropped utterance (no decode mark) takes its buffered burst with it instead of
     /// leaving it at the head of the next utterance's clip.
     #[test]
@@ -1397,8 +1456,18 @@ mod clip_tests {
         let mut saved = vec![0u8; 32_000]; // 1 s of noise the gate ignores
         let mut clips = Some(ClipCutter::new());
         let (mut docs, mut cur) = (Vec::new(), String::new());
+        let keep = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(e, Some(&dir), saved, clips, &mut docs, &mut cur, &on_event);
+            forward_saved(
+                e,
+                Some(&dir),
+                &keep,
+                saved,
+                clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
         };
         feed(state(UtteranceState::Dropped, 1), &mut saved, &mut clips);
         assert!(saved.is_empty());
@@ -1424,8 +1493,18 @@ mod clip_tests {
         let mut saved = vec![0u8; 32_000];
         let mut clips = Some(ClipCutter::new());
         let (mut docs, mut cur) = (Vec::new(), String::new());
+        let keep = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
-            forward_saved(e, Some(&dir), saved, clips, &mut docs, &mut cur, &on_event);
+            forward_saved(
+                e,
+                Some(&dir),
+                &keep,
+                saved,
+                clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
         };
         feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
         saved.extend(vec![0u8; 3_200]);

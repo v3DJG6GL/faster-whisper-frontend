@@ -1762,7 +1762,7 @@ function armStuckWatchdog(): void {
       // cancelLive, not awaited; it is a no-op in stop mode (nothing snapshotted), which is the only
       // mode with a pending transcript here.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
-      const cancelled = cancelLive().catch((e) => console.error("stuck-finalize cancel failed:", e));
+      const cancelled = cancelLive({ keepRecording: true }).catch((e) => console.error("stuck-finalize cancel failed:", e));
       if (pending) {
         void (async () => {
           await cancelled;
@@ -3666,6 +3666,9 @@ export interface CancelOpts {
   /** Skip the shortcut re-registration — for the chord-family restart, which cancels while
    *  the user is still holding the chord (re-enumerating keyboards then would lose its keys). */
   keepShortcuts?: boolean;
+  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: a stream session still
+   *  draining after stop keeps its saved recording — it may be the only copy of what was said. */
+  keepRecording?: boolean;
 }
 
 /** Chord family, when the in-place upgrade would be a lie: the hands-free Profile needs a
@@ -3903,7 +3906,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
     // right now — in stop-timing mode the session is already gone by then, and the flag is
     // the only thing that distinguishes this from the closed-handler's release below.
     if (endpoint === "batch") await cancelRecord(true);
-    else await cancelStream(true);
+    else await cancelStream(true, !opts?.keepRecording);
   } catch (e) {
     console.error("cancelLive: cancel failed:", e);
   }
