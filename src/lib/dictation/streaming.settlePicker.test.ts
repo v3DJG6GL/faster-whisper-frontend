@@ -73,9 +73,15 @@ describe("the settle picker is armed for exactly one session", () => {
     const ask = mask(streamingSrc).indexOf("await askTargetsAtSettle(");
     expect(ask).toBeGreaterThanOrEqual(0);
     expect(mask(streamingSrc).lastIndexOf("settlePickerOpen = asking", ask)).toBeGreaterThanOrEqual(0);
-    // A cancel before the window is up hid nothing: the asker re-checks after the show.
+    // A cancel before the window is up hid nothing: the asker checks before the show (so a
+    // cancelled ask never shows and focuses the window) and re-checks after it.
     const asker = mask(bodyAfter(dictationSrc, "function askTranslationTargets("));
-    expect(asker.indexOf("stillWanted()")).toBeGreaterThan(asker.indexOf("await showLangPick("));
+    const show = asker.indexOf("await showLangPick(");
+    expect(show).toBeGreaterThanOrEqual(0);
+    const pre = asker.indexOf("stillWanted()");
+    expect(pre, "a pre-show stillWanted() check").toBeGreaterThanOrEqual(0);
+    expect(pre).toBeLessThan(show);
+    expect(asker.lastIndexOf("stillWanted()")).toBeGreaterThan(show);
     expect(asker).toContain("abortLangPick(");
   });
 

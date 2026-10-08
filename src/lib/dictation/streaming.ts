@@ -958,6 +958,18 @@ let clipDirty = false;
 // on the clipboard, so the per-phrase snapshot must gate on THIS, not clipDirty — else the next paste
 // re-snapshots our own text as the user's "original" and the later restore clobbers their content.
 let clipHoldsOurs = false;
+/** Put the user's clipboard back from the Rust-held snapshot (which survives, so a later paste can
+ *  restore again). clipHoldsOurs is cleared BEFORE the await: a cancel-then-restart swaps the chain
+ *  meanwhile, and a late clear would wipe the next session's own flag. Every restore goes through
+ *  here so that ordering cannot drift between the call sites. */
+async function giveClipboardBack(): Promise<void> {
+  clipHoldsOurs = false;
+  try {
+    await restoreClipboardSnapshot();
+  } catch (e) {
+    console.error("restore clipboard snapshot failed:", e);
+  }
+}
 let phraseEndTimer: ReturnType<typeof setTimeout> | null = null;
 const PHRASE_END_QUIET_MS = 1200;
 // How long the phrase-end actions may be withheld because the server still holds the utterance
@@ -1104,12 +1116,7 @@ function bumpPhraseEnd(deferred = false): void {
         // next pasted phrase restores again.
         if (clipDirty && beganInjection) {
           clipDirty = false;
-          clipHoldsOurs = false; // the restore below puts the user's clipboard back
-          try {
-            await restoreClipboardSnapshot();
-          } catch (e) {
-            console.error("restore clipboard snapshot failed:", e);
-          }
+          await giveClipboardBack();
         }
         if (insertCfg !== cfg) return;
         clipBooked = null;
@@ -2430,10 +2437,10 @@ async function ensureListeners(): Promise<void> {
 
   await reg<string>("stream://boundary", (e) => {
     // Same un-advanced-epoch path as `final`/`overrides-ignored`: a cancelled/errored session's
-    // detached WS drain can still emit a late boundary. Unlike cancel, a stream://error does NOT
-    // null insertCfg, so without this the separator-inject below would land in the now-refocused
-    // window after the error handler deliberately suppressed the trailing Enter. Only process a
-    // boundary while genuinely busy — post-cancel (idle) / post-error (error) drain emits drop.
+    // detached WS drain can still emit a late boundary, which must not bank into (or type a
+    // separator for) a session that already ended. Cancel and stream://error both null insertCfg,
+    // but the bank and clear below run before any insertCfg check, so only process a boundary
+    // while genuinely busy — post-cancel (idle) / post-error (error) drain emits drop.
     if (!inSession()) return;
     // Long-silence hard break: the server reset its document. Bank what we have (for
     // the stop-timing single insert), drop our live baseline so the next utterance
@@ -2572,15 +2579,8 @@ async function ensureListeners(): Promise<void> {
             if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed) {
               if (beganInjection) {
                 // A prior paste snapshotted the user's clipboard — put it back (mirrors the per-phrase
-                // restore contract); the snapshot survives in Rust and isn't consumed. Cleared
-                // BEFORE the await (as the sibling restore links do): a cancel-then-restart swaps
-                // the chain meanwhile, and a late write here would wipe session B's own flag.
-                clipHoldsOurs = false;
-                try {
-                  await restoreClipboardSnapshot();
-                } catch (e) {
-                  console.error("restore clipboard snapshot failed:", e);
-                }
+                // restore contract); the snapshot survives in Rust and isn't consumed.
+                await giveClipboardBack();
               } else {
                 // No prior snapshot: `sep` (OUR text) is on the clipboard. Mark clipHoldsOurs so a later
                 // phrase's begin_injection (gated on !clipHoldsOurs) won't snapshot `sep` as the user's
@@ -2606,14 +2606,7 @@ async function ensureListeners(): Promise<void> {
       const live = !!insertCfg?.live;
       injectChain = injectChain.then(async () => {
         if (insertCfg !== cfg) return;
-        if (live && clipDirty && beganInjection) {
-          clipHoldsOurs = false; // the restore below puts the user's clipboard back
-          try {
-            await restoreClipboardSnapshot();
-          } catch (e) {
-            console.error("restore clipboard snapshot failed:", e);
-          }
-        }
+        if (live && clipDirty && beganInjection) await giveClipboardBack();
         // Re-check after the awaited restore (as bumpPhraseEnd's link does): cancelLive swaps in a
         // fresh injectChain, so a new session's first paste can set clipDirty meanwhile — clearing
         // it here would drop that session's restore debt.
@@ -2666,8 +2659,8 @@ async function ensureListeners(): Promise<void> {
         return;
       }
       // A late `closed` from the drain lands ~6s after the server closed — AFTER the 4s error-linger
-      // has already flipped the chip to idle (the error path leaves insertCfg + committedDoc/bankedDoc
-      // intact). Re-running the tail here would re-inject the whole transcript into the now-refocused
+      // has already flipped the chip to idle (the error path nulls insertCfg but leaves
+      // committedDoc/bankedDoc intact). Re-running the tail here would re-inject the whole transcript into the now-refocused
       // window. Treat an already-settled idle as terminal (post-cancel also lands here with insertCfg
       // null — handled below too, but bailing early is harmless and clearer).
       if (st.status === "idle") {

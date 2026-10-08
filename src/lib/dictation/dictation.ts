@@ -301,6 +301,12 @@ function askTranslationTargets(seed: Record<string, unknown>, stillWanted?: () =
         unlisten.push(await listen<string[]>("langpick://commit", (e) => finish({ kind: "picked", targets: e.payload ?? [] })));
         unlisten.push(await listen("langpick://abort", () => finish({ kind: "aborted" })));
         unlisten.push(await listen("langpick://unavailable", () => finish({ kind: "unavailable" })));
+        // Cancelled during the import/listen awaits: never show (and focus) a picker nobody
+        // wants — the abort that cancel sent may have preceded the listeners, so check here.
+        if (stillWanted && !stillWanted()) {
+          finish({ kind: "aborted" });
+          return;
+        }
         await showLangPick(seed);
         // Cancelled while the window was coming up: that abort hid nothing (and its event may
         // have beaten the listeners above), so take the late-shown window down here.

@@ -464,7 +464,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // an awaited translate + inject — routinely longer than the 1.2 s quiet gap.
     const timer = mask(fns.bumpPhraseEnd);
     const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
-    for (const step of ["clipDirty && beganInjection", "restoreClipboardSnapshot(", "clipBooked = null", "flushClipByLang("]) {
+    for (const step of ["clipDirty && beganInjection", "giveClipboardBack(", "clipBooked = null", "flushClipByLang("]) {
       expect(link, `${step} must run inside the queued link`).toContain(step);
     }
     // Only the link may touch them; the baseline stays synchronous (read at enqueue).
@@ -490,7 +490,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // clear wipes it.
     const boundary = mask(bodyAfter(streamingSrc, '"stream://boundary"'));
     const link = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(async () =>"));
-    expect(link).toContain("restoreClipboardSnapshot(");
+    expect(link).toContain("giveClipboardBack(");
     for (const step of ["clipDirty && beganInjection", "clipDirty = false"]) {
       expect(link, `${step} must run inside the queued link`).toContain(step);
       const inLink = link.split(step).length;
@@ -498,16 +498,28 @@ describe("work that must wait for the queue or the cancel", () => {
     }
   });
 
-  it("the separator task clears clipHoldsOurs before its awaited restore", () => {
+  it("the clipboard restore helper clears clipHoldsOurs before its awaited restore", () => {
     // A cancel-then-restart swaps the chain during the await; a clear AFTER it would wipe the
-    // new session's own clipHoldsOurs (set by its first paste) — same rule as the sibling links.
+    // new session's own clipHoldsOurs (set by its first paste).
+    const helper = mask(bodyAfter(streamingSrc, "function giveClipboardBack"));
+    const clear = helper.indexOf("clipHoldsOurs = false");
+    expect(clear, "the helper must clear clipHoldsOurs").toBeGreaterThanOrEqual(0);
+    expect(helper.indexOf("restoreClipboardSnapshot(")).toBeGreaterThan(clear);
+  });
+
+  it("the separator task restores through the shared helper", () => {
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
     const at = task.indexOf("if (beganInjection)");
     expect(at, "the separator's restore branch moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const branch = task.slice(at, task.indexOf("} else {", at));
-    const clear = branch.indexOf("clipHoldsOurs = false");
-    expect(clear, "the restore branch must clear clipHoldsOurs").toBeGreaterThanOrEqual(0);
-    expect(branch.indexOf("restoreClipboardSnapshot(")).toBeGreaterThan(clear);
+    expect(branch).toContain("giveClipboardBack(");
+  });
+
+  it("every clipboard restore goes through giveClipboardBack", () => {
+    // An inline copy can drift from the clear-before-await ordering (it already did once): the
+    // helper body must be the only call site; the other occurrence is the import.
+    const calls = mask(streamingSrc).split("restoreClipboardSnapshot(").length - 1;
+    expect(calls, "call restoreClipboardSnapshot only from giveClipboardBack").toBe(1);
   });
 });
