@@ -44,6 +44,12 @@ let rerunRequested = false; // a refresh asked for mid-pass → run one more pas
 let statsPagesOpen = 0; // mounted Statistics pages; their documents are fetched only while > 0
 let skippedTicks = 0; // poll ticks passed over while hidden
 let pageMissed = false; // a hidden pass ran with a Statistics page open, skipping its documents
+// Bumped on every committed success. A stale-marking miss (`reopened`) checks it against the value
+// it captured before its fetch: a same-query success that landed meanwhile — another pass, the
+// reopen fetch — is seconds old, so the miss must not mark it failed. A counter, not the document
+// reference: setUsageView/Year keep the old reference when a success re-answers identical data.
+let viewGen = 0;
+let yearGen = 0;
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
 function statsPageShown(): boolean {
@@ -57,6 +63,8 @@ export function openStatisticsPage(): () => void {
   if (statsPagesOpen === 1) {
     // Reopened: what the store kept is from the last visit (the poll leaves it alone while the
     // page is closed), so a miss now marks it failed rather than presenting it as current.
+    // These fetches cover any hidden pass the previous visit missed.
+    pageMissed = false;
     void refreshView(true).catch(() => {});
     void refreshYear(true, true).catch(() => {});
   }
@@ -140,14 +148,16 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, q, tz);
   if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !force) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
+  const gen = yearGen;
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
   if (!cur || cur.id !== backend.id) return;
   const nq = yearPageQuery(now.usageViewQuery);
   if (!nq || viewSignature(cur, effectiveServerUrl(cur, now.settings), nq, tz) !== sig) return;
-  if (stats === null && now.usageYear?.sig === sig && !reopened) return;
+  if (stats === null && now.usageYear?.sig === sig && (!reopened || yearGen !== gen)) return;
   now.setUsageYear(sig, stats);
+  if (stats !== null) yearGen++;
 }
 
 /** Fetch the Statistics page's document for the current query against the viewed
@@ -162,13 +172,17 @@ async function refreshView(reopened = false): Promise<void> {
   const tz = viewerTimeZone();
   const q = s.usageViewQuery;
   const sig = viewSignature(backend, target, q, tz);
+  const gen = viewGen;
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
   if (!cur || cur.id !== backend.id) return;
   if (viewSignature(cur, effectiveServerUrl(cur, now.settings), now.usageViewQuery, tz) !== sig) return;
-  if (stats === null && now.usageView?.sig === sig && !reopened) return; // keep the last-known on a transient miss
+  // Keep the last-known on a transient miss — and on a stale-marking one too when a success
+  // landed while this fetch was out (that document is current, not the kept one).
+  if (stats === null && now.usageView?.sig === sig && (!reopened || viewGen !== gen)) return;
   now.setUsageView(sig, stats);
+  if (stats !== null) viewGen++;
 }
 
 async function refreshOne(backend: Backend): Promise<void> {
@@ -244,13 +258,18 @@ async function refreshAll(): Promise<void> {
         }
       }
       if (statsPageShown()) {
+        // A hidden pass skipped the page's documents, so what it shows may be hours old: a
+        // miss now marks it failed, as on a reopen. Consumed here rather than by the show
+        // handler, so a show folded into an in-flight pass (rerunRequested) still counts.
+        const stale = pageMissed;
+        pageMissed = false;
         try {
-          await refreshView();
+          await refreshView(stale);
         } catch {
           /* the page keeps its last document */
         }
         try {
-          await refreshYear(true);
+          await refreshYear(true, stale);
         } catch {
           /* the calendar keeps its last year */
         }
@@ -282,7 +301,6 @@ export function initUsageController(): void {
   onWindowHiddenChange((hidden) => {
     if (hidden || (skippedTicks === 0 && !pageMissed)) return;
     skippedTicks = 0;
-    pageMissed = false;
     void refreshAll();
   });
 

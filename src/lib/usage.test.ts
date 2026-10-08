@@ -221,6 +221,52 @@ describe("usage poll gates", () => {
     expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
     close();
   });
+  it("a reopen miss does not mark failed what a pass fetched while it was out", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    let releaseView!: (v: null) => void;
+    let releaseYear!: (v: null) => void;
+    getUsageStats
+      .mockImplementationOnce(() => new Promise((r) => (releaseView = r)) as never)
+      .mockImplementationOnce(() => new Promise((r) => (releaseYear = r)) as never);
+    const close = openStatisticsPage(); // the reopen's view + year fetches hang
+    await settle();
+    await vi.advanceTimersByTimeAsync(30_000); // a tick answers the same query (identical data)
+    await settle();
+    releaseView(null);
+    releaseYear(null);
+    await settle();
+    expect(useApp.getState().usageView?.stats).toBeTruthy();
+    expect(useApp.getState().usageView?.failed).toBeFalsy();
+    expect(useApp.getState().usageYear?.stats).toBeTruthy();
+    expect(useApp.getState().usageYear?.failed).toBeFalsy();
+    close();
+  });
+  it("the show catch-up marks the page documents failed on a miss after a hidden pass", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    const { usageView, usageYear } = useApp.getState();
+    expect(usageView?.stats && !usageView.failed).toBeTruthy();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
+    await settle();
+    // The server is gone for the page's documents when the window comes back.
+    const ok = getUsageStats.getMockImplementation()!;
+    getUsageStats.mockImplementation(async (a) =>
+      a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2 ? ok(a) : (null as never),
+    );
+    try {
+      setHidden(false);
+      await settle();
+      expect(useApp.getState().usageView).toEqual({ sig: usageView!.sig, stats: usageView!.stats, failed: true });
+      expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+    }
+  });
   it("refetches the page when the home profile moves the default backend under it", async () => {
     useApp.setState((s) => ({
       backends: [
