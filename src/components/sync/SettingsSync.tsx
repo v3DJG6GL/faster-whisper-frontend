@@ -61,12 +61,6 @@ const OTHER_BUCKET = IS_WINDOWS ? ("linux" as const) : ("windows" as const);
  *  error boundary in the app that unmounts the whole window. */
 const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
 
-/** The renderable rows of an inbound backend list: an array whose elements are objects.
- *  Everything else is dropped before the render body dereferences it. */
-function displayableBackends(list: unknown): Backend[] {
-  return arr<unknown>(list).filter((b): b is Backend => !!b && typeof b === "object");
-}
-
 /** Category descriptions for the import preview and the restore dialog (the Sync
  *  list itself renders per-setting switches from the manifest). */
 const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
@@ -180,10 +174,16 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     () => (categories.backends ? sanitizeBackends(categories.backends.list) : []),
     [categories],
   );
+  // Likewise the profiles: `sanitizeProfiles` dedupes ids and drops malformed entries, so the raw
+  // file length over-counted what replaces this device's profiles.
+  const installProfiles = useMemo(
+    () => (categories.profiles ? sanitizeProfiles(categories.profiles.list) : []),
+    [categories],
+  );
 
   const counts: Partial<Record<SyncCategory, string>> = {
     backends: categories.backends ? `${installBackends.length}` : undefined,
-    profiles: categories.profiles ? `${arr(categories.profiles.list).length}` : undefined,
+    profiles: categories.profiles ? `${installProfiles.length}` : undefined,
     appRules: categories.appRules
       ? `${arr(categories.appRules[MY_BUCKET]).length} this OS · ${arr(categories.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
@@ -202,10 +202,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // (`isCodeList`), which is what keeps `isStrictSubset`'s O(k·m) scan from freezing the webview
   // on a hand-authored file. Bonus: the preview now predicts exactly what apply would install.
   const st = useApp.getState();
-  const wouldProfiles =
-    sel.profiles && categories.profiles
-      ? sanitizeProfiles(categories.profiles.list)
-      : st.profiles;
+  const wouldProfiles = sel.profiles && categories.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category.
   const rawQa = categories.dictionary?.quickAddHotkey;
   const wouldQa =
@@ -308,7 +305,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
         )}
         {sel.backends && categories.backends && (
-          <IncomingAddresses list={installBackends.map((b) => ({ ...b, serverUrl: dest(b) }))} />
+          <IncomingAddresses list={categories.backends.list} />
         )}
         {missingKeys.length > 0 && (
           <Notice tone="warn">
@@ -412,9 +409,13 @@ export function RestoreFromServer({
     () => (blob.backends ? sanitizeBackends(blob.backends.list) : []),
     [blob],
   );
+  const installProfiles = useMemo(
+    () => (blob.profiles ? sanitizeProfiles(blob.profiles.list) : []),
+    [blob],
+  );
   const counts: Partial<Record<SyncCategory, string>> = {
     backends: blob.backends ? `${installBackends.length}` : undefined,
-    profiles: blob.profiles ? `${arr(blob.profiles.list).length}` : undefined,
+    profiles: blob.profiles ? `${installProfiles.length}` : undefined,
     appRules: blob.appRules
       ? `${arr(blob.appRules[MY_BUCKET]).length} this OS · ${arr(blob.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
@@ -426,7 +427,7 @@ export function RestoreFromServer({
   // Same reasoning as ImportPreview above: sanitize with `applyBlob`'s own helpers, because this
   // dialog renders before them and `chordConflicts` walks the elements in a render body.
   const st = useApp.getState();
-  const wouldProfiles = sel.profiles && blob.profiles ? sanitizeProfiles(blob.profiles.list) : st.profiles;
+  const wouldProfiles = sel.profiles && blob.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category.
   const rawQa = blob.dictionary?.quickAddHotkey;
   const wouldQa =
@@ -502,13 +503,7 @@ export function RestoreFromServer({
             {joinNames(replaced)} are overwritten.
           </Notice>
         )}
-        {sel.backends && blob.backends && (
-          // Where dictation goes: a surviving id's "Address on this device" override wins, as in
-          // ImportPreview.
-          <IncomingAddresses
-            list={installBackends.map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, st.settings) }))}
-          />
-        )}
+        {sel.backends && blob.backends && <IncomingAddresses list={blob.backends.list} />}
         <Notice tone="ok">
           After restoring, settings sync turns on for this device against this server.
         </Notice>
@@ -564,10 +559,14 @@ const LOCAL_ARM_LABEL = "This device";
  *  gate in front of them, and disclosed only a COUNT. A URL's real authority is whatever follows
  *  the last `@`, so `http://localhost:8000@evil.tld/v1` reads as loopback until it is parsed. */
 export function IncomingAddresses({ list }: { list: unknown }) {
-  // ELEMENTS too, not only the container: the pull path hands this the raw server list, and
-  // `sanitizeBackends` runs only inside applyBlob — AFTER consent. A `[null]` element threw
-  // in this render body and unmounted the very dialog that lets the user refuse the blob.
-  const all = displayableBackends(list);
+  // Takes the RAW inbound list and derives the rows itself, so every caller lists the same thing:
+  // what `applyBlob` would install (`sanitizeBackends` — run here BEFORE consent, since a `[null]`
+  // element or a non-string address once threw in this render body and unmounted the very dialog
+  // that lets the user refuse the blob), at the address this device would CONNECT to (a surviving
+  // id's "Address on this device" override wins over the canonical one). The three callers used to
+  // respell this derivation each, and drifted.
+  const settings = useApp.getState().settings;
+  const all = sanitizeBackends(list).map((b) => ({ ...b, serverUrl: effectiveServerUrl(b, settings) }));
   const backends = all.slice(0, MAX_SHOWN_ADDRESSES);
   if (backends.length === 0) return null;
   return (
@@ -575,14 +574,22 @@ export function IncomingAddresses({ list }: { list: unknown }) {
       <div className="font-medium">Dictation would be sent to:</div>
       <ul className="mt-1 space-y-0.5">
         {backends.map((b, i) => {
-          // Type-checked, not `String()`-coerced: these are raw server values, and both
-          // `String({toString: 0})` and a template literal over such an `id` throw in this
-          // render body. A non-string URL falls to the "unreadable address" label below.
-          const url = typeof b.serverUrl === "string" ? b.serverUrl : "";
+          const url = b.serverUrl;
+          // An empty address is the sanitizer's "not configured" state (it blanks a scheme this
+          // app does not speak): nothing is sent, as the moved-key notice says for the same entry.
+          // "unreadable address" stays for a non-empty string `authorityOf` rejects.
+          if (url.trim() === "") {
+            return (
+              <li key={`${b.id}-${i}`} className="font-mono text-[12px]">
+                {safeText(b.name || b.id, 60)} →{" "}
+                <span className="text-dim">no usable address — nothing is sent until one is set</span>
+              </li>
+            );
+          }
           const auth = authorityOf(url);
           const warn = insecureUrlWarning(url);
           return (
-            <li key={`${typeof b.id === "string" ? b.id : ""}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
+            <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
               {safeText(b.name || b.id, 60)} →{" "}
               {/* The host through the IDENTITY helper, which marks a truncation. The plain display
                   filter cuts at 80 code points with no ellipsis, and `serverUrl` has no length cap
@@ -637,7 +644,7 @@ function SecurityReviewDialog() {
     <Modal onClose={busy ? () => {} : rejectPendingReview}>
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        {safeText(pending.device || "Another device", 60)} sent changes that affect where your
+        {safeText(pending.device, 60).trim() || "Another device"} sent changes that affect where your
         dictation is sent, which key is used, or what is kept on this device. Everything else was
         applied already — only these are waiting.
       </div>
@@ -735,7 +742,7 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
     <Modal onClose={busy ? () => {} : dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        These settings changed both here and on {safeText(pending.remoteDevice, 60) || "another device"}. Pick which
+        These settings changed both here and on {safeText(pending.remoteDevice, 60).trim() || "another device"}. Pick which
         version to keep — everything else was merged automatically.
       </div>
       <div className="mt-4">
