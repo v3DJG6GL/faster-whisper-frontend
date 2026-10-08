@@ -76,6 +76,17 @@ fn window_size(monitor_logical_w: f64) -> (f64, f64) {
     )
 }
 
+/// Logical width the overlay window was last sized to (`f64` bits; 0 = never sized).
+static SIZED_W: AtomicU64 = AtomicU64::new(0);
+
+/// Resize the overlay to `(w, h)` only when the width differs from the last one applied
+/// (first show, or a move to a monitor of another width) — never per show.
+fn size_window(win: &WebviewWindow, (w, h): (f64, f64)) {
+    if SIZED_W.swap(w.to_bits(), Ordering::Relaxed) != w.to_bits() {
+        let _ = win.set_size(tauri::LogicalSize::new(w, h));
+    }
+}
+
 /// Logical width of the monitor the chip lives on (unbounded when it can't be read).
 fn monitor_logical_w(win: &WebviewWindow) -> f64 {
     crate::aux_windows::position::monitor_of(win)
@@ -173,11 +184,11 @@ pub fn prewarm_chip_rule(cfg: &crate::config::Config) {
         // Chip disabled: leave the user's kwinrulesrc untouched.
         IndicatorPosition::Off => return,
     };
-    // (No monitor cap here — there is no window yet to ask; chip_position clamps x at 0.)
-    let (w, h) = window_size(f64::MAX);
+    // No window to size yet: only the position (computed for the width the window will get
+    // on the active output) is pre-warmed.
     let gen = kwin::next_place_gen();
     std::thread::spawn(move || {
-        kwin::place_chip(kwin::chip_position(edge, w, h), gen);
+        kwin::place_chip(kwin::chip_position(edge).map(|(pos, _)| pos), gen);
     });
 }
 
@@ -194,12 +205,7 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
         apply_scale(&win, clamp_scale(s));
     }
     // Size before position: the centring reads the window size.
-    // Only when it differs (first show, or a move to a narrower monitor) — never per show.
-    let (w, h) = window_size(monitor_logical_w(&win));
-    static SIZED_W: AtomicU64 = AtomicU64::new(0);
-    if SIZED_W.swap(w.to_bits(), Ordering::Relaxed) != w.to_bits() {
-        let _ = win.set_size(tauri::LogicalSize::new(w, h));
-    }
+    size_window(&win, window_size(monitor_logical_w(&win)));
     self::position(&win, &position);
     let _ = win.set_always_on_top(true);
 
@@ -220,9 +226,18 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
         // it runs on the GTK/UI thread — a hang here freezes the whole app and every
         // queued command (text injection included). Do it on a detached thread; the
         // window is already shown, the rule only nudges it into position afterwards.
+        // The size above came from the window's CURRENT (GTK) monitor, but the rule pins it on
+        // KWin's active output — on a narrower one the wide strip would be clamped to its left
+        // edge and the pill land off-centre. Re-size to the output the chip actually lands on,
+        // gated by the same generation as the position so a stale thread doesn't resize.
         let gen = kwin::next_place_gen();
+        let win = win.clone();
         std::thread::spawn(move || {
-            kwin::place_chip(kwin::chip_position(&position, w, h), gen);
+            let placed = kwin::chip_position(&position);
+            if let Some((_, size)) = placed.filter(|_| kwin::is_current_place_gen(gen)) {
+                size_window(&win, size);
+            }
+            kwin::place_chip(placed.map(|(pos, _)| pos), gen);
         });
         return;
     }
@@ -731,6 +746,11 @@ mod kwin {
         PLACE_GEN.fetch_add(1, Ordering::Relaxed) + 1
     }
 
+    /// Whether `gen` is still the newest placement (no later show/prewarm claimed one).
+    pub fn is_current_place_gen(gen: u64) -> bool {
+        PLACE_GEN.load(Ordering::Relaxed) == gen
+    }
+
     /// Connector name of the output the user is on (cursor / focused window), via
     /// KWin's D-Bus. e.g. "DP-1". None if KWin isn't reachable.
     fn active_output_name() -> Option<String> {
@@ -787,8 +807,20 @@ mod kwin {
     /// forced position whose top-left falls outside every output (so a negative/off-border
     /// anchor never applies). The resting inset and the edge-peek tuck are pure CSS in the
     /// webview (see Overlay.tsx), so the window itself never moves for the peek.
-    pub fn chip_position(edge: &str, w: f64, h: f64) -> Option<(i32, i32)> {
-        let (ox, oy, ow, oh) = active_output_geometry()?;
+    /// Also returns the window's logical size for THAT output (see [`chip_placement`]).
+    pub fn chip_position(edge: &str) -> Option<((i32, i32), (f64, f64))> {
+        Some(chip_placement(edge, active_output_geometry()?))
+    }
+
+    /// Top-left and logical window size for the chip on an output of logical geometry
+    /// `(x, y, w, h)`. The width is capped to THIS output (`window_size`), so the pinned
+    /// position and the window width agree and the pill (centred in the window) sits on the
+    /// output's centre even when the output is narrower than the full strip.
+    pub fn chip_placement(
+        edge: &str,
+        (ox, oy, ow, oh): (i32, i32, i32, i32),
+    ) -> ((i32, i32), (f64, f64)) {
+        let (w, h) = super::window_size(ow as f64);
         let cw = w as i32;
         let ch = h as i32;
         let x = ox + ((ow - cw) / 2).max(0);
@@ -797,7 +829,7 @@ mod kwin {
         } else {
             oy
         };
-        Some((x, y))
+        ((x, y), (w, h))
     }
 
     /// Write the position-independent rule body (strength 2 = "Force").
@@ -857,5 +889,28 @@ mod kwin {
         if need_reconfigure {
             reconfigure();
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::kwin::chip_placement;
+
+    /// The pill is centred in the window, so the window's centre must be the output's centre —
+    /// also on an output narrower than the full strip (a 1280-wide laptop next to a wide one).
+    #[test]
+    fn kwin_placement_centres_the_window_on_a_narrow_output() {
+        for (ox, ow) in [(0, 1280), (2560, 1280), (0, 3840), (1920, 1640)] {
+            let ((x, y), (w, _)) = chip_placement("top", (ox, 0, ow, 800));
+            assert!(w <= ow as f64, "window {w} wider than output {ow}");
+            assert_eq!(
+                x * 2 + w as i32,
+                ox * 2 + ow,
+                "off-centre on output {ox}+{ow}"
+            );
+            assert_eq!(y, 0);
+        }
+        let ((_, y), (_, h)) = chip_placement("bottom", (0, 100, 1280, 800));
+        assert_eq!(y, 100 + 800 - h as i32);
     }
 }
