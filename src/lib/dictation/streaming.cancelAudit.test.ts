@@ -258,7 +258,10 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(reset, "startLive's finally resets startingSession").toBeGreaterThanOrEqual(0);
     const tail = body.slice(reset);
     expect(tail).toContain("pendingReclassify = null");
-    expect(tail).toContain("applyReclassify(");
+    // Routed through reclassifyLive so the post-start gate has one copy; the reset must come
+    // first, or the call would hit the queue arm and re-strand the upgrade.
+    const call = tail.indexOf("reclassifyLive(upgraded)");
+    expect(call, "startLive's finally must hand the slot to reclassifyLive").toBeGreaterThan(0);
   });
 
   it("a delivered typed insert consumes the carry", () => {

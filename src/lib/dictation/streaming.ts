@@ -963,9 +963,10 @@ const PHRASE_END_QUIET_MS = 1200;
 // (see bumpPhraseEnd), counted from the first expiry that found it so.
 const PHRASE_DEFER_MAX_MS = 30_000;
 let phraseDeferSince: number | null = null;
-// Chord family: a hands-free superset completed during the start prologue (insertCfg not
-// built yet) — startLiveInner applies the upgrade right after it exists. Cleared on
-// every fresh start and on cancel so a stale flip can't latch an unrelated session.
+// Chord family: a hands-free superset completed while the start is in flight (startingSession).
+// startLiveInner applies one queued before the session context exists (right after
+// `capturing = true`); startLive's finally applies one queued later, during the start invoke's
+// await. Cleared on every fresh start and on cancel so a stale flip can't latch an unrelated session.
 let pendingReclassify: Profile | null = null;
 // Chord family, the other answer: the hands-free superset needs a session the hold's can't be
 // upgraded into (another backend/language/…, see dictation.ts `sessionShape`). A restart that
@@ -3250,14 +3251,16 @@ export async function startLive(
     // A chord-family upgrade that landed AFTER startLiveInner's own drain (during the start
     // invoke's await — status is already "listening", so dictation.ts routes the superset press
     // to reclassifyLive, which still queues while startingSession is true). Nothing else drains
-    // the slot, so apply it here. A pending restart wins; a failed start or an owed prologue stop
-    // leaves capturing=false and drops it, exactly like a post-start reclassifyLive would.
+    // the slot, so hand it to reclassifyLive here — startingSession is false now, so it takes the
+    // post-start gate, which drops it on a failed start or an owed prologue stop (capturing=false).
+    // A pending restart wins. A late upgrade cannot change sessionPerUtterance / per_utterance —
+    // both already went out with the start — so that session keeps one History record.
     const upgraded = pendingReclassify as Profile | null;
     pendingReclassify = null;
     if (restart) {
       if (capturing) void cancelLive({ keepShortcuts: true }).then(restart);
       else restart();
-    } else if (upgraded && insertCfg && capturing) applyReclassify(upgraded);
+    } else if (upgraded) reclassifyLive(upgraded);
   }
 }
 
@@ -3617,8 +3620,9 @@ async function startLiveInner(
  *  Profile. That Profile's own backend/language/prompt overrides do NOT
  *  apply — the transport was opened for the hold's backend and stays there —
  *  so dictation.ts only upgrades when they match, and `restartLiveAs` otherwise.
- *  Mid-prologue (insertCfg not built yet) the flip is queued and applied by
- *  startLiveInner the moment the session context exists. */
+ *  While the start is in flight the flip is queued: startLiveInner applies it once the
+ *  session context exists, and startLive's finally applies one that lands during the
+ *  start invoke. */
 export function reclassifyLive(profile: Profile): void {
   if (startingSession) {
     pendingReclassify = profile;
