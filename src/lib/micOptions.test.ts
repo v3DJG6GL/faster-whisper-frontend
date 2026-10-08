@@ -104,6 +104,12 @@ describe("buildMicView", () => {
     expect(v.legacy).toBe(true);
   });
 
+  it("with no sound server a missing legacy pin is plainly not connected", () => {
+    const v = buildMicView({ ...inv(), server: null }, "Old USB Mic, USB Audio", null, false, true);
+    expect(v.triggerLabel).toBe("Old USB Mic, USB Audio (not connected)");
+    expect(v.legacy).toBe(false);
+  });
+
   it("off Linux a missing legacy pin is plainly not connected (no card fallback)", () => {
     const v = buildMicView(inv(), "Old USB Mic, USB Audio", null, false, false);
     expect(v.triggerLabel).toBe("Old USB Mic, USB Audio (not connected)");

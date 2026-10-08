@@ -102,7 +102,9 @@ export function buildMicView(
   const selMic = selectedId ? mics.find((m) => m.id === selectedId) : undefined;
   const selPath = selectedId && !selMic ? paths.find((p) => p.path.id === selectedId) : undefined;
   const missing = !!inv && !!selectedId && !selMic && !selPath;
-  const legacy = cardFallback && missing && isLegacyPin(selectedId);
+  // With no sound server a legacy name is migrated to its card path once that mic is listed
+  // (AudioTab retries), so a name still missing then really is not connected.
+  const legacy = cardFallback && missing && isLegacyPin(selectedId) && !!inv?.server;
 
   const rows: MicRow[] = [
     {

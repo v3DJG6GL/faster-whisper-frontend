@@ -9,7 +9,8 @@ import {
 } from "@/lib/api";
 import type { MicInventory } from "@/lib/types";
 import { MicPicker } from "@/components/settings/MicPicker";
-import { buildMicView, isAlsaPin, labelForPick } from "@/lib/micOptions";
+import { buildMicView, isAlsaPin, isLegacyPin, labelForPick } from "@/lib/micOptions";
+import { retryLegacyMicPin } from "@/lib/micMigration";
 import { safeDisplayText } from "@/lib/sanitize";
 import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 
@@ -96,6 +97,16 @@ export function AudioTab() {
       invSeq.current++;
     };
   }, [refresh]);
+
+  // A legacy name pin (saved before pins were device ids) is moved to its id once per launch
+  // (micMigration.ts) — but only if that mic was listed then. Retry whenever the listed mics
+  // change (plugged in after launch, or the pin arrived by sync), not on every 3 s poll: else
+  // the picker lists the mic twice and calls the name "not offered by the sound server" while
+  // dictation records it through the server just fine.
+  const micIds = inv ? inv.mics.map((m) => m.id).join("\n") : null;
+  useEffect(() => {
+    if (micIds !== null && isLegacyPin(microphoneId)) void retryLegacyMicPin();
+  }, [micIds, microphoneId]);
 
   // Mic test: subscribe to levels and open the device while `testing` is on.
   useEffect(() => {
@@ -314,13 +325,16 @@ export function AudioTab() {
             advanced={advanced}
             pathsListed={invHasPaths}
             onAdvancedChange={setAdvanced}
-            onPick={(id) =>
+            onPick={(id) => {
+              // Picking latches the shown paths view as the user's choice: the default follows the
+              // pin, so leaving a path pin would otherwise collapse the list they picked from.
+              if (advancedChoice === null) setAdvanced(advanced);
               updateSettings({
                 microphoneId: id,
                 // Re-picking the unplugged pin finds no live device to name it — keep its saved label.
                 microphoneLabel: id ? (labelForPick(inv, id) ?? (id === microphoneId ? microphoneLabel : null)) : null,
-              })
-            }
+              });
+            }}
             className="w-56"
             // Locked during a test: switching the device mid-test re-runs the capture effect,
             // racing the old fire-and-forget stop against the new start (the late stop could tear
