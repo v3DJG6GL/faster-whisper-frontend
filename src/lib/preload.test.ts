@@ -75,7 +75,6 @@ describe("acquireWarm", () => {
   const translationOff = {
     can_request_override_profile: false,
     can_request_decode_overrides: false,
-    allowed_override_profiles: [],
     translation_enabled: false,
   } as Capabilities;
 

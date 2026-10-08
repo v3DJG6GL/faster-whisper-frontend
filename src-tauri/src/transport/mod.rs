@@ -74,10 +74,6 @@ pub struct Capabilities {
     pub can_request_override_profile: bool,
     #[serde(default)]
     pub can_request_decode_overrides: bool,
-    /// `["*"]` = unrestricted (free choice from the names endpoint); else the
-    /// explicit allowed names; `[]` = none.
-    #[serde(default)]
-    pub allowed_override_profiles: Vec<String>,
     /// Whether the server runs the optional pipeline stages at all (additive,
     /// newer backends only) — pre-flight-disables the client's "Separate
     /// music" / "Speaker diarization" toggles. Absent = unknown ⇒ assume
@@ -91,10 +87,6 @@ pub struct Capabilities {
     /// `Some(true)` — absence means the endpoint does not exist.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url_download_enabled: Option<bool>,
-    /// Installed yt-dlp version on the server (only when the feature is on)
-    /// — surfaced in download-failure guidance. Bounded in discovery.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub yt_dlp_version: Option<String>,
     /// Whether a link's VIDEO can be kept/fetched (keep_video on the form,
     /// POST /v1/audio/url-media/video). Same `Some(true)`-only contract as
     /// `url_download_enabled`. A typed struct drops what it does not name,
@@ -129,8 +121,6 @@ pub struct Capabilities {
     pub translation_models: Option<Vec<ServerModel>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub translate_to_default: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub llama_cpp_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diarization_models: Option<Vec<ServerModel>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

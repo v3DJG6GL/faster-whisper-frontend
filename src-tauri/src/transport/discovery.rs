@@ -201,23 +201,6 @@ pub async fn list_override_profiles(server_url: &str, api_key: Option<&str>) -> 
 pub async fn get_capabilities(server_url: &str, api_key: Option<&str>) -> Option<Capabilities> {
     let base = base_url(server_url);
     let mut caps: Capabilities = get_json(format!("{base}/v1/me"), api_key).await?;
-    // The one server-supplied string list in this module with no ceiling of its own, while every
-    // sibling here — `models`, `list_override_profiles` — takes
-    // `MAX_MODELS` plus a per-entry `bounded_name`. `get_json`'s only ceiling is the generic 32 MiB
-    // body cap, and `Capabilities` is `Serialize`, so the whole list crossed the IPC and was
-    // JSON-parsed on the webview main thread from a gesture-free effect that re-fires as the
-    // server address is typed. Nothing in the frontend reads the field at all.
-    caps.allowed_override_profiles.truncate(MAX_MODELS);
-    for name in caps.allowed_override_profiles.iter_mut() {
-        *name = bounded_name(name);
-    }
-    // Server string rendered as a UI label (download-failure guidance).
-    caps.yt_dlp_version = caps
-        .yt_dlp_version
-        .map(|v| super::bounded_server_text(&v, 32));
-    caps.llama_cpp_version = caps
-        .llama_cpp_version
-        .map(|v| super::bounded_server_text(&v, 32));
     caps.media_package = caps.media_package.map(bound_media_package);
     caps.translation_models = bound_models(caps.translation_models);
     caps.diarization_models = bound_models(caps.diarization_models);

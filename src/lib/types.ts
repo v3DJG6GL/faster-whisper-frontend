@@ -638,8 +638,6 @@ export interface ConnectionInfo {
 export interface Capabilities {
   can_request_override_profile: boolean;
   can_request_decode_overrides: boolean;
-  /** ["*"] = unrestricted (free choice); explicit names = restricted; [] = none. */
-  allowed_override_profiles: string[];
   /** Whether the optional pipeline stages exist on this server (newer
    *  backends) — pre-flight-disables the Separate-music / diarization
    *  toggles. Absent = unknown ⇒ assume available. */
@@ -649,9 +647,6 @@ export interface Capabilities {
    *  two stage flags above, ABSENT means the endpoint does not exist —
    *  the URL affordance is shown only on `=== true` (deliberate opt-in). */
   url_download_enabled?: boolean;
-  /** Installed yt-dlp version on the server (newer backends, only when the
-   *  feature is on) — surfaced in download-failure guidance. */
-  yt_dlp_version?: string | null;
   /** Whether a link's VIDEO can be kept/fetched. ABSENT means the feature
    *  does not exist — the switch shows only on `=== true`. */
   url_video_enabled?: boolean;
@@ -689,8 +684,6 @@ export interface Capabilities {
   translation_models?: ServerModel[];
   /** The caller's resolved TRANSLATE_TO default (seeds the toggle). */
   translate_to_default?: string[];
-  /** llama-cpp-python version, only when translation is enabled. */
-  llama_cpp_version?: string | null;
   /** Diarization pipelines / MSS models the caller may pick per run. */
   diarization_models?: ServerModel[];
   separation_models?: ServerModel[];

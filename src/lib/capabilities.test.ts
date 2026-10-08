@@ -13,6 +13,7 @@ import {
   forgetCaps,
   maxTranslationTargets,
   refreshCaps,
+  requestCredentialGen,
   translationLanguages,
   translationTargetInfo,
   translationWarm,
@@ -23,7 +24,6 @@ function caps(patch: Partial<Capabilities>): Capabilities {
   return {
     can_request_override_profile: false,
     can_request_decode_overrides: false,
-    allowed_override_profiles: [],
     ...patch,
   };
 }
@@ -167,6 +167,17 @@ describe("forgetCaps", () => {
     // Per Backend: another id's generation does not move.
     const other = newBackendDraft().id;
     expect(credentialGeneration(other)).toBe(0);
+  });
+
+  it("names the stored key's generation only for a request that uses the stored key", () => {
+    const id = newBackendDraft().id;
+    forgetCaps(id);
+    forgetCaps(id);
+    expect(requestCredentialGen(id, null)).toBe(2);
+    expect(requestCredentialGen(id, "")).toBe(2);
+    // A typed key is the request's own credential: no stored generation applies.
+    expect(requestCredentialGen(id, "sk-typed")).toBe(0);
+    expect(requestCredentialGen(null, null)).toBe(0);
   });
 });
 
