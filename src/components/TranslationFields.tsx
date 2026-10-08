@@ -105,6 +105,7 @@ export function TranslationOptionsFields({
   sectionLabels,
   chipParts,
   onChipPart,
+  maxTargets,
   children,
 }: {
   targets: string[];
@@ -112,6 +113,9 @@ export function TranslationOptionsFields({
   /** Compound target chips (see TranslationTargetChips `parts`). */
   chipParts?: Record<string, ChipPart[]>;
   onChipPart?: (key: string) => void;
+  /** The chips' cap when not every chip is a machine translation (the site's own subtitles are
+   *  free); defaults to the server's translation limit. */
+  maxTargets?: number;
   mode: "fluent" | "faithful";
   onModeChange: (m: "fluent" | "faithful") => void;
   model: string;
@@ -138,7 +142,7 @@ export function TranslationOptionsFields({
           value={targets}
           onChange={onTargetsChange}
           {...translationTargetInfo(caps, model || inheritedModel)}
-          max={maxTranslationTargets(caps)}
+          max={maxTargets ?? maxTranslationTargets(caps)}
           exclude={exclude}
           disabled={disabled}
           parts={chipParts}

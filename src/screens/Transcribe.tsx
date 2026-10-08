@@ -517,6 +517,13 @@ export default function Transcribe() {
         parts: Object.fromEntries(siteView.chips.map((c) => [c.code, c.parts])),
         onTargetsChange: (next: string[]) => applySite(setTargets(siteInput, siteState, next)),
         onPart: (key: string) => applySite(flip(siteInput, siteState, key)),
+        // Only machine translations count against the server's cap (the panel's own gate): a chip
+        // the site's subtitles alone serve is free. Counted from the parts, so it holds while
+        // the panel has no run too.
+        max:
+          maxTranslationTargets(caps) +
+          siteView.chips.length -
+          siteView.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length,
       }
     : null;
 
@@ -1673,6 +1680,7 @@ export default function Transcribe() {
                             })}
                             chipParts={siteChips?.parts}
                             onChipPart={siteChips?.onPart}
+                            maxTargets={siteChips?.max}
                             mode={translationMode}
                             onModeChange={(m) => {
                               setTranslationMode(m);

@@ -271,13 +271,15 @@ describe("tracks and switches", () => {
         const es = v.rows.find((r) => r.code === "es")!;
         expect([es.sub, es.badges.map((x) => x.state)]).toEqual(["from the site", ["idle", "active"]]);
         expect(v.chips.map((c) => c.code)).toContain("es");
-        // Switching off its site track drops the language: machine translation cannot take over
-        // past the limit, so it must not stay wanted with no source at all.
+        // Switching off its site track: machine translation takes over es, its slot taken from
+        // a language a site track still covers (it keeps that track) — not from your targets.
         const [fi1, fst] = apply(i1, flip(i1, st, es.badges[1].key!));
-        expect(fi1.targets).not.toContain("es");
+        expect(fi1.targets).toContain("es");
         const fv = derive(fi1, fst);
-        expect(fv.chips.map((c) => c.code)).not.toContain("es");
         expect(fv.run!.fetch).not.toContain("es");
+        expect(fv.run!.mtTargets).toEqual(["ja", "fi", "en", "fr", "es"]);
+        expect(fv.chips.find((c) => c.code === "es")!.parts.map((p) => p.on)).toEqual([true, false]);
+        expect(fv.chips.find((c) => c.code === "it")!.parts.map((p) => p.on)).toEqual([false, true]);
       }
     }
     // Without a known limit nothing is cut.
@@ -300,6 +302,40 @@ describe("tracks and switches", () => {
     const [i2, s2] = apply(wide, flip(wide, st, es.badges[1].key!));
     expect(i2.targets).toEqual(["ja", "es"]);
     expect(derive(i2, s2).run!.mtTargets).toEqual(["ja", "es"]);
+  });
+  it("switching off a site track never takes the translation slot of another language's only source", () => {
+    // ja holds the one slot; es comes from the site and is listed first among your targets.
+    const inp = input({ tracks: [tr("de", "de"), tr("es", "es")], targets: ["es", "ja"], maxTargets: 1 });
+    const [i1, s1] = apply(inp, flip(inp, initialSiteState(inp.targets), "ex:es"));
+    expect(i1.targets).toEqual(["ja"]);
+    const v = derive(i1, s1);
+    expect(v.run!.mtTargets).toEqual(["ja"]);
+    expect(v.chips.map((c) => c.code)).toEqual(["ja"]);
+  });
+  it("switching machine translation on at a full translation limit changes nothing", () => {
+    // Prefer: es is covered by its site track, its MT badge idle; ja holds the one slot.
+    const inp = input({ tracks: [tr("en", "en"), tr("es", "es")], spoken: "en", targets: ["ja"], maxTargets: 1 });
+    const st = initialSiteState(inp.targets);
+    expect(flip(inp, st, "mt:es")).toEqual({ state: st, targets: ["ja"] });
+    // Its site track switched off first (es drops, as above): switching MT on is refused too,
+    // rather than leaving es wanted with no source at all.
+    const inp2 = input({ tracks: [tr("de", "de"), tr("es", "es")], targets: ["ja"], maxTargets: 1 });
+    const [i1, s1] = apply(inp2, flip(inp2, initialSiteState(inp2.targets), "ex:es"));
+    const [i2, s2] = apply(i1, flip(i1, s1, "mt:es"));
+    expect(i2.targets).toEqual(["ja"]);
+    expect(derive(i2, s2).chips.map((c) => c.code)).toEqual(["ja"]);
+  });
+  it("a preset gives the translation slot to a language with no other source first", () => {
+    // de is a target the site covers; fr was added and only machine translation can bring it.
+    const inp = input({ tracks: [tr("en", "en"), tr("de", "de")], spoken: "en", targets: ["de"], maxTargets: 1 });
+    const [i1, s1] = apply(inp, addLanguage(inp, initialSiteState(inp.targets), "fr"));
+    expect(derive(i1, s1).run!.mtTargets).toEqual(["fr"]);
+    const [i2, s2] = apply(i1, pickPolicy(i1, s1, "both"));
+    const v = derive(i2, s2);
+    expect(v.run!.mtTargets).toEqual(["fr"]);
+    expect(v.chips.find((c) => c.code === "de")!.parts.map((p) => p.on)).toEqual([false, true]);
+    // Under Prefer, de's redundant machine translation cannot take fr's slot either.
+    expect(flip(i1, s1, "mt:de")).toEqual({ state: s1, targets: i1.targets });
   });
   it("Custom: a machine-translation badge the rules switch keeps a title that matches its state", () => {
     const inp = input({ tracks: [tr("en", "en"), tr("de-orig", "de", { kind: "auto" })], spoken: "en", targets: ["de"] });

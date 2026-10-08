@@ -361,14 +361,19 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   for (const r of rows) if (r.code && cutOut.has(r.code)) r.sub = "over the download limit";
   // The server machine-translates into at most `maxTargets` languages per run and drops the rest,
   // but a preset lights machine translation for every language the site brings (Side by side,
-  // Generate). Past the limit it greys out: the languages you translate into keep it first, then
-  // the site's in row order. A site language left without a source drops out, as above.
+  // Generate). Past the limit it greys out: the languages you translate into keep it first —
+  // those with no other source ahead of those a site track already covers, whose translation is
+  // only extra — then the site's in row order. A site language left without a source drops out,
+  // as above.
   const mtCapped = new Set<string>();
   const maxMt = input.maxTargets;
   if (maxMt !== undefined) {
     const live = targets.filter((c) => !cutOut.has(c));
+    const bare = (c: string) => !langSources(c).badges.slice(1).some((b) => b.state === "active");
+    const explicit = input.targets.filter((c) => live.includes(c));
     const prio = uniq([
-      ...input.targets.filter((c) => live.includes(c)),
+      ...explicit.filter(bare),
+      ...explicit,
       ...codes.filter((c) => live.includes(c)),
       ...live,
     ]);
@@ -446,6 +451,24 @@ function allTargets(m: ReturnType<typeof model>): Record<string, boolean> {
   return tg;
 }
 
+/** Would this click strand a language under the translation limit? Asks the limit with the
+ *  change in place: `c`'s machine translation greyed, or another language newly greyed while it
+ *  stays wanted with no source at all (every badge off — a dead MT click). A language the limit
+ *  greys that keeps a site track is fine: its translation was only extra. */
+function strands(
+  input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof model>,
+  next: Record<string, boolean>, tg: Record<string, boolean>, c: string,
+): boolean {
+  if (input.maxTargets === undefined) return false;
+  const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+  const a = model({ ...input, targets: trial.targets }, trial.state);
+  if (a.mtCapped.has(c)) return true;
+  return [...a.mtCapped].some((x) =>
+    !m.mtCapped.has(x)
+    && a.view.chips.some((ch) => ch.code === x)
+    && !a.view.rows.find((r) => r.code === x)?.badges.some((b) => b.state === "active"));
+}
+
 /** A badge click: flip used ↔ not used, snapshot into Custom (v25/v27). A language you
  *  translate into always keeps a source: switching off its last one lets machine translation
  *  take over (an existing subtitle went, unless the translation limit greys it) or drops the
@@ -472,6 +495,12 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   const own = m.codeOf[key];
   const c = own ?? (sib ? m.codeOf[sib] : undefined);
   if (own && next[key]) tg[own] = true; // switching any source on makes the language wanted
+  // Machine translation switched on past a full translation limit would be greyed by it (or
+  // grey another language's only source): the click would only flip to Custom and leave the
+  // language wanted with nothing translating it. Free a slot first, as above.
+  if (own && next[key] && key.startsWith("mt:") && strands(input, st, m, next, tg, own)) {
+    return { state: st, targets: [...input.targets] };
+  }
   if (c && tg[c] && !next[key]) {
     const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k]);
     if (!left.length) {
@@ -480,10 +509,10 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
         next["mt:" + c] = true;
         // Machine translation takes over only if the translation limit leaves it a slot — an
         // MT badge that was idle (Prefer) or off never counted, so ask the limit with the
-        // takeover in place. Greyed, the language would stay wanted with no source at all
-        // (both chip parts off, a dead MT click): drop it, as switching MT off does.
-        const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-        if (model({ ...input, targets: trial.targets }, trial.state).mtCapped.has(c)) {
+        // takeover in place. Greyed — or greying another language's only source — a language
+        // would stay wanted with no source at all (both chip parts off, a dead MT click): drop
+        // it, as switching MT off does.
+        if (strands(input, st, m, next, tg, c)) {
           tg[c] = false;
           next["mt:" + c] = false;
         }
