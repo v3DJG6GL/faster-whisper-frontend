@@ -226,9 +226,9 @@ mod imp {
             if num_layouts == 0 {
                 continue;
             }
-            // Scan the active group for this key; clamp to 0 if the key defines fewer groups than the
-            // active index (a rare mixed-group key — matches XKB wrapping the group back into range).
-            let g = if group < num_layouts { group } else { 0 };
+            // Scan the effective group for this key: a key defining fewer groups than the active
+            // index wraps back into range, as XKB's default RANGE_WRAP out-of-range action does.
+            let g = group % num_layouts;
             // Only the 4 standard levels are encoded below (none / Shift / AltGr / Shift+AltGr).
             // Cap the scan: an ISO_Level5 layout (Neo, intl-extended) exposes 6-8 levels, and a
             // glyph reachable ONLY at level 4+ would be registered as `shift=false, altgr=false`

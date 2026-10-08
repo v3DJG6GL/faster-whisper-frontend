@@ -563,7 +563,7 @@ fn err_cb_with_lost(
     stop: Arc<AtomicBool>,
     device_lost: Arc<AtomicBool>,
 ) -> impl FnMut(cpal::Error) + Send + 'static {
-    crate::audio::stream_errors::error_callback("stream", move || {
+    crate::audio::stream_errors::error_callback("record", move || {
         device_lost.store(true, Ordering::SeqCst);
         stop.store(true, Ordering::SeqCst);
     })
@@ -1161,7 +1161,7 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // The streaming path caps its `error` frames; this sibling formatted the transport
             // error in raw, and that error carries `detail_from(&body)` — up to the 32 MiB body cap.
             let msg = crate::transport::bounded_server_text(
-                &format!("Transcription failed: {e}"),
+                &format!("Transcription failed: {e:#}"),
                 crate::transport::MAX_ERROR_TEXT,
             );
             emit_if_active(&app, epoch, "stream://error", msg);
@@ -1184,7 +1184,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
 ///
 /// Both non-None variants are unix-only: off unix `apply_mute` is a real no-op (see below), so
 /// gating them keeps the Windows build free of dead-code warnings for a state it can never reach.
+#[derive(Default)]
 enum MuteMode {
+    #[default]
     None,
     /// Per-app: the sink-input ids WE muted (others' playback). Unmute these on drop.
     #[cfg(unix)]
@@ -1194,9 +1196,11 @@ enum MuteMode {
     WholeSink(bool),
 }
 
+/// Mute / Unmute carry the sending guard's id (from `MUTE_SEQ`), so the worker can tell a stale
+/// Unmute from the one that owns the mute currently applied.
 enum MuteCmd {
-    Mute,
-    Unmute,
+    Mute(u64),
+    Unmute(u64),
     /// Exit barrier: ack once the worker has drained to here, so cleanup_for_exit can block until a
     /// just-enqueued Unmute's pactl/wpctl restore has actually run before the process terminates.
     Flush(std::sync::mpsc::Sender<()>),
@@ -1246,32 +1250,57 @@ fn restore_mute(mode: &MuteMode) {
 /// inside start_stream / start_record (async commands on the blocking pool since d960783) and in
 /// session Drop, which can land on any thread including the GTK/UI one: a wedged PulseAudio/
 /// PipeWire socket must never stall whichever thread holds the guard (aux_windows/overlay.rs
-/// makes the same off-thread move for its KWin shell-outs). Processing in FIFO order also means a
-/// session's Unmute always runs before the next session's Mute, so the per-app muted set can't race.
+/// makes the same off-thread move for its KWin shell-outs). FIFO order alone does NOT order one
+/// session's Unmute before the next one's Mute: stop/cancel drop the old session outside the state
+/// lock (after a capture join), so a new session can enqueue its Mute first. See `MuteSlot`.
 fn mute_worker() -> &'static std::sync::mpsc::Sender<MuteCmd> {
     static WORKER: OnceLock<std::sync::mpsc::Sender<MuteCmd>> = OnceLock::new();
     WORKER.get_or_init(|| {
         let (tx, rx) = std::sync::mpsc::channel::<MuteCmd>();
         std::thread::spawn(move || {
-            let mut mode = MuteMode::None;
+            let mut slot = MuteSlot::<MuteMode>::default();
             while let Ok(cmd) = rx.recv() {
-                // Always restore what we last muted before applying the next command, so the worker
-                // is self-correcting and never leaves an unmatched mute behind.
-                restore_mute(&mode);
-                mode = match cmd {
-                    MuteCmd::Mute => apply_mute(),
-                    MuteCmd::Unmute => MuteMode::None,
-                    MuteCmd::Flush(ack) => {
-                        // FIFO: any preceding Unmute's restore already ran above (restore_mute). Ack so
-                        // the exit barrier can proceed; nothing is left muted.
-                        let _ = ack.send(());
-                        MuteMode::None
-                    }
-                };
+                slot.handle(cmd, apply_mute, restore_mute);
             }
         });
         tx
     })
+}
+
+/// The worker's state: the mute currently applied and the id of the guard that owns it (0 = none).
+/// Generic over the mode so the ownership rule is unit-testable without a sound server.
+#[derive(Default)]
+struct MuteSlot<M> {
+    owner: u64,
+    mode: M,
+}
+
+impl<M: Default> MuteSlot<M> {
+    fn handle(&mut self, cmd: MuteCmd, apply: impl FnOnce() -> M, restore: impl Fn(&M)) {
+        match cmd {
+            MuteCmd::Mute(id) => {
+                // Restore whatever is applied before muting again, so the worker never leaves an
+                // unmatched mute behind; the new guard now owns the mute.
+                restore(&self.mode);
+                self.mode = apply();
+                self.owner = id;
+            }
+            // Only the owner's Unmute restores. Any other is a guard whose mute a newer Mute already
+            // restored above (its drop was enqueued late), so it must not undo the live session's mute.
+            MuteCmd::Unmute(id) if id == self.owner => {
+                restore(&self.mode);
+                *self = Self::default();
+            }
+            MuteCmd::Unmute(_) => {}
+            MuteCmd::Flush(ack) => {
+                // Exit barrier: everything queued before it has run; restore what is still applied and
+                // ack so the quit can proceed with nothing left muted.
+                restore(&self.mode);
+                *self = Self::default();
+                let _ = ack.send(());
+            }
+        }
+    }
 }
 
 /// Block (up to `timeout`) until the worker has drained every queued command — used on app exit so a
@@ -1283,24 +1312,29 @@ fn flush_mute_worker(timeout: std::time::Duration) -> bool {
     mute_worker().send(MuteCmd::Flush(tx)).is_err() || rx.recv_timeout(timeout).is_ok()
 }
 
+/// Guard ids for `MuteCmd`; starts at 1 so 0 can mean "no owner" in `MuteSlot`.
+static MUTE_SEQ: AtomicU64 = AtomicU64::new(0);
+
 struct SystemMuteGuard {
-    active: bool,
+    /// Some(id) only when muting was enabled.
+    id: Option<u64>,
 }
 
 impl SystemMuteGuard {
     fn new(enabled: bool) -> Self {
-        if enabled {
+        let id = enabled.then(|| MUTE_SEQ.fetch_add(1, Ordering::SeqCst) + 1);
+        if let Some(id) = id {
             // Non-blocking: the worker thread does the blocking pactl/wpctl work off the UI thread.
-            let _ = mute_worker().send(MuteCmd::Mute);
+            let _ = mute_worker().send(MuteCmd::Mute(id));
         }
-        Self { active: enabled }
+        Self { id }
     }
 }
 
 impl Drop for SystemMuteGuard {
     fn drop(&mut self) {
-        if self.active {
-            let _ = mute_worker().send(MuteCmd::Unmute);
+        if let Some(id) = self.id {
+            let _ = mute_worker().send(MuteCmd::Unmute(id));
         }
     }
 }
@@ -1584,7 +1618,38 @@ fn run_record_capture(
 
 #[cfg(test)]
 mod tests {
-    use super::streams_to_mute;
+    use super::{streams_to_mute, MuteCmd, MuteSlot};
+    use std::cell::RefCell;
+
+    // stop/cancel drop the old session outside the state lock, so the next session's Mute can reach
+    // the worker before the old Unmute. That late Unmute must not restore the live session's mute.
+    #[test]
+    fn late_unmute_from_a_replaced_guard_keeps_the_new_mute() {
+        let restored = RefCell::new(Vec::new());
+        let restore = |m: &u32| restored.borrow_mut().push(*m);
+        let mut slot = MuteSlot::<u32>::default();
+        slot.handle(MuteCmd::Mute(1), || 10, restore);
+        slot.handle(MuteCmd::Mute(2), || 20, restore);
+        slot.handle(MuteCmd::Unmute(1), || unreachable!(), restore);
+        assert_eq!((slot.owner, slot.mode), (2, 20));
+        slot.handle(MuteCmd::Unmute(2), || unreachable!(), restore);
+        assert_eq!((slot.owner, slot.mode), (0, 0));
+        // 0 = the no-op restore of the initial empty slot.
+        assert_eq!(*restored.borrow(), vec![0, 10, 20]);
+    }
+
+    #[test]
+    fn flush_restores_the_live_mute_and_acks() {
+        let restored = RefCell::new(Vec::new());
+        let restore = |m: &u32| restored.borrow_mut().push(*m);
+        let mut slot = MuteSlot::<u32>::default();
+        slot.handle(MuteCmd::Mute(1), || 10, restore);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slot.handle(MuteCmd::Flush(tx), || unreachable!(), restore);
+        assert!(rx.try_recv().is_ok());
+        assert_eq!((slot.owner, slot.mode), (0, 0));
+        assert_eq!(*restored.borrow(), vec![0, 10]);
+    }
 
     // A trimmed `pactl list sink-inputs` with three streams: a normal other-app stream, one the
     // user already muted, and our own (matched by PID).

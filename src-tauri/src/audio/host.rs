@@ -25,7 +25,9 @@ pub fn default_output() -> Option<Device> {
 pub fn input_by_id(id: &DeviceId) -> Option<Device> {
     #[cfg(target_os = "linux")]
     if id.host() == HostId::Alsa {
-        return alsa_host()?.device_by_id(id);
+        // `devices()` also lists playback-only hw devices, so filter like the branch below; an
+        // output-only match must read as missing so the caller falls back with a notice.
+        return alsa_host()?.device_by_id(id).filter(|d| d.supports_input());
     }
     with_host(|h| {
         if h.id() != id.host() {
