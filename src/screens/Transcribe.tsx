@@ -408,6 +408,9 @@ export default function Transcribe() {
   const defaultModelName = backendOwnModel || (model ? undefined : decodeDefaults?.model) || "server model";
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
   const serverLang = serverLanguageLabel(decodeDefaults);
+  // The context segments a blank pick runs with: the backend's own, else the server's (unknown
+  // until decode defaults load — the stepper then says "Inherit", not a greyed 0).
+  const inheritedContext = backend?.translationOverrides?.contextSegments ?? serverContextSegments(decodeDefaults);
   // The source a run's translation starts from: the picked language, else the server's
   // DEFAULT_LANGUAGE; "" when neither names one (auto-detect, several languages).
   const sourceOf = (lang: string): string => {
@@ -555,7 +558,7 @@ export default function Transcribe() {
     // stage this run would not actually request: a link translates what runLink
     // sends (linkTranslateTo — none when its site tracks cover every target, its
     // frozen targets even after the chips are cleared), every other file the chips.
-    const runT = translationAvailable ? translateTo : [];
+    const runT = translationAvailable ? translateTo.slice(0, maxTranslationTargets(caps)) : [];
     const targetsOf = (p: string) => (isSourceUrl(p) ? (linkTranslateTo({ translateTo: runT }, urlMeta[p]) ?? []) : runT);
     const warmTargets = translationAvailable ? files.map(targetsOf).find((t) => t.length > 0) : undefined;
     // A text source only runs the translation stage, and the pump fails it without targets.
@@ -730,6 +733,8 @@ export default function Transcribe() {
   const persistOptions = patchTranscribe;
   /** The site-subtitle panel held the chips since the last re-prune (it may have grown them). */
   const panelHeldChips = useRef(false);
+  /** translateTo's length when the panel took the chips: the user's own list, which no release cuts. */
+  const panelBase = useRef(0);
   /** The server's translation limit as of the last render, for the unmount cut (null = no translation). */
   const releaseCap = useRef<number | null>(null);
   // The picker and backend-switch prunes see the source of THAT moment; a server's
@@ -737,16 +742,22 @@ export default function Transcribe() {
   // source settles — else a chip equal to it survives hidden and runs a source→source no-op.
   // Not while the site-subtitle panel owns the chips: translateTo must stay its mirror. The
   // panel may grow it past the server's translation limit (a language a site track serves is
-  // free there, freeAdds); once released, it is cut back to the limit (first ones in list
-  // order kept), or every other run sends the over-cap list (a subtitle or text file's
-  // translation is rejected outright). Only on that release: a list chosen on a backend with
-  // a higher limit must survive a visit or a run on a lower one.
+  // free there, freeAdds); once released, what it grew past both the limit and the list it
+  // took is cut back (first ones in list order kept). Only on that release, and never below
+  // the length it took: a list chosen on a backend with a higher limit must survive a visit,
+  // a preview or a run on a lower one. The stored list may thus stay over the limit (the
+  // counter shows it in warn); run() caps the wire, so it is never sent over.
   useEffect(() => {
-    if (siteChips) panelHeldChips.current = true;
+    if (siteChips && !panelHeldChips.current) {
+      panelHeldChips.current = true;
+      panelBase.current = translateTo.length;
+    }
     if (busy || siteChips) return;
     let next = knownSource ? pruneTargets(translateTo, knownSource) : translateTo;
-    if (panelHeldChips.current && translationAvailable) {
-      next = next.slice(0, maxTranslationTargets(caps));
+    if (panelHeldChips.current) {
+      // Cleared on every release, also on a server without translation (where the panel never
+      // wrote the list): a stale latch would cut on a later backend's re-prune or the unmount.
+      if (translationAvailable) next = next.slice(0, Math.max(maxTranslationTargets(caps), panelBase.current));
       panelHeldChips.current = false;
     }
     if (next.length !== translateTo.length) {
@@ -764,7 +775,8 @@ export default function Transcribe() {
     const cap = releaseCap.current;
     if (!panelHeldChips.current || cap === null) return;
     const cur = useApp.getState().settings.transcribe?.translateTo ?? [];
-    if (cur.length > cap) persistOptions({ translateTo: cur.slice(0, cap) });
+    const keep = Math.max(cap, panelBase.current);
+    if (cur.length > keep) persistOptions({ translateTo: cur.slice(0, keep) });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount only; reads refs and the store
   }, []);
 
@@ -874,6 +886,7 @@ export default function Transcribe() {
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
       // Unknown caps (not probed yet) stay unknown: a retry then keeps its translation slice.
       translationAvailable: caps ? translationAvailable : undefined,
+      translationMaxTargets: caps && translationAvailable ? maxTranslationTargets(caps) : undefined,
       mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
       jobsEnabled: !isStandard && caps?.jobs_enabled === true,
       mediaMaxBytes: caps?.media_max_bytes,
@@ -888,7 +901,11 @@ export default function Transcribe() {
     // Backend defaults only seed the toggle, they never force the stage on
     // (an invisible fallback made translation impossible to switch off and
     // silently swallowed an explicit Translate-to-English).
-    const effTargets = translationAvailable ? translateTo : [];
+    // Capped at the server's translation limit on the wire only (first ones in list order, the
+    // release cut's own rule): the stored list may stay over a lower server's limit, but sent
+    // whole, a subtitle or text file's translation is rejected outright. A link with a frozen
+    // site plan sends its own site.mtTargets (linkTranslateTo), which this cut leaves alone.
+    const effTargets = translationAvailable ? translateTo.slice(0, maxTranslationTargets(caps)) : [];
     const t2t = effTargets.length > 0;
     // "Authoritative" now has to be SAID, not just implied by omission: the server reads
     // an absent `translate_to` as "inherit my override-profile's TRANSLATE_TO", so an
@@ -1733,7 +1750,8 @@ export default function Transcribe() {
                             >
                               <Stepper
                                 value={runContextSegments}
-                                inherited={backend?.translationOverrides?.contextSegments ?? serverContextSegments(decodeDefaults)}
+                                inherited={inheritedContext}
+                                inheritedText={inheritedContext === undefined ? inheritLabel(undefined) : undefined}
                                 inheritNote={backend?.translationOverrides?.contextSegments !== undefined ? "backend" : "server"}
                                 onReset={() => setRunContextSegments(undefined)}
                                 onChange={setRunContextSegments}

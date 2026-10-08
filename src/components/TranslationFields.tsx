@@ -321,6 +321,7 @@ export function TranslationDefaultsEditor({
         <Stepper
           value={v.contextSegments}
           inherited={inherited.contextSegments}
+          inheritedText={inherited.contextSegments === undefined ? inheritLabel(undefined) : undefined}
           inheritNote={inheritedFrom}
           onReset={() => patch({ contextSegments: undefined })}
           onChange={(n) => patch({ contextSegments: n })}

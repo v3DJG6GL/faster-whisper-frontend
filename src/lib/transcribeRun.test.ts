@@ -750,6 +750,18 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions(undefined, false, true)).toBeUndefined();
   });
 
+  it("a kept slice is cut to the retry server's translation limit", () => {
+    // A list over a lower server's limit: the text route would reject it whole.
+    const opts = { translateTo: ["de", "fr", "es"], translationMode: "fluent" as const, diarize: true };
+    expect(reconcileRetryOptions(opts, false, true, 2)).toEqual({ ...opts, translateTo: ["de", "fr"], standard: undefined });
+    // Within the limit, or no known limit: untouched.
+    expect(reconcileRetryOptions(opts, false, true, 3)).toEqual({ ...opts, standard: undefined });
+    expect(reconcileRetryOptions(opts, false, true, undefined)).toEqual({ ...opts, standard: undefined });
+    // A stripped slice stays stripped; a missing one stays missing.
+    expect(reconcileRetryOptions(opts, false, false, 2)).toEqual({ diarize: true, standard: undefined });
+    expect(reconcileRetryOptions({ diarize: true }, false, true, 2)).toEqual({ diarize: true, standard: undefined });
+  });
+
   it("no last options: a standard server still gets its flag", () => {
     expect(reconcileRetryOptions(undefined, true)).toEqual({ standard: true });
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
@@ -1196,8 +1208,10 @@ describe("a ledgered file whose request lost contact", () => {
   async function run(error: string) {
     const { ledgerRows, _resetLedgerForTests } = await import("./jobsLedger");
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    const { useApp } = await import("./store");
     _resetLedgerForTests();
     useTranscriptHistory.setState({ records: [], loaded: true });
+    useApp.setState({ logsDoorway: null });
     let pid: string | undefined;
     transcribeFile.mockImplementation(async (a) => {
       pid = a.options?.progressId;
@@ -1211,7 +1225,10 @@ describe("a ledgered file whose request lost contact", () => {
       startRun(undefined, {}, ctx);
       await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
       await Promise.resolve();
-      return { pid: pid!, watch, rows: ledgerRows(), records: useTranscriptHistory.getState().records };
+      return {
+        pid: pid!, watch, rows: ledgerRows(), records: useTranscriptHistory.getState().records,
+        doorway: useApp.getState().logsDoorway?.msg ?? "",
+      };
     } finally {
       vi.unstubAllGlobals();
       setOrphanWatch(null);
@@ -1230,8 +1247,16 @@ describe("a ledgered file whose request lost contact", () => {
     expect(records[0].createdAt).toBe(new Date(rows[0].startedAt).toISOString());
   });
 
+  it("a handed-off run's banner says it may still land in History, not 'try again'", async () => {
+    // A retry would stop the watcher and delete the server job that is still finishing.
+    const { doorway } = await run("Timed out waiting for the server.");
+    expect(doorway).toContain("History");
+    expect(doorway).not.toContain("try again");
+  });
+
   it("a server answer (HTTP 500) still forgets the row and is never watched", async () => {
-    const { pid, watch, rows, records } = await run("HTTP 500: boom");
+    const { pid, watch, rows, records, doorway } = await run("HTTP 500: boom");
+    expect(doorway).not.toContain("History");
     expect(watch).not.toHaveBeenCalled();
     expect(rows).toEqual([]);
     expect(records).toHaveLength(1);

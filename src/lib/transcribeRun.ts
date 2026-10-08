@@ -12,7 +12,9 @@ import {
   fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
 } from "./api";
-import { errorText, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText } from "./errors";
+import {
+  describeTransportError, errorText, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText,
+} from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
@@ -503,6 +505,10 @@ export interface RunContext {
    *  that lands on one without it drops the last run's translation settings. Unset = unknown
    *  (caps not loaded): only a standard server is assumed to lack it. */
   translationAvailable?: boolean;
+  /** The server's translation target limit (caps' translation_max_targets) when it translates:
+   *  a retry cuts the last run's targets to it, as run() cuts the chips. Unset = unknown or no
+   *  translation, no client cut. */
+  translationMaxTargets?: number;
   /** The server packages subtitles (caps.media_package_enabled): a local
    *  VIDEO file then asks the server to retain the upload for a while, so
    *  an export right after needs no second upload. */
@@ -2109,12 +2115,18 @@ async function pump(
         // Failure doorway banner → Logs screen (pre-filtered to Warn+). The
         // queue item keeps the raw error; the doorway gets the truthful
         // template (cause + backend + one fix). A text source only ran the
-        // translate stage, so it toasts as a translation failure.
+        // translate stage, so it toasts as a translation failure. A run handed
+        // to its headless watcher gets no "try again": a retry stops that
+        // watcher and deletes the server job that would land in History.
         const backendName =
           useApp.getState().backends.find((b) => b.id === ctx.backendId)?.name ?? "the backend";
-        useApp
-          .getState()
-          .setLogsDoorway(transportErrorDoorway(isText ? "translate" : "transcribe", e, backendName));
+        const kind = isText ? "translate" : "transcribe";
+        const d = describeTransportError(kind, e, backendName);
+        useApp.getState().setLogsDoorway(
+          handedOff
+            ? { msg: `${d.title} The server may still finish it — the transcript then appears in History on its own.`, showLogs: d.showLogs }
+            : transportErrorDoorway(kind, e, backendName),
+        );
       } finally {
         pollingDone = true;
         activeCancel = null;
@@ -2217,11 +2229,14 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  frozen targets. A missing slice stays missing: filled in as an explicit empty list it would
  *  turn a site plan's frozen targets back on (`linkTranslateTo`) while the rail, which reads
  *  the un-reconciled `lastOptions`, shows no Translating stage. `translationAvailable` unset =
- *  unknown (caps not loaded): only a standard server is assumed to lack it. */
+ *  unknown (caps not loaded): only a standard server is assumed to lack it. A kept slice is cut
+ *  to that server's `maxTargets` (first ones in list order, as run() cuts the chips): sent over
+ *  it, a subtitle or text file's translation is rejected outright. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
   translationAvailable?: boolean,
+  maxTargets?: number,
 ): TranscribeOptions | undefined {
   if (!opts) return standard ? { standard: true } : undefined;
   const out: TranscribeOptions = {
@@ -2235,6 +2250,8 @@ export function reconcileRetryOptions(
     delete out.translationModel;
     delete out.translationGlossary;
     delete out.translationContextSegments;
+  } else if (maxTargets !== undefined && out.translateTo && out.translateTo.length > maxTargets) {
+    out.translateTo = out.translateTo.slice(0, maxTargets);
   }
   return out;
 }
@@ -2256,7 +2273,11 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // the old job lands a second record (and transcribes the file twice).
   stopOrphans([path]);
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
-  void pump(s.epoch, reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable), ctx);
+  void pump(
+    s.epoch,
+    reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable, ctx.translationMaxTargets),
+    ctx,
+  );
 }
 
 export function cancelRun() {
