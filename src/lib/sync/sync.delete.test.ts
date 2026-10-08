@@ -451,6 +451,35 @@ describe("a pending review when the server copy is gone", () => {
       api.conflicts = [];
     }
   });
+  // The push composed before it learned the document was re-created: its gated-off fields were
+  // filled from the dead snapshot, and a first-contact merge took them for local edits.
+  it("recomposes after a 409 on a re-created document, so dead pass-through values stay off the server", async () => {
+    try {
+      const base = await seedBase();
+      api.pulled = { version: 5, updated_ts: 5, device: "peer", blob: base };
+      await pullNow(true); // a clean pull: the base is now v5
+      const s = useApp.getState().settings;
+      const dead = (base.general as { soundEffects: boolean }).soundEffects;
+      useApp.setState({
+        settings: {
+          ...s,
+          general: { ...s.general, soundEffects: !dead },
+          sync: { ...s.sync!, sub: { ...s.sync!.sub!, soundCues: false } },
+        },
+      });
+      const reseeded = structuredClone(base);
+      delete (reseeded.general as { soundEffects?: boolean }).soundEffects; // the peer gates it off too
+      api.conflicts = [{ version: 1, updated_ts: 6, device: "peer", blob: reseeded }];
+      await pushNow(true);
+      expect(getPendingConflict()).toBeNull();
+      expect(api.pushedBase).toBe(1);
+      expect((api.pushed as SyncBlob).general).not.toHaveProperty("soundEffects");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      api.conflicts = [];
+    }
+  });
   it("is dropped by a push whose 409 finds no server document", async () => {
     try {
       await raiseAtV5();
