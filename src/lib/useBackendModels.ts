@@ -9,6 +9,7 @@ import { useApp } from "@/lib/store";
 import { isTauri, testConnection } from "@/lib/api";
 import { effectiveServerUrl } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
+import { credentialGeneration } from "@/lib/capabilities";
 import type { Backend, ServerModel } from "@/lib/types";
 
 export function useBackendModels(backend: Backend | undefined): ServerModel[] {
@@ -21,12 +22,17 @@ export function useBackendModels(backend: Backend | undefined): ServerModel[] {
   useEffect(() => {
     if (!backend || !isTauri || conn) return;
     let stale = false;
+    // A key rotated and saved mid-probe empties `conn` again (already undefined here, so the deps
+    // don't change and this run isn't cancelled): the old key's verdict must not land.
+    const gen = credentialGeneration(backend.id);
     testConnection({
       serverUrl: url,
       backendId: backend.id,
     })
       .then((info) => {
-        if (!stale) useApp.getState().setConnection(backend.id, info);
+        if (!stale && credentialGeneration(backend.id) === gen) {
+          useApp.getState().setConnection(backend.id, info);
+        }
       })
       .catch(() => {});
     return () => {

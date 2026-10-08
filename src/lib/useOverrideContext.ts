@@ -6,7 +6,7 @@ import { useApp } from "@/lib/store";
 import { useRisesToFull } from "@/lib/useDecodeDefaults";
 import { hasOwn, ownProp } from "@/lib/own";
 import type { Capabilities } from "@/lib/types";
-import type { ServerKind } from "@/lib/serverKind";
+import { effectiveServerKind, type ServerKind } from "@/lib/serverKind";
 
 /**
  * Shared by the Backend and Profile editors (and Transcribe / the transcript viewer): the
@@ -58,10 +58,14 @@ export function useOverrideContext(args: {
     // A typed key is always an edit: the Backends editor leaves the field blank to keep the
     // stored key, and /v1/me is per-caller, so a rotated key must be probed live rather than
     // read from the cache filled with the old credential.
+    // …and so is a saved backend the store knows as standard while this caller does not (the
+    // editor's draft switched Server type away from Standard): refreshCaps would pin that saved
+    // kind's null, and the gate / info panel would stay empty after the switch is tested.
     const editing =
       !backend ||
       (!!typedTarget && normalizeUrl(typedTarget) !== normalizeUrl(savedTarget ?? "")) ||
-      !!apiKey;
+      !!apiKey ||
+      effectiveServerKind(backend, ownProp(st.connections, backendId)) === "standard";
     if (!editing) {
       setLive(false);
       // Absent ⇒ never fetched; the store is invalidated at the sites that repoint or

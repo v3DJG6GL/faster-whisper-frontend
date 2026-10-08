@@ -4,8 +4,9 @@
 // backend's `decodeOverrides`; every batch request drops them (Rust batch.rs post()).
 //
 // The server applies them and keeps the pair rules (inner < outer, hard break 0 or > outer);
-// the steppers only keep the inner pause below the outer one so the preview never shows a pair
-// the server would rewrite. Nothing here acts on the values — the preview just draws them.
+// the steppers keep the inner pause below the outer one, and the preview runs the values through
+// serverTimings() (both server pair rules), so it never shows a pair the server would rewrite.
+// Nothing here acts on the values — the preview just draws them.
 import { useId, type CSSProperties } from "react";
 import { RangeField, Stepper } from "@/components/ui";
 import { OverrideHeader, OverrideText } from "@/components/OverrideField";
@@ -21,6 +22,7 @@ import {
   previewRule,
   secText,
   separatorGlyphs,
+  serverTimings,
   type LiveTimings,
   type PauseKind,
 } from "@/lib/livePreview";
@@ -108,6 +110,23 @@ export function LiveDictationFields({
     });
   };
 
+  /** Inner/outer ↺: the reset one inherits again, and the other moves along when the inherited
+   *  value would break inner < outer (an own inner 400 / outer 500, inner reset to 700). */
+  const resetPause = (which: "inner" | "outer") => {
+    const k: DecodeKey = which === "inner" ? "streaming_vad_inner_silence_ms" : "streaming_vad_outer_silence_ms";
+    const inheritedMs = num(inh(k)) ?? (which === "inner" ? LIVE_FALLBACK.innerMs : LIVE_FALLBACK.outerMs);
+    const pair = keepInnerBelowOuter(
+      which,
+      which === "inner" ? inheritedMs : t.innerMs,
+      which === "outer" ? inheritedMs : t.outerMs,
+    );
+    patch({
+      [k]: undefined,
+      ...(which === "inner" && pair.outerMs !== t.outerMs ? { streaming_vad_outer_silence_ms: pair.outerMs } : {}),
+      ...(which === "outer" && pair.innerMs !== t.innerMs ? { streaming_vad_inner_silence_ms: pair.innerMs } : {}),
+    });
+  };
+
   const control = (k: DecodeKey, off: boolean) => {
     const spec = keySpec(k);
     const c = CONTROL[k]!;
@@ -120,7 +139,7 @@ export function LiveDictationFields({
             value={num(own(k))}
             inherited={num(inh(k)) ?? (k === "streaming_vad_inner_silence_ms" ? LIVE_FALLBACK.innerMs : LIVE_FALLBACK.outerMs)}
             inheritNote={noteOf(k)}
-            onReset={() => patch({ [k]: undefined })}
+            onReset={() => resetPause(k === "streaming_vad_inner_silence_ms" ? "inner" : "outer")}
             onChange={(n) => setPause(k === "streaming_vad_inner_silence_ms" ? "inner" : "outer", n)}
             min={c.min}
             max={c.max}
@@ -242,8 +261,9 @@ const PAUSE_TIP: Record<PauseKind, string> = {
 /** "What you'd get": the sample dictation typed into a little app window, each pause shown
  *  where it happens, in the colour of the setting that decides it. */
 function LivePreview({ t }: { t: LiveTimings }) {
-  const rule = previewRule(t);
-  const tokens = livePreview(t);
+  const st = serverTimings(t);
+  const rule = previewRule(st);
+  const tokens = livePreview(st);
   return (
     <div className="mb-3 mt-2 flex flex-col gap-2.5 rounded-xl border border-line bg-panel px-3.5 py-3">
       <div className="text-[12.5px] font-semibold text-dim">What you&apos;d get</div>

@@ -9,6 +9,7 @@ import { targetCap } from "./languages";
 import { useApp } from "./store";
 import { newBackendDraft } from "./backends";
 import {
+  credentialGeneration,
   forgetCaps,
   maxTranslationTargets,
   refreshCaps,
@@ -156,6 +157,16 @@ describe("forgetCaps", () => {
     resolveOld({ server_info: { version: "old" } });
     await old;
     expect(useApp.getState().caps[b.id]).toBe(fresh);
+  });
+
+  it("bumps the credential generation a connection test snapshots", () => {
+    const id = newBackendDraft().id;
+    const before = credentialGeneration(id);
+    forgetCaps(id);
+    expect(credentialGeneration(id)).toBe(before + 1);
+    // Per Backend: another id's generation does not move.
+    const other = newBackendDraft().id;
+    expect(credentialGeneration(other)).toBe(0);
   });
 });
 

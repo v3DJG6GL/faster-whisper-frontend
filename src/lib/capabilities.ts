@@ -48,6 +48,13 @@ export function forgetCaps(id: string): void {
   lastFetchAt.delete(id);
 }
 
+/** The credential generation `forgetCaps` bumps: a caller that awaits a request made with this
+ *  Backend's credential (a connection test) snapshots it first and drops the answer if it moved —
+ *  a saved key rotation keeps the address and key presence its other guards compare. */
+export function credentialGeneration(id: string): number {
+  return generation.get(id) ?? 0;
+}
+
 /** Refresh a Backend's cached capabilities. Best-effort and never throws: a
  *  standard/old server stores null ("fetched and unsupported"); a transient error
  *  leaves the cache entry absent so the next trigger re-probes instead of latching

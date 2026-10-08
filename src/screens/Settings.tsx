@@ -74,7 +74,7 @@ const TABS = ["General", "Appearance", "Audio", "Dictation", "Recording & histor
  *  shared by the split bar, its legend and the subfolder chips. */
 const AUDIO_STORE_TYPES = [
   { key: "dict", sub: "dictations/", label: "dictations",
-    color: "#d9a45b", bytesKey: "recordingsBytes", filesKey: "recordingsFiles" },
+    color: "#d9a45b", bytesKey: "recordingsBytes", filesKey: "recordingsAudioFiles" },
   { key: "files", sub: "files/", label: "file transcriptions",
     color: "var(--c-ok)", bytesKey: "fileMediaBytes", filesKey: "fileMediaFiles" },
   { key: "links", sub: "links/", label: "link transcriptions",
@@ -194,7 +194,7 @@ export default function Settings() {
     // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
     // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
     if (kind === "dict" || kind === "clear") dropPendingWrites();
-    if (kind === "clear") forgetRecord(null);
+    if (kind === "clear") forgetRecord(null, { deleted: true });
     const done = (n: number, what: string) => {
       if (tabRef.current === "Recording & history") {
         setStoreMsg({ text: `Removed ${n} ${what}.` });
@@ -211,7 +211,7 @@ export default function Settings() {
     setBusy("store", true); // set with the IPC, so nothing above can leave it stuck
     const [op, what]: [Promise<number>, string] =
       kind === "dict"
-        ? [deleteAllDictations(basePref), "dictation file(s)"]
+        ? [deleteAllDictations(basePref), "dictation(s) and audio file(s)"]
         : kind === "files"
           ? [removeTranscriptMedia("file", basePref), "audio cop(y/ies)"]
           : kind === "links"
@@ -302,7 +302,11 @@ export default function Settings() {
           // the pre-move paths straight back on disk — drop it, don't flush it.
           dropPendingWrites();
           try {
-            await moveAudioBase(basePref, picked);
+            // Read the live base, not the click-time closure: on Linux the picker isn't modal,
+            // so a Reset or second Change… can finish a move while this picker is still open —
+            // moving from the stale base would find nothing and strand the audio.
+            const from = audioBasePref(useApp.getState().settings.recording);
+            await moveAudioBase(from, picked);
           } catch (e) {
             // A partial move already rewrote the records that did move: reload either way.
             forgetRecord(null);
@@ -607,7 +611,7 @@ export default function Settings() {
                         />
                         {t.label}{" "}
                         <span className="text-text">
-                          {storeStats[t.filesKey] > 0
+                          {storeStats[t.bytesKey] > 0
                             ? `${fmtBytes(storeStats[t.bytesKey])} · ${storeStats[t.filesKey]}`
                             : "—"}
                         </span>

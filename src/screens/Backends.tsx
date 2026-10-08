@@ -32,7 +32,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, in
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { forgetCaps, refreshCaps } from "@/lib/capabilities";
+import { credentialGeneration, forgetCaps, refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer } from "@/components/sync/SettingsSync";
@@ -1014,6 +1014,9 @@ export default function Backends() {
   const handleTest = async (b: Backend) => {
     setTesting((s) => new Set(s).add(b.id));
     const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
+    // A key rotated and saved mid-test keeps all three of the guards below; the save emptied this
+    // backend's connection, and the old key's verdict would sit there for the session.
+    const gen = credentialGeneration(b.id);
     try {
       const info = await testConnection({
         serverUrl: testedUrl,
@@ -1031,14 +1034,14 @@ export default function Backends() {
       // re-tests on its own: the green "connected" dot beside the new host was permanent.
       const cur = useApp.getState().backends.find((x) => x.id === b.id);
       const curUrl = cur ? effectiveServerUrl(cur, useApp.getState().settings) : null;
-      if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey && curUrl === testedUrl) {
+      if (cur && cur.serverUrl === b.serverUrl && cur.hasApiKey === b.hasApiKey && curUrl === testedUrl && credentialGeneration(b.id) === gen) {
         setConnection(b.id, info);
       }
     } catch (e) {
       console.error("test_connection failed", e);
       const cur2 = useApp.getState().backends.find((x) => x.id === b.id);
       const curUrl2 = cur2 ? effectiveServerUrl(cur2, useApp.getState().settings) : null;
-      if (cur2 && cur2.serverUrl === b.serverUrl && cur2.hasApiKey === b.hasApiKey && curUrl2 === testedUrl) {
+      if (cur2 && cur2.serverUrl === b.serverUrl && cur2.hasApiKey === b.hasApiKey && curUrl2 === testedUrl && credentialGeneration(b.id) === gen) {
         setConnection(b.id, { ok: false, openMode: false, models: [], error: String(e) } as ConnectionInfo);
       }
     } finally {
