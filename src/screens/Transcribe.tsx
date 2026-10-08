@@ -9,7 +9,7 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/transcribe/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/transcribe/SiteSubtitlesPanel";
-import { derive, flip, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
+import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -513,6 +513,7 @@ export default function Transcribe() {
       persistOptions({ translateTo: ch.targets });
     }
   };
+  const siteMtUsed = siteView ? siteView.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length : 0;
   /** The translation chips while the panel is in charge: the wanted languages, each with its
    *  sources as compound parts. */
   const siteChips = siteInput && siteState?.subs && siteView
@@ -522,12 +523,11 @@ export default function Transcribe() {
         onTargetsChange: (next: string[]) => applySite(setTargets(siteInput, siteState, next)),
         onPart: (key: string) => applySite(flip(siteInput, siteState, key)),
         // Only machine translations count against the server's cap (the panel's own gate): a chip
-        // the site's subtitles alone serve is free, and so is adding a language the site has
-        // subtitles for. Counted from the parts, so it holds while the panel has no run too.
-        used: siteView.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length,
-        free: siteView.rows
-          .filter((r) => r.code && r.badges.some((b) => b.kind === "existing" || b.kind === "auto"))
-          .map((r) => r.code as string),
+        // the site's subtitles alone serve is free, and so is adding a language a site track would
+        // serve (freeAdds). Counted from the parts, so it holds while the panel has no run too.
+        used: siteMtUsed,
+        // Asked only at the limit (one trial derive per site language).
+        free: siteMtUsed >= maxTranslationTargets(caps) ? freeAdds(siteInput, siteState) : undefined,
       }
     : null;
 

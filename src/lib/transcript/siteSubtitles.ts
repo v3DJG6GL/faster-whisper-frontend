@@ -574,6 +574,28 @@ export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readon
   return ch;
 }
 
+/** The site languages the translation chips' picker may add although machine translation is
+ *  at the server's limit: trialled through setTargets, a language qualifies only when it then
+ *  keeps an active site source and no extra machine translation runs. Under Generate (site
+ *  tracks idle) or past the download limit it would be a chip with nothing behind it. Costs one
+ *  derive per candidate, so ask only at the limit. */
+export function freeAdds(input: SiteSubsInput, st: SiteSubsState): string[] {
+  const view = derive(input, st);
+  const chips = view.chips.map((c) => c.code);
+  const mtOn = (v: SiteSubsView) => v.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length;
+  const before = mtOn(view);
+  const out: string[] = [];
+  for (const r of view.rows) {
+    if (!r.code || chips.includes(r.code)) continue;
+    if (!r.badges.some((b) => b.kind === "existing" || b.kind === "auto")) continue;
+    const ch = setTargets(input, st, [...chips, r.code]);
+    const v = derive({ ...input, targets: ch.targets }, ch.state);
+    const chip = v.chips.find((c) => c.code === r.code);
+    if (chip?.parts.some((p) => p.on && p.kind !== "mt") && mtOn(v) <= before) out.push(r.code);
+  }
+  return out;
+}
+
 /** What a link run freezes into its metadata at Add link: the view's run, its machine
  *  translation only where the server can translate (`mt`), and the preview's facts about
  *  the tracks it fetches. */

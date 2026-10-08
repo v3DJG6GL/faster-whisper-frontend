@@ -721,7 +721,12 @@ mod imp {
                             "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout — putting the text on the clipboard instead of typing",
                             reachable + unreachable
                         );
-                        crate::inject::text::persist_off_runtime(job.text.clone()).await?;
+                        // No key was synthesized: a failed clipboard write is "nothing written"
+                        // (the caller's re-send is safe), as in the sibling diverts.
+                        if let Err(e) = crate::inject::text::persist_off_runtime(job.text.clone()).await {
+                            tracing::warn!("[wayland-inject] clipboard divert failed: {e}");
+                            return Ok(crate::inject::Landed::NothingWritten);
+                        }
                         return Ok(crate::inject::Landed::OnClipboard);
                     }
                     if unreachable > 0 {

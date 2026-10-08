@@ -269,7 +269,11 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(clears(bodyAfter(finalBody, "if (delivered) "))).toBe(true);
   });
 
-  it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
+  it("a diverted live phrase disarms the per-phrase and tail Enter", () => {
+    expect(/\bphraseDirty = false;/.test(mask(bodyAfter(finalBody, "if (delivered && diverted) ")))).toBe(true);
+  });
+
+    it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
     const block = bodyAfter(finalBody, "if (!t.isSelf && landed)");
     expect(block).toContain("commonPrefixLen(injectedText, target) >= clipFrom");
     expect(block).toContain("injectedText = target");

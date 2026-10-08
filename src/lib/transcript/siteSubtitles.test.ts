@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
@@ -324,6 +324,18 @@ describe("tracks and switches", () => {
     const [i2, s2] = apply(i1, flip(i1, s1, "mt:es"));
     expect(i2.targets).toEqual(["ja"]);
     expect(derive(i2, s2).chips.map((c) => c.code)).toEqual(["ja"]);
+  });
+  it("at a full translation limit only a language a site track would serve adds free", () => {
+    // ja holds the one slot; es's chip was removed.
+    const inp = input({ tracks: [tr("en", "en"), tr("es", "es")], spoken: "en", targets: ["ja"], maxTargets: 1 });
+    const st = initialSiteState(inp.targets);
+    const [i1, s1] = apply(inp, setTargets(inp, st, derive(inp, st).chips.map((c) => c.code).filter((c) => c !== "es")));
+    expect(derive(i1, s1).chips.map((c) => c.code)).not.toContain("es");
+    // Prefer: re-adding es lights its site track and needs no translation slot.
+    expect(freeAdds(i1, s1)).toEqual(["es"]);
+    // Generate: the site track stays idle, so es would need the full machine translation.
+    const [i2, s2] = apply(i1, pickPolicy(i1, s1, "generate"));
+    expect(freeAdds(i2, s2)).not.toContain("es");
   });
   it("a preset gives the translation slot to a language with no other source first", () => {
     // de is a target the site covers; fr was added and only machine translation can bring it.

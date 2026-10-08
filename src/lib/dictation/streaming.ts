@@ -2300,6 +2300,11 @@ async function ensureListeners(): Promise<void> {
               // user's old clipboard back over the text we just told them to paste.
               clipDirty = false;
               clipHoldsOurs = true;
+              // Nor the per-phrase / tail Enter: the target field now holds at most part of the
+              // dictation (this phrase sits on the clipboard), and Enter would submit that part —
+              // or, when focus moved, press Return in whatever window took it. `grew` armed it
+              // before this queued insert ran.
+              phraseDirty = false;
             } else if (t.method === "paste" && delivered) {
               // The latest paste owns the clipboard, so ITS window's rule decides the restore —
               // the snapshot gate and the separator path already honor t.restoreClipboard. A
