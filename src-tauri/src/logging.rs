@@ -537,12 +537,9 @@ pub fn log_folder_path(app: AppHandle, custom: Option<String>) -> Result<String,
 
 #[tauri::command]
 pub fn open_log_folder(app: AppHandle, custom: Option<String>) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
     let dir = resolve_log_dir(&app, custom).ok_or("no log folder")?;
     crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
-    app.opener()
-        .open_path(dir.to_string_lossy(), None::<&str>)
-        .map_err(|e| e.to_string())
+    crate::open_external(&app, &dir.to_string_lossy())
 }
 
 #[cfg(test)]

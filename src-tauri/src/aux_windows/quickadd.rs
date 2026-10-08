@@ -496,9 +496,11 @@ pub(crate) mod win_seed {
     }
 
     /// Is any shortcut modifier physically down RIGHT NOW, straight from the OS?
-    /// `GetAsyncKeyState`'s high bit is the current physical state, independent of our
-    /// hook and of any message queue — so unlike `HeldKeys` it cannot be reset to an
-    /// empty map by a worker restart. VK_SHIFT/CONTROL/MENU cover both sides.
+    /// `GetAsyncKeyState`'s high bit is independent of our hook and of any message
+    /// queue — so unlike `HeldKeys` it cannot be reset to an empty map by a worker
+    /// restart. But it reflects only key events no low-level hook swallowed: under a
+    /// capturing RDP client it reads the chord UP (see the menu-mask comment).
+    /// VK_SHIFT/CONTROL/MENU cover both sides.
     #[cfg(windows)]
     fn modifier_physically_down() -> bool {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -679,8 +681,12 @@ pub(crate) mod win_seed {
         // becomes Ctrl+Shift+Insert, which is PASTE in most terminals and many editors: it would
         // dump the user's clipboard into the focused source app, the exact mutation the gate's
         // own comment names. Same rule as the injection sinks — re-ask at the sink, not only
-        // before the prologue.
-        if modifier_physically_down() {
+        // before the prologue. OR-ed with the hook-fed mirror (same reason as the menu mask:
+        // under RDP capture the OS reads swallowed keys UP while our hook still records them);
+        // the release gate just waited the mirror empty, so a hit here is a fresh press.
+        if modifier_physically_down()
+            || held.any_held(&crate::hotkeys::held_keys::SHORTCUT_MOD_CODES)
+        {
             tracing::info!(
                 "[quickadd-seed] modifier went down during the prologue; skipping the copy grab"
             );

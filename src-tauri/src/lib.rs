@@ -31,6 +31,99 @@ mod tray;
 #[cfg(windows)]
 mod win_session_end;
 
+/// The variables `prepare_process_env` set itself — never one the user exported — so
+/// `open_external` can launch helpers without them.
+#[cfg(target_os = "linux")]
+static INJECTED_ENV: std::sync::OnceLock<Vec<&'static str>> = std::sync::OnceLock::new();
+
+/// Process-wide environment the webview needs. `main` calls this before `run()`: it must happen
+/// before the first webview is created. Launched helpers (browser, file manager) do not inherit
+/// what is set here — see `open_external`.
+pub fn prepare_process_env() {
+    #[cfg(target_os = "linux")]
+    {
+        let vars = vars_to_inject(
+            std::env::var_os("APPIMAGE").is_some(),
+            std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_some(),
+            std::env::var_os("NO_AT_BRIDGE").is_some(),
+        );
+        for var in &vars {
+            std::env::set_var(var, "1");
+        }
+        let _ = INJECTED_ENV.set(vars);
+    }
+}
+
+/// Which variables to set to "1", never overriding a user's own value.
+///
+/// WEBKIT_DISABLE_DMABUF_RENDERER — AppImage only: the bundled WebKitGTK's DMA-BUF renderer
+/// fails to bring up EGL against the host graphics stack ("Could not create default EGL
+/// display: EGL_BAD_PARAMETER" from the GPU process → the webview never paints, white window).
+/// The deb/host build is unaffected, so flip the fallback only when the AppImage runtime is
+/// detected ($APPIMAGE).
+///
+/// NO_AT_BRIDGE — don't bridge OUR OWN UI onto the AT-SPI accessibility bus. WebKitGTK's startup
+/// burst of accessible-object registration segfaults inside libatk-bridge
+/// (spi_register_object_to_path) on current stacks (webkit2gtk 2.52.3 × at-spi2-core
+/// 2.60.0/2.60.4, Ubuntu resolute, 2026-07-11: three identical startup crashes, deterministic).
+/// This app is itself an AT-SPI *client* — its own listeners are precisely what force every app
+/// (including this one) to bridge — so opting our own tree out both dodges the crash and removes
+/// noise from the desktop a11y tree. focus (app detection / field guard) reads OTHER apps as a
+/// client and is unaffected; the own-window inject guard uses Tauri is_focused(), not AT-SPI.
+/// Cost: our UI is invisible to screen readers — export NO_AT_BRIDGE=0 to re-enable the bridge
+/// explicitly. Apps we launch do not pay it: `open_external` strips the variable again.
+#[cfg(target_os = "linux")]
+fn vars_to_inject(appimage: bool, has_dmabuf: bool, has_at_bridge: bool) -> Vec<&'static str> {
+    let mut vars = Vec::new();
+    if appimage && !has_dmabuf {
+        vars.push("WEBKIT_DISABLE_DMABUF_RENDERER");
+    }
+    if !has_at_bridge {
+        vars.push("NO_AT_BRIDGE");
+    }
+    vars
+}
+
+/// Open a URL or path with the system default handler. On Linux, when `prepare_process_env`
+/// injected variables, the opener plugin would hand them to the launched app (xdg-open inherits
+/// our environment, and a cold-started browser inherits xdg-open's — Firefox honours
+/// NO_AT_BRIDGE, so its whole session would vanish from the screen reader). So spawn xdg-open
+/// ourselves with those variables removed, and fall back to the plugin if it can't start.
+/// Everywhere else this is exactly the plugin call.
+pub(crate) fn open_external(app: &tauri::AppHandle, target: &str) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    #[cfg(target_os = "linux")]
+    if let Some(vars) = INJECTED_ENV.get().filter(|v| !v.is_empty()) {
+        match xdg_open_command(target, vars).spawn() {
+            Ok(mut child) => {
+                // Reap it (xdg-open exits once the handler is launched): no zombie.
+                std::thread::spawn(move || {
+                    let _ = child.wait();
+                });
+                return Ok(());
+            }
+            Err(e) => tracing::debug!("xdg-open did not start ({e}); using the opener plugin"),
+        }
+    }
+    app.opener()
+        .open_url(target, None::<&str>)
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn xdg_open_command(target: &str, strip: &[&str]) -> std::process::Command {
+    use std::process::Stdio;
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    for var in strip {
+        cmd.env_remove(var);
+    }
+    cmd
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ring + file writer exist BEFORE the subscriber so no startup line is
@@ -347,4 +440,30 @@ pub fn run() {
                 crate::session::cleanup_for_exit(app);
             }
         });
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_variables_the_user_did_not_set_are_injected() {
+        assert_eq!(
+            vars_to_inject(true, false, false),
+            ["WEBKIT_DISABLE_DMABUF_RENDERER", "NO_AT_BRIDGE"]
+        );
+        assert_eq!(vars_to_inject(false, false, false), ["NO_AT_BRIDGE"]);
+        assert!(vars_to_inject(true, true, true).is_empty());
+    }
+
+    #[test]
+    fn the_launched_handler_does_not_inherit_the_injected_variables() {
+        let cmd = xdg_open_command("https://example.org", &["NO_AT_BRIDGE"]);
+        let envs: Vec<_> = cmd.get_envs().collect();
+        assert_eq!(envs, [(std::ffi::OsStr::new("NO_AT_BRIDGE"), None)]);
+        assert_eq!(
+            cmd.get_args().collect::<Vec<_>>(),
+            [std::ffi::OsStr::new("https://example.org")]
+        );
+    }
 }

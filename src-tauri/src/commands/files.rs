@@ -23,16 +23,15 @@ pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> 
 /// (with its subfolders) first so the button works before the first run.
 #[tauri::command]
 pub fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
     let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
     crate::audio::create_dir_private(&dir)
         .map_err(|e| format!("could not create the folder: {e}"))?;
     for sub in AUDIO_SUBDIRS {
         let _ = crate::audio::create_dir_private(&dir.join(sub));
     }
-    app.opener()
-        .open_path(dir.to_string_lossy().into_owned(), None::<&str>)
-        .map_err(|e| e.to_string())
+    // Not the bare plugin call: the file manager it may cold-start must not inherit the
+    // env vars this process injected for itself (see `crate::open_external`).
+    crate::open_external(&app, &dir.to_string_lossy())
 }
 
 /// Move one file across a possible filesystem boundary: rename, else
@@ -314,14 +313,12 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
 /// stored record can only ever launch a web URL, never a local program.
 #[tauri::command]
 pub fn open_source_url(app: AppHandle, url: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
     let u = url.trim();
     if !(u.starts_with("https://") || u.starts_with("http://")) {
         return Err("not a web link".into());
     }
-    app.opener()
-        .open_url(u, None::<&str>)
-        .map_err(|e| e.to_string())
+    // A cold-started browser must not inherit our injected env vars (`crate::open_external`).
+    crate::open_external(&app, u)
 }
 
 /// The longest path `reveal_in_folder` accepts (bytes) — past every OS's own limit.
