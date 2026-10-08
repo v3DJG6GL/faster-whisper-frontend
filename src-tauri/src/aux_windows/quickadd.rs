@@ -652,10 +652,20 @@ pub(crate) mod win_seed {
         // A paste dictated just before the chord may still have its 400ms restore pending
         // (`inject::RestoreSlot`). Left alone it would fire mid-grab — faking the copy's
         // sequence bump — and our own restore below would then write the transcript back over
-        // it. Land it NOW, like both paste paths do: `prev` becomes the user's real clipboard,
-        // and `seq0` is read after this write.
+        // it. Land it NOW: `prev` becomes the user's real clipboard, and `seq0` is read after
+        // this write. Both paste paths also take it before writing and give it back when they
+        // cannot land it (`RequeueRestore`). A failed landing here does the same — the restore
+        // goes back to the timer — and skips the (optional) seed: continuing would let that
+        // timer fire mid-grab, which is exactly the fake bump this take exists to prevent.
         if let Some(p) = crate::inject::take_pending_restore() {
-            let _ = crate::inject::set_text_ext(&mut cb, &p, true, false);
+            if let Err(e) = crate::inject::set_text_ext(&mut cb, &p, true, false) {
+                tracing::warn!(
+                    "[quickadd-seed] could not land the pending paste restore ({} bytes): {e}; rescheduling it and skipping the copy grab",
+                    p.len()
+                );
+                crate::inject::restore_clipboard_later(Some(p));
+                return None;
+            }
         }
         let prev = cb.get_text().ok(); // None = empty or non-text (image/files)
         #[cfg(windows)]

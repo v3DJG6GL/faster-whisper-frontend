@@ -7,7 +7,8 @@
 //! in the log at the default level): once when a process crosses `WARN_ANON_MB` (re-armed
 //! once it falls back under `REARM_ANON_MB`), and whenever a peak jumps by `WARN_PEAK_JUMP_MB`
 //! between two samples (or, the first time a process is seen, when its peak is already over
-//! `WARN_ANON_MB`). Linux only; `note_route` exists everywhere because the webview calls
+//! `WARN_ANON_MB`); a peak warning is skipped when the same sample already logged the
+//! crossing warning, so one spike is one warn line. Linux only; `note_route` exists everywhere because the webview calls
 //! it on every platform.
 
 use std::sync::Mutex;
@@ -92,14 +93,16 @@ mod imp {
                 peak_mb: peak,
                 warned: false,
             });
-            // VmHWM never sits below Pss_Anon, so a first-seen process over the line would
-            // also trip the peak warning below: one event, one warn line.
+            // A spike that crosses the line usually also trips a peak warning below (VmHWM
+            // never sits below Pss_Anon, and a fast climb jumps the peak too): the crossing
+            // line carries the peak, so either peak warning is suppressed — one event, one
+            // warn line.
             let mut warned_now = false;
             if anon >= WARN_ANON_MB && !s.warned {
                 s.warned = true;
                 warned_now = true;
                 tracing::warn!(
-                    "[mem] {name} (pid {pid}) holds {anon}M private memory — screen {route}"
+                    "[mem] {name} (pid {pid}) holds {anon}M private memory (peak {peak}M) — screen {route}"
                 );
             } else if anon < REARM_ANON_MB {
                 s.warned = false;
@@ -110,7 +113,7 @@ mod imp {
                         "[mem] {name} (pid {pid}) peaked at {peak}M since launch — screen {route}"
                     );
                 }
-            } else if peak >= s.peak_mb + WARN_PEAK_JUMP_MB {
+            } else if !warned_now && peak >= s.peak_mb + WARN_PEAK_JUMP_MB {
                 tracing::warn!(
                     "[mem] {name} (pid {pid}) peaked at {peak}M since the last sample (was {}M) — screen {route}",
                     s.peak_mb
