@@ -622,6 +622,8 @@ const MAX_PREVIEW_PEERS = 500;
 
 /** A pulled update that would repoint a backend or replace a stored key, held for approval. */
 function SecurityReviewDialog() {
+  // The getter is not reactive: re-read it on every prompt change (see `syncPromptSeq`).
+  useApp((st) => st.syncPromptSeq);
   const pending = getPendingReview();
   const dictating = useApp((st) => st.status !== "idle");
   const [busy, setBusy] = useState(false);
@@ -730,6 +732,9 @@ function SecurityReviewDialog() {
 
 /** Keep Local / Keep Remote per genuinely-conflicting category. */
 function ConflictDialog() {
+  // Same as SecurityReviewDialog: re-read on every prompt change, so a closed or widened
+  // conflict never leaves the old body (and its categories) on screen.
+  useApp((st) => st.syncPromptSeq);
   const pending = getPendingConflict();
   if (!pending) return null;
   // Keyed on the conflict's identity so a NEW conflict remounts the body with
@@ -788,7 +793,8 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
           onClick={() => {
             const chosen = Object.fromEntries(pending.categories.map((c) => [c, picks[c] ?? "local"]));
             setBusy(true);
-            void resolveSyncConflicts(chosen).finally(() => setBusy(false));
+            // Bound to the conflict shown: picks never apply to one re-raised over other categories.
+            void resolveSyncConflicts(chosen, pending.id).finally(() => setBusy(false));
           }}
         >
           {busy ? "Applying…" : "Apply"}

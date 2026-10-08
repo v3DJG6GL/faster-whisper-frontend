@@ -1445,6 +1445,52 @@ describe("a no-op push while a sync prompt waits", () => {
       dismissSyncConflict();
     }
   });
+
+  // The dialogs read the prompts through non-reactive getters and re-rendered only on a status
+  // change — but closing one prompt next to its sibling writes the sibling's notice, unchanged,
+  // so the closed dialog stayed up and its buttons did nothing. Every prompt change bumps a seq.
+  it("tells the dialogs a review was rejected while the conflict's notice stays", async () => {
+    try {
+      await raiseBoth();
+      const { syncStatus, syncError, syncPromptSeq } = useApp.getState();
+      rejectPendingReview();
+      expect(getPendingReview()).toBeNull();
+      expect(useApp.getState().syncStatus).toBe(syncStatus);
+      expect(useApp.getState().syncError).toBe(syncError);
+      expect(useApp.getState().syncPromptSeq).toBeGreaterThan(syncPromptSeq);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      rejectPendingReview();
+      dismissSyncConflict();
+    }
+  });
+
+  it("tells the dialogs a conflict was dismissed while the review's notice stays", async () => {
+    try {
+      // The review raised last, so its notice is the one showing.
+      const base = await seedBase();
+      raiseConflictForTests({ remoteVersion: 2 });
+      const remote = structuredClone(base);
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()).not.toBeNull();
+      expect(getPendingConflict()).not.toBeNull();
+      const { syncStatus, syncError, syncPromptSeq } = useApp.getState();
+      expect(syncError).toContain("review it in Settings → Sync");
+      dismissSyncConflict();
+      expect(getPendingConflict()).toBeNull();
+      expect(useApp.getState().syncStatus).toBe(syncStatus);
+      expect(useApp.getState().syncError).toBe(syncError);
+      expect(useApp.getState().syncPromptSeq).toBeGreaterThan(syncPromptSeq);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      dismissSyncConflict();
+      rejectPendingReview();
+    }
+  });
 });
 
 // A focus pull while dictating re-raises the same review with an apply that was refused: it
@@ -1463,6 +1509,41 @@ describe("a review re-raised by a pull refused while dictating", () => {
       expect(getPendingReview()?.restApplied).toBe(true);
       useApp.setState({ status: "recording" as never });
       try {
+        await pullNow(true);
+      } finally {
+        useApp.setState({ status: "idle" });
+      }
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      expect(getPendingReview()?.restApplied).toBe(true);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      rejectPendingReview();
+    }
+  });
+
+  // The keep was tied to the same rows: a gate turned on (or an edit) since changes the list, not
+  // what the earlier apply landed, so the dialog said nothing was applied although most of it had.
+  it("keeps it when the re-raise lists different rows", async () => {
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(true);
+      const remote = structuredClone(base);
+      const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+      remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
+      remote.backends = {
+        ...remote.backends!,
+        list: remote.backends!.list.map((b) => ({ ...b, serverUrl: "http://evil:9" })),
+      };
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind).sort()).toEqual(["dictation-retention", "server-url"]);
+      expect(getPendingReview()?.restApplied).toBe(true); // the general change landed
+      // While dictating, this device takes the peer's address itself: the repoint row goes.
+      useApp.setState({ status: "recording" as never });
+      try {
+        useApp.setState({ backends: useApp.getState().backends.map((b) => ({ ...b, serverUrl: "http://evil:9" })) });
         await pullNow(true);
       } finally {
         useApp.setState({ status: "idle" });

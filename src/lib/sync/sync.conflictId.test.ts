@@ -55,6 +55,21 @@ describe("pending-conflict identity", () => {
     raiseConflictForTests({ remoteVersion: 7, remoteDevice: "laptop-b", categories: ["general", "chip"] });
     expect(getPendingConflict()?.id).not.toBe(first?.id);
   });
+
+  it("picks made on one conflict never resolve another", async () => {
+    // A resolve that re-merged into more categories re-raises the conflict with a new id. The
+    // dialog's next Apply carried picks for the categories it had shown only, and the unseen one
+    // fell to this device's value without the user ever choosing.
+    reset();
+    await setSyncBaseForTests("none");
+    raiseConflictForTests({ remoteVersion: 8, categories: ["general"] });
+    const shown = getPendingConflict()!.id;
+    raiseConflictForTests({ remoteVersion: 8, categories: ["general", "chip"] });
+    const widened = getPendingConflict()!.id;
+    await resolveSyncConflicts({ general: "remote" }, shown);
+    expect(getPendingConflict()?.id).toBe(widened);
+    expect(getPendingConflict()?.categories).toEqual(["general", "chip"]);
+  });
 });
 
 describe("resolveSyncConflicts", () => {

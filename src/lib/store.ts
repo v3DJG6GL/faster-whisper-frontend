@@ -479,6 +479,10 @@ interface AppState {
   syncUnsupported: boolean;
   lastSyncedAt: number | null; // epoch ms of the last successful pull/push
   lastSyncDevice: string | null; // last WRITER's device label (server-reported)
+  /** Bumped on every change to the engine's pending review / conflict. The sync dialogs read
+   *  those through non-reactive getters and re-render on this: the status line cannot carry it,
+   *  since closing one prompt while its sibling waits writes the sibling's (unchanged) notice. */
+  syncPromptSeq: number;
 
   setTheme: (t: ThemeName) => void;
   updateSettings: (patch: Partial<AppSettings>) => void;
@@ -545,6 +549,7 @@ interface AppState {
       syncUnsupported: boolean;
       lastSyncedAt: number | null;
       lastSyncDevice: string | null;
+      syncPromptSeq: number;
     }>,
   ) => void;
 
@@ -691,6 +696,7 @@ export const useApp = create<AppState>((set) => ({
   syncUnsupported: false,
   lastSyncedAt: null,
   lastSyncDevice: null,
+  syncPromptSeq: 0,
 
   setTheme: (t) => {
     applyTheme(t);

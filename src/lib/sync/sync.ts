@@ -1967,8 +1967,8 @@ function supersede(): void {
   gen++;
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
   clearTimeout(pushTimer);
-  pendingConflict = null; // a conflict against the old server is unresolvable now
-  pendingReview = null; // ditto for a held-back pull from the old server
+  setPendingConflict(null); // a conflict against the old server is unresolvable now
+  setPendingReview(null); // ditto for a held-back pull from the old server
   pullParked = false; // ditto a re-pull parked for the old server
 }
 
@@ -1999,6 +1999,24 @@ export function getPendingConflict(): { id: number; categories: SyncCategory[]; 
   return pendingConflict
     ? { id: pendingConflictId, categories: pendingConflict.categories, remoteDevice: pendingConflict.remoteDevice }
     : null;
+}
+
+/** Every write to the two pending prompts goes through these. The dialogs read them through the
+ *  non-reactive getters above, so each change bumps `syncPromptSeq` for them to re-render on — the
+ *  status line could not carry it: closing one prompt while its sibling waits writes the sibling's
+ *  notice, unchanged, so no selector moved and the closed dialog stayed up doing nothing. */
+function setPendingConflict(c: PendingConflict | null): void {
+  if (pendingConflict === c) return;
+  pendingConflict = c;
+  promptsChanged();
+}
+function setPendingReview(r: PendingReview | null): void {
+  if (pendingReview === r) return;
+  pendingReview = r;
+  promptsChanged();
+}
+function promptsChanged(): void {
+  setRuntime({ syncPromptSeq: useApp.getState().syncPromptSeq + 1 });
 }
 
 const setRuntime = (p: Parameters<ReturnType<typeof useApp.getState>["setSyncRuntime"]>[0]) =>
@@ -2426,8 +2444,8 @@ export async function pullNow(manual = false): Promise<void> {
       } else {
         // No base to forget, but any review / conflict / parked apply still describes a server
         // document that no longer exists.
-        pendingReview = null;
-        pendingConflict = null;
+        setPendingReview(null);
+        setPendingConflict(null);
         pullParked = false;
       }
       setRuntime({ syncStatus: "ok" });
@@ -3075,8 +3093,9 @@ interface PendingReview {
    *  `categorySelection(false)` when that apply did not land (refused while dictating, or its
    *  retries exhausted). Kept across a relist: recomputing it from the relisted rows would count a category that was held back at
    *  the raise, and whose rows no longer show, as applied — and keep a live edit over a peer
-   *  value the store never received. Kept (with `gatesSig`) across a same-review re-raise whose
-   *  apply was refused too: that apply changed nothing, so the earlier landed one still holds. */
+   *  value the store never received. Kept (with `gatesSig`) across a re-raise of the same server
+   *  version whose apply was refused too: that apply changed nothing, so the earlier landed one
+   *  still holds. */
   applied: Record<SyncCategory, boolean>;
   version: number;
   updatedAt: number | null;
@@ -3119,18 +3138,22 @@ function raiseReview(r: PendingReview): void {
   // A re-raise whose apply was refused (dictating) changed nothing in the store: the earlier
   // raise's landed apply, and the gates it ran under, still describe it — or the dialog said
   // nothing was applied yet and the approval re-asked over categories that already landed.
-  // The new `storeSig` stays (same as a relist): it is the store as it is now.
+  // The new `storeSig` stays (same as a relist): it is the store as it is now. Same server
+  // version and writer, whatever the rows: an edit or a gate turned on since changes the list,
+  // not what the earlier apply landed (a relist keeps `applied` across a new list too), and
+  // approveLocked asks wherever today's gates differ from the kept `gatesSig`.
   if (
     pendingReview &&
     !Object.values(r.applied).some(Boolean) &&
     Object.values(pendingReview.applied).some(Boolean) &&
-    sameReview(pendingReview, r)
+    pendingReview.version === r.version &&
+    pendingReview.device === r.device
   ) {
     r = { ...r, applied: pendingReview.applied, gatesSig: pendingReview.gatesSig };
   }
-  pendingReview = r;
+  setPendingReview(r);
   // A conflict against an older server version is moot now: the server moved past it.
-  if (pendingConflict && pendingConflict.remoteVersion < r.version) pendingConflict = null;
+  if (pendingConflict && pendingConflict.remoteVersion < r.version) setPendingConflict(null);
   reviewStatus();
 }
 
@@ -3148,8 +3171,8 @@ function reviewStatus(): void {
  *  gone — another device took the change back, or this one now agrees. Left up, the dialog sat
  *  next to "Synced" and its Apply re-landed the withdrawn change and moved the base backwards. */
 function dropSupersededPending(version: number): void {
-  if (pendingReview && pendingReview.version <= version) pendingReview = null;
-  if (pendingConflict && pendingConflict.remoteVersion <= version) pendingConflict = null;
+  if (pendingReview && pendingReview.version <= version) setPendingReview(null);
+  if (pendingConflict && pendingConflict.remoteVersion <= version) setPendingConflict(null);
 }
 
 /** Two server `updated_ts` stamps name the same write. Not `===`: a persisted base's stamp went
@@ -3210,8 +3233,8 @@ async function forgetDeadDocument(myGen: number): Promise<boolean> {
     snapshotSecretIds: undefined,
   });
   if (myGen !== gen) return false;
-  pendingReview = null;
-  pendingConflict = null;
+  setPendingReview(null);
+  setPendingConflict(null);
   pullParked = false;
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
   return true;
@@ -3277,7 +3300,7 @@ type ApproveOutcome = "push" | "done" | "prompt";
 async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOutcome> {
   // A base at or past the reviewed version was adopted meanwhile: the review is moot.
   if ((state.version ?? 0) >= r.version) {
-    pendingReview = null;
+    setPendingReview(null);
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
   }
@@ -3359,7 +3382,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     else (blobNow as Record<string, unknown>)[cat] = v;
   }
   if (ask) {
-    pendingReview = null;
+    setPendingReview(null);
     raiseConflict({
       categories: re.conflicts,
       merged: re.merged,
@@ -3382,13 +3405,13 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     raiseReview({ ...r, blob: blobNow, changes: now, relisted: true, storeSig: sigNow });
     return "prompt";
   }
-  pendingReview = null;
+  setPendingReview(null);
   const applied = await applyBlob(blobNow, applyCats);
   if (myGen !== gen) return "done";
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it): put
     // the review back so the approval isn't consumed by an apply that never happened.
-    pendingReview = r;
+    setPendingReview(r);
     return "prompt";
   }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
@@ -3415,7 +3438,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
 /** Reject the held-back pull. Nothing is applied and NO base is adopted, so the next pull
  *  re-offers it rather than silently treating the rejected state as agreed. */
 export function rejectPendingReview(): void {
-  pendingReview = null;
+  setPendingReview(null);
   // Also drops a pull-apply parked while dictation ran: with no base adopted the next pull
   // re-offers it, so nothing lands behind a refusal.
   pullParked = false;
@@ -3469,9 +3492,9 @@ function raiseConflict(c: PendingConflict): void {
     pendingConflict.remoteDevice === c.remoteDevice &&
     pendingConflict.categories.join() === c.categories.join();
   if (!same) pendingConflictId = ++conflictSeq;
-  pendingConflict = c;
+  setPendingConflict(c);
   // Same rule as raiseReview: a review against an older server version is moot now.
-  if (pendingReview && pendingReview.version < c.remoteVersion) pendingReview = null;
+  if (pendingReview && pendingReview.version < c.remoteVersion) setPendingReview(null);
   conflictStatus();
 }
 
@@ -3496,14 +3519,19 @@ function idleStatus(): void {
 /** Apply the user's per-category picks, then adopt + push the result. */
 export async function resolveSyncConflicts(
   choices: Record<string, "local" | "remote">,
+  /** The id of the conflict the picks were made on (`getPendingConflict().id`). A different one
+   *  is pending — a re-raise over more categories, or another conflict — and the picks do not
+   *  describe it: a category missing from `choices` fell to this device's value unasked. */
+  expectedId?: number,
 ): Promise<void> {
   if (!pendingConflict) return;
+  if (expectedId !== undefined && pendingConflictId !== expectedId) return;
   if (useApp.getState().status !== "idle") return; // same rule as approvePendingReview
   const myGen = gen; // same epoch rule as approvePendingReview
   // The conflict the user picked on. Same lock rule as approvePendingReview; a pull during the
   // wait may re-raise it, which keeps the id only when it is the same conflict (raiseConflict),
   // so the picks still apply to it.
-  const id = pendingConflictId;
+  const id = expectedId ?? pendingConflictId;
   if (!(await takeSyncLock(myGen))) return;
   let outcome: ApproveOutcome = "done";
   try {
@@ -3531,7 +3559,7 @@ async function resolveLocked(
 ): Promise<ApproveOutcome> {
   // Same moot-conflict rule as approveLocked.
   if ((state.version ?? 0) >= c.remoteVersion) {
-    pendingConflict = null;
+    setPendingConflict(null);
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
   }
@@ -3553,7 +3581,7 @@ async function resolveLocked(
     raiseConflict({ ...c, categories: re.conflicts, merged: re.merged, local: localNow });
     return "prompt";
   }
-  pendingConflict = null;
+  setPendingConflict(null);
   const final: SyncBlob = { ...re.merged };
   for (const cat of c.categories) {
     const src = choices[cat] === "remote" ? c.remote : localNow;
@@ -3608,7 +3636,7 @@ async function resolveLocked(
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it):
     // restore the conflict so the picks are re-offered, not a base that never landed.
-    pendingConflict = c;
+    setPendingConflict(c);
     return "prompt";
   }
   if (degraded && degradedBaseWithheld(c.remote)) return "done";
@@ -3636,7 +3664,7 @@ async function resolveLocked(
 }
 
 export function dismissSyncConflict(): void {
-  pendingConflict = null;
+  setPendingConflict(null);
   pullParked = false; // "Later" also drops a pull-apply parked while dictation ran (re-offered next pull)
   // Same as rejectPendingReview: a review at this version still waits — keep its notice.
   if (pendingReview) reviewStatus();
