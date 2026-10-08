@@ -7,7 +7,7 @@ import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labele
 import { OverrideHeader, OverrideText } from "@/components/OverrideField";
 import { OVERRIDE_CONTROL_W } from "@/components/styles";
 import { ServerInfoButton, ServerInfoPanel } from "@/components/ServerInfoPanel";
-import { backendChips } from "@/lib/backendChipLabels";
+import { backendChips, WHISPER_ALIAS } from "@/lib/backendChipLabels";
 import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/envDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -196,6 +196,9 @@ function Editor({
     credentialGen: liveGen,
   });
   const server = serverInherited(decodeDefaults);
+  // The backend's own model, if it names one: the `whisper-1` alias (a new backend's default)
+  // loads the server's DEFAULT_MODEL, so it reads as inherited, as the chips and ModelPicker do.
+  const ownModel = b.model.trim() === WHISPER_ALIAS ? "" : b.model.trim();
   // "Multiple languages" is the backend's default `multilingual` decode override.
   const multiOffered = offersMultilingual({
     canOverride: caps?.can_request_decode_overrides,
@@ -248,7 +251,9 @@ function Editor({
         if (
           stored &&
           !testedKey &&
-          normalizeUrl(testedUrl) === normalizeUrl(effectiveServerUrl(stored, live.settings)) &&
+          // Both sides in stored form first: a lenient `http:/host` override normalises to "" raw,
+          // while `effectiveServerUrl` resolves it to `http://host`, so the commit never happened.
+          normalizeUrl(storedTypedUrl(testedUrl)) === normalizeUrl(storedTypedUrl(effectiveServerUrl(stored, live.settings))) &&
           credentialGeneration(b.id) === gen
         ) {
           setConnection(b.id, info);
@@ -522,6 +527,7 @@ function Editor({
                 backendId={b.id}
                 apiKey={debouncedKey || null}
                 serverKind={hookKind}
+                credentialGen={liveGen}
                 canRequest={caps?.can_request_override_profile}
                 value={b.overrideProfile ?? ""}
                 inheritLabel="Server default"
@@ -539,14 +545,14 @@ function Editor({
           title="Defaults"
           summary={
             <span className="text-faint">
-              · {shortModelName(b.model || decodeDefaults?.model) ?? "server model"} ·{" "}
+              · {shortModelName(ownModel || decodeDefaults?.model) ?? "server model"} ·{" "}
               {safeDisplayText(spoken.value ? spokenLabel(spoken.value) : (serverLanguageLabel(decodeDefaults) ?? "server language"), 30)}{" "}
               · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
           }
           hint="What every profile on this backend starts from."
         >
-          <OverrideHeader title="DEFAULT_MODEL" desc={envDesc("DEFAULT_MODEL")} overridden={!!b.model.trim()}>
+          <OverrideHeader title="DEFAULT_MODEL" desc={envDesc("DEFAULT_MODEL")} overridden={!!ownModel}>
             <div className={OVERRIDE_CONTROL_W}>
               <ModelPicker
                 ariaLabel="Model"
