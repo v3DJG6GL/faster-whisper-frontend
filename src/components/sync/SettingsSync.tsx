@@ -38,10 +38,11 @@ import {
   rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
+  sanitizeBackends,
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
+import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { relTime } from "@/lib/format";
 import { conflicts as chordConflicts, withQuickAddPeer } from "@/lib/hotkeyConflicts";
@@ -207,18 +208,17 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   const predictedConflicts =
     chordConflicts(peers, !lowLevelActive).length > 0;
 
-  const missingKeys =
-    sel.backends && categories.backends
-      ? arr<Backend>(categories.backends.list).filter(
-          // Import never deletes a stored key and the apply re-derives `hasApiKey` from the
-          // keyring by id, so a same-id backend this device already holds a key for keeps it —
-          // exempt only at the same address: a moved one would send that key somewhere new.
-          (b) =>
-            b.hasApiKey &&
-            !ownProp(result.secrets, b.id) &&
-            !st.backends.some((x) => x.id === b.id && x.hasApiKey && x.serverUrl === b.serverUrl),
-        )
-      : [];
+  // Judged on what the apply installs (sanitized, as above). Import never deletes a stored key
+  // and the apply re-derives `hasApiKey` from the keyring by id, so a same-id backend this
+  // device holds a key for keeps it: nothing to re-enter — but if the file moves it to another
+  // server, that key goes there, whatever the file's own `hasApiKey` says.
+  const incoming = sel.backends && categories.backends ? sanitizeBackends(categories.backends.list) : [];
+  const keyHere = (b: Backend) => st.backends.find((x) => x.id === b.id && x.hasApiKey);
+  const missingKeys = incoming.filter((b) => b.hasApiKey && !ownProp(result.secrets, b.id) && !keyHere(b));
+  const movedKeys = incoming.filter((b) => {
+    const here = keyHere(b);
+    return !!here && !ownProp(result.secrets, b.id) && normalizeUrl(here.serverUrl) !== normalizeUrl(b.serverUrl);
+  });
 
   // Same helper `RestoreFromServer` uses for its own replace warning — see the notice below.
   const replaced = replacedNames(sel, categories, st);
@@ -303,6 +303,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
             API key re-entered after importing (not included in the file).
           </Notice>
         )}
+        {movedKeys.map((b) => (
+          <Notice key={`moved-${b.id}`} tone="warn">
+            &ldquo;{safeText(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
+            {safeText(authorityOf(b.serverUrl)?.host || b.serverUrl || "an empty address", 120)}.
+          </Notice>
+        ))}
         {/* These interpolate a backend name straight out of the imported file. The missing-keys
             line above renders the same field through safeText; this one did not, so a bidi
             override could rewrite the sentence the user reads to decide whether to import. */}
