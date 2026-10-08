@@ -758,8 +758,9 @@ export async function stopMicTestPlayback(): Promise<void> {
 /** Shared contract for every event subscription: no-op (empty unlisten) outside Tauri, else
  *  dynamic-import the event module and listen, handing the typed payload to `cb`. Keeps the
  *  isTauri guard + dynamic import in ONE place so a subscriber can't forget the empty-unlisten
- *  return (which would throw, not no-op, in non-Tauri `pnpm dev`). Returns the unlisten fn. */
-async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
+ *  return (which would throw, not no-op, in non-Tauri `pnpm dev`). Returns the unlisten fn.
+ *  Exported for the aux windows (Overlay, QuickAdd, LangPick) that listen to their own events. */
+export async function subscribe<T>(event: string, cb: (payload: T) => void): Promise<() => void> {
   if (!isTauri) return () => {};
   const { listen } = await import("@tauri-apps/api/event");
   return listen<T>(event, (e) => cb(e.payload));

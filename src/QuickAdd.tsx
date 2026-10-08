@@ -25,7 +25,7 @@ import { ruleDotColor } from "@/lib/ruleColor";
 import { safeDisplayText, wellFormedAppRules } from "@/lib/sanitize";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
-  getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText,
+  getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri,
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/dictation/streaming";
 import { effectiveServerUrl } from "@/lib/backends";
@@ -92,8 +92,9 @@ export default function QuickAdd() {
   const target = useRef<Target | null>(null);
   const rowsRef = useRef<MapRow[]>([]);
   rowsRef.current = rows;
-  // Live mirror of `phase` for closeNow: correct-on-close only runs the list while it is the one
-  // shown ("ok") — on nopin / error / loading `rows` still holds the previously loaded list.
+  // Live mirror of `phase` for closeNow: correct-on-close only runs the list while it is on
+  // screen ("ok") — not on nopin, while loading, or after an error, when the capture row is
+  // replaced and a hidden paste on close would surprise (deliberate, Run #34).
   const phaseRef = useRef<Phase>("loading");
   phaseRef.current = phase;
   // Live mirror of `find` so the once-built summon listener can tell whether the user has begun
@@ -356,8 +357,7 @@ export default function QuickAdd() {
         setShowSeq((s) => s + 1);
       }
     };
-    import("@tauri-apps/api/event")
-      .then(({ listen }) => listen("quickadd://shown", onSummon))
+    subscribe("quickadd://shown", () => void onSummon())
       .then(async (f) => {
         // If the effect was torn down before listen() resolved (StrictMode dev mount→unmount→
         // remount), drop the subscription now instead of leaking a duplicate listener.
@@ -373,7 +373,7 @@ export default function QuickAdd() {
         // run one now. Safe to race a real event: the sgen guard supersedes the older run,
         // and the backend seed read is generation-stamped and non-destructive, so this can
         // never surface another summon's text.
-        if (summonGen.current === 0) {
+        if (isTauri && summonGen.current === 0) {
           const { getCurrentWindow } = await import("@tauri-apps/api/window");
           const visible = await getCurrentWindow().isVisible().catch(() => false);
           if (!cancelled && visible && summonGen.current === 0) void onSummon();
@@ -447,8 +447,7 @@ export default function QuickAdd() {
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
-    import("@tauri-apps/api/event")
-      .then(({ listen }) => listen("quickadd://closing", () => closeNow()))
+    subscribe("quickadd://closing", () => closeNow())
       .then((f) => {
         if (cancelled) f();
         else un = f;

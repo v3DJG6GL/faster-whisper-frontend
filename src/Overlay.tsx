@@ -2,7 +2,7 @@ import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, ty
 import { motion, AnimatePresence, MotionConfig } from "motion/react";
 import { Target, X } from "lucide-react";
 import { Waveform } from "@/components/Waveform";
-import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen, isTauri } from "@/lib/api";
+import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen, isTauri, subscribe } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { langCode } from "@/lib/languages";
@@ -542,13 +542,10 @@ export default function Overlay() {
     if (!isTauri) return;
     let cancelled = false;
     let unlisten: (() => void) | undefined;
-    import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen<boolean>("chip://pointer", (e) => {
-          if (e.payload) onPointerEnterRef.current();
-          else clearHover();
-        }),
-      )
+    subscribe<boolean>("chip://pointer", (p) => {
+      if (p) onPointerEnterRef.current();
+      else clearHover();
+    })
       .then((un) => {
         if (cancelled) un();
         else unlisten = un;

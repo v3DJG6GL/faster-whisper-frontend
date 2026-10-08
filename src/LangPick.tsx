@@ -25,7 +25,7 @@
 // out of this window is a decision the user can see.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { abortLangPick, commitLangPick, isTauri } from "@/lib/api";
+import { abortLangPick, commitLangPick, isTauri, subscribe } from "@/lib/api";
 import { langCode, targetCap, targetSections, toggleCode, untestedTitle, type LangRow } from "@/lib/languages";
 import { comboboxInputProps, navKey } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
@@ -84,23 +84,20 @@ export default function LangPick() {
     if (!isTauri) return;
     let unlisten: (() => void) | undefined;
     let cancelled = false;
-    void import("@tauri-apps/api/event")
-      .then(({ listen }) =>
-        listen<Seed>("langpick://shown", (e) => {
-          const s = e.payload ?? {};
-          setSeed(s);
-          themeRef.current = s.theme ?? "auto";
-          applyAccentAndTheme(typeof s.accentHue === "number" ? s.accentHue : undefined, s.accentMotion, s.theme ?? "auto");
-          // Preselect the Profile's own targets: Enter with no keystrokes must reproduce
-          // what would have happened without the picker. Anything else makes the prompt a
-          // trap — confirming it by habit would silently change the outcome. (Esc is the
-          // other habit, and it aborts loudly rather than changing anything.)
-          setChosen(cleanRecent(s.preset, targetCap(s.max)));
-          setQuery("");
-          setActive(0);
-          setShowSeq((n) => n + 1);
-        }),
-      )
+    void subscribe<Seed>("langpick://shown", (p) => {
+      const s = p ?? {};
+      setSeed(s);
+      themeRef.current = s.theme ?? "auto";
+      applyAccentAndTheme(typeof s.accentHue === "number" ? s.accentHue : undefined, s.accentMotion, s.theme ?? "auto");
+      // Preselect the Profile's own targets: Enter with no keystrokes must reproduce
+      // what would have happened without the picker. Anything else makes the prompt a
+      // trap — confirming it by habit would silently change the outcome. (Esc is the
+      // other habit, and it aborts loudly rather than changing anything.)
+      setChosen(cleanRecent(s.preset, targetCap(s.max)));
+      setQuery("");
+      setActive(0);
+      setShowSeq((n) => n + 1);
+    })
       .then((un) => {
         if (cancelled) un();
         else unlisten = un;
