@@ -262,6 +262,32 @@ describe("a sync composed with a degraded keyring", () => {
     }
   });
 
+  // The raise-time degraded flag withheld the base even after the user stopped syncing the server
+  // list, saying backend changes are "on hold" for a category this device no longer syncs.
+  it("approving a degraded review after turning server-list sync off adopts the base", async () => {
+    try {
+      const { base, before } = await seed();
+      const remote = peer(base, before, true);
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, backendList: false } };
+      useApp.setState({ settings });
+      await approvePendingReview();
+      const st = useApp.getState();
+      expect(st.settings.transcribe?.dictationRetentionDays).toBe(1);
+      expect(st.backends.map((b) => [b.id, b.name])).toEqual([["b1", "local"], ["b2", "added-here"]]);
+      expect(st.syncError ?? "").not.toContain("keyring");
+      api.keys = { b1: "sk-secret" };
+      await pushNow(true);
+      expect(api.pushedBase).toBe(2); // the peer's version became the base
+    } finally {
+      cleanup();
+    }
+  });
+
   // Raised with the keyring readable, approved after it locked: the approval's compose carried
   // the base's backends category, the merge read it as "local unchanged", and the apply wrote
   // the base / peer list over every backend added here since.
@@ -813,6 +839,7 @@ describe("approving a review after editing a category the peer changed", () => {
     await pullNow(true);
     expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
     expect(useApp.getState().settings.general.typeAsISpeak).toBe(peerTyping); // general applied
+    expect(getPendingReview()?.restApplied).toBe(true);
     return { base, peerTyping };
   }
   const toggleStartMinimized = (): boolean => {
@@ -1270,6 +1297,7 @@ describe("approving a review raised while dictating", () => {
       }
       expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
       expect(useApp.getState().settings.general.typeAsISpeak).toBe(localTyping); // nothing landed
+      expect(getPendingReview()?.restApplied).toBe(false); // the dialog must not say "applied already"
       const s = useApp.getState().settings;
       const mine = !s.general.startMinimized;
       useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
@@ -1332,6 +1360,37 @@ describe("a no-op push while a sync prompt waits", () => {
       const pushesBefore = api.pushes;
       await pushNow();
       expect(api.pushes).toBe(pushesBefore); // the hash shortcut, not a 409 re-raise
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toContain("review it in Settings → Sync");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      rejectPendingReview();
+    }
+  });
+
+  // A pull refused while dictating adopts no base either, so no dropSupersededPending ran: its
+  // bare "ok" said "Synced" next to the still-open review.
+  it("keeps the review's notice through a pull refused while dictating", async () => {
+    try {
+      const base = await seedBase();
+      const remote = structuredClone(base);
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()).not.toBeNull();
+      // The peer reverted the retention and changed something ordinary: nothing to review, but
+      // the apply is refused while a session runs.
+      const next = structuredClone(base);
+      next.general = { ...next.general, typeAsISpeak: !useApp.getState().settings.general.typeAsISpeak } as never;
+      api.pulled = { version: 3, updated_ts: 3, device: "peer", blob: next };
+      useApp.setState({ status: "recording" as never });
+      try {
+        await pullNow(true);
+      } finally {
+        useApp.setState({ status: "idle" });
+      }
+      expect(getPendingReview()).not.toBeNull();
       expect(useApp.getState().syncStatus).toBe("error");
       expect(useApp.getState().syncError).toContain("review it in Settings → Sync");
     } finally {

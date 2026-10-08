@@ -77,8 +77,9 @@ export function stripMachineFolders(blob: SyncBlob): SyncBlob {
 /** Apply the user's per-category selection from a parsed import. Secrets ride
  *  inside the blob (applyBlob writes them to the keyring and re-derives
  *  hasApiKey from keyring truth). Throws "dictating" if a session is live —
- *  the preview dialog blocks on that instead of silently deferring. Returns
- *  false when applyBlob deferred or its retries exhausted (nothing was applied). */
+ *  the preview dialog blocks on that instead of a bare refusal. Returns
+ *  false when applyBlob refused (dictation live) or its retries exhausted
+ *  (nothing was applied). */
 export async function applyImport(
   selection: Record<SyncCategory, boolean>,
   result: ImportResult,

@@ -2397,7 +2397,7 @@ export async function pullNow(manual = false): Promise<void> {
     if (pullUrl === null) {
       // The target moved while we were in the keyring. Don't read the abandoned host — the next
       // window-focus pull runs against the corrected address on its own.
-      setRuntime({ syncStatus: "ok" });
+      idleStatus();
       return;
     }
     const res = await syncPull({ serverUrl: pullUrl, backendId: backend.id });
@@ -2480,10 +2480,8 @@ export async function pushNow(manual = false): Promise<void> {
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
       // Nothing to send — but a pending prompt adopts no base, so ANY store edit lands here while
       // it waits: restore its notice (cleared by the "syncing" above) instead of "Synced" next to
-      // the dialog. A conflict takes precedence over a review.
-      if (pendingConflict) conflictStatus();
-      else if (pendingReview) reviewStatus();
-      else setRuntime({ syncStatus: "ok" });
+      // the dialog.
+      idleStatus();
       return;
     }
     // Gated on the COMPOSED blob, not on the Backends switch: the snapshot pass-through
@@ -2506,7 +2504,7 @@ export async function pushNow(manual = false): Promise<void> {
       // backend's plaintext key, so it is the one that must not go to an abandoned host.
       const pushUrl = liveSyncTarget(backend);
       if (pushUrl === null) {
-        setRuntime({ syncStatus: "ok" });
+        idleStatus();
         schedulePush(0); // let the corrected address receive this state instead
         return;
       }
@@ -2611,9 +2609,10 @@ export async function pushNow(manual = false): Promise<void> {
         const applied = await applyBlob(merged, pushCats);
         if (myGen !== gen) return; // superseded during the apply wait
         if (!applied) {
-          // Deferred/dropped: no base adopted and nothing pushed, the next pull re-offers it.
-          // Clear the 'syncing' this call set, as reconcileRemote's twin does.
-          setRuntime({ syncStatus: "ok" });
+          // Refused (dictation live) or dropped: no base adopted and nothing pushed, the next pull
+          // re-offers it. Clear the 'syncing' this call set, as reconcileRemote's twin does —
+          // without hiding a prompt that still waits.
+          idleStatus();
           return;
         }
         // Applied without the degraded backends category: adopt the base and keep pushing only
@@ -2685,9 +2684,10 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // wait, and the "ok" below would then land over the reset state (pushNow's 409 twin's order).
   if (myGen !== gen) return;
   if (!applied) {
-    // Deferred (dictation live). Persist no base so the next pull re-offers the blob — the same
-    // rule the held-back-review path documents above.
-    setRuntime({ syncStatus: "ok" });
+    // Refused (dictation live) or dropped. Persist no base so the next pull re-offers the blob —
+    // the same rule the held-back-review path documents above. No base means no
+    // dropSupersededPending either, so a waiting prompt keeps its notice.
+    idleStatus();
     return;
   }
   // Applied without the degraded backends category: the remote becomes the base only when it
@@ -3071,8 +3071,9 @@ interface PendingReview {
   /** `gatesSignature` at the raise: what the held-back apply stripped depends on it. A relist
    *  keeps it — no apply ran since, so the store still lacks what the raise's gates stripped. */
   gatesSig: Record<SyncCategory, string>;
-  /** The categories the raise's apply landed (`appliedAt` over `heldBack(cats, changes)` THEN). Kept across a
-   *  relist: recomputing it from the relisted rows would count a category that was held back at
+  /** The categories the raise's apply landed (`appliedAt` over `heldBack(cats, changes)` THEN);
+   *  `categorySelection(false)` when that apply did not land (refused while dictating, or its
+   *  retries exhausted). Kept across a relist: recomputing it from the relisted rows would count a category that was held back at
    *  the raise, and whose rows no longer show, as applied — and keep a live edit over a peer
    *  value the store never received. */
   applied: Record<SyncCategory, boolean>;
@@ -3095,9 +3096,17 @@ export function getPendingReview(): {
   changes: SecurityChange[];
   device: string | null;
   relisted: boolean;
+  /** The raise's held-back apply landed the rest of the update: the dialog may say "everything
+   *  else was applied already" only then — an apply refused while dictating landed nothing. */
+  restApplied: boolean;
 } | null {
   return pendingReview
-    ? { changes: pendingReview.changes, device: pendingReview.device, relisted: pendingReview.relisted === true }
+    ? {
+        changes: pendingReview.changes,
+        device: pendingReview.device,
+        relisted: pendingReview.relisted === true,
+        restApplied: Object.values(pendingReview.applied).some(Boolean),
+      }
     : null;
 }
 
@@ -3112,7 +3121,7 @@ function raiseReview(r: PendingReview): void {
   reviewStatus();
 }
 
-/** The status a pending review shows (raiseReview, and pushNow's no-change arm restoring it). */
+/** The status a pending review shows (raiseReview, and `idleStatus` restoring it). */
 function reviewStatus(): void {
   setRuntime({
     syncStatus: "error",
@@ -3371,7 +3380,10 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
   // it left the backends category alone, or the next unlocked push reverts the peer's change.
-  if ((r.degraded || degradedNow) && degradedBaseWithheld(r.remote)) return "done";
+  // The raise's flag counts only while backends still syncs (`live`: a degraded raise already
+  // holds backends out of `r.cats`, so `cats` cannot tell): turned off since, nothing is held for
+  // it, and reconcileRemote adopts the base then too (`backendsDegraded` is off with it).
+  if (((r.degraded && live.backends) || degradedNow) && degradedBaseWithheld(r.remote)) return "done";
   await persistState({
     version: r.version,
     updatedAt: r.updatedAt,
@@ -3447,13 +3459,22 @@ function raiseConflict(c: PendingConflict): void {
   conflictStatus();
 }
 
-/** The status a pending conflict shows (raiseConflict, and pushNow's no-change arm restoring it). */
+/** The status a pending conflict shows (raiseConflict, and `idleStatus` restoring it). */
 function conflictStatus(): void {
   setRuntime({
     syncStatus: "error",
     syncError:
       "Both this device and another changed the same settings — resolve the conflict in Settings → Sync.",
   });
+}
+
+/** The status a sync that adopted no base ends on: a prompt adopts none either, so it still
+ *  waits — restore its notice (the call's "syncing" cleared it) instead of "Synced" next to the
+ *  dialog. A conflict takes precedence over a review. */
+function idleStatus(): void {
+  if (pendingConflict) conflictStatus();
+  else if (pendingReview) reviewStatus();
+  else setRuntime({ syncStatus: "ok" });
 }
 
 /** Apply the user's per-category picks, then adopt + push the result. */

@@ -439,10 +439,10 @@ export function RestoreFromServer({
   const replaced = replacedNames(sel, blob, st);
 
   const apply = async () => {
-    // Re-check right before applying: applyBlob silently DEFERS while dictating
-    // (fine for background sync, wrong here — onApplied would bind sync against
-    // the pre-restore state). The disabled button covers the steady state; this
-    // covers a session starting between render and click.
+    // Re-check right before applying: applyBlob refuses while dictating, and
+    // saying why up front beats the generic "nothing was restored" below. The
+    // disabled button covers the steady state; this covers a session starting
+    // between render and click.
     if (useApp.getState().status !== "idle") {
       setError("Stop dictation before restoring.");
       return;
@@ -640,13 +640,19 @@ function SecurityReviewDialog() {
   const label = (c: SecurityChange) => LABELS[c.kind];
   const shown = pending.changes.slice(0, MAX_REVIEW_ROWS);
   const hidden = pending.changes.length - shown.length;
+  // Only a new server or a moved address carries a `url`: a retention, history or key row
+  // sends nothing anywhere new, so the footer must not warn about "the new address" for it.
+  const repoints = pending.changes.some((c) => !!c.url);
   return (
     <Modal onClose={busy ? () => {} : rejectPendingReview}>
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
         {safeText(pending.device, 60).trim() || "Another device"} sent changes that affect where your
-        dictation is sent, which key is used, or what is kept on this device. Everything else was
-        applied already — only these are waiting.
+        dictation is sent, which key is used, what it types, or what is kept on this device.{" "}
+        {/* The raise's held-back apply is refused while dictating: then nothing landed. */}
+        {pending.restApplied
+          ? "Everything else was applied already — only these are waiting."
+          : "Nothing from this update has been applied yet — all of it waits for your decision."}
       </div>
       {pending.relisted && (
         <Notice tone="warn" className="mt-3">
@@ -695,8 +701,8 @@ function SecurityReviewDialog() {
         )}
       </div>
       <Notice className="mt-3">
-        If you did not change this yourself on another device, reject it — your microphone audio and
-        everything you dictate would go to the new address.
+        If you did not change this yourself on another device, reject it
+        {repoints ? " — your microphone audio and everything you dictate would go to the new address." : "."}
       </Notice>
       {dictating && (
         <Notice className="mt-3">Stop dictation before applying — nothing is queued while a session runs.</Notice>

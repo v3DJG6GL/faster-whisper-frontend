@@ -228,7 +228,7 @@ describe("applyBlob keep-local (baseline)", () => {
     });
   });
 
-  it("defers (returns false, applies nothing) while dictation is live", async () => {
+  it("refuses (returns false, applies nothing) while dictation is live", async () => {
     useApp.setState({ status: "recording" as never });
     const before = useApp.getState().settings;
     const applied = await applyBlob(
@@ -236,7 +236,7 @@ describe("applyBlob keep-local (baseline)", () => {
       CATS_ALL,
     );
     expect(applied).toBe(false);
-    expect(useApp.getState().settings).toBe(before); // untouched — stashed for later
+    expect(useApp.getState().settings).toBe(before); // untouched — refused, nothing stashed
     useApp.setState({ status: "idle" });
     expect(await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL)).toBe(true);
   });
@@ -244,7 +244,7 @@ describe("applyBlob keep-local (baseline)", () => {
   it("a one-shot restore refused while dictating parks no re-pull; a pull-apply does", async () => {
     // Onboarding's restore calls applyBlob with ignoreGates and no idle pre-check: it parked the
     // whole blob and triggered a pointless re-pull at the session's end.
-    rejectPendingReview(); // drops the re-pull the "defers while dictation is live" test parked
+    rejectPendingReview(); // drops the re-pull the "refuses while dictation is live" test parked
     useApp.setState({ status: "recording" as never });
     try {
       const blob = { chip: { indicatorPosition: "bottom" } as never };
