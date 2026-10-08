@@ -270,7 +270,20 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
   });
 
   it("a diverted live phrase disarms the per-phrase and tail Enter", () => {
-    expect(/\bphraseDirty = false;/.test(mask(bodyAfter(finalBody, "if (delivered && diverted) ")))).toBe(true);
+    const diverted = mask(bodyAfter(finalBody, "if (delivered && diverted) "));
+    expect(/\bphraseDirty = false;/.test(diverted)).toBe(true);
+    // The Enter producers arm off `phraseDirty` synchronously — before this queued task runs —
+    // so the queued Enter tasks themselves must see the divert, or Return submits the partial
+    // message / lands in the window that took focus.
+    expect(diverted).toContain("lastPhraseDiverted = true;");
+    const enter = mask(fns.enqueueAutoEnter);
+    const skip = enter.indexOf("if (lastPhraseDiverted) return;");
+    expect(skip, "auto-Enter task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
+    expect(skip).toBeLessThan(enter.indexOf("injectText("));
+    expect(mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"))).toContain("if (dirtyAtBreak && !lastPhraseDiverted)");
+    // A later phrase that really typed re-arms it; a session reset starts clean.
+    expect(mask(bodyAfter(finalBody, "if (delivered) "))).toContain("lastPhraseDiverted = false;");
+    expect(mask(fns.clearPhraseEnd)).toContain("lastPhraseDiverted = false;");
   });
 
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {

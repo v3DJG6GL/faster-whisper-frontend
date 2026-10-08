@@ -290,7 +290,6 @@ interface InsertCfg {
    *  so a config mid-migration still reads as it did. */
   timing: "off" | "stop" | "live";
   method: "paste" | "direct" | "clipboard";
-  pasteShortcut: string[]; // chord for the paste method (KeyboardEvent.code list)
   /** The Profile's insertion overrides, frozen for the session — the one layer that CAN'T
    *  be re-read live (see resolveTarget). The app-rule layer above it stays live per phrase,
    *  which is the whole point: rules follow window switches, the profile does not change
@@ -948,6 +947,11 @@ let beganInjection = false;
 // press Enter — instead of waiting for the backend's long-silence hard break (~20s, far too
 // late). `phraseDirty` = committed text typed since the last auto-Enter.
 let phraseDirty = false;
+// Whether the LAST delivered live phrase was diverted to the clipboard (focus moved, chord held).
+// Read IN the queue by every Enter producer: they arm off `phraseDirty` synchronously, before the
+// phrase task that diverts has run, so its `phraseDirty = false` comes too late to stop them —
+// the queued Enter would then submit the partial message or press Return in the new window.
+let lastPhraseDiverted = false;
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
@@ -1046,6 +1050,9 @@ function enqueueAutoEnter(): void {
     // not gone out, so an Enter now would submit the half-typed message. The re-typing final that
     // delivers the carry grows the document and earns its own Enter.
     if (carryText) return;
+    // The phrase this Enter would follow went to the clipboard, not the field (set by its task,
+    // which ran before this one — the chain is FIFO). Same reason as the carry.
+    if (lastPhraseDiverted) return;
     // The target decides: an app rule can turn Enter off for this window even when the
     // profile/global has it on (a chat client submits, an editor must not).
     if (!t.autoEnter) return;
@@ -1139,6 +1146,7 @@ function clearPhraseEndTimer(): void {
 function clearPhraseEnd(): void {
   clearPhraseEndTimer();
   phraseDirty = false;
+  lastPhraseDiverted = false;
   clipDirty = false;
   clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
@@ -2303,8 +2311,9 @@ async function ensureListeners(): Promise<void> {
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
               // dictation (this phrase sits on the clipboard), and Enter would submit that part —
               // or, when focus moved, press Return in whatever window took it. `grew` armed it
-              // before this queued insert ran.
+              // before this queued insert ran — so also flag it for the Enter tasks queued behind us.
               phraseDirty = false;
+              lastPhraseDiverted = true;
             } else if (t.method === "paste" && delivered) {
               // The latest paste owns the clipboard, so ITS window's rule decides the restore —
               // the snapshot gate and the separator path already honor t.restoreClipboard. A
@@ -2345,6 +2354,7 @@ async function ensureListeners(): Promise<void> {
                 signalInsert("clipboard");
               } else {
                 sessionTyped = true;
+                lastPhraseDiverted = false;
                 signalInsert("typed");
               }
               bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);
@@ -2562,7 +2572,8 @@ async function ensureListeners(): Promise<void> {
           // Enter wins over the separator when this target wants it — the same precedence the
           // synchronous fork had, just evaluated against the window actually being typed into.
           if (t.autoEnter) {
-            if (dirtyAtBreak) {
+            // Not after a diverted last phrase (see enqueueAutoEnter); still no separator either.
+            if (dirtyAtBreak && !lastPhraseDiverted) {
               await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             }
             return;
@@ -2824,8 +2835,6 @@ async function ensureListeners(): Promise<void> {
               // to this same chain) then finds status "idle" and does nothing. The queued
               // hold-start it may fire resets `injectChain` for its own session; this task
               // returns right after and never touches the chain again.
-              // Route: this session translates nothing now, and its "→ ?" is answered.
-              setDictation({ sessionTargets: [], routePending: null });
               settleIdle();
               return;
             }
@@ -3419,7 +3428,7 @@ async function startLiveInner(
   // app-rule layer per phrase but never this one — a profile does not change mid-session,
   // and the poll can outlive `activeProfile`.
   const profileInsertion: InsertionOverrides = pov?.insertionOverrides ?? {};
-  const { rule, notEditable, method, pasteShortcut } = resolveInjectionTarget(
+  const { rule, notEditable, method } = resolveInjectionTarget(
     targetApp ?? null,
     useApp.getState().appRules,
     g,
@@ -3429,7 +3438,6 @@ async function startLiveInner(
   insertCfg = {
     timing: g.insertTiming,
     method,
-    pasteShortcut,
     profileInsertion,
     targetApp: targetApp ?? null,
     blocked: rule?.block ?? false,
@@ -3625,9 +3633,6 @@ async function startLiveInner(
     stopTargetPoll();
     activeEndpoint = null;
     capturing = false;
-    // The lease was acquired before the start invoke; every other exit releases it, and a
-    // leaked one pings the server that just refused us every two minutes (preload.ts).
-    releaseWarmLease();
     console.error("start dictation failed:", e);
     flashError(String(e));
   }
