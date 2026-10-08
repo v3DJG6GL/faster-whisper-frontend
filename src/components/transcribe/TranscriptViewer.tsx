@@ -1174,8 +1174,12 @@ export function TranscriptViewer({
     const card = bar?.parentElement;
     if (!bar || !card) return;
     const box = transcriptBoxRef.current;
-    if (was === "export" && box && activeSegIdx >= 0) {
-      const row = box.querySelector<HTMLElement>(`#seg-row-${activeSegIdx}`);
+    if (was === "export" && box) {
+      // Only site tracks in the Subtitles view: the cue under the playhead carries the time
+      // anchor (the DOM, not timeAnchor: that state lands after this effect).
+      const row =
+        box.querySelector<HTMLElement>(`#${TIME_ANCHOR_ID}`) ??
+        (activeSegIdx >= 0 ? box.querySelector<HTMLElement>(`#seg-row-${activeSegIdx}`) : null);
       if (row) {
         box.scrollTop +=
           row.getBoundingClientRect().top -

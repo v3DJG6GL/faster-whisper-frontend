@@ -17,9 +17,9 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl } from "@/lib/backends";
+import { effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
-import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
+import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob, sanitizeBackends } from "@/lib/sync/sync";
 import { starterProfiles } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
@@ -321,7 +321,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               </div>
               {pull.state.blob?.backends ? (
                 <div className="mt-2.5">
-                  <IncomingAddresses list={pull.state.blob.backends.list} />
+                  {/* What the restore installs, at the address this device uses — as Settings'
+                      import and restore previews list it. */}
+                  <IncomingAddresses
+                    list={sanitizeBackends(pull.state.blob.backends.list).map((b) => ({
+                      ...b,
+                      serverUrl: effectiveServerUrl(b, useApp.getState().settings),
+                    }))}
+                  />
                 </div>
               ) : null}
               <div className="mt-3.5 flex items-center gap-2.5">
