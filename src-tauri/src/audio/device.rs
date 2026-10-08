@@ -422,13 +422,19 @@ pub fn resolve_legacy(name: &str) -> Option<(String, String)> {
                     s.label.clone(),
                 ));
             }
+            // A server that answers and serves inputs without this mic means it isn't connected
+            // (or its card's input is off there): an ALSA pin would bypass the server for good.
+            // None = the migration retries next launch, as list_input_devices shows the server.
+            if host::on_sound_server() {
+                return None;
+            }
         }
         // A server that is held after a timeout is there, just not answering: an ALSA pin now
         // would be persisted for good and fight it. None = the migration retries next launch.
         if super::pulse::held() {
             return None;
         }
-        // No server: the card's shared ALSA path.
+        // Only when no sound server serves inputs: the card's shared ALSA path.
         let card = alsa_paths::card_label(name);
         alsa_cards()
             .into_iter()
