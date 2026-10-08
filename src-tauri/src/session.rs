@@ -1136,14 +1136,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // but it was being dropped here — so on a batch backend a locked override was
             // silently ignored with no "Server ignored N override(s)" notice on Home/chip.
             if !res.overrides_ignored.is_empty() {
-                // Server-supplied and unbounded on the wire; each entry is rendered as its own
-                // notice. Bound the count and each string before it reaches the UI.
-                let notices: Vec<String> = res
-                    .overrides_ignored
-                    .iter()
-                    .take(crate::transport::MAX_NOTICES)
-                    .map(|s| crate::transport::bounded_server_text(s, 200))
-                    .collect();
+                // Already bounded by to_batch_result; re-bound through the same helper as a
+                // cheap boundary guard so the count/length ceilings cannot drift.
+                let notices = batch::bound_notices(&res.overrides_ignored);
                 emit_if_active(&app, epoch, "stream://overrides-ignored", notices);
             }
             emit_if_active(
