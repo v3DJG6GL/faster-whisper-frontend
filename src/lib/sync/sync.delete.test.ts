@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   approvePendingReview,
   deleteFailureMessage,
+  dismissSyncConflict,
   getPendingConflict,
   getPendingReview,
   pullNow,
   pushNow,
+  raiseConflictForTests,
   rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
@@ -1393,6 +1395,80 @@ describe("a no-op push while a sync prompt waits", () => {
       expect(getPendingReview()).not.toBeNull();
       expect(useApp.getState().syncStatus).toBe("error");
       expect(useApp.getState().syncError).toContain("review it in Settings → Sync");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      rejectPendingReview();
+    }
+  });
+
+  // A push 409ing next to a review raises a conflict at the review's own version, so both wait:
+  // closing one wrote a blank status over the other's notice while its dialog stayed up.
+  async function raiseBoth(): Promise<void> {
+    const base = await seedBase();
+    const remote = structuredClone(base);
+    remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+    await pullNow(true);
+    expect(getPendingReview()).not.toBeNull();
+    raiseConflictForTests({ remoteVersion: 2 });
+    expect(getPendingReview()).not.toBeNull();
+    expect(getPendingConflict()).not.toBeNull();
+  }
+
+  it("keeps the review's notice when the conflict next to it is dismissed", async () => {
+    try {
+      await raiseBoth();
+      dismissSyncConflict();
+      expect(getPendingReview()).not.toBeNull();
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toContain("review it in Settings → Sync");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      dismissSyncConflict();
+      rejectPendingReview();
+    }
+  });
+
+  it("keeps the conflict's notice when the review next to it is rejected", async () => {
+    try {
+      await raiseBoth();
+      rejectPendingReview();
+      expect(getPendingConflict()).not.toBeNull();
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toContain("resolve the conflict in Settings → Sync");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      rejectPendingReview();
+      dismissSyncConflict();
+    }
+  });
+});
+
+// A focus pull while dictating re-raises the same review with an apply that was refused: it
+// replaced the raise's record of what landed, so the dialog said nothing was applied yet although
+// the rest of the update already had (and the approval re-asked over categories that landed).
+describe("a review re-raised by a pull refused while dictating", () => {
+  it("keeps the record of the earlier raise's apply", async () => {
+    try {
+      const base = await seedBase();
+      const remote = structuredClone(base);
+      const peerTyping = !useApp.getState().settings.general.typeAsISpeak;
+      remote.general = { ...remote.general, typeAsISpeak: peerTyping } as never;
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.restApplied).toBe(true);
+      useApp.setState({ status: "recording" as never });
+      try {
+        await pullNow(true);
+      } finally {
+        useApp.setState({ status: "idle" });
+      }
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      expect(getPendingReview()?.restApplied).toBe(true);
     } finally {
       api.keys = null;
       api.pulled = null;

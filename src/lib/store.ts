@@ -51,7 +51,7 @@ const MAX_QUICK_LAUNCH = 100;
 // DEFAULT_SYNC / DEFAULT_SETTINGS moved to defaults.ts (pure data, no import
 // cycle with the settings manifest); re-exported here so importers don't churn.
 import { DEFAULT_SETTINGS, DEFAULT_SYNC } from "./defaults";
-import { completeGates } from "./settingsManifest";
+import { completeGates, withLegacySubKeys } from "./settingsManifest";
 export { DEFAULT_SYNC };
 
 /** Deep-merge loaded settings over the defaults so a config written by an older version
@@ -130,9 +130,7 @@ function completeSub(
   saved: Partial<SyncSubSettings> | undefined,
   savedCategories: Partial<Record<SyncCategory, boolean>> | undefined,
 ): SyncSubSettings {
-  const gates = completeGates(saved, savedCategories);
-  // Legacy keys written back so a downgraded app reads the same intent.
-  return { ...gates, recordingsDir: gates.audioFolder, latchAutoStop: gates.handsFreeAutoStop };
+  return withLegacySubKeys(completeGates(saved, savedCategories));
 }
 
 /** Fill missing category toggles — with a one-time split migration: a config

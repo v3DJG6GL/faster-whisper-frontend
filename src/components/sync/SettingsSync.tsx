@@ -749,7 +749,7 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
         These settings changed both here and on {safeText(pending.remoteDevice, 60).trim() || "another device"}. Pick which
-        version to keep — everything else was merged automatically.
+        version to keep — the rest of this update is applied together with your picks.
       </div>
       <div className="mt-4">
         {pending.categories.map((c, i) => {

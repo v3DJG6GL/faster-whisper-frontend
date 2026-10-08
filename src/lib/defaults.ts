@@ -3,7 +3,7 @@
 // only types and the (equally pure) settings manifest.
 
 import type { AppSettings, SyncSettings } from "./types";
-import { DEFAULT_SETTING_SYNC } from "./settingsManifest";
+import { DEFAULT_SETTING_SYNC, withLegacySubKeys } from "./settingsManifest";
 
 /** Sync starts off with every category opted in — flipping "Enable sync" is
  *  the single gate; the toggles then subtract. Machine-local by contract
@@ -23,10 +23,11 @@ export const DEFAULT_SYNC: SyncSettings = {
     fileTranscriptions: true,
     logging: true,
   },
-  // Derived from the manifest (the single source); `recordingsDir` is the
-  // legacy alias of `audioFolder`. A hand-written literal here outranks the
-  // manifest once persisted (a saved boolean reads as an explicit choice).
-  sub: { ...DEFAULT_SETTING_SYNC, recordingsDir: DEFAULT_SETTING_SYNC.audioFolder },
+  // Derived from the manifest (the single source), plus the legacy aliases
+  // `recordingsDir` (of `audioFolder`) and `latchAutoStop` (of
+  // `handsFreeAutoStop`). A hand-written literal here outranks the manifest
+  // once persisted (a saved boolean reads as an explicit choice).
+  sub: withLegacySubKeys(DEFAULT_SETTING_SYNC),
   urlOverrides: {},
 };
 

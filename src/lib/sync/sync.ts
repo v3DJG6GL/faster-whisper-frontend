@@ -3075,7 +3075,8 @@ interface PendingReview {
    *  `categorySelection(false)` when that apply did not land (refused while dictating, or its
    *  retries exhausted). Kept across a relist: recomputing it from the relisted rows would count a category that was held back at
    *  the raise, and whose rows no longer show, as applied — and keep a live edit over a peer
-   *  value the store never received. */
+   *  value the store never received. Kept (with `gatesSig`) across a same-review re-raise whose
+   *  apply was refused too: that apply changed nothing, so the earlier landed one still holds. */
   applied: Record<SyncCategory, boolean>;
   version: number;
   updatedAt: number | null;
@@ -3115,6 +3116,18 @@ function raiseReview(r: PendingReview): void {
   // since you read it" notice while it is still the same list, or the next re-raise (a debounced
   // push 409s right back into the review) wiped it seconds after it appeared.
   if (pendingReview?.relisted && !r.relisted && sameReview(pendingReview, r)) r = { ...r, relisted: true };
+  // A re-raise whose apply was refused (dictating) changed nothing in the store: the earlier
+  // raise's landed apply, and the gates it ran under, still describe it — or the dialog said
+  // nothing was applied yet and the approval re-asked over categories that already landed.
+  // The new `storeSig` stays (same as a relist): it is the store as it is now.
+  if (
+    pendingReview &&
+    !Object.values(r.applied).some(Boolean) &&
+    Object.values(pendingReview.applied).some(Boolean) &&
+    sameReview(pendingReview, r)
+  ) {
+    r = { ...r, applied: pendingReview.applied, gatesSig: pendingReview.gatesSig };
+  }
   pendingReview = r;
   // A conflict against an older server version is moot now: the server moved past it.
   if (pendingConflict && pendingConflict.remoteVersion < r.version) pendingConflict = null;
@@ -3406,7 +3419,10 @@ export function rejectPendingReview(): void {
   // Also drops a pull-apply parked while dictation ran: with no base adopted the next pull
   // re-offers it, so nothing lands behind a refusal.
   pullParked = false;
-  setRuntime({ syncStatus: "idle", syncError: null });
+  // A conflict raised at the review's own version (a push 409ing next to it) still waits: keep
+  // its notice rather than a blank status next to its dialog.
+  if (pendingConflict) conflictStatus();
+  else setRuntime({ syncStatus: "idle", syncError: null });
 }
 
 // ── conflict resolution (driven by the Sync tab dialog) ─────────────────────
@@ -3622,7 +3638,9 @@ async function resolveLocked(
 export function dismissSyncConflict(): void {
   pendingConflict = null;
   pullParked = false; // "Later" also drops a pull-apply parked while dictation ran (re-offered next pull)
-  setRuntime({ syncStatus: "idle", syncError: null });
+  // Same as rejectPendingReview: a review at this version still waits — keep its notice.
+  if (pendingReview) reviewStatus();
+  else setRuntime({ syncStatus: "idle", syncError: null });
 }
 
 // ── triggers ────────────────────────────────────────────────────────────────

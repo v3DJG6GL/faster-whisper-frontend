@@ -220,6 +220,7 @@ describe("store completion of a pre-split config", () => {
     expect(sub.quickAddHotkey).toBe(DEFAULT_SETTING_SYNC.quickAddHotkey);
     expect(sub.transcribePicks).toBe(DEFAULT_SETTING_SYNC.transcribePicks);
     expect(sub.recordingsDir).toBe(DEFAULT_SETTING_SYNC.audioFolder);
+    expect(sub.latchAutoStop).toBe(DEFAULT_SETTING_SYNC.handsFreeAutoStop);
     const vals = Object.values(DEFAULT_SETTING_SYNC);
     expect(vals.some((v) => !v)).toBe(true); // a boolean "sync everything" master can never read on by default
     expect(vals.some((v) => v)).toBe(true);

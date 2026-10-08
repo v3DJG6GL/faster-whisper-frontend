@@ -25,6 +25,7 @@ import {
   SYNC_GROUP_LABEL,
   completeGates,
   settingsOfGroup,
+  withLegacySubKeys,
   type SettingDef,
   type SettingId,
   type SyncGroup,
@@ -107,7 +108,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
     const next = { ...gates, ...patch };
     // Persist the complete gate map plus the legacy mirror keys, so an older
     // app version reading this config still sees the audio-folder and auto-stop intent.
-    updateSync({ sub: { ...next, recordingsDir: next.audioFolder, latchAutoStop: next.handsFreeAutoStop } });
+    updateSync({ sub: withLegacySubKeys(next) });
   }
 
   /** Reset the given switches to their DEFAULT position (not to off). */

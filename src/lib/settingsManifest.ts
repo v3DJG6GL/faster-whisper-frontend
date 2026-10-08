@@ -559,3 +559,14 @@ export function completeGates(
   return gates;
 }
 
+/** The reverse of completeGates' legacy remap: write the pre-rename keys BACK
+ *  (derived from their manifest ids) for downgrade safety, so an older app
+ *  version reading the persisted map still sees the same intent. Every place
+ *  that persists a gate map goes through this, so a renamed switch cannot lose
+ *  its old-version alias at one of them. */
+export function withLegacySubKeys<T extends Record<SettingId, boolean>>(
+  g: T,
+): T & { recordingsDir: boolean; latchAutoStop: boolean } {
+  return { ...g, recordingsDir: g.audioFolder, latchAutoStop: g.handsFreeAutoStop };
+}
+
