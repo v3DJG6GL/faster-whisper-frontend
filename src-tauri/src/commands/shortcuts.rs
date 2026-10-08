@@ -223,6 +223,9 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 // next chord both rebind AND fire dictation (for a held evdev PTT chord, wedge
                 // "listening" — exactly what the suspend guards). The capture's reregister
                 // rebuilds fresh held-state on completion, so nothing is lost by skipping.
+                // The node listing is taken BEFORE the apply enumerates (see below).
+                #[cfg(target_os = "linux")]
+                let listing = input_event_nodes();
                 if !apply_bindings_unless_capturing(&app) {
                     tracing::info!(
                         "[suspend] binding capture in progress; leaving shortcuts suspended"
@@ -233,12 +236,14 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 #[cfg(windows)]
                 crate::aux_windows::overlay::repair_topmost(&app);
                 // Keep the node set current across the resume. The apply above just enumerated, so
-                // what was pending is moot; the watch re-baselines on this listing, and a node new
-                // relative to the last pre-suspend tick (a keyboard re-enumerated across the
-                // suspend, or one that re-attached after the apply's enumerate) stays pending and
-                // gets one settled-tick keyboard probe. A failed listing keeps the old baseline.
+                // what was pending is moot; the watch re-baselines on the listing taken before the
+                // apply, so a node new relative to the last pre-suspend tick (a keyboard
+                // re-enumerated across the suspend) stays pending and gets one settled-tick
+                // keyboard probe, and any node that appears during or after the apply's enumerate,
+                // under any name, reads as new on the next tick. A failed listing keeps the old
+                // baseline.
                 #[cfg(target_os = "linux")]
-                match input_event_nodes() {
+                match listing {
                     Some(now) => nodes.after_apply(now),
                     None => nodes.forget_pending(),
                 }
@@ -463,9 +468,10 @@ impl InputNodeWatch {
     }
 
     /// An apply just enumerated: clears `pending` and the loss latch, then re-baselines on `now`
-    /// via observe — so nodes new relative to the last pre-apply listing stay pending and get one
-    /// settled-tick keyboard probe, which also covers a node that appeared between the apply's
-    /// enumerate and this listing.
+    /// via observe — so nodes new relative to the last tick's listing stay pending and get one
+    /// settled-tick keyboard probe. Taking `now` before the apply enumerates means a node that
+    /// appears during or after that enumerate is missing from the new baseline and reads as new on
+    /// the next tick.
     fn after_apply(&mut self, now: std::collections::BTreeSet<String>) {
         self.forget_pending();
         let _ = self.observe(now, false);
@@ -695,11 +701,7 @@ mod tests {
         assert_eq!(w.observe(set(&["event0", "event1"]), false), None);
         assert_eq!(w.observe(set(&["event0"]), false), None);
         assert_eq!(w.observe(set(&["event0"]), false), None);
-        assert_eq!(
-            w.observe(set(&[]), false),
-            None,
-            "unreadable dir reads as removals"
-        );
+        assert_eq!(w.observe(set(&[]), false), None, "every node removed");
         assert_eq!(w.observe(set(&[]), false), None);
     }
 
