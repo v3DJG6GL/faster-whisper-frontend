@@ -672,7 +672,9 @@ export default function QuickAdd() {
  *  that the SAME word is still selected, then paste the list-corrected version over it — correcting
  *  the word in place. Skips if the selection is gone or changed (the "check first" guard), or — on
  *  the typing method only — if its edges carry a line break that typing would turn into Enter.
- *  Paste replaces the active selection; the user's prior clipboard is restored afterwards. */
+ *  Paste replaces the active selection; the user's prior clipboard is restored afterwards —
+ *  unless Rust diverts to the clipboard (focus moved, or untypeable text on Wayland), in which
+ *  case the correction stays on the clipboard and the selection is left as it was. */
 async function replaceSelectionAfterClose(
   original: string,
   corrected: string,
@@ -715,7 +717,7 @@ async function replaceSelectionAfterClose(
   const safe = corrected.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
   // Same re-check as the dictation path: this one deliberately waits for the WM to hand focus
   // back before resolving, so focus can move again between that resolve and the keystrokes.
-  await injectText({
+  const out = await injectText({
     text: lead + safe + trail,
     method,
     autoEnter: false,
@@ -724,6 +726,9 @@ async function replaceSelectionAfterClose(
     expectAppId: app?.appId ?? null,
     remoteDesktop,
   });
+  // Neither outcome throws, so closeNow's catch never sees them — log them like the skips above.
+  if (!out.landed) console.info("[quick-add] correct-on-close skipped: one of our own windows still had focus");
+  else if (out.diverted) console.info("[quick-add] correct-on-close diverted: the correction is on the clipboard, the selection was not replaced");
 }
 
 function errTitle(f: PipelineFetch | null): string {
