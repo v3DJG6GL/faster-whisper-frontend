@@ -10,7 +10,7 @@ import { FieldTrigger, IconButton, Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { sourceTone } from "@/lib/sourceTone";
 import {
-  SITE_POLICIES, addLanguage, derive, flip, listedLanguages, pickPolicy, removeLanguage,
+  SITE_POLICIES, addLanguage, derive, flip, listedLanguages, mtUsed, pickPolicy, removeLanguage,
   type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "@/lib/transcript/siteSubtitles";
 
@@ -53,8 +53,8 @@ export function SiteSubtitlesPanel({
   const listed = listedLanguages(input, state);
   const { used, of, existing } = v.counter;
   // Only machine-translation targets count against the server's cap (the site's own subtitles
-  // and the transcript are free).
-  const mtFull = (v.run?.mtTargets.length ?? 0) >= maxTargets;
+  // and the transcript are free) — counted as the chips count them, like the chips' own picker.
+  const mtFull = mtUsed(v) >= maxTargets;
   return (
     <div className="flex flex-col gap-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -174,7 +174,7 @@ export function SiteSubtitlesPanel({
                         // there is no room for one more.
                         disabled={disabled || mtFull}
                         renderTrigger={(p) => (
-                          <span title={mtFull ? `At most ${maxTargets} target languages per run` : undefined} className="block">
+                          <span title={mtFull ? `At most ${maxTargets} machine translations per run` : undefined} className="block">
                             <FieldTrigger {...p} open={p["aria-expanded"]} size="sm">
                               Choose a language…
                             </FieldTrigger>

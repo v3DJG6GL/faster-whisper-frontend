@@ -163,6 +163,20 @@ describe("rows and chips (v30, v34, v37)", () => {
     const [i2, st2] = apply(i1, addLanguage(i1, st1, "es"));
     expect(rowCodes(i2, st2)).toContain("es");
   });
+  it("a deleted language picked again outside the panel (switch off) comes back as a row and a chip", () => {
+    const inp = input({ targets: ["es"] });
+    const st0 = initialSiteState(inp.targets);
+    const [i1, st1] = apply(inp, removeLanguage(inp, st0, "es"));
+    // The switch off, the chips' plain picker writes the targets without touching the panel state.
+    const i2 = { ...i1, targets: ["es"] };
+    const v = derive(i2, st1);
+    expect(v.rows.find((r) => r.code === "es")?.deletable).toBe(true);
+    expect(v.chips.map((c) => c.code)).toContain("es");
+    expect(listedLanguages(i2, st1)).toContain("es");
+    const chips = v.chips.map((c) => c.code);
+    expect(v.run!.mtTargets.filter((c) => !chips.includes(c))).toEqual([]);
+    expect(v.run!.mtTargets).toContain("es");
+  });
   it("v30 chip parts in fixed order: machine translation, then existing", () => {
     const inp = input({ targets: ["en", "es"] });
     const v = derive(inp, initialSiteState(inp.targets));

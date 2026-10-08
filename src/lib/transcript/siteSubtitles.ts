@@ -305,8 +305,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     deletable: false,
   }];
   // Every other language: rows never vanish, badges grey out; a switched-off language keeps its
-  // row, only a language the site doesn't have can be deleted (v37).
-  const codes = order.filter((c) => c !== sp && !st.removed.includes(c));
+  // row, only a language the site doesn't have can be deleted (v37). A deleted language that is
+  // a translation target again (re-added through the chips' picker while the panel was off) is
+  // back: hidden, it would still be machine-translated with no row or chip to stop it.
+  const codes = order.filter((c) => c !== sp && (!st.removed.includes(c) || tmap[c] === true));
   for (const code of codes) {
     const src = langSources(code);
     rows.push({
