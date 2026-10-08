@@ -92,6 +92,10 @@ export default function QuickAdd() {
   const target = useRef<Target | null>(null);
   const rowsRef = useRef<MapRow[]>([]);
   rowsRef.current = rows;
+  // Live mirror of `phase` for closeNow: correct-on-close only runs the list while it is the one
+  // shown ("ok") — on nopin / error / loading `rows` still holds the previously loaded list.
+  const phaseRef = useRef<Phase>("loading");
+  phaseRef.current = phase;
   // Live mirror of `find` so the once-built summon listener can tell whether the user has begun
   // typing since the reset — the seed read is awaited (AT-SPI up to ~1s; the Windows clipboard
   // rendezvous up to ~6.5s under RDP) AFTER the field is made interactive, so a slow seed must not
@@ -256,7 +260,8 @@ export default function QuickAdd() {
     if (!t) return false;
     // A retry (badge click / summon auto-retry) can run while the 600ms debounce is still
     // armed — CANCEL it, don't just null the handle: an orphaned timeout would fire a second,
-    // concurrent PATCH of the same rows (and closeNow's `pending` bookkeeping would miss it).
+    // concurrent PATCH of the same rows (and closeNow flushes only while a timer is armed, so it
+    // would never notice an orphaned one).
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = null;
     // Mark in flight: the badge shows progress, and the summon auto-retry / a badge
@@ -422,16 +427,11 @@ export default function QuickAdd() {
   }, [find, insert, mutate]);
 
   const closeNow = useCallback(() => {
-    const pending = saveTimer.current !== null;
-    if (saveTimer.current) {
-      window.clearTimeout(saveTimer.current);
-      saveTimer.current = null;
-    }
-    if (pending) void flushSave(); // persist a debounced edit before hiding
+    if (saveTimer.current !== null) void flushSave(); // persist a debounced edit before hiding (flushSave cancels the timer itself)
     // Correct-on-close: run the current list over the word we seeded from the selection; if it
     // changed, replace the still-selected word in the source app with the result (see helper).
     const original = originalSelectionRef.current;
-    const corrected = original ? applyMap(original, rowsRef.current) : null;
+    const corrected = original && phaseRef.current === "ok" ? applyMap(original, rowsRef.current) : null;
     originalSelectionRef.current = null; // one-shot — don't re-correct on a later close
     void hideQuickAdd().catch((e) => console.error("quick-add hide failed:", e));
     if (original && corrected && corrected !== original && generalRef.current) {
