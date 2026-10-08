@@ -287,7 +287,9 @@ describe("a sync composed with a degraded keyring", () => {
         useApp.setState({ backends: [...useApp.getState().backends, added] });
         api.keys = {};
         await approvePendingReview();
-        if (getPendingReview()) await approvePendingReview(); // a relist under the locked judge
+        // Judged under the categories the apply runs with: the held-out backends (the peer's
+        // stored key) must not relist a review whose rows can never land.
+        expect(getPendingReview()).toBeNull();
         const st = useApp.getState();
         expect(st.settings.transcribe?.dictationRetentionDays).toBe(1); // the approved change applied
         // A rename is not held back: the raise already applied it, before the add here.

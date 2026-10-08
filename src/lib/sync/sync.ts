@@ -2368,6 +2368,20 @@ async function takeSyncLock(myGen: number): Promise<boolean> {
   return true;
 }
 
+/** The idle-transition re-run of a pull-apply parked while dictation ran: a fresh pull under the
+ *  engine lock, which re-merges the current server document against the live store, re-runs the
+ *  security gates and adopts the base. Waits out a running pull/push instead of dropping on its
+ *  `inFlight` — the reconcile that parked may still hold the lock (a review raise reads the
+ *  keyring after its parked apply). Dropped on a supersede, which starts its own pull. */
+async function rePullAfterSession(): Promise<void> {
+  const myGen = gen;
+  while (inFlight) {
+    await new Promise((r) => setTimeout(r, 50));
+    if (myGen !== gen) return;
+  }
+  if (myGen === gen && canSync()) await pullNow(true);
+}
+
 /** Pull the server blob and reconcile it into the running app. `manual` also
  *  re-applies when the version hasn't moved (a "make it so" button press). */
 export async function pullNow(manual = false): Promise<void> {
@@ -3259,7 +3273,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     st0.profiles !== st1.profiles ||
     st0.appRules !== st1.appRules;
   // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
-  let localNow = await composeLive(r.cats, state.snapshot ?? r.remote);
+  const localNow = await composeLive(r.cats, state.snapshot ?? r.remote);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // The keyring can lock between the raise and this approval: a degraded compose carries the
   // base's (or remote's) backends category, not this device's list, so the merge reads backends
@@ -3314,12 +3328,10 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     });
     return "prompt";
   }
-  // A degraded keyring re-sends the snapshot's backends category (the peer's view, again): judge
-  // against the live list with no keys instead, so every incoming address / key still raises.
-  if (degradedNow) {
-    localNow = { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } };
-  }
-  const now = gatedSecurityCheck(blobNow, localNow, r.cats);
+  // Judge under the categories the apply below runs with: a degraded keyring holds backends out
+  // of it, so judging them under `r.cats` relisted rows (a peer's stored keys) that never land.
+  const applyCats = degradedNow ? { ...r.cats, backends: false } : r.cats;
+  const now = gatedSecurityCheck(blobNow, localNow, applyCats);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
     // Judged against the store as it is now: a later approval compares against that. The gates
@@ -3328,7 +3340,6 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     return "prompt";
   }
   pendingReview = null;
-  const applyCats = degradedNow ? { ...r.cats, backends: false } : r.cats;
   const applied = await applyBlob(blobNow, applyCats);
   if (myGen !== gen) return "done";
   if (!applied) {
@@ -3495,8 +3506,8 @@ async function resolveLocked(
   const degradedNow = backendsDegraded(localNow, syncedCats);
   const degraded = backendsDegraded(c.local, syncedCats) || degradedNow;
   const applyCats = degraded ? { ...syncedCats, backends: false } : syncedCats;
-  // Judged against the live list with no keys when degraded, as approvePendingReview does, so
-  // every incoming address / key still raises.
+  // Judged against the live list with no keys when degraded, so every incoming address / key
+  // still raises.
   const judgeLocal = degradedNow
     ? { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } }
     : localNow;
@@ -3633,11 +3644,14 @@ export async function initSync(): Promise<void> {
       s.profiles === prev.profiles &&
       s.appRules === prev.appRules
     ) {
-      // Re-run a deferred pull-apply once dictation lands back at idle.
+      // A pull-apply parked while dictation ran: re-pull once the session lands back at idle
+      // rather than re-applying the parked blob. That direct re-apply ran outside the engine lock
+      // and adopted no base, so a pull landing a newer version during its keyring wait got the
+      // older blob hydrated back over it (and the next push shipped the revert). Only pull and
+      // 409 reconciles park (one-shot callers pre-check status), so the opts carry nothing here.
       if (pendingApply && s.status === "idle" && prev.status !== "idle") {
-        const p = pendingApply;
         pendingApply = null;
-        void applyBlob(p.blob, p.cats, 2, p.opts);
+        void rePullAfterSession();
       }
       return;
     }
