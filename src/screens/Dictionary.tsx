@@ -353,7 +353,7 @@ function RuleCard({
                         />
                         {bodyEditable && (
                           <>
-                            <button type="button" aria-expanded={noteShown} title={noteShown ? "Hide note" : "Add a note"}
+                            <button type="button" aria-expanded={noteShown} title={noteShown ? "Hide note" : hasNote ? "Show note" : "Add a note"}
                               onClick={() => {
                                 if (!noteShown && !hasNote) setNoteFocusId(row.id);
                                 setNoteShow((m) => new Map(m).set(row.id, !noteShown));
@@ -395,7 +395,12 @@ function RuleCard({
                           <span className="w-12 shrink-0 pt-2 text-right font-mono text-[11px] text-faint">note</span>
                           <textarea value={row.note ?? ""} disabled={inputsDisabled} rows={2} autoFocus={row.id === noteFocusId}
                             placeholder="note (optional)"
-                            onChange={(ev) => setRow({ note: ev.target.value })}
+                            onChange={(ev) => {
+                              // Pin the open state first: a note shown only because it had text
+                              // (no explicit toggle) otherwise unmounted the moment it was cleared.
+                              if (!noteShow.has(row.id)) setNoteShow((m) => new Map(m).set(row.id, true));
+                              setRow({ note: ev.target.value });
+                            }}
                             className="ring-signal min-w-0 flex-1 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text placeholder:italic placeholder:text-faint disabled:opacity-50" />
                         </div>
                       )}
