@@ -9,7 +9,7 @@
 // later half-configured state is the Home checklist's job (SetupChecklist).
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { BrandMark } from "@/components/Sidebar";
+import { BrandMark, Wordmark } from "@/components/Sidebar";
 import { TriggerTile } from "@/components/TriggerTile";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { Button, Labeled, Notice, Select, TextInput } from "@/components/ui";
@@ -235,12 +235,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         <div className="flex items-center gap-3">
           <BrandMark />
           <div className="text-left leading-none">
-            <div className="font-display text-[20px] font-[430] tracking-tight text-text">
-              faster<span className="font-[730] text-accent">whisper</span>
-            </div>
-            <div className="mt-1 font-mono text-[12px] uppercase tracking-label text-faint">
-              <span className="font-bold text-accent">&gt;</span> frontend
-            </div>
+            <Wordmark />
           </div>
         </div>
 

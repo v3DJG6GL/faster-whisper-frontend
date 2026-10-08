@@ -180,6 +180,13 @@ export function AudioTab() {
         // with the button stuck on Stop — end the test (cleanup stops + unlistens).
         console.error("mic test failed to start:", e);
         if (active) {
+          // Say why, as the late path (endTest) does — a device lost before the start
+          // settled is reported as such, anything else is an open failure.
+          setTestNote(
+            endedEarly && endReason === "device-lost"
+              ? "The microphone stopped delivering audio, so the test ended."
+              : "The microphone could not be opened, so the test ended.",
+          );
           setMicWarming(false);
           setTesting(false);
         }

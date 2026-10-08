@@ -199,6 +199,11 @@ function RuleCard({
   useEffect(() => {
     if (justAddedId !== null) setJustAddedId(null);
   }, [justAddedId]);
+  // Same one-shot for a just-opened empty note: focus it once, not on every re-expand of the rule.
+  const [noteFocusId, setNoteFocusId] = useState<number | null>(null);
+  useEffect(() => {
+    if (noteFocusId !== null) setNoteFocusId(null);
+  }, [noteFocusId]);
 
   const setEntries = (fn: (rows: EntryRow[]) => EntryRow[]) =>
     onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));
@@ -349,7 +354,10 @@ function RuleCard({
                         {bodyEditable && (
                           <>
                             <button type="button" aria-expanded={noteShown} title={noteShown ? "Hide note" : "Add a note"}
-                              onClick={() => setNoteShow((m) => new Map(m).set(row.id, !noteShown))}
+                              onClick={() => {
+                                if (!noteShown && !hasNote) setNoteFocusId(row.id);
+                                setNoteShow((m) => new Map(m).set(row.id, !noteShown));
+                              }}
                               className={cn(
                                 "ring-signal inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] transition-colors",
                                 hasNote ? "text-accent" : "text-faint hover:text-dim",
@@ -385,7 +393,7 @@ function RuleCard({
                       {noteShown && (
                         <div className="flex items-start gap-3">
                           <span className="w-12 shrink-0 pt-2 text-right font-mono text-[11px] text-faint">note</span>
-                          <textarea value={row.note ?? ""} disabled={inputsDisabled} rows={2} autoFocus={!hasNote}
+                          <textarea value={row.note ?? ""} disabled={inputsDisabled} rows={2} autoFocus={row.id === noteFocusId}
                             placeholder="note (optional)"
                             onChange={(ev) => setRow({ note: ev.target.value })}
                             className="ring-signal min-w-0 flex-1 rounded-xl border border-line bg-surface-2 px-3 py-2 text-[12px] leading-relaxed text-text placeholder:italic placeholder:text-faint disabled:opacity-50" />

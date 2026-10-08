@@ -314,6 +314,7 @@ export default function Settings() {
           return;
         }
         moveError = null;
+        setStoreMsg(null);
         setBusy("dir", true);
         try {
           // A coalesced record write captured BEFORE the move would land after it and put
@@ -345,6 +346,7 @@ export default function Settings() {
   const resetRecDir = () => {
     if (busy.dir || busy.store) return;
     moveError = null;
+    setStoreMsg(null);
     setBusy("dir", true);
     dropPendingWrites();
     void moveAudioBase(basePref, null)

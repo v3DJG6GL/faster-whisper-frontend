@@ -86,6 +86,23 @@ export function BrandMark() {
   );
 }
 
+export function Wordmark() {
+  // Family wordmark grammar (shared with faster-whisper-backend): light "faster" in ink
+  // + bold "whisper" in accent, and an accent "&gt;" prompt before the role label.
+  // Mirrored in docs/brand/logo.html — keep the two in sync. Used by the sidebar and
+  // the first-run Onboarding screen; the caller supplies the wrapper's alignment.
+  return (
+    <>
+      <div className="font-display text-[20px] font-[430] tracking-tight text-text">
+        faster<span className="font-[730] text-accent">whisper</span>
+      </div>
+      <div className="mt-1 font-mono text-[12px] uppercase tracking-label text-faint">
+        <span className="font-bold text-accent">&gt;</span> frontend
+      </div>
+    </>
+  );
+}
+
 /** Setup guidance dot while the app isn't dictation-ready: amber marks the next
  *  step's screen (Backends first, then Profiles), green marks a completed step —
  *  both vanish once a backend AND a profile exist (mirrors the Home checklist). */
@@ -150,15 +167,7 @@ export function Sidebar() {
       <div className="flex items-center gap-3 px-5 pb-5 pt-6">
         <BrandMark />
         <div className="leading-none">
-          {/* Family wordmark grammar (shared with faster-whisper-backend): light "faster"
-              in ink + bold "whisper" in accent, and an accent "&gt;" prompt before the
-              role label. Mirrored in docs/brand/logo.html — keep the two in sync. */}
-          <div className="font-display text-[20px] font-[430] tracking-tight text-text">
-            faster<span className="font-[730] text-accent">whisper</span>
-          </div>
-          <div className="mt-1 font-mono text-[12px] uppercase tracking-label text-faint">
-            <span className="font-bold text-accent">&gt;</span> frontend
-          </div>
+          <Wordmark />
         </div>
       </div>
 

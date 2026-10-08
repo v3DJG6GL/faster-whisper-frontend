@@ -475,9 +475,12 @@ export function Stepper({
     // Focusing and leaving an inheriting field changes nothing, nor does emptying it or leaving
     // a lone "-" / ".": only a typed number overrides. An untouched field is unchanged even when
     // the inherited value moved under it while focused (the text still holds the old one);
-    // retyping the inherited value is unchanged too, while typing `min` with no numeric
-    // inherited value still overrides.
-    const unchanged = !editedRef.current || (inherited !== undefined && text === String(value));
+    // retyping the inherited value is unchanged too — in any spelling ("05", "0.50"), and without
+    // clamping, so an out-of-range inherited value retyped verbatim isn't pinned to the bound —
+    // while typing `min` with no numeric inherited value still overrides.
+    const unchanged =
+      !editedRef.current ||
+      (inherited !== undefined && (text === String(value) || (Number.isFinite(n) && round(n) === value)));
     if (inheriting && (unchanged || !Number.isFinite(n))) {
       setText(String(value));
       return;
