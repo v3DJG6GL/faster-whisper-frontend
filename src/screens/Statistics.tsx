@@ -36,7 +36,10 @@ export default function Statistics() {
   // declaration order, and a child's (StatisticsView's) would run before both.
   useEffect(() => openStatisticsPage(), []);
   const setScope = (scope: UsageScope) => setState((s) => ({ ...s, scope }));
-  const setQuery = (query: UsagePageQuery) => setState((s) => ({ ...s, query }));
+  // Re-clicking the selected range hands back an equal but fresh object; keeping the state
+  // stops the query effect from storing it and refetching the whole page document.
+  const setQuery = (query: UsagePageQuery) =>
+    setState((s) => (JSON.stringify(s.query) === JSON.stringify(query) ? s : { ...s, query }));
   const setMetric = (metric: ChartMetric) => setState((s) => ({ ...s, metric }));
   const setRhythm = (rhythm: Rhythm) => setState((s) => ({ ...s, rhythm }));
   return (

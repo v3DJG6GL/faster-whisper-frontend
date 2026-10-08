@@ -294,15 +294,19 @@ export function initUsageController(): void {
     } else if (
       (state.usage !== prev.usage &&
         state.backends.some((b) => hasOwn(prev.usage, b.id) && !hasOwn(state.usage, b.id))) ||
-      (evictTimer !== undefined && state.settings.sync?.urlOverrides !== prev.settings.sync?.urlOverrides)
+      (state.settings.sync?.urlOverrides !== prev.settings.sync?.urlOverrides &&
+        (evictTimer !== undefined || state.backends.some((b) => !hasOwn(state.usage, b.id))))
     ) {
       // A live backend's cached usage was dropped without bKey moving — an API-key rotation
       // (forgetBackendCaches) or a URL override (setUrlOverride): refetch it soon, not on the
       // next tick. Debounced: the override field writes on every keystroke, and a pass per
       // half-typed address would send the key to each of them. Only the FIRST keystroke
-      // evicts (the key is already gone for the rest), so a pending pass is re-armed on every
-      // override change too — it runs 1 s after the LAST one. refreshOne only ever adds
-      // keys, so this cannot loop.
+      // evicts (the key is already gone for the rest), so every override change re-arms the
+      // pass while one is pending OR a live backend's usage is still missing — the latter
+      // covers a keystroke landing while the debounced pass's fetch to the half-typed address
+      // is still in flight (no timer then, and that fetch bails on the moved target without
+      // re-adding the key). It runs 1 s after the LAST change. This fires only on an override
+      // change and refreshAll folds overlapping passes, so it cannot loop.
       clearTimeout(evictTimer);
       evictTimer = setTimeout(() => {
         evictTimer = undefined;

@@ -178,6 +178,31 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await settle();
   });
+  it("refetches when an override keystroke lands while the eviction pass's fetch is in flight", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    getUsageStats.mockClear();
+    let release!: (v: null) => void;
+    getUsageStats.mockImplementationOnce(() => new Promise((r) => (release = r)) as never);
+    useApp.getState().setUrlOverride("b1", "http://1"); // evicts b1
+    await vi.advanceTimersByTimeAsync(1_000); // the debounced pass starts; its fetch hangs
+    await settle();
+    expect(calls().fixed).toBe(1);
+    // No timer is pending now and b1's key is already gone — the next keystroke must still re-arm.
+    useApp.getState().setUrlOverride("b1", "http://10.0");
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+    // The held fetch resolves against the old address and bails without re-adding b1…
+    release(null);
+    await settle();
+    // …so the folded rerun is the one that fetches the new address.
+    expect(calls().fixed).toBe(2);
+    expect("b1" in useApp.getState().usage).toBe(true);
+    // Restore, and let the pass it arms run before the next case.
+    useApp.getState().setUrlOverride("b1", null);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {
