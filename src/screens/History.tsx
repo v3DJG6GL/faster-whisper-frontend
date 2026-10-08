@@ -238,8 +238,10 @@ function RecordingPlayer({ path }: { path: string }) {
           const next = seekKeyTarget(e.key, a.currentTime, len || 0, e.shiftKey);
           if (next === null) return;
           e.preventDefault();
-          if (next === "toggle") toggle();
-          else {
+          // Space toggles once per press: a held key auto-repeats.
+          if (next === "toggle") {
+            if (!e.repeat) toggle();
+          } else {
             a.currentTime = next;
             setCur(next);
           }

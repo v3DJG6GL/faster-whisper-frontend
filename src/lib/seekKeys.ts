@@ -2,7 +2,9 @@
  *  Page keys jump, Home/End clamp, Space toggles playback. Pure so it is testable
  *  without a DOM; returns the clamped target time, "toggle", or null (not ours).
  *  A non-positive audioLen means the length is unknown (e.g. a WebM whose
- *  duration is still Infinity): forward steps are not clamped and End is a no-op. */
+ *  duration is still Infinity): forward steps are not clamped and End is a no-op.
+ *  Space is a once-per-press toggle: callers still preventDefault on a key
+ *  auto-repeat (so a held Space never scrolls) but only toggle when !e.repeat. */
 export function seekKeyTarget(
   key: string,
   curTime: number,

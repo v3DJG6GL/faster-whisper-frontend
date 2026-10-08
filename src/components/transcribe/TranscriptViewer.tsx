@@ -1701,7 +1701,14 @@ export function TranscriptViewer({
                 // so this one has to own them — a focusable ARIA slider without
                 // keyboard seeking was dead on exactly the control built for it.
                 onKeyDown={(e) => {
-                  const next = seekKeyTarget(e.key, curTime, audioLen || 0, e.shiftKey);
+                  // Step from the live position: curTime only refreshes every
+                  // ~0.24 s of playback, so a step from it landed off by that much.
+                  const next = seekKeyTarget(
+                    e.key,
+                    audioRef.current?.currentTime ?? curTime,
+                    audioLen || 0,
+                    e.shiftKey,
+                  );
                   if (next === "toggle") {
                     e.preventDefault();
                     // Arrows keep repeating (they step); Space toggles once per press.

@@ -45,7 +45,9 @@ export function Toggle({
 }: {
   /** `"mixed"` renders the tri-state look (centered accent knob) used by
    *  group master switches; the parent computes the click semantics
-   *  (mixed → all-on → all-off) — `onChange` still receives a boolean. */
+   *  (mixed → all-on → all-off) — `onChange` still receives a boolean.
+   *  ARIA `switch` has no mixed value, so the mixed state is exposed as a
+   *  tri-state checkbox instead (otherwise screen readers announce "off"). */
   checked: boolean | "mixed";
   onChange: (v: boolean) => void;
   disabled?: boolean;
@@ -55,7 +57,7 @@ export function Toggle({
   return (
     <button
       type="button"
-      role="switch"
+      role={mixed ? "checkbox" : "switch"}
       aria-checked={mixed ? "mixed" : checked}
       aria-label={ariaLabel}
       disabled={disabled}
