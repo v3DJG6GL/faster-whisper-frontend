@@ -363,8 +363,10 @@ pub(crate) async fn inject_text(
     // `inject::rdp_client`): the focused app id against the known clients, and — Windows — the focused
     // window's class, which also catches the RDP control hosted by RDCMan/mRemoteNG & co. The
     // per-app rule overrides both when it says On/Off; `None` is "Auto". Both are logged so a
-    // support log shows WHICH detector fired and whether the rule overrode it.
+    // support log shows WHICH detector fired and whether the rule overrode it. A bare auto-Enter
+    // (empty text) touches no clipboard, so there is nothing remote-specific to resolve or log.
     let remote_target = method != "direct"
+        && !text.is_empty()
         && {
             let by_exe = focused_now
                 .as_ref()

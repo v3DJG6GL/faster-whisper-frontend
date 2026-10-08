@@ -17,6 +17,8 @@ use std::time::Duration;
 pub const MAX_TRACKS: usize = 12;
 pub const MAX_SRT_BYTES: usize = 2 * 1024 * 1024;
 /// A 10 GB upload or download on a slow link: hours, not the run's ceiling.
+/// The one ceiling for any multi-GB video transfer (server fetch, local pull,
+/// export), so retuning a run timeout never cuts a long video short.
 pub const MEDIA_EXPORT_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
 /// The `too_large` sentence, whether the command's early size check or the
 /// upload's own check refuses the file.

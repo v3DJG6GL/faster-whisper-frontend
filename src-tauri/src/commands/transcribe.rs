@@ -225,7 +225,7 @@ async fn fetch_link_media(
     let (dir, timeout) = if video {
         (
             crate::store::transcripts::video_media_dir(app, audio_base)?,
-            transport::batch::FILE_TRANSCRIBE_TIMEOUT * 4,
+            transport::media::MEDIA_EXPORT_TIMEOUT,
         )
     } else {
         (

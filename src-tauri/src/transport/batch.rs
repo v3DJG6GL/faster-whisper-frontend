@@ -1864,7 +1864,7 @@ pub struct UrlMediaDownload {
 
 /// A 10 GB video on a slow uplink: the server's own wall clock for one video
 /// download is an hour by default; give the request room past that.
-const URL_VIDEO_TIMEOUT: Duration = Duration::from_secs(4 * 3600);
+const URL_VIDEO_TIMEOUT: Duration = super::media::MEDIA_EXPORT_TIMEOUT;
 
 /// Ask the server to fetch a link's VIDEO into its media store on demand
 /// (the export panel's path for a run that did not keep it). Progress rides

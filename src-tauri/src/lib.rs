@@ -119,8 +119,9 @@ fn xdg_open_command(target: &str, strip: &[&str]) -> std::process::Command {
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
     let mut cmd = std::process::Command::new("xdg-open");
-    // Its own process group, as the plugin's detached spawn leaves it: the launched browser or
-    // file manager must not share ours (a signal to the app's group would reach it too).
+    // Its own process group (the plugin's detached spawn goes further, with setsid): a signal to
+    // the app's group, e.g. Ctrl+C in the launching terminal, must not reach the launched browser
+    // or file manager.
     cmd.arg(target)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
