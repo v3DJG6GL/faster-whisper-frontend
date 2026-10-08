@@ -280,15 +280,19 @@ pub async fn cancel_record(
         // session, and disowning here would instead kill a legitimate earlier transcription that
         // is still in flight (stop A → start B → cancel B would have discarded A's result). Nor
         // for a recovery cancel (`discard_recording: false`), where the saved audio may be the
-        // only copy of what was said.
+        // only copy of what was said: that keep is final, so a later Cancel cannot disown it.
         let sess = {
             let mut guard = state
                 .0
                 .lock()
                 .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
-            if sess.is_none() && discard_recording {
-                session::cancel_detached_batch();
+            if sess.is_none() {
+                if discard_recording {
+                    session::cancel_detached_batch();
+                } else {
+                    session::forget_detached_batch();
+                }
             }
             session::retire_active_epoch();
             sess

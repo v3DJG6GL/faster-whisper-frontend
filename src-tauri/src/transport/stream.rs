@@ -260,6 +260,9 @@ pub async fn run<F>(
             // and the log.
             let m = super::bounded_server_text(&$msg, super::MAX_ERROR_TEXT);
             tracing::warn!("[stream] {m}");
+            // A stop during setup already claimed the discard slot: retire it here too, or the
+            // next session's Cancel takes it and logs a discard for a session that saved nothing.
+            let _ = crate::session::settle_detached_stream(&params.discard);
             on_event(StreamEvent::Error(m));
             on_event(StreamEvent::Closed);
             return;

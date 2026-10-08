@@ -101,7 +101,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // blamed on the scheme.
       const typed = stripUrlNoise(url.trim());
       setError(
-        /^https?:/i.test(storedTypedUrl(url))
+        !typed
+          ? "Enter the server’s address, like http://host:8000."
+          : /^https?:/i.test(storedTypedUrl(url))
           ? "Enter the server’s host too, like http://host:8000."
           : /^[a-z][a-z0-9+.-]*:[\\/]/i.test(typed)
             ? "Enter an address like http://host:8000 — that scheme isn’t supported."

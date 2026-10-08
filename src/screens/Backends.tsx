@@ -790,7 +790,9 @@ function ConnectStep({
       // `host:port` or `host:` is a bad port, and blaming the scheme pointed at the wrong part.
       const typed = stripUrlNoise(typedUrl.trim());
       setError(
-        /^https?:/i.test(storedTypedUrl(typedUrl))
+        !typed
+          ? "Enter the server’s address, like http://host:8000."
+          : /^https?:/i.test(storedTypedUrl(typedUrl))
           ? "Enter the server’s host too, like http://host:8000."
           : /^[a-z][a-z0-9+.-]*:[\\/]/i.test(typed)
             ? "Enter an address like http://host:8000 — that scheme isn’t supported."

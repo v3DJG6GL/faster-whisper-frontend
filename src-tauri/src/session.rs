@@ -92,6 +92,14 @@ pub fn cancel_detached_batch() {
     mark_batch_cancelled(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst));
 }
 
+/// A recovery cancel's keep is final (the batch twin of [`forget_detached_stream`]): no later
+/// Cancel that finds no live session — the next session's start window — may still disown the
+/// transcription it kept and delete its `.wav`. Called under the `RecordState` lock, as every
+/// claim is.
+pub fn forget_detached_batch() {
+    DETACHED_BATCH_EPOCH.store(0, Ordering::SeqCst);
+}
+
 /// Was the detached transcription for `epoch` cancelled? Epoch 0 is "none detached yet".
 fn batch_cancelled(epoch: u64) -> bool {
     epoch != 0
@@ -1818,7 +1826,8 @@ Sink Input #12\n\
     #[test]
     fn a_later_cancel_keeps_an_earlier_batch_cancelled() {
         use super::{
-            batch_cancelled, cancel_detached_batch, mark_batch_cancelled, DETACHED_BATCH_EPOCH,
+            batch_cancelled, cancel_detached_batch, forget_detached_batch, mark_batch_cancelled,
+            DETACHED_BATCH_EPOCH,
         };
         use std::sync::atomic::Ordering;
         // Epochs far above anything a real session claims in a test run.
@@ -1832,5 +1841,10 @@ Sink Input #12\n\
         assert!(batch_cancelled(b));
         assert!(!batch_cancelled(c));
         assert!(!batch_cancelled(0));
+        // A recovery cancel kept C: a later stray Cancel finds nothing to disown.
+        DETACHED_BATCH_EPOCH.store(c, Ordering::SeqCst);
+        forget_detached_batch();
+        cancel_detached_batch();
+        assert!(!batch_cancelled(c), "a kept transcription stays kept");
     }
 }

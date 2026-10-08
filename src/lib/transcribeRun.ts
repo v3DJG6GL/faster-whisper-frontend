@@ -13,7 +13,7 @@ import {
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
 } from "./api";
 import {
-  describeTransportError, errorText, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText,
+  errorText, handedOffDoorway, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText,
 } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
@@ -506,8 +506,8 @@ export interface RunContext {
    *  (caps not loaded): only a standard server is assumed to lack it. */
   translationAvailable?: boolean;
   /** The server's translation target limit (caps' translation_max_targets) when it translates:
-   *  a retry cuts the last run's targets to it, as run() cuts the chips. Unset = unknown or no
-   *  translation, no client cut. */
+   *  translateParsed cuts to it (the text route rejects a longer list outright; the audio route
+   *  drops the extras itself, with a warning). Unset = unknown or no translation, no client cut. */
   translationMaxTargets?: number;
   /** The server packages subtitles (caps.media_package_enabled): a local
    *  VIDEO file then asks the server to retain the upload for a while, so
@@ -1648,13 +1648,20 @@ export async function translateParsed(
   progressId?: string | null,
   epoch?: number,
 ): Promise<BatchResult> {
-  const targets = options.translateTo ?? [];
+  // Over the server's limit the text route rejects the whole request: keep the first ones and
+  // name the rest, in the audio route's own words (it drops them server-side).
+  const all = options.translateTo ?? [];
+  const cap = ctx.translationMaxTargets;
+  const targets = cap !== undefined && all.length > cap ? all.slice(0, cap) : all;
   // Chunk well under the transport's 512-text cap — a feature-length .srt
   // easily exceeds it, and each chunk is one server round trip.
   const CHUNK = 400;
   const results: Record<string, string>[] = [];
   const keptAll: string[][] = [];
   const warnings: string[] = [];
+  if (targets.length < all.length) {
+    warnings.push(`translation targets over TRANSLATION_MAX_TARGETS (${cap}) were dropped: ${all.slice(targets.length).join(", ")}`);
+  }
   let model: string | undefined;
   let source: string | undefined;
   let plan: PlanStage[] | undefined;
@@ -2121,11 +2128,8 @@ async function pump(
         const backendName =
           useApp.getState().backends.find((b) => b.id === ctx.backendId)?.name ?? "the backend";
         const kind = isText ? "translate" : "transcribe";
-        const d = describeTransportError(kind, e, backendName);
         useApp.getState().setLogsDoorway(
-          handedOff
-            ? { msg: `${d.title} The server may still finish it — the transcript then appears in History on its own.`, showLogs: d.showLogs }
-            : transportErrorDoorway(kind, e, backendName),
+          handedOff ? handedOffDoorway(kind, backendName) : transportErrorDoorway(kind, e, backendName),
         );
       } finally {
         pollingDone = true;
@@ -2229,14 +2233,11 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  frozen targets. A missing slice stays missing: filled in as an explicit empty list it would
  *  turn a site plan's frozen targets back on (`linkTranslateTo`) while the rail, which reads
  *  the un-reconciled `lastOptions`, shows no Translating stage. `translationAvailable` unset =
- *  unknown (caps not loaded): only a standard server is assumed to lack it. A kept slice is cut
- *  to that server's `maxTargets` (first ones in list order, as run() cuts the chips): sent over
- *  it, a subtitle or text file's translation is rejected outright. */
+ *  unknown (caps not loaded): only a standard server is assumed to lack it. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
   translationAvailable?: boolean,
-  maxTargets?: number,
 ): TranscribeOptions | undefined {
   if (!opts) return standard ? { standard: true } : undefined;
   const out: TranscribeOptions = {
@@ -2250,8 +2251,6 @@ export function reconcileRetryOptions(
     delete out.translationModel;
     delete out.translationGlossary;
     delete out.translationContextSegments;
-  } else if (maxTargets !== undefined && out.translateTo && out.translateTo.length > maxTargets) {
-    out.translateTo = out.translateTo.slice(0, maxTargets);
   }
   return out;
 }
@@ -2275,7 +2274,7 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
   void pump(
     s.epoch,
-    reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable, ctx.translationMaxTargets),
+    reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable),
     ctx,
   );
 }

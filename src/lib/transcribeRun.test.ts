@@ -750,18 +750,6 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions(undefined, false, true)).toBeUndefined();
   });
 
-  it("a kept slice is cut to the retry server's translation limit", () => {
-    // A list over a lower server's limit: the text route would reject it whole.
-    const opts = { translateTo: ["de", "fr", "es"], translationMode: "fluent" as const, diarize: true };
-    expect(reconcileRetryOptions(opts, false, true, 2)).toEqual({ ...opts, translateTo: ["de", "fr"], standard: undefined });
-    // Within the limit, or no known limit: untouched.
-    expect(reconcileRetryOptions(opts, false, true, 3)).toEqual({ ...opts, standard: undefined });
-    expect(reconcileRetryOptions(opts, false, true, undefined)).toEqual({ ...opts, standard: undefined });
-    // A stripped slice stays stripped; a missing one stays missing.
-    expect(reconcileRetryOptions(opts, false, false, 2)).toEqual({ diarize: true, standard: undefined });
-    expect(reconcileRetryOptions({ diarize: true }, false, true, 2)).toEqual({ diarize: true, standard: undefined });
-  });
-
   it("no last options: a standard server still gets its flag", () => {
     expect(reconcileRetryOptions(undefined, true)).toEqual({ standard: true });
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
@@ -1254,6 +1242,13 @@ describe("a ledgered file whose request lost contact", () => {
     expect(doorway).not.toContain("try again");
   });
 
+  it("a handed-off connect failure does not also claim nothing was started", async () => {
+    const { watch, doorway } = await run("Could not connect — is the server running and the URL correct?");
+    expect(watch).toHaveBeenCalled();
+    expect(doorway).toContain("History");
+    expect(doorway).not.toContain("nothing was started");
+  });
+
   it("a server answer (HTTP 500) still forgets the row and is never watched", async () => {
     const { pid, watch, rows, records, doorway } = await run("HTTP 500: boom");
     expect(doorway).not.toContain("History");
@@ -1306,6 +1301,29 @@ describe("translateParsed joins a text source like the TXT export", () => {
       { segments: [{ text: "Hi." }, { text: "How are you?" }] }, { translateTo: ["ja", "de"] }, ctx,
     );
     expect(r.translations).toEqual({ ja: "やあ。元気？", de: "Hallo. Wie geht's?" });
+  });
+
+  it("a list over the server's limit sends the first ones and names the rest", async () => {
+    // The text route rejects an over-limit list whole (a link's frozen site plan, a list kept
+    // from a higher-limit backend): cut it here, in the audio route's own warning words.
+    translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
+    const r = await translateParsed(
+      { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, { ...ctx, translationMaxTargets: 2 },
+    );
+    expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+    expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
+  });
+
+  it("within the limit, or with no known limit, the whole list goes out without a warning", async () => {
+    translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
+    for (const max of [2, undefined]) {
+      translateText.mockClear();
+      const r = await translateParsed(
+        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, { ...ctx, translationMaxTargets: max },
+      );
+      expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+      expect(r.warnings ?? []).toEqual([]);
+    }
   });
 });
 

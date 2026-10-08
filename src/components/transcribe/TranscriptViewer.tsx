@@ -688,7 +688,8 @@ export function TranscriptViewer({
               contextSegments: trOv?.contextSegments ?? null,
               progressId: pid,
             });
-          if (groups.length === 1) return ask(targets);
+          // A Cancel during the caps refresh above falls through to the loop, which sends nothing.
+          if (groups.length === 1 && !ctl.cancelled) return ask(targets);
           // More languages than one request may carry: ask per group, in turn, and fold
           // the answers into one — every language is still translated, none dropped.
           const parts: TextTranslationResult[] = [];

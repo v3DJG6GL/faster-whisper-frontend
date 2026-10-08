@@ -147,6 +147,20 @@ export function translateFailureDoorway(
   return { msg: `Translation failed (${shortCause(e)})${tail}`, showLogs: true };
 }
 
+/** The doorway for a run whose request lost contact and was handed to its headless watcher:
+ *  never "nothing was started" (a dropped connect may have reached the server) and never
+ *  "try again" (a retry stops the watcher and deletes the job that would land in History). */
+export function handedOffDoorway(
+  kind: TransportErrorKind,
+  backendLabel: string,
+): { msg: string; showLogs: boolean } {
+  const label = safeDisplayText(backendLabel, 80) || "the backend";
+  return {
+    msg: `Lost contact with ${label} while ${GERUND[kind]}. The server may still finish it — the transcript then appears in History on its own.`,
+    showLogs: true,
+  };
+}
+
 /** The failure-doorway payload for setLogsDoorway: title + fix in one line,
  *  "View logs" offered only when the log holds more than the line says. */
 export function transportErrorDoorway(

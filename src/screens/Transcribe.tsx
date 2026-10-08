@@ -558,7 +558,7 @@ export default function Transcribe() {
     // stage this run would not actually request: a link translates what runLink
     // sends (linkTranslateTo — none when its site tracks cover every target, its
     // frozen targets even after the chips are cleared), every other file the chips.
-    const runT = translationAvailable ? translateTo.slice(0, maxTranslationTargets(caps)) : [];
+    const runT = translationAvailable ? translateTo : [];
     const targetsOf = (p: string) => (isSourceUrl(p) ? (linkTranslateTo({ translateTo: runT }, urlMeta[p]) ?? []) : runT);
     const warmTargets = translationAvailable ? files.map(targetsOf).find((t) => t.length > 0) : undefined;
     // A text source only runs the translation stage, and the pump fails it without targets.
@@ -746,7 +746,7 @@ export default function Transcribe() {
   // took is cut back (first ones in list order kept). Only on that release, and never below
   // the length it took: a list chosen on a backend with a higher limit must survive a visit,
   // a preview or a run on a lower one. The stored list may thus stay over the limit (the
-  // counter shows it in warn); run() caps the wire, so it is never sent over.
+  // counter shows it in warn); a run then translates the first ones and warns about the rest.
   useEffect(() => {
     if (siteChips && !panelHeldChips.current) {
       panelHeldChips.current = true;
@@ -901,11 +901,11 @@ export default function Transcribe() {
     // Backend defaults only seed the toggle, they never force the stage on
     // (an invisible fallback made translation impossible to switch off and
     // silently swallowed an explicit Translate-to-English).
-    // Capped at the server's translation limit on the wire only (first ones in list order, the
-    // release cut's own rule): the stored list may stay over a lower server's limit, but sent
-    // whole, a subtitle or text file's translation is rejected outright. A link with a frozen
-    // site plan sends its own site.mtTargets (linkTranslateTo), which this cut leaves alone.
-    const effTargets = translationAvailable ? translateTo.slice(0, maxTranslationTargets(caps)) : [];
+    // Sent whole even over a lower server's limit: the audio route drops the extras with a
+    // result warning naming them, and translateParsed (subtitle/text files, a link's site
+    // transcript) cuts to ctx.translationMaxTargets with the same warning — sent whole there,
+    // the text route rejects the whole translation.
+    const effTargets = translationAvailable ? translateTo : [];
     const t2t = effTargets.length > 0;
     // "Authoritative" now has to be SAID, not just implied by omission: the server reads
     // an absent `translate_to` as "inherit my override-profile's TRANSLATE_TO", so an
