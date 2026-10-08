@@ -366,12 +366,13 @@ interface AppState {
   /** Truthful end-of-session insert result, set WITH the idle transition — drives the chip's
    *  done marker (✓ typed / clipboard glyph / nothing). null = no session finished yet. */
   sessionOutcome: "typed" | "clipboard" | "none" | null;
-  /** Qualifies a "none" outcome that was NOT a cancel: the user aborted the translate-to
-   *  picker after release, so the transcript was kept but nothing was inserted. Set in the
-   *  SAME call as `sessionOutcome` (the chip is edge-triggered on that), "-saved" only when
-   *  a History record was actually written. "incomplete": the stream ended short (the
-   *  drain timed out before the server's last final) but some text landed or was kept —
-   *  the last phrase may be missing. null = no such note. */
+  /** Qualifies the end-of-session outcome. The not-inserted pair marks a "none" outcome that
+   *  was NOT a cancel: the user aborted the translate-to picker after release, so the
+   *  transcript was kept but nothing was inserted. Set in the SAME call as `sessionOutcome`
+   *  (the chip is edge-triggered on that), "-saved" only when a History record was actually
+   *  written. "incomplete" can accompany ANY outcome (typed / clipboard / none): the stream
+   *  ended short (the drain timed out before the server's last final) but some text landed
+   *  or was kept — the last phrase may be missing. null = no such note. */
   sessionNote: "not-inserted" | "not-inserted-saved" | "incomplete" | null;
   /** The RESOLVED translation targets of the active session — what will actually be injected,
    *  not what the Profile is configured with. The two diverge once a per-session picker can
@@ -735,6 +736,14 @@ export const useApp = create<AppState>((set) => ({
       // showing the old server's "connected"/classification.
       if (prev && (prev.serverUrl !== b.serverUrl || prev.hasApiKey !== b.hasApiKey)) {
         return { backends, ...evictBackendCaches(s, b.id) };
+      }
+      // A changed Server type on the same target keeps the connection, but the cached caps were
+      // probed (or pinned null) under the old kind: drop them so the Backends list re-probes
+      // under the new one, or the row's info button stays disabled after Standard → Auto/Full.
+      if (prev && prev.kind !== b.kind && hasOwn(s.caps, b.id)) {
+        const caps = { ...s.caps };
+        delete caps[b.id];
+        return { backends, caps };
       }
       return { backends };
     }),

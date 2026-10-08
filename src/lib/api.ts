@@ -1528,7 +1528,8 @@ export async function transcriptStoreStats(
 }
 
 /** "Delete all dictations" — session records AND the dictations folder's
- *  .wav/.txt files. Returns how many files were removed. */
+ *  .wav/.txt files. Returns how many records and audio files were removed (the .txt
+ *  sidecars go too but are not counted), matching the confirm's "N dictations + M audio files". */
 export async function deleteAllDictations(audioBase: string | null): Promise<number> {
   if (!isTauri) return 0;
   return await invoke<number>("delete_all_dictations", { audioBase });
