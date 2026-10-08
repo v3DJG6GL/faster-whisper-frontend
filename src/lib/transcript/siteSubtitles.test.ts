@@ -219,6 +219,10 @@ describe("tracks and switches", () => {
     const vc = derive(ci, cu);
     expect(vc.run!.fetch).toEqual(run.fetch);
     expect(vc.run!.mtTargets).toEqual(["sv", "fi", "da"]);
+    // Clicking a greyed over-cap badge changes nothing — not even the preset.
+    const st0 = initialSiteState(inp.targets);
+    const exSv = v.rows.find((r) => r.code === "sv")!.badges[1].key!;
+    expect(flip(inp, st0, exSv)).toEqual({ state: st0, targets: inp.targets });
   });
   it("counter counts the tracks in use", () => {
     const inp = input();

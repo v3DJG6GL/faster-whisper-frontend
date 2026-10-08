@@ -259,10 +259,16 @@ pub async fn move_audio_base(
         // Move the heal stamp so the new base is stamped and the old one is clean.
         // Without this the old base keeps a stray stamp (blocking the remove_dir
         // below) and the new one re-runs the full heal scan on the next launch.
-        // The stamp is an empty marker, so write + remove is the move — and unlike
-        // a bare rename it also works across drives (EXDEV).
-        let _ = std::fs::write(to.join(HEAL_STAMP), b"");
-        let _ = std::fs::remove_file(from.join(HEAL_STAMP));
+        // Rename first: it is a no-op when both paths name the same folder (case-only
+        // difference, symlink). Across drives it fails (EXDEV); the stamp is an empty
+        // marker, so write + remove is the move then.
+        let (old_stamp, new_stamp) = (from.join(HEAL_STAMP), to.join(HEAL_STAMP));
+        if !old_stamp.exists() {
+            let _ = std::fs::write(&new_stamp, b"");
+        } else if std::fs::rename(&old_stamp, &new_stamp).is_err() {
+            let _ = std::fs::write(&new_stamp, b"");
+            let _ = std::fs::remove_file(&old_stamp);
+        }
         let _ = std::fs::remove_dir(&from); // only if empty
 
         // Always re-point what actually moved: records store ABSOLUTE paths, and a

@@ -131,6 +131,24 @@ describe("usage poll gates", () => {
     close();
   });
 
+  it("a page closed while hidden does not make every later show run a pass", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(10 * 30_000); // the hidden pass skips the open page
+    await settle();
+    close();
+    setHidden(false); // one catch-up pass; no page is open to take the flag
+    await settle();
+    getUsageStats.mockClear();
+    setHidden(true);
+    setHidden(false); // nothing was passed over since
+    await settle();
+    expect(calls()).toEqual({ fixed: 0, page: 0 });
+  });
+
   it("refetches a backend whose cached usage was dropped without a backend edit", async () => {
     await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
     await settle();

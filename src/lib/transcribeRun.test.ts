@@ -737,13 +737,13 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions(opts, false, undefined)).toEqual({ ...opts, standard: undefined });
   });
 
-  it("a retry onto a translating server sends a missing slice as an explicit empty list", () => {
-    // Absent translate_to would inherit the server's override-profile TRANSLATE_TO.
-    expect(reconcileRetryOptions({ diarize: true }, false, true))
-      .toEqual({ diarize: true, standard: undefined, translateTo: [] });
-    expect(reconcileRetryOptions(undefined, false, true)).toEqual({ translateTo: [] });
-    // Unknown caps fill nothing in (a fresh run sends no slice then either).
-    expect(reconcileRetryOptions({ diarize: true }, false)).toEqual({ diarize: true, standard: undefined });
+  it("a retry onto a translating server leaves a missing slice missing", () => {
+    // An explicit [] would switch a link's frozen site targets back on (linkTranslateTo) while the
+    // rail, reading the un-reconciled options, shows no Translating stage.
+    const out = reconcileRetryOptions({ diarize: true }, false, true);
+    expect(out).toEqual({ diarize: true, standard: undefined });
+    expect(linkTranslateTo(out!, { siteSubs: { mtTargets: ["de"] } as never })).toBeUndefined();
+    expect(reconcileRetryOptions(undefined, false, true)).toBeUndefined();
   });
 
   it("no last options: a standard server still gets its flag", () => {

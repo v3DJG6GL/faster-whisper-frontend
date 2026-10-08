@@ -211,11 +211,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     sel.backends && categories.backends
       ? arr<Backend>(categories.backends.list).filter(
           // Import never deletes a stored key and the apply re-derives `hasApiKey` from the
-          // keyring by id, so a same-id backend this device already holds a key for keeps it.
+          // keyring by id, so a same-id backend this device already holds a key for keeps it —
+          // exempt only at the same address: a moved one would send that key somewhere new.
           (b) =>
             b.hasApiKey &&
             !ownProp(result.secrets, b.id) &&
-            !st.backends.some((x) => x.id === b.id && x.hasApiKey),
+            !st.backends.some((x) => x.id === b.id && x.hasApiKey && x.serverUrl === b.serverUrl),
         )
       : [];
 

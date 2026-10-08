@@ -316,7 +316,8 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   // A lit badge over the cap would claim a track the run never downloads: it greys out, and a
   // wanted language it leaves without a source gets machine translation (the v28/v30 fill-in).
   // Rows share these badge objects; the chips, the counter and mtTargets are built after this.
-  for (const id of ids) if (!kept.has(id)) shown.delete(id);
+  const capped = new Set(ids.filter((id) => !kept.has(id)));
+  for (const id of capped) shown.delete(id);
   const overCap = (b: SiteBadge) =>
     b.state === "active" && !!b.key && /^(ex|cand):/.test(b.key) && !kept.has(b.key.split(":")[1]);
   const capOff = (b: SiteBadge, fills: boolean) => {
@@ -374,6 +375,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     targets,
     tmap,
     codes,
+    capped,
   };
 }
 
@@ -393,6 +395,10 @@ function allTargets(m: ReturnType<typeof model>): Record<string, boolean> {
  *  take over (an existing subtitle went) or drops the language (machine translation went, v28). */
 export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): SiteChange {
   const m = model(input, st);
+  // A greyed over-cap badge: switching it on would be greyed again by the same cap, so the
+  // click would only flip a preset to Custom with nothing visible changed. Free a slot first.
+  const capKey = /^(?:ex|cand):(.+)$/.exec(key);
+  if (capKey && m.capped.has(capKey[1])) return { state: st, targets: [...input.targets] };
   const next = { ...m.snap, [key]: !m.snap[key] };
   // One site track can show twice — as the original row's candidate (cand:) and on its own
   // language's row (ex:) — and either lit badge downloads it: both flip together, or a

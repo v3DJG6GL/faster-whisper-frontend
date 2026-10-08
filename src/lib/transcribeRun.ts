@@ -2210,17 +2210,16 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  server without a translating stage (any standard one, or a full one with translation off)
  *  no T2T slice at all — `translateTo` undefined is "no translating stage" (as
  *  `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
- *  frozen targets. On a server known to translate, a missing slice goes out as an explicit
- *  empty list, as `translationRunOptions` sends it: an absent `translate_to` would inherit
- *  the server's override-profile TRANSLATE_TO. `translationAvailable` unset = unknown (caps
- *  not loaded): only a standard server is assumed to lack it, and nothing is filled in. */
+ *  frozen targets. A missing slice stays missing: filled in as an explicit empty list it would
+ *  turn a site plan's frozen targets back on (`linkTranslateTo`) while the rail, which reads
+ *  the un-reconciled `lastOptions`, shows no Translating stage. `translationAvailable` unset =
+ *  unknown (caps not loaded): only a standard server is assumed to lack it. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
   translationAvailable?: boolean,
 ): TranscribeOptions | undefined {
-  const fillNone = !standard && translationAvailable === true;
-  if (!opts) return standard ? { standard: true } : fillNone ? { translateTo: [] } : undefined;
+  if (!opts) return standard ? { standard: true } : undefined;
   const out: TranscribeOptions = {
     ...opts,
     standard: standard || undefined,
@@ -2232,7 +2231,7 @@ export function reconcileRetryOptions(
     delete out.translationModel;
     delete out.translationGlossary;
     delete out.translationContextSegments;
-  } else if (fillNone && out.translateTo === undefined) out.translateTo = [];
+  }
   return out;
 }
 
