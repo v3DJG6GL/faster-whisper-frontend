@@ -3095,7 +3095,9 @@ function teardownAfterFatalInject(): void {
   // its `insertCfg !== cfg` guard — its only gate — instead of typing/pasting a phrase and firing a
   // green "inserted" pulse onto the now-red error chip. Safe: the failing task `return`s without
   // re-reading insertCfg, and the late drain `closed` bails on status "error"/"idle" before it would
-  // read insertCfg at the tail. endInjection is still chained on `owed` below, so snapshots restore.
+  // read insertCfg at the tail. discardInjectionSnapshot is chained on `owed` below, so the snapshot
+  // is dropped (not restored) once any in-flight paste finishes — the failed phrase's transcript
+  // stays on the clipboard as the error promises.
   insertCfg = null;
   const owed = injectChain;
   void owed
@@ -3245,10 +3247,17 @@ export async function startLive(
     // (TS narrows the module `let` to its start-of-function `null`; the prologue's awaits set it.)
     const restart = restartOwed as (() => void) | null;
     restartOwed = null;
+    // A chord-family upgrade that landed AFTER startLiveInner's own drain (during the start
+    // invoke's await — status is already "listening", so dictation.ts routes the superset press
+    // to reclassifyLive, which still queues while startingSession is true). Nothing else drains
+    // the slot, so apply it here. A pending restart wins; a failed start or an owed prologue stop
+    // leaves capturing=false and drops it, exactly like a post-start reclassifyLive would.
+    const upgraded = pendingReclassify as Profile | null;
+    pendingReclassify = null;
     if (restart) {
       if (capturing) void cancelLive({ keepShortcuts: true }).then(restart);
       else restart();
-    }
+    } else if (upgraded && insertCfg && capturing) applyReclassify(upgraded);
   }
 }
 

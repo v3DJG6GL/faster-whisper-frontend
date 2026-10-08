@@ -246,7 +246,19 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const arm = src.indexOf("else if (!isCapturing() && !isStarting())");
     expect(arm, "finalizing no-op arm in dictate()").toBeGreaterThanOrEqual(0);
     const next = src.indexOf("} else if (handsFree", arm);
+    expect(next, "handsFree arm after the finalizing arm").toBeGreaterThan(arm);
     expect(src.slice(arm, next)).toContain("voidPendingHoldStart()");
+  });
+
+  it("an upgrade queued after startLiveInner's own drain is applied when the start settles", () => {
+    // During the start invoke's await status is already "listening" but startingSession is still
+    // true, so reclassifyLive queues — only startLive's finally runs after that, so it must drain.
+    const body = mask(fns.startLive);
+    const reset = body.indexOf("startingSession = false");
+    expect(reset, "startLive's finally resets startingSession").toBeGreaterThanOrEqual(0);
+    const tail = body.slice(reset);
+    expect(tail).toContain("pendingReclassify = null");
+    expect(tail).toContain("applyReclassify(");
   });
 
   it("a delivered typed insert consumes the carry", () => {
