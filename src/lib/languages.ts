@@ -86,14 +86,21 @@ export function languageLabel(code: string): string {
 }
 
 /** A track's language as its titles and chips name it: the English name with the region in
- *  caps ("Portuguese (BR)"); a code with no name in caps ("XX"). */
+ *  caps ("Portuguese (BR)"); a script subtag named with the language when the runtime knows the
+ *  pair ("zh-Hant-TW" is "Traditional Chinese (TW)", "sr-Latn" is "Serbian (Latin)"); a code with
+ *  no name in caps ("XX"). */
 export function trackLanguageName(code: string): string {
   const exact = ownProp(LABEL_FIX, code); // "zh-Hant" is "Traditional Chinese", not "Chinese (HANT)"
   if (exact) return exact;
-  const [base, region] = code.split("-");
+  const [base, second, third] = code.split("-");
   const b = base.toLowerCase();
+  if (second !== undefined && /^[A-Za-z]{4}$/.test(second)) {
+    const key = `${b}-${second[0].toUpperCase()}${second.slice(1).toLowerCase()}`;
+    const scripted = languageLabel(key);
+    if (scripted !== key) return scripted + (third !== undefined ? ` (${third.toUpperCase()})` : "");
+  }
   const name = languageLabel(b);
-  return (name === b ? b.toUpperCase() : name) + (region !== undefined ? ` (${region.toUpperCase()})` : "");
+  return (name === b ? b.toUpperCase() : name) + (second !== undefined ? ` (${second.toUpperCase()})` : "");
 }
 
 const natives = new Map<string, string>();

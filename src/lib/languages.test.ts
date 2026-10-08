@@ -188,6 +188,12 @@ describe("trackLanguageName", () => {
     expect(trackLanguageName("zh-Hant")).toBe("Traditional Chinese");
     expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
   });
+  it("names a script subtag with the language and keeps a region after it", () => {
+    expect(trackLanguageName("zh-Hans")).toBe("Simplified Chinese");
+    expect(trackLanguageName("zh-Hant-TW")).toBe("Traditional Chinese (TW)");
+    expect(trackLanguageName("sr-Latn")).toBe("Serbian (Latin)");
+    expect(trackLanguageName("pt-BR")).toBe("Portuguese (BR)");
+  });
 });
 
 describe("namedLanguage", () => {
