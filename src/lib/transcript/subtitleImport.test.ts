@@ -424,6 +424,13 @@ describe("site subtitle cleanup", () => {
     const srt = cue(1, "one") + cue(2, "one", "two") + cue(3, "two", "three") + cue(4, "three", "four");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["one", "two", "three", "four"]);
   });
+  it("cleans a three-line roll-up file", () => {
+    // Each cue repeats the cue before's last TWO lines: its first line is never that cue's last.
+    const cue = (n: number, ...lines: string[]) => `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${lines.join("\n")}\n\n`;
+    const srt = cue(1, "one") + cue(2, "one", "two") + cue(3, "one", "two", "three")
+      + cue(4, "two", "three", "four") + cue(5, "three", "four", "five");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["one", "two", "three", "four", "five"]);
+  });
   it("keeps a word said at the end of one cue and the start of the next in an ordinary file", () => {
     // Our own export of "Wait." / "Wait. Did you hear that?" among other two-line cues.
     const cue = (n: number, a: string, b?: string) =>

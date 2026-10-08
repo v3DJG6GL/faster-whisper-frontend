@@ -663,6 +663,29 @@ describe("lrc word tags", () => {
     expect(generateExport(one("今年是2024年", ["今年", "是", "2024", "年"]), { format: "lrc", wordTimestamps: true }))
       .toBe("[00:00.00]<00:00.00>今年<00:00.50>是<00:01.00>2024<00:01.50>年\n");
   });
+  it("a spaced Thai line takes its seams from the text: a space only where the text has one", () => {
+    const ws = ["สวัสดี", "ครับ", " ผม", "ชื่อ"];
+    const r: BatchResult = {
+      text: "สวัสดีครับ ผมชื่อ",
+      language: "th",
+      segments: [{ start: 0, end: 2, text: "สวัสดีครับ ผมชื่อ" }],
+      words: ws.map((word, i) => ({ word, start: i * 0.5, end: i * 0.5 + 0.5 })),
+    };
+    expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
+      .toBe("[00:00.00]<00:00.00>สวัสดี<00:00.50>ครับ <00:01.00>ผม<00:01.50>ชื่อ\n");
+  });
+  it("a word the text does not hold falls back to the script rule for its seams", () => {
+    const r: BatchResult = {
+      text: "Hello there",
+      segments: [{ start: 0, end: 1, text: "Hello there" }],
+      words: [
+        { word: " Hallo", start: 0, end: 0.5 },
+        { word: " there", start: 0.5, end: 1 },
+      ],
+    };
+    expect(generateExport(r, { format: "lrc", wordTimestamps: true }))
+      .toBe("[00:00.00]<00:00.00>Hallo <00:00.50>there\n");
+  });
 });
 
 describe("joinSegmentTexts", () => {

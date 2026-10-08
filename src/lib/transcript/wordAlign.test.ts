@@ -128,6 +128,43 @@ describe("alignSegmentWords", () => {
     expect(out[1].end).toBeCloseTo(2, 9);
   });
 
+  it("cuts each unspaced run of a spaced line per old word (ja with a Latin word)", () => {
+    // The whitespace split used to keep "今日は雨" as one token that matched nothing,
+    // collapsing 今日/は/晴れ into one word.
+    const ja: TranscriptWord[] = [
+      { word: " 今日", start: 0, end: 0.4 },
+      { word: "は", start: 0.4, end: 0.6 },
+      { word: "晴れ", start: 0.6, end: 1.1 },
+      { word: " AI", start: 1.1, end: 1.5 },
+      { word: "です", start: 1.5, end: 1.9 },
+    ];
+    const out = alignSegmentWords(ja, "今日は雨 AIです");
+    expect(out.map((x) => x.word)).toEqual([" 今日", "は", "雨", " AI", "です"]);
+    expect(out[0]).toBe(ja[0]);
+    expect(out[1]).toBe(ja[1]);
+    expect(out[3]).toBe(ja[3]);
+    expect(out[4]).toBe(ja[4]);
+    expect(out[2].start).toBe(ja[2].start);
+    expect(out[2].end).toBeCloseTo(ja[2].end, 9);
+    expect(out.map((x) => x.word).join("").trim()).toBe("今日は雨 AIです");
+  });
+
+  it("keeps a spaced Thai line's word count when one syllable changes", () => {
+    const th: TranscriptWord[] = [
+      { word: "สวัสดี", start: 0, end: 1 },
+      { word: "ครับ", start: 1, end: 2 },
+      { word: " ผม", start: 2, end: 2.5 },
+      { word: "ชื่อ", start: 2.5, end: 3 },
+    ];
+    const out = alignSegmentWords(th, "สวัสดีค่ะ ผมชื่อ");
+    expect(out.map((x) => x.word)).toEqual(["สวัสดี", "ค่ะ", " ผม", "ชื่อ"]);
+    expect(out[0]).toBe(th[0]);
+    expect(out[2]).toBe(th[2]);
+    expect(out[3]).toBe(th[3]);
+    expect(out[1].start).toBe(1);
+    expect(out[1].end).toBeCloseTo(2, 9);
+  });
+
   it("keeps a syllable the model split across two words split on a punctuation-only edit", () => {
     // faster-whisper cuts Thai per decodable token, so a word may start with a tone mark.
     const th: TranscriptWord[] = [

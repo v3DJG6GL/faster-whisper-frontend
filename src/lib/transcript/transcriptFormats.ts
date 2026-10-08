@@ -554,13 +554,28 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
         // of the following word — the karaoke convention.
         // Unspaced text (CJK, Thai, "今年是2024年") has no spaces between its words: joining
         // them with one would add some, so a segment without whitespace joins with none. A
-        // spaced segment decides per seam (as joinSegmentTexts), so one Latin word in a CJK
-        // line keeps its spaces without spacing out the rest.
+        // spaced segment takes each seam from its own text (as cueSplit's tokensOf), so one
+        // Latin word in a CJK line keeps its spaces without spacing out the rest, and a Thai
+        // line with phrase spaces gets no space at its word seams (unspacedChar knows only
+        // Han/Kana). A seam whose words the text does not hold (they disagree) falls back to
+        // the per-seam script rule of joinSegmentTexts.
         const cw = ws.map((w) => clean(w.word));
-        const spaced = /\s/.test(seg.text.trim());
+        const text = clean(seg.text);
+        const spaced = /\s/.test(text);
+        let cur = 0;
+        let prevEnd = -1;
         const body = cw
-          .map((c, k) => (k && spaced && !(unspacedChar(edgeChar(cw[k - 1], true)) && unspacedChar(edgeChar(c, false))) ? " " : "")
-            + `<${lrcTime(ws[k].start)}>${c}`)
+          .map((c, k) => {
+            const at = spaced ? text.indexOf(c, cur) : -1;
+            const gap = !k || !spaced
+              ? false
+              : at >= 0 && prevEnd >= 0
+                ? /\s/.test(text.slice(prevEnd, at))
+                : !(unspacedChar(edgeChar(cw[k - 1], true)) && unspacedChar(edgeChar(c, false)));
+            if (at >= 0) cur = at + c.length;
+            prevEnd = at >= 0 ? cur : -1;
+            return (gap ? " " : "") + `<${lrcTime(ws[k].start)}>${c}`;
+          })
           .join("");
         out.push(`[${lrcTime(seg.start)}]${prefix}${body}`);
         continue;

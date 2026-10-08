@@ -258,16 +258,23 @@ const TRAIL = new RegExp(`[${TRAILS}]`);
 /** What rides after a base character: combining marks, emoji skin tones, Thai/Lao following
  *  vowels, ZWJ + next, a stacking virama + the consonant it stacks. */
 const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S)*`;
+/** Scripts written without spaces between words that are no CJK (unspacedChar keeps
+ *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
+ *  between its syllables, like a CJK run — a space-joined multi-sentence Thai translation
+ *  used to be a handful of unsplittable tokens. */
+const SYLLABIC = "\\p{Script=Thai}\\p{Script=Lao}\\p{Script=Khmer}\\p{Script=Myanmar}";
+const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
 /** A token of spaced text: a word (with any opening brackets before it), or one unspaced
- *  (CJK) character with the opening brackets before it and its other punctuation after it —
+ *  (CJK, Thai…) character with the opening brackets before it and its other punctuation
+ *  after it (a Thai/Lao leading vowel rides with the consonant after it) —
  *  so a CJK translation holding one Latin word still splits between its characters, and
  *  never right after a 「 or （ (a Latin word or number before 「 used to swallow it). A
  *  bracket with nothing after it is its own token, so no character falls out of the spans.
  *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
  *  variation selector) — they are Script=Inherited and would otherwise split off. */
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]${UNIT_TAIL}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
-    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}]+`
+  `[${OPEN_PUNCT}]*[${LEADS}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]${UNIT_TAIL}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
+    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
 );
@@ -442,6 +449,10 @@ export function cutByShare(text: string, shares: number[]): string[] {
           // before i is unspaced too, as at every other seam.
           || (unspacedChar(edgeChar(text.slice(Math.max(0, i - 8), i), true))
             && (UNSPACED.test(edgeChar(text.slice(i, i + 2), false)) || OPENER.test(text[i])))
+          // A Thai/Lao/Khmer/Burmese run cuts between its syllables (the guards above keep
+          // each one whole), as the whitespace-free branch does.
+          || (BRK_SYL.test(edgeChar(text.slice(Math.max(0, i - 8), i), true))
+            && BRK_SYL.test(edgeChar(text.slice(i, i + 2), false)))
         : c < 0xdc00 || c > 0xdfff
     ) cand.push(i);
   }

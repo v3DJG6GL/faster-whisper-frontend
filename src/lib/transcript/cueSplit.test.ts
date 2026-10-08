@@ -445,6 +445,24 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
       expect(p[0].endsWith("\u1039")).toBe(false);
     }
   });
+  // Two Thai sentences joined by one space: spaced text, but each sentence is still one run.
+  const THAI2 = THAI + " " + "พรุ่งนี้ฝนจะตกหนักมากดังนั้นเราควรอยู่บ้านและดูหนังด้วยกันทั้งวันเลยนะครับ";
+  it("own timing: a spaced multi-sentence Thai translation splits inside its sentences", () => {
+    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { th: THAI2 } }] });
+    const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "th"]);
+    const L = limitsFor(STD, "th");
+    expect(grid.own.th.length).toBeGreaterThan(2);
+    expect(grid.own.th.every((c) => c.end - c.start <= L.maxDur)).toBe(true);
+    expect(grid.own.th.every((c) => !LEAD.test(c.text) && !TRAIL.test(c.text) && !/^\p{M}/u.test(c.text))).toBe(true);
+    expect(grid.own.th.map((c) => c.text).join("").replace(/\s/g, "")).toBe(THAI2.replace(/\s/g, ""));
+  });
+  it("cutByShare cuts a spaced Thai text inside its runs, leaving no part empty", () => {
+    const parts = cutByShare(THAI2, [1, 1, 1, 1]);
+    expect(parts).toHaveLength(4);
+    expect(parts.every((p) => p.length > 0)).toBe(true);
+    expect(parts.join("").replace(/\s/g, "")).toBe(THAI2.replace(/\s/g, ""));
+    expect(parts.every((p, k) => (k === 3 || !LEAD.test(p)) && !TRAIL.test(p) && !/^\p{M}/u.test(p))).toBe(true);
+  });
   it("wrapLines never ends a line on a leading vowel", () => {
     for (let cpl = 28; cpl <= 60; cpl++) {
       const lines = wrapLines(THAI + THAI, cpl, 2);

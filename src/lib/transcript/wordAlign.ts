@@ -54,21 +54,28 @@ function tokenize(text: string): string[] {
 const UNSPACED_RE =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
 
-/** Tokens of an edited whitespace-free (CJK) text, cut where the original words were:
- *  splitting on whitespace yields one token there, which matches no old word, so one
- *  changed character used to collapse the whole line's timing into one word. A code-point
- *  LCS against the old words' characters tags each new character with the word it came
- *  from (or none); a token ends wherever that owner changes. */
-function charTokens(oldWords: TranscriptWord[], text: string): string[] {
+/** Tokens of an edited text that holds an unspaced script (CJK, Thai…), cut where the
+ *  original words were: splitting on whitespace yields one token per unspaced run, which
+ *  matches no old word, so one changed character used to collapse the whole run's timing
+ *  into one word. One code-point LCS of the whole text (whitespace aside) against the old
+ *  words' characters tags each new character with the word it came from (or none); a
+ *  token ends at whitespace and, inside a run holding an unspaced script, wherever that
+ *  owner changes. One LCS over the line, not one per whitespace piece: a piece aligned on
+ *  its own may borrow a character from another piece's word ("ค่ะ"'s tone mark from a
+ *  later "ชื่อ") and cut a syllable. `opens[k]` marks a token that follows whitespace or
+ *  starts the text. */
+function charTokens(oldWords: TranscriptWord[], text: string): { toks: string[]; opens: boolean[] } {
   const oldChars: string[] = [];
   const owner: number[] = [];
   oldWords.forEach((w, k) => {
-    for (const c of Array.from(w.word.trim())) {
+    for (const c of Array.from(w.word)) {
+      if (/\s/.test(c)) continue;
       oldChars.push(c);
       owner.push(k);
     }
   });
-  const newChars = Array.from(text);
+  const pieces = tokenize(text);
+  const newChars = pieces.flatMap((p) => Array.from(p));
   const m = oldChars.length;
   const n = newChars.length;
   const dp: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
@@ -84,15 +91,32 @@ function charTokens(oldWords: TranscriptWord[], text: string): string[] {
     else j++;
   }
   const toks: string[] = [];
-  newChars.forEach((c, j) => {
-    // Clinging joins only across an INSERTED character: two characters matched to different old
-    // words keep their boundary (the model may have split a syllable), or a punctuation-only
-    // edit would merge two timed words into one that matches neither.
-    const joins = own[j] === own[j - 1] || ((own[j] === -1 || own[j - 1] === -1) && clings(newChars[j - 1], c));
-    if (j && joins) toks[toks.length - 1] += c;
-    else toks.push(c);
-  });
-  return toks;
+  const opens: boolean[] = [];
+  let j = 0;
+  for (const p of pieces) {
+    const chars = Array.from(p);
+    const cut = UNSPACED_RE.test(p);
+    chars.forEach((c, k) => {
+      // Clinging joins only across an INSERTED character: two characters matched to different old
+      // words keep their boundary (the model may have split a syllable), or a punctuation-only
+      // edit would merge two timed words into one that matches neither.
+      const joins =
+        !cut || own[j] === own[j - 1] || ((own[j] === -1 || own[j - 1] === -1) && clings(newChars[j - 1], c));
+      if (k && joins) toks[toks.length - 1] += c;
+      else {
+        toks.push(c);
+        opens.push(k === 0);
+      }
+      j++;
+    });
+  }
+  return { toks, opens };
+}
+
+/** A text of spaced scripts only: its whitespace pieces, each opening a token. */
+function spacedTokens(text: string): { toks: string[]; opens: boolean[] } {
+  const toks = tokenize(text);
+  return { toks, opens: toks.map(() => true) };
 }
 
 /** `c` never starts a token after `prev`: a combining mark (a Thai tone mark, a decomposed
@@ -112,9 +136,12 @@ export function alignSegmentWords(
   newText: string,
 ): TranscriptWord[] {
   if (!oldWords.length) return [];
-  const trimmed = newText.trim();
-  const unspaced = !/\s/.test(trimmed) && UNSPACED_RE.test(trimmed);
-  const newToks = unspaced ? charTokens(oldWords, trimmed) : tokenize(newText);
+  // Any unspaced run is cut per old word, also inside a spaced line: a Japanese line with
+  // a spaced " AI", or a Thai line with phrase spaces, used to keep each run as one token
+  // that matched nothing. A line of spaced scripts only stays a plain whitespace split.
+  const { toks: newToks, opens } = UNSPACED_RE.test(newText)
+    ? charTokens(oldWords, newText)
+    : spacedTokens(newText);
   if (!newToks.length) return [];
   const a = oldWords.map((w) => norm(w.word));
   const b = newToks.map(norm);
@@ -133,11 +160,12 @@ export function alignSegmentWords(
   // Whisper's verbose_json words usually carry their separating space (" Wort");
   // rebuilt words follow whatever convention the original list uses.
   const spacey = oldWords.some((w) => /^\s/.test(w.word));
-  /** A rebuilt token's leading space. In an unspaced (CJK) line the tokens are pieces of
-   *  one run of text, so only the segment's first token or one standing where an old word
-   *  carried a space (a Latin " AI" inside the line) gets one — never one mid-line. */
+  /** A rebuilt token's leading space. Tokens cut out of one unspaced (CJK, Thai) run are
+   *  pieces of that run, so only a token that opens a whitespace piece of the edit or one
+   *  standing where an old word carried a space (a Latin " AI" inside the line) gets one —
+   *  never one mid-run. */
   const lead = (j: number, old?: TranscriptWord) =>
-    !spacey ? "" : !unspaced || j === 0 || (old && /^\s/.test(old.word)) ? " " : "";
+    !spacey ? "" : opens[j] || (old && /^\s/.test(old.word)) ? " " : "";
   const out: TranscriptWord[] = [];
   /** Emit new tokens [nj0,nj1) over the span of old words [oi0,oi1). */
   const flush = (oi0: number, oi1: number, nj0: number, nj1: number) => {
