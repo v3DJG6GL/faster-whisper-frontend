@@ -22,10 +22,13 @@ export function useOverrideContext(args: {
   backendId?: string | null;
   apiKey?: string | null;
   serverKind: ServerKind;
+  /** Bumped when the backend's stored key is replaced elsewhere (a sync pull): the live probe
+   *  ran as the old caller, so it must re-run. Callers that never probe live may omit it. */
+  credentialGen?: number;
 }): {
   caps: Capabilities | null;
 } {
-  const { serverUrl, backendId, apiKey, serverKind } = args;
+  const { serverUrl, backendId, apiKey, serverKind, credentialGen } = args;
   // Read-through of the store cache instead of a per-mount fetch: streaming.ts and
   // preload.ts need the same answer with no hook to fetch from, so the fetch moved
   // to lib/capabilities.ts and this hook became one of its readers. Absent key ⇒
@@ -93,7 +96,7 @@ export function useOverrideContext(args: {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, apiKey, backendId, standard, full]);
+  }, [serverUrl, apiKey, backendId, standard, full, credentialGen]);
 
   // A known-standard target has no /v1/me: the store entry belongs to whatever the SAVED
   // backend last pointed at (the Backends editor may have retyped it to a plain server), so it

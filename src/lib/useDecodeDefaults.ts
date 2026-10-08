@@ -23,8 +23,11 @@ export function useDecodeDefaults(args: {
   /** The override profile the request will name (NO_OVERRIDE_PROFILE included). */
   profileName?: string | null;
   serverKind: ServerKind;
+  /** Bumped when the backend's stored key is replaced elsewhere (a sync pull): values fetched as
+   *  the old caller are withheld and refetched. Omitted ⇒ no such signal. */
+  credentialGen?: number;
 }): DecodeDefaults | undefined {
-  const { serverUrl, backendId, apiKey, serverKind } = args;
+  const { serverUrl, backendId, apiKey, serverKind, credentialGen } = args;
   const model = args.model?.trim() ?? "";
   // Debounced here, once for every caller: the override-profile picker's custom name reports each
   // keystroke, and each one cleared the inherited values and fired a credentialed fetch. Only the
@@ -44,7 +47,7 @@ export function useDecodeDefaults(args: {
   const full = useRisesToFull(serverKind);
   // The request the values belong to. `full` stays out: a reconnect refetch for the same request
   // may keep showing that same server's values meanwhile.
-  const key = JSON.stringify([serverUrl, backendId ?? null, apiKey ?? null, model, profileName, standard]);
+  const key = JSON.stringify([serverUrl, backendId ?? null, apiKey ?? null, model, profileName, standard, credentialGen ?? 0]);
   useEffect(() => {
     if (standard || !backendId) return;
     let cancelled = false;
@@ -56,7 +59,7 @@ export function useDecodeDefaults(args: {
     return () => {
       cancelled = true;
     };
-  }, [key, serverUrl, backendId, apiKey, model, profileName, standard, full]);
+  }, [key, serverUrl, backendId, apiKey, model, profileName, standard, full, credentialGen]);
 
   return st?.key === key ? st.dd : undefined;
 }

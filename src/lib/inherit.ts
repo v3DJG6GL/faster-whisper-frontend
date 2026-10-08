@@ -172,7 +172,9 @@ export function serverInherited(
     }
   }
   const ignored: DecodeKey[] = [];
-  for (const key of Object.keys(below ?? {}) as DecodeKey[]) {
+  // Known keys only, as above: the local config is never clamped, so a downgrade or hand edit
+  // can leave a key this build has no spec for, and keySpec() on it threw during render.
+  for (const key of Object.keys(below ?? {}).filter(isDecodeKey)) {
     const v = below![key];
     if (v === undefined) continue;
     if (locked.has(key)) {

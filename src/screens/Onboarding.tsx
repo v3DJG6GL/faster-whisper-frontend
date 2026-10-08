@@ -17,7 +17,7 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { insecureUrlWarning, newBackendDraft, normalizeUrl } from "@/lib/backends";
+import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
 import { starterProfiles } from "@/lib/starters";
@@ -87,14 +87,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // mints a fresh id, writes the API key to a SECOND keyring account, and upserts a duplicate
     // backend, leaving one of the two keys orphaned in the OS wallet.
     if (busy) return;
-    const serverUrl = normalizeUrl(url);
+    const serverUrl = normalizeUrl(storedTypedUrl(url));
     // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
     // was run with — a corrected key matters as much as a corrected host.
     const keyAtTest = key;
     // Still the target on screen? Every await below re-asks — the inputs stay editable
     // throughout (the test, the keyring write parked on a wallet prompt, the pull).
     const stillLive = () =>
-      !abandoned.current && normalizeUrl(urlRef.current) === serverUrl && keyRef.current === keyAtTest;
+      !abandoned.current && normalizeUrl(storedTypedUrl(urlRef.current)) === serverUrl && keyRef.current === keyAtTest;
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
       setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
       return;
@@ -189,7 +189,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Turn sync on for this device, against the restored backend that matches
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
-      const gateUrl = normalizeUrl(url);
+      const gateUrl = normalizeUrl(storedTypedUrl(url));
       // Re-add the gate's own backend when the restore replaced the list without it, exactly as
       // the Backends screen's restore does. `?? s.backends[0]` bound sync — and therefore every
       // future push of every backend's plaintext key — to the FIRST entry of a list the server
@@ -363,7 +363,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         )}
 
         {step === "quickadd" && backendId && (
-          <QuickAddStep serverUrl={normalizeUrl(url)} backendId={backendId} onFinish={finish} />
+          <QuickAddStep serverUrl={normalizeUrl(storedTypedUrl(url))} backendId={backendId} onFinish={finish} />
         )}
 
         {importResult && (
@@ -608,7 +608,7 @@ function QuickAddStep({
         </div>
       </div>
       {quickAddHotkey.length === 0 && (
-        <p className="mt-3 text-[11px] text-faint">No quick-add hotkey set — add one on the Dictionary screen.</p>
+        <p className="mt-3 text-[11px] text-faint">No quick-add hotkey set — record one above, or later on the Dictionary screen.</p>
       )}
     </>
   );

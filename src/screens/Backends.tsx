@@ -168,12 +168,16 @@ function Editor({
   const hookKindRef = useRef(kind);
   if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
   const hookKind = hookKindRef.current;
+  // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
+  // generation, and both hooks below must then re-ask as the new caller (as resultLive does).
+  const liveGen = debouncedKey ? 0 : credentialGeneration(b.id);
   // Caller capabilities, for gating the decode editor.
   const { caps: ctxCaps } = useOverrideContext({
     serverUrl: probeUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
     serverKind: hookKind,
+    credentialGen: liveGen,
   });
   // The hook reads a blank address as "the saved one" (right for its other callers), but here a
   // cleared field is "no address yet": don't keep the old server's limits and privacy panel.
@@ -189,6 +193,7 @@ function Editor({
     model: debouncedModel,
     profileName: b.overrideProfile,
     serverKind: hookKind,
+    credentialGen: liveGen,
   });
   const server = serverInherited(decodeDefaults);
   // "Multiple languages" is the backend's default `multilingual` decode override.
@@ -413,7 +418,7 @@ function Editor({
           open={showConnection}
           onToggle={() => setShowConnection((v) => !v)}
           title="Connection"
-          summary={<span className="text-faint">· {safeIdentityText(authorityOf(effUrl)?.host, 60) || "no address"}</span>}
+          summary={<span className="text-faint">· {safeIdentityText(authorityOf(storedTypedUrl(effUrl))?.host, 60) || "no address"}</span>}
         >
           <OverrideHeader title="Name" env={false}>
             <div className={OVERRIDE_CONTROL_W}>
@@ -764,10 +769,11 @@ function ConnectStep({
     if (busy) return;
     const typedUrl = url;
     const typedKey = key;
-    const serverUrl = normalizeUrl(typedUrl);
+    // Lenient `http:/host` is canonicalised as the editor does (the warning above already judges it so).
+    const serverUrl = normalizeUrl(storedTypedUrl(typedUrl));
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
       // Say so — a bare return left the flow's first button dead and silent for
-      // `ftp://host`, `https:/host` or a lone `http://`.
+      // `ftp://host` or a lone `http://`.
       setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
       return;
     }

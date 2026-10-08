@@ -89,6 +89,13 @@ describe("serverInherited", () => {
     // No answer: nothing is known, so nothing is disabled.
     expect(serverInherited(null).known).toBeNull();
   });
+  it("skips a backend value for a key this build does not know instead of throwing", () => {
+    // The local config is never clamped: a downgrade can leave a newer build's key set to "".
+    const s = serverInherited(undefined, { future_text: "", beam_size: 3 } as never);
+    expect(s.values).toEqual({ beam_size: 3 });
+    expect(s.sources).toEqual({ beam_size: "Backend default" });
+    expect(s.ignored).toEqual([]);
+  });
   it("shows the server's values with their source", () => {
     const s = serverInherited(dd());
     expect(s.values.beam_size).toBe(10);
