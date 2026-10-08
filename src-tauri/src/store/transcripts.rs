@@ -509,8 +509,12 @@ pub async fn delete_transcript_record(
         // re-point it: release the lock first, or a slow recordings share would hold every
         // (main-thread) save hostage.
         drop(io);
-        if let Some(src) = src {
-            remove_dictation_audio(&src);
+        // The audio goes only once the record is gone: a failed unlink (locked file) keeps the
+        // History entry, and it must keep its recording too.
+        if res.is_ok() {
+            if let Some(src) = src {
+                remove_dictation_audio(&src);
+            }
         }
         res
     })

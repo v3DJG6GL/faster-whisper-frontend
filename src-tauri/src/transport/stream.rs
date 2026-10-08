@@ -879,7 +879,8 @@ fn clip_stem(stamp: &str, utterance: u32) -> String {
 /// cut where the server began decoding an utterance (`utterance: decoding`), and that head is
 /// written at the utterance's `final` (all of the buffer when no decoding mark came), then
 /// drained — memory holds at most the utterance in flight, and a crash loses at most that one.
-/// A `dropped` utterance's audio is discarded up to its mark (the server found no words in it).
+/// A `dropped` utterance's audio is discarded up to its mark (the server found no words in it),
+/// or all buffered audio when it had none (the server's no-speech gate drops without decoding).
 ///
 /// Leftover rule: audio still buffered at close belongs to no `final` — the speech gate's tail
 /// after the last decode mark (the server finalizes the utterance in flight on close, so it is
@@ -930,9 +931,12 @@ impl ClipCutter {
                 state: UtteranceState::Dropped,
                 utterance: Some(n),
             } => {
-                if let Some(end) = self.take_mark(*n) {
-                    let gone = split_at_cut(saved, end.saturating_sub(self.taken)).len();
-                    self.taken += gone;
+                // The server's no-speech gate drops without decoding, so no mark came: the
+                // burst is everything buffered (else it heads the next utterance's clip).
+                let end = self.take_mark(*n).unwrap_or(self.taken + saved.len());
+                let gone = split_at_cut(saved, end.saturating_sub(self.taken)).len();
+                self.taken += gone;
+                if gone > 0 {
                     tracing::info!(
                         "[stream] utterance {n} dropped — discarded {} ms of its audio",
                         pcm_duration_ms(gone)
@@ -1368,6 +1372,38 @@ mod clip_tests {
         };
         assert_eq!(txt(0), "Hallo Welt Komma\n");
         assert_eq!(txt(1), "und weiter\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A gate-dropped utterance (no decode mark) takes its buffered burst with it instead of
+    /// leaving it at the head of the next utterance's clip.
+    #[test]
+    fn a_markless_drop_discards_its_burst() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-drop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let seen: RefCell<Vec<(Option<u32>, u64)>> = RefCell::new(Vec::new());
+        let on_event = |e: StreamEvent| {
+            if let StreamEvent::RecordingSaved {
+                utterance,
+                duration_ms,
+                ..
+            } = e
+            {
+                seen.borrow_mut().push((utterance, duration_ms));
+            }
+        };
+        let mut saved = vec![0u8; 32_000]; // 1 s of noise the gate ignores
+        let mut clips = Some(ClipCutter::new());
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
+            forward_saved(e, Some(&dir), saved, clips, &mut docs, &mut cur, &on_event);
+        };
+        feed(state(UtteranceState::Dropped, 1), &mut saved, &mut clips);
+        assert!(saved.is_empty());
+        saved.extend(vec![0u8; 16_000]); // 0.5 s
+        feed(state(UtteranceState::Decoding, 2), &mut saved, &mut clips);
+        feed(fin(" Hallo", Some(2)), &mut saved, &mut clips);
+        assert_eq!(seen.into_inner(), vec![(Some(2), 500)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
