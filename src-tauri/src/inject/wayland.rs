@@ -322,6 +322,27 @@ mod imp {
             })
     }
 
+    /// Should a typed job go on the clipboard instead, because the active layout cannot produce
+    /// its letters? Two cases divert. Most letters are unreachable (Chinese on a US layout, digits
+    /// or not). Or ANY unreachable letter is from a caseless script (Han, Kana, Hangul, Arabic,
+    /// Hebrew, Thai...): one such character is a whole word or syllable, so "我在用iPhone 15 Pro
+    /// Max" must not be typed as "iPhone 15 Pro Max" just because the Latin letters outnumber it.
+    /// Only stray cased letters (an accent a US layout lacks) are left to the per-character skip.
+    fn divert_unreachable(text: &str, map: &HashMap<char, KeySpec>) -> bool {
+        let (reachable, unreachable) = letter_reach(text, map);
+        unreachable > 0 && (unreachable >= reachable || unreachable_caseless(text, map))
+    }
+
+    /// Does `text` hold a letter of a caseless script that the active layout cannot type?
+    fn unreachable_caseless(text: &str, map: &HashMap<char, KeySpec>) -> bool {
+        text.chars().any(|c| {
+            c.is_alphabetic()
+                && !c.is_lowercase()
+                && !c.is_uppercase()
+                && key_spec_for(c, map).is_none()
+        })
+    }
+
     /// Is this key a normal case-pair (its Shift level is the case-inverse of its base glyph)? Used so
     /// the live-Caps-Lock compensation knows whether pressing Shift actually cancels KWin's
     /// capitalization. A non-alphabetic base (digits, symbols) is unaffected by Caps → safe. A
@@ -711,16 +732,26 @@ mod imp {
                 // US layout, digits or not) used to skip them in the loop below, press auto-Enter
                 // on what was left and report `Landed::Yes`: the text was lost with nothing on the
                 // clipboard. Hand it over on the clipboard instead, before any key is synthesized —
-                // an on-clipboard divert, not an error, so a live session keeps running. Symbols
-                // (a "♪" or "…" phrase, curly quotes, an em dash, emoji) and a few stray letters in
-                // an otherwise typeable line are still skipped silently per character below.
+                // an on-clipboard divert, not an error, so a live session keeps running. A letter
+                // of a caseless script (Han, Kana, Hangul, Arabic, Hebrew, Thai...) always diverts,
+                // even inside a mostly Latin line: each one is a word, not a stray accent. Symbols
+                // (a "♪" or "…" phrase, curly quotes, an em dash, emoji) and a few stray accented
+                // cased letters in an otherwise typeable line are still skipped per character below.
                 if !job.paste && !job.text.is_empty() {
                     let (reachable, unreachable) = letter_reach(&job.text, &charmap);
-                    if unreachable > 0 && unreachable >= reachable {
+                    if divert_unreachable(&job.text, &charmap) {
                         tracing::warn!(
                             "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout — putting the text on the clipboard instead of typing",
                             reachable + unreachable
                         );
+                        // `own_window_focused` above is a main-thread round trip, so a cancel can
+                        // land after the pre-job check. Re-ask right before the clipboard write,
+                        // like every sibling transcript write in `text.rs`, or a cancelled
+                        // transcript still replaces what the user had copied.
+                        if crate::inject::injection_cancelled(job.epoch) {
+                            tracing::info!("[wayland-inject] cancelled before the clipboard divert — dropping the job");
+                            return Ok(crate::inject::Landed::Yes);
+                        }
                         // No key was synthesized: a failed clipboard write is "nothing written"
                         // (the caller's re-send is safe), as in the sibling diverts.
                         if let Err(e) = crate::inject::text::persist_off_runtime(job.text.clone()).await {
@@ -1020,6 +1051,21 @@ mod imp {
         fn letter_reach_keeps_a_mostly_typeable_line_typeable() {
             let (yes, no) = letter_reach("caf\u{e9} ole", &us_letters());
             assert!(no > 0 && no < yes);
+            assert!(!divert_unreachable("caf\u{e9} ole", &us_letters()));
+        }
+
+        #[test]
+        fn a_caseless_script_letter_diverts_even_in_a_mostly_latin_line() {
+            // 12 typeable Latin letters vs 3 Han characters: the Han words must not be dropped.
+            assert!(unreachable_caseless(
+                "我在用iPhone 15 Pro Max",
+                &us_letters()
+            ));
+            assert!(divert_unreachable("我在用iPhone 15 Pro Max", &us_letters()));
+            assert!(divert_unreachable("你好 世界", &us_letters()));
+            // A stray accented cased letter is still skipped per character.
+            assert!(!unreachable_caseless("caf\u{e9}", &us_letters()));
+            assert!(!divert_unreachable("Caf\u{c9} au lait", &us_letters()));
         }
     }
 }
