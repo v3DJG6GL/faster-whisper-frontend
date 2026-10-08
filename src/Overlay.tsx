@@ -8,7 +8,15 @@ import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sani
 import { langCode } from "@/lib/languages";
 import { quickLaunchMeta } from "@/lib/screenRegistry";
 import { newSpeakMemo, stepSpeaking } from "@/lib/dictation/speaking";
-import { dictationVisual, isActiveDictation, isProcessing, type DictationTone } from "@/lib/dictation/dictationVisual";
+import {
+  dictationVisual,
+  isActiveDictation,
+  isProcessing,
+  sessionNoteHoldMs,
+  SESSION_NOTE_HOLD_MS,
+  SESSION_WARN_HOLD_MS,
+  type DictationTone,
+} from "@/lib/dictation/dictationVisual";
 import {
   CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs,
@@ -233,6 +241,9 @@ export default function Overlay() {
   // from the loaded config arrives: that one carries the SAVED sizes, which must seed them rather
   // than read as a Settings adjustment (that would tuck the chip at once, or nudge it, at launch).
   // The overlay://ready reply can predate the config load, so its default sizes don't seed.
+  // A main-window reload restarts the controller, which re-sends default-built payloads to this
+  // (not reloaded) webview: those re-arm the seed, so the saved sizes seed again rather than read
+  // as two Settings adjustments (default, then saved).
   const scalesSeeded = useRef(false);
 
   // Live updates from the Rust core when running under Tauri.
@@ -256,6 +267,7 @@ export default function Overlay() {
             prevThemeRef.current = theme;
             applyAccentAndTheme(hue, mot, theme);
           }
+          if (e.payload.configLoaded === false) scalesSeeded.current = false;
           if (!scalesSeeded.current) {
             lastChipScale.current = e.payload.chipScale ?? REC.chipScale;
             lastDotScale.current = e.payload.dotScale ?? REC.dotScale;
@@ -441,11 +453,15 @@ export default function Overlay() {
     }
     // Linger so the FINAL words stay readable — but only when there ARE words. With nothing
     // to show (a no-speech session ending), collapse at once instead of holding an empty pill
-    // that would fall through to the "listening" label after the session is already over.
-    const linger = state.partial ? COLLAPSE_LINGER_MS : 0;
+    // that would fall through to the "listening" label after the session is already over —
+    // unless there is a note or reason to read: the label lives in the expanded body, so with
+    // live transcript off (no words) a 0 linger never painted it. sessionNoteHoldMs is the one
+    // hold rule the note/pulse timers below (and the dock-off window hide) use, so the linger
+    // matches. Read from the payload: `note`/`pulse` are derived further down, on the same edge.
+    const linger = Math.max(sessionNoteHoldMs(state), state.partial ? COLLAPSE_LINGER_MS : 0);
     const t = setTimeout(() => setExpanded(false), linger);
     return () => clearTimeout(t);
-  }, [wantExpanded, state.partial]);
+  }, [wantExpanded, state.partial, state.sessionNote, state.translateFailure, state.sessionOutcome]);
 
   // Hover-to-reveal: holding the cursor over the chip for the configured delay
   // (hoverRevealMs, default 500 ms) expands it to show
@@ -840,7 +856,7 @@ export default function Overlay() {
       const failed = !!state.translateFailure;
       setPulse(failed ? "untranslated" : o);
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
-      pulseTimer.current = setTimeout(() => setPulse(null), failed ? 2600 : 1100);
+      pulseTimer.current = setTimeout(() => setPulse(null), failed ? SESSION_WARN_HOLD_MS : 1100);
     } else {
       // null (fresh session) or "none" (cancelled / nothing landed) → clear any lingering pulse.
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
@@ -865,7 +881,10 @@ export default function Overlay() {
     if (n) {
       setNote(n);
       // "incomplete" carries a reason to read, like the untranslated pulse: held longer.
-      noteTimer.current = setTimeout(() => setNote(null), n === "incomplete" ? 2600 : 2000);
+      noteTimer.current = setTimeout(
+        () => setNote(null),
+        n === "incomplete" ? SESSION_WARN_HOLD_MS : SESSION_NOTE_HOLD_MS,
+      );
     } else {
       setNote(null); // a fresh session clears it
     }
@@ -897,12 +916,14 @@ export default function Overlay() {
       : note === "not-inserted-saved"
         ? "not inserted · saved to History"
         : "not inserted";
-  // "incomplete" outranks the untranslated pulse (as the sr-only status does): both land on
-  // the same edge with the same 2600 ms hold, so the pulse first would never paint it — and
-  // a possibly lost phrase is the bigger news than an untranslated one.
+  // "incomplete" and the untranslated pulse are COMBINED (as the sr-only status does): both land
+  // on the same edge with the same 2600 ms hold, so one slot has to carry both — the untranslated
+  // outcome first, the possibly lost phrase after it.
   const label =
     note === "incomplete"
-      ? noteLabel
+      ? pulse === "untranslated"
+        ? `${untranslatedVerb} as spoken · ${noteLabel}`
+        : noteLabel
       : pulse === "untranslated"
         ? `${untranslatedVerb} as spoken — translation ${failureLabel}`
         : note
@@ -910,6 +931,19 @@ export default function Overlay() {
           : state.status === "idle"
             ? ""
             : vis.label;
+  // The outcome an "incomplete" note shares the sr-only status with — from the stable payload
+  // fields, not the 1.1 s pulse, so the live region doesn't change (and re-announce) when the
+  // pulse clears. Without it a clipboard-only or untranslated end went unsaid behind the note.
+  const incompleteEndPhrase =
+    state.translateFailure && (state.sessionOutcome === "typed" || state.sessionOutcome === "clipboard")
+      ? state.sessionOutcome === "clipboard"
+        ? "Copied untranslated — the translation did not finish"
+        : "Inserted untranslated — the translation did not finish"
+      : state.sessionOutcome === "clipboard"
+        ? "Copied to clipboard"
+        : state.sessionOutcome === "typed"
+          ? "Inserted"
+          : "";
   // The states whose dot colour comes from the tone map rather than the armed/standby tokens.
   const toneOwnsDot = vis.state === "error" || vis.state === "speaking" || vis.state === "processing";
   const dotColorClass =
@@ -1256,7 +1290,9 @@ export default function Overlay() {
             speaks the change; non-urgent → polite. */}
         <span role="status" aria-live="polite" className="sr-only">
           {note === "incomplete"
-            ? "The last phrase may be missing — the server did not finish the transcript in time"
+            ? incompleteEndPhrase
+              ? `${incompleteEndPhrase}. The last phrase may be missing`
+              : "The last phrase may be missing — the server did not finish the transcript in time"
             : pulse === "typed"
               ? "Inserted"
               : pulse === "clipboard"
