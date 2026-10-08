@@ -34,7 +34,7 @@ import {
   activeRailIndex, axisLayout, flushPersistEdits, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
   linkPrefetchFor, linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
-  useTranscribeRun, type RailStage,
+  useTranscribeRun, type RailStage, linkUsesSiteTranscript, setUrlMeta,
   assembleTranslatedSegments,
   cancelRun, lostContact, translateParsed, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
   SITE_TRANSCRIPT_FALLBACK,
@@ -557,6 +557,26 @@ describe("selectPath keeps a same-path open record", () => {
     useTranscribeRun.setState({ lastOptions: { diarize: true } });
     openHistoryRecord(recOf("rec-6", "/d.mp3"));
     expect(useTranscribeRun.getState().lastOptions).toBeUndefined();
+  });
+
+  const LINK = "https://example.com/watch?v=plan";
+  const sitePlan = { transcriptTrackId: "t", fetch: ["t"], mtTargets: [] };
+
+  it("opening a link record drops another Add link's site-subtitle plan (its retry transcribes)", () => {
+    useTranscribeRun.setState({ files: [], urlMeta: {} });
+    setUrlMeta(LINK, { title: "Later add", extractor: "Youtube", siteSubs: sitePlan });
+    openHistoryRecord({ ...recOf("rec-7", LINK), kind: "url", title: "Old run" });
+    const meta = useTranscribeRun.getState().urlMeta[LINK];
+    expect(linkUsesSiteTranscript(meta)).toBe(false);
+    expect(meta).toEqual({ title: "Old run", extractor: "Youtube" });
+  });
+
+  it("a link still staged in the input list keeps its card's plan", () => {
+    useTranscribeRun.setState({ files: [LINK], urlMeta: {} });
+    setUrlMeta(LINK, { title: "Staged", siteSubs: sitePlan });
+    openHistoryRecord({ ...recOf("rec-8", LINK), kind: "url" });
+    expect(linkUsesSiteTranscript(useTranscribeRun.getState().urlMeta[LINK])).toBe(true);
+    useTranscribeRun.setState({ files: [], urlMeta: {} });
   });
 });
 

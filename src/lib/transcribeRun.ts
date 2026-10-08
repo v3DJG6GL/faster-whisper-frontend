@@ -1116,10 +1116,22 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
   if (!currentRecord(rec.id)) upsertRecord(rec);
   registerRecord(rec);
   const recIsUrl = isSourceUrl(rec.sourcePath);
+  // urlMeta is per URL, not per record: a site-subtitle plan frozen by another Add link of
+  // the same URL must not steer this record's Retry (the rail and runLink read it). A link
+  // still staged in the input list keeps its card's plan for the next Run.
+  const prevMeta = get().urlMeta[rec.sourcePath];
+  const dropPlan = recIsUrl && !!prevMeta?.siteSubs && !get().files.includes(rec.sourcePath);
+  const { siteSubs: _otherPlan, ...metaSansPlan } = prevMeta ?? {};
   set((s) => ({
     epoch: s.epoch + 1,
-    urlMeta: recIsUrl && rec.title
-      ? { ...s.urlMeta, [rec.sourcePath]: { ...s.urlMeta[rec.sourcePath], title: rec.title } }
+    urlMeta: recIsUrl && (rec.title || dropPlan)
+      ? {
+          ...s.urlMeta,
+          [rec.sourcePath]: {
+            ...(dropPlan ? metaSansPlan : prevMeta),
+            ...(rec.title ? { title: rec.title } : {}),
+          },
+        }
       : s.urlMeta,
     queue: [
       {
