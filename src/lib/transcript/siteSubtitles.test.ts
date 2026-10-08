@@ -271,6 +271,13 @@ describe("tracks and switches", () => {
         const es = v.rows.find((r) => r.code === "es")!;
         expect([es.sub, es.badges.map((x) => x.state)]).toEqual(["from the site", ["idle", "active"]]);
         expect(v.chips.map((c) => c.code)).toContain("es");
+        // Switching off its site track drops the language: machine translation cannot take over
+        // past the limit, so it must not stay wanted with no source at all.
+        const [fi1, fst] = apply(i1, flip(i1, st, es.badges[1].key!));
+        expect(fi1.targets).not.toContain("es");
+        const fv = derive(fi1, fst);
+        expect(fv.chips.map((c) => c.code)).not.toContain("es");
+        expect(fv.run!.fetch).not.toContain("es");
       }
     }
     // Without a known limit nothing is cut.

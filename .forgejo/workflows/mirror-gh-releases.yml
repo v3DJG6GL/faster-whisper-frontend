@@ -39,10 +39,11 @@
 #     on. The SHA256SUMS files themselves are compared by CONTENT: their size
 #     never changes within a tag (fixed-width digests + version-stamped
 #     names). Every other asset is compared by size AND by its digest in the
-#     source sums vs the GitHub copy of the sums — those describe exactly the
-#     bytes a previous run verified and uploaded, so a rebuilt release whose
-#     installer kept its byte count (sector-padded MSI) is still caught
-#     without downloading the GitHub installer. Any mismatch means an
+#     source sums vs the GitHub copy of the sums — since f752520 those describe
+#     exactly the bytes a previous run verified and uploaded (a manual run
+#     with verify_bytes hashes GitHub's installers to repair older mirrors),
+#     so a rebuilt release whose installer kept its byte count (sector-padded
+#     MSI) is still caught without downloading the GitHub installer. Any mismatch means an
 #     interrupted upload or a rebuilt release, so the GitHub copy is replaced.
 #     The sums are uploaded after the installers of their release, so GitHub
 #     only ever gets new sums once the installers they describe are in place.
@@ -72,6 +73,14 @@ on:
     - cron: '45 7 * * *'
     - cron: '45 15 * * *'
   workflow_dispatch:
+    inputs:
+      verify_bytes:
+        # Releases mirrored before the sums-based installer check (f752520) may hold an
+        # old same-size installer next to new sums — the sums check cannot see that. A
+        # manual run with this on hashes GitHub's installer bytes once and repairs it.
+        description: Also download and hash GitHub's installers (one-time repair of older mirrors)
+        type: boolean
+        default: false
 
 # A release publish + a notes edit in quick succession must not run two
 # overlapping syncs (both would try to create the same GitHub release).
@@ -98,6 +107,7 @@ jobs:
           # the run-scoped token anyway so the sync survives the repo ever
           # being flipped private.
           SRC_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERIFY_BYTES: ${{ inputs.verify_bytes || 'false' }}
         run: |
           set -euo pipefail
 
@@ -262,8 +272,17 @@ jobs:
                       [ -z "$want" ] ||
                         [ "$want" = "$(awk -v n="$aname" '$2 == n { print $1; exit }' gh-allsums.txt)" ]
                     }; then
-                      fresh=$((fresh + 1))
-                      continue
+                      # verify_bytes (manual one-time repair, see the input): the sums only vouch
+                      # for bytes THIS version uploaded, so hash GitHub's copy. Inside an `if` on
+                      # purpose, like the GitHub sums fetch: an unreadable copy reads as drift.
+                      if [ "$VERIFY_BYTES" != "true" ] || [ -z "$want" ] || {
+                        dget -L -H 'Accept: application/octet-stream' -o gh-asset.bin \
+                          "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")" &&
+                          [ "$(sha256sum gh-asset.bin | cut -d' ' -f1)" = "$want" ]
+                      }; then
+                        fresh=$((fresh + 1))
+                        continue
+                      fi
                     fi
                     ;;
                 esac

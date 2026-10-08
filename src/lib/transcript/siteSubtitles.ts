@@ -448,7 +448,8 @@ function allTargets(m: ReturnType<typeof model>): Record<string, boolean> {
 
 /** A badge click: flip used ↔ not used, snapshot into Custom (v25/v27). A language you
  *  translate into always keeps a source: switching off its last one lets machine translation
- *  take over (an existing subtitle went) or drops the language (machine translation went, v28). */
+ *  take over (an existing subtitle went, unless the translation limit greys it) or drops the
+ *  language (machine translation went, or cannot take over; v28). */
 export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): SiteChange {
   const m = model(input, st);
   // A greyed over-cap badge (the download or the translation limit): switching it on would be
@@ -474,7 +475,9 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   if (c && tg[c] && !next[key]) {
     const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k]);
     if (!left.length) {
-      if (key.startsWith("mt:")) tg[c] = false;
+      // Machine translation cannot take over a language the translation limit already greys:
+      // it would stay wanted with no source at all (both chip parts off, a dead MT click).
+      if (key.startsWith("mt:") || m.mtCapped.has(c)) tg[c] = false;
       else next["mt:" + c] = true;
     }
   }

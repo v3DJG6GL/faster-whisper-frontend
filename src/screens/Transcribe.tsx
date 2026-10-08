@@ -495,7 +495,8 @@ export default function Transcribe() {
         multi: linkLang.sp.multi,
         targets: translationAvailable ? translateTo : [],
         site: previewSite,
-        maxTargets: maxTranslationTargets(caps),
+        // No machine translation, nothing to cap: the rows keep the download-cap wording.
+        maxTargets: translationAvailable ? maxTranslationTargets(caps) : undefined,
       }
     : null;
   const siteView = siteInput && siteState ? derive(siteInput, siteState) : null;

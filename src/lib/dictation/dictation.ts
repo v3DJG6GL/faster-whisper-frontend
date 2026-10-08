@@ -10,7 +10,7 @@ import {
   isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs,
 } from "./streaming";
 import type { TargetPick } from "./streaming";
-import { getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
+import { abortLangPick, getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
 import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
 import { sessionShape } from "./sessionShape";
@@ -175,8 +175,8 @@ export function dictate(profileId: string, action: TriggerAction): void {
   // the one-shot translate, the last moment the answer can still change what is inserted.
   setSettleTargetPicker(
     profile.askTranslationTargets && profile.activation === "hold"
-      ? () =>
-          askTranslationTargets(targetPickerSeed(profile, backend, "after")).then((pick) => {
+      ? (stillWanted) =>
+          askTranslationTargets(targetPickerSeed(profile, backend, "after"), stillWanted).then((pick) => {
             if (pick.kind === "picked") rememberRecent("recentTranslationTargets", pick.targets);
             return pick;
           })
@@ -285,7 +285,7 @@ export function startHandsFree(backend: Backend, micId: string | null, profile: 
  *   • `unavailable` — no picker could be shown (no window, IPC failure): not a gesture, so
  *                     the caller proceeds with the Profile's configured targets.
  *  A picker always answers, one way or another — see the catch below. */
-function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPick> {
+function askTranslationTargets(seed: Record<string, unknown>, stillWanted?: () => boolean): Promise<TargetPick> {
   if (!isTauri) return Promise.resolve({ kind: "unavailable" });
   return new Promise((resolve) => {
     let done = false;
@@ -302,6 +302,12 @@ function askTranslationTargets(seed: Record<string, unknown>): Promise<TargetPic
         unlisten.push(await listen("langpick://abort", () => finish({ kind: "aborted" })));
         unlisten.push(await listen("langpick://unavailable", () => finish({ kind: "unavailable" })));
         await showLangPick(seed);
+        // Cancelled while the window was coming up: that abort hid nothing (and its event may
+        // have beaten the listeners above), so take the late-shown window down here.
+        if (stillWanted && !stillWanted()) {
+          finish({ kind: "aborted" });
+          void abortLangPick().catch((e) => console.error("lang pick abort failed:", e));
+        }
       })
       // A failed import/listen/show must read as "unavailable", never as a pending answer:
       // the hands-free caller holds `pickerOpen` across this await and push-to-talk holds

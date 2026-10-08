@@ -1585,10 +1585,10 @@ export type TargetPick =
  *  push-to-talk path). Injected rather than imported: dictation.ts already imports this
  *  module, so the dependency can only go this way. Armed BEFORE startLive, which is how
  *  startLiveInner knows to publish the route as "undecided" (`routePending`). */
-let askTargetsAtSettle: (() => Promise<TargetPick>) | null = null;
+let askTargetsAtSettle: ((stillWanted: () => boolean) => Promise<TargetPick>) | null = null;
 /** The settle picker currently on screen (a per-ask token), for cancelLive to abort. */
 let settlePickerOpen: object | null = null;
-export function setSettleTargetPicker(fn: (() => Promise<TargetPick>) | null): void {
+export function setSettleTargetPicker(fn: ((stillWanted: () => boolean) => Promise<TargetPick>) | null): void {
   askTargetsAtSettle = fn;
 }
 
@@ -2810,7 +2810,9 @@ async function ensureListeners(): Promise<void> {
             settlePickerOpen = asking;
             let pick: TargetPick;
             try {
-              pick = await askTargetsAtSettle();
+              // `stillWanted`: a cancel that lands while the window is still coming up aborts
+              // before the show — the asker takes the late-shown window down itself.
+              pick = await askTargetsAtSettle(() => settlePickerOpen === asking);
             } finally {
               if (settlePickerOpen === asking) settlePickerOpen = null;
             }

@@ -70,8 +70,13 @@ describe("the settle picker is armed for exactly one session", () => {
     // The ask is awaited inside the stop-mode inject task; disarming alone leaves the
     // always-on-top window up with buttons whose answer the stale task then ignores.
     expect(mask(bodyAfter(streamingSrc, "async function cancelLive("))).toContain("abortLangPick(");
-    const ask = mask(streamingSrc).indexOf("await askTargetsAtSettle()");
+    const ask = mask(streamingSrc).indexOf("await askTargetsAtSettle(");
+    expect(ask).toBeGreaterThanOrEqual(0);
     expect(mask(streamingSrc).lastIndexOf("settlePickerOpen = asking", ask)).toBeGreaterThanOrEqual(0);
+    // A cancel before the window is up hid nothing: the asker re-checks after the show.
+    const asker = mask(bodyAfter(dictationSrc, "function askTranslationTargets("));
+    expect(asker.indexOf("stillWanted()")).toBeGreaterThan(asker.indexOf("await showLangPick("));
+    expect(asker).toContain("abortLangPick(");
   });
 
   it("dictate() disarms before the hands-free branch can return early", () => {

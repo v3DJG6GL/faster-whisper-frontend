@@ -196,9 +196,10 @@ function Editor({
     credentialGen: liveGen,
   });
   const server = serverInherited(decodeDefaults);
-  // The backend's own model, if it names one: the `whisper-1` alias (a new backend's default)
-  // loads the server's DEFAULT_MODEL, so it reads as inherited, as the chips and ModelPicker do.
-  const ownModel = b.model.trim() === WHISPER_ALIAS ? "" : b.model.trim();
+  // The backend's own model, if it names one: on a full server the `whisper-1` alias (a new
+  // backend's default) loads the server's DEFAULT_MODEL, so it reads as inherited, as the chips
+  // and ModelPicker do. On a standard (OpenAI-compatible) server it is the real model sent.
+  const ownModel = b.model.trim() === WHISPER_ALIAS && kind !== "standard" ? "" : b.model.trim();
   // "Multiple languages" is the backend's default `multilingual` decode override.
   const multiOffered = offersMultilingual({
     canOverride: caps?.can_request_decode_overrides,
