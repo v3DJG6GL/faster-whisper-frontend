@@ -55,8 +55,10 @@ function statsPageShown(): boolean {
 export function openStatisticsPage(): () => void {
   statsPagesOpen++;
   if (statsPagesOpen === 1) {
-    void refreshView().catch(() => {});
-    void refreshYear(true).catch(() => {});
+    // Reopened: what the store kept is from the last visit (the poll leaves it alone while the
+    // page is closed), so a miss now marks it failed rather than presenting it as current.
+    void refreshView(true).catch(() => {});
+    void refreshYear(true, true).catch(() => {});
   }
   let closed = false;
   return () => {
@@ -126,8 +128,9 @@ export function yearPageQuery(q: UsagePageQuery): UsagePageQuery | null {
 }
 
 /** Fetch the calendar's year document beside the page's, under the same rules. `force`
- *  refetches a year it already has (the page reopening after the poll left it alone). */
-async function refreshYear(force = false): Promise<void> {
+ *  refetches a year it already has (the page reopening after the poll left it alone);
+ *  `reopened` marks a kept same-query year failed on a miss, as refreshView's does. */
+async function refreshYear(force = false, reopened = false): Promise<void> {
   const s = useApp.getState();
   const backend = viewStatsBackend(s);
   if (!backend) return;
@@ -143,13 +146,15 @@ async function refreshYear(force = false): Promise<void> {
   if (!cur || cur.id !== backend.id) return;
   const nq = yearPageQuery(now.usageViewQuery);
   if (!nq || viewSignature(cur, effectiveServerUrl(cur, now.settings), nq, tz) !== sig) return;
-  if (stats === null && now.usageYear?.sig === sig) return;
+  if (stats === null && now.usageYear?.sig === sig && !reopened) return;
   now.setUsageYear(sig, stats);
 }
 
 /** Fetch the Statistics page's document for the current query against the viewed
- *  backend. A response for a query that is no longer current is dropped. */
-async function refreshView(): Promise<void> {
+ *  backend. A response for a query that is no longer current is dropped. `reopened`: the
+ *  page just mounted, so a kept same-query document may be days old — a miss marks it
+ *  failed (still shown, as older data) instead of keeping it as if it were current. */
+async function refreshView(reopened = false): Promise<void> {
   const s = useApp.getState();
   const backend = viewStatsBackend(s);
   if (!backend) return;
@@ -162,7 +167,7 @@ async function refreshView(): Promise<void> {
   const cur = viewStatsBackend(now);
   if (!cur || cur.id !== backend.id) return;
   if (viewSignature(cur, effectiveServerUrl(cur, now.settings), now.usageViewQuery, tz) !== sig) return;
-  if (stats === null && now.usageView?.sig === sig) return; // keep the last-known on a transient miss
+  if (stats === null && now.usageView?.sig === sig && !reopened) return; // keep the last-known on a transient miss
   now.setUsageView(sig, stats);
 }
 
@@ -320,11 +325,16 @@ export function initUsageController(): void {
       clearTimeout(afterTimer);
       afterTimer = setTimeout(() => void refreshAll(), AFTER_SESSION_MS);
     }
-    // The Statistics page changed what it asks for, or which backend it looks at: fetch
-    // that document now rather than on the next 30 s tick.
+    // The Statistics page changed what it asks for, or which backend it looks at — picked, or
+    // the implicit default moving under it (the home profile cycled from the chip, a sync pull
+    // rewriting the profiles): fetch that document now rather than on the next 30 s tick.
+    // Usage-map changes are left out: refreshAll refreshes the view after its per-backend loop.
     if (
       statsPageShown() &&
-      (state.usageViewQuery !== prev.usageViewQuery || state.usageViewBackendId !== prev.usageViewBackendId)
+      (state.usageViewQuery !== prev.usageViewQuery ||
+        state.usageViewBackendId !== prev.usageViewBackendId ||
+        ((state.profiles !== prev.profiles || state.settings.homeProfileId !== prev.settings.homeProfileId) &&
+          viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id))
     ) {
       void refreshView().catch(() => {});
       void refreshYear().catch(() => {});

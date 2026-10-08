@@ -203,6 +203,62 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(1_000);
     await settle();
   });
+  it("a page reopened onto a miss marks the kept documents failed instead of current", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    let close = openStatisticsPage();
+    await settle();
+    close();
+    const { usageView, usageYear } = useApp.getState();
+    expect(usageView?.stats && !usageView.failed).toBeTruthy();
+    expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
+    // The page closed; on the next visit the server does not answer (view + year).
+    getUsageStats.mockImplementationOnce(async () => null as never).mockImplementationOnce(async () => null as never);
+    close = openStatisticsPage();
+    await settle();
+    // Same query, so the same documents — kept up, but no longer presented as current.
+    expect(useApp.getState().usageView).toEqual({ sig: usageView!.sig, stats: usageView!.stats, failed: true });
+    expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
+    close();
+  });
+  it("refetches the page when the home profile moves the default backend under it", async () => {
+    useApp.setState((s) => ({
+      backends: [
+        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+      ],
+      profiles: [
+        { id: "p1", enabled: true, backendId: "b1" } as never,
+        { id: "p2", enabled: true, backendId: "b2" } as never,
+      ],
+      usageViewBackendId: null,
+      settings: { ...s.settings, homeProfileId: "p1" },
+    }));
+    await vi.advanceTimersByTimeAsync(30_000); // the backend-edit pass, then a tick: both have usage
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    getUsageStats.mockClear();
+    // The overlay chip cycles the home profile while the page is open.
+    useApp.setState((s) => ({ settings: { ...s.settings, homeProfileId: "p2" } }));
+    await settle();
+    const page = getUsageStats.mock.calls.map(([a]) => a as { backendId?: string });
+    expect(page.length).toBe(2); // the view + the year, without waiting for a tick
+    expect(page.every((a) => a.backendId === "b2")).toBe(true);
+    // A home-profile change that leaves the default backend where it is fetches nothing.
+    getUsageStats.mockClear();
+    useApp.setState((s) => ({ settings: { ...s.settings, homeProfileId: "p2" }, profiles: [...s.profiles] }));
+    await settle();
+    expect(getUsageStats).not.toHaveBeenCalled();
+    close();
+    useApp.setState((s) => ({
+      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      profiles: [],
+      settings: { ...s.settings, homeProfileId: undefined },
+    }));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

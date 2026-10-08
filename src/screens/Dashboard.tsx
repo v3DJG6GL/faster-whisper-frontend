@@ -15,6 +15,7 @@ import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/dictation/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
+import { effectiveLanguage } from "@/lib/backends";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
 import { langCode } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
@@ -52,7 +53,7 @@ const TRANSCRIPT_LINGER_MS = 10000;
  *  defaults under the profile's overrides. Both halves are peer-authored (a sync pull can
  *  land them), so they go through routeParts' labelling and bounds. */
 function profileRoute(p: Profile | undefined, backend: Backend | undefined): string {
-  const lang = p?.language?.trim() ? p.language : (backend?.language ?? "auto");
+  const lang = effectiveLanguage(p?.language, backend?.language) ?? "auto";
   const route = routeParts(lang, configuredRouteTargets(p, backend));
   return (route.source || "auto") + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
 }
@@ -61,7 +62,7 @@ function profileRoute(p: Profile | undefined, backend: Backend | undefined): str
  *  the row's narrow column; the full names ride on the cell's tooltip. */
 function profileRouteShort(p: Profile | undefined, backend: Backend | undefined): string {
   const code = (v: string) => langCode(v.trim(), 8);
-  const lang = p?.language?.trim() ? p.language : (backend?.language ?? "");
+  const lang = effectiveLanguage(p?.language, backend?.language) ?? "";
   const source = lang && lang !== "auto" ? code(lang) : "auto";
   const targets = (configuredRouteTargets(p, backend) ?? []).filter((t) => typeof t === "string" && t.trim()).map(code);
   return source + (targets.length ? ` → ${targets.slice(0, ROUTE_TARGETS_SHOWN).join(", ")}${targets.length > ROUTE_TARGETS_SHOWN ? ` +${targets.length - ROUTE_TARGETS_SHOWN}` : ""}` : "");
@@ -83,7 +84,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   const backends = useApp((s) => s.backends);
   const updateProfile = useApp((s) => s.updateProfile);
   const navigate = useNavigate();
-  const backend = backends.find((b) => b.id === p.backendId);
+  const backend = backendForProfile(p, backends);
   const Glyph = GLYPH[p.activation];
   const name = safeDisplayText(p.name, 80);
   return (

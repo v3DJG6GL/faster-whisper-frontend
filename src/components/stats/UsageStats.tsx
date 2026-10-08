@@ -102,7 +102,9 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
   return (
     <Panel
       title={`Stages · share of sessions that used them, ${rangeWord}`}
-      right={<><Pill>{fmtFull(media)} file &amp; link sessions · {fmtFull(win.dictation.sessions)} dictations</Pill><Pill>counts sessions</Pill></>}
+      // The stage rows are the document's own, which has no per-kind split (the Kind filter is
+      // client-side): say so under a narrowed kind rather than let them read as filtered.
+      right={<><Pill>{fmtFull(media)} file &amp; link sessions · {fmtFull(win.dictation.sessions)} dictations</Pill><Pill>counts sessions</Pill>{scope !== "all" && <Pill>all kinds</Pill>}</>}
     >
       <div>
         {orderedStageRows(withS).map((row) => {
@@ -131,7 +133,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
             );
           }
           const share = pct(st.runs, st.of_runs);
-          const runsWord = row.key === "translating" ? "sessions" : "file sessions";
+          const runsWord = row.key === "translating" ? "sessions" : "file & link sessions";
           let detail: ReactNode;
           if (row.key === "translating") {
             detail = <>avg <Num>+{(st.secs / st.runs).toFixed(1)} s</Num> / run</>;
@@ -160,7 +162,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
                 <div className="h-1.5 flex-1 overflow-hidden rounded-pill bg-line">
                   <i className="block h-full rounded-pill" style={{ width: `${share}%`, background: row.colorVar }} />
                 </div>
-                <span className="w-[120px] font-num text-[12px] text-text">
+                <span className="w-[150px] font-num text-[12px] text-text">
                   {share} % · {fmtFull(st.runs)} {runsWord}
                 </span>
               </div>
