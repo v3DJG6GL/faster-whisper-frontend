@@ -317,10 +317,21 @@ describe("tracks and switches", () => {
     const inp = input({ tracks: [tr("en", "en"), tr("es", "es")], spoken: "en", targets: ["ja"], maxTargets: 1 });
     const st = initialSiteState(inp.targets);
     expect(flip(inp, st, "mt:es")).toEqual({ state: st, targets: ["ja"] });
+    // The dead click says why, on the row's badge and the chip's part alike.
+    const limit = "At the 1-language translation limit — switch another translation off first";
+    const v = derive(inp, st);
+    expect(v.rows.find((r) => r.code === "es")!.badges[0].title).toBe(limit);
+    expect(v.chips.find((c) => c.code === "es")!.parts[0].title).toBe(limit);
+    // With a free slot the click works and the titles offer it.
+    const wide = { ...inp, maxTargets: 2 };
+    const vw = derive(wide, st);
+    expect(vw.rows.find((r) => r.code === "es")!.badges[0].title).toBe("Not needed: existing subtitles cover Spanish — click to machine-translate anyway");
+    expect(vw.chips.find((c) => c.code === "es")!.parts[0].title).toBe("Machine-translate into Spanish as well");
     // Its site track switched off first (es drops, as above): switching MT on is refused too,
     // rather than leaving es wanted with no source at all.
     const inp2 = input({ tracks: [tr("de", "de"), tr("es", "es")], targets: ["ja"], maxTargets: 1 });
     const [i1, s1] = apply(inp2, flip(inp2, initialSiteState(inp2.targets), "ex:es"));
+    expect(derive(i1, s1).rows.find((r) => r.code === "es")!.badges[0].title).toBe(limit);
     const [i2, s2] = apply(i1, flip(i1, s1, "mt:es"));
     expect(i2.targets).toEqual(["ja"]);
     expect(derive(i2, s2).chips.map((c) => c.code)).toEqual(["ja"]);
@@ -333,6 +344,7 @@ describe("tracks and switches", () => {
     expect(derive(i1, s1).chips.map((c) => c.code)).not.toContain("es");
     // Prefer: re-adding es lights its site track and needs no translation slot.
     expect(freeAdds(i1, s1)).toEqual(["es"]);
+    expect(freeAdds(i1, s1, derive(i1, s1))).toEqual(["es"]);
     // Generate: the site track stays idle, so es would need the full machine translation.
     const [i2, s2] = apply(i1, pickPolicy(i1, s1, "generate"));
     expect(freeAdds(i2, s2)).not.toContain("es");

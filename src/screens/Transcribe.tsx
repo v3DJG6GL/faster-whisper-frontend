@@ -9,7 +9,7 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/transcribe/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/transcribe/SiteSubtitlesPanel";
-import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
+import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -513,7 +513,7 @@ export default function Transcribe() {
       persistOptions({ translateTo: ch.targets });
     }
   };
-  const siteMtUsed = siteView ? siteView.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length : 0;
+  const siteMtUsed = siteView ? mtUsed(siteView) : 0;
   /** The translation chips while the panel is in charge: the wanted languages, each with its
    *  sources as compound parts. */
   const siteChips = siteInput && siteState?.subs && siteView
@@ -527,7 +527,7 @@ export default function Transcribe() {
         // serve (freeAdds). Counted from the parts, so it holds while the panel has no run too.
         used: siteMtUsed,
         // Asked only at the limit (one trial derive per site language).
-        free: siteMtUsed >= maxTranslationTargets(caps) ? freeAdds(siteInput, siteState) : undefined,
+        free: siteMtUsed >= maxTranslationTargets(caps) ? freeAdds(siteInput, siteState, siteView) : undefined,
       }
     : null;
 
@@ -731,16 +731,22 @@ export default function Transcribe() {
   // The picker and backend-switch prunes see the source of THAT moment; a server's
   // DEFAULT_LANGUAGE arrives later (decode defaults load async), so re-prune when the known
   // source settles — else a chip equal to it survives hidden and runs a source→source no-op.
-  // Not while the site-subtitle panel owns the chips: translateTo must stay its mirror.
+  // Not while the site-subtitle panel owns the chips: translateTo must stay its mirror. The
+  // panel may grow it past the server's translation limit (a language a site track serves is
+  // free there, freeAdds); released, it is cut back to the limit, or every other run sends the
+  // over-cap list (a subtitle or text file's translation is rejected outright). The panel's
+  // free adds come last, so the first ones stay.
   useEffect(() => {
-    if (!knownSource || busy || siteChips) return;
-    const next = pruneTargets(translateTo, knownSource);
+    if (busy || siteChips) return;
+    let next = knownSource ? pruneTargets(translateTo, knownSource) : translateTo;
+    if (translationAvailable) next = next.slice(0, maxTranslationTargets(caps));
     if (next.length !== translateTo.length) {
       setTranslateTo(next);
       persistOptions({ translateTo: next });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- stable setters; translateTo is read, not watched;
-    // siteChips as a boolean: the panel releasing the chips re-prunes, its per-render identity does not
+    // siteChips as a boolean: the panel releasing the chips re-prunes, its per-render identity does not;
+    // caps unwatched: a backend switch to a lower limit must not silently and permanently drop targets
   }, [knownSource, busy, !!siteChips]);
 
   // The studio splitter: the rail width lives in the transcribe settings (local, never

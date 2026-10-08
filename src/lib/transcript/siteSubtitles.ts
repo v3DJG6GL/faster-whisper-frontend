@@ -441,7 +441,29 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
 }
 
 export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
-  return model(input, st).view;
+  const m = model(input, st);
+  // At a full translation limit flip refuses to switch machine translation on where it would
+  // be greyed or strand another language (strands) — a dead click: its badge and chip part say
+  // why instead of offering it. flip returns the very same state only when it refuses; it
+  // calls model, not derive. Below the limit nothing is refused, so only then is it asked.
+  const maxMt = input.maxTargets;
+  if (maxMt !== undefined && mtUsed(m.view) >= maxMt) {
+    const title = `At the ${maxMt}-language translation limit — switch another translation off first`;
+    for (const r of m.view.rows) {
+      const mtB = r.badges[0];
+      if (!r.code || mtB?.kind !== "mt" || mtB.state === "active" || m.mtCapped.has(r.code)) continue;
+      if (flip(input, st, "mt:" + r.code).state !== st) continue;
+      mtB.title = title;
+      const part = m.view.chips.find((c) => c.code === r.code)?.parts[0];
+      if (part?.kind === "mt") part.title = title;
+    }
+  }
+  return m.view;
+}
+
+/** The machine translations the chips light — what counts against the translation limit. */
+export function mtUsed(v: SiteSubsView): number {
+  return v.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length;
 }
 
 /** Every wanted language written into the targets — what entering Custom does (v32). */
@@ -563,7 +585,7 @@ export function removeLanguage(input: SiteSubsInput, st: SiteSubsState, code: st
 /** The translation chips' own picker while the panel is in charge: chips no longer in
  *  `next` switch their language off, new codes are added as languages (rows at the bottom). */
 export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readonly string[]): SiteChange {
-  const chips = derive(input, st).chips.map((c) => c.code);
+  const chips = model(input, st).view.chips.map((c) => c.code);
   let ch: SiteChange = { state: st, targets: [...input.targets] };
   const step = (c: SiteChange) => {
     ch = c;
@@ -578,20 +600,20 @@ export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readon
  *  at the server's limit: trialled through setTargets, a language qualifies only when it then
  *  keeps an active site source and no extra machine translation runs. Under Generate (site
  *  tracks idle) or past the download limit it would be a chip with nothing behind it. Costs one
- *  derive per candidate, so ask only at the limit. */
-export function freeAdds(input: SiteSubsInput, st: SiteSubsState): string[] {
-  const view = derive(input, st);
+ *  derive per candidate, so ask only at the limit; `view` = derive(input, st) when the caller
+ *  already has it. */
+export function freeAdds(input: SiteSubsInput, st: SiteSubsState, view: SiteSubsView = derive(input, st)): string[] {
   const chips = view.chips.map((c) => c.code);
-  const mtOn = (v: SiteSubsView) => v.chips.filter((c) => c.parts[0]?.kind === "mt" && c.parts[0].on).length;
-  const before = mtOn(view);
+  const before = mtUsed(view);
   const out: string[] = [];
   for (const r of view.rows) {
     if (!r.code || chips.includes(r.code)) continue;
     if (!r.badges.some((b) => b.kind === "existing" || b.kind === "auto")) continue;
     const ch = setTargets(input, st, [...chips, r.code]);
-    const v = derive({ ...input, targets: ch.targets }, ch.state);
+    // The trial's titles do not matter: model, not derive, spares derive's limit pass.
+    const v = model({ ...input, targets: ch.targets }, ch.state).view;
     const chip = v.chips.find((c) => c.code === r.code);
-    if (chip?.parts.some((p) => p.on && p.kind !== "mt") && mtOn(v) <= before) out.push(r.code);
+    if (chip?.parts.some((p) => p.on && p.kind !== "mt") && mtUsed(v) <= before) out.push(r.code);
   }
   return out;
 }
