@@ -21,6 +21,7 @@ import {
 import { evdevStatus, pickAndImportSettings, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
 import { applyImport, exportToFile, stripMachineFolders } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/sync/SyncSettingsList";
+import { SETTING } from "@/lib/settingsManifest";
 import {
   ALL_CATEGORIES,
   applyBlob,
@@ -209,7 +210,12 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   const missingKeys =
     sel.backends && categories.backends
       ? arr<Backend>(categories.backends.list).filter(
-          (b) => b.hasApiKey && !ownProp(result.secrets, b.id),
+          // Import never deletes a stored key and the apply re-derives `hasApiKey` from the
+          // keyring by id, so a same-id backend this device already holds a key for keeps it.
+          (b) =>
+            b.hasApiKey &&
+            !ownProp(result.secrets, b.id) &&
+            !st.backends.some((x) => x.id === b.id && x.hasApiKey),
         )
       : [];
 
@@ -266,9 +272,10 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
 
       <div className="mt-3 flex flex-col gap-2">
         <Notice>
-          Never imported: the microphone, this device&apos;s audio and log folders, and the Linux
-          input backend. Other machine-specific settings in the file (chip position, paste
-          shortcuts, server addresses) come in with their category.
+          Never imported: the microphone, &ldquo;{SETTING.pressEnterAfter.label}&rdquo;, this
+          device&apos;s audio and log folders, and the Linux input backend. Other machine-specific
+          settings in the file (chip position, paste shortcuts, server addresses) come in with their
+          category.
         </Notice>
         {/* The hazard notice `RestoreFromServer` has and this dialog did not, though both default
             every present category to ON and both apply through `applyBlob` — which REPLACES rather
@@ -894,9 +901,9 @@ export function SyncTab() {
         <SectionLabel>What this device syncs</SectionLabel>
         <SyncSettingsList enabled={sync.enabled} />
         <div className="mt-3 rounded-[10px] border border-dashed border-line-strong px-4 py-2.5 text-[12px] leading-snug text-faint">
-          <span className="font-semibold text-dim">Never synced:</span> microphone, this device's
-          audio and log folders (unless enabled above), the Linux input backend, and these sync
-          settings themselves.
+          <span className="font-semibold text-dim">Never synced:</span> microphone,{" "}
+          &ldquo;{SETTING.pressEnterAfter.label}&rdquo;, this device's audio and log folders (unless
+          enabled above), the Linux input backend, and these sync settings themselves.
         </div>
 
         <div className="flex items-center gap-3 py-4">

@@ -3103,6 +3103,13 @@ function dropSupersededPending(version: number): void {
   if (pendingConflict && pendingConflict.remoteVersion <= version) pendingConflict = null;
 }
 
+/** Two server `updated_ts` stamps name the same write. Not `===`: a persisted base's stamp went
+ *  through serde_json (no `float_roundtrip`) and the state file, whose best-effort float parse can
+ *  bring a 17-digit `time.time()` back one ULP off — strict equality then read the unchanged
+ *  server copy as a re-created document after a restart and forgot a live base. A real delete +
+ *  re-seed is never within a millisecond of the old write. */
+const sameStamp = (a: number, b: number): boolean => Math.abs(a - b) <= 1e-3;
+
 /** The server's document at `version` is not the one this device's base or pending prompts were
  *  built on: server versions only grow, so a version BELOW the base or below a pending prompt's
  *  means the document was deleted and re-created — a peer's "Delete server copy" followed by its
@@ -3117,7 +3124,7 @@ function serverRecreated(version: number, updatedTs: number | null | undefined):
     version === atVersion &&
     typeof atTs === "number" &&
     typeof updatedTs === "number" &&
-    updatedTs !== atTs;
+    !sameStamp(updatedTs, atTs);
   const base = state.version ?? 0;
   return (
     version < base ||
@@ -3254,6 +3261,11 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
   let localNow = await composeLive(r.cats, state.snapshot ?? r.remote);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
+  // The keyring can lock between the raise and this approval: a degraded compose carries the
+  // base's (or remote's) backends category, not this device's list, so the merge reads backends
+  // as "local unchanged" and the apply below wrote that list over every backend added here.
+  // Hold the category out as resolveLocked does — `r.degraded` alone only knows the raise.
+  const degradedNow = backendsDegraded(localNow, r.cats);
   // `r.blob` was merged against the raise-time local: an edit made here since would be hydrated
   // back to its old value. Re-merge against the live compose (no base was adopted, so a category
   // the peer changed still differs from the base). Where that conflicts, "edited" means the
@@ -3304,7 +3316,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   }
   // A degraded keyring re-sends the snapshot's backends category (the peer's view, again): judge
   // against the live list with no keys instead, so every incoming address / key still raises.
-  if (backendsDegraded(localNow, r.cats)) {
+  if (degradedNow) {
     localNow = { ...localNow, backends: { list: useApp.getState().backends, secrets: {} } };
   }
   const now = gatedSecurityCheck(blobNow, localNow, r.cats);
@@ -3316,7 +3328,8 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     return "prompt";
   }
   pendingReview = null;
-  const applied = await applyBlob(blobNow, r.cats);
+  const applyCats = degradedNow ? { ...r.cats, backends: false } : r.cats;
+  const applied = await applyBlob(blobNow, applyCats);
   if (myGen !== gen) return "done";
   if (!applied) {
     // Not applied (a session started mid-apply, or the store kept changing under it): put
@@ -3326,7 +3339,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
   // it left the backends category alone, or the next unlocked push reverts the peer's change.
-  if (r.degraded && degradedBaseWithheld(r.remote)) return "done";
+  if ((r.degraded || degradedNow) && degradedBaseWithheld(r.remote)) return "done";
   await persistState({
     version: r.version,
     updatedAt: r.updatedAt,
@@ -3389,7 +3402,10 @@ function raiseConflict(c: PendingConflict): void {
   const same =
     pendingConflict !== null &&
     pendingConflict.remoteVersion === c.remoteVersion &&
-    pendingConflict.remoteUpdatedAt === c.remoteUpdatedAt &&
+    (pendingConflict.remoteUpdatedAt === c.remoteUpdatedAt ||
+      (pendingConflict.remoteUpdatedAt !== null &&
+        c.remoteUpdatedAt !== null &&
+        sameStamp(pendingConflict.remoteUpdatedAt, c.remoteUpdatedAt))) &&
     pendingConflict.remoteDevice === c.remoteDevice &&
     pendingConflict.categories.join() === c.categories.join();
   if (!same) pendingConflictId = ++conflictSeq;

@@ -262,6 +262,52 @@ describe("a sync composed with a degraded keyring", () => {
     }
   });
 
+  // Raised with the keyring readable, approved after it locked: the approval's compose carried
+  // the base's backends category, the merge read it as "local unchanged", and the apply wrote
+  // the base / peer list over every backend added here since.
+  it("approving a review after the keyring locked keeps this device's list", async () => {
+    for (const renameB1 of [false, true]) {
+      try {
+        await resetSyncState();
+        const settings = structuredClone(DEFAULT_SETTINGS);
+        settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+        const b1 = backend({ hasApiKey: true });
+        useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
+        api.keys = { b1: "sk-secret" };
+        await pushNow(true);
+        const base = structuredClone(api.pushed) as SyncBlob;
+        const before = useApp.getState().settings.general.typeAsISpeak;
+        const remote = peer(base, before, renameB1);
+        remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+        api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+        await pullNow(true);
+        expect(getPendingReview()?.changes.map((c) => c.kind)).toContain("dictation-retention");
+        // Now add a backend here and lock the wallet before approving.
+        const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
+        useApp.setState({ backends: [...useApp.getState().backends, added] });
+        api.keys = {};
+        await approvePendingReview();
+        if (getPendingReview()) await approvePendingReview(); // a relist under the locked judge
+        const st = useApp.getState();
+        expect(st.settings.transcribe?.dictationRetentionDays).toBe(1); // the approved change applied
+        // A rename is not held back: the raise already applied it, before the add here.
+        const b1Name = renameB1 ? "renamed-by-peer" : "local";
+        expect(st.backends.map((b) => [b.id, b.name])).toEqual([["b1", b1Name], ["b2", "added-here"]]);
+        api.keys = { b1: "sk-secret" };
+        await pushNow(true);
+        if (renameB1) {
+          // The peer changed backends: no base adopted, and the status says why.
+          expect(api.pushedBase).toBe(1);
+        } else {
+          expect(api.pushedBase).toBe(2);
+          expect((api.pushed as SyncBlob).backends?.list.map((b) => b.id)).toEqual(["b1", "b2"]);
+        }
+      } finally {
+        cleanup();
+      }
+    }
+  });
+
   it("a 409 that changed backends stops with a keyring error instead of a silent ok", async () => {
     try {
       const { base, before } = await seed();
@@ -601,6 +647,39 @@ describe("a re-created document reconciled with no base", () => {
       const pushesBefore = api.pushes;
       await pushNow();
       expect(api.pushes === pushesBefore || api.pushedBase !== 1).toBe(true);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+  // A persisted base's stamp goes through serde_json's best-effort float parse and can come back
+  // one ULP off `time.time()`'s 17 digits: after a restart the unchanged server copy then read as
+  // a re-seed and the live base was forgotten. Only a real re-write moves the stamp that far.
+  it("keeps the base when the same version's stamp differs only by float noise", async () => {
+    try {
+      const stamp = 1759900000.123958;
+      const base = await seedBase();
+      api.pulled = { version: 5, updated_ts: stamp, device: "peer", blob: base };
+      await pullNow(true);
+      const reseeded = structuredClone(base);
+      const peerType = !useApp.getState().settings.general.typeAsISpeak;
+      reseeded.general = { ...reseeded.general, typeAsISpeak: peerType } as never;
+      const offByUlp = stamp + 2 ** -22;
+      expect(offByUlp).not.toBe(stamp);
+      api.pulled = { version: 5, updated_ts: offByUlp, device: "peer", blob: reseeded };
+      await pullNow();
+      expect(getPendingConflict()).toBeNull(); // not reconciled first-contact
+      bumpChipScale();
+      await pushNow();
+      expect(api.pushedBase).toBe(5);
+      // A stamp a second away is another write at that number: the base is forgotten.
+      const pushed = structuredClone(api.pushed) as SyncBlob;
+      api.pulled = { version: 7, updated_ts: stamp + 1, device: "peer", blob: pushed };
+      await pullNow(true);
+      expect(getPendingConflict()).toBeNull();
+      api.pulled = { version: 7, updated_ts: stamp + 2, device: "peer", blob: { ...pushed, general: reseeded.general } };
+      await pullNow();
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
     } finally {
       api.keys = null;
       api.pulled = null;
