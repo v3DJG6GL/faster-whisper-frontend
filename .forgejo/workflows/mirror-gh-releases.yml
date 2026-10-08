@@ -33,14 +33,19 @@
 #   * Drafts are skipped (release.yml stages uploads in a draft before
 #     flipping it live — mirroring one would leak a half-built release).
 #   * Existing GitHub releases get name/body/prerelease drift patched.
-#   * Assets are matched by name and compared by size (neither the Forgejo nor
-#     the GitHub release API exposes a digest for an attachment); every
-#     downloaded byte is then verified against the release's own SHA256SUMS
-#     file before it is pushed on. A size mismatch means an interrupted upload
-#     or a rebuilt release, so the GitHub copy is replaced. The SHA256SUMS files
-#     themselves are compared by CONTENT instead: their size never changes within
-#     a tag (fixed-width digests + version-stamped names), so a rebuild would
-#     otherwise leave GitHub holding the old sums next to the new installers.
+#   * Assets are matched by name (neither the Forgejo nor the GitHub release
+#     API exposes a digest for an attachment); every downloaded byte is
+#     verified against the release's own SHA256SUMS file before it is pushed
+#     on. The SHA256SUMS files themselves are compared by CONTENT: their size
+#     never changes within a tag (fixed-width digests + version-stamped
+#     names). Every other asset is compared by size AND by its digest in the
+#     source sums vs the GitHub copy of the sums — those describe exactly the
+#     bytes a previous run verified and uploaded, so a rebuilt release whose
+#     installer kept its byte count (sector-padded MSI) is still caught
+#     without downloading the GitHub installer. Any mismatch means an
+#     interrupted upload or a rebuilt release, so the GitHub copy is replaced.
+#     The sums are uploaded after the installers of their release, so GitHub
+#     only ever gets new sums once the installers they describe are in place.
 #     An asset with no published digest (a release older than SHA256SUMS) is
 #     skipped with a warning, never uploaded.
 #   * Releases are processed oldest-first so GitHub's "latest release"
@@ -186,9 +191,10 @@ jobs:
             # the API exposes no digest of its own on either side (verified: Forgejo's Attachment
             # schema has none, and neither does GitHub's).
             : > allsums.txt
-            # Each fetched sums file is also kept as src-<name> for the content comparison in
-            # the asset loop below; clear the previous release's copies first.
-            rm -f src-SHA256SUMS*
+            : > gh-allsums.txt
+            # Each fetched sums file is also kept as src-<name> (and GitHub's copy as gh-<name>)
+            # for the comparisons in the asset loop below; clear the previous release's copies.
+            rm -f src-SHA256SUMS* gh-SHA256SUMS*
             sumsfound=0
             # `done < <(jq …)` is a PROCESS SUBSTITUTION, whose exit status `set -euo pipefail`
             # does not observe either — the same class of exemption as the if-condition noted
@@ -197,7 +203,9 @@ jobs:
             # allsums.txt stayed empty, no asset was mirrored, and the job reported success.
             # A plain assignment IS checked, so a malformed payload now fails the job while
             # `// []` keeps a legitimately asset-less release a quiet no-op.
-            assets=$(jq -c '.assets // [] | .[]' <<<"$rel")
+            # sort_by is stable and false < true: the SHA256SUMS files go last (see header), so a
+            # run that dies replacing an installer never leaves GitHub's new sums beside it.
+            assets=$(jq -c '.assets // [] | sort_by((.name // "") | startswith("SHA256SUMS")) | .[]' <<<"$rel")
             while IFS= read -r sasset; do
               [ -n "$sasset" ] || continue
               sname=$(jq -r '.name' <<<"$sasset")
@@ -212,6 +220,21 @@ jobs:
               # tampering with a release would induce. Fail the job instead.
               sget -o "src-$sname" "$(jq -r '.browser_download_url' <<<"$sasset")"
               cat "src-$sname" >> allsums.txt
+              # GitHub's copy of the same file. Unlike the source fetch above, this one IS inside
+              # an `if` on purpose: a GitHub sums asset that cannot be read (an upload GitHub keeps
+              # listed in "starter" state, a persistent 5xx) must not abort the job — releases are
+              # walked oldest-first, so one bad old asset would block every newer release (the
+              # run-848 class). A missing copy only reads as drift: the sums and every installer
+              # of this release are re-uploaded from verified source bytes. A size mismatch is
+              # drift already, so it is not even downloaded.
+              smatch=$(jq -c --arg n "$sname" '.[] | select(.name == $n)' <<<"$dassets")
+              if [ -n "$smatch" ] && [ "$(jq -r '.size' <<<"$smatch")" = "$(jq -r '.size' <<<"$sasset")" ] &&
+                dget -L -H 'Accept: application/octet-stream' -o "gh-$sname" \
+                  "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$smatch")"; then
+                cat "gh-$sname" >> gh-allsums.txt
+              else
+                rm -f "gh-$sname"
+              fi
             done <<<"$assets"
 
             while IFS= read -r asset; do
@@ -219,29 +242,32 @@ jobs:
               aname=$(jq -r '.name' <<<"$asset")
               asize=$(jq -r '.size' <<<"$asset")
               match=$(jq -c --arg n "$aname" '.[] | select(.name == $n)' <<<"$dassets")
+              want=$(awk -v n="$aname" '$2 == n { print $1; exit }' allsums.txt)
               if [ -n "$match" ]; then
                 case "$aname" in
                   SHA256SUMS*)
                     # Size says nothing here (see header): a rebuilt tag keeps the same byte
-                    # count with different digests. Compare the GitHub copy's bytes instead.
-                    dget -L -H 'Accept: application/octet-stream' -o gh-sums.txt \
-                      "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")"
-                    if cmp -s gh-sums.txt "src-$aname"; then
-                      rm -f gh-sums.txt
+                    # count with different digests. Compare the GitHub copy fetched above; no
+                    # copy (size drift or an unreadable asset) is drift.
+                    if [ -f "gh-$aname" ] && cmp -s "gh-$aname" "src-$aname"; then
                       fresh=$((fresh + 1))
                       continue
                     fi
-                    rm -f gh-sums.txt
                     ;;
                   *)
-                    if [ "$(jq -r '.size' <<<"$match")" = "$asize" ]; then
+                    # Size plus the digest GitHub's own sums publish for it (see header). With
+                    # no source digest (a pre-SHA256SUMS release) size is all there is — the
+                    # digest gate below then keeps such an asset from ever being re-uploaded.
+                    if [ "$(jq -r '.size' <<<"$match")" = "$asize" ] && {
+                      [ -z "$want" ] ||
+                        [ "$want" = "$(awk -v n="$aname" '$2 == n { print $1; exit }' gh-allsums.txt)" ]
+                    }; then
                       fresh=$((fresh + 1))
                       continue
                     fi
                     ;;
                 esac
               fi
-              want=$(awk -v n="$aname" '$2 == n { print $1; exit }' allsums.txt)
               if [ -z "$want" ] && [ "${aname#SHA256SUMS}" = "$aname" ]; then
                 # No digest for this asset. Every release built since SHA256SUMS was introduced
                 # publishes one per leg, so this now means either a release predating that, or an
@@ -266,7 +292,12 @@ jobs:
                 dput -X DELETE "$dst_api/repos/$DST_REPO/releases/assets/$(jq -r '.id' <<<"$match")"
               fi
               echo "[$tag] uploading $aname ($asize bytes)"
-              sget -o asset.bin "$(jq -r '.browser_download_url' <<<"$asset")"
+              case "$aname" in
+                # Reuse the copy the installers were just checked against instead of a second
+                # download that could already be a newer rebuild's sums.
+                SHA256SUMS*) cp "src-$aname" asset.bin ;;
+                *) sget -o asset.bin "$(jq -r '.browser_download_url' <<<"$asset")" ;;
+              esac
               # A short read must not become a silently corrupt GitHub asset.
               dl=$(stat -c%s asset.bin)
               if [ "$dl" != "$asize" ]; then
