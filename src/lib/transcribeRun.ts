@@ -2200,17 +2200,28 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
 
 /** A retry replays the last run's options, but a failed row survives a backend switch, so
  *  the wire-shaping keys follow the server the retry goes to: `standard` (how an "auto"
- *  language goes out) and, for Whisper's translate task, the endpoint it is routed to. */
+ *  language goes out), for Whisper's translate task the endpoint it is routed to, and on a
+ *  standard server no T2T slice at all — `translateTo` undefined is "no translating stage"
+ *  (as `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
+ *  frozen targets. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
 ): TranscribeOptions | undefined {
   if (!opts) return standard ? { standard: true } : undefined;
-  return {
+  const out: TranscribeOptions = {
     ...opts,
     standard: standard || undefined,
     ...(opts.task === "translate" ? { useTranslationsEndpoint: standard } : {}),
   };
+  if (standard) {
+    delete out.translateTo;
+    delete out.translationMode;
+    delete out.translationModel;
+    delete out.translationGlossary;
+    delete out.translationContextSegments;
+  }
+  return out;
 }
 
 /** Stop the headless watchers of lost requests for these paths before they are re-queued:

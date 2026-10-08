@@ -439,6 +439,29 @@ describe("a pending review when the server copy is gone", () => {
       api.pulled = null;
     }
   });
+  // A re-seed can also climb back to EXACTLY the prompt's number: same version, another write
+  // stamp. Approving then adopted the dead document's blob as the base at that number.
+  it("is dropped by a pull whose re-created document reached the review's own version", async () => {
+    try {
+      const before = await raiseAtV5(); // the review was raised at v5, stamp 5
+      const reseeded = structuredClone(api.pulled as { blob: SyncBlob }).blob;
+      reseeded.recording = { ...reseeded.recording, dictationRetentionDays: before } as never;
+      const peerType = !useApp.getState().settings.general.typeAsISpeak;
+      reseeded.general = { ...reseeded.general, typeAsISpeak: peerType } as never;
+      api.pulled = { version: 5, updated_ts: 9, device: "peer", blob: reseeded };
+      await pullNow();
+      expect(getPendingReview()).toBeNull();
+      await approvePendingReview(); // a stray click on the stale dialog
+      expect(useApp.getState().settings.transcribe?.dictationRetentionDays).toBe(before);
+      // The dead base is forgotten: the re-seed is reconciled first-contact (the differing
+      // category is asked about), not 3-way merged against the deleted document's v1 and applied.
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      expect(useApp.getState().settings.general.typeAsISpeak).toBe(!peerType);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
   it("is dropped by a push whose 409 carries the re-created document at a lower version", async () => {
     try {
       const before = await raiseAtV5();

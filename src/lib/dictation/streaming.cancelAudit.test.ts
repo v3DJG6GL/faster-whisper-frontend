@@ -13,6 +13,7 @@
 import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
+import dictationSrc from "./dictation.ts?raw";
 import { incompleteSurface } from "./streaming";
 
 /** Blank out comments, strings and template literals — same length, so indexes
@@ -239,6 +240,13 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const gate = restart.indexOf("!capturing");
     expect(gate, "restartLiveAs must not cancel a draining session").toBeGreaterThanOrEqual(0);
     expect(gate).toBeLessThan(restart.indexOf("cancelLive("));
+    // dictate()'s reclassify arm for that window also drops the root's queued re-press: the
+    // engine has handed the hold off, so a hold session started from it on settle never stops.
+    const src = mask(dictationSrc);
+    const arm = src.indexOf("else if (!isCapturing() && !isStarting())");
+    expect(arm, "finalizing no-op arm in dictate()").toBeGreaterThanOrEqual(0);
+    const next = src.indexOf("} else if (handsFree", arm);
+    expect(src.slice(arm, next)).toContain("voidPendingHoldStart()");
   });
 
   it("a delivered typed insert consumes the carry", () => {

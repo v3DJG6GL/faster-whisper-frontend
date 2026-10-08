@@ -92,8 +92,12 @@ fn vars_to_inject(appimage: bool, has_dmabuf: bool, has_at_bridge: bool) -> Vec<
 /// Everywhere else this is exactly the plugin call.
 pub(crate) fn open_external(app: &tauri::AppHandle, target: &str) -> Result<(), String> {
     use tauri_plugin_opener::OpenerExt;
+    // Not under WSL: the open crate (the plugin's path) hands that to wslview, not xdg-open.
     #[cfg(target_os = "linux")]
-    if let Some(vars) = INJECTED_ENV.get().filter(|v| !v.is_empty()) {
+    if let Some(vars) = INJECTED_ENV
+        .get()
+        .filter(|v| !v.is_empty() && std::env::var_os("WSL_DISTRO_NAME").is_none())
+    {
         match xdg_open_command(target, vars).spawn() {
             Ok(mut child) => {
                 // Reap it (xdg-open exits once the handler is launched): no zombie.
@@ -112,12 +116,16 @@ pub(crate) fn open_external(app: &tauri::AppHandle, target: &str) -> Result<(), 
 
 #[cfg(target_os = "linux")]
 fn xdg_open_command(target: &str, strip: &[&str]) -> std::process::Command {
+    use std::os::unix::process::CommandExt;
     use std::process::Stdio;
     let mut cmd = std::process::Command::new("xdg-open");
+    // Its own process group, as the plugin's detached spawn leaves it: the launched browser or
+    // file manager must not share ours (a signal to the app's group would reach it too).
     cmd.arg(target)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::null())
+        .process_group(0);
     for var in strip {
         cmd.env_remove(var);
     }

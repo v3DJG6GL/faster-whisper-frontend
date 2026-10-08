@@ -98,10 +98,16 @@ describe("buildMicView", () => {
   });
 
   it("names a legacy pin by its own text when it can't be found", () => {
-    const v = buildMicView(inv(), "Old USB Mic, USB Audio", null, false);
+    const v = buildMicView(inv(), "Old USB Mic, USB Audio", null, false, true);
     // Not "(not connected)": Rust still opens a legacy name through its sound card.
     expect(v.triggerLabel).toBe("Old USB Mic, USB Audio");
     expect(v.legacy).toBe(true);
+  });
+
+  it("off Linux a missing legacy pin is plainly not connected (no card fallback)", () => {
+    const v = buildMicView(inv(), "Old USB Mic, USB Audio", null, false, false);
+    expect(v.triggerLabel).toBe("Old USB Mic, USB Audio (not connected)");
+    expect(v.legacy).toBe(false);
   });
 
   it("adds grouped, labelled paths only with the advanced switch", () => {

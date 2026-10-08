@@ -8,6 +8,7 @@
 //   raw ALSA paths — labelled by what they do, with the technical id beneath.
 // Pure, so it is unit-tested apart from the component.
 
+import { IS_LINUX } from "./platform";
 import type { MicInventory, MicPath, MicPathKind } from "./types";
 
 /** cpal host names a saved pin starts with ("<host>:<device>"). Anything else is a display
@@ -69,7 +70,8 @@ export interface MicView {
   rows: MicRow[];
   /** The pinned mic isn't in the list (only decided once a list has loaded). */
   missing: boolean;
-  /** The missing pin is a pre-ids display name: Rust still opens it through its sound card while plugged in. */
+  /** The missing pin is a pre-ids display name that Rust still opens through its sound card while
+   *  plugged in — Linux only (the ALSA card fallback); elsewhere it really is not connected. */
   legacy: boolean;
   /** What the closed picker reads. */
   triggerLabel: string;
@@ -89,6 +91,7 @@ export function buildMicView(
   selectedId: string | null,
   savedLabel: string | null | undefined,
   advanced: boolean,
+  cardFallback: boolean = IS_LINUX,
 ): MicView {
   const name = pinnedName(selectedId, savedLabel);
   const mics = inv?.mics ?? [];
@@ -99,7 +102,7 @@ export function buildMicView(
   const selMic = selectedId ? mics.find((m) => m.id === selectedId) : undefined;
   const selPath = selectedId && !selMic ? paths.find((p) => p.path.id === selectedId) : undefined;
   const missing = !!inv && !!selectedId && !selMic && !selPath;
-  const legacy = missing && isLegacyPin(selectedId);
+  const legacy = cardFallback && missing && isLegacyPin(selectedId);
 
   const rows: MicRow[] = [
     {

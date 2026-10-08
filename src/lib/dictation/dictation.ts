@@ -101,8 +101,10 @@ export function dictate(profileId: string, action: TriggerAction): void {
       if (s.activeProfile === profileId) stopOrCancel(true);
       else if (!isCapturing() && !isStarting()) {
         // The mic is already closed and the session is finalizing: there is no audio left to
-        // upgrade, and restarting would discard the transcript. Leave it alone; the Start the
-        // root fired is already queued as a fast re-press.
+        // upgrade, and restarting would discard the transcript. Leave it alone — and drop the
+        // root's queued fast re-press: the engine has handed that hold off (ReleaseHold), so the
+        // hold session it would start on settle gets no Stop on release and keeps listening.
+        voidPendingHoldStart();
       } else if (handsFree && handsFree.enabled) {
         const running = s.profiles.find((p) => p.id === s.activeProfile);
         const shape = (p: Profile) => sessionShape(p, backendForProfile(p, s.backends));

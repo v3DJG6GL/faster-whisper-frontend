@@ -718,6 +718,16 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions({ diarize: true }, true)).toEqual({ standard: true, diarize: true });
   });
 
+  it("a retry on a standard server drops the translation slice", () => {
+    // A link run failed on a T2T backend; the retry goes to a standard one, which has no
+    // translating stage — the site plan's frozen targets must not go out either.
+    const opts = { translateTo: ["fr"], translationMode: "fluent" as const, translationModel: "m", diarize: true };
+    expect(reconcileRetryOptions(opts, true)).toEqual({ standard: true, diarize: true });
+    expect(linkTranslateTo(reconcileRetryOptions(opts, true)!, { siteSubs: { mtTargets: ["fr"] } as never })).toBeUndefined();
+    // A full backend keeps it.
+    expect(reconcileRetryOptions(opts, false)).toEqual({ ...opts, standard: undefined });
+  });
+
   it("no last options: a standard server still gets its flag", () => {
     expect(reconcileRetryOptions(undefined, true)).toEqual({ standard: true });
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();

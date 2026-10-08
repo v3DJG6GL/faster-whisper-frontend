@@ -3111,16 +3111,25 @@ function dropSupersededPending(version: number): void {
  *  write's stamp, so the same version with a different stamp is a different document. Missed,
  *  that took the "nothing new" shortcut and the next push at that base overwrote the re-seed. */
 function serverRecreated(version: number, updatedTs: number | null | undefined): boolean {
+  // Built on `atVersion` (stamped `atTs`), yet the server now holds another document there.
+  const restamped = (atVersion: number, atTs: number | null | undefined) =>
+    version > 0 &&
+    version === atVersion &&
+    typeof atTs === "number" &&
+    typeof updatedTs === "number" &&
+    updatedTs !== atTs;
   const base = state.version ?? 0;
   return (
     version < base ||
-    (version > 0 &&
-      version === base &&
-      typeof state.updatedAt === "number" &&
-      typeof updatedTs === "number" &&
-      updatedTs !== state.updatedAt) ||
-    (pendingReview !== null && pendingReview.version > version) ||
-    (pendingConflict !== null && pendingConflict.remoteVersion > version)
+    restamped(base, state.updatedAt) ||
+    // The prompts too: each carries the stamp it was raised at, and a re-seed climbing back to
+    // exactly a prompt's number would otherwise approve (or resolve) the dead document's blob
+    // as the base — and the follow-up push at that number overwrites the re-seed.
+    (pendingReview !== null &&
+      (pendingReview.version > version || restamped(pendingReview.version, pendingReview.updatedAt))) ||
+    (pendingConflict !== null &&
+      (pendingConflict.remoteVersion > version ||
+        restamped(pendingConflict.remoteVersion, pendingConflict.remoteUpdatedAt)))
   );
 }
 
@@ -3374,12 +3383,13 @@ export function hasPendingApplyForTests(): boolean {
 
 function raiseConflict(c: PendingConflict): void {
   // A pending conflict adopts no base, so every focus pull / 409 re-raises it: keep the id when it
-  // is the SAME conflict (same server version, writer and categories — so the same remote
-  // content, and a retained "remote" pick hands over nothing unseen), or the dialog remounts
-  // and resets the user's half-made picks on every window switch.
+  // is the SAME conflict (same server version, write stamp, writer and categories — so the same
+  // remote content, and a retained "remote" pick hands over nothing unseen), or the dialog
+  // remounts and resets the user's half-made picks on every window switch.
   const same =
     pendingConflict !== null &&
     pendingConflict.remoteVersion === c.remoteVersion &&
+    pendingConflict.remoteUpdatedAt === c.remoteUpdatedAt &&
     pendingConflict.remoteDevice === c.remoteDevice &&
     pendingConflict.categories.join() === c.categories.join();
   if (!same) pendingConflictId = ++conflictSeq;
