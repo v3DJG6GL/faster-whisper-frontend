@@ -1903,7 +1903,10 @@ export function TranscriptViewer({
             ) : null,
           )}
           <span className="text-[11.5px] text-faint">
-            the view is the export — Copy and files match what you see
+            {/* Copy always writes per-segment lines, never the cue rows or a site track. */}
+            {subtitlesView
+              ? "files match what you see — Copy writes the segments"
+              : "the view is the export — Copy and files match what you see"}
           </span>
         </div>
       )}

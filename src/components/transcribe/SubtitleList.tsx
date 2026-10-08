@@ -51,10 +51,13 @@ interface Row {
 /** One cue row, memoized: during playback only the rows entering and leaving
  *  the playhead re-render (the SegmentRow idiom). */
 const CueRow = memo(function CueRow({
-  row, active, columns, lane, canSeek, seekTo, onEditSegment, maxEditSeg,
+  row, active, anchorId, columns, lane, canSeek, seekTo, onEditSegment, maxEditSeg,
 }: {
   row: Row;
   active: boolean;
+  /** Site-track-only lanes: the follow target id this row carries instead of
+   *  its own (it has no segment). */
+  anchorId?: string;
   /** Table mode: the grid template; lanes render a compact two-part row. */
   columns?: string;
   lane?: boolean;
@@ -78,7 +81,7 @@ const CueRow = memo(function CueRow({
   );
   return (
     <div
-      id={row.first ? `seg-row-${row.seg}` : undefined}
+      id={anchorId ?? (row.first && row.seg >= 0 ? `seg-row-${row.seg}` : undefined)}
       onClick={canSeek ? () => seekTo(row.start) : undefined}
       className={cn(
         "group relative gap-3.5 rounded-lg px-2 py-2",
@@ -126,13 +129,15 @@ const estimate = (r: Row, lane?: boolean) =>
 
 /** One virtualized column of cue rows (the table, or one lane) scrolling in
  *  the viewer's transcript box. `pin` = the row carrying the active segment's
- *  id — always rendered, at its virtual position. */
+ *  id — always rendered, at its virtual position; `anchorId` = that id when
+ *  the row carries it by time rather than by its own segment. */
 function VirtualCues({
-  rows, active, pin, columns, lane, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg,
+  rows, active, pin, anchorId, columns, lane, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg,
 }: {
   rows: Row[];
   active: number;
   pin: number;
+  anchorId?: string;
   columns?: string;
   lane?: boolean;
   scrollRef: RefObject<HTMLElement | null>;
@@ -178,7 +183,7 @@ function VirtualCues({
             data-index={v.index}
             style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start - margin}px)` }}
           >
-            <CueRow row={r} active={v.index === active} columns={columns} lane={lane}
+            <CueRow row={r} active={v.index === active} anchorId={v.index === pin ? anchorId : undefined} columns={columns} lane={lane}
               canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
           </div>
         );
@@ -289,7 +294,15 @@ export function SubtitleList({
     (lanes ? (layout.lanes[layout.idLane]?.rows ?? []) : layout.rows).forEach((r, i) => r.first && m.set(r.seg, i));
     return m;
   }, [layout, lanes]);
-  const pin = firstOf.get(activeSeg) ?? -1;
+  // Only site tracks shown: no lane is keyed to segments, so no row carries a
+  // segment id for follow to find. Hand the active segment's id to the idLane
+  // cue under the playhead instead (no end grace: a gap between site cues
+  // still anchors the one before it).
+  const segKeyed = !lanes || tracks.some((t) => t === "orig" || !timedTrack(result, t));
+  const pin = segKeyed
+    ? (firstOf.get(activeSeg) ?? -1)
+    : lastStartedAt(layout.lanes[layout.idLane]?.rows ?? [], curTime);
+  const anchorId = !segKeyed && activeSeg >= 0 ? `seg-row-${activeSeg}` : undefined;
 
   /** The cue under the playhead (binary search; a short grace after its end). */
   const activeIn = (rows: Row[]) => {
@@ -327,7 +340,8 @@ export function SubtitleList({
                   {plural(ln.rows.length, "subtitle")}
                 </span>
               </div>
-              <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === layout.idLane ? pin : -1} lane scrollRef={scrollRef}
+              <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === layout.idLane ? pin : -1}
+                anchorId={li === layout.idLane ? anchorId : undefined} lane scrollRef={scrollRef}
                 canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
             </div>
           ))}
