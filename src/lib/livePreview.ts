@@ -49,6 +49,17 @@ export function pauseKind(seconds: number, t: LiveTimings): PauseKind {
   return "go";
 }
 
+/** `t` as the server will run it: it keeps the inner pause below the outer one (else outer − 50 ms)
+ *  and a hard break above it (else outer + 1 s), as streaming/routes.py does. The preview reads
+ *  this so it never shows a pair the server would rewrite; the editor keeps the raw values. */
+export function serverTimings(t: LiveTimings): LiveTimings {
+  return {
+    ...t,
+    innerMs: t.innerMs >= t.outerMs ? Math.max(0, t.outerMs - 50) : t.innerMs,
+    hardMs: t.hardMs > 0 && t.hardMs <= t.outerMs ? t.outerMs + 1000 : t.hardMs,
+  };
+}
+
 /** Seconds as the preview writes them: "0.7 s", "5 s". */
 export function secText(seconds: number): string {
   return `${String(Math.round(seconds * 10) / 10)} s`;

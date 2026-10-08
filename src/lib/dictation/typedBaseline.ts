@@ -1,6 +1,6 @@
 /**
- * The live-typing baseline's arithmetic, kept PURE so it can be tested — `streaming.ts`, the
- * only caller, has no harness (nothing in this repo mocks Tauri; the same reason
+ * The live-typing baseline's arithmetic, kept PURE so it can be tested without driving
+ * `streaming.ts`, the only caller, through its Tauri transport (the same reason
  * `utterancePending.ts` and `captureIds.ts` live on their own).
  *
  * Live dictation is append-only: the server re-sends the WHOLE document on every `final`, and

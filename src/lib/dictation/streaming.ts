@@ -1553,11 +1553,14 @@ function settleIdle(keepError = false): void {
     // (history, outcome "none", lease), and BEFORE the hold-start below. flashError voids a
     // queued fast re-press; this flash is not the press's failure, so keep it across the call
     // (the release path still voids it as usual) — the new session then replaces the error.
-    // Its own doorway line is the generic one; put the specific notice back.
+    // Not the Rust notice itself: it says only the last phrase may be missing, which
+    // understates a session where nothing survived (the handler's warn keeps the raw text).
+    // Its own doorway line is the generic one; put this specific message back.
+    const msg = "The server didn’t finish the transcript in time; nothing was transcribed.";
     const queued = pendingHoldStart;
-    flashError(sessionIncomplete);
+    flashError(msg);
     pendingHoldStart = queued;
-    useApp.getState().setLogsDoorway({ msg: sessionIncomplete, showLogs: true });
+    useApp.getState().setLogsDoorway({ msg, showLogs: true });
   }
   consumePendingHoldStart();
 }

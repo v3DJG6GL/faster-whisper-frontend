@@ -12,7 +12,8 @@ import homeSrc from "../../screens/Dashboard.tsx?raw";
 import overlaySrc from "../../Overlay.tsx?raw";
 import feedbackSrc from "../../components/ui/feedback.tsx?raw";
 import {
-  dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone,
+  dictationVisual, isActiveDictation, isGracefulStop, isProcessing, sessionNoteHoldMs,
+  SESSION_NOTE_HOLD_MS, SESSION_WARN_HOLD_MS, type DictationTone,
 } from "./dictationVisual";
 import type { DictationStatus } from "../types";
 
@@ -190,5 +191,18 @@ describe("Dashboard hero follows the tone, not only the state", () => {
   });
   it("tooltip and click agree on graceful stop", () => {
     expect(/title=\{[\s\S]{0,400}isGracefulStop\(status, isCapturing\(\)\)/.test(homeSrc)).toBe(true);
+  });
+});
+
+describe("sessionNoteHoldMs — one hold rule for the chip and the window", () => {
+  it("holds the incomplete note and the untranslated pulse longest", () => {
+    expect(sessionNoteHoldMs({ sessionNote: "incomplete", sessionOutcome: "none" })).toBe(SESSION_WARN_HOLD_MS);
+    expect(sessionNoteHoldMs({ translateFailure: "timeout", sessionOutcome: "typed" })).toBe(SESSION_WARN_HOLD_MS);
+    expect(sessionNoteHoldMs({ translateFailure: "error", sessionOutcome: "clipboard" })).toBe(SESSION_WARN_HOLD_MS);
+  });
+  it("holds a plain note shorter and nothing at all when there is nothing to read", () => {
+    expect(sessionNoteHoldMs({ sessionNote: "not-inserted", sessionOutcome: "none" })).toBe(SESSION_NOTE_HOLD_MS);
+    expect(sessionNoteHoldMs({ translateFailure: "cancelled", sessionOutcome: "none" })).toBe(0);
+    expect(sessionNoteHoldMs({ sessionNote: null, translateFailure: null, sessionOutcome: "typed" })).toBe(0);
   });
 });

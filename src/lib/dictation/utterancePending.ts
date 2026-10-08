@@ -5,8 +5,8 @@
  * stopped talking" and the server's `final` used to read as amber "ready" while the backend was
  * decoding. The server now announces the lifecycle (`stream://utterance`: open → decoding →
  * final | dropped) and guarantees one terminal frame per announced utterance. This module is the
- * client's copy of that state, kept PURE (the clock is passed in) because `streaming.ts` — the
- * only caller — has no test harness: nothing in this repo mocks Tauri, the same reason
+ * client's copy of that state, kept PURE (the clock is passed in) so it can be tested without
+ * driving `streaming.ts` — the only caller — through its Tauri transport, the same reason
  * `captureIds.ts` lives on its own.
  *
  * The server is the only source. Nothing here INFERS work from local audio; the two limits below

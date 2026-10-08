@@ -146,3 +146,26 @@ export function isProcessing(status: DictationStatus): boolean {
 export function isGracefulStop(status: DictationStatus, capturing: boolean): boolean {
   return status === "listening" || (capturing && isProcessing(status));
 }
+
+/** How long the chip holds an end-of-session note that carries a reason to read: the
+ *  "incomplete" note and the untranslated pulse. */
+export const SESSION_WARN_HOLD_MS = 2600;
+/** How long the chip holds a plain end-of-session note ("not inserted"). */
+export const SESSION_NOTE_HOLD_MS = 2000;
+
+/**
+ * THE one rule for how long an end-of-session note stays readable, shared by the chip's own
+ * timers and collapse linger (Overlay.tsx, dock on) and the window's hide linger
+ * (chipController.ts, dock off) so neither surface cuts the other short: the "incomplete"
+ * note or a failed translate on a typed/clipboard outcome (the untranslated pulse) →
+ * SESSION_WARN_HOLD_MS; any other note → SESSION_NOTE_HOLD_MS; nothing to read → 0.
+ */
+export function sessionNoteHoldMs(s: {
+  sessionNote?: string | null;
+  translateFailure?: unknown;
+  sessionOutcome?: string | null;
+}): number {
+  const untranslated = !!s.translateFailure && (s.sessionOutcome === "typed" || s.sessionOutcome === "clipboard");
+  if (s.sessionNote === "incomplete" || untranslated) return SESSION_WARN_HOLD_MS;
+  return s.sessionNote ? SESSION_NOTE_HOLD_MS : 0;
+}

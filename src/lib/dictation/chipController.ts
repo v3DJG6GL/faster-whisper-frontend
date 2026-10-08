@@ -15,7 +15,7 @@ import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
-import { isActiveDictation } from "./dictationVisual";
+import { isActiveDictation, sessionNoteHoldMs } from "./dictationVisual";
 import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
 import { DEFAULT_SETTINGS } from "../defaults";
 
@@ -368,7 +368,7 @@ export async function initOverlayController(): Promise<void> {
       state.sessionOutcome !== prev.sessionOutcome || // end-of-session done marker
       state.sessionTargets !== prev.sessionTargets || // the session's resolved translation route
       state.routePending !== prev.routePending || // undecided / choosing / original stand-ins for it
-      state.sessionNote !== prev.sessionNote || // "not inserted" qualifier for a "none" outcome
+      state.sessionNote !== prev.sessionNote || // end-of-session qualifier (not inserted / incomplete)
       state.translateFailure !== prev.translateFailure || // qualifies the done marker
       state.usage !== prev.usage || // P28: refreshed usage stats → update the chip readout
       state.configLoaded !== prev.configLoaded || // the chip latches its size seed on the loaded config
@@ -470,6 +470,9 @@ export async function initOverlayController(): Promise<void> {
         hideTimer !== undefined &&
         state.status === prev.status &&
         state.dictationError === prev.dictationError &&
+        state.sessionNote === prev.sessionNote &&
+        state.translateFailure === prev.translateFailure &&
+        state.sessionOutcome === prev.sessionOutcome &&
         pos === prev.settings.recording.indicatorPosition
       )
         return;
@@ -480,7 +483,16 @@ export async function initOverlayController(): Promise<void> {
         shownScale = scale;
         visible = true;
       }
-      const delay = pos === "off" ? 0 : state.status === "error" ? 2400 : 1800;
+      // A session note ("incomplete" / "not inserted") or an untranslated outcome rides the idle
+      // write, and the chip holds it for sessionNoteHoldMs (the same rule as Overlay.tsx's note /
+      // pulse timers and collapse linger): the plain 1800 ms linger would hide the window before
+      // it can be read. 200 ms of margin so the window outlasts the chip's own timer.
+      const hold = sessionNoteHoldMs(state);
+      const delay =
+        pos === "off" ? 0
+        : state.status === "error" ? 2400
+        : hold > 0 ? hold + 200
+        : 1800;
       hideTimer = setTimeout(() => {
         hideTimer = undefined;
         visible = false;

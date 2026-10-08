@@ -335,7 +335,11 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(read).toBeGreaterThanOrEqual(0);
     expect(flash, "settleIdle must flash when nothing survived").toBeGreaterThan(history);
     expect(holdStart).toBeGreaterThan(flash);
-    expect(bodyAfter(streamingSrc, "function settleIdle(")).toContain('"incomplete"');
+    // The note branch itself, not merely the word: the comment above it also says "incomplete".
+    expect(bodyAfter(streamingSrc, "function settleIdle(")).toMatch(/incomplete === "note"\s*\?\s*"incomplete"/);
+    // The flash means NOTHING survived; the Rust notice ("the last phrase may be missing")
+    // would understate that on the chip.
+    expect(settle).not.toContain("flashError(sessionIncomplete)");
     for (const end of ["async function startLiveInner(", "async function cancelLive("]) {
       expect(mask(bodyAfter(streamingSrc, end)), `${end} must reset the mark`).toContain("sessionIncomplete = null");
     }

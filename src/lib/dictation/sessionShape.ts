@@ -5,6 +5,7 @@
 // with. Two Profiles whose shapes differ can't share a session: dictation.ts restarts instead.
 
 import { backendPrompt, effectiveLanguage } from "../backends";
+import { stableStringify } from "../stable";
 import type { Backend, Profile } from "../types";
 
 /** The backend, and the model / language / prompt / decode / translation setup resolved
@@ -15,7 +16,8 @@ import type { Backend, Profile } from "../types";
  *  (dictation.ts `backendForProfile`); `null` when there is none. Compared as strings. */
 export function sessionShape(profile: Profile, backend: Backend | undefined): string | null {
   if (!backend) return null;
-  return stableJson([
+  // Object keys sorted, so two override maps set in a different order compare equal.
+  return stableStringify([
     backend.id,
     profile.model?.trim() || backend.model,
     effectiveLanguage(profile.language, backend.language),
@@ -26,13 +28,4 @@ export function sessionShape(profile: Profile, backend: Backend | undefined): st
     { ...backend.translationOverrides, ...profile.translationOverrides },
     profile.askTranslationTargets ? (profile.activation === "hold" ? "ask-at-release" : "ask-before-start") : false,
   ]);
-}
-
-/** JSON with object keys sorted, so two override maps set in a different order compare equal. */
-function stableJson(v: unknown): string {
-  return JSON.stringify(v, (_k, x: unknown) =>
-    x && typeof x === "object" && !Array.isArray(x)
-      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      : x,
-  );
 }

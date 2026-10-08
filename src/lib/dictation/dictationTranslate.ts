@@ -1,7 +1,6 @@
 // The dictation translate call, extracted from streaming.ts so it can be
-// TESTED. Nothing in this repo mocks Tauri (`isTauri` is false under vitest and
-// `vi.mock` is used nowhere), so the transport reaches this module as injected
-// parameters — the same idiom runChunkedTranslate uses.
+// TESTED. The transport reaches this module as injected parameters, so its
+// tests need no Tauri mock — the same idiom runChunkedTranslate uses.
 //
 // Three bugs live here, and all three are why the seam exists:
 //   • The budget was derived from the TEXT LENGTH alone, so a 73-character
@@ -66,7 +65,7 @@ export interface TranslateDeps {
   /** The server's progress entry for `progressId`. This is what makes the
    *  stall detector possible — without it there is nothing to distinguish a
    *  wedged server from a slow one, and only the ceiling applies. Absent under
-   *  vitest (nothing mocks Tauri) and on a backend with no progress endpoint. */
+   *  vitest (outside Tauri) and on a backend with no progress endpoint. */
   pollProgress?: (args: {
     serverUrl: string;
     backendId: string;

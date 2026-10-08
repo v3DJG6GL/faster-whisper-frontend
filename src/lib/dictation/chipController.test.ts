@@ -1,8 +1,9 @@
 // The chip's translation-route resolution. Pure, so it can be exercised without the
 // store or the cross-window payload it normally rides in.
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { useApp } from "../store";
+import { hideOverlay } from "../api";
 import {
   initOverlayController,
   chipRoute,
@@ -218,5 +219,66 @@ describe("initOverlayController — configLoaded reaches the chip", () => {
     useApp.getState().setConfigLoaded();
     expect(updates().length).toBe(before + 1);
     expect(last()?.configLoaded).toBe(true);
+  });
+});
+
+describe("initOverlayController — the hide linger outlasts the chip's session note", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  // Dock off: the chip shows only for the session, then lingers. A note ("incomplete") or a
+  // translate failure lands on the idle write and the chip holds it for 2600 ms.
+  const settle = async (extra: Partial<ReturnType<typeof useApp.getState>>) => {
+    const s = useApp.getState().settings;
+    useApp.setState({
+      status: "idle",
+      sessionNote: null,
+      translateFailure: null,
+      sessionOutcome: null,
+      settings: { ...s, recording: { ...s.recording, indicatorPosition: "top", persistentDock: false } },
+    });
+    await initOverlayController();
+    vi.useFakeTimers();
+    vi.mocked(hideOverlay).mockClear();
+    useApp.setState({ status: "listening" });
+    useApp.setState({ status: "idle", ...extra });
+  };
+
+  it("keeps the window up past 1800 ms while a session note shows", async () => {
+    await settle({ sessionNote: "incomplete" });
+    vi.advanceTimersByTime(2000);
+    expect(hideOverlay).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(800);
+    expect(hideOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds an untranslated typed outcome as long as the incomplete note", async () => {
+    await settle({ sessionOutcome: "typed", translateFailure: "timeout" });
+    vi.advanceTimersByTime(2700);
+    expect(hideOverlay).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(hideOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("holds a plain 'not inserted' note for its shorter hold", async () => {
+    await settle({ sessionOutcome: "none", sessionNote: "not-inserted" });
+    vi.advanceTimersByTime(2100);
+    expect(hideOverlay).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(100);
+    expect(hideOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not hold a translate failure that left nothing on screen", async () => {
+    await settle({ sessionOutcome: "none", translateFailure: "cancelled" });
+    vi.advanceTimersByTime(1800);
+    expect(hideOverlay).toHaveBeenCalledTimes(1);
+  });
+
+  it("still hides a plain idle settle at 1800 ms", async () => {
+    await settle({});
+    vi.advanceTimersByTime(1799);
+    expect(hideOverlay).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(hideOverlay).toHaveBeenCalledTimes(1);
   });
 });

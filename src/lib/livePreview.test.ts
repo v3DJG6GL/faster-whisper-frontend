@@ -7,6 +7,7 @@ import {
   previewRule,
   secText,
   separatorGlyphs,
+  serverTimings,
   type PreviewToken,
 } from "./livePreview";
 
@@ -76,5 +77,21 @@ describe("keepInnerBelowOuter", () => {
   it("pulls the inner down when the outer reaches it, never under 200 ms", () => {
     expect(keepInnerBelowOuter("outer", 700, 600)).toEqual({ innerMs: 500, outerMs: 600 });
     expect(keepInnerBelowOuter("outer", 700, 250)).toEqual({ innerMs: 200, outerMs: 250 });
+  });
+});
+
+describe("serverTimings", () => {
+  it("moves a hard break at or under the outer pause to outer + 1 s, as the server does", () => {
+    const t = serverTimings({ ...LIVE_FALLBACK, innerMs: 700, outerMs: 1200, hardMs: 1000 });
+    expect(t.hardMs).toBe(2200);
+    expect(pauseKind(1.6, t)).toBe("end");
+    expect(previewRule(t).par).toBe("from 2.2 s new paragraph");
+  });
+  it("keeps a hard break of 0 (never) and a valid pair as they are", () => {
+    expect(serverTimings({ ...LIVE_FALLBACK, hardMs: 0 })).toEqual({ ...LIVE_FALLBACK, hardMs: 0 });
+    expect(serverTimings(LIVE_FALLBACK)).toEqual(LIVE_FALLBACK);
+  });
+  it("pulls an inner pause at or over the outer one to outer − 50 ms", () => {
+    expect(serverTimings({ ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200 }).innerMs).toBe(1150);
   });
 });
