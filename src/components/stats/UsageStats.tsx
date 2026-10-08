@@ -449,14 +449,10 @@ export function StatisticsView({
   }, [fresh, stats, query, today, view]);
   // Points past the window's end are dropped BEFORE densifying: densifyKinds extends its end
   // to the latest data day, so a stand-in document's win.to+1 point would shift the whole span
-  // a day later and the post-filter would then lose the window's first day.
+  // a day later. With them gone it emits exactly win.from..win.to (win.days = to - from + 1).
   const dense = useMemo(
     () =>
-      stats
-        ? densifyKinds((Array.isArray(stats.series) ? stats.series : []).filter((p) => !!p && p.day <= win.to), win.days, win.to).filter(
-            (p) => p.day >= win.from && p.day <= win.to,
-          )
-        : [],
+      stats ? densifyKinds((Array.isArray(stats.series) ? stats.series : []).filter((p) => !!p && p.day <= win.to), win.days, win.to) : [],
     [stats, win],
   );
   const mode = bucketMode(win.days);
@@ -475,12 +471,8 @@ export function StatisticsView({
   const yearWin = { from: today - 364, to: today };
   const yearDense = useMemo(
     () =>
-      yearStats
-        ? densifyKinds((Array.isArray(yearStats.series) ? yearStats.series : []).filter((p) => !!p && p.day <= today), 365, today).filter(
-            (p) => p.day >= yearWin.from && p.day <= yearWin.to,
-          )
-        : [],
-    [yearStats, today, yearWin.from, yearWin.to],
+      yearStats ? densifyKinds((Array.isArray(yearStats.series) ? yearStats.series : []).filter((p) => !!p && p.day <= today), 365, today) : [],
+    [yearStats, today],
   );
   if (!viewBackend || !stats) {
     return (

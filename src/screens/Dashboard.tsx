@@ -16,6 +16,9 @@ import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
 import { effectiveLanguage } from "@/lib/backends";
+import { WHISPER_ALIAS } from "@/lib/backendChipLabels";
+import { effectiveServerKind } from "@/lib/serverKind";
+import { ownProp } from "@/lib/own";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
 import { langCode } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
@@ -84,9 +87,15 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   const backends = useApp((s) => s.backends);
   const updateProfile = useApp((s) => s.updateProfile);
   const navigate = useNavigate();
+  const connections = useApp((s) => s.connections);
   const backend = backendForProfile(p, backends);
   const Glyph = GLYPH[p.activation];
   const name = safeDisplayText(p.name, 80);
+  // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
+  // loads the server's DEFAULT_MODEL, so it is no name of its own (as on Profiles/Backends).
+  const kind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
+  const ownModel = backend && !(backend.model.trim() === WHISPER_ALIAS && kind !== "standard") ? backend.model.trim() : "";
+  const model = p.model?.trim() || ownModel || (backend ? "server model" : "");
   return (
     <div
       role="row"
@@ -115,7 +124,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
         </div>
       </div>
       <div role="gridcell"><HotkeyChips codes={p.hotkey} /></div>
-      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text">{safeDisplayText(p.model?.trim() || backend?.model, 40) || "—"}</div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text">{safeDisplayText(model, 40) || "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${safeDisplayText(backend.name, 80)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
       <div role="gridcell" className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
