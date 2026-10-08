@@ -28,11 +28,11 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { ALL_CATEGORIES, migrateBlob } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl } from "@/lib/backends";
+import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { credentialGeneration, forgetCaps, refreshCaps, requestCredentialGen } from "@/lib/capabilities";
+import { credentialGeneration, forgetCaps, refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer } from "@/components/sync/SettingsSync";
@@ -95,7 +95,11 @@ function Editor({
   // as `effectiveServerUrl` resolves the override. One rule for both, so the live and debounced
   // values can never pick different branches mid-debounce.
   const probeUrl = storedTypedUrl(debouncedUrl);
-  const [testing, setTesting] = useState(false);
+  // The target an in-flight test was started for. Only that target shows the button busy: the
+  // fields stay editable mid-test and the liveTarget guard drops the stale run's verdict, so a
+  // single boolean kept Test disabled for the corrected address until the old request timed out.
+  const [testingTarget, setTestingTarget] = useState<{ url: string; key: string } | null>(null);
+  const testing = !!testingTarget && testingTarget.url === effUrl && testingTarget.key === key;
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
   // liveTarget guard only stops a result that RESOLVES after the edit — one that already committed
@@ -169,16 +173,14 @@ function Editor({
   if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
   const hookKind = hookKindRef.current;
   // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
-  // generation, and the hooks below must then re-ask as the new caller (as resultLive does).
-  // useDecodeDefaults and the override-profile picker apply the same rule themselves.
-  const liveGen = requestCredentialGen(b.id, debouncedKey || null);
+  // generation, and the hooks below then re-ask as the new caller (as resultLive does) — they
+  // and the override-profile picker apply that stored-key generation rule themselves.
   // Caller capabilities, for gating the decode editor.
   const { caps: ctxCaps } = useOverrideContext({
     serverUrl: probeUrl,
     backendId: b.id,
     apiKey: debouncedKey || null,
     serverKind: hookKind,
-    credentialGen: liveGen,
   });
   // The hook reads a blank address as "the saved one" (right for its other callers), but here a
   // cleared field is "no address yet": don't keep the old server's limits and privacy panel.
@@ -229,7 +231,8 @@ function Editor({
     // Taken BEFORE the await, as the list card's handleTest does: a pull that rotates the stored
     // key mid-test makes a blank-key verdict describe the old caller.
     const gen = credentialGeneration(b.id);
-    setTesting(true);
+    const run = { url: testedUrl, key: testedKey };
+    setTestingTarget(run);
     try {
       const info = await testConnection({
         // The guards keep comparing the raw `testedUrl`; only the request gets the stored form
@@ -256,7 +259,7 @@ function Editor({
           !testedKey &&
           // Both sides in stored form first: a lenient `http:/host` override normalises to "" raw,
           // while `effectiveServerUrl` resolves it to `http://host`, so the commit never happened.
-          normalizeUrl(storedTypedUrl(testedUrl)) === normalizeUrl(storedTypedUrl(effectiveServerUrl(stored, live.settings))) &&
+          typedServerUrl(testedUrl) === typedServerUrl(effectiveServerUrl(stored, live.settings)) &&
           credentialGeneration(b.id) === gen
         ) {
           setConnection(b.id, info);
@@ -270,7 +273,8 @@ function Editor({
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
     } finally {
-      setTesting(false);
+      // Only this run's own marker: a newer run for the corrected target keeps its spinner.
+      setTestingTarget((t) => (t === run ? null : t));
     }
   };
 
@@ -778,11 +782,16 @@ function ConnectStep({
     const typedUrl = url;
     const typedKey = key;
     // Lenient `http:/host` is canonicalised as the editor does (the warning above already judges it so).
-    const serverUrl = normalizeUrl(storedTypedUrl(typedUrl));
+    const serverUrl = typedServerUrl(typedUrl);
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
       // Say so — a bare return left the flow's first button dead and silent for
-      // `ftp://host` or a lone `http://`.
-      setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
+      // `ftp://host` or a lone `http://`. The latter has a supported scheme and no host: name the
+      // missing host, not the scheme.
+      setError(
+        /^https?:/i.test(storedTypedUrl(typedUrl))
+          ? "Enter the server’s host too, like http://host:8000."
+          : "Enter an address like http://host:8000 — that scheme isn’t supported.",
+      );
       return;
     }
     setBusy(true);

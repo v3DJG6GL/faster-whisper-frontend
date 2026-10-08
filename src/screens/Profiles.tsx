@@ -10,7 +10,7 @@ import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/envDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { HotkeyChips } from "@/components/HotkeyChips";
-import { starterProfiles } from "@/lib/starters";
+import { startersClearOf } from "@/lib/starters";
 import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
@@ -25,7 +25,7 @@ import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
 import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
-import { conflicts as chordConflicts, conflictsByProfile, findChordConflict, quickAddPeer, QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
+import { conflictsByProfile, findChordConflict, QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
@@ -948,12 +948,10 @@ export default function Profiles() {
                     variant="accent"
                     onClick={() => {
                       // The suggestion's chords are fixed; the quick-add chord is not.
-                      // Commit a colliding starter UNBOUND rather than writing a
-                      // conflict that freezes every save on the persistence gate.
-                      const qa = quickAddHotkey.length > 0 ? [quickAddPeer(quickAddHotkey)] : [];
-                      for (const p of starterProfiles(backends[0]?.id ?? null)) {
-                        const clash = chordConflicts([...qa, p], !lowLevelActive).length > 0;
-                        upsertProfile(clash ? { ...p, hotkey: [] } : p);
+                      // A colliding starter is committed UNBOUND (startersClearOf) rather
+                      // than writing a conflict that freezes every save on the persistence gate.
+                      for (const p of startersClearOf(backends[0]?.id ?? null, quickAddHotkey, !lowLevelActive)) {
+                        upsertProfile(p);
                       }
                     }}
                   >

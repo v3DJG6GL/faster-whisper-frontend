@@ -17,10 +17,10 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl } from "@/lib/backends";
+import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
-import { starterProfiles } from "@/lib/starters";
+import { startersClearOf } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
@@ -87,16 +87,22 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     // mints a fresh id, writes the API key to a SECOND keyring account, and upserts a duplicate
     // backend, leaving one of the two keys orphaned in the OS wallet.
     if (busy) return;
-    const serverUrl = normalizeUrl(storedTypedUrl(url));
+    const serverUrl = typedServerUrl(url);
     // Snapshotted alongside the url so the post-await check below compares BOTH terms the test
     // was run with — a corrected key matters as much as a corrected host.
     const keyAtTest = key;
     // Still the target on screen? Every await below re-asks — the inputs stay editable
     // throughout (the test, the keyring write parked on a wallet prompt, the pull).
     const stillLive = () =>
-      !abandoned.current && normalizeUrl(storedTypedUrl(urlRef.current)) === serverUrl && keyRef.current === keyAtTest;
+      !abandoned.current && typedServerUrl(urlRef.current) === serverUrl && keyRef.current === keyAtTest;
     if (!serverUrl.replace(/^https?:\/\//i, "")) {
-      setError("Enter an address like http://host:8000 — that scheme isn’t supported.");
+      // A lone `http://` has a supported scheme and no host: name the missing host, as the
+      // Backends connect step does.
+      setError(
+        /^https?:/i.test(storedTypedUrl(url))
+          ? "Enter the server’s host too, like http://host:8000."
+          : "Enter an address like http://host:8000 — that scheme isn’t supported.",
+      );
       return;
     }
     setBusy(true);
@@ -189,7 +195,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Turn sync on for this device, against the restored backend that matches
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
-      const gateUrl = normalizeUrl(storedTypedUrl(url));
+      const gateUrl = typedServerUrl(url);
       // Re-add the gate's own backend when the restore replaced the list without it, exactly as
       // the Backends screen's restore does. `?? s.backends[0]` bound sync — and therefore every
       // future push of every backend's plaintext key — to the FIRST entry of a list the server
@@ -360,7 +366,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         )}
 
         {step === "quickadd" && backendId && (
-          <QuickAddStep serverUrl={normalizeUrl(storedTypedUrl(url))} backendId={backendId} onFinish={finish} />
+          <QuickAddStep serverUrl={typedServerUrl(url)} backendId={backendId} onFinish={finish} />
         )}
 
         {importResult && (
@@ -402,7 +408,11 @@ function StartersStep({
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   const updateGeneral = useApp((s) => s.updateGeneral);
-  const [drafts, setDrafts] = useState<Profile[]>(() => starterProfiles(backendId));
+  // A starter whose fixed chord is the quick-add chord starts unbound (its card asks for one), as
+  // the Profiles screen's "Keep these" commits it: Confirm has no conflict check of its own, and a
+  // colliding pair would hold every later save. Sides collapsed until evdevStatus answers — the
+  // conservative reading.
+  const [drafts, setDrafts] = useState<Profile[]>(() => startersClearOf(backendId, quickAddHotkey, !IS_WINDOWS));
   const [lowLevel, setLowLevel] = useState(IS_WINDOWS);
   useEffect(() => {
     if (IS_WINDOWS) return;

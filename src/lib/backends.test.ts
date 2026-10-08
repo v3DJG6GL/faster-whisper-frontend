@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, storedTypedUrl } from "./backends";
+import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
 import type { AppSettings, Backend } from "./types";
 
 describe("newBackendDraft", () => {
@@ -17,6 +17,9 @@ describe("insecureUrlWarning", () => {
   });
   it("warns for a lenient one-slash http scheme to a public address", () => {
     expect(insecureUrlWarning("http:/8.8.8.8:8000")).not.toBeNull();
+  });
+  it("warns for a slashless http scheme to a public address", () => {
+    expect(insecureUrlWarning("http:example.com")).not.toBeNull();
   });
 });
 
@@ -111,6 +114,19 @@ describe("storedTypedUrl", () => {
   it("keeps host:port meaning for a slashless `http:8000`", () => {
     expect(storedTypedUrl("http:8000")).toBe("http://http:8000");
   });
+  it("canonicalises a slashless http(s) scheme whose remainder is a host", () => {
+    // WHATWG and the url crate read `http:evil.tld:8000` as http://evil.tld:8000/.
+    expect(storedTypedUrl("http:evil.tld:8000")).toBe("http://evil.tld:8000");
+    expect(storedTypedUrl("HTTPS:example.com")).toBe("https://example.com");
+  });
+});
+
+describe("typedServerUrl", () => {
+  it("is the stored form, normalised", () => {
+    expect(typedServerUrl(" host:8000 ")).toBe(normalizeUrl("http://host:8000"));
+    expect(typedServerUrl("http:/h/")).toBe("http://h");
+    expect(typedServerUrl("ftp://x")).toBe("");
+  });
 });
 
 describe("effectiveServerUrl", () => {
@@ -122,5 +138,8 @@ describe("effectiveServerUrl", () => {
   it("keeps an https override as typed and falls back to serverUrl for a blank one", () => {
     expect(effectiveServerUrl(b, withOverride("https://x"))).toBe("https://x");
     expect(effectiveServerUrl(b, withOverride("   "))).toBe("http://canonical:8000");
+  });
+  it("gives a slashless http: override the // the parsers read into it", () => {
+    expect(effectiveServerUrl(b, withOverride("http:example.com"))).toBe("http://example.com");
   });
 });

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getCapabilities } from "@/lib/api";
 import { effectiveServerUrl, normalizeUrl } from "@/lib/backends";
-import { refreshCaps } from "@/lib/capabilities";
+import { refreshCaps, requestCredentialGen } from "@/lib/capabilities";
 import { useApp } from "@/lib/store";
 import { useRisesToFull } from "@/lib/useDecodeDefaults";
 import { hasOwn, ownProp } from "@/lib/own";
@@ -22,13 +22,17 @@ export function useOverrideContext(args: {
   backendId?: string | null;
   apiKey?: string | null;
   serverKind: ServerKind;
-  /** Bumped when the backend's stored key is replaced elsewhere (a sync pull): the live probe
-   *  ran as the old caller, so it must re-run. Callers that never probe live may omit it. */
-  credentialGen?: number;
 }): {
   caps: Capabilities | null;
 } {
-  const { serverUrl, backendId, apiKey, serverKind, credentialGen } = args;
+  const { serverUrl, backendId, apiKey, serverKind } = args;
+  // Bumped when the backend's stored key is replaced elsewhere (a sync pull): a live probe ran as
+  // the old caller and a cached entry was evicted, so the effect below must re-run. Derived here
+  // for every caller (as useDecodeDefaults does) — an opt-in argument only the Backends editor
+  // passed left Profiles, Transcribe and the transcript viewer on empty caps after a rotation.
+  // Read on every render: the eviction that bumps it (forgetBackendCaches) also replaces the
+  // store's `connections` / `caps`, which re-renders the readers.
+  const credentialGen = requestCredentialGen(backendId, apiKey);
   // Read-through of the store cache instead of a per-mount fetch: streaming.ts and
   // preload.ts need the same answer with no hook to fetch from, so the fetch moved
   // to lib/capabilities.ts and this hook became one of its readers. Absent key ⇒
