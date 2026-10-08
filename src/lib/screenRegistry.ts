@@ -72,8 +72,10 @@ export const OVERLAY_ACTIONS: OverlayActionDef[] = [
   { id: "open-quick-add", label: "Quick add", icon: Plus },
 ];
 
-/** Label + icon for a quick-launch entry, resolved from the registries above. */
-export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: LucideIcon } {
+/** Label + icon for a quick-launch entry, resolved from the registries above. `known` is false
+ *  when the target is in neither registry (a synced / newer-version entry): callers must not
+ *  dispatch it — the raw target could name an internal action kind the button never showed. */
+export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: LucideIcon; known: boolean } {
   const reg =
     e.kind === "screen"
       ? SCREENS.find((s) => s.id === e.target)
@@ -85,5 +87,6 @@ export function quickLaunchMeta(e: OverlayQuickAction): { label: string; icon: L
   return {
     label: reg?.label ?? "Unknown action",
     icon: reg?.icon ?? SCREENS[0].icon,
+    known: !!reg,
   };
 }

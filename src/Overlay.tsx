@@ -927,6 +927,10 @@ export default function Overlay() {
     ] ?? "failed";
   // "clipboard" means nothing was typed — the words only reached the clipboard.
   const untranslatedVerb = state.sessionOutcome === "clipboard" ? "copied" : "inserted";
+  // The sr-only wording of the same outcome — with the SAME reason the chip shows, so an
+  // "empty" or "cancelled" translation isn't announced as one that "did not finish".
+  const untranslatedPhrase =
+    `${state.sessionOutcome === "clipboard" ? "Copied" : "Inserted"} untranslated — translation ${failureLabel}`;
   // The "not inserted" note takes the slot the same way, for the same reason.
   const noteLabel =
     note === "incomplete"
@@ -954,9 +958,7 @@ export default function Overlay() {
   // pulse clears. Without it a clipboard-only or untranslated end went unsaid behind the note.
   const incompleteEndPhrase =
     state.translateFailure && (state.sessionOutcome === "typed" || state.sessionOutcome === "clipboard")
-      ? state.sessionOutcome === "clipboard"
-        ? "Copied untranslated — the translation did not finish"
-        : "Inserted untranslated — the translation did not finish"
+      ? untranslatedPhrase
       : state.sessionOutcome === "clipboard"
         ? "Copied to clipboard"
         : state.sessionOutcome === "typed"
@@ -1176,6 +1178,9 @@ export default function Overlay() {
   // abruptly under the cursor right as you reach for a button.
   const showQuickLaunch = restingIdle && hoverReveal && !peeked && hasQuickLaunch;
   const runQuickLaunch = (e: OverlayQuickAction) => {
+    // An "Unknown action" entry (target in neither registry) stays inert: forwarding its raw
+    // target could run an internal kind such as "cancel-dictation" behind that label.
+    if (!quickLaunchMeta(e).known) return;
     if (e.kind === "screen")
       void showMainAtScreen(e.target).catch((err) => console.error("overlay quick-launch failed:", err));
     else void emitOverlayAction(e.target).catch((err) => console.error("overlay quick-launch failed:", err));
@@ -1202,7 +1207,7 @@ export default function Overlay() {
   if (showProfile) {
     idGroups.push(
       <div key="tag" className="flex items-center">
-        {/* `chipTagFor` caps the tag at 10 code points but strips nothing, and `sanitizeProfiles`
+        {/* `chipTagFor` caps an authored tag at 16 code points (a derived one at 10) but strips nothing, and `sanitizeProfiles`
             checks id/name/hotkey, not `tag` — so this is the second unstripped leaf in the row. */}
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
@@ -1316,9 +1321,7 @@ export default function Overlay() {
               : pulse === "clipboard"
                 ? "Copied to clipboard"
                 : pulse === "untranslated"
-                  ? state.sessionOutcome === "clipboard"
-                    ? "Copied untranslated — the translation did not finish"
-                    : "Inserted untranslated — the translation did not finish"
+                  ? untranslatedPhrase
                   : note
                     ? noteLabel
                     : ""}
@@ -1422,15 +1425,16 @@ export default function Overlay() {
                   {showQuickLaunch ? (
                     <div className="flex items-center gap-2">
                       {state.quickLaunch.map((e) => {
-                        const { label, icon: Icon } = quickLaunchMeta(e);
+                        const { label, icon: Icon, known } = quickLaunchMeta(e);
                         return (
                           <button
                             key={e.id}
                             type="button"
                             title={label}
                             aria-label={label}
+                            disabled={!known}
                             onClick={() => runQuickLaunch(e)}
-                            className="ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-text"
+                            className="ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
                           >
                             <Icon className="size-4" />
                           </button>
