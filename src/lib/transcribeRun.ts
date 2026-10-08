@@ -18,7 +18,7 @@ import { isTextSourcePath, parseImportedText, type ImportedText } from "./transc
 import { useApp } from "./store";
 import { safeDisplayText } from "./sanitize";
 import {
-  currentRecord, patchRecord, setRecordForgetHook, upsertRecord, type TranscriptRecord,
+  currentRecord, patchRecord, setRecordForgetHook, upsertRecord, useTranscriptHistory, type TranscriptRecord,
 } from "./transcript/transcriptHistory";
 import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
@@ -572,6 +572,8 @@ export interface TranscribeRunState {
     spokenMultiInherited?: boolean;
     /** Audio the spoken-language check already downloaded; the run reuses it. */
     prefetchMediaId?: string;
+    /** The backend that issued `prefetchMediaId` (see linkPrefetchFor). */
+    prefetchBackendId?: string;
     /** The link card's site-subtitle plan (D86), frozen at Add link. */
     siteSubs?: SiteSubsRun;
   }>;
@@ -771,9 +773,21 @@ function registered(key: string): TranscriptRecord | undefined {
 }
 
 /** Drop a deleted record from the registries (and close it if it is the open one), so a
- *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk wipe). */
-export function forgetRecord(id: string | null): void {
+ *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk wipe).
+ *  `deleted` (bulk only): the records themselves are being deleted (Settings' clear), not
+ *  just re-homed (a storage move or reset keeps them) — stop every lost request's job too,
+ *  as the single-id path does, or the finished job lands its transcript again. */
+export function forgetRecord(id: string | null, opts?: { deleted?: boolean }): void {
   if (id === null) {
+    if (opts?.deleted) {
+      // A lost request's failed record carries its job id: one registered here, or one an
+      // earlier launch left (reconcile watches it headless, nothing registered it). The
+      // hook skips the rail's reattached run and is a no-op for an id nothing watches.
+      const ids = new Set(registeredIds);
+      for (const r of useTranscriptHistory.getState().records) if (r.status === "failed") ids.add(r.id);
+      for (const jobId of ids) orphanForget?.(jobId);
+    }
+    registeredIds.clear();
     registeredIds.clear();
     for (const k of Object.keys(idByPath)) delete idByPath[k];
     for (const t of persistTimers.values()) window.clearTimeout(t);
@@ -1779,6 +1793,16 @@ export function linkTranslateTo(
   return site && (site.mtTargets.length || opts.translateTo) ? site.mtTargets : opts.translateTo;
 }
 
+/** The link card's prefetched media id, only when the run goes to the backend that issued it:
+ *  a media id is only good on the server that stored it. A backend switched after Add link
+ *  gets nothing, so the run downloads on its own server instead of pointing at a foreign id. */
+export function linkPrefetchFor(
+  meta: { prefetchMediaId?: string; prefetchBackendId?: string } | undefined,
+  backendId: string,
+): string | undefined {
+  return meta?.prefetchMediaId && meta.prefetchBackendId === backendId ? meta.prefetchMediaId : undefined;
+}
+
 /** A link run: the link card's spoken language and reused audio, and — when the
  *  card picked them — the site's own subtitles: as the transcript (no transcription;
  *  the audio is still fetched for playback, the video on demand when kept) or next
@@ -1798,10 +1822,11 @@ async function runLink(
   const spoken = meta?.spokenLanguage;
   const opts = common.options ?? {};
   const translateTo = linkTranslateTo(opts, meta);
+  const prefetch = linkPrefetchFor(meta, ctx.backendId);
   const options: TranscribeOptions = {
     ...opts,
     ...(translateTo ? { translateTo } : {}),
-    ...(meta?.prefetchMediaId ? { prefetchedMediaId: meta.prefetchMediaId } : {}),
+    ...(prefetch ? { prefetchedMediaId: prefetch } : {}),
   };
   const req = {
     ...common,
@@ -1826,7 +1851,7 @@ async function runLink(
   }
   // The transcript is the site's: keep the audio (the check's download, else one now).
   const warnings = [...got.warnings];
-  let audio = meta?.prefetchMediaId ?? null;
+  let audio = prefetch ?? null;
   if (!audio && epoch === get().epoch) {
     try {
       audio = (await fetchUrlAudioOnDemand({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, progressId: pid })).mediaId;

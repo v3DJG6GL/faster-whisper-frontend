@@ -10,7 +10,8 @@ const getJobResult = vi.fn<(args: { jobId: string }) => Promise<JobOutcome<Batch
 const loadJobsLedger = vi.fn<() => Promise<unknown>>(() => Promise.resolve(null));
 const saveJobsLedger = vi.fn<(l: unknown) => Promise<void>>(() => Promise.resolve());
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
-const cancelBackendTranscription = vi.fn(() => Promise.resolve());
+type CancelArgs = { serverUrl: string; backendId?: string | null; progressId: string };
+const cancelBackendTranscription = vi.fn((_a: CancelArgs) => Promise.resolve());
 const deleteJob = vi.fn((_args: { jobId: string }) => Promise.resolve({ kind: "ok", value: null }));
 const getTranscribeProgress = vi.fn<(args: { progressId: string }) => Promise<unknown>>(
   () => Promise.resolve({ stage: "unknown" }));
@@ -23,7 +24,7 @@ vi.mock("./api", async (importOriginal) => ({
   loadJobsLedger: () => loadJobsLedger(),
   saveJobsLedger: (l: unknown) => saveJobsLedger(l),
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
-  cancelBackendTranscription: () => cancelBackendTranscription(),
+  cancelBackendTranscription: (a: CancelArgs) => cancelBackendTranscription(a),
   deleteJob: (a: { jobId: string }) => deleteJob(a),
   getTranscribeProgress: (a: { progressId: string }) => getTranscribeProgress(a),
   // Media copies are best-effort side effects; keep them inert here.
@@ -86,6 +87,9 @@ beforeEach(() => {
   getJob.mockReset();
   getJobResult.mockReset();
   getTranscribeProgress.mockClear();
+  // An earlier test's cancel or stop must not satisfy this one's assertion.
+  cancelBackendTranscription.mockClear();
+  deleteJob.mockClear();
   saveTranscriptRecord.mockClear();
   saveJobsLedger.mockClear();
   loadJobsLedger.mockImplementation(() => Promise.resolve(null));
@@ -355,7 +359,9 @@ describe("reconcileJobs", () => {
     expect(useTranscribeRun.getState().running).toBe(true);
     getJob.mockClear();
     cancelRun();
-    expect(cancelBackendTranscription).toHaveBeenCalled();
+    // Routed to the server and job the run was re-attached to.
+    expect(cancelBackendTranscription).toHaveBeenCalledWith(expect.objectContaining({
+      progressId: JOB_A, serverUrl: "http://localhost:8000", backendId: "b1" }));
     expect(useTranscribeRun.getState().running).toBe(false);
     await vi.advanceTimersByTimeAsync(0);
     expect(ledgerRows()).toEqual([]);
@@ -779,6 +785,58 @@ describe("reconcileJobs", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
     expect(records().some((x) => x.id === JOB_A)).toBe(false);
+  });
+
+  /** A watched lost request with its failed record in History; `register` = this launch
+   *  registered the record (opened from History), else only the mirror holds it. */
+  async function watchLostFailed(register: boolean) {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscriptHistory.setState({ records: [rec] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    if (register) expect(openHistoryRecord(rec)).toBe(true);
+    deleteJob.mockClear();
+  }
+
+  async function expectNoReAdd() {
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(getJob.mock.calls.filter(([a]) => a.jobId === JOB_A)).toEqual([]);
+    expect(records()).toEqual([]);
+  }
+
+  it("clearing every record stops a lost request's watcher, so the finished job can't re-add it", async () => {
+    await watchLostFailed(false);
+    forgetRecord(null, { deleted: true });
+    useTranscriptHistory.setState({ records: [] }); // the clear itself
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    await expectNoReAdd();
+  });
+
+  it("clearing every record stops a registered lost request even when the mirror dropped it first", async () => {
+    await watchLostFailed(true);
+    useTranscriptHistory.setState({ records: [] });
+    forgetRecord(null, { deleted: true });
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    await expectNoReAdd();
+  });
+
+  it("a bulk forget that keeps the records (a storage move) leaves the lost request watched", async () => {
+    await watchLostFailed(true);
+    forgetRecord(null);
+    expect(deleteJob).not.toHaveBeenCalled();
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(records().map((x) => [x.id, x.status])).toEqual([[JOB_A, "done"]]);
   });
 
   it("a retry stops an earlier launch's lost request that reconcile could not reach yet", async () => {

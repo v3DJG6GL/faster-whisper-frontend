@@ -935,8 +935,11 @@ export function TranscriptViewer({
         decodePendingRef.current = true;
         decodeMediaFile(p)
           .then((wavPath) => {
-            decodePendingRef.current = false;
+            // A stale completion leaves the flag alone: the record switch already reset it,
+            // and clearing it under the new record's in-flight decode would let the stall
+            // watchdog re-enter and mark that record broken.
             if (stale()) return;
+            decodePendingRef.current = false;
             if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
             blobUrlRef.current = null;
             setBlobSrc(convertFileSrc(wavPath));
@@ -946,7 +949,7 @@ export function TranscriptViewer({
             if (prior?.why === "gone") setAudioNote("copy");
           })
           .catch((e) => {
-            if (stale()) { decodePendingRef.current = false; return; }
+            if (stale()) return;
             decodePendingRef.current = false;
             const why = String(e).includes("gone") ? "gone" : "codec";
             const detail = `decode failed: ${String(e)}`;
@@ -989,7 +992,7 @@ export function TranscriptViewer({
           setBrokenWhy("gone");
           setBrokenDetail(`could not read the stored copy: ${String(e)}`);
         })
-        .finally(() => { bufferPendingRef.current = false; });
+        .finally(() => { if (!stale()) bufferPendingRef.current = false; });
       return;
     }
     bufferPendingRef.current = true;
@@ -1017,7 +1020,7 @@ export function TranscriptViewer({
             setBrokenWhy("gone");
           });
       })
-      .finally(() => { bufferPendingRef.current = false; });
+      .finally(() => { if (!stale()) bufferPendingRef.current = false; });
   };
 
   // WebKitGTK doesn't reliably fire `error` for an unsupported container —
@@ -1574,7 +1577,7 @@ export function TranscriptViewer({
           <span className="text-[12px] text-dim">
             {editCount
               ? `${plural(editCount, "correction")} — they apply to Copy and every export`
-              : "click a sentence to correct it · click a speaker chip to reassign"}
+              : `click a sentence to correct it${hasSpeakers && showNames ? " · click a speaker chip to reassign" : ""}`}
           </span>
           <span className="flex-1" />
           {flaggedIdxs.length > 0 && isTauri && retroTranslateAvailable && (

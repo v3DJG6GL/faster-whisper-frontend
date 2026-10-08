@@ -208,9 +208,9 @@ export const SegmentRow = memo(function SegmentRow({
             return (
               <span
                 key={wi}
-                onClick={() => seekTo(w.start)}
+                onClick={canSeek ? () => seekTo(w.start) : undefined}
                 className={cn(
-                  "cursor-pointer",
+                  canSeek && "cursor-pointer",
                   current && "rounded bg-accent px-0.5 font-medium text-accent-ink",
                   passed && "opacity-60",
                 )}

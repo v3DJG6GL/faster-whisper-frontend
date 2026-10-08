@@ -652,6 +652,7 @@ export default function Transcribe() {
         // Gated on multiOffered: a server that refuses or locks the key never gets it sent.
         spokenMultiInherited: multiOffered && inheritedBaseline.multilingual === true,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
+        prefetchBackendId: linkLang.prefetchBackendId ?? undefined,
         siteSubs: siteView?.run ? frozenSiteRun(siteView.run, siteInput?.tracks ?? [], translationAvailable) : undefined,
       });
     } else {
@@ -666,6 +667,7 @@ export default function Transcribe() {
         spokenLanguage: undefined,
         spokenMultiInherited: undefined,
         prefetchMediaId: undefined,
+        prefetchBackendId: undefined,
         siteSubs: undefined,
       });
     }
@@ -1864,21 +1866,33 @@ export default function Transcribe() {
           !panelItem?.siteFallback &&
           !(panelItem?.result?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
         const stages = railStages(panelOptions, forUrl, forText, siteT);
+        // The server-owned plan behind this file (live poll while it runs,
+        // the response's receipt once settled) and the numbers it derives:
+        // the overall fraction and the ETA are the server's, verbatim.
+        const plan = planOf(progress, panelItem?.result);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
+        // Read from the same plan as the rail rows and the strip: a stage the
+        // server declined after the last poll is "skipped" only in the
+        // receipt, and the live snapshot still calls it pending.
         const skipped = skippedStages({
-          progress, stageTimes, lastOptions: panelOptions, forUrl, forText, siteTranscript: siteT,
+          progress: plan ? { ...progress, plan } : progress,
+          stageTimes, lastOptions: panelOptions, forUrl, forText, siteTranscript: siteT,
         });
         const active = complete
           ? stages.length
           : activeRailIndex(progress, stageTimes, stages, skipped);
         const now = Date.now();
         const fileIdx = queue.findIndex((it) => it.status === "running");
-        // The server-owned plan behind this file (live poll while it runs,
-        // the response's receipt once settled) and the numbers it derives:
-        // the overall fraction and the ETA are the server's, verbatim.
-        const plan = planOf(progress, panelItem?.result);
         const planBy = new Map((plan ?? []).map((p) => [p.stage, p] as const));
+        // A soft-failed stage turns "failed" live while later stages still run:
+        // point at the warning only once it is on screen AND belongs to this run
+        // (the notice renders the selected file's result, which may be another).
+        const failWarnShown =
+          complete &&
+          !!panelItem?.result &&
+          panelItem.result === result &&
+          (result?.warnings?.length ?? 0) > 0;
         const overall = complete ? 1 : overallOf({ queue, progress }) ?? 0;
         const starts = Object.values(stageTimes).map((t) => t.start);
         const ends = Object.values(stageTimes).map((t) => t.end ?? t.start);
@@ -2151,7 +2165,8 @@ export default function Transcribe() {
                     : planStage
                       ? planStage.state === "active" ? "active"
                         : planStage.state === "pending" ? "pending"
-                          : planStage.state === "failed" ? "failed" : "done"
+                          : planStage.state === "failed" ? "failed"
+                            : planStage.state === "skipped" ? "skipped" : "done"
                       : i === active ? "active"
                         : i > active ? "pending" : "done";
                 // The translate row's fraction is unit-weighted (done
@@ -2349,7 +2364,10 @@ export default function Transcribe() {
                       )}
                       {state === "failed" && (
                         <div className="mt-0.5 text-[12px] text-dim">
-                          <span className="text-rec">Failed</span> — see the warning below.
+                          <span className="text-rec">Failed</span> — the run continued without it.
+                          {failWarnShown
+                            ? studio ? " See the warning beside the transcript." : " See the warning below."
+                            : ""}
                         </div>
                       )}
                       {/* One segment per unit, sized by what it took or

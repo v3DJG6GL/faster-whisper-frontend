@@ -26,6 +26,9 @@ export interface LinkLanguage {
   recheck: () => void;
   /** The audio the finished check downloaded, for the run to reuse. */
   prefetchMediaId: string | null;
+  /** The backend that issued `prefetchMediaId`: a media id is only good on the server that
+   *  stored it, so the run reuses it only when it targets this same backend. */
+  prefetchBackendId: string | null;
 }
 
 /** One link's spoken language and its check. A new preview (another link) starts over and
@@ -45,6 +48,8 @@ export function useLinkLanguage(args: {
   const { url, preview, serverUrl, backendId, enabled, model, screen } = args;
   const [edited, setEdited] = useState<string | null>(null);
   const [check, setCheck] = useState<LinkLanguageCheck>({ state: "idle" });
+  // The backend the finished check ran on (captured at start, not the current pick).
+  const [checkedOn, setCheckedOn] = useState<string | null>(null);
   const seq = useRef(0);
   const inFlight = useRef<{ serverUrl: string; backendId?: string; progressId: string } | null>(null);
 
@@ -66,11 +71,16 @@ export function useLinkLanguage(args: {
       .then((result) => {
         if (seq.current !== s) return;
         inFlight.current = null;
+        setCheckedOn(backendId ?? null);
         setCheck({ state: "done", result });
       })
       .catch((e) => {
         if (seq.current !== s) return;
+        // A client-side failure (timeout, transport) leaves the server downloading/decoding:
+        // stop it too (harmless when the server is the one that failed).
+        const f = inFlight.current;
         inFlight.current = null;
+        if (f) void cancelTextTranslation(f).catch(() => {});
         setCheck({ state: "failed", error: safeDisplayText(errorText(e), 200) });
       });
   }, [cancel, url, enabled, serverUrl, backendId, model]);
@@ -96,6 +106,7 @@ export function useLinkLanguage(args: {
     reset: () => setEdited(null),
     recheck: start,
     prefetchMediaId: check.state === "done" ? check.result?.mediaId ?? null : null,
+    prefetchBackendId: check.state === "done" ? checkedOn : null,
   };
 }
 

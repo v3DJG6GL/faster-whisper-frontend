@@ -33,7 +33,7 @@ vi.mock("./api", async (importOriginal) => {
 import {
   activeRailIndex, axisLayout, flushPersistEdits, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
-  linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
+  linkPrefetchFor, linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
   cancelRun, lostContact, translateParsed, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
@@ -1045,6 +1045,22 @@ describe("withSiteTracks", () => {
     expect(out.warnings).toContain(SITE_TRANSCRIPT_FALLBACK);
     expect(out.warnings?.filter((w) => w === SITE_TRANSCRIPT_FALLBACK)).toHaveLength(1);
   });
+  it("a ledgered site transcript that downloads fine now still rides as the fallback warning, not a track", async () => {
+    // The download succeeding is the case only withSiteTracks' own push covers: fetchSiteSubs
+    // finds the transcript and adds no warning of its own.
+    fetchUrlSubtitles.mockImplementation(async () => ({ tracks: [{ id: "en", lang: "en", kind: "manual", ext: "vtt",
+      text: "WEBVTT\n\n00:00.000 --> 00:01.000\nhi" }], failed: [] }) as never);
+    try {
+      const res = { text: "x" };
+      const meta = { siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } };
+      const out = await withSiteTracks(res, "https://youtu.be/q", meta, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      expect(fetchUrlSubtitles).toHaveBeenCalledTimes(1);
+      expect(out.timedTracks).toBeUndefined();
+      expect(out.warnings?.filter((w) => w === SITE_TRANSCRIPT_FALLBACK)).toHaveLength(1);
+    } finally {
+      fetchUrlSubtitles.mockReset();
+    }
+  });
 });
 
 describe("axisLayout", () => {
@@ -1176,5 +1192,15 @@ describe("translateParsed joins a text source like the TXT export", () => {
       { segments: [{ text: "Hi." }, { text: "How are you?" }] }, { translateTo: ["ja", "de"] }, ctx,
     );
     expect(r.translations).toEqual({ ja: "やあ。元気？", de: "Hallo. Wie geht's?" });
+  });
+});
+
+describe("linkPrefetchFor — a prefetched media id only goes back to the server that issued it", () => {
+  it("reuses the id on its issuer and drops it anywhere else", () => {
+    const meta = { prefetchMediaId: "m", prefetchBackendId: "A" };
+    expect(linkPrefetchFor(meta, "A")).toBe("m");
+    expect(linkPrefetchFor(meta, "B")).toBeUndefined();
+    expect(linkPrefetchFor({ prefetchMediaId: "m" }, "A")).toBeUndefined(); // issuer unknown
+    expect(linkPrefetchFor(undefined, "A")).toBeUndefined();
   });
 });
