@@ -41,7 +41,6 @@ export function Button({
   variant = "default",
   size = "md",
   className,
-  type = "button",
   disabled,
   title,
 }: {
@@ -50,13 +49,12 @@ export function Button({
   variant?: ButtonVariant;
   size?: ButtonSize;
   className?: string;
-  type?: "button" | "submit";
   disabled?: boolean;
   title?: string;
 }) {
   return (
     <button
-      type={type}
+      type="button"
       onClick={onClick}
       disabled={disabled}
       title={title}

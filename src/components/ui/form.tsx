@@ -429,8 +429,10 @@ export function Stepper({
     const base = stepBase(textRef.current, focusedRef.current, valueRef.current);
     const next = round(clamp(base + d));
     if (next === base) {
-      // Hit a bound — still commit a typed number that differs, then stop repeating.
-      if (base !== valueRef.current) {
+      // Hit a bound — still commit a typed number that differs, then stop repeating. Only a typed
+      // one: an untouched field showing an out-of-range value (own or inherited) must not be
+      // pulled to the bound — that would change it and pin an override on an inheriting field.
+      if (base !== valueRef.current && editedRef.current) {
         onChangeRef.current(base);
         textRef.current = String(base);
         setText(String(base));
