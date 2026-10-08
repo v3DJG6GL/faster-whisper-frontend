@@ -99,7 +99,11 @@ export function dictate(profileId: string, action: TriggerAction): void {
     if (isBusy() || isStarting()) {
       const handsFree = s.profiles.find((p) => p.id === profileId);
       if (s.activeProfile === profileId) stopOrCancel(true);
-      else if (handsFree && handsFree.enabled) {
+      else if (!isCapturing() && !isStarting()) {
+        // The mic is already closed and the session is finalizing: there is no audio left to
+        // upgrade, and restarting would discard the transcript. Leave it alone; the Start the
+        // root fired is already queued as a fast re-press.
+      } else if (handsFree && handsFree.enabled) {
         const running = s.profiles.find((p) => p.id === s.activeProfile);
         const shape = (p: Profile) => sessionShape(p, backendForProfile(p, s.backends));
         if (running && shape(running) !== shape(handsFree)) {
@@ -402,10 +406,12 @@ export function runOverlayAction(kind: string): void {
   if (kind === "cycle-active-profile") {
     // Only meaningful when idle/standby — never reshuffle a running session, INCLUDING one
     // mid-start: status is still "idle" through the ~1s prologue, so without isStarting() a chip
-    // cycle in that window would overwrite the starting session's activeProfile + persist a new
-    // homeProfileId (the same mislabel the START path guards). Same for the target picker: it
-    // has already stamped activeProfile, so a cycle while it is open would mislabel the pick
-    // and the commit/abort would stamp the old Profile back. Mirrors dictate()'s start gate.
+    // cycle in that window would persist a new homeProfileId under the starting session (the
+    // same mislabel the START path guards). Same for the target picker: it has already stamped
+    // activeProfile, so a cycle while it is open would mislabel the pick. Mirrors dictate()'s
+    // start gate. The cycle persists ONLY the home target (which the standby dock previews);
+    // it never stamps activeProfile, which nothing clears while idle and which would then
+    // outrank a later header pick on the chip, the stats and Home's readouts.
     if (s.status !== "idle" || isStarting() || pickerOpen) return;
     const enabled = s.profiles.filter((p) => p.enabled);
     if (enabled.length === 0) return;
@@ -413,7 +419,6 @@ export function runOverlayAction(kind: string): void {
     const i = enabled.findIndex((p) => p.id === cur?.id);
     const next = enabled[(i + 1) % enabled.length];
     s.updateSettings({ homeProfileId: next.id }); // persists; standby tag + next toggle follow
-    s.setDictation({ activeProfile: next.id });
     return;
   }
 }

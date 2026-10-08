@@ -223,6 +223,24 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
   });
 
+  it("the per-phrase Enter stands down while a carry is pending", () => {
+    const task = mask(fns.enqueueAutoEnter);
+    const skip = task.indexOf("if (carryText) return");
+    expect(skip, "auto-Enter task must skip while a carry is pending").toBeGreaterThanOrEqual(0);
+    expect(skip).toBeGreaterThan(task.indexOf("holdCoerced("));
+    expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
+  });
+
+  it("a chord-family upgrade/restart leaves a finalizing session alone", () => {
+    // After stopLive the mic is closed but insertCfg is intact: flipping `live` would drop the
+    // stop-mode insert, and cancelling would discard the draining transcript unsaved.
+    expect(mask(fns.reclassifyLive)).toContain("!capturing");
+    const restart = mask(fns.restartLiveAs);
+    const gate = restart.indexOf("!capturing");
+    expect(gate, "restartLiveAs must not cancel a draining session").toBeGreaterThanOrEqual(0);
+    expect(gate).toBeLessThan(restart.indexOf("cancelLive("));
+  });
+
   it("a delivered typed insert consumes the carry", () => {
     // Trailing space, no brace: bodyAfter opens at the first `{` AFTER the anchor.
     expect(clears(bodyAfter(finalBody, "if (delivered) "))).toBe(true);

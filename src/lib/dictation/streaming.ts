@@ -1028,6 +1028,10 @@ function enqueueAutoEnter(): void {
     // the PTT chord is still physically held, so the Enter would fold into the held modifier (mirrors
     // the live-final useClipboard guard). A hold session is clipboard-coerced, so nothing was typed here.
     if (holdCoerced(cfg?.activation, t.method)) return;
+    // A carry is pending (mirrors the boundary task): the untyped rest of the earlier document has
+    // not gone out, so an Enter now would submit the half-typed message. The re-typing final that
+    // delivers the carry grows the document and earns its own Enter.
+    if (carryText) return;
     // The target decides: an app rule can turn Enter off for this window even when the
     // profile/global has it on (a chat client submits, an editor must not).
     if (!t.autoEnter) return;
@@ -3611,7 +3615,9 @@ export function reclassifyLive(profile: Profile): void {
     pendingReclassify = profile;
     return;
   }
-  if (!insertCfg) return; // no session — dictate() only calls this while busy
+  // No session, or one already finalizing: stopLive closed the mic, so there is no audio left to
+  // upgrade, and flipping `live` now would make the closed handler skip the stop-mode insert.
+  if (!insertCfg || !capturing) return;
   applyReclassify(profile);
 }
 
@@ -3633,6 +3639,9 @@ export function restartLiveAs(start: () => void): void {
     restartOwed = start;
     return;
   }
+  // The mic is already closed and the transcript is draining: cancelling now would throw the
+  // finalizing dictation away unsaved. Leave it to finish.
+  if (!capturing) return;
   // The chord is still physically held here — keep the hotkey backend's held-set as it is.
   void cancelLive({ keepShortcuts: true }).then(start);
 }

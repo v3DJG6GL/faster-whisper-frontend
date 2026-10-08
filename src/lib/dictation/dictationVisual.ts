@@ -154,12 +154,13 @@ export const SESSION_WARN_HOLD_MS = 2600;
 export const SESSION_NOTE_HOLD_MS = 2000;
 
 /**
- * THE one rule for how long an end-of-session note stays readable, shared by the chip's own
- * note/pulse holds (Overlay.tsx, dock on — the collapse linger follows those via
- * collapseLingerMs) and the window's hide linger (chipController.ts, dock off) so neither
- * surface cuts the other short: the "incomplete"
- * note or a failed translate on a typed/clipboard outcome (the untranslated pulse) →
- * SESSION_WARN_HOLD_MS; any other note → SESSION_NOTE_HOLD_MS; nothing to read → 0.
+ * THE one rule for how long an end-of-session note stays readable: the "incomplete" note or a
+ * failed translate on a typed/clipboard outcome (the untranslated pulse) → SESSION_WARN_HOLD_MS;
+ * any other note → SESSION_NOTE_HOLD_MS; nothing to read → 0. The window's hide linger
+ * (chipController.ts, dock off) calls this; the chip's own pulse and note timers (Overlay.tsx,
+ * dock on — the collapse linger follows those via collapseLingerMs) apply the same rule INLINE
+ * from the two constants, so a change here must be mirrored there or the two surfaces cut each
+ * other's note short.
  */
 export function sessionNoteHoldMs(s: {
   sessionNote?: string | null;

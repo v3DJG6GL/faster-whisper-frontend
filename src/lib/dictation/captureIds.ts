@@ -1,6 +1,6 @@
 // Pairing a live phrase with the capture row the server minted for it,
-// extracted from streaming.ts so it can be TESTED (nothing in this repo mocks
-// Tauri, so anything reachable only through a WS event handler is not).
+// extracted from streaming.ts and kept pure so it can be tested without
+// driving streaming.ts's WS event handlers through its Tauri transport.
 //
 // The server holds each utterance's log receipt open waiting for our translate
 // call, and the capture id is how it links the two halves into one block. The
