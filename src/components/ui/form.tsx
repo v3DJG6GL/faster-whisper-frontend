@@ -414,11 +414,14 @@ export function Stepper({
   const round = (n: number) => Math.round(n * pow) / pow;
   const clamp = (n: number) => Math.min(max, Math.max(min, n));
   const parse = (s: string) => (decimals > 0 ? parseFloat(s) : parseInt(s, 10));
-  // What −/+ step from: the typed text while focused, else the committed value. stepBy and the
-  // buttons' disabled bounds share it so they can't disagree about where a bound is.
+  // What −/+ step from: the typed text once the user typed since focusing, else the committed
+  // value — an untouched focused field steps exactly like an unfocused one (an out-of-range own
+  // value isn't clamped first, and a value that moved under the focus isn't stepped from stale
+  // text). stepBy and the buttons' disabled bounds share it so they can't disagree about where a
+  // bound is.
   const stepBase = (t: string, f: boolean, v: number) => {
     const n = parse(t);
-    return f && Number.isFinite(n) ? round(clamp(n)) : v;
+    return f && editedRef.current && Number.isFinite(n) ? round(clamp(n)) : v;
   };
 
   function stopRepeat() {
@@ -468,8 +471,11 @@ export function Stepper({
   const commit = () => {
     const n = parse(text);
     // Focusing and leaving an inheriting field changes nothing, nor does emptying it or leaving
-    // a lone "-" / ".": only a typed number overrides.
-    const unchanged = inherited !== undefined ? text === String(value) : !editedRef.current;
+    // a lone "-" / ".": only a typed number overrides. An untouched field is unchanged even when
+    // the inherited value moved under it while focused (the text still holds the old one);
+    // retyping the inherited value is unchanged too, while typing `min` with no numeric
+    // inherited value still overrides.
+    const unchanged = !editedRef.current || (inherited !== undefined && text === String(value));
     if (inheriting && (unchanged || !Number.isFinite(n))) {
       setText(String(value));
       return;
