@@ -474,8 +474,11 @@ export default function History() {
     const ext = EXPORT_EXTENSIONS[format];
     // A link's sourceName is its title; its sourcePath is the URL the stem
     // reads the site from (and the date leads, like the viewer's export).
+    // The in-session yt-dlp extractor names the site for hosts with no usable
+    // label (an IP, a single-label host) — the viewer's export passes it too.
+    const extractor = rec.kind === "url" ? useTranscribeRun.getState().urlMeta[rec.sourcePath]?.extractor : undefined;
     const stem = rec.kind === "url"
-      ? exportStem(rec.title, rec.sourcePath, { createdAt: rec.createdAt })
+      ? exportStem(rec.title, rec.sourcePath, { createdAt: rec.createdAt, extractor })
       : exportStem(rec.title, rec.sourceName);
     let path: string | null;
     try {
@@ -492,7 +495,7 @@ export default function History() {
       // link. Inside the try: an
       // on-disk record is unvalidated, and a throw here must land in the row's export note
       // rather than escape the fire-and-forget `void quickExport(rec)` as a rejection.
-      const result = withTrackSites(recordEditedResult(rec), rec.sourcePath);
+      const result = withTrackSites(recordEditedResult(rec), rec.sourcePath, extractor);
       const all = transcriptTracks(result);
       const files = generateExports(result, exportOptionsFor({
         format,
