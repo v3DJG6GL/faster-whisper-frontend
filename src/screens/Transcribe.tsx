@@ -730,6 +730,8 @@ export default function Transcribe() {
   const persistOptions = patchTranscribe;
   /** The site-subtitle panel held the chips since the last re-prune (it may have grown them). */
   const panelHeldChips = useRef(false);
+  /** The server's translation limit as of the last render, for the unmount cut (null = no translation). */
+  const releaseCap = useRef<number | null>(null);
   // The picker and backend-switch prunes see the source of THAT moment; a server's
   // DEFAULT_LANGUAGE arrives later (decode defaults load async), so re-prune when the known
   // source settles — else a chip equal to it survives hidden and runs a source→source no-op.
@@ -743,8 +745,10 @@ export default function Transcribe() {
     if (siteChips) panelHeldChips.current = true;
     if (busy || siteChips) return;
     let next = knownSource ? pruneTargets(translateTo, knownSource) : translateTo;
-    if (panelHeldChips.current && translationAvailable) next = next.slice(0, maxTranslationTargets(caps));
-    panelHeldChips.current = false;
+    if (panelHeldChips.current && translationAvailable) {
+      next = next.slice(0, maxTranslationTargets(caps));
+      panelHeldChips.current = false;
+    }
     if (next.length !== translateTo.length) {
       setTranslateTo(next);
       persistOptions({ translateTo: next });
@@ -753,6 +757,16 @@ export default function Transcribe() {
     // siteChips as a boolean: the panel releasing the chips re-prunes, its per-render identity does not;
     // caps unwatched: a backend switch to a lower limit must not silently and permanently drop targets
   }, [knownSource, busy, !!siteChips]);
+  // Left (or unmounted) while the panel still held the chips: that release never reaches the
+  // effect above, so cut the persisted list here, or the next visit sends it over the limit.
+  releaseCap.current = translationAvailable ? maxTranslationTargets(caps) : null;
+  useEffect(() => () => {
+    const cap = releaseCap.current;
+    if (!panelHeldChips.current || cap === null) return;
+    const cur = useApp.getState().settings.transcribe?.translateTo ?? [];
+    if (cur.length > cap) persistOptions({ translateTo: cur.slice(0, cap) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount only; reads refs and the store
+  }, []);
 
   // The studio splitter: the rail width lives in the transcribe settings (local, never
   // synced); while a drag is in flight the live value is local state, persisted on release.

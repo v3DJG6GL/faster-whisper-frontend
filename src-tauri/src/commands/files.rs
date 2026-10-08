@@ -473,8 +473,7 @@ fn decode_text_source(bytes: &[u8]) -> String {
                     bad += 1;
                 }
             }
-            // A tie stays UTF-8: one real character and one stray byte is a UTF-8 file.
-            if good >= bad {
+            if good > bad {
                 return String::from_utf8_lossy(bytes).into_owned();
             }
             // Mostly undecodable high bytes: a single-byte (Windows-1252) file.
@@ -574,9 +573,11 @@ mod tests {
         let mut stray = "äöü ".as_bytes().to_vec();
         stray.push(0xFF);
         assert_eq!(decode_text_source(&stray), "äöü \u{FFFD}");
-        let mut tie = "ä ".as_bytes().to_vec();
-        tie.push(0xFF);
-        assert_eq!(decode_text_source(&tie), "ä \u{FFFD}");
+        // A 1:1 tie goes to Windows-1252: "weiß…" + one umlaut is one valid pair and one bad byte.
+        assert_eq!(
+            decode_text_source(b"Ich wei\xdf\x85 nicht, M\xe4dchen"),
+            "Ich weiß… nicht, Mädchen"
+        );
 
         // "ß…" in Windows-1252 (DF 85) is also a valid UTF-8 pair; it must not outvote the rest.
         assert_eq!(

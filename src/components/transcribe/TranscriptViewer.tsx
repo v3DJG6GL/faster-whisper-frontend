@@ -644,8 +644,11 @@ export function TranscriptViewer({
             // Each group's request restarts the shared id at 0: scale it into the group's share
             // of the chunk (a poll sent before this group began reports the one before).
             if (sentAt < ctl.groupAt) return;
+            // Weighted by group size (the last group may be smaller); targetProgress is per
+            // language, the same in every group.
             const done = typeof p.progress === "number" ? p.progress : 0;
-            p = { ...p, progress: (ctl.group + done) / groups.length, targetProgress: undefined };
+            const before = groups.slice(0, ctl.group).reduce((n, g) => n + g.length, 0);
+            p = { ...p, progress: (before + done * groups[ctl.group].length) / targets.length };
           }
           setTrRun((s) => (s ? foldTranslatePoll(s, p, Date.now(), sentAt) : s));
         })

@@ -115,6 +115,9 @@ describe("round-trips against generateExport", () => {
     };
     const lrc = generateExport(th, { format: "lrc", wordTimestamps: true });
     expect(parseImportedText("lrc", lrc).segments[0].text).toBe(text);
+    // A space after the line stamp or a speaker prefix is no seam space.
+    expect(parseImportedText("lrc", "[00:01.00] <00:01.00>Hello<00:01.50>world\n").segments[0].text).toBe("Hello world");
+    expect(parseImportedText("lrc", "[00:01.00]Alice: <00:01.00>Hello<00:01.50>world\n").segments[0].text).toContain("Hello world");
   });
   it("lrc: an astral (Ext-B) Han character at a word-tag seam round-trips without a space", () => {
     // 𠮷 is a surrogate pair: the seam test used to look at one UTF-16 unit and miss it.

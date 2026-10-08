@@ -349,8 +349,11 @@ function parseLrc(body: string): ImportedText {
     // theirs. (The export also joins every word of a whitespace-free segment, e.g. Thai or
     // CJK with digits; a tag-only line can't tell that apart from a foreign file, so those
     // gain spaces.)
+    // Judged after the first word tag: a space after the line stamp or a "Name: " prefix is
+    // not a seam space.
     const body = trimmed.slice(lastTagEnd);
-    const ownSpaces = /\s<\d+:\d+(?:\.\d+)?>/.test(body);
+    const firstTag = body.search(/<\d+:\d+(?:\.\d+)?>/);
+    const ownSpaces = firstTag >= 0 && /\s<\d+:\d+(?:\.\d+)?>/.test(body.slice(firstTag + 1));
     const { text, speaker } = cueText([
       body.replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
         ownSpaces || (unspacedChar(edgeChar(s.slice(Math.max(0, off - 8), off), true)) &&
