@@ -155,6 +155,8 @@ export function TargetLanguagePicker({
   modelName,
   exclude,
   max,
+  used,
+  free,
   ariaLabel = "Translate into",
   disabled,
   renderTrigger,
@@ -168,6 +170,11 @@ export function TargetLanguagePicker({
   /** The known source language — translating into it is a no-op. */
   exclude?: string;
   max: number;
+  /** How many picked languages count against `max` (default: all of them) — with site
+   *  subtitles only the machine-translated ones do. */
+  used?: number;
+  /** Languages that add without counting against `max` (the site has subtitles for them). */
+  free?: readonly string[];
   ariaLabel?: string;
   disabled?: boolean;
   renderTrigger?: (p: TriggerProps) => ReactNode;
@@ -175,8 +182,11 @@ export function TargetLanguagePicker({
   const { recent, use, forget, flush } = useRecent("recentTranslationTargets");
   // At the cap the "+ language" button rests: remove a chip to pick another. The cap is the
   // server's or the app's own ceiling (targetCap), so the wording names neither.
-  const full = value.length >= max;
-  const fullTitle = `At most ${max} target languages per run`;
+  const full = (used ?? value.length) >= max;
+  const fullTitle = used === undefined ? `At most ${max} target languages per run` : `At most ${max} machine translations per run`;
+  // At the cap only a free language (one the site has subtitles for) still adds.
+  const blocked = (code: string) => full && !value.includes(code) && !free?.includes(code);
+  const anyFree = !!free?.some((c) => !value.includes(c));
   return (
     <ListPicker<LangRow>
       label={ariaLabel}
@@ -187,7 +197,7 @@ export function TargetLanguagePicker({
       onPick={(r) => {
         // The multi popover stays open at the cap, where a tick is a no-op: only a code that
         // was really added counts as a Recent target.
-        const next = toggleCode(value, r.value, max);
+        const next = toggleCode(value, r.value, blocked(r.value) ? 0 : Infinity);
         if (next.includes(r.value) && !value.includes(r.value)) use(r.value);
         else if (!next.includes(r.value) && value.includes(r.value)) forget(r.value);
         onChange(next);
@@ -196,12 +206,12 @@ export function TargetLanguagePicker({
       renderRow={(r, { selected }) => <TargetRow row={r} on={selected} />}
       // At the cap the popover stays open but an unticked row's tick is a no-op, and the trigger's
       // tooltip is hidden under the popover (or absent on a custom trigger): say why on the row.
-      rowTitle={(r) => (full && !value.includes(r.value) ? fullTitle : untestedTitle(r))}
+      rowTitle={(r) => (blocked(r.value) ? fullTitle : untestedTitle(r))}
       renderTrigger={
         renderTrigger ??
         ((p) => (
           // The tooltip sits on a wrapper: a disabled button shows none in some webviews.
-          <span title={full ? fullTitle : undefined} className="inline-flex">
+          <span title={full && !anyFree ? fullTitle : undefined} className="inline-flex">
             <button
               {...p}
               // At the cap the button only LOOKS disabled (aria-disabled): ListPicker.show already
@@ -209,7 +219,7 @@ export function TargetLanguagePicker({
               // Esc closes the still-open multi popover — focus would drop to <body>.
               disabled={disabled}
               aria-disabled={p.disabled || undefined}
-              aria-label={full ? `Add a target language — ${fullTitle}` : "Add a target language"}
+              aria-label={full && !anyFree ? `Add a target language — ${fullTitle}` : "Add a target language"}
               className={cn(
                 "ring-signal h-7 rounded-pill border border-dashed border-line-strong px-2.5 text-[11.5px] text-dim hover:text-text",
                 p["aria-expanded"] && "border-accent/55 text-text",
@@ -225,7 +235,7 @@ export function TargetLanguagePicker({
       noun="language"
       keys={MULTI_KEYS}
       // A custom trigger (the site-subtitles "Choose a language…") is not capped here.
-      disabled={disabled || (full && !renderTrigger)}
+      disabled={disabled || (full && !anyFree && !renderTrigger)}
     />
   );
 }

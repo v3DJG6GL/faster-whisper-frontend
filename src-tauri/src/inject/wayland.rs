@@ -310,12 +310,12 @@ mod imp {
         }
     }
 
-    /// How many of `text`'s non-whitespace characters the active layout can type, and how many it
-    /// cannot — `(reachable, unreachable)`. Whitespace is left out of both: a transcript of only
-    /// spaces and newlines says nothing about whether the layout fits its script.
-    fn layout_reach(text: &str, map: &HashMap<char, KeySpec>) -> (usize, usize) {
+    /// How many of `text`'s letters the active layout can type, and how many it cannot —
+    /// `(reachable, unreachable)`. Only letters count: digits, punctuation, symbols and emoji say
+    /// nothing about whether the layout fits the transcript's script.
+    fn letter_reach(text: &str, map: &HashMap<char, KeySpec>) -> (usize, usize) {
         text.chars()
-            .filter(|c| !c.is_whitespace())
+            .filter(|c| c.is_alphabetic())
             .fold((0, 0), |(yes, no), c| match key_spec_for(c, map) {
                 Some(_) => (yes + 1, no),
                 None => (yes, no + 1),
@@ -643,32 +643,6 @@ mod imp {
                     continue;
                 }
             };
-            // A transcript the active layout cannot type AT ALL (Chinese on a US layout) used to
-            // skip every character in the loop below, still press auto-Enter on the empty field
-            // and report `Landed::Yes` — so the caller's failed-insert recovery (clipboard) never
-            // ran and the text was lost. Answer it as a failure instead, before any key is
-            // synthesized; like the keymap failure above it does not end the portal session. A
-            // PARTLY reachable transcript still types what it can (curly quotes, an em dash or an
-            // emoji in an otherwise Latin sentence) — that skip stays silent per character below.
-            if !job.paste && !job.text.is_empty() && !crate::inject::injection_cancelled(job.epoch)
-            {
-                let (reachable, unreachable) = layout_reach(&job.text, &charmap);
-                if unreachable > 0 && reachable == 0 {
-                    tracing::warn!(
-                        "[wayland-inject] none of the {unreachable} character(s) exist on the active keyboard layout — nothing typed"
-                    );
-                    let _ = job.reply.send(Err(
-                        "none of the transcript's characters exist on the active keyboard layout"
-                            .into(),
-                    ));
-                    continue;
-                }
-                if unreachable > 0 {
-                    tracing::warn!(
-                        "[wayland-inject] {unreachable} character(s) not on the active layout will be skipped"
-                    );
-                }
-            }
             // Every keycode we press is recorded here so we can GUARANTEE a matching
             // release even if a portal call fails mid-chord. Without this, a failure
             // after `Ctrl↓`/`Shift↓` leaves that modifier logically DOWN system-wide
@@ -732,6 +706,29 @@ mod imp {
                 if own_window_focused(app) {
                     tracing::info!("[wayland-inject] skipped before typing: our own window holds focus");
                     return Ok(crate::inject::Landed::NothingWritten);
+                }
+                // A transcript whose LETTERS the active layout mostly cannot produce (Chinese on a
+                // US layout, digits or not) used to skip them in the loop below, press auto-Enter
+                // on what was left and report `Landed::Yes`: the text was lost with nothing on the
+                // clipboard. Hand it over on the clipboard instead, before any key is synthesized —
+                // an on-clipboard divert, not an error, so a live session keeps running. Symbols
+                // (a "♪" or "…" phrase, curly quotes, an em dash, emoji) and a few stray letters in
+                // an otherwise typeable line are still skipped silently per character below.
+                if !job.paste && !job.text.is_empty() {
+                    let (reachable, unreachable) = letter_reach(&job.text, &charmap);
+                    if unreachable > 0 && unreachable >= reachable {
+                        tracing::warn!(
+                            "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout — putting the text on the clipboard instead of typing",
+                            reachable + unreachable
+                        );
+                        crate::inject::text::persist_off_runtime(job.text.clone()).await?;
+                        return Ok(crate::inject::Landed::OnClipboard);
+                    }
+                    if unreachable > 0 {
+                        tracing::warn!(
+                            "[wayland-inject] {unreachable} letter(s) not on the active layout will be skipped"
+                        );
+                    }
                 }
                 if job.paste {
                     // Resolve the chord to keycodes HERE (the charmap is built) so the MAIN key maps by
@@ -997,20 +994,27 @@ mod imp {
         }
 
         #[test]
-        fn layout_reach_counts_a_script_the_layout_cannot_type_as_wholly_unreachable() {
-            // Chinese on a US layout: nothing to type, so the job must fail rather than land.
-            assert_eq!(layout_reach("你好 世界\n", &us_letters()), (0, 4));
+        fn letter_reach_counts_a_script_the_layout_cannot_type_digits_or_not() {
+            // Chinese on a US layout: the digits are typeable, the words are not — divert.
+            assert_eq!(letter_reach("你好 世界\n", &us_letters()), (0, 4));
+            assert_eq!(
+                letter_reach("会议在3点开始。2026年预算", &us_letters()),
+                (0, 9)
+            );
         }
 
         #[test]
-        fn layout_reach_keeps_a_partly_reachable_transcript_typeable() {
-            // An em dash in a Latin sentence is skipped, not a reason to fail the whole job.
-            assert_eq!(layout_reach("ab — c", &us_letters()), (3, 1));
+        fn letter_reach_ignores_symbols_and_whitespace() {
+            // A music/ellipsis phrase or an em dash is skipped per character, never a reason to
+            // divert a live phrase.
+            assert_eq!(letter_reach("♪ … — 😀 \n\t", &us_letters()), (0, 0));
+            assert_eq!(letter_reach("ab — c", &us_letters()), (3, 0));
         }
 
         #[test]
-        fn layout_reach_ignores_whitespace() {
-            assert_eq!(layout_reach(" \n\t ", &us_letters()), (0, 0));
+        fn letter_reach_keeps_a_mostly_typeable_line_typeable() {
+            let (yes, no) = letter_reach("caf\u{e9} ole", &us_letters());
+            assert!(no > 0 && no < yes);
         }
     }
 }

@@ -85,7 +85,11 @@ function charTokens(oldWords: TranscriptWord[], text: string): string[] {
   }
   const toks: string[] = [];
   newChars.forEach((c, j) => {
-    if (j && (own[j] === own[j - 1] || clings(newChars[j - 1], c))) toks[toks.length - 1] += c;
+    // Clinging joins only across an INSERTED character: two characters matched to different old
+    // words keep their boundary (the model may have split a syllable), or a punctuation-only
+    // edit would merge two timed words into one that matches neither.
+    const joins = own[j] === own[j - 1] || ((own[j] === -1 || own[j - 1] === -1) && clings(newChars[j - 1], c));
+    if (j && joins) toks[toks.length - 1] += c;
     else toks.push(c);
   });
   return toks;

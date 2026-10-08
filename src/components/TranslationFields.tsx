@@ -25,6 +25,8 @@ export function TranslationTargetChips({
   modelName,
   exclude,
   max = TRANSLATION_MAX_TARGETS,
+  used,
+  free,
   disabled,
   ariaLabel = "Translation targets",
   parts,
@@ -44,10 +46,15 @@ export function TranslationTargetChips({
   /** The known source language — offering it as a target is a no-op. */
   exclude?: string;
   max?: number;
+  /** How many chips count against `max` (default: all) — see TargetLanguagePicker. */
+  used?: number;
+  /** Languages that add without counting against `max`. */
+  free?: readonly string[];
   disabled?: boolean;
   ariaLabel?: string;
 }) {
   const shown = chipCodes(value);
+  const counted = used ?? shown.length;
   // Membership and removal go through the SAME sanitizer as the chips: a synced " de " renders
   // "DE", so removing it must match on that code, not on the raw entry.
   const codeOf = (c: string) => chipCodes([c])[0] ?? "";
@@ -74,11 +81,13 @@ export function TranslationTargetChips({
         modelName={modelName}
         exclude={exclude}
         max={max}
+        used={used}
+        free={free}
         disabled={disabled}
       />
       {shown.length > 0 && (
-        <span className={cn("text-[11px] tabular-nums", shown.length >= max ? "text-warn" : "text-faint")}>
-          {shown.length} of {max}
+        <span className={cn("text-[11px] tabular-nums", counted >= max ? "text-warn" : "text-faint")}>
+          {counted} of {max}
         </span>
       )}
     </div>
@@ -105,7 +114,8 @@ export function TranslationOptionsFields({
   sectionLabels,
   chipParts,
   onChipPart,
-  maxTargets,
+  usedTargets,
+  freeTargets,
   children,
 }: {
   targets: string[];
@@ -113,9 +123,10 @@ export function TranslationOptionsFields({
   /** Compound target chips (see TranslationTargetChips `parts`). */
   chipParts?: Record<string, ChipPart[]>;
   onChipPart?: (key: string) => void;
-  /** The chips' cap when not every chip is a machine translation (the site's own subtitles are
-   *  free); defaults to the server's translation limit. */
-  maxTargets?: number;
+  /** With site subtitles only machine-translated chips count against the server's translation
+   *  limit (`usedTargets`), and a language the site has subtitles for adds free (`freeTargets`). */
+  usedTargets?: number;
+  freeTargets?: readonly string[];
   mode: "fluent" | "faithful";
   onModeChange: (m: "fluent" | "faithful") => void;
   model: string;
@@ -142,7 +153,9 @@ export function TranslationOptionsFields({
           value={targets}
           onChange={onTargetsChange}
           {...translationTargetInfo(caps, model || inheritedModel)}
-          max={maxTargets ?? maxTranslationTargets(caps)}
+          max={maxTranslationTargets(caps)}
+          used={usedTargets}
+          free={freeTargets}
           exclude={exclude}
           disabled={disabled}
           parts={chipParts}

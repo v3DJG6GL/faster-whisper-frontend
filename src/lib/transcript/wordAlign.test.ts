@@ -127,6 +127,18 @@ describe("alignSegmentWords", () => {
     expect(out[1].start).toBe(1);
     expect(out[1].end).toBeCloseTo(2, 9);
   });
+
+  it("keeps a syllable the model split across two words split on a punctuation-only edit", () => {
+    // faster-whisper cuts Thai per decodable token, so a word may start with a tone mark.
+    const th: TranscriptWord[] = [
+      { word: "ค", start: 0, end: 1 },
+      { word: "่ะ", start: 1, end: 2 },
+      { word: "วันนี้", start: 2, end: 3 },
+    ];
+    const out = alignSegmentWords(th, "ค่ะวันนี้!");
+    expect(out[0]).toBe(th[0]);
+    expect(out[1]).toBe(th[1]);
+  });
 });
 
 describe("segmentWordRanges", () => {
