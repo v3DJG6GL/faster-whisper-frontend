@@ -1415,8 +1415,9 @@ async function reconcileBackendSecrets(
  * sync-OFF or server-switch edit made while the apply is parked must reach
  * the subscriber's supersede() branches, or the stale restart re-applies the
  * blob after the user disconnected.
- * While dictating, the apply is DEFERRED to the next idle transition — a mid-
- * session hydrate would yank profiles/backends out from under the session.
+ * While dictating nothing is applied — a mid-session hydrate would yank
+ * profiles/backends out from under the session. A pull-apply re-pulls once the
+ * session is idle (see `rePullAfterSession`); a one-shot restore just fails.
  */
 export async function applyBlob(
   blob: SyncBlob,
@@ -1430,10 +1431,12 @@ export async function applyBlob(
 ): Promise<boolean> {
   const st = useApp.getState();
   if (st.status !== "idle") {
-    // Deferred, not applied: the caller must NOT adopt the server's version as
-    // the new base (pendingApply is memory-only and dies on quit/supersede), or
-    // the peer's change is recorded as applied and never re-offered.
-    pendingApply = { blob, cats, opts };
+    // Not applied: the caller must NOT adopt the server's version as the new base, or the
+    // peer's change is recorded as applied and never re-offered. A gate-respecting caller (a pull
+    // or 409 reconcile) parks a re-pull for the end of the session (`pullParked`, memory-only, dies
+    // on quit/supersede); an explicit one-shot restore (`ignoreGates`) never queues — its caller
+    // reports the failure, and a re-pull it triggered later would only be a pointless sync.
+    if (!opts.ignoreGates) pullParked = true;
     return false;
   }
   // The epoch this apply belongs to: a supersede during the keyring wait (sync switched off,
@@ -1927,10 +1930,9 @@ export async function applyBlob(
   }
   // The retry runs OUTSIDE the try so the STALE sentinel of the recursive call is its own
   // (`applyingRemote` wraps only `hydrate`, so nothing is held across the recursion).
-  // A session that started during the keyring wait must NOT park the blob via the top-of-function
-  // pendingApply branch: only a top-level call may queue — one-shot callers (import, restore,
-  // review approval, conflict resolution) pre-check status to avoid that queue, and a "not
-  // applied" answer that later lands behind the UI's back is worse than a plain "not applied".
+  // A session that started during the keyring wait must NOT park via the top-of-function branch:
+  // only a top-level call may queue a re-pull. A retry that answers "not applied" here is final;
+  // the caller (a reconcile re-offers on the next pull, a one-shot restore reports it) owns it.
   if (staleRestart) {
     if (useApp.getState().status !== "idle") return false;
     return applyBlob(blob, cats, retries - 1, opts);
@@ -1945,11 +1947,8 @@ export async function applyBlob(
 
 let started = false;
 let applyingRemote = false;
-let pendingApply: {
-  blob: SyncBlob;
-  cats: Record<SyncCategory, boolean>;
-  opts: { ignoreGates?: boolean };
-} | null = null;
+/** A pull-apply was refused because dictation ran: re-pull once the session is idle. */
+let pullParked = false;
 let state: SyncState = {};
 let device: SyncDeviceInfo | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
@@ -1970,7 +1969,7 @@ function supersede(): void {
   clearTimeout(pushTimer);
   pendingConflict = null; // a conflict against the old server is unresolvable now
   pendingReview = null; // ditto for a held-back pull from the old server
-  pendingApply = null; // ditto a deferred apply of the old server's blob
+  pullParked = false; // ditto a re-pull parked for the old server
 }
 
 /** A conflict awaiting the user's per-category picks (drives the Sync tab's
@@ -2429,7 +2428,7 @@ export async function pullNow(manual = false): Promise<void> {
         // document that no longer exists.
         pendingReview = null;
         pendingConflict = null;
-        pendingApply = null;
+        pullParked = false;
       }
       setRuntime({ syncStatus: "ok" });
       schedulePush(0);
@@ -2479,7 +2478,12 @@ export async function pushNow(manual = false): Promise<void> {
     if (myGen !== gen) return;
     let base = state.version ?? 0;
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
-      setRuntime({ syncStatus: "ok" });
+      // Nothing to send — but a pending prompt adopts no base, so ANY store edit lands here while
+      // it waits: restore its notice (cleared by the "syncing" above) instead of "Synced" next to
+      // the dialog. A conflict takes precedence over a review.
+      if (pendingConflict) conflictStatus();
+      else if (pendingReview) reviewStatus();
+      else setRuntime({ syncStatus: "ok" });
       return;
     }
     // Gated on the COMPOSED blob, not on the Backends switch: the snapshot pass-through
@@ -2587,7 +2591,7 @@ export async function pushNow(manual = false): Promise<void> {
         const riskyPush = gatedSecurityCheck(merged, blob, pushCats);
         if (riskyPush.length > 0) {
           const applyNow = heldBack(pushCats, riskyPush);
-          await applyBlob(merged, applyNow);
+          const landed = await applyBlob(merged, applyNow);
           if (myGen !== gen) return; // superseded during the apply wait
           // The gates the apply ran under, then the keyring read — which parks up to 10 s, so the
           // epoch is checked AGAIN after it: a supersede meanwhile dropped every pending prompt on
@@ -2597,7 +2601,7 @@ export async function pushNow(manual = false): Promise<void> {
           if (myGen !== gen) return;
           raiseReview({
             changes: riskyPush, blob: merged, cats: pushCats, remote: remoteBlob,
-            applied: appliedAt(pushCats, applyNow),
+            applied: landed ? appliedAt(pushCats, applyNow) : categorySelection(false),
             storeSig, gatesSig,
             version: remote.version, updatedAt: remote.updated_ts ?? null, device: remote.device ?? null,
             pushAfter: true, degraded,
@@ -2661,7 +2665,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // persistState here: adopting the server's version as the new base would drop the held-back
     // change, so the next pull re-offers it until the user decides.
     const applyNow = heldBack(applyCats, risky);
-    await applyBlob(merged, applyNow);
+    const landed = await applyBlob(merged, applyNow);
     if (myGen !== gen) return; // superseded during the apply wait — the review is for a dead epoch
     // Same re-check after the keyring read as pushNow's 409 twin.
     const gatesSig = gatesSignature();
@@ -2669,7 +2673,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     if (myGen !== gen) return;
     raiseReview({
       changes: risky, blob: merged, cats: applyCats, remote: remoteBlob,
-      applied: appliedAt(applyCats, applyNow),
+      applied: landed ? appliedAt(applyCats, applyNow) : categorySelection(false),
       storeSig, gatesSig,
       version: remote.version, updatedAt: remote.updated_ts ?? null,
       device: remote.device ?? null, pushAfter: true, degraded,
@@ -2781,9 +2785,13 @@ function catOf({ kind, category }: SecurityChange): SyncCategory {
 }
 
 /** What a raise's held-back apply (`applyNow`, under `applyCats`) actually landed, for
- *  `PendingReview.applied`. The dictionary's pin applies only together with the backends list
- *  (applyBlob's `cats.backends` check), so holding backends back also withholds the peer's pin:
- *  the dictionary then did NOT fully land, and an edit to it while the review waits must ask. */
+ *  `PendingReview.applied` — only when that apply answered "applied": one refused while dictating
+ *  (or dropped stale) landed nothing, and the raisers record `categorySelection(false)` instead.
+ *  Claiming it landed let an approval keep a later live edit over a peer value the store never
+ *  received, adopt the base and push the edit over the peer's change.
+ *  The dictionary's pin applies only together with the backends list (applyBlob's `cats.backends`
+ *  check), so holding backends back also withholds the peer's pin: the dictionary then did NOT
+ *  fully land, and an edit to it while the review waits must ask. */
 function appliedAt(
   applyCats: Record<SyncCategory, boolean>,
   applyNow: Record<SyncCategory, boolean>,
@@ -3101,6 +3109,11 @@ function raiseReview(r: PendingReview): void {
   pendingReview = r;
   // A conflict against an older server version is moot now: the server moved past it.
   if (pendingConflict && pendingConflict.remoteVersion < r.version) pendingConflict = null;
+  reviewStatus();
+}
+
+/** The status a pending review shows (raiseReview, and pushNow's no-change arm restoring it). */
+function reviewStatus(): void {
   setRuntime({
     syncStatus: "error",
     syncError:
@@ -3177,7 +3190,7 @@ async function forgetDeadDocument(myGen: number): Promise<boolean> {
   if (myGen !== gen) return false;
   pendingReview = null;
   pendingConflict = null;
-  pendingApply = null;
+  pullParked = false;
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
   return true;
 }
@@ -3200,10 +3213,9 @@ function sameReview(a: PendingReview, b: PendingReview): boolean {
 export async function approvePendingReview(): Promise<void> {
   const r = pendingReview;
   if (!r) return;
-  // Never QUEUE a consented apply behind a live dictation: applyBlob would park the blob in
-  // `pendingApply` and the store subscriber would land it the moment the session ends — even
-  // after the user changed their mind and pressed Reject. Leave the review up instead; the
-  // dialog says why.
+  // Never run a consented apply behind a live dictation: applyBlob would refuse it and park a
+  // re-pull for the session's end, which only re-raises this review — the click would be
+  // consumed for nothing. Leave the review up instead; the dialog says why.
   if (useApp.getState().status !== "idle") return;
   // The epoch this approval belongs to: a supersede during the compose below or the apply's
   // keyring wait (sync off, server switched, server copy deleted) dropped this review on
@@ -3247,6 +3259,15 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
   }
+  // The categories this device syncs NOW, within the raise's: turning one off does not supersede
+  // the review (only an ON transition re-pulls), so approving under `r.cats` landed e.g. the
+  // peer's whole server list on a device that had just opted out of it. The compose, the judge
+  // and the apply all run under these; the store signature stays on `r.cats`, like `r.storeSig`.
+  const live = syncCats();
+  const cats = Object.fromEntries(ALL_CATEGORIES.map((c) => [c, r.cats[c] && live[c]])) as Record<
+    SyncCategory,
+    boolean
+  >;
   // applyBlob reads the gates LIVE, but the list was judged under the gates at raise time: with
   // "Server addresses" / "API keys" off then, a repoint or key swap was left off the list (the
   // apply would strip it). Turning the gate on since does not supersede the review, so approving
@@ -3273,13 +3294,13 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     st0.profiles !== st1.profiles ||
     st0.appRules !== st1.appRules;
   // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
-  const localNow = await composeLive(r.cats, state.snapshot ?? r.remote);
+  const localNow = await composeLive(cats, state.snapshot ?? r.remote);
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // The keyring can lock between the raise and this approval: a degraded compose carries the
   // base's (or remote's) backends category, not this device's list, so the merge reads backends
   // as "local unchanged" and the apply below wrote that list over every backend added here.
   // Hold the category out as resolveLocked does — `r.degraded` alone only knows the raise.
-  const degradedNow = backendsDegraded(localNow, r.cats);
+  const degradedNow = backendsDegraded(localNow, cats);
   // `r.blob` was merged against the raise-time local: an edit made here since would be hydrated
   // back to its old value. Re-merge against the live compose (no base was adopted, so a category
   // the peer changed still differs from the base). Where that conflicts, "edited" means the
@@ -3329,8 +3350,8 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     return "prompt";
   }
   // Judge under the categories the apply below runs with: a degraded keyring holds backends out
-  // of it, so judging them under `r.cats` relisted rows (a peer's stored keys) that never land.
-  const applyCats = degradedNow ? { ...r.cats, backends: false } : r.cats;
+  // of it, so judging them under `cats` relisted rows (a peer's stored keys) that never land.
+  const applyCats = degradedNow ? { ...cats, backends: false } : cats;
   const now = gatedSecurityCheck(blobNow, localNow, applyCats);
   const shown = new Set(r.changes.map(changeKey));
   if (now.some((c) => !shown.has(changeKey(c)))) {
@@ -3372,7 +3393,7 @@ export function rejectPendingReview(): void {
   pendingReview = null;
   // Also drops a pull-apply parked while dictation ran: with no base adopted the next pull
   // re-offers it, so nothing lands behind a refusal.
-  pendingApply = null;
+  pullParked = false;
   setRuntime({ syncStatus: "idle", syncError: null });
 }
 
@@ -3400,9 +3421,9 @@ export async function setSyncBaseForTests(base: "none" | "live"): Promise<void> 
   state = base === "live" ? { snapshot: await composeLive(syncCats()) } : {};
 }
 
-/** Test seam: is a deferred apply parked for the end of the dictation session? */
+/** Test seam: is a re-pull parked for the end of the dictation session? */
 export function hasPendingApplyForTests(): boolean {
-  return pendingApply !== null;
+  return pullParked;
 }
 
 function raiseConflict(c: PendingConflict): void {
@@ -3423,6 +3444,11 @@ function raiseConflict(c: PendingConflict): void {
   pendingConflict = c;
   // Same rule as raiseReview: a review against an older server version is moot now.
   if (pendingReview && pendingReview.version < c.remoteVersion) pendingReview = null;
+  conflictStatus();
+}
+
+/** The status a pending conflict shows (raiseConflict, and pushNow's no-change arm restoring it). */
+function conflictStatus(): void {
   setRuntime({
     syncStatus: "error",
     syncError:
@@ -3518,7 +3544,7 @@ async function resolveLocked(
   const risky = gatedSecurityCheck(final, localNow, applyCats);
   if (risky.length > 0) {
     const applyNow = heldBack(applyCats, risky);
-    await applyBlob(final, applyNow);
+    const landed = await applyBlob(final, applyNow);
     if (myGen !== gen) return "done";
     // Same re-check after the keyring read as pushNow's 409 twin.
     const gatesSig = gatesSignature();
@@ -3529,7 +3555,7 @@ async function resolveLocked(
       blob: final,
       cats: applyCats,
       remote: c.remote,
-      applied: appliedAt(applyCats, applyNow),
+      applied: landed ? appliedAt(applyCats, applyNow) : categorySelection(false),
       storeSig,
       gatesSig,
       version: c.remoteVersion,
@@ -3574,7 +3600,7 @@ async function resolveLocked(
 
 export function dismissSyncConflict(): void {
   pendingConflict = null;
-  pendingApply = null; // "Later" also drops a pull-apply parked while dictation ran (re-offered next pull)
+  pullParked = false; // "Later" also drops a pull-apply parked while dictation ran (re-offered next pull)
   setRuntime({ syncStatus: "idle", syncError: null });
 }
 
@@ -3642,12 +3668,12 @@ export async function initSync(): Promise<void> {
       s.appRules === prev.appRules
     ) {
       // A pull-apply parked while dictation ran: re-pull once the session lands back at idle
-      // rather than re-applying the parked blob. That direct re-apply ran outside the engine lock
+      // rather than re-applying a held blob. That direct re-apply ran outside the engine lock
       // and adopted no base, so a pull landing a newer version during its keyring wait got the
-      // older blob hydrated back over it (and the next push shipped the revert). Only pull and
-      // 409 reconciles park (one-shot callers pre-check status), so the opts carry nothing here.
-      if (pendingApply && s.status === "idle" && prev.status !== "idle") {
-        pendingApply = null;
+      // older blob hydrated back over it (and the next push shipped the revert). Only
+      // gate-respecting callers park (applyBlob never parks an `ignoreGates` restore).
+      if (pullParked && s.status === "idle" && prev.status !== "idle") {
+        pullParked = false;
         void rePullAfterSession();
       }
       return;

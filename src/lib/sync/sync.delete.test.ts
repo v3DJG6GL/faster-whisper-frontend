@@ -1247,3 +1247,97 @@ describe("an edit landing during an approval's keyring wait", () => {
     }
   });
 });
+
+// The raisers recorded `applied` from the categories they ASKED applyBlob to land, ignoring its
+// answer. A pull raised while dictating lands nothing (applyBlob refuses and parks a re-pull), so
+// when that re-pull never replaced the review, an edit to a category the peer changed read as
+// "on top of the applied peer value": the approval kept the live value, adopted the peer's base
+// and the follow-up push shipped the edit over the peer's change without asking.
+describe("approving a review raised while dictating", () => {
+  it("asks about a category the peer changed and the user edited since", async () => {
+    try {
+      const base = await seedBase();
+      const remote = structuredClone(base);
+      const localTyping = useApp.getState().settings.general.typeAsISpeak;
+      remote.general = { ...remote.general, typeAsISpeak: !localTyping } as never;
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      useApp.setState({ status: "recording" as never });
+      try {
+        await pullNow(true);
+      } finally {
+        useApp.setState({ status: "idle" }); // the re-pull at the session's end never lands
+      }
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["dictation-retention"]);
+      expect(useApp.getState().settings.general.typeAsISpeak).toBe(localTyping); // nothing landed
+      const s = useApp.getState().settings;
+      const mine = !s.general.startMinimized;
+      useApp.setState({ settings: { ...s, general: { ...s.general, startMinimized: mine } } });
+      const pushesBefore = api.pushes;
+      await approvePendingReview();
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()?.categories).toEqual(["general"]);
+      expect(useApp.getState().settings.general.startMinimized).toBe(mine);
+      expect(api.pushes).toBe(pushesBefore);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      api.conflicts = [];
+    }
+  });
+});
+
+// Turning a category off does not supersede a pending review (only an ON transition re-pulls),
+// and the approval composed, judged and applied under the raise-time categories: approving a
+// server-list review after opting out of server-list sync still landed the peer's whole list.
+describe("approving a backends review after turning the server-list gate off", () => {
+  it("leaves this device's list alone", async () => {
+    try {
+      const base = await seedBase();
+      setServerAddressesGate(true);
+      const before = useApp.getState().backends.map((b) => [b.name, b.serverUrl]);
+      const remote = structuredClone(base);
+      remote.backends = {
+        ...remote.backends!,
+        list: remote.backends!.list.map((b) => ({ ...b, name: "renamed-by-peer", serverUrl: "http://evil:9" })),
+      };
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["server-url"]);
+      const settings = structuredClone(useApp.getState().settings);
+      settings.sync = { ...settings.sync!, sub: { ...settings.sync!.sub!, backendList: false } };
+      useApp.setState({ settings });
+      await approvePendingReview();
+      expect(getPendingReview()).toBeNull();
+      expect(getPendingConflict()).toBeNull();
+      expect(useApp.getState().backends.map((b) => [b.name, b.serverUrl])).toEqual(before);
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+    }
+  });
+});
+
+// While a prompt waits no base is adopted, so ANY store edit runs a push that finds nothing new
+// to send — and its hash shortcut wrote "ok" over the prompt's notice while the dialog stayed up.
+describe("a no-op push while a sync prompt waits", () => {
+  it("keeps the review's notice", async () => {
+    try {
+      const base = await seedBase();
+      const remote = structuredClone(base);
+      remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingReview()).not.toBeNull();
+      const pushesBefore = api.pushes;
+      await pushNow();
+      expect(api.pushes).toBe(pushesBefore); // the hash shortcut, not a 409 re-raise
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toContain("review it in Settings → Sync");
+    } finally {
+      api.keys = null;
+      api.pulled = null;
+      rejectPendingReview();
+    }
+  });
+});

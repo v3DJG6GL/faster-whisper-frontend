@@ -241,6 +241,23 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL)).toBe(true);
   });
 
+  it("a one-shot restore refused while dictating parks no re-pull; a pull-apply does", async () => {
+    // Onboarding's restore calls applyBlob with ignoreGates and no idle pre-check: it parked the
+    // whole blob and triggered a pointless re-pull at the session's end.
+    rejectPendingReview(); // drops the re-pull the "defers while dictation is live" test parked
+    useApp.setState({ status: "recording" as never });
+    try {
+      const blob = { chip: { indicatorPosition: "bottom" } as never };
+      expect(await applyBlob(blob, CATS_ALL, 2, { ignoreGates: true })).toBe(false);
+      expect(hasPendingApplyForTests()).toBe(false);
+      expect(await applyBlob(blob, CATS_ALL)).toBe(false);
+      expect(hasPendingApplyForTests()).toBe(true);
+    } finally {
+      useApp.setState({ status: "idle" });
+      rejectPendingReview();
+    }
+  });
+
   it("audio-folder gate off: inbound paths never overwrite local", async () => {
     const s = settings();
     s.recording.audioBaseDir = "/home/me/mine";
@@ -719,7 +736,7 @@ describe("applyBlob keep-local (baseline)", () => {
 
   it("a session started during the keyring wait reports 'not applied' and parks nothing", async () => {
     // The stale-restart retry re-entered applyBlob's top-of-function "dictation live" branch and
-    // parked the blob in pendingApply — so a one-shot caller (import, restore, review approval)
+    // parked the blob (now: a re-pull) — so a one-shot caller (import, restore, review approval)
     // was told "not applied" while the settings landed anyway once the session ended.
     rejectPendingReview(); // drops the apply the "defers while dictation is live" test parked
     expect(hasPendingApplyForTests()).toBe(false);
