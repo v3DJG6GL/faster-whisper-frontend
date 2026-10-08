@@ -352,9 +352,11 @@ pub(crate) async fn inject_text(
             }
         }
         // The one site that reports a DIVERT: the caller asked to type or paste and we did neither.
+        // Reported only when a transcript was written — a withheld bare Enter (empty text) wrote
+        // nothing, so a caller booking a clipboard outcome on `diverted` must not see one.
         return Ok(InjectOutcome {
             landed: true,
-            diverted: true,
+            diverted: !text.is_empty(),
         });
     }
     // Now that the method is final and focus has been read once, at the sink. Two detectors (see

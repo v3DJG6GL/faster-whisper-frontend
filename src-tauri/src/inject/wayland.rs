@@ -872,7 +872,7 @@ mod imp {
                 // ran zero times and the pre-job check was the only earlier one — the charmap
                 // build plus the portal keycode round trips sit in the gap it cannot cover, so
                 // a cancel arriving there still pressed Return. (`virtual_keyboard.rs` closes the
-                // same gap with its `&& emitted` short-circuit.)
+                // same gap with the per-key `injection_cancelled` check inside its typing loop.)
                 // The focus term is the sibling of the cancel term: the loop above probes every 32
                 // characters, so up to 32 characters plus this Enter can still follow a focus
                 // change — and an Enter is the one keystroke that ACTS rather than inserts, firing

@@ -11,7 +11,8 @@
 //! either.
 //!
 //! GNOME does not implement this protocol; `type_text` returns Err there (and on any
-//! failure), so `inject_text` falls back to the portal path.
+//! failure); `inject_text` falls back to the portal path only when no key was transmitted
+//! yet (`VkError::after_typing == false`).
 //!
 //! wayland-client is synchronous and its `EventQueue` isn't `Send` across awaits, so
 //! the connection lives on a dedicated OS thread served over a channel — mirroring
@@ -284,7 +285,7 @@ mod imp {
             }
             // Before the keymap upload, not only between keys: a cancel that already landed
             // then costs no memfd / keymap roundtrip (the in-loop check covers the bare
-            // auto-Enter job's single element either way). `Ok(())` and not
+            // auto-Enter job's single element either way). `Ok(Landed::Yes)` and not
             // an error, because an error here reports `after_typing: false` and the portal
             // fallback would then type the very text the user cancelled.
             if crate::inject::injection_cancelled(epoch) {

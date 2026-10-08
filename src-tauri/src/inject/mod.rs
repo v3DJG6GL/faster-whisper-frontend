@@ -1192,6 +1192,16 @@ fn paste(
     // is a DIVERT, not "nothing written" — and the restore is skipped deliberately so the text
     // stays pasteable, exactly as the failed-paste arm below does.
     if own_window_focused() {
+        // The probe is an event-loop round trip, so a cancel can land during it — and clicking
+        // Cancel in our own window is what makes it answer true. Bail exactly as the settle check
+        // above does (the Wayland twin's `&& !injection_cancelled(epoch)` gate in text.rs).
+        if injection_cancelled(epoch) {
+            tracing::info!("[clip] paste: cancelled during the own-window probe — not pasting");
+            if !cancel_wants_recovery(epoch) {
+                restore_clipboard_later(previous);
+            }
+            return Ok(Landed::Yes);
+        }
         tracing::info!("[clip] paste: skipped at the chord — our own window took focus");
         // Hand the selection to the persistent owner BEFORE returning. The `set_text` above went
         // through this local `Clipboard`, which is dropped when this function returns — and on X11
