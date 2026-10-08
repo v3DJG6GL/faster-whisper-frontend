@@ -15,6 +15,9 @@ describe("insecureUrlWarning", () => {
   it("still warns for plain http to a public address", () => {
     expect(insecureUrlWarning("http://8.8.8.8:8000")).not.toBeNull();
   });
+  it("warns for a lenient one-slash http scheme to a public address", () => {
+    expect(insecureUrlWarning("http:/8.8.8.8:8000")).not.toBeNull();
+  });
 });
 
 describe("effectiveLanguage", () => {
@@ -100,6 +103,13 @@ describe("storedTypedUrl", () => {
     expect(storedTypedUrl("https://h/")).toBe("https://h/");
     expect(storedTypedUrl("")).toBe("");
     expect(storedTypedUrl("ftp://x")).toBe("ftp://x");
+  });
+  it("canonicalises a lenient http(s) scheme the parsers would honour", () => {
+    expect(storedTypedUrl("http:/h.example:8000")).toBe("http://h.example:8000");
+    expect(storedTypedUrl("HTTPS:\\\\h")).toBe("https://h");
+  });
+  it("keeps host:port meaning for a slashless `http:8000`", () => {
+    expect(storedTypedUrl("http:8000")).toBe("http://http:8000");
   });
 });
 

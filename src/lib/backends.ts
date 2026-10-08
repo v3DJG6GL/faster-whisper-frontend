@@ -39,7 +39,14 @@ export function normalizeUrl(raw: string): string {
  *  URL is kept as typed (no trailing-slash stripping, so a stored URL is not re-evicted on
  *  an unchanged save), and anything else stays verbatim so the connect error still names it. */
 export function storedTypedUrl(raw: string): string {
-  const t = stripUrlNoise(raw.trim());
+  // A lenient http(s) scheme (`http:/h`, `HTTPS:\\h`) is canonicalised first: WHATWG reads it as
+  // `http://h`, but it fails the two-slash test, so it used to be stored verbatim — reqwest then
+  // connected in cleartext while the not-encrypted warning (which parsed it as nothing) stayed
+  // silent and the WS URL built from it was garbage. At least one slash is required, so
+  // `http:8000` (host `http`, port 8000) keeps its schemeless meaning. A URL that already passes
+  // is left untouched, so a stored URL is not rewritten (and re-evicted) on an unchanged save.
+  let t = stripUrlNoise(raw.trim());
+  if (!/^https?:\/\//i.test(t)) t = t.replace(/^(https?):[\\/]+/i, (_m, s: string) => `${s.toLowerCase()}://`);
   return !t || /^https?:\/\//i.test(t) ? t : normalizeUrl(t) || t;
 }
 
@@ -99,7 +106,8 @@ function isLocalAddress(host: string): boolean {
 export function insecureUrlWarning(url: string): string | null {
   let parsed: URL;
   try {
-    parsed = new URL(normalizeUrl(url));
+    // Judge the form that is stored and sent, so a lenient `http:/host` is warned about too.
+    parsed = new URL(normalizeUrl(storedTypedUrl(url)));
   } catch {
     return null; // not a parseable address yet — the connect attempt reports that on its own
   }

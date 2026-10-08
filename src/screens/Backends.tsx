@@ -149,7 +149,11 @@ function Editor({
   const storedTarget = useRef({ url: effUrl, key });
   const storedFresh = storedTarget.current.url === effUrl && storedTarget.current.key === key;
   const stored = storedFresh ? storedConn : undefined;
-  const conn = result ?? stored;
+  // A blank-key verdict is only still true while the stored key's generation is unchanged (see
+  // `resultTarget.gen`): a sync pull that rotates the key moves neither address nor key field, so
+  // the reset effect above never fires and the old caller's "Connected", chips and models stayed.
+  const resultLive = result && (key || resultTarget.current.gen === credentialGeneration(b.id)) ? result : null;
+  const conn = resultLive ?? stored;
   // `detected` = what the freshest verdict (this editor's test, else the fresh session cache)
   // inferred; `kind` = the effective classification (a manual override wins). `kind` gates the
   // decode-override editor.
@@ -543,7 +547,7 @@ function Editor({
                 ariaLabel="Model"
                 value={b.model}
                 onChange={(v) => set({ model: v })}
-                models={result?.ok ? result.models : stored?.ok ? stored.models : []}
+                models={resultLive?.ok ? resultLive.models : stored?.ok ? stored.models : []}
                 placeholder={decodeDefaults?.model ? inheritLabel(shortModelName(decodeDefaults.model), "Default") : "whisper-1 / large-v3"}
               />
             </div>
@@ -684,7 +688,7 @@ function Editor({
         </DisclosureCard>
       </div>
 
-      {result && <ConnResult info={result} />}
+      {resultLive && <ConnResult info={resultLive} />}
 
       {keyError && (
         <Notice className="mt-4">{keyError}</Notice>
