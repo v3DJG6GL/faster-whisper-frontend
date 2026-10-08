@@ -967,8 +967,9 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
 }
 
 /** The transcript returned while its video was still downloading: keep
- *  polling the run's progress id (its own 1 s poller — the run poller is
- *  gone) until the `video` sub-object reaches a terminal state, folding it
+ *  polling the run's progress id (its own poller: every second while this
+ *  link is the one on screen, every 5 s otherwise — the run poller is gone)
+ *  until the `video` sub-object reaches a terminal state, folding it
  *  into the rail only while this run is still the one on screen, then pull
  *  the file. Gives up when the entry vanishes (server restart / stale
  *  sweep) or after two hours. */

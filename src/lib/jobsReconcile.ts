@@ -11,9 +11,10 @@
 //   done     → the result is fetched and ingested exactly like the POST path.
 //   failed / cancelled / unknown → a failed record with the reason.
 //   server unreachable → try again every 30 s for ten minutes, then leave the rows
-//              for the next launch (nothing is lost — the server holds a job for its
-//              jobs TTL, caps.jobs.ttl_s, 72 h by default, from its start and again
-//              from its finish).
+//              for the next launch (nothing is lost — the server holds a running job
+//              for max(its jobs TTL, 24 h) from its start — caps.jobs.ttl_s, 72 h by
+//              default — and a finished one for a TTL from its finish; see
+//              jobsLedger.maxAgeMs).
 //
 // Every ingest is idempotent: the record id IS the job id, so a second pass upserts
 // the same record; the row is forgotten only after the record was written.
