@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
-import { ownProp } from "@/lib/own";
+import { hasOwn, ownProp } from "@/lib/own";
 import { effectiveServerUrl } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
@@ -34,7 +34,7 @@ import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { seedTargets } from "@/lib/translationTargets";
-import { maxTranslationTargets } from "@/lib/capabilities";
+import { maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
@@ -613,9 +613,10 @@ export function TranscriptViewer({
     const mode = opts?.mode ?? trOv?.mode;
     // The text route refuses a request over the server's target cap, and a record can carry
     // more tracks than its backend allows NOW (cap lowered, or a fallback backend): split.
-    const cap = maxTranslationTargets(trCaps);
-    const groups: string[][] = [];
-    for (let at = 0; at < targets.length; at += cap) groups.push(targets.slice(at, at + cap));
+    // Resolved by the first chunk (translate below), not from this render's caps: those are
+    // null until the store's caps land, and "unknown" there means "not loaded yet", not
+    // "no cap" — the app's ceiling would send one request the server refuses.
+    let groups: string[][] | null = null;
     const pid = newProgressId();
     // group/groupAt: the request of a split chunk now in flight (see translate below) and
     // when it was sent, so the shared progress id's per-request 0→1 maps onto the chunk.
@@ -640,15 +641,16 @@ export function TranscriptViewer({
       getTranscribeProgress({ serverUrl, backendId: backend.id, progressId: pid })
         .then((p) => {
           if (trCtls.get(okey) !== ctl) return;
-          if (groups.length > 1 && p.stage === "translating") {
+          const gs = groups;
+          if (gs && gs.length > 1 && p.stage === "translating") {
             // Each group's request restarts the shared id at 0: scale it into the group's share
             // of the chunk (a poll sent before this group began reports the one before).
             if (sentAt < ctl.groupAt) return;
             // Weighted by group size (the last group may be smaller); targetProgress is per
             // language, the same in every group.
             const done = typeof p.progress === "number" ? p.progress : 0;
-            const before = groups.slice(0, ctl.group).reduce((n, g) => n + g.length, 0);
-            p = { ...p, progress: (before + done * groups[ctl.group].length) / targets.length };
+            const before = gs.slice(0, ctl.group).reduce((n, g) => n + g.length, 0);
+            p = { ...p, progress: (before + done * gs[ctl.group].length) / targets.length };
           }
           setTrRun((s) => (s ? foldTranslatePoll(s, p, Date.now(), sentAt) : s));
         })
@@ -664,6 +666,15 @@ export function TranscriptViewer({
         // correction made mid-run must be translated as it is NOW (the merge clears its stale mark).
         textOf: (i) => (useTranscribeRun.getState().edits[okey]?.[i] ?? result.segments?.[i]?.text ?? "").trim(),
         translate: async (texts) => {
+          if (!groups) {
+            // Caps never fetched for this backend: fetch them now (never throws). A server that
+            // really reports nothing (older backend) keeps the documented ceiling.
+            if (!hasOwn(useApp.getState().caps, backend.id)) await refreshCaps(backend, { force: true });
+            const cap = maxTranslationTargets(ownProp(useApp.getState().caps, backend.id) ?? null);
+            const gs: string[][] = [];
+            for (let at = 0; at < targets.length; at += cap) gs.push(targets.slice(at, at + cap));
+            groups = gs;
+          }
           const ask = (group: string[]) =>
             translateText({
               serverUrl,
