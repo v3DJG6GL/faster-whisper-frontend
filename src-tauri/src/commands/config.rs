@@ -50,10 +50,15 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // thread, so they go to a background thread. The mutex serializes them, so two quick saves
     // never prune or wipe at the same time, and the generation check drops a superseded save's
     // sweep (the mutex is not FIFO, so an older, shorter window could otherwise run last).
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     if reset {
-        tracing::info!("[config] settings were reset; post-save retention sweeps skipped");
+        // The hold is sticky for the session and every debounced autosave lands here, so the line
+        // is logged once per session (like the log-prune hold in logging.rs), not once per save.
+        static LOGGED_SWEEP_HOLD: AtomicBool = AtomicBool::new(false);
+        if !LOGGED_SWEEP_HOLD.swap(true, Ordering::SeqCst) {
+            tracing::info!("[config] settings were reset; post-save retention sweeps skipped");
+        }
     } else {
-        use std::sync::atomic::{AtomicU64, Ordering};
         static SWEEP_GEN: AtomicU64 = AtomicU64::new(0);
         let my_gen = SWEEP_GEN.fetch_add(1, Ordering::SeqCst) + 1;
         let app = app.clone();

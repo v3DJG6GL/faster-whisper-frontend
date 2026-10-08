@@ -63,20 +63,29 @@ fn hostname() -> String {
             }
         }
     }
-    if let Ok(text) = std::fs::read_to_string("/etc/hostname") {
-        let text = text.trim().to_string();
-        if !text.is_empty() {
-            return text;
-        }
+    if let Some(name) = std::fs::read_to_string("/etc/hostname")
+        .ok()
+        .and_then(|text| hostname_from_file(&text))
+    {
+        return name;
     }
     #[cfg(target_os = "linux")]
-    if let Ok(text) = std::fs::read_to_string("/proc/sys/kernel/hostname") {
-        let text = text.trim().to_string();
-        if !text.is_empty() {
-            return text;
-        }
+    if let Some(name) = std::fs::read_to_string("/proc/sys/kernel/hostname")
+        .ok()
+        .and_then(|text| hostname_from_file(&text))
+    {
+        return name;
     }
     "unknown device".into()
+}
+
+/// The first non-blank, non-comment line of a hostname file. hostname(5) allows `#` comment
+/// lines, and trimming the whole file would push "# managed …\nmyhost" as the device label.
+fn hostname_from_file(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(String::from)
 }
 
 /// Return (creating + persisting on first call) this machine's device id, plus
@@ -128,6 +137,16 @@ mod tests {
         let saved = load(&dir).expect("the state is an object again");
         assert_eq!(saved["deviceId"], a);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_hostname_file_skips_comment_and_blank_lines() {
+        assert_eq!(
+            hostname_from_file("# managed\n\n  myhost \n").as_deref(),
+            Some("myhost")
+        );
+        assert_eq!(hostname_from_file("# only\n"), None);
+        assert_eq!(hostname_from_file(""), None);
     }
 
     #[test]

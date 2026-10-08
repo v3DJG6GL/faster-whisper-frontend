@@ -22,6 +22,9 @@ use tauri::{AppHandle, Manager};
 /// with the stale copy it read, or resurrect a record a sweep or the user's delete just removed.
 /// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
 /// the two rewriters, and `delete_transcript_record` (across its sourcePath read + unlink).
+/// The destructive commands (`delete_transcript_record`, `delete_all_dictations`,
+/// `clear_file_transcriptions`, `remove_transcript_media`) run on the blocking pool, so they
+/// too may overlap a save or sweep and rely on this per-entry lock, not on IPC ordering.
 static RECORD_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn record_io_lock() -> std::sync::MutexGuard<'static, ()> {
@@ -307,7 +310,18 @@ fn is_own_media(path: &Path) -> bool {
 /// commands use, so the "Frees N MB / Delete N files" readout promises exactly what a wipe
 /// does. In-progress `.tmp` copies are skipped like every sweep skips them.
 fn owned_dir_bytes(dir: &Path, own: impl Fn(&Path) -> bool) -> (u64, u32) {
-    let (mut bytes, mut files) = (0u64, 0u32);
+    let (bytes, files, _) = owned_dir_tally(dir, own, |_| false);
+    (bytes, files)
+}
+
+/// `owned_dir_bytes` plus how many of the owned files `mark` holds for, in ONE listing — the
+/// folder may sit on a slow share, so a readout must not list it once per sub-count.
+fn owned_dir_tally(
+    dir: &Path,
+    own: impl Fn(&Path) -> bool,
+    mark: impl Fn(&Path) -> bool,
+) -> (u64, u32, u32) {
+    let (mut bytes, mut files, mut marked) = (0u64, 0u32, 0u32);
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -318,11 +332,14 @@ fn owned_dir_bytes(dir: &Path, own: impl Fn(&Path) -> bool) -> (u64, u32) {
                 if m.is_file() {
                     bytes += m.len();
                     files += 1;
+                    if mark(&path) {
+                        marked += 1;
+                    }
                 }
             }
         }
     }
-    (bytes, files)
+    (bytes, files, marked)
 }
 
 /// The recordings folder's readout: bytes and count of every file "Delete all dictations" removes
@@ -335,10 +352,12 @@ fn recordings_usage(dir: &Path) -> (u64, u32, u32) {
             .map(crate::audio::is_dictation_file)
             .unwrap_or(false)
     };
-    let is_wav = |p: &Path| p.extension().and_then(|e| e.to_str()) == Some("wav");
-    let (wav_bytes, wav_files) = owned_dir_bytes(dir, |p| own(p) && is_wav(p));
-    let (side_bytes, side_files) = owned_dir_bytes(dir, |p| own(p) && !is_wav(p));
-    (wav_bytes + side_bytes, wav_files + side_files, wav_files)
+    owned_dir_tally(dir, own, is_wav)
+}
+
+/// Is this a `.wav` — the audio half of a dictation's `.wav` + `.txt` pair.
+fn is_wav(p: &Path) -> bool {
+    p.extension().and_then(|e| e.to_str()) == Some("wav")
 }
 
 /// Does the transcript store hold ANY `.json` record? Cheap (a directory listing), so the
@@ -449,8 +468,10 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
 /// Delete one record's file. The user-facing "Delete" — actually removes data.
 /// Tries both stores: ids are UUIDs, so the same id can only exist in one.
 /// The record's audio copy (if any) goes with it.
+/// async + spawn_blocking like the other destructive store commands: it walks the media folders
+/// under a user-picked base (possibly a slow or offline share), which must not freeze every window.
 #[tauri::command]
-pub fn delete_transcript_record(
+pub async fn delete_transcript_record(
     app: AppHandle,
     id: String,
     audio_base: Option<String>,
@@ -458,32 +479,37 @@ pub fn delete_transcript_record(
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    if let Ok(dirs) = all_media_dirs(&app, audio_base) {
-        for dir in dirs {
-            remove_media_for(&dir, &id);
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        if let Ok(dirs) = all_media_dirs(&app, audio_base) {
+            for dir in dirs {
+                remove_media_for(&dir, &id);
+            }
         }
-    }
-    let name = format!("{id}.json");
-    let file_path = transcripts_dir(&app)?.join(&name);
-    // Held across both branches' read + unlink — see `RECORD_IO`: a media-path rewrite that read
-    // this record before the unlink would otherwise rename its copy back into place afterwards.
-    let _io = record_io_lock();
-    if file_path.exists() {
-        return std::fs::remove_file(file_path).map_err(|e| e.to_string());
-    }
-    let rec_path = dictations_dir(&app)?.join(&name);
-    // A dictation's audio lives in the recordings folder, not `files/`/`links/`:
-    // take the .wav and its .txt sidecar with the record, or "delete from disk"
-    // leaves a verbatim recording of the user's speech (and the deleted text)
-    // behind with nothing referencing it.
-    if let Some(src) = std::fs::read_to_string(&rec_path)
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
-    {
-        remove_dictation_audio(&src);
-    }
-    std::fs::remove_file(rec_path).map_err(|e| e.to_string())
+        let name = format!("{id}.json");
+        let file_path = transcripts_dir(&app)?.join(&name);
+        // Held across both branches' read + unlink — see `RECORD_IO`: a media-path rewrite that
+        // read this record before the unlink would otherwise rename its copy back into place
+        // afterwards.
+        let _io = record_io_lock();
+        if file_path.exists() {
+            return std::fs::remove_file(file_path).map_err(|e| e.to_string());
+        }
+        let rec_path = dictations_dir(&app)?.join(&name);
+        // A dictation's audio lives in the recordings folder, not `files/`/`links/`:
+        // take the .wav and its .txt sidecar with the record, or "delete from disk"
+        // leaves a verbatim recording of the user's speech (and the deleted text)
+        // behind with nothing referencing it.
+        if let Some(src) = std::fs::read_to_string(&rec_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+            .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
+        {
+            remove_dictation_audio(&src);
+        }
+        std::fs::remove_file(rec_path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Copy a run's input audio into `<base>/files/<id>.<ext>`, so the
@@ -602,71 +628,97 @@ pub async fn transcript_store_stats(
 /// "Delete all dictations now": every stored session record AND every app-owned
 /// file in the recordings folder (.wav + .txt sidecars matching the `dictation-*`
 /// naming convention — a user-chosen folder may hold foreign files).
-/// The retention clocks stay as set.
+/// The retention clocks stay as set. Returns records + AUDIO files removed — the sidecars go
+/// too but are not counted, so the result matches the confirm's "N dictations + M audio files"
+/// (`recordingsAudioFiles`).
 #[tauri::command]
-pub fn delete_all_dictations(app: AppHandle, audio_base: Option<String>) -> Result<u32, String> {
-    let mut removed = wipe_records(&dictations_dir(&app)?) as u32;
-    if let Some(dir) = crate::commands::resolve_recordings_dir(&app, audio_base) {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                // Only the app's own files (same invariant as prune): a user-chosen
-                // folder may hold other people's .wav/.txt.
-                let own = path
-                    .file_name()
-                    .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
-                    .unwrap_or(false);
-                if own && std::fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
+pub async fn delete_all_dictations(
+    app: AppHandle,
+    audio_base: Option<String>,
+) -> Result<u32, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+        let mut removed = wipe_records(&dictations_dir(&app)?) as u32;
+        if let Some(dir) = crate::commands::resolve_recordings_dir(&app, audio_base) {
+            removed += remove_own_recordings(&dir);
+        }
+        tracing::info!(
+            "[transcripts] delete-all dictations: removed {removed} record(s)/recording(s)"
+        );
+        Ok(removed)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Delete every app-owned file in the recordings folder; returns how many of them were audio.
+fn remove_own_recordings(dir: &Path) -> u32 {
+    let mut removed = 0u32;
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            // Only the app's own files (same invariant as prune): a user-chosen
+            // folder may hold other people's .wav/.txt.
+            let own = path
+                .file_name()
+                .map(|n| crate::audio::is_dictation_file(&n.to_string_lossy()))
+                .unwrap_or(false);
+            if own && std::fs::remove_file(&path).is_ok() && is_wav(&path) {
+                removed += 1;
             }
         }
     }
-    tracing::info!("[transcripts] delete-all dictations: removed {removed} file(s)");
-    Ok(removed)
+    removed
 }
 
 /// "Delete all transcriptions": every file/link/text record with its corrections;
 /// the orphan sweep then drops their audio.
 #[tauri::command]
-pub fn clear_file_transcriptions(
+pub async fn clear_file_transcriptions(
     app: AppHandle,
     audio_base: Option<String>,
 ) -> Result<u32, String> {
-    let removed = wipe_records(&transcripts_dir(&app)?) as u32;
-    sweep_orphan_media(&app, audio_base);
-    Ok(removed)
+    tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+        let removed = wipe_records(&transcripts_dir(&app)?) as u32;
+        sweep_orphan_media(&app, audio_base);
+        Ok(removed)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// "Delete audio from file/link transcriptions": empties one media subfolder
 /// (`kind` "file" → files/, "url" → links/, "video" → video/; None → all three).
 /// Transcripts stay.
 #[tauri::command]
-pub fn remove_transcript_media(
+pub async fn remove_transcript_media(
     app: AppHandle,
     kind: Option<String>,
     audio_base: Option<String>,
 ) -> Result<u32, String> {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    match kind.as_deref() {
-        Some("file") => dirs.push(files_media_dir(&app, audio_base)?),
-        Some("url") => dirs.push(links_media_dir(&app, audio_base)?),
-        Some("video") => dirs.push(video_media_dir(&app, audio_base)?),
-        _ => dirs.extend(all_media_dirs(&app, audio_base)?),
-    }
-    let mut removed = 0u32;
-    for dir in dirs {
-        if let Ok(entries) = std::fs::read_dir(&dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if is_own_media(&path) && std::fs::remove_file(&path).is_ok() {
-                    removed += 1;
+    tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        match kind.as_deref() {
+            Some("file") => dirs.push(files_media_dir(&app, audio_base)?),
+            Some("url") => dirs.push(links_media_dir(&app, audio_base)?),
+            Some("video") => dirs.push(video_media_dir(&app, audio_base)?),
+            _ => dirs.extend(all_media_dirs(&app, audio_base)?),
+        }
+        let mut removed = 0u32;
+        for dir in dirs {
+            if let Ok(entries) = std::fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if is_own_media(&path) && std::fs::remove_file(&path).is_ok() {
+                        removed += 1;
+                    }
                 }
             }
         }
-    }
-    tracing::info!("[transcripts] media store cleared: removed {removed} file(s)");
-    Ok(removed)
+        tracing::info!("[transcripts] media store cleared: removed {removed} file(s)");
+        Ok(removed)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Remove every media file named after `id` (any extension).
@@ -902,6 +954,24 @@ mod tests {
         std::fs::write(dir.join("dictation-3.wav.tmp"), b"1234567").unwrap();
         std::fs::write(dir.join("song.wav"), b"123456789").unwrap();
         assert_eq!(recordings_usage(&dir), (12, 4, 2));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deleting_all_recordings_counts_audio_not_sidecars() {
+        let dir = std::env::temp_dir().join(format!("fwf-rec-wipe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for stem in ["dictation-1", "dictation-2", "dictation-3"] {
+            std::fs::write(dir.join(format!("{stem}.wav")), b"1234").unwrap();
+            std::fs::write(dir.join(format!("{stem}.txt")), b"12").unwrap();
+        }
+        std::fs::write(dir.join("song.wav"), b"123456789").unwrap();
+        // The readout's audio count and the wipe's result agree; the sidecars still go.
+        assert_eq!(recordings_usage(&dir).2, 3);
+        assert_eq!(remove_own_recordings(&dir), 3);
+        assert!(!dir.join("dictation-1.txt").exists());
+        assert!(dir.join("song.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
