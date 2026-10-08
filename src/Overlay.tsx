@@ -13,8 +13,7 @@ import {
   isActiveDictation,
   isProcessing,
   collapseLingerMs,
-  SESSION_NOTE_HOLD_MS,
-  SESSION_WARN_HOLD_MS,
+  sessionNoteHoldMs,
   type DictationTone,
 } from "@/lib/dictation/dictationVisual";
 import {
@@ -842,12 +841,13 @@ export default function Overlay() {
     if (o === "typed" || o === "clipboard") {
       // A translation that was configured and didn't land outranks the delivery kind: the
       // text arrived, but not in the language the user asked for, and that is the more
-      // surprising half. Held longer still, because it carries a reason to read.
-      const failed = !!state.translateFailure;
-      setPulse(failed ? "untranslated" : o);
-      pulseHoldUntil.current = failed ? Date.now() + SESSION_WARN_HOLD_MS : 0;
+      // surprising half. Held longer still, because it carries a reason to read — for the
+      // shared sessionNoteHoldMs (the window's hide linger reads the same rule; 0 = no warning).
+      const warnHold = sessionNoteHoldMs({ translateFailure: state.translateFailure, sessionOutcome: o });
+      setPulse(warnHold ? "untranslated" : o);
+      pulseHoldUntil.current = warnHold ? Date.now() + warnHold : 0;
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
-      pulseTimer.current = setTimeout(() => setPulse(null), failed ? SESSION_WARN_HOLD_MS : 1100);
+      pulseTimer.current = setTimeout(() => setPulse(null), warnHold || 1100);
     } else {
       // null (fresh session) or "none" (cancelled / nothing landed) → clear any lingering pulse.
       if (pulseTimer.current) clearTimeout(pulseTimer.current);
@@ -872,8 +872,9 @@ export default function Overlay() {
     noteTimer.current = null;
     if (n) {
       setNote(n);
-      // "incomplete" carries a reason to read, like the untranslated pulse: held longer.
-      const hold = n === "incomplete" ? SESSION_WARN_HOLD_MS : SESSION_NOTE_HOLD_MS;
+      // "incomplete" carries a reason to read, like the untranslated pulse: held longer
+      // (sessionNoteHoldMs, the rule the window's hide linger shares).
+      const hold = sessionNoteHoldMs({ sessionNote: n });
       noteHoldUntil.current = Date.now() + hold;
       noteTimer.current = setTimeout(() => setNote(null), hold);
     } else {
