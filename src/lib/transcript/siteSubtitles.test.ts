@@ -284,6 +284,23 @@ describe("tracks and switches", () => {
     const [i2, st2] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "generate"));
     expect(derive({ ...i2, maxTargets: undefined }, st2).run!.mtTargets).toHaveLength(13);
   });
+  it("switching off a site track drops its language when the translation limit leaves no slot", () => {
+    // Prefer: es comes from the site, its MT badge idle — it never counted against the limit.
+    const inp = input({ tracks: [tr("de", "de"), tr("es", "es")], targets: ["ja"], maxTargets: 1 });
+    const st = initialSiteState(inp.targets);
+    const es = derive(inp, st).rows.find((r) => r.code === "es")!;
+    expect(es.badges.map((b) => b.state)).toEqual(["idle", "active"]);
+    const [i1, s1] = apply(inp, flip(inp, st, es.badges[1].key!));
+    expect(i1.targets).toEqual(["ja"]);
+    const v = derive(i1, s1);
+    expect(v.chips.map((c) => c.code)).not.toContain("es");
+    expect(v.run!.mtTargets).toEqual(["ja"]);
+    // With a free slot machine translation still takes over.
+    const wide = { ...inp, maxTargets: 2 };
+    const [i2, s2] = apply(wide, flip(wide, st, es.badges[1].key!));
+    expect(i2.targets).toEqual(["ja", "es"]);
+    expect(derive(i2, s2).run!.mtTargets).toEqual(["ja", "es"]);
+  });
   it("Custom: a machine-translation badge the rules switch keeps a title that matches its state", () => {
     const inp = input({ tracks: [tr("en", "en"), tr("de-orig", "de", { kind: "auto" })], spoken: "en", targets: ["de"] });
     // German's only track is auto-generated and the auto switch went off: translation fills in.

@@ -475,10 +475,19 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   if (c && tg[c] && !next[key]) {
     const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k]);
     if (!left.length) {
-      // Machine translation cannot take over a language the translation limit already greys:
-      // it would stay wanted with no source at all (both chip parts off, a dead MT click).
-      if (key.startsWith("mt:") || m.mtCapped.has(c)) tg[c] = false;
-      else next["mt:" + c] = true;
+      if (key.startsWith("mt:")) tg[c] = false;
+      else {
+        next["mt:" + c] = true;
+        // Machine translation takes over only if the translation limit leaves it a slot — an
+        // MT badge that was idle (Prefer) or off never counted, so ask the limit with the
+        // takeover in place. Greyed, the language would stay wanted with no source at all
+        // (both chip parts off, a dead MT click): drop it, as switching MT off does.
+        const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+        if (model({ ...input, targets: trial.targets }, trial.state).mtCapped.has(c)) {
+          tg[c] = false;
+          next["mt:" + c] = false;
+        }
+      }
     }
   }
   return fromMap(input, { ...st, policy: "custom", sel: next }, tg);
