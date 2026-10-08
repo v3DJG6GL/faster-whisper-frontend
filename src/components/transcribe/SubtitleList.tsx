@@ -128,9 +128,11 @@ const estimate = (r: Row, lane?: boolean) =>
   16 + Math.max(lane ? 36 : 43, 19 * Math.max(...r.lines.map((l) => l.text.split("\n").length)));
 
 /** One virtualized column of cue rows (the table, or one lane) scrolling in
- *  the viewer's transcript box. `pin` = the row carrying the active segment's
- *  id — always rendered, at its virtual position; `anchorId` = that id when
- *  the row carries it by time rather than by its own segment. */
+ *  the viewer's transcript box. `pin` = the row follow looks up: the active
+ *  segment's first cue, or (only site tracks shown) the cue under the
+ *  playhead. Always rendered, at its virtual position. `anchorId` =
+ *  TIME_ANCHOR_ID when the pin is chosen by time rather than by its own
+ *  segment id. */
 function VirtualCues({
   rows, active, pin, anchorId, columns, lane, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg,
 }: {

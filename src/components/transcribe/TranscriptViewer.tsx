@@ -1217,6 +1217,9 @@ export function TranscriptViewer({
   // The animation is a hand-rolled rAF ease-out: WebKitGTK ignores
   // scrollTo({behavior:"smooth"}) and jumps instantly.
   const followAnimRef = useRef<number | null>(null);
+  // Time mode follows the cue, not the segment: a segment boundary mid-glide
+  // must not restart the animation toward the same row.
+  const followKey = timeAnchor !== null ? `t${timeAnchor}` : `s${activeSegIdx}`;
   useEffect(() => {
     // Not while editing: the highlight is not drawn in Edit mode, and a scroll on every
     // segment boundary would pull the transcript out from under the caret. Not in
@@ -1307,7 +1310,7 @@ export function TranscriptViewer({
         followAnimRef.current = null;
       }
     };
-  }, [activeSegIdx, timeAnchor, follow, playing, editMode, reading]);
+  }, [followKey, follow, playing, editMode, reading]);
   // Manual wheel/touch INSIDE the transcript box disarms follow (the chip
   // re-arms); scrolling anywhere else on the page leaves it armed — a stray
   // tick over the sidebar used to kill it. Listener-level, not onScroll:
