@@ -44,7 +44,7 @@ export function TranslateProgressCard({
   }, [done]);
   const reconnecting = run.phase === "reconnecting";
   const lane = run.modelPhaseSeen ? MODEL_LANE : 0;
-  const amberW = lane * run.modelPct;
+  const amberW = lane * (done ? 1 : run.modelPct);
   const tealW = (1 - lane) * (done ? 1 : run.pct);
   const stageText =
     run.phase === "starting"

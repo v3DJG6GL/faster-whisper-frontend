@@ -24,6 +24,7 @@ import { fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { lastStartedAt, seekKeyTarget } from "@/lib/seekKeys";
 import {
   cancelTextTranslation, decodeMediaFile, getTranscribeProgress, openSourceUrl, readMediaFile, isTauri, translateText,
+  type TextTranslationResult,
 } from "@/lib/api";
 import {
   beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
@@ -610,6 +611,11 @@ export function TranscriptViewer({
     const serverUrl = effectiveServerUrl(backend, useApp.getState().settings);
     const trOv = backend.translationOverrides;
     const mode = opts?.mode ?? trOv?.mode;
+    // The text route refuses a request over the server's target cap, and a record can carry
+    // more tracks than its backend allows NOW (cap lowered, or a fallback backend): split.
+    const cap = maxTranslationTargets(trCaps);
+    const groups: string[][] = [];
+    for (let at = 0; at < targets.length; at += cap) groups.push(targets.slice(at, at + cap));
     const pid = newProgressId();
     const ctl = { pid, cancelled: false, serverUrl, backendId: backend.id };
     trCtls.set(okey, ctl);
@@ -644,19 +650,36 @@ export function TranscriptViewer({
         // Read the store, not the render closure: the chunk loop outlives this render and a
         // correction made mid-run must be translated as it is NOW (the merge clears its stale mark).
         textOf: (i) => (useTranscribeRun.getState().edits[okey]?.[i] ?? result.segments?.[i]?.text ?? "").trim(),
-        translate: (texts) =>
-          translateText({
-            serverUrl,
-            backendId: backend.id,
-            texts,
-            targets,
-            source: result.language ?? null,
-            model: (opts?.model ?? trOv?.model) || null,
-            mode: mode ?? null,
-            glossary: trOv?.glossary ?? null,
-            contextSegments: trOv?.contextSegments ?? null,
-            progressId: pid,
-          }),
+        translate: async (texts) => {
+          const ask = (group: string[]) =>
+            translateText({
+              serverUrl,
+              backendId: backend.id,
+              texts,
+              targets: group,
+              source: result.language ?? null,
+              model: (opts?.model ?? trOv?.model) || null,
+              mode: mode ?? null,
+              glossary: trOv?.glossary ?? null,
+              contextSegments: trOv?.contextSegments ?? null,
+              progressId: pid,
+            });
+          if (groups.length === 1) return ask(targets);
+          // More languages than one request may carry: ask per group, in turn, and fold
+          // the answers into one — every language is still translated, none dropped.
+          const parts: TextTranslationResult[] = [];
+          for (const g of groups) {
+            if (ctl.cancelled) break; // the loop drops this chunk's answer anyway
+            parts.push(await ask(g));
+          }
+          return {
+            results: texts.map((_, i) => Object.assign({}, ...parts.map((r) => r.results[i]))),
+            kept: texts.map((_, i) => parts.flatMap((r) => r.kept?.[i] ?? [])),
+            warnings: parts.flatMap((r) => r.warnings ?? []),
+            model: parts[0]?.model,
+            source: parts[0]?.source,
+          };
+        },
         onChunkStart: (chunkIdxs, done) =>
           setTrRun((s) => (s ? beginChunk(s, chunkIdxs, done) : s)),
         onMerge: (patch, prov, _first, kept) => {
