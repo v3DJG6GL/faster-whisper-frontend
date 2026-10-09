@@ -163,9 +163,15 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   if (out.result && segs != null) {
     if (!Array.isArray(segs)) out = { ...out, result: { ...out.result, segments: undefined } };
     else if (segs.some((s) => !s || typeof s !== "object" || typeof (s as { text?: unknown }).text !== "string")) {
-      const clean = segs
-        .filter((s): s is object => !!s && typeof s === "object")
-        .map((s) => (typeof (s as { text?: unknown }).text === "string" ? s : { ...s, text: "" }));
+      // A bad entry becomes a blank placeholder at the previous end, never dropped: the
+      // corrections (edits, speakerEdits, translationsStale) are keyed by segment index.
+      let end = 0;
+      const clean = segs.map((s) => {
+        if (!s || typeof s !== "object") return { start: end, end, text: "" };
+        const e = (s as { end?: unknown }).end;
+        if (typeof e === "number" && Number.isFinite(e)) end = e;
+        return typeof (s as { text?: unknown }).text === "string" ? s : { ...s, text: "" };
+      });
       out = { ...out, result: { ...out.result, segments: clean as typeof out.result.segments } };
     }
   }

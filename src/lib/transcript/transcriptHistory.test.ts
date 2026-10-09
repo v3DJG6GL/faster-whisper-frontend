@@ -192,7 +192,7 @@ describe("loadHistory", () => {
         sourcePath: "/a.wav",
         sourceName: "a.wav",
         status: "done",
-        edits: { 1: 9 },
+        edits: { 1: 9, 2: "TWO" },
         result: { text: "ok", segments: [{ start: 0, end: 1, text: 5 }, null, { start: 1, end: 2, text: "two" }] },
       },
       {
@@ -208,9 +208,11 @@ describe("loadHistory", () => {
     ]);
     await loadHistory(true);
     const a = saved("bad-segs");
-    expect(a.result?.segments?.map((s) => s.text)).toEqual(["", "two"]);
-    expect(a.edits).toEqual({});
-    expect(() => recordText(a, 200)).not.toThrow();
+    // The bad slot keeps its index, so the correction on segment 2 still lands on "two".
+    expect(a.result?.segments?.map((s) => s.text)).toEqual(["", "", "two"]);
+    expect(a.result?.segments?.[1]).toMatchObject({ start: 1, end: 1 });
+    expect(a.edits).toEqual({ 2: "TWO" });
+    expect(recordText(a, 200).trim()).toBe("TWO");
     const b = saved("str-segs");
     expect(b.result?.segments).toBeUndefined();
     expect(recordText(b, 200)).toBe("plain");
