@@ -149,11 +149,7 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
     // snapshot across reconnects), so a kept foreground mark may name an app the user has
     // since left — and note_focus would reject every focus from the app actually in front.
     // Fail open until the next window:activate, like "the moment after a switch".
-    {
-        let mut snap = snapshot.lock();
-        snap.active_app = None;
-        snap.active_bus = None;
-    }
+    clear_mark(&mut snapshot.lock());
     tracing::info!("[atspi] focus listener started");
 
     // Resolve focus OFF the event loop, in a single COALESCING task that always works on
@@ -520,19 +516,22 @@ pub(super) fn note_activate(
 
 /// A `window:deactivate`, matched by its sender's bus name — no D-Bus round-trip, so a busy or
 /// quitting app can't leave its foreground mark behind. The mark's own bus clears it; a
-/// different bus is a different app, so the mark stays. Returns `true` only when the bus can't
-/// decide (no bus recorded for the mark, or none on the event) — the caller then falls back to
-/// resolving the app id for `note_deactivate`.
+/// different bus is a different app, so the mark stays. Returns `true` only when a mark exists
+/// and the bus can't decide (no bus recorded for the mark, or none on the event) — the caller
+/// then falls back to resolving the app id for `note_deactivate`. No mark → nothing to clear,
+/// so no resolve either.
 pub(super) fn note_deactivate_bus(
     snapshot: &parking_lot::Mutex<super::Snapshot>,
     sender: Option<&str>,
 ) -> bool {
     let mut snap = snapshot.lock();
+    if snap.active_app.is_none() {
+        return false;
+    }
     match (snap.active_bus.as_deref(), sender) {
         (Some(marked), Some(sender)) => {
             if marked == sender {
-                snap.active_app = None;
-                snap.active_bus = None;
+                clear_mark(&mut snap);
             }
             false
         }
@@ -546,9 +545,14 @@ pub(super) fn note_deactivate_bus(
 pub(super) fn note_deactivate(snapshot: &parking_lot::Mutex<super::Snapshot>, app_id: &str) {
     let mut snap = snapshot.lock();
     if snap.active_app.as_deref() == Some(app_id) {
-        snap.active_app = None;
-        snap.active_bus = None;
+        clear_mark(&mut snap);
     }
+}
+
+/// Drop the foreground mark — `active_app` and `active_bus` always clear together (lockstep).
+fn clear_mark(snap: &mut super::Snapshot) {
+    snap.active_app = None;
+    snap.active_bus = None;
 }
 
 /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground

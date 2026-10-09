@@ -333,6 +333,9 @@ mod tests {
     fn a_deactivate_clears_the_foreground_mark_by_its_bus_name_without_a_resolve() {
         use super::atspi::{note_activate, note_deactivate, note_deactivate_bus};
         let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        // No mark (fresh, or reset on reconnect) → nothing to clear, so no resolve either.
+        assert!(!note_deactivate_bus(&snap, None));
+        assert!(!note_deactivate_bus(&snap, Some(":1.5")));
         note_activate(&snap, "org.kde.konsole".into(), Some(":1.42".into()));
         // Another app's (stale) deactivate: decided by the bus alone, the mark stays.
         assert!(!note_deactivate_bus(&snap, Some(":1.7")));
