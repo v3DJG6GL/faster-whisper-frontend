@@ -1314,7 +1314,27 @@ describe("translateParsed joins a text source like the TXT export", () => {
     expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
   });
 
-  it("within the limit, or with no known limit, the whole list goes out without a warning", async () => {
+  it("a retry with no limit on its context reads the server's from the cached caps", async () => {
+    // A retry built before this backend's caps loaded carries no translationMaxTargets: the
+    // text route would 422 the whole list, so the cap is resolved here like the viewer does.
+    const { useApp } = await import("./store");
+    const before = useApp.getState().caps;
+    useApp.setState({
+      caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
+    });
+    try {
+      translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
+      const r = await translateParsed(
+        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es"] }, ctx,
+      );
+      expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+      expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es");
+    } finally {
+      useApp.setState({ caps: before });
+    }
+  });
+
+  it("within the limit, or with an unknown limit (the app's ceiling), the whole list goes out without a warning", async () => {
     translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
     for (const max of [2, undefined]) {
       translateText.mockClear();

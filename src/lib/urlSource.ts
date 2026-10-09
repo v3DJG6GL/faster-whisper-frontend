@@ -8,7 +8,7 @@
 
 import { stripUrlNoise } from "./backends";
 import { safeDisplayText } from "./sanitize";
-import { fmtDuration } from "./format";
+import { fmtDuration, fmtDurationExact } from "./format";
 
 /** Is this queue key a media link rather than a filesystem path?
  *
@@ -115,7 +115,10 @@ export function linkTooLong(p: Pick<UrlPreview, "duration" | "url_max_duration_s
   const d = p?.duration;
   const max = p?.url_max_duration_s;
   if (typeof d !== "number" || typeof max !== "number" || !(d > 0) || !(max > 0) || d <= max) return null;
-  return `Longer than this server's ${fmtDuration(max)} limit.`;
+  // fmtDuration rounds to whole minutes, so a 90 s limit would read "2m" — longer than a
+  // 100 s link it refuses. Whole-minute limits keep the short form ("4h"); others go exact.
+  const limit = Math.round(max) % 60 === 0 ? fmtDuration(max) : fmtDurationExact(max);
+  return `Longer than this server's ${limit} limit.`;
 }
 
 /** One subtitle track a link offers. `hoh` = hearing-impaired, from its name. */

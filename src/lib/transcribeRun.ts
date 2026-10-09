@@ -33,7 +33,8 @@ import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
 import { trText } from "./transcript/cueSplit";
 import { joinSegmentTexts } from "./transcript/transcriptFormats";
 import { newProgressId } from "./ids";
-import { ownProp } from "./own";
+import { hasOwn, ownProp } from "./own";
+import { maxTranslationTargets, refreshCaps } from "./capabilities";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./transcript/siteSubtitles";
@@ -1651,7 +1652,17 @@ export async function translateParsed(
   // Over the server's limit the text route rejects the whole request: keep the first ones and
   // name the rest, in the audio route's own words (it drops them server-side).
   const all = options.translateTo ?? [];
-  const cap = ctx.translationMaxTargets;
+  let cap = ctx.translationMaxTargets;
+  if (cap === undefined && all.length) {
+    // A retry before this backend's caps loaded carries no limit: resolve it the way the
+    // viewer's Translate does (TranscriptViewer) — fetch caps never fetched (never throws),
+    // and a server that really reports nothing keeps the app's documented ceiling.
+    if (!hasOwn(useApp.getState().caps, ctx.backendId)) {
+      const b = useApp.getState().backends.find((x) => x.id === ctx.backendId);
+      if (b) await refreshCaps(b, { force: true });
+    }
+    cap = maxTranslationTargets(ownProp(useApp.getState().caps, ctx.backendId) ?? null);
+  }
   const targets = cap !== undefined && all.length > cap ? all.slice(0, cap) : all;
   // Chunk well under the transport's 512-text cap — a feature-length .srt
   // easily exceeds it, and each chunk is one server round trip.
