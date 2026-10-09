@@ -1751,12 +1751,16 @@ export function TranscriptViewer({
                 // press, moves anywhere on screen keep seeking until release.
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
+                  // Length not known yet (Infinity, or before loadedmetadata):
+                  // frac * 0 would rewind to the start, so do nothing instead.
+                  if (!(audioLen > 0)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
                   seekTo(frac * (audioLen || 0));
                 }}
                 onPointerMove={(e) => {
                   if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
+                  if (!(audioLen > 0)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
                   seekTo(frac * (audioLen || 0));
