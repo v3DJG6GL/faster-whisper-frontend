@@ -132,11 +132,8 @@ export function Segmented<T extends string>({
               // Labels are short by design and read as one token ("Clipboard paste"):
               // wrapping one across two lines makes the group look broken.
               "ring-signal inline-flex items-center gap-1.5 whitespace-nowrap rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
-              active ? "bg-accent text-accent-ink" : "text-dim hover:text-text",
+              active ? "bg-accent text-accent-ink" : "text-dim enabled:hover:text-text",
               off && "cursor-not-allowed",
-              // The hover cancel only belongs on inactive faces: on the active pill it would
-              // fade the label to grey on the accent fill (cn is plain clsx, no tailwind-merge).
-              off && !active && "hover:text-dim",
               o.disabled && !disabled && "opacity-40",
             )}
           >
