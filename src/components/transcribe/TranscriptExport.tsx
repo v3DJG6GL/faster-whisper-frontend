@@ -126,6 +126,14 @@ export function TranscriptExport({
    *  only while its own record still shows. */
   const ownerRef = useRef(owner);
   ownerRef.current = owner;
+  /** The latest render's result, tagged with its record. */
+  const latestResult = useRef({ owner, editedResult });
+  latestResult.current = { owner, editedResult };
+  /** The result a Save writes once its dialog (or a link's video fetch) has been awaited: a
+   *  retranslate chunk or an edit may have landed since the click. Another record on screen
+   *  by then never lends its result — the click's own stands. */
+  const liveResult = (started: typeof owner) =>
+    latestResult.current.owner === started ? latestResult.current.editedResult : editedResult;
   /** The record whose Save is running (dialog to last file); null = none. */
   const exportingFor = useRef<typeof owner | null>(null);
   // One job slot PER record: another record's progress events never overwrite this one's.
@@ -453,7 +461,7 @@ export function TranscriptExport({
    *  the panel now shows. `mine` = its record still shows (no outcome lands on
    *  another record's panel); otherwise a failure goes to `late`. */
   const exportVideoTo = async (
-    dest: string, embedded: string[], mine: () => boolean, late: (msg: string) => void,
+    dest: string, embedded: string[], started: typeof owner, mine: () => boolean, late: (msg: string) => void,
   ): Promise<boolean> => {
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
@@ -524,11 +532,13 @@ export function TranscriptExport({
       else late(msg);
       return false;
     }
-    const subtitles = embedded.length ? embeddedSubtitleTracks(editedResult, exportOptions, embedded, trackNames) : [];
+    // After the fetch: the subtitles carry the latest result (liveResult).
+    const res = liveResult(started);
+    const subtitles = embedded.length ? embeddedSubtitleTracks(res, exportOptions, embedded, trackNames) : [];
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video).
-    const audioLang = (editedResult.language ?? "").trim() || null;
+    const audioLang = (res.language ?? "").trim() || null;
     const jobId = newProgressId();
     const fromFile = !!source.sourcePath;
     // A busy answer after an upload names that upload's server copy (and its expiry,
@@ -681,10 +691,13 @@ export function TranscriptExport({
     if (!target) return; // cancelled
     // Beside a video the text files are one subtitle file per language; the
     // plain text export stays the (possibly bilingual) reading file. Built after the
-    // dialog: a cancel pays nothing, and the dialog opens without waiting on them.
+    // dialog, from the latest result (liveResult): a cancel pays nothing, the dialog opens
+    // without waiting on them, and a translation that landed meanwhile is written. The plan
+    // stays the click's: it names the files the dialog confirmed.
+    const res = liveResult(started);
     const files = plan.sidecars
-      ? sidecarFiles(editedResult, exportOptions, plan.sidecars.tracks, plan.sidecars.format)
-      : generateExports(editedResult, exportOptions);
+      ? sidecarFiles(res, exportOptions, plan.sidecars.tracks, plan.sidecars.format)
+      : generateExports(res, exportOptions);
     // The picked path names the FIRST file; siblings land beside it under
     // the stem the user actually chose in the dialog.
     const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
@@ -703,7 +716,7 @@ export function TranscriptExport({
           if (landed !== dest && mine()) setAudioSavedAs(basename(landed));
           written.push(landed);
           continue;
-        } else if (!(await exportVideoTo(dest, plan.embedded, mine, late))) {
+        } else if (!(await exportVideoTo(dest, plan.embedded, started, mine, late))) {
           return;
         }
         written.push(dest);
@@ -930,36 +943,39 @@ export function TranscriptExport({
       </button>
     )}>
       <span className="-mt-2 truncate font-mono text-[11px] text-faint">{plan.primary.name(stem)}</span>
-      {planned.map((t, i) => (
-        <div key={t.id} className="grid grid-cols-[auto_2.5rem_minmax(0,1fr)_1.75rem] items-center gap-x-2 gap-y-1">
-          <span aria-hidden className={cn("size-1.5 rounded-full", trackTone(t, "dot"))} />
-          <span className="font-mono text-[11px] text-dim">{langCode(t.lang)}</span>
-          <TextInput
-            aria-label={`${trackChipLabel(editedResult, t.id)} track name`}
-            value={nameValue(t)}
-            placeholder={t.defaultTitle}
-            maxLength={TRACK_TITLE_MAX}
-            disabled={effSubtitleMode === "sidecar"}
-            title={effSubtitleMode === "sidecar" ? "Names go into the video's own tracks — choose embedded or both" : undefined}
-            onChange={(e) => setName(t.id, e.target.value)}
-            className={cn("h-8 text-[12.5px]", renamed(t) && "shadow-[inset_0_0_0_1px_var(--c-accent)]")}
-          />
-          {renamed(t) ? (
-            <button type="button" onClick={() => setName(t.id, null)} title={`Back to ${t.defaultTitle}`}
-              aria-label={`Reset the ${t.defaultTitle} name`}
-              className="ring-signal grid size-7 place-items-center rounded-md text-faint hover:text-text">
-              {resetIcon}
-            </button>
-          ) : <span />}
-          <span className="col-start-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-faint">
-            {sideNames && <span className="min-w-0 truncate">{sideNames[i](stem)}</span>}
-            <span className={cn("rounded-pill px-1.5 font-sans leading-4", trackTone(t))}>{sourceWord(t)}</span>
-            {([[inVideo && plan.primaryExt !== "mp4" && t.original, "original"], [inVideo && t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
-              <span key={flag} className="rounded-pill border border-line px-1.5 leading-4">{flag}</span>
-            ))}
-          </span>
-        </div>
-      ))}
+      {/* One code column for every row, as wide as the longest code (zh-Hant), so the names align. */}
+      <div className="grid grid-cols-[auto_minmax(2.5rem,max-content)_minmax(0,1fr)_1.75rem] gap-x-2 gap-y-3">
+        {planned.map((t, i) => (
+          <div key={t.id} className="col-span-full grid grid-cols-subgrid items-center gap-y-1">
+            <span aria-hidden className={cn("size-1.5 rounded-full", trackTone(t, "dot"))} />
+            <span className="font-mono text-[11px] text-dim">{langCode(t.lang, 12)}</span>
+            <TextInput
+              aria-label={`${trackChipLabel(editedResult, t.id)} track name`}
+              value={nameValue(t)}
+              placeholder={t.defaultTitle}
+              maxLength={TRACK_TITLE_MAX}
+              disabled={effSubtitleMode === "sidecar"}
+              title={effSubtitleMode === "sidecar" ? "Names go into the video's own tracks — choose embedded or both" : undefined}
+              onChange={(e) => setName(t.id, e.target.value)}
+              className={cn("h-8 text-[12.5px]", renamed(t) && "shadow-[inset_0_0_0_1px_var(--c-accent)]")}
+            />
+            {renamed(t) ? (
+              <button type="button" onClick={() => setName(t.id, null)} title={`Back to ${t.defaultTitle}`}
+                aria-label={`Reset the ${t.defaultTitle} name`}
+                className="ring-signal grid size-7 place-items-center rounded-md text-faint hover:text-text">
+                {resetIcon}
+              </button>
+            ) : <span />}
+            <span className="col-start-3 flex min-w-0 flex-wrap items-center gap-1.5 font-mono text-[10.5px] text-faint">
+              {sideNames && <span className="min-w-0 truncate">{sideNames[i](stem)}</span>}
+              <span className={cn("rounded-pill px-1.5 font-sans leading-4", trackTone(t))}>{sourceWord(t)}</span>
+              {([[inVideo && plan.primaryExt !== "mp4" && t.original, "original"], [inVideo && t.plain, "default"], [t.hoh, "SDH"]] as const).map(([on, flag]) => on && (
+                <span key={flag} className="rounded-pill border border-line px-1.5 leading-4">{flag}</span>
+              ))}
+            </span>
+          </div>
+        ))}
+      </div>
     </PanelBox>
   );
 

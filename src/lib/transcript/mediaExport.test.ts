@@ -88,6 +88,13 @@ describe("embeddedSubtitleTracks", () => {
     expect(sidecarNames({ language: "!!" }, ["orig", "../x", "pt-BR"], "srt").map((n) => n("t")))
       .toEqual(["t.und.srt", "t.x.srt", "t.pt-BR.srt"]);
   });
+  it("sidecarFiles skips a cue-less VTT track (a header and STYLE blocks are not subtitles)", () => {
+    // Not translated yet, and every line kept as the source: both render no cue at all.
+    expect(sidecarFiles(result, { format: "txt" }, ["orig", "xx"], "vtt").map((f) => f.name("s"))).toEqual(["s.de.vtt"]);
+    const kept: BatchResult = { ...result, segments: result.segments?.map((s) => ({ ...s, translationsKept: ["fr"] })) };
+    expect(sidecarFiles(kept, { format: "txt" }, ["orig", "fr"], "vtt").map((f) => f.name("s"))).toEqual(["s.de.vtt"]);
+    expect(sidecarFiles(kept, { format: "txt" }, ["orig", "fr"], "srt").map((f) => f.name("s"))).toEqual(["s.de.srt"]);
+  });
   it("a language's further tracks are labelled and carry their flags (D89)", () => {
     const site: BatchResult = {
       ...result,

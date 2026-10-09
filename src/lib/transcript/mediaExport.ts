@@ -94,6 +94,10 @@ function trackSubtitle(result: BatchResult, opts: ExportOptions, track: string, 
   return generateExports(result, { ...opts, format, tracks: [track] })[0]?.content ?? "";
 }
 
+/** Whether a subtitle file holds at least one cue: every timing line has " --> " (cue text
+ *  never does — VTT escapes its '>'), while a cue-less VTT is still a header and STYLE blocks. */
+const hasCue = (content: string) => content.includes(" --> ");
+
 /** A track's language as the packager accepts it (Rust `is_package_lang`: a lowercase 2–3 letter
  *  primary, at most one 2–8 alnum subtag). Site-track langs only pass the looser `is_lang_code`
  *  ("en-x-autogen", "zh-Hant-TW"), and one bad tag would fail the whole save: fall back to the
@@ -116,7 +120,7 @@ export function embeddedSubtitleTracks(
 ): EmbeddedTrack[] {
   return planTracks(result, tracks, names).flatMap((t) => {
     const srt = trackSubtitle(result, opts, t.id, "srt");
-    return srt.trim()
+    return hasCue(srt)
       ? [{ lang: packageLang(t.lang), label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
       : [];
   });
@@ -153,7 +157,7 @@ export function sidecarFiles(
   const names = sidecarNames(result, tracks, format);
   return tracks.flatMap((t, i) => {
     const content = trackSubtitle(result, opts, t, format);
-    return content.trim() ? [{ name: names[i], content }] : [];
+    return hasCue(content) ? [{ name: names[i], content }] : [];
   });
 }
 
