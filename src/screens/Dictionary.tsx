@@ -1170,10 +1170,12 @@ function FetchError({ fetch, backendName, onRetry }: { fetch: PipelineFetch; bac
   );
 }
 
+// `error` can be whitespace only (a bare proxy body like "\r\n" folds to spaces on the Rust side),
+// so trim before falling back or the card body comes out blank.
 function describeFetchError(fetch: PipelineFetch, name: string): { title: string; body: string } {
   switch (fetch.status) {
     case 0:
-      return { title: `Couldn't reach ${name}`, body: fetch.error || "The server is unreachable. Check it's running and the URL is correct on the Backends screen." };
+      return { title: `Couldn't reach ${name}`, body: fetch.error?.trim() || "The server is unreachable. Check it's running and the URL is correct on the Backends screen." };
     case 401:
       return { title: "This server needs a valid API key", body: "Set or fix the API key for this Backend on the Backends screen, then refresh." };
     case 403:
@@ -1181,7 +1183,7 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
     case 404:
       return { title: "This server doesn't support editable rules", body: "It's either a standard Whisper server or an older faster-whisper-backend. Update the server to manage its dictionary here." };
     default:
-      return { title: `Server error (HTTP ${fetch.status})`, body: fetch.error || "The server returned an unexpected error." };
+      return { title: `Server error (HTTP ${fetch.status})`, body: fetch.error?.trim() || "The server returned an unexpected error." };
   }
 }
 
@@ -1238,7 +1240,7 @@ function SaveBanner({
   }
   if (!result.ok) {
     return (
-      <Notice>{result.detail || "Couldn't save the changes."}</Notice>
+      <Notice>{result.detail?.trim() || "Couldn't save the changes."}</Notice>
     );
   }
   // `conflicts` is opaque server JSON (passed through verbatim, only null-coerced); a non-array
