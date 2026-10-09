@@ -1991,7 +1991,6 @@ let pendingConflict: PendingConflict | null = null;
  *  "remote" pick from the previous conflict would otherwise silently hand the
  *  peer a category with no second prompt. A re-raise of the SAME conflict keeps
  *  it (see raiseConflict). */
-let conflictSeq = 0;
 let pendingConflictId = 0;
 /** The Sync tab reads the pending conflict through this (set into the store
  *  would drag blob payloads through every subscriber). */
@@ -3491,7 +3490,7 @@ function raiseConflict(c: PendingConflict): void {
         sameStamp(pendingConflict.remoteUpdatedAt, c.remoteUpdatedAt))) &&
     pendingConflict.remoteDevice === c.remoteDevice &&
     pendingConflict.categories.join() === c.categories.join();
-  if (!same) pendingConflictId = ++conflictSeq;
+  if (!same) pendingConflictId++;
   setPendingConflict(c);
   // Same rule as raiseReview: a review against an older server version is moot now.
   if (pendingReview && pendingReview.version < c.remoteVersion) setPendingReview(null);
@@ -3531,7 +3530,7 @@ export async function resolveSyncConflicts(
   // The conflict the user picked on. Same lock rule as approvePendingReview; a pull during the
   // wait may re-raise it, which keeps the id only when it is the same conflict (raiseConflict),
   // so the picks still apply to it.
-  const id = expectedId ?? pendingConflictId;
+  const id = pendingConflictId;
   if (!(await takeSyncLock(myGen))) return;
   let outcome: ApproveOutcome = "done";
   try {

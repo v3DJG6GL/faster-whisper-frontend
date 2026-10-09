@@ -735,16 +735,37 @@ function ConflictDialog() {
   // Same as SecurityReviewDialog: re-read on every prompt change, so a closed or widened
   // conflict never leaves the old body (and its categories) on screen.
   useApp((st) => st.syncPromptSeq);
+  // The picks live here, not in the body: resolve nulls the pending conflict before it awaits
+  // the apply, so the body unmounts; a refused apply restores the SAME conflict (same id) and a
+  // fresh body would show every row back on "local" — the next Apply then keeps this device's
+  // settings without asking. Tagged with the conflict id, so a NEW conflict still starts empty
+  // (a retained "remote" pick would silently hand the peer a category with no second prompt).
+  const [picks, setPicks] = useState<{ id: number; p: Record<string, "local" | "remote"> }>({ id: -1, p: {} });
   const pending = getPendingConflict();
   if (!pending) return null;
-  // Keyed on the conflict's identity so a NEW conflict remounts the body with
-  // fresh picks — the instance never unmounts between conflicts, and a retained
-  // "remote" pick would silently hand the peer a category with no second prompt.
-  return <ConflictDialogBody key={pending.id} pending={pending} />;
+  // Keyed on the conflict's identity so a new conflict (or a restored one) remounts the body
+  // with busy cleared.
+  return (
+    <ConflictDialogBody
+      key={pending.id}
+      pending={pending}
+      picks={picks.id === pending.id ? picks.p : {}}
+      onPick={(c, v) =>
+        setPicks((s) => ({ id: pending.id, p: { ...(s.id === pending.id ? s.p : {}), [c]: v } }))
+      }
+    />
+  );
 }
 
-function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeof getPendingConflict>> }) {
-  const [picks, setPicks] = useState<Record<string, "local" | "remote">>({});
+function ConflictDialogBody({
+  pending,
+  picks,
+  onPick,
+}: {
+  pending: NonNullable<ReturnType<typeof getPendingConflict>>;
+  picks: Record<string, "local" | "remote">;
+  onPick: (category: string, value: "local" | "remote") => void;
+}) {
   // resolveSyncConflicts returns silently while a session runs (same rule as the review's
   // approve) — the button says so instead of doing nothing.
   const dictating = useApp((st) => st.status !== "idle");
@@ -764,7 +785,7 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
               <Segmented
                 ariaLabel={`Resolve ${meta?.title ?? c}`}
                 value={picks[c] ?? "local"}
-                onChange={(v) => setPicks((p) => ({ ...p, [c]: v }))}
+                onChange={(v) => onPick(c, v)}
                 options={[
                   { value: "local", label: LOCAL_ARM_LABEL },
                   // The server names this button. Defanging its characters does not stop it
@@ -785,9 +806,9 @@ function ConflictDialogBody({ pending }: { pending: NonNullable<ReturnType<typeo
         <Button variant="ghost" disabled={busy} onClick={dismissSyncConflict}>
           Later
         </Button>
-        {/* Same window as SecurityReviewDialog's: resolve nulls the pending conflict and only
-            then awaits applyBlob, so a click on Later (or the backdrop) during that await shows
-            the conflict as deferred while the picks are still applied and pushed. */}
+        {/* Resolve nulls the pending conflict before it awaits applyBlob, so the dialog is gone
+            during that await (no Later/backdrop click can land in it), and a refused apply brings
+            the same conflict back with the picks ConflictDialog kept. */}
         <Button
           disabled={busy || dictating}
           onClick={() => {
