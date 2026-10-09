@@ -163,15 +163,19 @@ export function sectionKeys(section: KeySection): DecodeKey[] {
  *  ladder "0.0,0.4", or a rung half-typed like "0."; the sync sanitizer and the server parse it).
  *  null = refused: anything but digits, dots, commas and spaces, a comma when `singleOnly`
  *  (a standard Whisper server takes one number, no ladder), a rung with a space inside ("0 2")
- *  or two dots ("0.2.4"), or a rung above the spec max ("5") — values the sync sanitizer and the
+ *  or two dots ("0.2.4"), a rung above the spec max ("5"), or more rungs or characters than the
+ *  spec allows (16 rungs, 64 characters) — values the sync sanitizer and the
  *  server would drop or clamp. Empty and half-typed rungs ("", "0.", "1.") pass, so typing is
  *  never blocked mid-entry. */
 export function parseLadderInput(raw: string, singleOnly: boolean): number | string | undefined | null {
   const t = raw.trim();
   if (!t) return undefined;
   if (!/^[0-9., ]*$/.test(raw) || (singleOnly && raw.includes(","))) return null;
-  const max = keySpec("temperature").max ?? Infinity;
-  for (const part of raw.split(",")) {
+  const spec = keySpec("temperature");
+  const max = spec.max ?? Infinity;
+  const parts = raw.split(",");
+  if (t.length > (spec.maxLen ?? Infinity) || parts.length > (spec.maxRungs ?? Infinity)) return null;
+  for (const part of parts) {
     const r = part.trim();
     if (r.includes(" ") || r.split(".").length > 2 || Number(r) > max) return null;
   }

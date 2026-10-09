@@ -507,8 +507,9 @@ export default function History() {
         speakers: speakerOrder(live.result ?? { text: "" }),
         renames: live.renames ?? {},
         colorPicks: live.speakerColors ?? {},
-        // The viewer's display toggles (legacy speakerColorMode migration included).
-        toggles: displayToggles(t),
+        // The viewer's display toggles (legacy speakerColorMode migration included) — minus the
+        // 1 s placeholder clocks of a plain-text source, which the viewer and Copy hide too.
+        toggles: { ...displayToggles(t), showTs: displayToggles(t).showTs && !result.timingSynthesized },
         cues: cueOptionsOf(t),
         tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(live.exportTracks).order) : [],
       }));
@@ -642,14 +643,14 @@ export default function History() {
              the targets. Hairline dividers rather than blank lines, because a
              transcript contains its own line breaks and a blank line does not
              read as a language boundary. */
-          <div className="mt-3 max-h-56 overflow-y-auto">
+          <div className="mt-3 grid max-h-56 grid-cols-[minmax(2.5rem,max-content)_minmax(0,1fr)] gap-x-2 overflow-y-auto">
             {tracks.map(({ lang, text, orig }, i) => (
               <div
                 // A profile may translate INTO its own source language (nothing excludes it),
                 // which would give the original track and a target the same code.
                 key={`${i}:${lang}`}
                 className={cn(
-                  "grid grid-cols-[minmax(2.5rem,max-content)_minmax(0,1fr)] gap-2 py-2",
+                  "col-span-full grid grid-cols-subgrid py-2", // one tag column for every track, so texts align
                   i > 0 && "border-t border-line",
                 )}
               >

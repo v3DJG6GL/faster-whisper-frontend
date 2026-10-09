@@ -429,6 +429,14 @@ describe("parseLadderInput", () => {
     expect(parseLadderInput("1", true)).toBe(1);
     expect(parseLadderInput("1.0", true)).toBe("1.0");
   });
+
+  it("refuses a ladder longer than the sanitizer keeps", () => {
+    expect(parseLadderInput(Array(17).fill("0").join(","), false)).toBeNull(); // 17 rungs
+    expect(parseLadderInput(Array(16).fill("0").join(","), false)).toBe(Array(16).fill("0").join(","));
+    const long = Array(11).fill("0.125").join(","); // 11 rungs, 65 characters
+    expect(long.length).toBe(65);
+    expect(parseLadderInput(long, false)).toBeNull();
+  });
 });
 
 describe("stepDecimals", () => {

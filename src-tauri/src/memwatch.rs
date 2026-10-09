@@ -77,7 +77,12 @@ mod imp {
     /// forgets pids that are gone, so the map stays bounded. `pinned` keeps it the first time
     /// only: the map empties again once every pinned pid is gone (all four relaunched, or one
     /// sample whose /proc read failed), and re-pinning then would name windows by relaunch order.
+    /// A sample with no web process at all is a failed /proc read (the main webview lives as long
+    /// as the app): it forgets nothing, so the same pids keep their labels on the next sample.
     fn pin_labels(labels: &mut HashMap<u32, &'static str>, pinned: &mut bool, web: &[u32]) {
+        if web.is_empty() {
+            return;
+        }
         labels.retain(|pid, _| web.contains(pid));
         if !*pinned && web.len() == LABELS.len() {
             labels.extend(web.iter().copied().zip(LABELS));
@@ -246,6 +251,13 @@ mod imp {
             let web = [14, 15, 16, 17];
             pin_labels(&mut labels, &mut pinned, &web);
             assert_eq!(names(&labels, &web), ["web14", "web15", "web16", "web17"]);
+            // A failed /proc read between two samples of the same four pids keeps their labels.
+            let (mut labels, mut pinned) = (HashMap::new(), false);
+            let web = [10, 11, 12, 13];
+            pin_labels(&mut labels, &mut pinned, &web);
+            pin_labels(&mut labels, &mut pinned, &[]);
+            pin_labels(&mut labels, &mut pinned, &web);
+            assert_eq!(names(&labels, &web), LABELS);
         }
     }
 }

@@ -343,8 +343,9 @@ mod imp {
     /// Latin-letter symbols Unicode also counts as alphabetic (circled Ⓜ, squared 🅿 emoji, math
     /// alphanumerics) and the Latin-context modifier letters below it (Hawaiʻi's ʻokina U+02BB)
     /// stay with the per-character skip. On a layout that types no basic Latin letter (Cyrillic,
-    /// Greek...): also any unreachable letter below U+0370 — ASCII or accented Latin there is an
-    /// English brand or name, not a stray accent.
+    /// Greek...): also any unreachable Latin letter (ASCII, Latin-1, Latin Extended-A/-B) — there
+    /// it is an English brand or name, not a stray accent. Modifier letters (the Belarusian
+    /// apostrophe U+02BC a `by` layout cannot type) and µ ª º stay with the per-character skip.
     fn unreachable_foreign_word(text: &str, map: &HashMap<char, KeySpec>) -> bool {
         const LATIN_ABOVE_GREEK: [std::ops::RangeInclusive<u32>; 14] = [
             0x1D00..=0x1DFF,   // phonetic extensions (+ supplement), combining Latin letters
@@ -368,7 +369,8 @@ mod imp {
             c.is_alphabetic()
                 && key_spec_for(c, map).is_none()
                 && ((u >= 0x0370 && !LATIN_ABOVE_GREEK.iter().any(|r| r.contains(&u)))
-                    || (!latin_layout && u < 0x0370))
+                    || (!latin_layout
+                        && (c.is_ascii_alphabetic() || (0x00C0..=0x024F).contains(&u))))
         })
     }
 
@@ -1169,6 +1171,11 @@ mod imp {
             ));
             assert!(!divert_unreachable(
                 "\u{44f} \u{43a}\u{443}\u{43f}\u{438}\u{43b} \u{43d}\u{43e}\u{432}\u{44b}\u{439} \u{442}\u{435}\u{43b}\u{435}\u{444}\u{43e}\u{43d}",
+                &ru
+            ));
+            // A modifier apostrophe (U+02BC, "сямʼя") is not a Latin word: skipped, no divert.
+            assert!(!divert_unreachable(
+                "\u{441}\u{44f}\u{43c}\u{2bc}\u{44f}",
                 &ru
             ));
         }
