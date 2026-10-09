@@ -432,9 +432,10 @@ describe("site subtitle cleanup", () => {
       { start: 6.5, end: 8, text: "next" },
     ]);
   });
-  it("cleanup runs for SRT too", () => {
-    const srt = "1\n00:00:01,000 --> 00:00:02,000\nA line\n\n2\n00:00:02,000 --> 00:00:03,000\nA line\nnext line\n";
-    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["A line", "next line"]);
+  it("a two-cue file is too short to call a roll-up: its repeated line stays", () => {
+    // One cue opening with the line before is a short roll-up OR an ordinary repeat — keep it.
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nWait.\n\n2\n00:00:02,000 --> 00:00:03,000\nWait.\nDid you hear that?\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["Wait.", "Wait. Did you hear that?"]);
   });
   it("cleans a longer roll-up file without freeze cues", () => {
     const cue = (n: number, a: string, b?: string) =>

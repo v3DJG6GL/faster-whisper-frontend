@@ -171,7 +171,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     const k = leadOverlap(prev.lines, cue.lines);
     if (k > 0 && k < cue.lines.length) opensWithPrev++;
   }
-  const rollUp = rolling || opensWithPrev * 2 > multi;
+  // At least three such cues: one or two cannot tell a short roll-up from a short ordinary
+  // file whose line is repeated across a cue boundary ("Wait." / "Wait. Did you hear that?"),
+  // and stripping that line loses words the file really holds.
+  const rollUp = rolling || (opensWithPrev >= 3 && opensWithPrev * 2 > multi);
   // The RAW lines of the last cue kept: its stripped `out` entry has lost the lines it
   // repeated, and a three-line roll repeats those too ([1,2,3] → [2,3,4]).
   let prevRaw: string[] = [];
