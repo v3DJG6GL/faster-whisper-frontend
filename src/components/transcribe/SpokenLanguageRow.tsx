@@ -29,6 +29,8 @@ export interface LinkLanguage {
   stop: () => void;
   /** The audio the finished check downloaded, for the run to reuse. */
   prefetchMediaId: string | null;
+  /** When the server deletes `prefetchMediaId` (unix seconds), null = not said. */
+  prefetchExpiresAt: number | null;
   /** The backend that issued `prefetchMediaId`: a media id is only good on the server that
    *  stored it, so the run reuses it only when it targets this same backend. */
   prefetchBackendId: string | null;
@@ -114,6 +116,7 @@ export function useLinkLanguage(args: {
       setCheck({ state: "idle" });
     },
     prefetchMediaId: check.state === "done" ? check.result?.mediaId ?? null : null,
+    prefetchExpiresAt: check.state === "done" ? check.result?.mediaExpiresAt ?? null : null,
     prefetchBackendId: check.state === "done" ? checkedOn : null,
   };
 }

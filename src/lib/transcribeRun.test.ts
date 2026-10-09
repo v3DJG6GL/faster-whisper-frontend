@@ -13,7 +13,9 @@ const transcribeFile = vi.fn<(args: Parameters<typeof import("./api").transcribe
 const translateText = vi.fn<(args: Parameters<typeof import("./api").translateText>[0]) => Promise<import("./api").TextTranslationResult>>();
 // Unset = the real outside-Tauri commands; the site-transcript fallback test answers them.
 const transcribeUrl = vi.fn<(args: Parameters<typeof import("./api").transcribeUrl>[0]) => Promise<never>>();
-const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUrlSubtitles>[0]) => Promise<never>>();
+const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUrlSubtitles>[0]) => Promise<import("./api").UrlSubtitles>>();
+// Unset = the real outside-Tauri command; the site-transcript audio-expiry test answers it.
+const fetchUrlAudioOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlAudioOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 // Unset = the real outside-Tauri command; the video-poll cadence test answers it.
 const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
 vi.mock("./api", async (importOriginal) => {
@@ -29,6 +31,8 @@ vi.mock("./api", async (importOriginal) => {
       transcribeUrl.getMockImplementation() ? transcribeUrl(a) : orig.transcribeUrl(a),
     fetchUrlSubtitles: (a: Parameters<typeof orig.fetchUrlSubtitles>[0]) =>
       fetchUrlSubtitles.getMockImplementation() ? fetchUrlSubtitles(a) : orig.fetchUrlSubtitles(a),
+    fetchUrlAudioOnDemand: (a: Parameters<typeof orig.fetchUrlAudioOnDemand>[0]) =>
+      fetchUrlAudioOnDemand.getMockImplementation() ? fetchUrlAudioOnDemand(a) : orig.fetchUrlAudioOnDemand(a),
     getTranscribeProgress: (a: Parameters<typeof orig.getTranscribeProgress>[0]) =>
       getTranscribeProgress.getMockImplementation() ? getTranscribeProgress(a) : orig.getTranscribeProgress(a),
   };
@@ -1015,6 +1019,55 @@ describe("a link whose site transcript track cannot be fetched", () => {
   });
 });
 
+describe("a link transcribed from the site's own subtitles keeps its audio's expiry", () => {
+  // Without it the export panel reads the server audio as kept forever and keeps offering it.
+  const url = "https://youtu.be/sitetx";
+  const site = { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] };
+  const runOnce = async (meta: Record<string, unknown>) => {
+    fetchUrlSubtitles.mockImplementation(async () => ({
+      tracks: [{ id: "en", lang: "en", kind: "manual" as const, ext: "srt" as const, text: "1\n00:00:00,000 --> 00:00:01,000\nHi.\n" }],
+      failed: [],
+    }));
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    try {
+      useTranscribeRun.setState({
+        files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {},
+        urlMeta: { [url]: { siteSubs: site, ...meta } },
+      });
+      startRun(undefined, {}, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      return useTranscribeRun.getState().queue.find((it) => it.path === url)?.result;
+    } finally {
+      vi.unstubAllGlobals();
+      fetchUrlSubtitles.mockReset();
+      fetchUrlAudioOnDemand.mockReset();
+      useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {}, urlMeta: {} });
+    }
+  };
+
+  it("stamps the on-demand download's expiry", async () => {
+    fetchUrlAudioOnDemand.mockImplementation(async () => ({ mediaId: "a1", expiresAt: 1_900_000_000, height: null, container: null, bytes: null }));
+    const res = await runOnce({});
+    expect(res?.sourceMediaId).toBe("a1");
+    expect(res?.sourceMediaExpiresAt).toBe(1_900_000_000);
+  });
+
+  it("stamps the language check's expiry when its audio is reused", async () => {
+    fetchUrlAudioOnDemand.mockImplementation(async () => { throw new Error("not reached"); });
+    const res = await runOnce({ prefetchMediaId: "p1", prefetchBackendId: "b1", prefetchExpiresAt: 1_800_000_000 });
+    expect(fetchUrlAudioOnDemand).not.toHaveBeenCalled();
+    expect(res?.sourceMediaId).toBe("p1");
+    expect(res?.sourceMediaExpiresAt).toBe(1_800_000_000);
+  });
+
+  it("stamps none when the server names no expiry", async () => {
+    fetchUrlAudioOnDemand.mockImplementation(async () => ({ mediaId: "a2", expiresAt: null, height: null, container: null, bytes: null }));
+    const res = await runOnce({});
+    expect(res?.sourceMediaId).toBe("a2");
+    expect(res && "sourceMediaExpiresAt" in res).toBe(false);
+  });
+});
+
 describe("keep_video: the secondary download folds into the Download row's meta", () => {
   it("keeps the video state and stamps its own rate clock, never reopening the stage clock", () => {
     useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
@@ -1306,17 +1359,26 @@ describe("translateParsed joins a text source like the TXT export", () => {
   it("a list over the server's limit sends the first ones and names the rest", async () => {
     // The text route rejects an over-limit list whole (a link's frozen site plan, a list kept
     // from a higher-limit backend): cut it here, in the audio route's own warning words.
-    translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
-    const r = await translateParsed(
-      { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, { ...ctx, translationMaxTargets: 2 },
-    );
-    expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
-    expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
+    const { useApp } = await import("./store");
+    const before = useApp.getState().caps;
+    useApp.setState({
+      caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
+    });
+    try {
+      translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
+      const r = await translateParsed(
+        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es", "it"] }, ctx,
+      );
+      expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+      expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es, it");
+    } finally {
+      useApp.setState({ caps: before });
+    }
   });
 
   it("a retry with no limit on its context reads the server's from the cached caps", async () => {
-    // A retry built before this backend's caps loaded carries no translationMaxTargets: the
-    // text route would 422 the whole list, so the cap is resolved here like the viewer does.
+    // The run context carries no limit: the text route would 422 the whole list, so the cap is
+    // read live from the backend's caps here, like the viewer does.
     const { useApp } = await import("./store");
     const before = useApp.getState().caps;
     useApp.setState({
@@ -1335,14 +1397,28 @@ describe("translateParsed joins a text source like the TXT export", () => {
   });
 
   it("within the limit, or with an unknown limit (the app's ceiling), the whole list goes out without a warning", async () => {
+    // undefined = no caps for b1: the app's ceiling applies.
+    const { useApp } = await import("./store");
+    const before = useApp.getState().caps;
     translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
-    for (const max of [2, undefined]) {
-      translateText.mockClear();
-      const r = await translateParsed(
-        { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, { ...ctx, translationMaxTargets: max },
-      );
-      expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
-      expect(r.warnings ?? []).toEqual([]);
+    try {
+      for (const max of [2, undefined]) {
+        const rest: Record<string, unknown> = { ...before };
+        delete rest.b1;
+        useApp.setState({
+          caps: (max === undefined
+            ? rest
+            : { ...rest, b1: { server_info: { limits: { translation_max_targets: max } } } }) as never,
+        });
+        translateText.mockClear();
+        const r = await translateParsed(
+          { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr"] }, ctx,
+        );
+        expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
+        expect(r.warnings ?? []).toEqual([]);
+      }
+    } finally {
+      useApp.setState({ caps: before });
     }
   });
 });

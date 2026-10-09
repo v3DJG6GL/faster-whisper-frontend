@@ -506,12 +506,6 @@ export interface RunContext {
    *  that lands on one without it drops the last run's translation settings. Unset = unknown
    *  (caps not loaded): only a standard server is assumed to lack it. */
   translationAvailable?: boolean;
-  /** The server's translation target limit (caps' translation_max_targets) when it translates:
-   *  translateParsed cuts to it (the text route rejects a longer list outright; the audio route
-   *  drops the extras itself, with a warning). Unset = not known when the run was built:
-   *  translateParsed then reads the backend's cached caps (fetching them once if absent) and cuts
-   *  to that limit, or to the app ceiling when the server reports none. */
-  translationMaxTargets?: number;
   /** The server packages subtitles (caps.media_package_enabled): a local
    *  VIDEO file then asks the server to retain the upload for a while, so
    *  an export right after needs no second upload. */
@@ -585,6 +579,9 @@ export interface TranscribeRunState {
     spokenMultiInherited?: boolean;
     /** Audio the spoken-language check already downloaded; the run reuses it. */
     prefetchMediaId?: string;
+    /** When the server deletes `prefetchMediaId` (the check's mediaExpiresAt): a site
+     *  transcript that reuses the audio stamps it, so playback/export stop offering it after. */
+    prefetchExpiresAt?: number;
     /** The backend that issued `prefetchMediaId` (see linkPrefetchFor). */
     prefetchBackendId?: string;
     /** The link card's site-subtitle plan (D86), frozen at Add link. */
@@ -1654,11 +1651,12 @@ export async function translateParsed(
   // Over the server's limit the text route rejects the whole request: keep the first ones and
   // name the rest, in the audio route's own words (it drops them server-side).
   const all = options.translateTo ?? [];
-  let cap = ctx.translationMaxTargets;
-  if (cap === undefined && all.length) {
-    // A retry before this backend's caps loaded carries no limit: resolve it the way the
-    // viewer's Translate does (TranscriptViewer) — fetch caps never fetched (never throws),
-    // and a server that really reports nothing keeps the app's documented ceiling.
+  let cap: number | undefined;
+  if (all.length) {
+    // The limit is read live from this backend's caps (a long batch follows a server that
+    // lowers it mid-run), the way the viewer's Translate does (TranscriptViewer): fetch caps
+    // never fetched (never throws), and a server that really reports nothing keeps the app's
+    // documented ceiling.
     if (!hasOwn(useApp.getState().caps, ctx.backendId)) {
       const b = useApp.getState().backends.find((x) => x.id === ctx.backendId);
       if (b) await refreshCaps(b, { force: true });
@@ -1887,10 +1885,14 @@ async function runLink(
   }
   // The transcript is the site's: keep the audio (the check's download, else one now).
   const warnings = [...got.warnings];
+  // Its expiry rides along: without one the export panel reads the audio as kept forever.
   let audio = prefetch ?? null;
+  let audioExp: number | undefined = prefetch ? meta?.prefetchExpiresAt : undefined;
   if (!audio && epoch === get().epoch) {
     try {
-      audio = (await fetchUrlAudioOnDemand({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, progressId: pid })).mediaId;
+      const dl = await fetchUrlAudioOnDemand({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, url, progressId: pid });
+      audio = dl.mediaId;
+      audioExp = dl.expiresAt ?? undefined;
     } catch (e) {
       warnings.push(`The audio could not be downloaded, so there is no playback: ${errorText(e)}`);
     }
@@ -1907,7 +1909,7 @@ async function runLink(
       {
         ...res,
         ...(meta?.durationSec ? { duration: meta.durationSec } : {}),
-        ...(audio ? { sourceMediaId: audio } : {}),
+        ...(audio ? { sourceMediaId: audio, ...(audioExp != null ? { sourceMediaExpiresAt: audioExp } : {}) } : {}),
         ...(videoPid ? { sourceVideoPending: true } : {}),
       },
       { others: got.others, warnings },

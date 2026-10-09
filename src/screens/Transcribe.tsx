@@ -668,6 +668,7 @@ export default function Transcribe() {
         // Gated on multiOffered: a server that refuses or locks the key never gets it sent.
         spokenMultiInherited: multiOffered && inheritedBaseline.multilingual === true,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,
+        prefetchExpiresAt: linkLang.prefetchExpiresAt ?? undefined,
         prefetchBackendId: linkLang.prefetchBackendId ?? undefined,
         siteSubs: siteView?.run ? frozenSiteRun(siteView.run, siteInput?.tracks ?? [], translationAvailable) : undefined,
       });
@@ -683,6 +684,7 @@ export default function Transcribe() {
         spokenLanguage: undefined,
         spokenMultiInherited: undefined,
         prefetchMediaId: undefined,
+        prefetchExpiresAt: undefined,
         prefetchBackendId: undefined,
         siteSubs: undefined,
       });
@@ -886,7 +888,6 @@ export default function Transcribe() {
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
       // Unknown caps (not probed yet) stay unknown: a retry then keeps its translation slice.
       translationAvailable: caps ? translationAvailable : undefined,
-      translationMaxTargets: caps && translationAvailable ? maxTranslationTargets(caps) : undefined,
       mediaPackageEnabled: !isStandard && caps?.media_package_enabled === true,
       jobsEnabled: !isStandard && caps?.jobs_enabled === true,
       mediaMaxBytes: caps?.media_max_bytes,
@@ -903,8 +904,8 @@ export default function Transcribe() {
     // silently swallowed an explicit Translate-to-English).
     // Sent whole even over a lower server's limit: the audio route drops the extras with a
     // result warning naming them, and translateParsed (subtitle/text files, a link's site
-    // transcript) cuts to ctx.translationMaxTargets with the same warning — sent whole there,
-    // the text route rejects the whole translation.
+    // transcript) cuts to the server's limit from the backend's caps with the same warning —
+    // sent whole there, the text route rejects the whole translation.
     const effTargets = translationAvailable ? translateTo : [];
     const t2t = effTargets.length > 0;
     // "Authoritative" now has to be SAID, not just implied by omission: the server reads
