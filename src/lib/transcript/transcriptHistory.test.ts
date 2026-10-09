@@ -134,6 +134,29 @@ describe("loadHistory", () => {
     expect(() => appChipLabel(r)).not.toThrow();
   });
 
+  it("keeps a record with non-array target lists, repairing only those fields", async () => {
+    const base = {
+      schemaVersion: 1,
+      kind: "dictation",
+      createdAt: "2026-01-02T03:04:05.000Z",
+      sourcePath: "",
+      sourceName: "Dictation",
+      status: "done",
+    };
+    listTranscriptRecords.mockResolvedValue([
+      { ...base, id: "str-targets", translationTargets: "de", result: { text: "x", translation: { targets: "de", model: "m" } } },
+      { ...base, id: "mixed-targets", translationTargets: ["fr", 7, null], result: { text: "x", translation: { targets: ["it", {}] } } },
+    ]);
+    await loadHistory(true);
+    const s = saved("str-targets");
+    expect(s.translationTargets).toBeUndefined();
+    expect(s.result?.translation).toEqual({ targets: [], model: "m" });
+    expect(s.result?.text).toBe("x");
+    const m = saved("mixed-targets");
+    expect(m.translationTargets).toEqual(["fr"]);
+    expect(m.result?.translation?.targets).toEqual(["it"]);
+  });
+
   it("survives a rejected listing", async () => {
     listTranscriptRecords.mockRejectedValue(new Error("no disk"));
     await loadHistory(true);

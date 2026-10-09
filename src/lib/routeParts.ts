@@ -18,7 +18,8 @@ export function routeParts(
   source: string,
   targets?: string[] | null,
 ): { source: string; targets: string[]; more: number } {
-  const labels = (targets ?? [])
+  // Array.isArray, not `?? []`: a record read back from disk can carry a string here.
+  const labels = (Array.isArray(targets) ? targets : [])
     .map((t) => (typeof t === "string" ? t.trim() : ""))
     .filter(Boolean)
     .map((t) => safeDisplayText(languageLabel(t), 24));

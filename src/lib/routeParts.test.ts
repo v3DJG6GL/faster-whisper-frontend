@@ -14,6 +14,10 @@ describe("routeParts", () => {
     expect(routeParts("German", null)).toEqual({ source: "German", targets: [], more: 0 });
   });
 
+  it("treats a non-array targets value (a damaged record read from disk) as no targets", () => {
+    expect(routeParts("German", "de" as unknown as string[])).toEqual({ source: "German", targets: [], more: 0 });
+  });
+
   it("labels the target codes", () => {
     expect(routeParts("German", ["fr", "it"]).targets).toEqual(["French", "Italian"]);
   });

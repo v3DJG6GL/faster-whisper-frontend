@@ -139,6 +139,34 @@ function isRecord(v: unknown): v is TranscriptRecord {
   );
 }
 
+/** Only the string entries of a target list read back from disk; `undefined` when it is not
+ *  an array at all. A string ("de") passes every `?.length` check and then throws at `.map`. */
+function stringTargets(v: unknown): string[] | undefined {
+  return Array.isArray(v) ? v.filter((t): t is string => typeof t === "string") : undefined;
+}
+
+/** Repair the fields a malformed file would crash the History render with, keeping the record:
+ *  a non-string appId throws in the search and app chips (`.toLowerCase()` / `.split()`), a
+ *  non-array target list in the route badge and the provenance line (`.map`). */
+function repairRecord(r: TranscriptRecord): TranscriptRecord {
+  let out = r;
+  if (r.appId != null && typeof r.appId !== "string") out = { ...out, appId: undefined };
+  if (r.translationTargets != null && !Array.isArray(r.translationTargets)) {
+    out = { ...out, translationTargets: undefined };
+  } else if (r.translationTargets?.some((t) => typeof t !== "string")) {
+    out = { ...out, translationTargets: stringTargets(r.translationTargets) };
+  }
+  const tr = r.result?.translation as unknown;
+  if (r.result && tr && typeof tr === "object") {
+    const targets = (tr as { targets?: unknown }).targets;
+    const clean = stringTargets(targets) ?? [];
+    if (!Array.isArray(targets) || clean.length !== targets.length) {
+      out = { ...out, result: { ...r.result, translation: { ...(tr as object), targets: clean } } };
+    }
+  }
+  return out;
+}
+
 function newestFirst(records: TranscriptRecord[]): TranscriptRecord[] {
   // A consistent comparator (equal stamps → 0): two records minted in the same millisecond
   // are reachable, and an inconsistent comparator's tie order is implementation-defined.
@@ -169,14 +197,9 @@ export function loadHistory(force = false): Promise<void> {
   loading = listTranscriptRecords()
     .then((raw) => {
       const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();
-      // A non-string appId (hand-edited or foreign file) would throw in the History search and
-      // app chips (`.toLowerCase()` / `.split()`); keep the record, drop only the bad field.
-      const byId = new Map(
-        raw
-          .filter(isRecord)
-          .map((r) => (r.appId != null && typeof r.appId !== "string" ? { ...r, appId: undefined } : r))
-          .map((r) => [r.id, r]),
-      );
+      // A field of the wrong shape (hand-edited or foreign file) would throw in the History
+      // render; keep the record, repair only the bad fields (repairRecord).
+      const byId = new Map(raw.filter(isRecord).map(repairRecord).map((r) => [r.id, r]));
       for (const [id, rec] of touched) {
         if (rec) byId.set(id, rec);
         else byId.delete(id);
