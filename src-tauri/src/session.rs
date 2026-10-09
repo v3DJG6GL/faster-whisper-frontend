@@ -135,8 +135,8 @@ pub struct DetachedStream {
     settled: AtomicBool,
 }
 
-/// Discard the recording of the stream session still draining after a stop, if any. Called by
-/// `cancel_stream` only for a user's Cancel that found no live session. The guard is held across
+/// Discard the recording of the stream session still draining after a stop, if any. Called (via
+/// [`settle_detached_on_cancel`]) only for a user's Cancel that found no live session. The guard is held across
 /// the store so the drain's [`settle_detached_stream`] sees either the flag set or an empty slot.
 pub fn cancel_detached_stream() {
     if let Ok(mut s) = DETACHED_STREAM.lock() {
@@ -146,6 +146,19 @@ pub fn cancel_detached_stream() {
                 "[stream] cancel after stop: the draining session will save no recording"
             );
         }
+    }
+}
+
+/// The detached-drain half of `cancel_stream`, decided under the stream state lock. Taking a LIVE
+/// session (any Cancel, the closed-handler release) supersedes an earlier drain as the Cancel
+/// target, as a settled claim does, so a later Cancel meant for that session cannot discard the
+/// one before it. With no live session, a user's Cancel discards the drain and a recovery cancel
+/// (`discard_recording: false`) releases it, so its keep is final; the release leaves it alone.
+pub fn settle_detached_on_cancel(took_live: bool, user_initiated: bool, discard_recording: bool) {
+    if took_live || (user_initiated && !discard_recording) {
+        forget_detached_stream();
+    } else if user_initiated {
+        cancel_detached_stream();
     }
 }
 
@@ -1782,7 +1795,7 @@ Sink Input #12\n\
         // parallel, and a second fn would race the global.
         use super::{
             cancel_detached_stream, claim_detached_stream, forget_detached_stream,
-            settle_detached_stream, DetachedStream, DETACHED_STREAM,
+            settle_detached_on_cancel, settle_detached_stream, DetachedStream, DETACHED_STREAM,
         };
         use std::sync::atomic::Ordering;
         use std::sync::Arc;
@@ -1839,6 +1852,42 @@ Sink Input #12\n\
         assert!(
             !discarded(&e),
             "nor the earlier drain the settled claim superseded"
+        );
+
+        // Taking a live session supersedes an earlier drain on every cancel path (the release of a
+        // server-closed session included); with none, only the user's Cancel discards.
+        let h = flag();
+        claim(&h);
+        settle_detached_on_cancel(true, false, true);
+        cancel_detached_stream();
+        assert!(
+            !discarded(&h),
+            "the release of a newer session superseded the drain"
+        );
+        claim(&h);
+        settle_detached_on_cancel(true, true, true);
+        cancel_detached_stream();
+        assert!(
+            !discarded(&h),
+            "a Cancel of a newer live session superseded the drain"
+        );
+        claim(&h);
+        settle_detached_on_cancel(false, false, true);
+        assert!(
+            !discarded(&h),
+            "the release with no live session leaves the drain alone"
+        );
+        settle_detached_on_cancel(false, true, false);
+        cancel_detached_stream();
+        assert!(
+            !discarded(&h),
+            "a recovery cancel releases the drain for good"
+        );
+        claim(&h);
+        settle_detached_on_cancel(false, true, true);
+        assert!(
+            discarded(&h),
+            "a user's Cancel with no live session discards the drain"
         );
 
         // A Cancel before the decision is the one the drain reads.

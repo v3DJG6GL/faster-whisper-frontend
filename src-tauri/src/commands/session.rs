@@ -133,15 +133,9 @@ pub async fn cancel_stream(
             // discard its recording, as cancel_record does for a detached batch. Not for the
             // closed-handler release, nor for a recovery cancel (stuck finalize, wake from sleep)
             // where the saved audio may be the only copy of what was said: that one RELEASES the
-            // drain instead — whether or not it also found a live session — so its keep is final
-            // and no later stray Cancel can still reach it.
-            if user_initiated {
-                if !discard_recording {
-                    session::forget_detached_stream();
-                } else if sess.is_none() {
-                    session::cancel_detached_stream();
-                }
-            }
+            // drain instead, so its keep is final and no later stray Cancel can still reach it.
+            // A live session taken on any path is the newest one, so it releases the drain too.
+            session::settle_detached_on_cancel(sess.is_some(), user_initiated, discard_recording);
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
             // this prevents a race where a new session claims epoch N+1, the lock drops, and THEN
             // the stale retire bumps to N+2 — silencing the new session's emissions.
