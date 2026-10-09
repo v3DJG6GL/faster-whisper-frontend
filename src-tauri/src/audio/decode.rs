@@ -60,15 +60,17 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
 /// Fill `out` from `decode` unless it is already cached — one caller per `out` at a time. The
 /// viewer re-requests the decode on every open and only ignores stale results (the blocking
 /// decode is never cancelled), so reopening a transcript mid-decode used to run a second full
-/// decode beside the first: another up-to-640 MiB buffer. Now the second caller waits and takes
-/// the cache-hit branch.
+/// decode beside the first: another up-to-640 MiB buffer. Now the waiters share the leader's
+/// outcome: a success through the cache-hit branch, a failure through the error the leader
+/// stored in the slot (else each queued open re-ran the same doomed decode, one after another).
+/// The slot dies with its last holder, so a later fresh open retries.
 fn cache_single_flight(
     dir: &std::path::Path,
     out: &std::path::Path,
     decode: impl FnOnce() -> Result<Vec<u8>, String>,
 ) -> Result<(), String> {
     let slot = InflightSlot::acquire(out);
-    let _held = slot.lock();
+    let mut held = slot.lock();
     if out.exists() {
         // Touch the mtime so eviction is really least-RECENTLY-used: `prune_cache` orders by
         // mtime, and a pure read left the transcript replayed daily looking older than one
@@ -80,14 +82,22 @@ fn cache_single_flight(
         prune_cache(dir, out);
         return Ok(());
     }
-    let wav = decode()?;
-    write_cached(out, &wav)?;
+    if let Some(e) = held.as_ref() {
+        // Queued behind a failed run of this same flight.
+        return Err(e.clone());
+    }
+    let result = decode().and_then(|wav| write_cached(out, &wav));
+    if let Err(e) = &result {
+        *held = Some(e.clone());
+        return result;
+    }
     prune_cache(dir, out);
     Ok(())
 }
 
-type InflightMap =
-    std::collections::HashMap<std::path::PathBuf, std::sync::Arc<std::sync::Mutex<()>>>;
+/// Per path: the flight's failure, if its leader failed (`None` while undecided or on success).
+type InflightLock = std::sync::Arc<std::sync::Mutex<Option<String>>>;
+type InflightMap = std::collections::HashMap<std::path::PathBuf, InflightLock>;
 
 /// Per-output-path locks for `cache_single_flight`. Per path, not one global lock: a newly
 /// opened DIFFERENT transcript must not queue behind a stale decode of another one.
@@ -98,7 +108,7 @@ static INFLIGHT: std::sync::LazyLock<std::sync::Mutex<InflightMap>> =
 /// holds it, so the map doesn't grow by one key per transcript ever opened.
 struct InflightSlot {
     out: std::path::PathBuf,
-    lock: std::sync::Arc<std::sync::Mutex<()>>,
+    lock: InflightLock,
 }
 
 impl InflightSlot {
@@ -111,8 +121,8 @@ impl InflightSlot {
         }
     }
 
-    /// Poison-tolerant: the mutex guards no data, a panicked decode just releases it.
-    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+    /// Poison-tolerant: a panicked decode stored no error, so the next waiter just retries.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Option<String>> {
         self.lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
@@ -147,11 +157,11 @@ fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
 /// Tmp-file sequence: the pid alone is shared by every call in this process.
 static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// A per-CALL unique tmp name, so two concurrent decodes of the same file (e.g. a retry while
-/// the first decode is still running) write independent tmp files and the loser's rename simply
-/// overwrites with identical bytes — a shared name let the first rename take the second call's
-/// tmp, failing that rename with ENOENT. Still ends in `.tmp`, so `prune_cache_to` skips it
-/// while this process runs; another process's tmp (see `cache_tmp_pid`) is swept.
+/// A per-CALL unique tmp name. `cache_single_flight` already serialises the writers of one `out`
+/// in this process; the `<pid>-<seq>` tag keeps every tmp name unique anyway (defence in depth:
+/// a shared name let one rename take another write's tmp, failing the second rename with
+/// ENOENT) and lets `prune_cache_to` tell this process's in-flight tmp (skipped) from another
+/// process's orphan (swept, see `cache_tmp_pid`).
 fn cache_tmp_path(out: &std::path::Path) -> std::path::PathBuf {
     out.with_extension(format!(
         "wav.{:x}-{}.tmp",
@@ -434,6 +444,44 @@ mod tests {
         assert!(
             !INFLIGHT.lock().unwrap().contains_key(&out),
             "the in-flight entry is released afterwards"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn waiters_share_a_failed_decode_and_a_later_open_retries() {
+        let dir = std::env::temp_dir().join(format!("fwf-decode-fail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("abc.wav");
+        let decodes = std::sync::atomic::AtomicUsize::new(0);
+        let failing = || {
+            decodes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            Err::<Vec<u8>, _>("x".to_string())
+        };
+        std::thread::scope(|s| {
+            let calls: Vec<_> = (0..2)
+                .map(|_| s.spawn(|| cache_single_flight(&dir, &out, failing)))
+                .collect();
+            for c in calls {
+                assert_eq!(c.join().unwrap(), Err("x".to_string()));
+            }
+        });
+        assert_eq!(
+            decodes.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the waiter takes the leader's error instead of re-running the decode"
+        );
+        assert!(!INFLIGHT.lock().unwrap().contains_key(&out));
+        assert_eq!(
+            cache_single_flight(&dir, &out, failing),
+            Err("x".to_string())
+        );
+        assert_eq!(
+            decodes.into_inner(),
+            2,
+            "a fresh open after the flight retries"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
