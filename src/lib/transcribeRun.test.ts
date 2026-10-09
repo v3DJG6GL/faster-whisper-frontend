@@ -18,6 +18,16 @@ const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUr
 const fetchUrlAudioOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlAudioOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 // Unset = the real outside-Tauri command; the video-poll cadence test answers it.
 const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
+// Unset = the real caps fetch; the translateParsed caps-miss test answers it.
+const refreshCaps = vi.fn<(...a: Parameters<typeof import("./capabilities").refreshCaps>) => Promise<void>>();
+vi.mock("./capabilities", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("./capabilities")>();
+  return {
+    ...orig,
+    refreshCaps: (...a: Parameters<typeof orig.refreshCaps>) =>
+      refreshCaps.getMockImplementation() ? refreshCaps(...a) : orig.refreshCaps(...a),
+  };
+});
 vi.mock("./api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./api")>();
   return {
@@ -1023,6 +1033,8 @@ describe("a link transcribed from the site's own subtitles keeps its audio's exp
   // Without it the export panel reads the server audio as kept forever and keeps offering it.
   const url = "https://youtu.be/sitetx";
   const site = { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] };
+  // The on-demand downloads of the last run, read before the mock is reset below.
+  let downloads = 0;
   const runOnce = async (meta: Record<string, unknown>) => {
     fetchUrlSubtitles.mockImplementation(async () => ({
       tracks: [{ id: "en", lang: "en", kind: "manual" as const, ext: "srt" as const, text: "1\n00:00:00,000 --> 00:00:01,000\nHi.\n" }],
@@ -1039,6 +1051,7 @@ describe("a link transcribed from the site's own subtitles keeps its audio's exp
       return useTranscribeRun.getState().queue.find((it) => it.path === url)?.result;
     } finally {
       vi.unstubAllGlobals();
+      downloads = fetchUrlAudioOnDemand.mock.calls.length;
       fetchUrlSubtitles.mockReset();
       fetchUrlAudioOnDemand.mockReset();
       useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {}, urlMeta: {} });
@@ -1054,10 +1067,22 @@ describe("a link transcribed from the site's own subtitles keeps its audio's exp
 
   it("stamps the language check's expiry when its audio is reused", async () => {
     fetchUrlAudioOnDemand.mockImplementation(async () => { throw new Error("not reached"); });
-    const res = await runOnce({ prefetchMediaId: "p1", prefetchBackendId: "b1", prefetchExpiresAt: 1_800_000_000 });
-    expect(fetchUrlAudioOnDemand).not.toHaveBeenCalled();
+    // Relative to now: a fixed date would turn into the expired case below one day.
+    const exp = Math.floor(Date.now() / 1000) + 3600;
+    const res = await runOnce({ prefetchMediaId: "p1", prefetchBackendId: "b1", prefetchExpiresAt: exp });
+    expect(downloads).toBe(0);
     expect(res?.sourceMediaId).toBe("p1");
-    expect(res?.sourceMediaExpiresAt).toBe(1_800_000_000);
+    expect(res?.sourceMediaExpiresAt).toBe(exp);
+  });
+
+  it("downloads afresh when the language check's audio has already expired", async () => {
+    // A check finished long before Run: the server dropped that id, so reusing it would leave
+    // the transcript without playback.
+    fetchUrlAudioOnDemand.mockImplementation(async () => ({ mediaId: "a3", expiresAt: 1_900_000_000, height: null, container: null, bytes: null }));
+    const res = await runOnce({ prefetchMediaId: "p1", prefetchBackendId: "b1", prefetchExpiresAt: Math.floor(Date.now() / 1000) - 10 });
+    expect(downloads).toBe(1);
+    expect(res?.sourceMediaId).toBe("a3");
+    expect(res?.sourceMediaExpiresAt).toBe(1_900_000_000);
   });
 
   it("stamps none when the server names no expiry", async () => {
@@ -1376,23 +1401,34 @@ describe("translateParsed joins a text source like the TXT export", () => {
     }
   });
 
-  it("a retry with no limit on its context reads the server's from the cached caps", async () => {
-    // The run context carries no limit: the text route would 422 the whole list, so the cap is
-    // read live from the backend's caps here, like the viewer does.
+  it("caps never fetched for this backend are fetched once, then the list is cut to the server's limit", async () => {
+    // A retry against a backend whose caps were never loaded: the text route would 422 the
+    // whole list, so the caps are fetched here first, then the cap is read from them.
     const { useApp } = await import("./store");
     const before = useApp.getState().caps;
+    const prevBackends = useApp.getState().backends;
+    const { b1: _b1, ...rest } = before as Record<string, unknown>;
     useApp.setState({
-      caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
+      caps: rest as never,
+      backends: [...prevBackends, { id: "b1", name: "B1", serverUrl: "http://x" } as never],
+    });
+    refreshCaps.mockImplementation(async () => {
+      useApp.setState({
+        caps: { ...useApp.getState().caps, b1: { server_info: { limits: { translation_max_targets: 2 } } } as never },
+      });
     });
     try {
       translateText.mockImplementation(() => Promise.resolve({ results: [{ de: "Hallo.", fr: "Salut." }] }));
       const r = await translateParsed(
         { segments: [{ text: "Hi." }] }, { translateTo: ["de", "fr", "es"] }, ctx,
       );
+      expect(refreshCaps).toHaveBeenCalledTimes(1);
+      expect(refreshCaps).toHaveBeenCalledWith(expect.objectContaining({ id: "b1" }), { force: true });
       expect(translateText.mock.calls[0][0].targets).toEqual(["de", "fr"]);
       expect(r.warnings).toContain("translation targets over TRANSLATION_MAX_TARGETS (2) were dropped: es");
     } finally {
-      useApp.setState({ caps: before });
+      refreshCaps.mockReset();
+      useApp.setState({ caps: before, backends: prevBackends });
     }
   });
 
@@ -1430,5 +1466,10 @@ describe("linkPrefetchFor — a prefetched media id only goes back to the server
     expect(linkPrefetchFor(meta, "B")).toBeUndefined();
     expect(linkPrefetchFor({ prefetchMediaId: "m" }, "A")).toBeUndefined(); // issuer unknown
     expect(linkPrefetchFor(undefined, "A")).toBeUndefined();
+  });
+
+  it("drops an expired id and keeps one whose expiry is unknown", () => {
+    expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: 1 }, "A")).toBeUndefined();
+    expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: undefined }, "A")).toBe("m");
   });
 });

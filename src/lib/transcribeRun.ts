@@ -1829,12 +1829,16 @@ export function linkTranslateTo(
 
 /** The link card's prefetched media id, only when the run goes to the backend that issued it:
  *  a media id is only good on the server that stored it. A backend switched after Add link
- *  gets nothing, so the run downloads on its own server instead of pointing at a foreign id. */
+ *  gets nothing, so the run downloads on its own server instead of pointing at a foreign id.
+ *  A check download that has expired (or will within a minute: run latency, clock skew) counts
+ *  as absent too — the server has dropped it, and a site transcript would keep a dead id. */
 export function linkPrefetchFor(
-  meta: { prefetchMediaId?: string; prefetchBackendId?: string } | undefined,
+  meta: { prefetchMediaId?: string; prefetchBackendId?: string; prefetchExpiresAt?: number } | undefined,
   backendId: string,
 ): string | undefined {
-  return meta?.prefetchMediaId && meta.prefetchBackendId === backendId ? meta.prefetchMediaId : undefined;
+  if (!meta?.prefetchMediaId || meta.prefetchBackendId !== backendId) return undefined;
+  if (meta.prefetchExpiresAt != null && meta.prefetchExpiresAt <= Date.now() / 1000 + 60) return undefined;
+  return meta.prefetchMediaId;
 }
 
 /** A link run: the link card's spoken language and reused audio, and — when the
