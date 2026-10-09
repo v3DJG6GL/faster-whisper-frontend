@@ -455,30 +455,49 @@ pub async fn package_media(
     let audio_lang = audio_lang.filter(|l| media::is_package_lang(l));
     let audio_label = media::bound_label(audio_label.as_deref());
     let dest = PathBuf::from(&dest_path);
-    let Some(parent) = dest.parent().filter(|p| p.is_dir()) else {
-        return Err("the export folder does not exist".into());
-    };
-    if inside_app_storage(&app, audio_base, parent) {
-        return Err("choose a folder outside the app's own storage".into());
-    }
     let max_upload = max_upload_bytes.unwrap_or(crate::store::transcripts::MAX_MEDIA_BYTES);
-    let (media_id, path) = match (source_media_id, source_path) {
-        (Some(id), None) => {
-            transport::gate_media_id(&id).map_err(|e| e.to_string())?;
-            (Some(id), None)
-        }
-        (None, Some(p)) => {
-            let p = PathBuf::from(p);
-            let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
-            if !meta.is_file() {
-                return Err("the video is not a file".into());
+    // The folder and source-file checks touch the disk (is_dir, canonicalize, metadata):
+    // on the blocking pool, so a stalled mount must not park a runtime worker. The inner
+    // Err is an outcome (too_large) the caller returns as Ok.
+    type Source = (Option<String>, Option<PathBuf>);
+    let checks_app = app.clone();
+    let checks_dest = dest.clone();
+    let checked = tauri::async_runtime::spawn_blocking(
+        move || -> Result<Result<Source, PackageOutcome>, String> {
+            let Some(parent) = checks_dest.parent().filter(|p| p.is_dir()) else {
+                return Err("the export folder does not exist".into());
+            };
+            if inside_app_storage(&checks_app, audio_base, parent) {
+                return Err("choose a folder outside the app's own storage".into());
             }
-            if meta.len() > max_upload {
-                return Ok(PackageOutcome::err("too_large", media::TOO_LARGE_DETAIL));
+            match (source_media_id, source_path) {
+                (Some(id), None) => {
+                    transport::gate_media_id(&id).map_err(|e| e.to_string())?;
+                    Ok(Ok((Some(id), None)))
+                }
+                (None, Some(p)) => {
+                    let p = PathBuf::from(p);
+                    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+                    if !meta.is_file() {
+                        return Err("the video is not a file".into());
+                    }
+                    if meta.len() > max_upload {
+                        return Ok(Err(PackageOutcome::err(
+                            "too_large",
+                            media::TOO_LARGE_DETAIL,
+                        )));
+                    }
+                    Ok(Ok((None, Some(p))))
+                }
+                _ => Err("name exactly one of a media id or a local file".into()),
             }
-            (None, Some(p))
-        }
-        _ => return Err("name exactly one of a media id or a local file".into()),
+        },
+    )
+    .await
+    .map_err(|e| e.to_string())??;
+    let (media_id, path) = match checked {
+        Ok(source) => source,
+        Err(outcome) => return Ok(outcome),
     };
     let key = resolve_key_async(api_key, backend_id).await;
     let emit_app = app.clone();
@@ -701,36 +720,38 @@ pub async fn copy_media_to(
     }
     let src_path = PathBuf::from(&src);
     let dest_path = PathBuf::from(&dest);
-    let src_real = src_path
-        .canonicalize()
-        .map_err(|e| format!("reading the media file: {e}"))?;
-    if !src_real.is_file() {
-        return Err("the media file is missing".into());
-    }
-    let owned = crate::store::transcripts::record_media_paths(&app, &record_id)
-        .iter()
-        .any(|p| p.canonicalize().map(|c| c == src_real).unwrap_or(false));
-    let in_store = resolve_audio_base(&app, audio_base.clone())
-        .map(|b| AUDIO_SUBDIRS.iter().any(|s| under(&b.join(s), &src_real)))
-        .unwrap_or(false);
-    if !owned && !in_store {
-        return Err("that file does not belong to this transcription".into());
-    }
-    let Some(parent) = dest_path.parent().filter(|p| p.is_dir()) else {
-        return Err("the export folder does not exist".into());
-    };
-    if inside_app_storage(&app, audio_base, parent) {
-        return Err("choose a folder outside the app's own storage".into());
-    }
-    if dest_path
-        .canonicalize()
-        .map(|c| c == src_real)
-        .unwrap_or(false)
-    {
-        return Err("that is the file itself".into());
-    }
     let no_clobber = no_clobber.unwrap_or(false);
+    // Every check below touches the disk (canonicalize, the record read, is_dir), so it
+    // runs on the blocking pool with the copy: a stalled mount must not park a worker.
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<u64>, String> {
+        let src_real = src_path
+            .canonicalize()
+            .map_err(|e| format!("reading the media file: {e}"))?;
+        if !src_real.is_file() {
+            return Err("the media file is missing".into());
+        }
+        let owned = crate::store::transcripts::record_media_paths(&app, &record_id)
+            .iter()
+            .any(|p| p.canonicalize().map(|c| c == src_real).unwrap_or(false));
+        let in_store = resolve_audio_base(&app, audio_base.clone())
+            .map(|b| AUDIO_SUBDIRS.iter().any(|s| under(&b.join(s), &src_real)))
+            .unwrap_or(false);
+        if !owned && !in_store {
+            return Err("that file does not belong to this transcription".into());
+        }
+        let Some(parent) = dest_path.parent().filter(|p| p.is_dir()) else {
+            return Err("the export folder does not exist".into());
+        };
+        if inside_app_storage(&app, audio_base, parent) {
+            return Err("choose a folder outside the app's own storage".into());
+        }
+        if dest_path
+            .canonicalize()
+            .map(|c| c == src_real)
+            .unwrap_or(false)
+        {
+            return Err("that is the file itself".into());
+        }
         let tmp = transport::media::tmp_sibling(&dest_path);
         // No-clobber: claim the name BEFORE copying, so a taken name costs no copy; then
         // rename the finished copy over our own placeholder. Held until this closure returns,
