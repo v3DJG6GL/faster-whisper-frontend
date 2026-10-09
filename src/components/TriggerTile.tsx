@@ -221,7 +221,9 @@ export function TriggerTile({
           capturing || justSet
             ? "border-accent ring-[3px] ring-accent/20"
             : pending
-              ? "border-warn"
+              ? pending.clear
+                ? "border-line"
+                : "border-warn"
               : codes.length === 0
                 ? "border-dashed border-line-strong"
                 : "border-line",
@@ -293,7 +295,7 @@ export function TriggerTile({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: -3 }}
           transition={{ duration: reduce ? 0 : 0.16 }}
-          className={cn("text-[13px]", pending ? "text-warn" : "text-dim")}
+          className={cn("text-[13px]", pending && !pending.clear ? "text-warn" : "text-dim")}
         >
           {pending ? clashText(pending) : sentence}
         </motion.p>
@@ -307,6 +309,8 @@ export function TriggerTile({
 
 function clashText(p: PendingChord): string {
   const keys = chordPhrase(p.codes);
+  // An Activation flip while the clash was parked can end it: say so, not who would lose keys.
+  if (p.clear) return `Nothing else uses ${keys} now. Use it here to keep it.`;
   return p.kind === "duplicate"
     ? `“${p.otherName}” already uses ${keys}. Use it here and “${p.otherName}” loses its shortcut.`
     : `${keys} overlaps the shortcut of “${p.otherName}”, so one would set off the other. Use it here and “${p.otherName}” loses its shortcut.`;

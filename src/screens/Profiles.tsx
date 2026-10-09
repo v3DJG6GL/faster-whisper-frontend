@@ -865,7 +865,7 @@ export default function Profiles() {
     const c = list[0];
     return c.kind === "duplicate"
       ? `Same shortcut as “${nameOf(c.otherId)}” — resolve to save & register.`
-      : `Overlaps “${nameOf(c.otherId)}” — one chord shadows the other.`;
+      : `Overlaps “${nameOf(c.otherId)}” — one would set off the other; resolve to save & register.`;
   };
 
   const startAdd = () => {

@@ -76,7 +76,10 @@ export function useHotkeyCapture(opts: {
   const { capturing, lowLevelActive } = opts;
   const [heldCodes, setHeldCodes] = useState<string[]>([]);
   const [warn, setWarn] = useState<string | null>(null);
-  const [pending, setPending] = useState<PendingChord | null>(null);
+  // The chord parked by a clash. Only the keys are kept: who it clashes with is derived on every
+  // render (`describe`), because the tile's Activation stays live while it is parked and a flip can
+  // change the owner, or end the clash, before "Use it here" is clicked.
+  const [parked, setParked] = useState<{ codes: string[] } | null>(null);
   // Keep the latest callbacks/others without retriggering the capture effect
   // (which would re-add listeners + re-suspend hotkeys on every render).
   const ref = useRef(opts);
@@ -93,7 +96,7 @@ export function useHotkeyCapture(opts: {
       setWarn(null);
       return;
     }
-    setPending(null); // a new capture replaces an unanswered clash
+    setParked(null); // a new capture replaces an unanswered clash
     takenRef.current = [];
     const me = { cancel: () => ref.current.onCancel() };
     const prev = activeCapture;
@@ -115,15 +118,7 @@ export function useHotkeyCapture(opts: {
         // them for the clash check too (a side-only-different chord would otherwise warn-free yet collide).
         const clash = findChordConflict(codes, ref.current.others, !lowLevelActive, ref.current.selfKind);
         if (clash) {
-          // The name is peer/blob-authored (`sanitizeProfiles` type-checks it but does not bound it),
-          // and this is the sentence the user reads to decide whether to take the keys over — so it
-          // gets the same defanging as the conflict banner's copy in Profiles.tsx.
-          setPending({
-            codes,
-            otherId: clash.id,
-            otherName: safeDisplayText(clash.name, 60) || "another profile",
-            kind: clash.kind,
-          });
+          setParked({ codes });
           ref.current.onCancel();
           return;
         }
@@ -244,56 +239,79 @@ export function useHotkeyCapture(opts: {
     };
   }, [capturing, lowLevelActive]);
 
+  // The parked chord as the tile shows it, against the bindings as they are NOW: the first owner it
+  // still clashes with that the user has not agreed to take over yet, else the first agreed one that
+  // still clashes (clicking takes its keys, so the warning must stay), else `clear`.
+  const describe = (codes: string[]): PendingChord => {
+    const { others, lowLevelActive: ll, selfKind } = ref.current;
+    const clashIn = (list: Profile[]) => findChordConflict(codes, list, !ll, selfKind);
+    const live =
+      clashIn(others.filter((o) => !takenRef.current.includes(o.id))) ??
+      clashIn(others.filter((o) => takenRef.current.includes(o.id)));
+    if (!live) return { codes, clear: true };
+    // The name is peer/blob-authored (`sanitizeProfiles` type-checks it but does not bound it),
+    // and this is the sentence the user reads to decide whether to take the keys over — so it
+    // gets the same defanging as the conflict banner's copy in Profiles.tsx.
+    return {
+      codes,
+      clear: false,
+      otherId: live.id,
+      otherName: safeDisplayText(live.name, 60) || "another profile",
+      kind: live.kind,
+    };
+  };
+  const pending = parked ? describe(parked.codes) : null;
+
   const acceptPending = () => {
-    if (!pending) return;
-    // The clash was computed when the capture ended; the tile's Activation stays live while it is
-    // parked, so re-check the owner now — a flip that made it the designed hold ⊂ hands-free
-    // nesting must commit without taking that binding's keys away.
-    const owner = ref.current.others.find((o) => o.id === pending.otherId);
-    if (owner && findChordConflict(pending.codes, [owner], !ref.current.lowLevelActive, ref.current.selfKind))
-      takenRef.current = [...takenRef.current, pending.otherId];
-    // findChordConflict reports only the first owner: if another binding clashes too, name it
-    // next instead of committing a set the save gate would refuse.
-    const next = findChordConflict(
-      pending.codes,
-      ref.current.others.filter((o) => !takenRef.current.includes(o.id)),
-      !ref.current.lowLevelActive,
-      ref.current.selfKind,
-    );
-    if (next) {
-      setPending({
-        codes: pending.codes,
-        otherId: next.id,
-        otherName: safeDisplayText(next.name, 60) || "another profile",
-        kind: next.kind,
-      });
-      return;
+    if (!parked) return;
+    const { codes } = parked;
+    // Re-derive at click time rather than trusting the last render.
+    const shown = describe(codes);
+    if (!shown.clear) {
+      if (!takenRef.current.includes(shown.otherId)) takenRef.current = [...takenRef.current, shown.otherId];
+      // findChordConflict reports only the first owner: if another binding clashes too, name it
+      // next instead of committing a set the save gate would refuse.
+      const next = findChordConflict(
+        codes,
+        ref.current.others.filter((o) => !takenRef.current.includes(o.id)),
+        !ref.current.lowLevelActive,
+        ref.current.selfKind,
+      );
+      if (next) {
+        setParked({ codes }); // a new object re-renders, and `describe` names the next owner
+        return;
+      }
     }
     // Re-check every owner taken earlier in this chain too, not only the last one parked: an
     // Activation flip while a later owner was parked can make an earlier clash the designed
     // nesting, whose keys must then stay with it.
     const taken = takenRef.current.filter((id) => {
       const o = ref.current.others.find((x) => x.id === id);
-      return !!o && !!findChordConflict(pending.codes, [o], !ref.current.lowLevelActive, ref.current.selfKind);
+      return !!o && !!findChordConflict(codes, [o], !ref.current.lowLevelActive, ref.current.selfKind);
     });
     takenRef.current = [];
     for (const id of taken) ref.current.onTakeOver(id);
-    ref.current.onCommit(pending.codes);
-    setPending(null);
+    ref.current.onCommit(codes);
+    setParked(null);
   };
   const dismissPending = () => {
     takenRef.current = [];
-    setPending(null);
+    setParked(null);
   };
 
   return { heldCodes, warn, pending, acceptPending, dismissPending };
 }
 
-/** A recorded chord another binding already owns, waiting for "Use it here" / "Try again". */
-export interface PendingChord {
-  codes: string[];
-  otherId: string;
-  /** Display-safe name of the owner (profile name, or "Quick add"). */
-  otherName: string;
-  kind: ConflictKind;
-}
+/** A recorded chord another binding already owns, waiting for "Use it here" / "Try again".
+ *  `clear` = an Activation flip (or a peer edit) ended the clash while it was parked: "Use it here"
+ *  now just keeps the keys, taking nothing away. */
+export type PendingChord =
+  | {
+      codes: string[];
+      clear: false;
+      otherId: string;
+      /** Display-safe name of the owner (profile name, or "Quick add"). */
+      otherName: string;
+      kind: ConflictKind;
+    }
+  | { codes: string[]; clear: true };
