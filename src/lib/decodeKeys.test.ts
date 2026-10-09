@@ -437,6 +437,15 @@ describe("parseLadderInput", () => {
     expect(long.length).toBe(65);
     expect(parseLadderInput(long, false)).toBeNull();
   });
+
+  it("lets a ladder stored over the limits shrink one keystroke at a time", () => {
+    const long = Array(12).fill("0.125").join(","); // 71 characters, stored by an earlier build
+    expect(parseLadderInput(long.slice(0, -1), false, long)).toBe(long.slice(0, -1));
+    expect(parseLadderInput(long + "5", false, long)).toBeNull();
+    const rungs = Array(18).fill("0").join(","); // 18 rungs
+    expect(parseLadderInput(rungs.slice(0, -1), false, rungs)).toBe(rungs.slice(0, -1)); // still 18 parts
+    expect(parseLadderInput(rungs + ",0", false, rungs)).toBeNull();
+  });
 });
 
 describe("stepDecimals", () => {

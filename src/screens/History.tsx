@@ -508,7 +508,9 @@ export default function History() {
         renames: live.renames ?? {},
         colorPicks: live.speakerColors ?? {},
         // The viewer's display toggles (legacy speakerColorMode migration included) — minus the
-        // 1 s placeholder clocks of a plain-text source, which the viewer and Copy hide too.
+        // 1 s placeholder clocks of a plain-text source, which the viewer and Copy hide too. The
+        // export panel deliberately keeps them on its warned switch (its Summary flags them);
+        // this one-click export has no Summary to warn in.
         toggles: { ...displayToggles(t), showTs: displayToggles(t).showTs && !result.timingSynthesized },
         cues: cueOptionsOf(t),
         tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(live.exportTracks).order) : [],

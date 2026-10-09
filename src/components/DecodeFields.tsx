@@ -177,7 +177,11 @@ export function DecodeFields({
           className={cur !== undefined && !fixedLabel ? "border-accent/55" : undefined}
           onChange={(e) => {
             // A ladder stored before (e.g. synced from a full backend) can still be edited down.
-            const parsed = parseLadderInput(e.target.value, standard && !String(cur ?? "").includes(","));
+            const parsed = parseLadderInput(
+              e.target.value,
+              standard && !String(cur ?? "").includes(","),
+              cur === undefined ? "" : String(cur),
+            );
             if (parsed !== null) setField(k, parsed);
           }}
         />
