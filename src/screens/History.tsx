@@ -502,6 +502,7 @@ export default function History() {
       // rather than escape the fire-and-forget `void quickExport(rec)` as a rejection.
       const result = withTrackSites(recordEditedResult(live), live.sourcePath, extractor);
       const all = transcriptTracks(result);
+      const tg = displayToggles(t);
       const files = generateExports(result, exportOptionsFor({
         format,
         speakers: speakerOrder(live.result ?? { text: "" }),
@@ -511,7 +512,7 @@ export default function History() {
         // 1 s placeholder clocks of a plain-text source, which the viewer and Copy hide too. The
         // export panel deliberately keeps them on its warned switch (its Summary flags them);
         // this one-click export has no Summary to warn in.
-        toggles: { ...displayToggles(t), showTs: displayToggles(t).showTs && !result.timingSynthesized },
+        toggles: { ...tg, showTs: tg.showTs && !result.timingSynthesized },
         cues: cueOptionsOf(t),
         tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(live.exportTracks).order) : [],
       }));

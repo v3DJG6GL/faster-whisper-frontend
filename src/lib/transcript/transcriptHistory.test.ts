@@ -21,6 +21,8 @@ const {
   recordEditedResult, recordText, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
+const { trText } = await import("./cueSplit");
+const { translationTracks } = await import("./exportTracks");
 
 const CAPTURE = {
   text: "hello there",
@@ -276,6 +278,102 @@ describe("loadHistory", () => {
     expect(b.speakerEdits).toBeUndefined();
     expect(b.renames).toBeUndefined();
     expect(b.result?.speakers).toBeUndefined();
+  });
+
+  it("repairs damaged per-segment translations so the viewer and the exports cannot throw", async () => {
+    const seg = (text: string, extra: object) => ({ start: 0, end: 1, text, ...extra });
+    const clean = {
+      schemaVersion: 1,
+      kind: "file",
+      id: "clean-tr",
+      createdAt: "2026-01-02T03:04:06.000Z",
+      sourcePath: "/b.wav",
+      sourceName: "b.wav",
+      status: "done",
+      result: { text: "hi", segments: [seg("hi", { translations: { de: "Hallo" }, translationsKept: ["fr"] })] },
+    };
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "bad-tr",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "/a.wav",
+        sourceName: "a.wav",
+        status: "done",
+        result: {
+          text: "a b c d",
+          segments: [
+            seg("a", { translations: { de: 5, fr: "Salut" } }),
+            seg("b", { translations: "hola" }),
+            seg("c", { translationsKept: 7 }),
+            seg("d", { translationsKept: ["de", 3] }),
+          ],
+        },
+      },
+      clean,
+    ]);
+    await loadHistory(true);
+    const a = saved("bad-tr");
+    const segs = a.result?.segments ?? [];
+    expect(segs.map((s) => s.text)).toEqual(["a", "b", "c", "d"]);
+    expect(segs[0]?.translations).toEqual({ fr: "Salut" });
+    expect(segs[1]?.translations).toBeUndefined();
+    expect(segs[2]?.translationsKept).toBeUndefined();
+    expect(segs[3]?.translationsKept).toEqual(["de"]);
+    for (const s of segs) for (const lang of ["de", "fr"]) expect(() => trText(s, lang)).not.toThrow();
+    expect(trText(segs[0]!, "fr")).toBe("Salut");
+    // A string map listed its indexes "0".."3" as language tracks.
+    expect(translationTracks(a.result!)).toEqual(["fr"]);
+    // A clean record is handed back as the very object the listing read.
+    expect(saved("clean-tr")).toBe(clean);
+  });
+
+  it("drops corrections with no segment to land on: an empty or missing list", async () => {
+    const base = {
+      schemaVersion: 1,
+      kind: "file",
+      sourcePath: "/a.wav",
+      sourceName: "a.wav",
+      status: "done",
+      edits: { 0: "x" },
+      speakerEdits: { 0: "Ana" },
+      translationsStale: { 0: true },
+    };
+    listTranscriptRecords.mockResolvedValue([
+      { ...base, id: "empty-segs", createdAt: "2026-01-02T03:04:05.000Z", result: { text: "plain", segments: [] } },
+      { ...base, id: "no-segs", createdAt: "2026-01-02T03:04:06.000Z", result: { text: "plain" } },
+    ]);
+    await loadHistory(true);
+    for (const id of ["empty-segs", "no-segs"]) {
+      const r = saved(id);
+      expect(r.edits).toBeUndefined();
+      expect(r.speakerEdits).toBeUndefined();
+      expect(r.translationsStale).toBeUndefined();
+      expect(r.result?.text).toBe("plain");
+      expect(recordText(r, 200)).toBe("plain");
+    }
+  });
+
+  it("keeps a failed record with a non-string error and title, dropping only those fields", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "url",
+        id: "bad-error",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "https://example.com/v",
+        sourceName: "v",
+        status: "failed",
+        error: 123,
+        title: {},
+      },
+    ]);
+    await loadHistory(true);
+    const r = saved("bad-error");
+    expect(r.status).toBe("failed");
+    expect(r.error).toBeUndefined();
+    expect(r.title).toBeUndefined();
   });
 
   it("survives a rejected listing", async () => {
