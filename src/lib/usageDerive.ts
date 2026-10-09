@@ -989,7 +989,9 @@ export function facetRows(
 
 /** The "Translated into" facet: one row per target code (upper-case, the picker's codes),
  *  then the outcomes that were not a translation, dim. Codes come from the server and are
- *  shown as-is (D26: code only), so a stray value is clipped to 8 chars. */
+ *  shown as-is (D26: code only), so a stray value is clipped to 12 chars — the bound the
+ *  dictation targets themselves carry (chipController.ts), so two regional variants such as
+ *  zh-Hant-TW and zh-Hant-HK stay apart. */
 export function translationRows(d: {
   targets?: readonly { code: string; runs: number; kept_original: number }[];
   translation?: { kept_original: number; not_asked: number; aborted: number; unreported: number };
@@ -998,7 +1000,7 @@ export function translationRows(d: {
     .filter((t) => t && typeof t.code === "string" && t.code.trim() !== "")
     .slice(0, 6)
     .map((t) => {
-      const code = t.code.trim().slice(0, 8).toUpperCase();
+      const code = t.code.trim().slice(0, 12).toUpperCase();
       const kept = typeof t.kept_original === "number" && t.kept_original > 0 ? t.kept_original : 0;
       const runs = typeof t.runs === "number" ? t.runs : 0;
       return {

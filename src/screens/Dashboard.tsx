@@ -22,6 +22,7 @@ import { ownProp } from "@/lib/own";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
 import { langCode } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
+import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 import type { Backend, Profile } from "@/lib/types";
 
 const GLYPH = { hold: Mic, handsfree: Hand } as const;
@@ -199,11 +200,14 @@ function HeroTitle() {
     }, 800);
     return () => { clearTimeout(d); if (t) clearInterval(t); };
   }, [hover]);
+  // Hiding the window (tray, keyboard) never fires mouseleave: drop the hover so the
+  // cleanup above stops the slide instead of ticking on in the hidden page.
+  useEffect(() => onWindowHiddenChange((hidden) => { if (hidden) setHover(false); }), []);
   const word = i < 0 ? "any field" : HERO_APPS[i];
   return (
     <h1
       className="mt-2 flex items-center gap-3 font-display text-[40px] font-bold leading-none tracking-tight text-text"
-      onMouseEnter={() => setHover(true)}
+      onMouseEnter={() => { if (!isWindowHidden()) setHover(true); }}
       onMouseLeave={() => setHover(false)}
       aria-label="Speak into any field."
     >

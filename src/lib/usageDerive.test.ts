@@ -467,6 +467,16 @@ describe("usageDerive", () => {
     expect(rows[0].colorVar).toBe("var(--c-translate)");
   });
 
+  it("translationRows keeps two regional variants of one script apart", () => {
+    const rows = translationRows({
+      targets: [
+        { code: "zh-Hant-TW", runs: 5, kept_original: 0 },
+        { code: "zh-Hant-HK", runs: 2, kept_original: 0 },
+      ],
+    });
+    expect(rows.slice(0, 2).map((r) => r.label)).toEqual(["ZH-HANT-TW", "ZH-HANT-HK"]);
+  });
+
   it("translationRows without any target keeps the two outcome rows", () => {
     const rows = translationRows({ translation: { kept_original: 0, not_asked: 4, aborted: 0, unreported: 0 } });
     expect(rows.map((r) => [r.label, r.pct])).toEqual([["Kept original", 0], ["Not asked", 100]]);

@@ -196,8 +196,9 @@ function HBars({ title, rows, empty }: { title: string; rows: FacetRow[]; empty?
       {rows.length === 0 && empty ? (
         <div className="text-[12px] text-faint">{empty}</div>
       ) : (
-        rows.map((r) => (
-          <div key={r.label} className="grid grid-cols-[96px_1fr_44px] items-center gap-2 py-[3px] text-[12px] text-dim">
+        // Keyed by position: two distinct ids can share a label (both clipped, both "unknown").
+        rows.map((r, i) => (
+          <div key={`${i}:${r.label}`} className="grid grid-cols-[96px_1fr_44px] items-center gap-2 py-[3px] text-[12px] text-dim">
             <span className="truncate" title={r.title ?? r.label}>{r.label}</span>
             <div className="h-2 overflow-hidden rounded-pill bg-line">
               <i className="block h-full rounded-pill" style={{ width: `${r.pct}%`, background: r.dim ? "var(--c-faint)" : (r.colorVar ?? "var(--c-accent)") }} />
