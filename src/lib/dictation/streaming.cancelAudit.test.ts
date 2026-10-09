@@ -461,6 +461,17 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(block.indexOf("insertCfg !== cfg", copy)).toBeGreaterThan(copy);
   });
 
+  it("the stop-mode failed-insert recovery books the clipboard outcome before flashing", () => {
+    // settleToIdleAfterInjection runs settleIdle(true) on the "error" status, so without the
+    // booking History and the outcome report record "none" for text the chip says is on the clipboard.
+    const src = mask(streamingSrc); // same offsets as streamingSrc; literals are masked
+    const copy = streamingSrc.indexOf('recoverToClipboard(outText, t, "failed insert")');
+    expect(copy, "failed-insert recovery moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const flash = src.indexOf("flashError(", copy);
+    expect(flash).toBeGreaterThan(copy);
+    expect(src.slice(copy, flash)).toContain("sessionClipboard = true");
+  });
+
   it("the stuck-finalize recovery stands down for a session started while it awaited", () => {
     // cancelLive idles the chip synchronously, so a new session can start before the recovery's
     // awaits finish; an unguarded flashError then stamps THAT session "error" (frames dropped,

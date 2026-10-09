@@ -1302,18 +1302,15 @@ export function resolveInjectionTarget(
  *  per-app rules follow window switches mid-session: a hands-free/live dictation that moves
  *  from Konsole to another app picks up each window's own rule instead of being frozen to
  *  whatever was focused when dictation began. Shares resolveInjectionTarget with startLive. */
-async function resolveTarget(cfg: InsertCfg | null): Promise<{
-  method: InsertCfg["method"];
-  pasteShortcut: string[];
-  autoEnter: boolean;
-  restoreClipboard: boolean;
-  /** See resolveInjectionTarget — null = let Rust auto-detect. */
-  remoteDesktop: boolean | null;
-  isSelf: boolean;
-  /** The app the rule below was resolved against, handed to Rust so it can confirm focus hasn't
-   *  moved by the time the keys actually go out. */
-  appId: string | null;
-}> {
+async function resolveTarget(cfg: InsertCfg | null): Promise<
+  // Every field resolveInjectionTarget resolves, minus the two only the chip readout reads — spread
+  // rather than re-listed, so a new per-app insertion field can't be silently dropped here.
+  Omit<ReturnType<typeof resolveInjectionTarget>, "rule" | "notEditable"> & {
+    /** The app the rule below was resolved against, handed to Rust so it can confirm focus hasn't
+     *  moved by the time the keys actually go out. */
+    appId: string | null;
+  }
+> {
   const g = useApp.getState().settings.general;
   const appRules = useApp.getState().appRules;
   const targetApp = await getFocusedApp();
@@ -1323,33 +1320,21 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<{
   // have session A's queued task resolve against session B's profile. Every task already
   // re-checks `insertCfg !== cfg` AFTER its await, but publishTarget below fires BEFORE that
   // check, so the token is what makes the wrong-session read structurally impossible.
-  const {
-    rule,
-    notEditable,
-    method,
-    pasteShortcut,
-    autoEnter,
-    restoreClipboard,
-    remoteDesktop,
-    isSelf,
-  } = resolveInjectionTarget(targetApp ?? null, appRules, g, cfg?.profileInsertion);
+  const { rule, notEditable, ...resolved } = resolveInjectionTarget(
+    targetApp ?? null,
+    appRules,
+    g,
+    cfg?.profileInsertion,
+  );
   // Keep the chip's "→ app" readout + skip hint live as focus moves mid-session: this resolves
   // the CURRENT window on every call, so it's the chip's source of truth — not the frozen
   // start-of-session value. Our own window shows as "→ this app": neutral, no warn hint.
-  publishTarget(targetApp ?? null, isSelf ? null : rule?.block ? "blocked" : notEditable ? "notEditable" : null);
+  publishTarget(targetApp ?? null, resolved.isSelf ? null : rule?.block ? "blocked" : notEditable ? "notEditable" : null);
   // Always hand Rust the app we resolved against, our own window included. `null` DISABLES the
   // sink-side focus re-check, so a null here meant: alt-tab between this resolve and the keys
   // going out and the resolved method was used with no re-check and no per-app rule — `block`
   // included. A real id makes that move a mismatch, which degrades to clipboard-only.
-  return {
-    method,
-    pasteShortcut,
-    autoEnter,
-    restoreClipboard,
-    remoteDesktop,
-    isSelf,
-    appId: targetApp?.appId ?? null,
-  };
+  return { ...resolved, appId: targetApp?.appId ?? null };
 }
 
 /** Copy `text` to the clipboard for a RESOLVED target — the clipboard-only phrase path and the
@@ -2905,6 +2890,10 @@ async function ensureListeners(): Promise<void> {
             // The recovery copy is another await — re-check, or a cancel / fresh session landing
             // during it gets this discarded session's error (and flashError's warm-lease release).
             if (insertCfg !== cfg) return;
+            // Book the recovery like the sink-skip branch below does: settleToIdleAfterInjection
+            // runs settleIdle(true) on this "error" status, and endOutcome() would otherwise
+            // record a transcript the chip says is on the clipboard as delivered nowhere.
+            if (onClipboard) sessionClipboard = true;
             flashError(
               onClipboard
                 ? "Couldn’t insert the text — it’s on the clipboard to paste manually."
