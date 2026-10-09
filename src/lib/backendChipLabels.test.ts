@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendChips, deviceChip, modelDevice, versionChip, withBackendChips } from "./backendChipLabels";
+import { backendChips, deviceChip, modelDevice, ownModelName, versionChip, withBackendChips } from "./backendChipLabels";
 import type { ConnectionInfo, ServerModel } from "./types";
 
 const models: ServerModel[] = [
@@ -95,5 +95,15 @@ describe("backendChips", () => {
     expect(backendChips({ model: "" }, { ...conn, serverVersion: undefined })).toEqual(["CUDA"]);
     expect(backendChips({ model: "" }, { ...conn, ok: false })).toEqual([]);
     expect(backendChips({ model: "" }, undefined)).toEqual([]);
+  });
+});
+
+describe("ownModelName", () => {
+  it("reads the whisper-1 alias as the server default except on a standard server", () => {
+    expect(ownModelName(" whisper-1 ", "full")).toBe("");
+    expect(ownModelName("whisper-1", "unknown")).toBe("");
+    expect(ownModelName("whisper-1", "standard")).toBe("whisper-1");
+    expect(ownModelName(" large-v3 ", "full")).toBe("large-v3");
+    expect(ownModelName(undefined, "full")).toBe("");
   });
 });

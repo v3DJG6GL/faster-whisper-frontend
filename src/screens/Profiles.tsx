@@ -32,7 +32,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, backendPrompt, effectiveLanguage, effectiveServerUrl } from "@/lib/backends";
-import { WHISPER_ALIAS, withBackendChips } from "@/lib/backendChipLabels";
+import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { backendForProfile } from "@/lib/dictation/dictation";
 import { liveAllowed } from "@/lib/dictation/streaming";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
@@ -151,8 +151,7 @@ function Editor({
   });
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
   // loads the server's DEFAULT_MODEL, so it reads as inherited (as on the Backends screen).
-  const backendOwnModel =
-    backend && !(backend.model.trim() === WHISPER_ALIAS && serverKind !== "standard") ? backend.model.trim() : "";
+  const backendOwnModel = ownModelName(backend?.model, serverKind);
   const multiInherited = typeof server.values.multilingual === "boolean" ? server.values.multilingual : undefined;
   const spoken = spokenField(p.language ?? "", p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's

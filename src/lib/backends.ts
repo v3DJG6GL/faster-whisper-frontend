@@ -3,6 +3,7 @@
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
 import { safeIdentityText } from "./sanitize";
+import { WHISPER_ALIAS } from "./backendChipLabels";
 
 /** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
  *  judge the same string the parsers do.
@@ -146,7 +147,7 @@ export function newBackendDraft(conn?: {
     name: "New backend",
     serverUrl: "http://localhost:8000",
     hasApiKey: false,
-    model: "whisper-1",
+    model: WHISPER_ALIAS,
     endpoint: "stream",
     // "" = the server's DEFAULT_LANGUAGE (W6, decided 2026-10-05): a backend added from now on
     // starts on the server's language; backends that already exist keep their "auto".

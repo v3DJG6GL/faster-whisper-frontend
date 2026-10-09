@@ -47,7 +47,7 @@ import {
 } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
 import { backendOptions, backendPrompt, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
-import { WHISPER_ALIAS, withBackendChips } from "@/lib/backendChipLabels";
+import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
@@ -403,8 +403,7 @@ export default function Transcribe() {
   // The model a blank Model field runs with: the Backend's, else the server's default (named by
   // request-default-settings — only while no per-run model is picked, else it names that one).
   // On a non-standard server the `whisper-1` alias loads DEFAULT_MODEL, so it is no name of its own.
-  const backendOwnModel =
-    backend && !(backend.model.trim() === WHISPER_ALIAS && serverKind !== "standard") ? backend.model.trim() : "";
+  const backendOwnModel = ownModelName(backend?.model, serverKind);
   const defaultModelName = backendOwnModel || (model ? undefined : decodeDefaults?.model) || "server model";
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
   const serverLang = serverLanguageLabel(decodeDefaults);

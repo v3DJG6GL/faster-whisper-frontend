@@ -7,7 +7,7 @@ import { Badge, Button, Card, ConfirmLeave, DisclosureCard, EditorHeader, Labele
 import { OverrideHeader, OverrideText } from "@/components/OverrideField";
 import { OVERRIDE_CONTROL_W } from "@/components/styles";
 import { ServerInfoButton, ServerInfoPanel } from "@/components/ServerInfoPanel";
-import { backendChips, WHISPER_ALIAS } from "@/lib/backendChipLabels";
+import { backendChips, ownModelName } from "@/lib/backendChipLabels";
 import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/envDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -199,7 +199,7 @@ function Editor({
   // The backend's own model, if it names one: on a full server the `whisper-1` alias (a new
   // backend's default) loads the server's DEFAULT_MODEL, so it reads as inherited, as the chips
   // and ModelPicker do. On a standard (OpenAI-compatible) server it is the real model sent.
-  const ownModel = b.model.trim() === WHISPER_ALIAS && kind !== "standard" ? "" : b.model.trim();
+  const ownModel = ownModelName(b.model, kind);
   // The header's device chip: /v1/models doesn't say which listed model is the server default, so
   // a backend on it gets the name the server resolved for exactly this request — only while the
   // address, key and model it was fetched for are still the ones typed (else the previous typing's
@@ -1174,6 +1174,7 @@ export default function Backends() {
               // Once per card, not five URL parses per render.
               const eff = effectiveUrl(b);
               const auth = authorityOf(eff);
+              const rowModel = ownModelName(b.model, effectiveServerKind(b, conn));
               return (
                 <Card key={b.id} className="p-5">
                   <div className="flex items-center gap-4">
@@ -1230,11 +1231,13 @@ export default function Backends() {
                             <Badge tone="warn">override in use</Badge>
                           </span>
                         )}
-                        {/* No model = the server's default: no separator dangling before nothing. */}
-                        {b.model.trim() && (
+                        {/* No model = the server's default: no separator dangling before nothing. The
+                            `whisper-1` alias on a full server is the server's default too (as in the
+                            editor header), not a model it offers. */}
+                        {rowModel && (
                           <>
                             <span className="text-faint">·</span>
-                            <span className="text-faint">{safeDisplayText(b.model, 80)}</span>
+                            <span className="text-faint">{safeDisplayText(rowModel, 80)}</span>
                           </>
                         )}
                       </div>

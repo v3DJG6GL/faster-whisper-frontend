@@ -16,7 +16,7 @@ import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
 import { effectiveLanguage } from "@/lib/backends";
-import { WHISPER_ALIAS } from "@/lib/backendChipLabels";
+import { ownModelName } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { ownProp } from "@/lib/own";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
@@ -100,7 +100,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
   // loads the server's DEFAULT_MODEL, so it is no name of its own (as on Profiles/Backends).
   const kind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
-  const ownModel = backend && !(backend.model.trim() === WHISPER_ALIAS && kind !== "standard") ? backend.model.trim() : "";
+  const ownModel = ownModelName(backend?.model, kind);
   const model = p.model?.trim() || ownModel || (backend ? "server model" : "");
   return (
     <div
