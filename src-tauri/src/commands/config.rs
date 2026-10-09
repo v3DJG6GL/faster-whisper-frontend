@@ -45,7 +45,9 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // already acts on them unsaved), not the disk, so they apply BEFORE the write: a refused save
     // (BACKUP_FAILED session, full/read-only disk) still returns its Err to the save banner, but
     // push-to-talk, Quick-Add and clipboard writes no longer lag behind the paste path until
-    // restart.
+    // restart. The Quick-Add window's own paste reads the rules from disk, so after a refused
+    // save its grab (here) and its paste can disagree until the next good save — the lesser
+    // split: before, the main window's paste and push-to-talk disagreed instead.
     // Clipboard privacy is a process-wide switch every transcript write reads (see inject/mod.rs), so
     // it is applied here rather than carried on each insert.
     crate::inject::set_clipboard_privacy(config.settings.general.exclude_from_clipboard_history);

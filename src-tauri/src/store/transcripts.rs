@@ -82,66 +82,6 @@ pub(crate) fn video_media_dir(app: &AppHandle, custom: Option<String>) -> Result
     audio_base(app, custom).map(|b| b.join(crate::commands::AUDIO_SUBDIRS[3]))
 }
 
-/// Media writes into the audio base still in flight (`save_transcript_media`, the link
-/// audio/video fetches), and whether `move_audio_base` is relocating that base. A writer
-/// resolves its folder ONCE and lands a `.tmp` the move skips, then renames it into the OLD
-/// base and the frontend stamps that path on the record after the move's rewrite — a file
-/// outside every per-base sweep and heal. So the two refuse each other instead: each side
-/// raises its own flag first and then checks the other's (SeqCst both ways), so at least one
-/// of a racing pair sees the other and backs off.
-static MEDIA_WRITES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static BASE_MOVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-/// Held by a media writer from before it resolves its folder until its final rename.
-pub(crate) struct MediaWriteGuard(());
-
-impl MediaWriteGuard {
-    pub(crate) fn try_new() -> Result<Self, String> {
-        use std::sync::atomic::Ordering::SeqCst;
-        MEDIA_WRITES.fetch_add(1, SeqCst);
-        if BASE_MOVING.load(SeqCst) {
-            MEDIA_WRITES.fetch_sub(1, SeqCst);
-            return Err("the audio folder is being moved — try again when it finishes".into());
-        }
-        Ok(Self(()))
-    }
-}
-
-impl Drop for MediaWriteGuard {
-    fn drop(&mut self) {
-        MEDIA_WRITES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
-/// Held by `move_audio_base` across the whole relocation; refused while another move or any
-/// media write is running.
-pub(crate) struct BaseMoveGuard(());
-
-impl BaseMoveGuard {
-    pub(crate) fn try_new() -> Result<Self, String> {
-        use std::sync::atomic::Ordering::SeqCst;
-        if BASE_MOVING
-            .compare_exchange(false, true, SeqCst, SeqCst)
-            .is_err()
-        {
-            return Err("another folder move is still running".into());
-        }
-        if MEDIA_WRITES.load(SeqCst) != 0 {
-            BASE_MOVING.store(false, SeqCst);
-            return Err(
-                "a media download is still running — try the move again when it finishes".into(),
-            );
-        }
-        Ok(Self(()))
-    }
-}
-
-impl Drop for BaseMoveGuard {
-    fn drop(&mut self) {
-        BASE_MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
-    }
-}
-
 /// Every record media folder — files/, links/, video/ — from one base resolution. The
 /// single list cleanup and the storage readout share, so a new media kind cannot be
 /// left out of one of them.
@@ -632,11 +572,8 @@ pub async fn save_transcript_media(
     if !valid_id(&id) {
         return Err("malformed record id".into());
     }
-    // Before the folder is resolved, and held until the final rename: see `MediaWriteGuard`.
-    let write = MediaWriteGuard::try_new()?;
     let dir = files_media_dir(&app, audio_base)?;
     tauri::async_runtime::spawn_blocking(move || {
-        let _write = write;
         let src = PathBuf::from(&source_path);
         let meta = std::fs::metadata(&src).map_err(|e| e.to_string())?;
         if !meta.is_file() {
@@ -960,23 +897,6 @@ fn wipe_records(dir: &Path) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// One test owns the process-global flags, so no other test can race it.
-    #[test]
-    fn base_move_and_media_writes_refuse_each_other() {
-        // A write in flight refuses the move; once it ends, the move goes ahead.
-        let write = MediaWriteGuard::try_new().expect("no move running");
-        assert!(BaseMoveGuard::try_new().is_err());
-        drop(write);
-        let moving = BaseMoveGuard::try_new().expect("no write running");
-        // While the move runs, a new write and a second move are both refused.
-        assert!(MediaWriteGuard::try_new().is_err());
-        assert!(BaseMoveGuard::try_new().is_err());
-        drop(moving);
-        // Both refusals left nothing behind: the next write and move both go through.
-        drop(MediaWriteGuard::try_new().expect("move ended"));
-        drop(BaseMoveGuard::try_new().expect("write ended"));
-    }
 
     #[test]
     fn heal_keeps_video_and_audio_apart() {

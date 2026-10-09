@@ -67,10 +67,9 @@ fn move_dir_contents(
         if !src.is_file() {
             continue;
         }
-        // A media `.tmp` (`<id>.<ext>.tmp`, see save_transcript_media) is a writer's partial
-        // file: `move_audio_base` refuses while a writer runs (`BaseMoveGuard`), so one here is
-        // a crash leftover — and moving it under a live writer would fail the copier's final
-        // rename and strand a `.tmp` every sweep skips forever.
+        // An in-progress media copy (`<id>.<ext>.tmp`, see save_transcript_media) finishes in
+        // the old base and its record keeps a valid absolute path; moving it under the writer
+        // fails the copier's final rename and strands a `.tmp` every sweep skips forever.
         if src.extension().and_then(|e| e.to_str()) == Some("tmp") {
             continue;
         }
@@ -244,11 +243,7 @@ pub async fn move_audio_base(
     if to.starts_with(&from) {
         return Err("the new folder can't be inside the current one".into());
     }
-    // Refused while a media copy or download is in flight (it would land in the old base after
-    // the rewrite below); held until the blocking move ends, on every exit path.
-    let moving = crate::store::transcripts::BaseMoveGuard::try_new()?;
     tauri::async_runtime::spawn_blocking(move || {
-        let _moving = moving;
         crate::audio::create_dir_private(&to)
             .map_err(|e| format!("could not create the folder: {e}"))?;
         let mut map: Vec<(String, String)> = Vec::new();

@@ -508,7 +508,9 @@ export interface RunContext {
   translationAvailable?: boolean;
   /** The server's translation target limit (caps' translation_max_targets) when it translates:
    *  translateParsed cuts to it (the text route rejects a longer list outright; the audio route
-   *  drops the extras itself, with a warning). Unset = unknown or no translation, no client cut. */
+   *  drops the extras itself, with a warning). Unset = not known when the run was built:
+   *  translateParsed then reads the backend's cached caps (fetching them once if absent) and cuts
+   *  to that limit, or to the app ceiling when the server reports none. */
   translationMaxTargets?: number;
   /** The server packages subtitles (caps.media_package_enabled): a local
    *  VIDEO file then asks the server to retain the upload for a while, so

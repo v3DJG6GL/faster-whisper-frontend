@@ -222,9 +222,6 @@ async fn fetch_link_media(
         return Err("malformed record id".into());
     }
     let key = resolve_key_async(api_key, backend_id).await;
-    // Before the folder is resolved, and held across the download's final rename: an audio-base
-    // move in between would leave the file in the old base (see `MediaWriteGuard`).
-    let _write = crate::store::transcripts::MediaWriteGuard::try_new()?;
     let (dir, timeout) = if video {
         (
             crate::store::transcripts::video_media_dir(app, audio_base)?,

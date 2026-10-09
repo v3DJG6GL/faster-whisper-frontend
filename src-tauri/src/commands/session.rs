@@ -269,7 +269,9 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 /// `discard_recording: false` (a recovery cancel: wake from sleep) leaves a transcription already
 /// detached by a stop alone, so its saved `.wav` and `.txt` survive — the stream path's rule. That
 /// holds for a LIVE session too: it is dropped, not discarded, so a device-loss salvage the sleep
-/// already spawned (or one that fires inside the capture join) keeps its recording.
+/// already spawned (or one that fires inside the capture join) keeps its recording. The keep is
+/// final for a salvage published before the cancel; one that fires inside the join publishes its
+/// epoch after the forget, so a later Cancel with no live session can still disown it.
 #[tauri::command]
 pub async fn cancel_record(
     app: AppHandle,
@@ -294,7 +296,8 @@ pub async fn cancel_record(
         // for a recovery cancel (`discard_recording: false`), where the saved audio may be the
         // only copy of what was said: that keep is final, so a later Cancel cannot disown it —
         // released even when a live session WAS found, since its device-loss salvage may already
-        // have published its epoch as the detached batch.
+        // have published its epoch as the detached batch (a salvage that fires inside the join
+        // below publishes after this forget, so that one stays reachable).
         let sess = {
             let mut guard = state
                 .0

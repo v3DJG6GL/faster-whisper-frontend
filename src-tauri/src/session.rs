@@ -159,11 +159,11 @@ pub fn forget_detached_stream() {
 
 /// Publish `flag` as the newest detached drain — unless that drain already settled (see
 /// [`DetachedStream::settled`]); checked under the lock, so a settle and a claim never interleave.
+/// A settled claim still EMPTIES the slot: the newest stopped session supersedes any earlier
+/// drain as the Cancel target, so a later Cancel meant for it cannot discard the one before.
 pub fn claim_detached_stream(flag: &Arc<DetachedStream>) {
     if let Ok(mut s) = DETACHED_STREAM.lock() {
-        if !flag.settled.load(Ordering::SeqCst) {
-            *s = Some(flag.clone());
-        }
+        *s = (!flag.settled.load(Ordering::SeqCst)).then(|| flag.clone());
     }
 }
 
@@ -1821,7 +1821,10 @@ Sink Input #12\n\
         // Settling is sticky: a stop that claims a drain only after it settled (the WS task
         // failed first, then the error handler's stopStream ran) publishes nothing, so a later
         // Cancel neither reaches it nor logs a discard.
-        let f = flag();
+        // An earlier drain still running is superseded all the same (A stopped and draining, B
+        // failed at connect and was then stopped): that Cancel must not discard A.
+        let (e, f) = (flag(), flag());
+        claim(&e);
         settle_detached_stream(&f);
         claim(&f);
         assert!(
@@ -1832,6 +1835,10 @@ Sink Input #12\n\
         assert!(
             !discarded(&f),
             "a Cancel after a settled claim reaches nothing"
+        );
+        assert!(
+            !discarded(&e),
+            "nor the earlier drain the settled claim superseded"
         );
 
         // A Cancel before the decision is the one the drain reads.
