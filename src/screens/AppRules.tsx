@@ -279,15 +279,17 @@ function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRe
   // inherits its method may well resolve to paste, and its saved chord is listed. Hidden
   // only when this rule itself forces direct/clipboard typing (or blocks).
   const pasteRelevant = !r.block && r.insertMethod !== "direct" && r.insertMethod !== "clipboard";
+  // Remote desktop stays live for a blocked rule (see the editor above), so its override shows either way.
+  const remotePart = r.remoteDesktop == null ? null : r.remoteDesktop ? "remote desktop" : "not remote desktop";
   const summary = r.block
-    ? "Blocked — never typed here"
+    ? ["Blocked — never typed here", remotePart].filter(Boolean).join(" · ")
     : [
         r.insertMethod ? METHOD_OPTIONS.find((m) => m.value === r.insertMethod)?.label : "Inherit method",
         pasteRelevant && r.pasteShortcut ? pasteLabel(r.pasteShortcut) : null,
         // Only when overridden — an inherited value would just repeat the default on every row.
         r.autoEnter == null ? null : r.autoEnter ? "Enter" : "no Enter",
         r.restoreClipboard == null ? null : r.restoreClipboard ? "restore clipboard" : "keep clipboard",
-        r.remoteDesktop == null ? null : r.remoteDesktop ? "remote desktop" : "not remote desktop",
+        remotePart,
       ]
         .filter(Boolean)
         .join(" · ");
