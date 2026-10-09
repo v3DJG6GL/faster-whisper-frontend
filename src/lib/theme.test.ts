@@ -309,16 +309,31 @@ describe("applyTheme + setAccentHue", () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
     vi.stubGlobal("document", fakeDocument);
-    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    let adds = 0;
+    let removes = 0;
+    vi.stubGlobal("window", {
+      matchMedia: () => ({
+        matches: false,
+        addEventListener: () => { adds++; },
+        removeEventListener: () => { removes++; },
+      }),
+    });
     let ticks = 0;
     subscribeAccentHue(() => ticks++);
     setAccentMotion({ period: 360, range: "wheel" });
     applyTheme("dark");
     startAccentDrift();
-    startAccentDrift();
+    const stop = startAccentDrift();
+    // One reduced-motion listener and one interval, not two.
+    expect(adds).toBe(1);
+    expect(vi.getTimerCount()).toBe(1);
     ticks = 0;
     vi.advanceTimersByTime(5_000);
     expect(ticks).toBe(5);
+    // The second start's stop tears down everything the first start set up.
+    stop();
+    expect(removes).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("a tick that lands on the same whole degree stamps nothing", () => {
