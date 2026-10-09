@@ -446,6 +446,21 @@ describe("parseLadderInput", () => {
     expect(parseLadderInput(rungs.slice(0, -1), false, rungs)).toBe(rungs.slice(0, -1)); // still 18 parts
     expect(parseLadderInput(rungs + ",0", false, rungs)).toBeNull();
   });
+
+  it("lets a stored bad rung shrink, never grow or multiply", () => {
+    expect(parseLadderInput("0.2.", false, "0.2.4")).toBe("0.2."); // still two dots
+    expect(parseLadderInput("2", false, "25")).toBe(2); // still above max
+    expect(parseLadderInput("0.2.4,0.", false, "0.2.4,0.6")).toBe("0.2.4,0.");
+    expect(parseLadderInput("255", false, "25")).toBeNull(); // longer while a bad rung remains
+    expect(parseLadderInput("0.2.", false, "0.2")).toBeNull(); // adds a bad rung
+  });
+
+  it("lets a stored ladder on a standard server shrink, never gain a rung", () => {
+    expect(parseLadderInput("0.2,0.4,0.6", true, "0.2,0.4")).toBeNull();
+    expect(parseLadderInput("0.2", true, "0.2,0.4")).toBe(0.2);
+    expect(parseLadderInput("0.2,0.", true, "0.2,0.4")).toBe("0.2,0.");
+    expect(parseLadderInput("0,0.2", true)).toBeNull();
+  });
 });
 
 describe("stepDecimals", () => {

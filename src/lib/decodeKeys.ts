@@ -164,10 +164,12 @@ export function sectionKeys(section: KeySection): DecodeKey[] {
  *  null = refused: anything but digits, dots, commas and spaces, a comma when `singleOnly`
  *  (a standard Whisper server takes one number, no ladder), a rung with a space inside ("0 2")
  *  or two dots ("0.2.4"), a rung above the spec max ("5"), or more rungs or characters than the
- *  spec allows (16 rungs, 64 characters; `prev` = the stored text, which may only shrink while
- *  over) — values the sync sanitizer and the
- *  server would drop or clamp. Empty and half-typed rungs ("", "0.", "1.") pass, so typing is
- *  never blocked mid-entry. */
+ *  spec allows (16 rungs, 64 characters) — values the sync sanitizer and the server would drop
+ *  or clamp. `prev` = the stored text: where it already breaks one of these rules (an earlier
+ *  build stored it unchecked, or a full backend synced a ladder to a standard one) it may only
+ *  shrink — never gain a comma, a bad rung or a character while a bad rung remains — so it can
+ *  still be edited down one keystroke at a time. Empty and half-typed rungs ("", "0.", "1.")
+ *  pass, so typing is never blocked mid-entry. */
 export function parseLadderInput(
   raw: string,
   singleOnly: boolean,
@@ -175,22 +177,28 @@ export function parseLadderInput(
 ): number | string | undefined | null {
   const t = raw.trim();
   if (!t) return undefined;
-  if (!/^[0-9., ]*$/.test(raw) || (singleOnly && raw.includes(","))) return null;
+  if (!/^[0-9., ]*$/.test(raw)) return null;
   const spec = keySpec("temperature");
   const max = spec.max ?? Infinity;
   const parts = raw.split(",");
+  const prevParts = prev.split(",").length;
   // Only an edit that GROWS past a limit is refused: a ladder stored over it (an earlier build had
   // no cap) must still shorten one keystroke at a time.
   const prevT = prev.trim();
   if (
+    (singleOnly && raw.includes(",") && parts.length > prevParts) ||
     (t.length > (spec.maxLen ?? Infinity) && t.length > prevT.length) ||
-    (parts.length > (spec.maxRungs ?? Infinity) && parts.length > prev.split(",").length)
+    (parts.length > (spec.maxRungs ?? Infinity) && parts.length > prevParts)
   )
     return null;
-  for (const part of parts) {
-    const r = part.trim();
-    if (r.includes(" ") || r.split(".").length > 2 || Number(r) > max) return null;
-  }
+  // Bad rungs likewise: none may be added, and while one remains the text may not grow.
+  const bad = (s: string) =>
+    s.split(",").filter((p) => {
+      const r = p.trim();
+      return r.includes(" ") || r.split(".").length > 2 || Number(r) > max;
+    }).length;
+  const nb = bad(raw);
+  if (nb > bad(prev) || (nb > 0 && t.length > prevT.length)) return null;
   return /^\d+(\.\d+)?$/.test(t) && String(Number(t)) === t ? Number(t) : raw;
 }
 
