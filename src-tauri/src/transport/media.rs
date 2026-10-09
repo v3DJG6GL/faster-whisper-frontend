@@ -406,13 +406,13 @@ pub async fn package_to_path(
     }
     .await;
     if let Err(e) = write_result {
-        let _ = std::fs::remove_file(&tmp);
+        let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e);
     }
-    std::fs::rename(&tmp, dest).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        anyhow::anyhow!("saving the export file: {e}")
-    })?;
+    if let Err(e) = tokio::fs::rename(&tmp, dest).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(anyhow::anyhow!("saving the export file: {e}"));
+    }
     Ok(PackageOutcome {
         kind: "ok",
         detail: String::new(),

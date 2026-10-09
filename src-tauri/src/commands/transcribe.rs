@@ -379,8 +379,8 @@ fn under(dir: &std::path::Path, path: &std::path::Path) -> bool {
 }
 
 /// Whether `path` sits inside any folder this app manages (the audio base or
-/// the app data dir) — an export must never land there, and a copy source
-/// must come from there or from the record's own files.
+/// the app data dir): an export must never land there. (copy_media_to's source
+/// check is the narrower record-owned or AUDIO_SUBDIRS test.)
 fn inside_app_storage(
     app: &tauri::AppHandle,
     audio_base: Option<String>,
@@ -611,7 +611,7 @@ pub async fn package_media(
     let r = until_epoch_bumps(&MEDIA_EXPORT_EPOCH, epoch, fut).await;
     if r.is_err() {
         // A cancelled or failed export leaves no half-written file behind.
-        let _ = std::fs::remove_file(media::tmp_sibling(&dest_for_cleanup));
+        let _ = tokio::fs::remove_file(media::tmp_sibling(&dest_for_cleanup)).await;
     }
     match r {
         Ok(out) => Ok(out),
