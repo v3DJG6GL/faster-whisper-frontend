@@ -416,6 +416,19 @@ describe("parseLadderInput", () => {
     expect(parseLadderInput("0.2x", false)).toBeNull();
     expect(parseLadderInput("0,0.2", true)).toBeNull();
   });
+  it("refuses a rung the sanitizer would drop or clamp, never a half-typed one", () => {
+    expect(parseLadderInput("0 2", false)).toBeNull();
+    expect(parseLadderInput("0.2.4", false)).toBeNull();
+    expect(parseLadderInput("5", true)).toBeNull();
+    expect(parseLadderInput("0,1.5", false)).toBeNull();
+    expect(parseLadderInput("2.", false)).toBeNull();
+    expect(parseLadderInput("0.", false)).toBe("0.");
+    expect(parseLadderInput("1.", true)).toBe("1.");
+    expect(parseLadderInput("0.0,", false)).toBe("0.0,");
+    expect(parseLadderInput("0.0, 0.4", false)).toBe("0.0, 0.4");
+    expect(parseLadderInput("1", true)).toBe(1);
+    expect(parseLadderInput("1.0", true)).toBe("1.0");
+  });
 });
 
 describe("stepDecimals", () => {
