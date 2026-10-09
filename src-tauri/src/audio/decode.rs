@@ -53,21 +53,79 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
         .join("playback");
     crate::audio::create_dir_private(&dir).map_err(|e| e.to_string())?;
     let out = dir.join(format!("{:016x}.wav", h.finish()));
+    cache_single_flight(&dir, &out, || decode_to_wav(path))?;
+    Ok(out.to_string_lossy().into_owned())
+}
+
+/// Fill `out` from `decode` unless it is already cached — one caller per `out` at a time. The
+/// viewer re-requests the decode on every open and only ignores stale results (the blocking
+/// decode is never cancelled), so reopening a transcript mid-decode used to run a second full
+/// decode beside the first: another up-to-640 MiB buffer. Now the second caller waits and takes
+/// the cache-hit branch.
+fn cache_single_flight(
+    dir: &std::path::Path,
+    out: &std::path::Path,
+    decode: impl FnOnce() -> Result<Vec<u8>, String>,
+) -> Result<(), String> {
+    let slot = InflightSlot::acquire(out);
+    let _held = slot.lock();
     if out.exists() {
         // Touch the mtime so eviction is really least-RECENTLY-used: `prune_cache` orders by
         // mtime, and a pure read left the transcript replayed daily looking older than one
         // decoded yesterday and never played again. Best-effort.
-        if let Ok(f) = std::fs::File::options().write(true).open(&out) {
+        if let Ok(f) = std::fs::File::options().write(true).open(out) {
             let _ =
                 f.set_times(std::fs::FileTimes::new().set_modified(std::time::SystemTime::now()));
         }
-        prune_cache(&dir, &out);
-        return Ok(out.to_string_lossy().into_owned());
+        prune_cache(dir, out);
+        return Ok(());
     }
-    let wav = decode_to_wav(path)?;
-    write_cached(&out, &wav)?;
-    prune_cache(&dir, &out);
-    Ok(out.to_string_lossy().into_owned())
+    let wav = decode()?;
+    write_cached(out, &wav)?;
+    prune_cache(dir, out);
+    Ok(())
+}
+
+type InflightMap =
+    std::collections::HashMap<std::path::PathBuf, std::sync::Arc<std::sync::Mutex<()>>>;
+
+/// Per-output-path locks for `cache_single_flight`. Per path, not one global lock: a newly
+/// opened DIFFERENT transcript must not queue behind a stale decode of another one.
+static INFLIGHT: std::sync::LazyLock<std::sync::Mutex<InflightMap>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// One caller's hold on an `INFLIGHT` entry; dropping it removes the entry once no other caller
+/// holds it, so the map doesn't grow by one key per transcript ever opened.
+struct InflightSlot {
+    out: std::path::PathBuf,
+    lock: std::sync::Arc<std::sync::Mutex<()>>,
+}
+
+impl InflightSlot {
+    fn acquire(out: &std::path::Path) -> Self {
+        let mut map = INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        let lock = map.entry(out.to_path_buf()).or_default().clone();
+        Self {
+            out: out.to_path_buf(),
+            lock,
+        }
+    }
+
+    /// Poison-tolerant: the mutex guards no data, a panicked decode just releases it.
+    fn lock(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
+impl Drop for InflightSlot {
+    fn drop(&mut self) {
+        let mut map = INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
+        // Every clone is taken under the map lock, so 2 (the map's + ours) means nobody else
+        // is waiting on this path.
+        if std::sync::Arc::strong_count(&self.lock) == 2 {
+            map.remove(&self.out);
+        }
+    }
 }
 
 /// tmp + rename, and no tmp left behind on EITHER failure — a WAV here can be hundreds of
@@ -92,13 +150,23 @@ static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 /// A per-CALL unique tmp name, so two concurrent decodes of the same file (e.g. a retry while
 /// the first decode is still running) write independent tmp files and the loser's rename simply
 /// overwrites with identical bytes — a shared name let the first rename take the second call's
-/// tmp, failing that rename with ENOENT. Still ends in `.tmp`, so `prune_cache_to` skips it.
+/// tmp, failing that rename with ENOENT. Still ends in `.tmp`, so `prune_cache_to` skips it
+/// while this process runs; another process's tmp (see `cache_tmp_pid`) is swept.
 fn cache_tmp_path(out: &std::path::Path) -> std::path::PathBuf {
     out.with_extension(format!(
         "wav.{:x}-{}.tmp",
         std::process::id(),
         TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ))
+}
+
+/// The writing pid of a `cache_tmp_path` name (`<hash>.wav.<hex pid>-<seq>.tmp`); `None` for
+/// any other `.tmp` (e.g. an older build's pid-less `<hash>.wav.tmp`).
+fn cache_tmp_pid(name: &str) -> Option<u32> {
+    let (_, tag) = name.strip_suffix(".tmp")?.rsplit_once(".wav.")?;
+    let (pid, seq) = tag.split_once('-')?;
+    seq.parse::<u64>().ok()?;
+    u32::from_str_radix(pid, 16).ok()
 }
 
 /// Keep the playback cache under `MAX_CACHE_BYTES`, deleting oldest-modified
@@ -121,8 +189,14 @@ fn prune_cache_to(dir: &std::path::Path, keep: &std::path::Path, max_bytes: u64)
             // Skip in-progress tmp files: a concurrent decode is writing to
             // `<hash>.wav.<pid>-<seq>.tmp` and will rename it on completion. Unlinking it
             // makes that rename fail with ENOENT and the viewer declares
-            // playback broken for a file that decoded fine.
+            // playback broken for a file that decoded fine. Another pid's tmp is an orphan
+            // (single-instance app; quit/crash doesn't wait for the blocking decode) that
+            // nothing else would ever remove — sweep it. Tmps never count toward the total.
             if p.extension().is_some_and(|ext| ext == "tmp") {
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+                if cache_tmp_pid(name) != Some(std::process::id()) {
+                    let _ = std::fs::remove_file(&p);
+                }
                 return None;
             }
             let m = e.metadata().ok()?;
@@ -301,6 +375,66 @@ mod tests {
         assert!(!old.exists(), "the oldest-modified file is evicted first");
         assert!(mid.exists());
         assert!(keep.exists(), "the file just written is never evicted");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_sweeps_other_processes_tmps_but_not_its_own() {
+        let dir = std::env::temp_dir().join(format!("fwf-decode-tmps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let own = std::process::id();
+        let foreign = if own == 1 { 2 } else { own - 1 };
+        let keep = dir.join("keep.wav");
+        let foreign_tmp = dir.join(format!("abc.wav.{foreign:x}-0.tmp"));
+        let own_tmp = dir.join(format!("abc.wav.{own:x}-0.tmp"));
+        let plain_tmp = dir.join("abc.wav.tmp");
+        for p in [&keep, &foreign_tmp, &own_tmp, &plain_tmp] {
+            std::fs::write(p, b"RIFF").unwrap();
+        }
+        assert_eq!(cache_tmp_pid(&format!("abc.wav.{own:x}-7.tmp")), Some(own));
+        prune_cache_to(&dir, &keep, u64::MAX);
+        assert!(!foreign_tmp.exists(), "a dead process's tmp is an orphan");
+        assert!(
+            !plain_tmp.exists(),
+            "a pid-less tmp from an older build is an orphan"
+        );
+        assert!(
+            own_tmp.exists(),
+            "this process's in-flight write is left alone"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_requests_for_one_output_decode_once() {
+        let dir = std::env::temp_dir().join(format!("fwf-decode-flight-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let out = dir.join("abc.wav");
+        let decodes = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|s| {
+            for _ in 0..2 {
+                s.spawn(|| {
+                    cache_single_flight(&dir, &out, || {
+                        decodes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_millis(200));
+                        Ok(b"RIFF".to_vec())
+                    })
+                    .unwrap();
+                });
+            }
+        });
+        assert_eq!(
+            decodes.into_inner(),
+            1,
+            "the second request waits for the first's file"
+        );
+        assert!(out.exists());
+        assert!(
+            !INFLIGHT.lock().unwrap().contains_key(&out),
+            "the in-flight entry is released afterwards"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
