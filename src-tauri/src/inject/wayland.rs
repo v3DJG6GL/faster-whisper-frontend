@@ -56,6 +56,7 @@ mod imp {
     use std::time::Duration;
     use tauri::{AppHandle, Manager};
     use tokio::sync::{mpsc, oneshot};
+    use unicode_normalization::UnicodeNormalization;
     use xkbcommon::xkb;
 
     // evdev key codes (Linux input-event-codes), which the portal expects.
@@ -84,6 +85,11 @@ mod imp {
         /// (ü, where Shift→è) pressing Shift selects the WRONG glyph, so for `caps_safe == false`
         /// the typer flips Caps OFF for the press instead. See the live-Caps branch in the typer.
         caps_safe: bool,
+        /// A dead-key prefix `(keycode, shift, altgr)` tapped before this key: the char exists only
+        /// as a compose of that dead key and this base key — Spanish/French/Portuguese é/ê/ñ,
+        /// Greek tonos ά/έ, which no level of any key carries. See the dead-key pass in
+        /// `charmap_from_keymap`.
+        dead: Option<(i32, bool, bool)>,
     }
 
     fn token_path(app: &AppHandle) -> Option<PathBuf> {
@@ -218,8 +224,39 @@ mod imp {
             None,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )?;
+        Some(charmap_from_keymap(
+            &keymap,
+            group,
+            compose_table(&ctx).as_ref(),
+        ))
+    }
 
+    /// The compose table the focused app most likely resolves dead keys with: the one for the
+    /// locale's character type (LC_ALL, then LC_CTYPE, then LANG — the precedence toolkits use),
+    /// or the `C` table when none is set. `None` when no table compiles: the dead-key pass is then
+    /// skipped and dead-key letters stay unreachable, as before.
+    fn compose_table(ctx: &xkb::Context) -> Option<xkb::compose::Table> {
+        let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .find(|v| !v.is_empty())
+            .unwrap_or_else(|| "C".into());
+        xkb::compose::Table::new_from_locale(ctx, &locale, xkb::compose::COMPILE_NO_FLAGS).ok()
+    }
+
+    /// The char → key map of `keymap` in layout group `group`. Split from `build_charmap` so tests
+    /// can compile a real layout without `setxkbmap` or an X display.
+    fn charmap_from_keymap(
+        keymap: &xkb::Keymap,
+        group: u32,
+        compose: Option<&xkb::compose::Table>,
+    ) -> HashMap<char, KeySpec> {
         let mut map: HashMap<char, KeySpec> = HashMap::new();
+        // Dead keysyms (dead_acute, dead_circumflex, dead_tilde...) and the key that types each,
+        // first (lowest-level) occurrence wins. They produce no character of their own, so the
+        // level scan below would otherwise drop them — and with them every letter a layout types
+        // ONLY through one (es/pt ó, fr ê, gr έ), silently skipped from the transcript.
+        let mut deads: Vec<(xkb::Keysym, (i32, bool, bool))> = Vec::new();
         for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
             let key = xkb::Keycode::new(kc);
             let num_layouts = keymap.num_layouts_for_key(key);
@@ -235,9 +272,19 @@ mod imp {
             // — a bare keypress that types that key's LEVEL-0 glyph instead. Leaving such glyphs
             // out of the map makes them fall back to the portal path rather than mis-type.
             let levels = keymap.num_levels_for_key(key, g).min(4);
-            let caps_safe = key_is_caps_safe(&keymap, key, g);
+            let caps_safe = key_is_caps_safe(keymap, key, g);
             for level in 0..levels {
                 for sym in keymap.key_get_syms_by_level(key, g, level) {
+                    if (0xfe50..=0xfe93).contains(&sym.raw())
+                        && !deads.iter().any(|(d, _)| d == sym)
+                    {
+                        let prefix = (
+                            (kc - EVDEV_OFFSET) as i32,
+                            level == 1 || level == 3,
+                            level == 2 || level == 3,
+                        );
+                        deads.push((*sym, prefix));
+                    }
                     let cp = xkb::keysym_to_utf32(*sym);
                     if cp == 0 {
                         continue;
@@ -253,8 +300,45 @@ mod imp {
                             altgr: level == 2 || level == 3,
                             lock: false,
                             caps_safe,
+                            dead: None,
                         });
                     }
+                }
+            }
+        }
+
+        // Dead-key pass, BEFORE the Caps Lock capitals below: every char that a dead key composes
+        // with a key we already type directly, and that no key types on its own. The compose table
+        // is the same kind of table the focused app resolves the sequence with (see
+        // `compose_table`). Directly typed chars always win: `or_insert`, and only direct keys
+        // serve as bases. Bases are tried simplest key first (no modifier, then one), so the
+        // cheapest sequence wins when two compose the same char.
+        if let Some(table) = compose {
+            let mut bases: Vec<(char, KeySpec)> = map.iter().map(|(&c, &s)| (c, s)).collect();
+            bases.sort_by_key(|&(c, s)| (u8::from(s.shift) + u8::from(s.altgr), s.keycode, c));
+            let mut state = xkb::compose::State::new(table, xkb::compose::STATE_NO_FLAGS);
+            for &(dead_sym, prefix) in &deads {
+                for &(base, spec) in &bases {
+                    state.reset();
+                    state.feed(dead_sym);
+                    state.feed(xkb::utf32_to_keysym(base as u32));
+                    if state.status() != xkb::compose::Status::Composed {
+                        continue;
+                    }
+                    let Some(out) = state.utf8() else {
+                        continue;
+                    };
+                    let mut chars = out.chars();
+                    let (Some(ch), None) = (chars.next(), chars.next()) else {
+                        continue; // a multi-char result is not one transcript char
+                    };
+                    if ch.is_control() {
+                        continue;
+                    }
+                    map.entry(ch).or_insert(KeySpec {
+                        dead: Some(prefix),
+                        ..spec
+                    });
                 }
             }
         }
@@ -269,7 +353,10 @@ mod imp {
         let extras: Vec<(char, KeySpec)> = map
             .iter()
             .filter_map(|(&ch, &spec)| {
-                if !ch.is_lowercase() {
+                // A dead-key letter keeps to its composed capital (dead key + Shift+base, found by
+                // the pass above): a Caps Lock bracket around the base of a compose sequence is a
+                // guess about the app's compose handling this map does not make.
+                if !ch.is_lowercase() || spec.dead.is_some() {
                     return None;
                 }
                 let up: Vec<char> = ch.to_uppercase().collect();
@@ -287,7 +374,7 @@ mod imp {
         for (u, spec) in extras {
             map.entry(u).or_insert(spec);
         }
-        Some(map)
+        map
     }
 
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
@@ -298,6 +385,7 @@ mod imp {
                 altgr: false,
                 lock: false,
                 caps_safe: true,
+                dead: None,
             }),
             '\t' => Some(KeySpec {
                 keycode: KEY_TAB,
@@ -305,9 +393,59 @@ mod imp {
                 altgr: false,
                 lock: false,
                 caps_safe: true,
+                dead: None,
             }),
             _ => map.get(&c).copied(),
         }
+    }
+
+    /// The keys that type `c`, each with the char it types: the char's own key when the layout
+    /// has one, else a base char plus separately typed combining marks that are canonically
+    /// equivalent to `c` — the Vietnamese `vn` layout types ệ as ê then U+0323 (combining dot
+    /// below), and has no ệ key. The base takes as many of `c`'s marks as a single key carries
+    /// (NFC of base + that subset); every mark left over must have a key of its own, typed after
+    /// it in canonical order. `None` when no split is typeable.
+    fn key_sequence(c: char, map: &HashMap<char, KeySpec>) -> Option<Vec<(char, KeySpec)>> {
+        if let Some(spec) = key_spec_for(c, map) {
+            return Some(vec![(c, spec)]);
+        }
+        let mut parts = std::iter::once(c).nfd();
+        let base = parts.next()?;
+        let marks: Vec<char> = parts.collect();
+        if marks.is_empty() || marks.len() > 3 {
+            return None;
+        }
+        // Subsets of the marks the base key takes, the largest first (fewest separate keys).
+        let mut subsets: Vec<u32> = (0..1u32 << marks.len()).collect();
+        subsets.sort_by_key(|m| std::cmp::Reverse(m.count_ones()));
+        for subset in subsets {
+            let taken = |i: usize| subset & (1 << i) != 0;
+            let mut head = std::iter::once(base)
+                .chain(
+                    marks
+                        .iter()
+                        .enumerate()
+                        .filter(|&(i, _)| taken(i))
+                        .map(|(_, &m)| m),
+                )
+                .nfc();
+            let (Some(ch), None) = (head.next(), head.next()) else {
+                continue;
+            };
+            let Some(spec) = key_spec_for(ch, map) else {
+                continue;
+            };
+            let rest: Option<Vec<(char, KeySpec)>> = marks
+                .iter()
+                .enumerate()
+                .filter(|&(i, _)| !taken(i))
+                .map(|(_, &m)| key_spec_for(m, map).map(|s| (m, s)))
+                .collect();
+            if let Some(rest) = rest {
+                return Some(std::iter::once((ch, spec)).chain(rest).collect());
+            }
+        }
+        None
     }
 
     /// How many of `text`'s letters the active layout can type, and how many it cannot —
@@ -316,7 +454,7 @@ mod imp {
     fn letter_reach(text: &str, map: &HashMap<char, KeySpec>) -> (usize, usize) {
         text.chars()
             .filter(|c| c.is_alphabetic())
-            .fold((0, 0), |(yes, no), c| match key_spec_for(c, map) {
+            .fold((0, 0), |(yes, no), c| match key_sequence(c, map) {
                 Some(_) => (yes + 1, no),
                 None => (yes, no + 1),
             })
@@ -367,7 +505,7 @@ mod imp {
         text.chars().any(|c| {
             let u = c as u32;
             c.is_alphabetic()
-                && key_spec_for(c, map).is_none()
+                && key_sequence(c, map).is_none()
                 && ((u >= 0x0370 && !LATIN_ABOVE_GREEK.iter().any(|r| r.contains(&u)))
                     || (!latin_layout
                         && (c.is_ascii_alphabetic() || (0x00C0..=0x024F).contains(&u))))
@@ -875,11 +1013,11 @@ mod imp {
                     // (hazard P16), so the untyped tail is dropped and this reports `Yes` — the
                     // same trade Q32 settled for the mid-typing cancel right above.
                     //
-                    // Below the `key_spec_for` lookup, not above it: an unreachable character
+                    // Below the `key_sequence` lookup, not above it: an unreachable character
                     // `continue`s without advancing `typed`, so a probe placed above re-fired on
                     // every character of an unreachable run (curly quotes, an em dash, emoji) —
                     // back to back, with no sleep between them — instead of once per 32 typed.
-                    let Some(spec) = key_spec_for(c, &charmap) else {
+                    let Some(keys) = key_sequence(c, &charmap) else {
                         continue; // char not reachable on this layout — skip
                     };
                     if typed.is_multiple_of(32) && typed > 0 && own_window_focused(app) {
@@ -900,77 +1038,110 @@ mod imp {
                     // to close.
                     typed += 1;
 
-                    // Capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À): press the
-                    // base key with Caps Lock effectively ON so KWin capitalizes the lowercase
-                    // keysym. If Caps is currently OFF, bracket the press with a Caps Lock tap to
-                    // flip it on and back (leaving the user's Caps state unchanged); if it's already
-                    // ON, the press alone yields the capital. Shift/AltGr still apply (È = Lock+Shift).
-                    //
-                    // Otherwise: a live Caps Lock capitalizes alphabetic output. On a normal
-                    // case-pair key the XOR below cancels it by pressing Shift; on a non-caps-safe
-                    // FOUR_LEVEL key (Swiss-German ü, whose Shift gives è) pressing Shift would
-                    // select the WRONG glyph, so flip Caps OFF for the press and use the glyph's own
-                    // modifiers, then flip it back — symmetric to the lock case (which flips it ON
-                    // for a capital). Gate on whether Caps actually case-FOLDS this char to a
-                    // different single char — not merely is_alphabetic(), which is also true for
-                    // caseless-script letters and for lowercase letters whose uppercase is
-                    // multi-char (German 'ß' → "SS"). Caps doesn't change those glyphs, so the
-                    // XOR-Shift below would wrongly select their shift-level keysym (e.g. German
-                    // Shift+ß = '?', turning "Straße" into "Stra?e").
-                    //
-                    // Both cases press the same sequence and differ only in this pair.
-                    let (flip_caps, needs_shift) = if spec.lock {
-                        (!caps, spec.shift)
-                    } else {
-                        let caps_affects = caps && {
-                            let lo: Vec<char> = c.to_lowercase().collect();
-                            let up: Vec<char> = c.to_uppercase().collect();
-                            lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
+                    // One char can take several keys: a dead-key prefix (`spec.dead`), or a base
+                    // letter plus separately typed combining marks (`key_sequence`). The cancel and
+                    // focus checks above stay per transcript char, so a char is never left half
+                    // composed by them.
+                    for (ch, spec) in keys {
+                        // Dead-key prefix (es/fr/pt é ê ñ, gr έ): tap the dead key with its own
+                        // modifiers first; the app composes it with the base key pressed below.
+                        // Through press!/release!, so a failure mid-tap is still released by the
+                        // cleanup. The live Caps compensation below concerns the base key only —
+                        // dead keysyms are not letters, so Caps does not change them.
+                        if let Some((dead_key, dead_shift, dead_altgr)) = spec.dead {
+                            if dead_shift {
+                                press!(KEY_LEFTSHIFT);
+                                tokio::time::sleep(Duration::from_millis(4)).await;
+                            }
+                            if dead_altgr {
+                                press!(KEY_RIGHTALT);
+                                tokio::time::sleep(Duration::from_millis(4)).await;
+                            }
+                            press!(dead_key);
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                            release!(dead_key);
+                            if dead_altgr {
+                                tokio::time::sleep(Duration::from_millis(4)).await;
+                                release!(KEY_RIGHTALT);
+                            }
+                            if dead_shift {
+                                tokio::time::sleep(Duration::from_millis(4)).await;
+                                release!(KEY_LEFTSHIFT);
+                            }
+                            tokio::time::sleep(Duration::from_millis(6)).await;
+                        }
+                        // Capital reachable ONLY via Caps Lock (Swiss-German Ü/Ä/Ö, È/É/À): press the
+                        // base key with Caps Lock effectively ON so KWin capitalizes the lowercase
+                        // keysym. If Caps is currently OFF, bracket the press with a Caps Lock tap to
+                        // flip it on and back (leaving the user's Caps state unchanged); if it's already
+                        // ON, the press alone yields the capital. Shift/AltGr still apply (È = Lock+Shift).
+                        //
+                        // Otherwise: a live Caps Lock capitalizes alphabetic output. On a normal
+                        // case-pair key the XOR below cancels it by pressing Shift; on a non-caps-safe
+                        // FOUR_LEVEL key (Swiss-German ü, whose Shift gives è) pressing Shift would
+                        // select the WRONG glyph, so flip Caps OFF for the press and use the glyph's own
+                        // modifiers, then flip it back — symmetric to the lock case (which flips it ON
+                        // for a capital). Gate on whether Caps actually case-FOLDS this char to a
+                        // different single char — not merely is_alphabetic(), which is also true for
+                        // caseless-script letters and for lowercase letters whose uppercase is
+                        // multi-char (German 'ß' → "SS"). Caps doesn't change those glyphs, so the
+                        // XOR-Shift below would wrongly select their shift-level keysym (e.g. German
+                        // Shift+ß = '?', turning "Straße" into "Stra?e").
+                        //
+                        // Both cases press the same sequence and differ only in this pair.
+                        let (flip_caps, needs_shift) = if spec.lock {
+                            (!caps, spec.shift)
+                        } else {
+                            let caps_affects = caps && {
+                                let lo: Vec<char> = ch.to_lowercase().collect();
+                                let up: Vec<char> = ch.to_uppercase().collect();
+                                lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
+                            };
+                            (
+                                caps_affects && !spec.caps_safe,
+                                spec.shift ^ (caps_affects && spec.caps_safe),
+                            )
                         };
-                        (
-                            caps_affects && !spec.caps_safe,
-                            spec.shift ^ (caps_affects && spec.caps_safe),
-                        )
-                    };
-                    if flip_caps {
-                        press!(KEY_CAPSLOCK);
-                        // Caps Lock toggles on the PRESS, so mark it flipped here — before the
-                        // release. If the release errors and bails the block, the cleanup tap
-                        // below must still run, else Caps is left inverted system-wide.
-                        caps_flipped = true;
-                        release!(KEY_CAPSLOCK);
+                        if flip_caps {
+                            press!(KEY_CAPSLOCK);
+                            // Caps Lock toggles on the PRESS, so mark it flipped here — before the
+                            // release. If the release errors and bails the block, the cleanup tap
+                            // below must still run, else Caps is left inverted system-wide.
+                            caps_flipped = true;
+                            release!(KEY_CAPSLOCK);
+                            tokio::time::sleep(Duration::from_millis(6)).await;
+                        }
+                        if needs_shift {
+                            press!(KEY_LEFTSHIFT);
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                        }
+                        if spec.altgr {
+                            press!(KEY_RIGHTALT);
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                        }
+                        press!(spec.keycode);
+                        tokio::time::sleep(Duration::from_millis(4)).await;
+                        release!(spec.keycode);
+                        if spec.altgr {
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                            release!(KEY_RIGHTALT);
+                        }
+                        if needs_shift {
+                            tokio::time::sleep(Duration::from_millis(4)).await;
+                            release!(KEY_LEFTSHIFT);
+                        }
+                        if flip_caps {
+                            tokio::time::sleep(Duration::from_millis(6)).await;
+                            press!(KEY_CAPSLOCK);
+                            // Symmetric to the opening tap: this PRESS toggles Caps back to the
+                            // user's original state, so clear the flag here — before the release.
+                            // Otherwise a failing release leaves caps_flipped set and the cleanup
+                            // tap would re-invert Caps.
+                            caps_flipped = false;
+                            release!(KEY_CAPSLOCK);
+                        }
                         tokio::time::sleep(Duration::from_millis(6)).await;
                     }
-                    if needs_shift {
-                        press!(KEY_LEFTSHIFT);
-                        tokio::time::sleep(Duration::from_millis(4)).await;
-                    }
-                    if spec.altgr {
-                        press!(KEY_RIGHTALT);
-                        tokio::time::sleep(Duration::from_millis(4)).await;
-                    }
-                    press!(spec.keycode);
-                    tokio::time::sleep(Duration::from_millis(4)).await;
-                    release!(spec.keycode);
-                    if spec.altgr {
-                        tokio::time::sleep(Duration::from_millis(4)).await;
-                        release!(KEY_RIGHTALT);
-                    }
-                    if needs_shift {
-                        tokio::time::sleep(Duration::from_millis(4)).await;
-                        release!(KEY_LEFTSHIFT);
-                    }
-                    if flip_caps {
-                        tokio::time::sleep(Duration::from_millis(6)).await;
-                        press!(KEY_CAPSLOCK);
-                        // Symmetric to the opening tap: this PRESS toggles Caps back to the
-                        // user's original state, so clear the flag here — before the release.
-                        // Otherwise a failing release leaves caps_flipped set and the cleanup
-                        // tap would re-invert Caps.
-                        caps_flipped = false;
-                        release!(KEY_CAPSLOCK);
-                    }
-                    tokio::time::sleep(Duration::from_millis(6)).await;
                 }
                 // Same missing third check as the paste branch above. For a bare auto-Enter
                 // job `job.text` is empty, so the per-character cancel check in the loop above
@@ -1057,6 +1228,7 @@ mod imp {
                         altgr: false,
                         lock: false,
                         caps_safe: true,
+                        dead: None,
                     };
                     (c, spec)
                 })
@@ -1075,6 +1247,7 @@ mod imp {
                         altgr: false,
                         lock: false,
                         caps_safe: true,
+                        dead: None,
                     };
                     (c, spec)
                 })
@@ -1178,6 +1351,158 @@ mod imp {
                 "\u{441}\u{44f}\u{43c}\u{2bc}\u{44f}",
                 &ru
             ));
+        }
+
+        fn spec(keycode: i32, shift: bool, dead: Option<(i32, bool, bool)>) -> KeySpec {
+            KeySpec {
+                keycode,
+                shift,
+                altgr: false,
+                lock: false,
+                caps_safe: true,
+                dead,
+            }
+        }
+
+        /// A Latin layout typing a-z and A-Z, plus `extra` chars, each on a key of its own.
+        fn latin_with(extra: &[(char, KeySpec)]) -> HashMap<char, KeySpec> {
+            let mut map = us_letters();
+            for (i, c) in ('A'..='Z').enumerate() {
+                map.insert(c, spec(16 + i as i32, true, None));
+            }
+            map.extend(extra.iter().copied());
+            map
+        }
+
+        /// Compile a real layout and its dead-key composes the way `build_charmap` does (group 0,
+        /// the en_US.UTF-8 compose table). `None` — the test then skips — when this machine has no
+        /// XKB data or compose table for it.
+        fn real_charmap(layout: &str) -> Option<HashMap<char, KeySpec>> {
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let keymap = xkb::Keymap::new_from_names(
+                &ctx,
+                "evdev",
+                "pc105",
+                layout,
+                "",
+                None,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            )?;
+            let table = xkb::compose::Table::new_from_locale(
+                &ctx,
+                std::ffi::OsStr::new("en_US.UTF-8"),
+                xkb::compose::COMPILE_NO_FLAGS,
+            )
+            .ok()?;
+            Some(charmap_from_keymap(&keymap, 0, Some(&table)))
+        }
+
+        #[test]
+        fn dead_key_letters_count_as_reachable() {
+            // es/pt: ó í á are typed through dead_acute (here keycode 40), never on a key of their own.
+            let acute = Some((40, false, false));
+            let es = latin_with(&[
+                ('\u{f3}', spec(24, false, acute)),
+                ('\u{e1}', spec(30, false, acute)),
+                ('\u{ed}', spec(23, false, acute)),
+            ]);
+            assert!(!divert_unreachable(
+                "La canci\u{f3}n est\u{e1} aqu\u{ed}",
+                &es
+            ));
+            assert_eq!(
+                letter_reach("La canci\u{f3}n est\u{e1} aqu\u{ed}", &es),
+                (17, 0)
+            );
+            // gr: the tonos letters ό έ come through dead_acute too, so a toned line is typed,
+            // not diverted.
+            let gr: HashMap<char, KeySpec> = ('\u{3b1}'..='\u{3c9}')
+                .chain(['\u{39a}'])
+                .enumerate()
+                .map(|(i, c)| (c, spec(16 + i as i32, false, None)))
+                .chain([
+                    ('\u{3ad}', spec(18, false, acute)),
+                    ('\u{3cc}', spec(24, false, acute)),
+                ])
+                .collect();
+            assert!(!divert_unreachable(
+                "\u{39a}\u{3b1}\u{3bb}\u{3b7}\u{3bc}\u{3ad}\u{3c1}\u{3b1} \u{3c3}\u{3b5} \u{3cc}\u{3bb}\u{3bf}\u{3c5}\u{3c2}",
+                &gr
+            ));
+        }
+
+        #[test]
+        fn combining_mark_keys_type_a_letter_no_key_carries() {
+            // vn: ê ô on keys of their own, the tone marks U+0301 / U+0323 as combining keys.
+            let vn = latin_with(&[
+                ('\u{ea}', spec(3, false, None)),
+                ('\u{f4}', spec(4, false, None)),
+                ('\u{301}', spec(5, false, None)),
+                ('\u{323}', spec(6, false, None)),
+            ]);
+            // ệ = e + U+0323 + U+0302: ê takes the circumflex, the dot below is typed after it.
+            let seq: Vec<char> = key_sequence('\u{1ec7}', &vn)
+                .unwrap()
+                .into_iter()
+                .map(|(ch, _)| ch)
+                .collect();
+            assert_eq!(seq, ['\u{ea}', '\u{323}']);
+            // ố = ô + U+0301; ó = o + U+0301.
+            let seq: Vec<char> = key_sequence('\u{1ed1}', &vn)
+                .unwrap()
+                .into_iter()
+                .map(|(ch, _)| ch)
+                .collect();
+            assert_eq!(seq, ['\u{f4}', '\u{301}']);
+            assert_eq!(letter_reach("Vi\u{1ec7}t", &vn), (4, 0));
+            assert!(!divert_unreachable("Vi\u{1ec7}t Nam", &vn));
+            // A mark with no key of its own leaves the letter unreachable: ẽ needs U+0303.
+            assert!(key_sequence('\u{1ebd}', &vn).is_none());
+            // A letter on its own key is that one key.
+            assert_eq!(key_sequence('a', &vn).map(|k| k.len()), Some(1));
+        }
+
+        #[test]
+        fn a_real_dead_key_layout_types_its_accented_letters() {
+            let Some(es) = real_charmap("es") else {
+                eprintln!("skipped: no XKB data or compose table for `es`");
+                return;
+            };
+            // The Spanish layout has no é/ó key: both come from dead_acute + the base letter.
+            for c in ['\u{e9}', '\u{f3}', '\u{c9}'] {
+                let spec = es.get(&c).copied();
+                assert!(
+                    spec.is_some_and(|s| s.dead.is_some()),
+                    "{c} not via a dead key"
+                );
+            }
+            // ñ has a key of its own and keeps it.
+            assert!(es.get(&'\u{f1}').is_some_and(|s| s.dead.is_none()));
+            assert!(!divert_unreachable(
+                "La canci\u{f3}n est\u{e1} aqu\u{ed}",
+                &es
+            ));
+            assert_eq!(
+                letter_reach("La canci\u{f3}n est\u{e1} aqu\u{ed}", &es),
+                (17, 0)
+            );
+            if let Some(fr) = real_charmap("fr") {
+                // French ê: dead_circumflex + e.
+                assert!(fr.get(&'\u{ea}').is_some_and(|s| s.dead.is_some()));
+                assert!(!divert_unreachable("\u{ea}tre ou ne pas \u{ea}tre", &fr));
+            }
+            if let Some(vn) = real_charmap("vn") {
+                // Vietnamese ệ ọ: a combining-mark key or a dead key after the base letter.
+                assert!(key_sequence('\u{1ec7}', &vn).is_some());
+                assert!(!divert_unreachable("Vi\u{1ec7}t Nam h\u{1ecd}c", &vn));
+            }
+            if let Some(gr) = real_charmap("gr") {
+                assert!(gr.get(&'\u{3ad}').is_some_and(|s| s.dead.is_some()));
+                assert!(!divert_unreachable(
+                    "\u{39a}\u{3b1}\u{3bb}\u{3b7}\u{3bc}\u{3ad}\u{3c1}\u{3b1} \u{3c3}\u{3b5} \u{3cc}\u{3bb}\u{3bf}\u{3c5}\u{3c2}",
+                    &gr
+                ));
+            }
         }
     }
 }

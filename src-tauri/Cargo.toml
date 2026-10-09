@@ -108,6 +108,9 @@ pulseaudio = "0.3"
 futures-executor = "0.3"
 ashpd = { version = "0.13", features = ["remote_desktop", "screencast"] }
 xkbcommon = "0.9.0"
+# NFD/NFC splits for direct typing: a letter the layout has no key for may still be typeable as a
+# base letter plus combining-mark keys (Vietnamese ệ = ê + U+0323 on the `vn` layout).
+unicode-normalization = "0.1"
 # dlopen only — query the active XKB group (X11 XkbGetState) so multi-layout direct-typing uses the
 # live layout, not always group 0. libX11 stays an OPTIONAL runtime dep (never a build/link requirement).
 libc = "0.2"
