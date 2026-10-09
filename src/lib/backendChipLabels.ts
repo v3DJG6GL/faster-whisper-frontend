@@ -1,6 +1,6 @@
 // The small chips that say which server build a backend runs and where its model runs:
-// "v0.1.153" (connections[id].serverVersion, from /v1/models) and "CUDA" / "CPU" (the default
-// model's `device` in /v1/models — the loaded model's real device, so a CPU fallback shows).
+// "v0.1.153" (connections[id].serverVersion, from /v1/models) and "CUDA" / "CPU" (the backend's
+// model's `device` in /v1/models — a loaded model's real device, so a CPU fallback shows).
 // Shown in the backend pickers, the Backends list row and the editor header; ModelPicker shows
 // each model's device chip. Both values come from the server, so both are bounded here.
 
@@ -26,18 +26,19 @@ export const WHISPER_ALIAS = "whisper-1";
 /** Where the backend's default model runs: the model it names (by id, else by the same last path
  *  part, "org/large-v3" ~ "large-v3"), else — a backend that leaves the model to the server, or
  *  names the OpenAI alias "whisper-1" the server maps to its default (and does not list) — the
- *  device every loaded model shares (or its only model's). /v1/models does not say which loaded
- *  model is the default and a per-model device override can split them, so loaded models on
- *  different devices give no chip rather than a guess. */
+ *  device every listed model shares (or its only model's). /v1/models does not say which model is
+ *  the default, but always lists it, loaded or not: a device all listed models agree on is the
+ *  default's too. Any split (a per-model device override, or a model on another device still
+ *  loaded beside an unloaded default) gives no chip rather than a guess — callers that know the
+ *  resolved default name pass it instead. */
 export function modelDevice(models: readonly ServerModel[] | undefined, model: string): string | undefined {
   if (!models?.length) return undefined;
   const m = model.trim();
   const byName = m ? (models.find((x) => x.id === m) ?? models.find((x) => tail(x.id) === tail(m))) : undefined;
   if (byName) return deviceChip(byName.device);
   if (m && m !== WHISPER_ALIAS) return undefined;
-  const loaded = models.filter((x) => x.loaded).map((x) => deviceChip(x.device)).filter((c) => c);
-  if (loaded.length) return loaded.every((c) => c === loaded[0]) ? loaded[0] : undefined;
-  return models.length === 1 ? deviceChip(models[0].device) : undefined;
+  const first = deviceChip(models[0].device);
+  return first && models.every((x) => deviceChip(x.device) === first) ? first : undefined;
 }
 
 /** The chips of one backend, from its last connection result: [version, device], each only when

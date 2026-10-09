@@ -162,7 +162,6 @@ function Editor({
   // inferred; `kind` = the effective classification (a manual override wins). `kind` gates the
   // decode-override editor.
   const detected = classifyConnection(conn);
-  const chips = backendChips(b, conn ?? undefined);
   const kind = effectiveServerKind(b, conn);
   // The hooks below fetch for the DEBOUNCED target, so they get the kind last seen while that
   // target was settled: `kind` follows the live field at once, and a typo-then-revert flipped it
@@ -202,6 +201,15 @@ function Editor({
   // backend's default) loads the server's DEFAULT_MODEL, so it reads as inherited, as the chips
   // and ModelPicker do. On a standard (OpenAI-compatible) server it is the real model sent.
   const ownModel = b.model.trim() === WHISPER_ALIAS && kind !== "standard" ? "" : b.model.trim();
+  // The header's device chip: /v1/models doesn't say which listed model is the server default, so
+  // a backend on it gets the name the server resolved for exactly this request — only while the
+  // address, key and model it was fetched for are still the ones typed (else the previous typing's
+  // resolution would name the chip). Without it, modelDevice falls back to the listed consensus.
+  const chipModel =
+    !ownModel && decodeDefaults?.model && debouncedUrl === effUrl && debouncedKey === key && debouncedModel.trim() === b.model.trim()
+      ? decodeDefaults.model
+      : b.model;
+  const chips = backendChips({ model: chipModel }, conn ?? undefined);
   // "Multiple languages" is the backend's default `multilingual` decode override.
   const multiOffered = offersMultilingual({
     canOverride: caps?.can_request_decode_overrides,
