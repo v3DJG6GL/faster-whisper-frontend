@@ -158,18 +158,22 @@ pub fn focus_is_remote_desktop(app_id: impl FnOnce() -> Option<String>) -> bool 
     focus_is_remote_desktop_client() || id.is_some_and(|id| is_remote_desktop_app(&id))
 }
 
-/// The saved per-app overrides (`AppRule.remoteDesktop`), as (rule key, on) in rule order.
-static RULES: std::sync::RwLock<Vec<(String, bool)>> = std::sync::RwLock::new(Vec::new());
+/// The saved per-app overrides (`AppRule.remoteDesktop`), as (rule key, on) in rule order. `None`
+/// is "Auto" (or a synced junk value): such a rule still shadows a later one for the same key.
+static RULES: std::sync::RwLock<Vec<(String, Option<bool>)>> = std::sync::RwLock::new(Vec::new());
 
-/// Apply the saved app rules (`Config.app_rules`, frontend-owned JSON). Only a rule whose
-/// `remoteDesktop` is a real boolean overrides: "Auto" (null/absent) and a synced junk value fall
-/// back to detection, as `resolveInjectionTarget` does. Called at startup and by `save_config`.
+/// Apply the saved app rules (`Config.app_rules`, frontend-owned JSON), floored as the webview's
+/// `wellFormedAppRules` floors them: a rule needs a string `id` and a string `appId` whose key is
+/// not empty. Every surviving rule is kept, Auto ones too, because `resolveInjectionTarget` finds
+/// the first rule for the key and only THEN reads its `remoteDesktop` — anything but a real
+/// boolean falls back to detection. Called at startup and by `save_config`.
 pub fn set_rules(app_rules: &[serde_json::Value]) {
-    let rules: Vec<(String, bool)> = app_rules
+    let rules: Vec<(String, Option<bool>)> = app_rules
         .iter()
         .filter_map(|r| {
+            r.get("id")?.as_str()?;
             let key = rule_key(r.get("appId")?.as_str()?);
-            let on = r.get("remoteDesktop")?.as_bool()?;
+            let on = r.get("remoteDesktop").and_then(serde_json::Value::as_bool);
             (!key.is_empty()).then_some((key, on))
         })
         .collect();
@@ -178,12 +182,16 @@ pub fn set_rules(app_rules: &[serde_json::Value]) {
     }
 }
 
+/// Can any saved rule force a verdict? Without one the app id is read lazily.
 fn has_rules() -> bool {
-    RULES.read().is_ok_and(|g| !g.is_empty())
+    RULES
+        .read()
+        .is_ok_and(|g| g.iter().any(|(_, on)| on.is_some()))
 }
 
 /// The rule's verdict for `app_id`: `Some(on)` when a rule forces it, `None` = Auto. The first
-/// matching rule wins, as the webview's `appRules.find` does.
+/// rule for the key wins and then its `remoteDesktop` decides, as the webview's `appRules.find`
+/// does — an Auto rule ahead of an On/Off one for the same app leaves it to detection.
 pub fn rule_override(app_id: &str) -> Option<bool> {
     let key = rule_key(app_id);
     if key.is_empty() {
@@ -194,7 +202,7 @@ pub fn rule_override(app_id: &str) -> Option<bool> {
         .ok()?
         .iter()
         .find(|(k, _)| *k == key)
-        .map(|&(_, on)| on)
+        .and_then(|&(_, on)| on)
 }
 
 /// Rust twin of the webview's `appRuleKey` (sanitize.ts): `safeDisplayText` (control and
@@ -239,11 +247,15 @@ mod tests {
     fn a_per_app_rule_overrides_both_detectors() {
         use super::{focus_is_remote_desktop, rule_override, set_rules};
         let rules: Vec<serde_json::Value> = serde_json::from_str(
-            r#"[{"appId":"MyVdiClient","remoteDesktop":true},
-                {"appId":"vmconnect\u200b","remoteDesktop":false},
-                {"appId":"gedit","remoteDesktop":null},
-                {"appId":"konsole","remoteDesktop":"yes"},
-                {"appId":"myvdiclient","remoteDesktop":false}]"#,
+            r#"[{"id":"1","appId":"MyVdiClient","remoteDesktop":true},
+                {"id":"2","appId":"vmconnect\u200b","remoteDesktop":false},
+                {"id":"3","appId":"gedit","remoteDesktop":null},
+                {"id":"4","appId":"konsole","remoteDesktop":"yes"},
+                {"id":"5","appId":"myvdiclient","remoteDesktop":false},
+                {"id":"6","appId":"shadowed","remoteDesktop":null},
+                {"id":"7","appId":"Shadowed","remoteDesktop":true},
+                {"appId":"noid","remoteDesktop":true},
+                {"id":"8","appId":" Kate\ufe0f\u2800 ","remoteDesktop":true}]"#,
         )
         .unwrap();
         set_rules(&rules);
@@ -256,9 +268,23 @@ mod tests {
         assert_eq!(rule_override("konsole"), None);
         assert!(!focus_is_remote_desktop(|| Some("gedit".into())));
         assert!(focus_is_remote_desktop(|| Some("anydesk".into())));
+        // An Auto rule ahead of an On rule for the same app shadows it: first match, then value.
+        assert_eq!(rule_override("shadowed"), None);
+        // A rule without an id is dropped by the webview's floor, so it does not apply here.
+        assert_eq!(rule_override("noid"), None);
+        // A key saved with invisible key characters (not deceptive-format ones) still matches.
+        assert_eq!(rule_override("kate"), Some(true));
         set_rules(&[]);
         assert!(focus_is_remote_desktop(|| Some("VMConnect".into())));
         assert!(!focus_is_remote_desktop(|| Some("myvdiclient".into())));
+    }
+
+    #[test]
+    fn rule_key_drops_invisible_characters() {
+        use super::rule_key;
+        assert_eq!(rule_key(" Konsole\u{200b} "), "konsole");
+        assert_eq!(rule_key("Konsole\u{fe0f}"), "konsole");
+        assert_eq!(rule_key("x\u{034f}\u{2800}"), "x");
     }
 
     #[cfg(not(windows))]

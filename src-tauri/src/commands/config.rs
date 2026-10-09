@@ -41,6 +41,17 @@ pub fn load_config(app: AppHandle) -> LoadedConfig {
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
+    // The two in-memory process switches mirror the webview's live settings (the paste path
+    // already acts on them unsaved), not the disk, so they apply BEFORE the write: a refused save
+    // (BACKUP_FAILED session, full/read-only disk) still returns its Err to the save banner, but
+    // push-to-talk, Quick-Add and clipboard writes no longer lag behind the paste path until
+    // restart.
+    // Clipboard privacy is a process-wide switch every transcript write reads (see inject/mod.rs), so
+    // it is applied here rather than carried on each insert.
+    crate::inject::set_clipboard_privacy(config.settings.general.exclude_from_clipboard_history);
+    // The per-app "Remote desktop" overrides the Quick-Add grab and the push-to-talk liveness gate
+    // read (the paste path gets them with each insert).
+    crate::inject::rdp_client::set_rules(&config.app_rules);
     // A save over a reset (this session, or one nobody has saved over yet) carries the defaults'
     // retention windows, not the backed-up settings' — its sweeps must not delete that history.
     let reset = config::retention_held(&dir);
@@ -76,12 +87,6 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // Log level reload / session-file move / prune — so Settings changes
     // apply live, not at the next restart.
     crate::logging::apply_log_settings(&app, &config, reset);
-    // Clipboard privacy is a process-wide switch every transcript write reads (see inject/mod.rs), so
-    // it is applied here rather than carried on each insert.
-    crate::inject::set_clipboard_privacy(config.settings.general.exclude_from_clipboard_history);
-    // The per-app "Remote desktop" overrides the Quick-Add grab and the push-to-talk liveness gate
-    // read (the paste path gets them with each insert).
-    crate::inject::rdp_client::set_rules(&config.app_rules);
     Ok(())
 }
 
