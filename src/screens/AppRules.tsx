@@ -257,7 +257,7 @@ function Editor({
               : autoRemote
                 ? "Auto — detected as a remote-desktop client."
                 : "Auto — not a known remote-desktop client."
-            : "Remote-desktop clients (mstsc, Citrix, AnyDesk…) get a longer paste delay and no clipboard restore."}
+            : "Remote-desktop clients (mstsc, Citrix, AnyDesk…) get a longer paste delay and no clipboard restore; on Windows, push-to-talk holds and Quick-Add's copy also allow for the connection."}
         </div>
       </Labeled>
 

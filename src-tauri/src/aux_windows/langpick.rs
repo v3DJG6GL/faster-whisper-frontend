@@ -29,7 +29,7 @@ const LP_TITLE: &str = "fwf-translate-to";
 /// Show + focus the picker, carrying the seed the main window built.
 ///
 /// `seed` is opaque JSON (source language, preselected targets, recents) — Rust forwards
-/// it to the webview and never interprets it, the same contract `app_rules` has in the
+/// it to the webview and never interprets it, the same contract `quick_launch` has in the
 /// config. It rides the show call rather than a separate fetch so the window cannot paint
 /// an empty list first and fill it a frame later.
 #[tauri::command]

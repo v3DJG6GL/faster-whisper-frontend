@@ -18,7 +18,10 @@
 //!
 //! A per-app rule can override both ("Remote desktop: On / Off"); `inject_text` logs which
 //! detector fired and whether the rule overrode it, so a support log answers "why was this
-//! treated as remote" without a repro.
+//! treated as remote" without a repro. The paste path gets the rule from the webview with each
+//! insert; the Quick-Add grab and the push-to-talk liveness gate have no webview round trip, so
+//! they read the same rules from [`set_rules`]' process-wide copy (applied at startup and on every
+//! config save) through [`focus_is_remote_desktop`].
 
 /// Remote-desktop / VDI clients, matched on the focused app id. Their clipboard reaches the
 /// remote host ASYNCHRONOUSLY (RDP "delayed rendering" even fetches the data only when the
@@ -139,13 +142,124 @@ pub fn focus_is_remote_desktop_client() -> bool {
 /// nothing). The class check runs first, being a few Win32 calls; `app_id` (the callers pass the
 /// live foreground app id: a process-image lookup on Windows, a snapshot read on Linux) is called
 /// only when it misses.
+///
+/// A per-app "Remote desktop: On / Off" rule for the focused app wins over both, as it does on the
+/// paste path — the rule exists for the client the detectors do not know, or a false positive.
+/// With no such rule saved, the id is still read lazily.
 pub fn focus_is_remote_desktop(app_id: impl FnOnce() -> Option<String>) -> bool {
-    focus_is_remote_desktop_client() || app_id().is_some_and(|id| is_remote_desktop_app(&id))
+    if !has_rules() {
+        return focus_is_remote_desktop_client()
+            || app_id().is_some_and(|id| is_remote_desktop_app(&id));
+    }
+    let id = app_id();
+    if let Some(on) = id.as_deref().and_then(rule_override) {
+        return on;
+    }
+    focus_is_remote_desktop_client() || id.is_some_and(|id| is_remote_desktop_app(&id))
+}
+
+/// The saved per-app overrides (`AppRule.remoteDesktop`), as (rule key, on) in rule order.
+static RULES: std::sync::RwLock<Vec<(String, bool)>> = std::sync::RwLock::new(Vec::new());
+
+/// Apply the saved app rules (`Config.app_rules`, frontend-owned JSON). Only a rule whose
+/// `remoteDesktop` is a real boolean overrides: "Auto" (null/absent) and a synced junk value fall
+/// back to detection, as `resolveInjectionTarget` does. Called at startup and by `save_config`.
+pub fn set_rules(app_rules: &[serde_json::Value]) {
+    let rules: Vec<(String, bool)> = app_rules
+        .iter()
+        .filter_map(|r| {
+            let key = rule_key(r.get("appId")?.as_str()?);
+            let on = r.get("remoteDesktop")?.as_bool()?;
+            (!key.is_empty()).then_some((key, on))
+        })
+        .collect();
+    if let Ok(mut g) = RULES.write() {
+        *g = rules;
+    }
+}
+
+fn has_rules() -> bool {
+    RULES.read().is_ok_and(|g| !g.is_empty())
+}
+
+/// The rule's verdict for `app_id`: `Some(on)` when a rule forces it, `None` = Auto. The first
+/// matching rule wins, as the webview's `appRules.find` does.
+pub fn rule_override(app_id: &str) -> Option<bool> {
+    let key = rule_key(app_id);
+    if key.is_empty() {
+        return None;
+    }
+    RULES
+        .read()
+        .ok()?
+        .iter()
+        .find(|(k, _)| *k == key)
+        .map(|&(_, on)| on)
+}
+
+/// Rust twin of the webview's `appRuleKey` (sanitize.ts): `safeDisplayText` (control and
+/// deceptive-format characters dropped, 200 kept), then `normalizeAppId`'s invisible key
+/// characters dropped and the ends trimmed, lowercased. Both the stored key and the live id go
+/// through it, so a rule matches here exactly when it matches on the paste path.
+fn rule_key(s: &str) -> String {
+    let shown: String = s
+        .chars()
+        .filter(|&c| !c.is_control() && !crate::inject::is_deceptive_format_char(c))
+        .take(200)
+        .collect();
+    let kept: String = shown
+        .chars()
+        .filter(|&c| !is_invisible_key_char(c))
+        .collect();
+    kept.trim().to_lowercase()
+}
+
+/// sanitize.ts `isInvisibleKeyChar`: characters with no visible glyph that the deceptive-format
+/// set leaves in.
+fn is_invisible_key_char(c: char) -> bool {
+    matches!(c,
+        '\u{034f}'
+        | '\u{17b4}'..='\u{17b5}'
+        | '\u{180b}'..='\u{180f}'
+        | '\u{2065}'
+        | '\u{2800}'
+        | '\u{fe00}'..='\u{fe0f}'
+        | '\u{fff0}'..='\u{fff8}'
+        | '\u{e0000}'..='\u{e0fff}')
 }
 
 #[cfg(test)]
 mod tests {
     use super::{is_remote_desktop_app, is_remote_window_class};
+
+    /// One test owns the process-wide RULES (tests run in parallel; a second fn would race it),
+    /// and its ids are ones no other test here asks about.
+    #[cfg(not(windows))]
+    #[test]
+    fn a_per_app_rule_overrides_both_detectors() {
+        use super::{focus_is_remote_desktop, rule_override, set_rules};
+        let rules: Vec<serde_json::Value> = serde_json::from_str(
+            r#"[{"appId":"MyVdiClient","remoteDesktop":true},
+                {"appId":"vmconnect\u200b","remoteDesktop":false},
+                {"appId":"gedit","remoteDesktop":null},
+                {"appId":"konsole","remoteDesktop":"yes"},
+                {"appId":"myvdiclient","remoteDesktop":false}]"#,
+        )
+        .unwrap();
+        set_rules(&rules);
+        // On: an unknown client is treated as remote; the first matching rule wins.
+        assert!(focus_is_remote_desktop(|| Some("myvdiclient".into())));
+        // Off: a known client (keyed with an invisible mark, as a synced rule may be) is not.
+        assert!(!focus_is_remote_desktop(|| Some("VMConnect".into())));
+        // Auto and junk values fall back to detection.
+        assert_eq!(rule_override("gedit"), None);
+        assert_eq!(rule_override("konsole"), None);
+        assert!(!focus_is_remote_desktop(|| Some("gedit".into())));
+        assert!(focus_is_remote_desktop(|| Some("anydesk".into())));
+        set_rules(&[]);
+        assert!(focus_is_remote_desktop(|| Some("VMConnect".into())));
+        assert!(!focus_is_remote_desktop(|| Some("myvdiclient".into())));
+    }
 
     #[cfg(not(windows))]
     #[test]

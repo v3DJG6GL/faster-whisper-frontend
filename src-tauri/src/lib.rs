@@ -255,6 +255,9 @@ pub fn run() {
             // "Keep dictated text out of clipboard history" — a process-wide switch every
             // transcript write reads; re-applied by save_config.
             inject::set_clipboard_privacy(cfg.settings.general.exclude_from_clipboard_history);
+            // Per-app "Remote desktop" overrides for the Quick-Add grab and push-to-talk; re-applied
+            // by save_config.
+            inject::rdp_client::set_rules(&cfg.app_rules);
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
             commands::apply_bindings(app.handle());

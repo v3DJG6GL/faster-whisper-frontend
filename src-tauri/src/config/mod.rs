@@ -739,7 +739,7 @@ pub struct AppSettings {
     pub recording: RecordingSettings,
     /// Settings-sync metadata (enable flag, sync-backend id, per-device category
     /// toggles, per-backend URL overrides). Frontend-owned opaque JSON like
-    /// `quick_launch`/`app_rules` — Rust stores + round-trips but never interprets
+    /// `quick_launch` — Rust stores + round-trips but never interprets
     /// it. MACHINE-LOCAL by contract: the TS sync layer excludes it from every
     /// synced blob and export. `#[serde(default, skip…)]` so older configs load
     /// and an unset value round-trips byte-stable.
@@ -834,8 +834,10 @@ pub struct Config {
     pub backends: Vec<Backend>,
     pub profiles: Vec<Profile>,
     /// Per-application injection rules (block/allow + method / paste-shortcut overrides).
-    /// Frontend-owned opaque JSON like `quick_launch` — Rust stores + round-trips but
-    /// never interprets it. `#[serde(default, skip…)]` so older configs load.
+    /// Frontend-owned opaque JSON like `quick_launch` — Rust stores + round-trips it and reads
+    /// exactly two keys, `appId` + `remoteDesktop` (`inject::rdp_client::set_rules`, for the
+    /// Quick-Add grab and the push-to-talk liveness gate). `#[serde(default, skip…)]` so older
+    /// configs load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_rules: Vec<serde_json::Value>,
     /// Schema version (absent/legacy ⇒ 1; current ⇒ 3, see `CONFIG_VERSION` in store.ts). Orders future migrations.

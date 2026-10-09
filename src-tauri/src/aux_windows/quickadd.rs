@@ -699,7 +699,8 @@ pub(crate) mod win_seed {
         // (mstsc, and the RDP control hosted by RDCMan & co.) OR the focused app id (VirtualBox,
         // VMware, Citrix, AnyDesk… — clients whose window class says nothing). The LIVE
         // foreground's id, like the class check: the copy goes to whatever holds focus now,
-        // never `focused_app_now`'s fallback to the app before a shell surface.
+        // never `focused_app_now`'s fallback to the app before a shell surface. A per-app
+        // "Remote desktop" rule wins over both, as on the paste path.
         let remote = crate::inject::rdp_client::focus_is_remote_desktop(|| {
             crate::focus::focused_app_id_live(app.state::<crate::focus::AtspiGuard>().inner())
         });

@@ -195,9 +195,11 @@ export interface AppRule {
   autoEnter?: boolean | null;
   /** Put the user's clipboard back after pasting, for THIS app. */
   restoreClipboard?: boolean | null;
-  /** Treat THIS app as a remote-desktop client (longer paste settle, no clipboard restore).
-   *  null/absent = auto-detect by app id — the Rust side knows mstsc, Citrix, AnyDesk and
-   *  friends; the override exists for the client it doesn't know, or a false positive. */
+  /** Treat THIS app as a remote-desktop client (longer paste settle, no clipboard restore; on
+   *  Windows also the push-to-talk liveness rule and Quick-Add's held copy grab, which Rust reads
+   *  from the saved rules — `rdp_client::set_rules`). null/absent = auto-detect by app id — the
+   *  Rust side knows mstsc, Citrix, AnyDesk and friends; the override exists for the client it
+   *  doesn't know, or a false positive. */
   remoteDesktop?: boolean | null;
 }
 

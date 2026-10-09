@@ -1224,7 +1224,8 @@ mod imp {
     }
 
     /// Is focus on a remote-desktop / VDI client, by EITHER `inject::rdp_client` detector (see
-    /// `rdp_client::focus_is_remote_desktop`); the app id is read only when the class misses.
+    /// `rdp_client::focus_is_remote_desktop`), or the app's own "Remote desktop" rule when one is
+    /// saved; without such a rule the app id is read only when the class misses.
     /// The LIVE foreground's id: `focused_app_now` falls back to the app focused before ours
     /// (and keeps it across the shell), so leaving a client for our window or the taskbar
     /// would still read as remote and arm the latch / liveness rule off-RDP.

@@ -79,6 +79,9 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // Clipboard privacy is a process-wide switch every transcript write reads (see inject/mod.rs), so
     // it is applied here rather than carried on each insert.
     crate::inject::set_clipboard_privacy(config.settings.general.exclude_from_clipboard_history);
+    // The per-app "Remote desktop" overrides the Quick-Add grab and the push-to-talk liveness gate
+    // read (the paste path gets them with each insert).
+    crate::inject::rdp_client::set_rules(&config.app_rules);
     Ok(())
 }
 
