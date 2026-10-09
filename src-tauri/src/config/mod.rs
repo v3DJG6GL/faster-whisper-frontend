@@ -835,9 +835,10 @@ pub struct Config {
     pub profiles: Vec<Profile>,
     /// Per-application injection rules (block/allow + method / paste-shortcut overrides).
     /// Frontend-owned opaque JSON like `quick_launch` — Rust stores + round-trips it and reads
-    /// exactly two keys, `appId` + `remoteDesktop` (`inject::rdp_client::set_rules`, for the
-    /// Quick-Add grab and the push-to-talk liveness gate). `#[serde(default, skip…)]` so older
-    /// configs load.
+    /// three keys: `id` and `appId` (the webview's `wellFormedAppRules` floor: both strings,
+    /// non-empty key; a rule failing it is ignored, as the webview ignores it) and
+    /// `remoteDesktop` (`inject::rdp_client::set_rules`, for the Quick-Add grab and the
+    /// push-to-talk liveness gate). `#[serde(default, skip…)]` so older configs load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub app_rules: Vec<serde_json::Value>,
     /// Schema version (absent/legacy ⇒ 1; current ⇒ 3, see `CONFIG_VERSION` in store.ts). Orders future migrations.

@@ -253,10 +253,10 @@ pub fn run() {
             logging::apply_log_settings(app.handle(), &cfg, retention_held);
             logging::spawn_emit_pump(app.handle().clone());
             // "Keep dictated text out of clipboard history" — a process-wide switch every
-            // transcript write reads; re-applied by save_config.
+            // transcript write reads; re-applied by apply_live_switches (save_config included).
             inject::set_clipboard_privacy(cfg.settings.general.exclude_from_clipboard_history);
             // Per-app "Remote desktop" overrides for the Quick-Add grab and push-to-talk; re-applied
-            // by save_config.
+            // by apply_live_switches (save_config included).
             inject::rdp_client::set_rules(&cfg.app_rules);
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
@@ -321,6 +321,7 @@ pub fn run() {
             memwatch::note_route,
             commands::load_config,
             commands::save_config,
+            commands::apply_live_switches,
             commands::set_backend_key,
             commands::delete_backend_key,
             commands::app_version,

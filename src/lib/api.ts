@@ -5,6 +5,7 @@ import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./transcript/subtitleImport
 import { invoke } from "@tauri-apps/api/core";
 import { safeDisplayText } from "./sanitize";
 import type {
+  AppRule,
   PlanStage,
   BatchProgress,
   BatchResult,
@@ -88,6 +89,15 @@ export async function loadConfig(): Promise<LoadedConfig | null> {
 export async function saveConfig(config: Config): Promise<void> {
   if (!isTauri) return;
   await invoke("save_config", { config });
+}
+
+/** Apply the in-memory switches `save_config` applies before its write (per-app "Remote desktop"
+ *  rules, clipboard-history privacy) without writing — for a save the webview holds back (the
+ *  shortcut-conflict freeze), so push-to-talk, Quick-Add and clipboard writes keep following the
+ *  live settings the paste path already uses. */
+export async function applyLiveSwitches(appRules: AppRule[], excludeFromClipboardHistory: boolean): Promise<void> {
+  if (!isTauri) return;
+  await invoke("apply_live_switches", { appRules, excludeFromClipboardHistory });
 }
 
 export async function setBackendKey(backendId: string, key: string): Promise<void> {

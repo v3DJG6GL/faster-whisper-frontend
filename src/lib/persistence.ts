@@ -1,5 +1,5 @@
 import { useApp, CONFIG_VERSION } from "./store";
-import { isTauri, loadConfig, saveConfig, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
+import { isTauri, loadConfig, saveConfig, applyLiveSwitches, reregisterShortcutsUnlessCapturing, evdevStatus } from "./api";
 import { conflicts, withQuickAddPeer } from "./hotkeyConflicts";
 import { IS_WINDOWS } from "./platform";
 import type { Profile } from "./types";
@@ -184,6 +184,10 @@ export async function initConfig(): Promise<void> {
       useApp
         .getState()
         .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");
+      // The held save still hands Rust its live switches (Remote desktop rules, clipboard
+      // privacy): the paste path reads them per insert, so without this push-to-talk, Quick-Add
+      // and clipboard writes would keep the frozen ones until the conflict is resolved.
+      void applyLiveSwitches(s.appRules, s.settings.general.excludeFromClipboardHistory).catch(() => {});
       return Promise.resolve();
     }
     const reReg = pendingBindingChange;
