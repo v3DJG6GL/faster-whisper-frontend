@@ -597,6 +597,9 @@ describe("a stop or cancel during the start invoke", () => {
     expect(owed, "the owed cancel must be honoured after the invoke").toBeGreaterThan(end);
     // …before the owed-stop check, which would otherwise stop (and save) a cancelled session.
     expect(owed).toBeLessThan(body.indexOf("void stopLive()"));
+    // …and only while the session still captures: an error/close during the invoke already
+    // tore it down, and a stop then would strand "finalizing…" over the error/idle chip.
+    expect(body).toContain("if (capturing) void stopLive()");
     const branch = bodyAfter(body, "if (owedCancel)");
     expect(branch).toContain("cancelStream(true,");
     expect(branch).toContain("cancelRecord(true,");

@@ -3659,9 +3659,13 @@ async function startLiveInner(
     // "listening", so stopOrCancel no-op'd against idle). The session is up now → stop it promptly
     // (a short tap-dictation) instead of leaving it wedged "listening" with the chord released.
     // An owed chord-family restart supersedes it: startLive's `finally` cancels this session.
+    // An error or close that landed during the invoke (stream://error, the closed handler,
+    // teardownAfterFatalInject) already tore the session down and set capturing=false; stopping
+    // again would put "finalizing…" over the error/idle chip with no watchdog (activeEndpoint is
+    // null) and no closed event to clear it (the epoch is retired).
     if (stopRequestedDuringStart && !restartOwed) {
       stopRequestedDuringStart = false;
-      void stopLive();
+      if (capturing) void stopLive();
     }
   } catch (e) {
     startInvokeInFlight = false;
@@ -3707,9 +3711,11 @@ export interface CancelOpts {
   /** Skip the shortcut re-registration — for the chord-family restart, which cancels while
    *  the user is still holding the chord (re-enumerating keyboards then would lose its keys). */
   keepShortcuts?: boolean;
-  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: a session still
-   *  draining (stream) or transcribing (batch) after stop keeps its saved recording — it may be
-   *  the only copy of what was said. */
+  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
+   *  discarded — a live stream session is finished (drained, recording written), a live batch
+   *  session is dropped, not discarded (not transcribed, but a device-loss salvage under way keeps
+   *  its .wav/.txt), and a drain/transcription still running after stop is released, keeping its
+   *  saved recording — the audio may be the only copy of what was said. */
   keepRecording?: boolean;
 }
 
@@ -3953,9 +3959,9 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   activeEndpoint = null;
   capturing = false;
   try {
-    // ABORT, don't finish: a cancel discards the in-flight session, so skip the drain (streaming) /
-    // the transcription POST (batch) — they'd produce a result we immediately throw away. This also
-    // releases the system-mute guard right away.
+    // A user Cancel ABORTS, not finishes: skip the drain (streaming) / the transcription POST
+    // (batch) — they'd produce a result we immediately throw away — and release the system-mute
+    // guard right away. A recovery cancel (keepRecording) keeps the audio instead (see CancelOpts).
     // `true`: the user pressed Cancel, so Rust also aborts a transcript that is being typed
     // right now — in stop-timing mode the session is already gone by then, and the flag is
     // the only thing that distinguishes this from the closed-handler's release below.

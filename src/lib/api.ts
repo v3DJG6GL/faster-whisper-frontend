@@ -930,7 +930,10 @@ export async function stopStream(): Promise<void> {
  *  in stop-timing mode where the session is long gone), and as the closed-handler's idempotent
  *  release of a parked session (`false`, so the end-of-session insert queued moments later lives).
  *  `discardRecording`: a user's Cancel after stop also drops the recording the detached drain
- *  would save (the batch path's rule); a recovery cancel passes false to keep that audio. */
+ *  would save (the batch path's rule); a recovery cancel passes false to keep that audio.
+ *  The one exception to "without draining": a recovery cancel (`userInitiated` true,
+ *  `discardRecording` false) FINISHES a live session, so its drain writes the recording (its UI
+ *  events epoch-silenced), and settles a detached drain so its keep is final. */
 export async function cancelStream(userInitiated = false, discardRecording = userInitiated): Promise<void> {
   if (!isTauri) return;
   await invoke("cancel_stream", { userInitiated, discardRecording });
@@ -975,7 +978,9 @@ export async function stopRecord(): Promise<void> {
  *  mute). Used by cancelLive (`userInitiated: true`), and as the closed-handler's idempotent
  *  release of a parked session (`false`) — see `cancelStream` for what the flag decides.
  *  `discardRecording`: a cancel during "transcribing…" disowns the detached transcription and
- *  its saved .wav/.txt; a recovery cancel passes false to keep them. */
+ *  its saved .wav/.txt; a recovery cancel passes false to keep them. With false a LIVE session is
+ *  dropped, not discarded: it is not transcribed, but a device-loss salvage already under way
+ *  keeps its .wav/.txt. */
 export async function cancelRecord(userInitiated = false, discardRecording = true): Promise<void> {
   if (!isTauri) return;
   await invoke("cancel_record", { userInitiated, discardRecording });
