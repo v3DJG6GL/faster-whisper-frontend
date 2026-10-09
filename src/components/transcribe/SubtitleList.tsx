@@ -46,6 +46,8 @@ interface Row {
   fast: boolean;
   /** Duration as a share of the longest allowed subtitle (0–100). */
   bar: number;
+  /** Placeholder clocks (a clock-less text source): no duration bar. */
+  synth: boolean;
 }
 
 /** One cue row, memoized: during playback only the rows entering and leaving
@@ -71,7 +73,7 @@ const CueRow = memo(function CueRow({
   const time = (
     <div className={cn("font-mono text-[10.5px] leading-relaxed tabular-nums", active ? "text-accent" : "text-faint")}>
       {fmtTimestamp(row.start)} → {fmtTimestamp(row.end)}
-      {!lane && (
+      {!lane && !row.synth && (
         <div className="mt-1 h-[3px] rounded-pill bg-line">
           <div className="h-full rounded-pill bg-accent" style={{ width: `${row.bar}%` }} />
         </div>
@@ -265,7 +267,8 @@ export function SubtitleList({
         lines: cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig")),
         cps: synth ? "no timing" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
         fast,
-        bar: Math.min(100, (d / maxDur) * 100),
+        bar: synth ? 0 : Math.min(100, (d / maxDur) * 100),
+        synth,
       };
     };
     if (!lanes) {

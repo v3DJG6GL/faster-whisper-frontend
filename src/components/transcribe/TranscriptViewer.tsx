@@ -780,11 +780,17 @@ export function TranscriptViewer({
     }).catch(() => {});
   };
 
+  // A clock-less text source's clocks are placeholders (start = row index),
+  // not timing: the viewer and Copy show none, as the Summary and Subtitles
+  // view say. The shared toggle itself stays as set — the export panel keeps
+  // its own, warned Timestamps switch.
+  const tsShown = showTs && !result.timingSynthesized;
+
   const copyText = (): string => {
     if (!effSegments.length) return result.text;
     return effSegments
       .map((seg, i) => {
-        const ts = showTs ? `[${fmtTimestamp(seg.start)}] ` : "";
+        const ts = tsShown ? `[${fmtTimestamp(seg.start)}] ` : "";
         const who = showNames && seg.speaker ? `${displayName(seg.speaker)}: ` : "";
         const lines: string[] = [];
         if (origVisible) lines.push(`${ts}${who}${seg.text.trim()}`);
@@ -1751,19 +1757,20 @@ export function TranscriptViewer({
                 // press, moves anywhere on screen keep seeking until release.
                 onPointerDown={(e) => {
                   e.currentTarget.setPointerCapture(e.pointerId);
-                  // Length not known yet (Infinity, or before loadedmetadata):
-                  // frac * 0 would rewind to the start, so do nothing instead.
+                  // Length not known yet (before loadedmetadata, and the record
+                  // stores no duration): frac * 0 would rewind to the start,
+                  // so do nothing instead.
                   if (!(audioLen > 0)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-                  seekTo(frac * (audioLen || 0));
+                  seekTo(frac * audioLen);
                 }}
                 onPointerMove={(e) => {
                   if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
                   if (!(audioLen > 0)) return;
                   const rect = e.currentTarget.getBoundingClientRect();
                   const frac = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
-                  seekTo(frac * (audioLen || 0));
+                  seekTo(frac * audioLen);
                 }}
                 // The window key handler concedes Space/arrows to a focused slider,
                 // so this one has to own them — a focusable ARIA slider without
@@ -1959,7 +1966,7 @@ export function TranscriptViewer({
           <span className="h-5 w-px bg-line" />
           {(
             [
-              ["Timestamps", showTs, setShowTs, true],
+              ["Timestamps", showTs, setShowTs, !result.timingSynthesized],
               ["Speaker names", showNames, setShowNames, hasSpeakers],
               ["Colors", colorize, setColorize, hasSpeakers],
             ] as const
@@ -2156,7 +2163,7 @@ export function TranscriptViewer({
                 passedWordIdx={i === activeSegIdx && !editMode ? passedWordIdx : -1}
                 range={segWordRanges[i]}
                 words={effWords}
-                showTs={showTs}
+                showTs={tsShown}
                 showNames={showNames}
                 colorize={colorize}
                 editMode={editMode}
