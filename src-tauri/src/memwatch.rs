@@ -50,8 +50,10 @@ mod imp {
     const WARN_PEAK_JUMP_MB: u64 = 1024;
     /// tauri.conf.json's creation order. WebKit starts one web process per webview as each
     /// window is built, so at the first sample with exactly four children, pid order is this
-    /// order: the labels are pinned to those pids then. A process outside that set (e.g. a
-    /// crashed and relaunched web process, which takes the newest pid) shows as `web<pid>`.
+    /// order: the labels are pinned to those pids then, once per run. A process outside that set
+    /// (e.g. a crashed and relaunched web process, which takes the newest pid) shows as
+    /// `web<pid>` — even once every pinned process is gone: four relaunched pids in sorted order
+    /// no longer say which window is which.
     const LABELS: [&str; 4] = ["main", "overlay", "quickadd", "langpick"];
 
     #[derive(Default)]
@@ -64,18 +66,22 @@ mod imp {
         let me = std::process::id();
         let mut seen: HashMap<u32, Seen> = HashMap::new();
         let mut labels: HashMap<u32, &'static str> = HashMap::new();
+        let mut pinned = false;
         loop {
             std::thread::sleep(INTERVAL);
-            sample(me, &mut seen, &mut labels);
+            sample(me, &mut seen, &mut labels, &mut pinned);
         }
     }
 
     /// Pins `LABELS` to `web` (sorted) the first time exactly four web processes exist, and
-    /// forgets pids that are gone, so the map stays bounded.
-    fn pin_labels(labels: &mut HashMap<u32, &'static str>, web: &[u32]) {
+    /// forgets pids that are gone, so the map stays bounded. `pinned` keeps it the first time
+    /// only: the map empties again once every pinned pid is gone (all four relaunched, or one
+    /// sample whose /proc read failed), and re-pinning then would name windows by relaunch order.
+    fn pin_labels(labels: &mut HashMap<u32, &'static str>, pinned: &mut bool, web: &[u32]) {
         labels.retain(|pid, _| web.contains(pid));
-        if labels.is_empty() && web.len() == LABELS.len() {
+        if !*pinned && web.len() == LABELS.len() {
             labels.extend(web.iter().copied().zip(LABELS));
+            *pinned = true;
         }
     }
 
@@ -86,10 +92,15 @@ mod imp {
             .unwrap_or_else(|| format!("web{pid}"))
     }
 
-    fn sample(me: u32, seen: &mut HashMap<u32, Seen>, labels: &mut HashMap<u32, &'static str>) {
+    fn sample(
+        me: u32,
+        seen: &mut HashMap<u32, Seen>,
+        labels: &mut HashMap<u32, &'static str>,
+        pinned: &mut bool,
+    ) {
         let mut web = children(me, "WebKitWebProces");
         web.sort_unstable();
-        pin_labels(labels, &web);
+        pin_labels(labels, pinned, &web);
         let route = super::ROUTE.lock().map(|r| r.clone()).unwrap_or_default();
         let mut line = format!("[mem] core {}M", anon_mb(me).unwrap_or(0));
         let mut alive = Vec::with_capacity(web.len());
@@ -196,25 +207,45 @@ mod imp {
 
         #[test]
         fn labels_stay_on_their_pids_after_a_web_process_relaunch() {
-            let mut labels = HashMap::new();
-            pin_labels(&mut labels, &[10, 11, 12, 13]);
+            let (mut labels, mut pinned) = (HashMap::new(), false);
+            pin_labels(&mut labels, &mut pinned, &[10, 11, 12, 13]);
             assert_eq!(label(&labels, 12), "quickadd");
             // quickadd's web process crashed; WebKit relaunched it with a newer pid, so the
             // count is four again but sorted order no longer matches creation order.
             let web = [10, 11, 13, 14];
-            pin_labels(&mut labels, &web);
+            pin_labels(&mut labels, &mut pinned, &web);
             let names: Vec<String> = web.iter().map(|&p| label(&labels, p)).collect();
             assert_eq!(names, ["main", "overlay", "langpick", "web14"]);
         }
 
         #[test]
         fn labels_wait_for_exactly_four_web_processes() {
-            let mut labels = HashMap::new();
-            pin_labels(&mut labels, &[10, 11]);
+            let (mut labels, mut pinned) = (HashMap::new(), false);
+            pin_labels(&mut labels, &mut pinned, &[10, 11]);
             assert_eq!(label(&labels, 10), "web10");
-            pin_labels(&mut labels, &[10, 11, 12, 13]);
+            pin_labels(&mut labels, &mut pinned, &[10, 11, 12, 13]);
             assert_eq!(label(&labels, 10), "main");
             assert_eq!(label(&labels, 13), "langpick");
+        }
+
+        #[test]
+        fn labels_are_not_re_pinned_once_every_pinned_process_is_gone() {
+            let names = |labels: &HashMap<u32, &'static str>, web: &[u32]| -> Vec<String> {
+                web.iter().map(|&p| label(labels, p)).collect()
+            };
+            // One sample whose /proc read failed (no children), then four relaunched pids.
+            let (mut labels, mut pinned) = (HashMap::new(), false);
+            pin_labels(&mut labels, &mut pinned, &[10, 11, 12, 13]);
+            pin_labels(&mut labels, &mut pinned, &[]);
+            let web = [20, 21, 22, 23];
+            pin_labels(&mut labels, &mut pinned, &web);
+            assert_eq!(names(&labels, &web), ["web20", "web21", "web22", "web23"]);
+            // All four relaunched between two samples.
+            let (mut labels, mut pinned) = (HashMap::new(), false);
+            pin_labels(&mut labels, &mut pinned, &[10, 11, 12, 13]);
+            let web = [14, 15, 16, 17];
+            pin_labels(&mut labels, &mut pinned, &web);
+            assert_eq!(names(&labels, &web), ["web14", "web15", "web16", "web17"]);
         }
     }
 }
