@@ -65,10 +65,15 @@ function profileRoute(p: Profile | undefined, backend: Backend | undefined): str
 /** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
  *  the row's narrow column; the full names ride on the cell's tooltip. */
 function profileRouteShort(p: Profile | undefined, backend: Backend | undefined): string {
-  const code = (v: string) => langCode(v.trim(), 12);
+  // Sanitized BEFORE the empty check: a synced code of format characters only (U+200F) passes a
+  // raw trim, then shows as a blank slot or a dangling comma.
+  const code = (v: string) => langCode(v.trim(), 12).trim();
   const lang = effectiveLanguage(p?.language, backend?.language) ?? "";
-  const source = lang && lang !== "auto" ? code(lang) : "auto";
-  const targets = (configuredRouteTargets(p, backend) ?? []).filter((t) => typeof t === "string" && t.trim()).map(code);
+  const source = (lang && lang !== "auto" ? code(lang) : "") || "auto";
+  const targets = (configuredRouteTargets(p, backend) ?? [])
+    .filter((t): t is string => typeof t === "string")
+    .map(code)
+    .filter(Boolean);
   return source + (targets.length ? ` → ${targets.slice(0, ROUTE_TARGETS_SHOWN).join(", ")}${targets.length > ROUTE_TARGETS_SHOWN ? ` +${targets.length - ROUTE_TARGETS_SHOWN}` : ""}` : "");
 }
 

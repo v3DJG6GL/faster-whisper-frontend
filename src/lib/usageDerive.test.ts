@@ -482,6 +482,11 @@ describe("usageDerive", () => {
     expect(rows[0].colorVar).toBe("var(--c-translate)");
   });
 
+  it("translationRows groups both tooltip counts alike", () => {
+    const rows = translationRows({ targets: [{ code: "de", runs: 1234, kept_original: 1050 }] });
+    expect(rows[0].title).toBe("DE · 1,234 dictations · 1,050 kept the original");
+  });
+
   it("translationRows keeps two regional variants of one script apart", () => {
     const rows = translationRows({
       targets: [

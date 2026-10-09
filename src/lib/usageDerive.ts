@@ -5,7 +5,7 @@
 // vitest covers it without a webview. The charts in components/stats/ only
 // lay these numbers out.
 
-import { dayToDate, plural } from "@/lib/format";
+import { dayToDate, fmtFull, plural } from "@/lib/format";
 import { langCode } from "@/lib/languages";
 import type {
   UsageHourCell,
@@ -946,9 +946,10 @@ export function pct(n: number, of: number): number {
   return Math.max(0, Math.min(100, Math.round((n / of) * 100)));
 }
 
-/** A server-sent target code as shown: sanitized (no bidi/control characters — the Rust
- *  mirror does not bound these), clipped to 12 code points, upper-case. The outer trim drops
- *  a space a stripped leading or trailing format character leaves behind. */
+/** A server-sent target code as shown: sanitized again here as defense in depth (the Rust
+ *  mirror's bounded_server_text already drops the bidi/format set, folds controls to a space
+ *  and caps at 16 with an ellipsis), clipped to 12 code points, upper-case. The outer trim
+ *  drops a space a folded control or stripped edge character leaves behind. */
 const targetCode = (c: string) => langCode(c.trim(), 12).trim();
 
 /** Target codes as `DE 61 %`-style shares of the stage's runs (sanitized and clipped like
@@ -1016,7 +1017,7 @@ export function translationRows(d: {
       const runs = typeof t.runs === "number" ? t.runs : 0;
       return {
         label: code,
-        title: `${code} · ${plural(runs, "dictation")}${kept > 0 ? ` · ${kept} kept the original` : ""}`,
+        title: `${code} · ${plural(runs, "dictation")}${kept > 0 ? ` · ${fmtFull(kept)} kept the original` : ""}`,
         value: runs,
         colorVar: "var(--c-translate)",
       };

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode, type RefObject } from "rea
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { Segmented } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { fmtFull, plural } from "@/lib/format";
+import { plural } from "@/lib/format";
 import {
   CHART_METRICS, KINDS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
   bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_SPAN_DAYS, type ChartMetric,
@@ -263,7 +263,7 @@ export function FilterBar({
           {retentionDays !== undefined && retentionDays <= 0 ? (
             <>Stage filters cover every day the server kept:</>
           ) : (
-            <>Stage filters cover the last {fmtFull(retentionDays ?? 365)} days:</>
+            <>Stage filters cover the last {plural(retentionDays ?? 365, "day")}:</>
           )}{" "}
           every number on this page now counts only sessions that were{" "}
           {query.with.map((k) => STAGE_CHIP_LABEL[k].toLowerCase()).join(" and ")}.
