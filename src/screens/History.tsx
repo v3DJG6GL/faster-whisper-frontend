@@ -38,7 +38,7 @@ import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";
-import { derivePickedStem, exportStem, isVideoSourcePath, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
+import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
 import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/transcript/exportTracks";
 import { cueOptionsOf } from "@/lib/transcript/cueSplit";
 import { displayToggles, patchTranscribe } from "@/lib/useDisplayToggles";
@@ -854,7 +854,7 @@ export default function History() {
             <Download className="size-3.5" />
           </Button>
         )}
-        {ok && rec.kind === "url" && (rec.mediaPath || rec.result?.sourceMediaId) && (
+        {ok && rec.kind === "url" && (rec.mediaPath || linkServerAudioLive(rec.result, Date.now() / 1000)) && (
           <Button
             variant="ghost"
             size="sm"

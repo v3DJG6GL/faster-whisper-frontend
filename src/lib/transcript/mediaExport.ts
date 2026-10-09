@@ -381,6 +381,15 @@ export function revealAfterSaveOn(t: Pick<TranscribeSettings, "revealAfterSave">
   return t?.revealAfterSave !== false;
 }
 
+/** A link's server AUDIO is still there to fetch: an id, and no expiry stored (= available)
+ *  or one still ahead. The export panel and History's "Save the audio" agree on it. */
+export function linkServerAudioLive(
+  result: { sourceMediaId?: string; sourceMediaExpiresAt?: number } | null | undefined,
+  nowSec: number,
+): boolean {
+  return !!result?.sourceMediaId && (result.sourceMediaExpiresAt == null || result.sourceMediaExpiresAt > nowSec);
+}
+
 /** A media export's phases; "fetching-audio" = a link's audio downloading before its copy. */
 export type MediaExportPhase =
   | "fetching" | "fetching-audio" | "uploading" | "packaging" | "downloading" | "copying" | "writing";

@@ -37,7 +37,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
-  legacyTrackIndices, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
+  legacyTrackIndices, linkServerAudioLive, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -197,10 +197,7 @@ export function TranscriptExport({
   const localAudio = mediaPath ?? rec?.mediaPath ?? null;
   // A link's server AUDIO while the server still has it (no expiry stored = available).
   const serverAudioId =
-    urlSource && rec?.result?.sourceMediaId
-      && (rec.result.sourceMediaExpiresAt == null || rec.result.sourceMediaExpiresAt > nowSec)
-      ? rec.result.sourceMediaId
-      : null;
+    urlSource && linkServerAudioLive(rec?.result, nowSec) ? rec?.result?.sourceMediaId ?? null : null;
   /** The server that issued `serverAudioId` — as `serverVideoIssuer`. */
   const serverAudioIssuer = serverAudioId ? rec?.result?.sourceMediaBackendId ?? rec?.backendId ?? null : null;
   const audioExt = localAudio ? extOf(localAudio) || "m4a" : serverAudioId ? "m4a" : null;
@@ -468,6 +465,21 @@ export function TranscriptExport({
     const serverUrl = effectiveServerUrl(trBackend, settings);
     // Every id this call stores is stamped with the server that issued it.
     const issuer = trBackend.id;
+    /** Remember a server copy this Save obtained (an upload or an on-demand fetch) in the
+     *  field this record kind reuses it from: a link's `sourceMediaId` is its server AUDIO
+     *  (Save audio fetches it), so a link's video goes to `sourceVideoMediaId`; a file's
+     *  upload is its retained source. It merges onto the LATEST copy of the record, never
+     *  onto `rec`: that is the render's snapshot, and spreading it (the video fetch lands
+     *  after an earlier write) erased the id just stored. */
+    const rememberUpload = (id: string, exp: number | undefined) => patchRecord(rec.id, (r) => ({
+      ...r,
+      result: {
+        ...(r.result ?? { text: "" }),
+        ...(urlSource
+          ? { sourceVideoMediaId: id, sourceVideoExpiresAt: exp, sourceVideoBackendId: issuer }
+          : { sourceMediaId: id, sourceMediaExpiresAt: exp, sourceMediaBackendId: issuer }),
+      },
+    }));
     let source: { sourceMediaId?: string; sourcePath?: string };
     // A stored server id is only good on the server that issued it (serverVideoIssuer).
     // trBackend falls back to the first backend for a record whose own one is missing or
@@ -493,18 +505,8 @@ export function TranscriptExport({
         // Fetched: a wait in the queue below shows as Queued (with its Cancel), not as
         // a fetch that never ends.
         setMediaJob(null);
-        // Every write below merges onto the LATEST copy of the record, never
-        // onto `rec`: that is the render's snapshot, and spreading it (the
-        // video fetch lands after the write above) erased the id just stored.
-        patchRecord(rec.id, (r) => ({
-          ...r,
-          result: {
-            ...(r.result ?? { text: "" }),
-            sourceVideoMediaId: got.mediaId,
-            sourceVideoExpiresAt: got.expiresAt ?? undefined,
-            sourceVideoBackendId: issuer,
-          },
-        }));
+        // Only reachable for a link (urlVideoOnDemand), so this lands in sourceVideo*.
+        rememberUpload(got.mediaId, got.expiresAt ?? undefined);
         // Keep a local copy too (the Settings' video store), best effort.
         void fetchUrlVideo({ serverUrl, backendId: trBackend.id, mediaId: got.mediaId, recordId: rec.id, audioBase })
           .then((vp) => { if (vp) patchRecord(rec.id, (r) => ({ ...r, videoPath: vp })); })
@@ -529,18 +531,6 @@ export function TranscriptExport({
     const audioLang = (editedResult.language ?? "").trim() || null;
     const jobId = newProgressId();
     const fromFile = !!source.sourcePath;
-    /** Remember an upload's server copy in the field this record kind reuses it from:
-     *  a link's `sourceMediaId` is its server AUDIO (Save audio fetches it), so a link's
-     *  upload goes to `sourceVideoMediaId`; a file's upload is its retained source. */
-    const rememberUpload = (id: string, exp: number | undefined) => patchRecord(rec.id, (r) => ({
-      ...r,
-      result: {
-        ...(r.result ?? { text: "" }),
-        ...(urlSource
-          ? { sourceVideoMediaId: id, sourceVideoExpiresAt: exp, sourceVideoBackendId: issuer }
-          : { sourceMediaId: id, sourceMediaExpiresAt: exp, sourceMediaBackendId: issuer }),
-      },
-    }));
     // A busy answer after an upload names that upload's server copy (and its expiry,
     // which the retry that packages it no longer learns). The copy is remembered on the
     // record as soon as the busy answer names it, so a dequeue, a thrown retry or an
@@ -770,6 +760,7 @@ export function TranscriptExport({
     hasSpeakers,
     firstName: speakers.length ? safeDisplayText(speakerName(fileRenames, speakers[0])) : null,
     cpsCount: cpsWarn.length,
+    timingSynthesized: !!editedResult.timingSynthesized,
     cpsLimit: cpsLimits.size === 1 ? `${[...cpsLimits][0]} chars/s` : "each language's limit",
     editCount,
     // A plain copy's container is the source's own (plan.primaryExt), not the chip's.

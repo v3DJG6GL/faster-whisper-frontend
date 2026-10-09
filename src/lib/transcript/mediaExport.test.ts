@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
-  isVideoSourcePath, legacyTrackIndices, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor, revealAfterSaveOn,
+  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
@@ -22,6 +22,17 @@ describe("revealAfterSaveOn", () => {
     expect(revealAfterSaveOn({})).toBe(true);
     expect(revealAfterSaveOn({ revealAfterSave: true })).toBe(true);
     expect(revealAfterSaveOn({ revealAfterSave: false })).toBe(false);
+  });
+});
+
+describe("linkServerAudioLive", () => {
+  it("needs an id, and an expiry that is absent or still ahead", () => {
+    expect(linkServerAudioLive(undefined, 100)).toBe(false);
+    expect(linkServerAudioLive({ sourceMediaExpiresAt: 200 }, 100)).toBe(false);
+    expect(linkServerAudioLive({ sourceMediaId: "m1" }, 100)).toBe(true);
+    expect(linkServerAudioLive({ sourceMediaId: "m1", sourceMediaExpiresAt: 50 }, 100)).toBe(false);
+    expect(linkServerAudioLive({ sourceMediaId: "m1", sourceMediaExpiresAt: 100 }, 100)).toBe(false);
+    expect(linkServerAudioLive({ sourceMediaId: "m1", sourceMediaExpiresAt: 200 }, 100)).toBe(true);
   });
 });
 

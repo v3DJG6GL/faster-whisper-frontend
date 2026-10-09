@@ -437,6 +437,15 @@ describe("site subtitle cleanup", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\nWait.\n\n2\n00:00:02,000 --> 00:00:03,000\nWait.\nDid you hear that?\n";
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["Wait.", "Wait. Did you hear that?"]);
   });
+  it("a three-cue file with two opening repeats is still too short: its repeated lines stay", () => {
+    // Two cues open with the line before — one short of the minimum of three.
+    const cue = (n: number, a: string, b?: string) =>
+      `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;
+    const srt = cue(1, "Wait.") + cue(2, "Wait.", "Did you hear that?") + cue(3, "Did you hear that?", "No.");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual([
+      "Wait.", "Wait. Did you hear that?", "Did you hear that? No.",
+    ]);
+  });
   it("cleans a longer roll-up file without freeze cues", () => {
     const cue = (n: number, a: string, b?: string) =>
       `${n}\n00:00:0${n},000 --> 00:00:0${n + 1},000\n${a}${b ? "\n" + b : ""}\n\n`;

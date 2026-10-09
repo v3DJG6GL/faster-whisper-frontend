@@ -103,6 +103,9 @@ export function exportSummary(a: {
   /** First speaker's display name, for the names row. */
   firstName: string | null;
   cpsCount: number;
+  /** The source was plain text: its clocks are 1 s placeholders, so the reading speed
+   *  was not checked (cpsWarnings skips it) and must not read as fine. */
+  timingSynthesized?: boolean;
   /** "17 chars/s", or a phrase when the languages' limits differ. */
   cpsLimit: string;
   editCount: number;
@@ -149,8 +152,9 @@ export function exportSummary(a: {
   }
   rows.push(
     !sub ? { label: "Reading speed", state: "na", why: "not part of this format" }
-      : a.cpsCount ? { label: "Reading speed", state: "warn", why: `${plural(a.cpsCount, "subtitle")} faster than ${a.cpsLimit}` }
-        : { label: "Reading speed", state: "on", why: `every subtitle at or under ${a.cpsLimit}` },
+      : a.timingSynthesized ? { label: "Reading speed", state: "na", why: "not checked — the source has no timing" }
+        : a.cpsCount ? { label: "Reading speed", state: "warn", why: `${plural(a.cpsCount, "subtitle")} faster than ${a.cpsLimit}` }
+          : { label: "Reading speed", state: "on", why: `every subtitle at or under ${a.cpsLimit}` },
   );
   rows.push({ label: "Corrections", state: a.editCount ? "on" : "off", why: a.editCount ? `${a.editCount} included` : "none" });
   if (a.media) {

@@ -76,6 +76,12 @@ describe("exportSummary", () => {
     expect(row(rows, "Reading speed")?.state).toBe("na");
     expect(row(rows, "Speaker names")).toBeUndefined();
   });
+  it("plain-text source: placeholder clocks leave the reading speed unchecked, never fine", () => {
+    expect(row(sum({ timingSynthesized: true }), "Reading speed"))
+      .toEqual({ label: "Reading speed", state: "na", why: "not checked — the source has no timing" });
+    expect(row(sum({ format: "txt", timingSynthesized: true, content: contentStates({ ...base, format: "txt" }) }), "Reading speed")?.state)
+      .toBe("na");
+  });
   it("txt with two tracks: interleaved, never \"inside each subtitle\"", () => {
     const rows = sum({ format: "txt", content: contentStates({ ...base, format: "txt" }) });
     expect(row(rows, "Tracks")?.why).toBe("EN · DE — in that order, interleaved");
