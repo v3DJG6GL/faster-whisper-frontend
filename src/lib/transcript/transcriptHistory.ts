@@ -148,8 +148,9 @@ function stringTargets(v: unknown): string[] | undefined {
 /** Repair the fields a malformed file would crash the History render with, keeping the record:
  *  a non-string appId throws in the search and app chips (`.toLowerCase()` / `.split()`), a
  *  non-array target list in the route badge, the provenance line and the bug report's
- *  `options.translateTo` fallback (`.map` / `.join`), and a non-string `translatedText` or
- *  `result.text` in the snippet sanitizer (`for..of`). Every step composes on `out`. */
+ *  `options.translateTo` fallback (`.map` / `.join`), a non-string `translatedText` or
+ *  `result.text` in the snippet sanitizer (`for..of`), and a damaged segment list or correction
+ *  map in the snippet's per-segment `.trim()`. Every step composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
   let out = r;
   const tt = (r.options as { translateTo?: unknown } | undefined)?.translateTo;
@@ -158,6 +159,23 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   }
   if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
   if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
+  const segs = out.result?.segments as unknown;
+  if (out.result && segs != null) {
+    if (!Array.isArray(segs)) out = { ...out, result: { ...out.result, segments: undefined } };
+    else if (segs.some((s) => !s || typeof s !== "object" || typeof (s as { text?: unknown }).text !== "string")) {
+      const clean = segs
+        .filter((s): s is object => !!s && typeof s === "object")
+        .map((s) => (typeof (s as { text?: unknown }).text === "string" ? s : { ...s, text: "" }));
+      out = { ...out, result: { ...out.result, segments: clean as typeof out.result.segments } };
+    }
+  }
+  const edits = r.edits as unknown;
+  if (edits != null) {
+    if (typeof edits !== "object" || Array.isArray(edits)) out = { ...out, edits: undefined };
+    else if (Object.values(edits).some((v) => typeof v !== "string")) {
+      out = { ...out, edits: Object.fromEntries(Object.entries(edits).filter(([, v]) => typeof v === "string")) };
+    }
+  }
   if (r.appId != null && typeof r.appId !== "string") out = { ...out, appId: undefined };
   if (r.translationTargets != null && !Array.isArray(r.translationTargets)) {
     out = { ...out, translationTargets: undefined };

@@ -182,6 +182,40 @@ describe("loadHistory", () => {
     expect(() => [...recordText(s, 200)]).not.toThrow();
   });
 
+  it("repairs a damaged segment list and correction map so the snippet cannot throw", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "bad-segs",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "/a.wav",
+        sourceName: "a.wav",
+        status: "done",
+        edits: { 1: 9 },
+        result: { text: "ok", segments: [{ start: 0, end: 1, text: 5 }, null, { start: 1, end: 2, text: "two" }] },
+      },
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "str-segs",
+        createdAt: "2026-01-02T03:04:06.000Z",
+        sourcePath: "/b.wav",
+        sourceName: "b.wav",
+        status: "done",
+        result: { text: "plain", segments: "abc" },
+      },
+    ]);
+    await loadHistory(true);
+    const a = saved("bad-segs");
+    expect(a.result?.segments?.map((s) => s.text)).toEqual(["", "two"]);
+    expect(a.edits).toEqual({});
+    expect(() => recordText(a, 200)).not.toThrow();
+    const b = saved("str-segs");
+    expect(b.result?.segments).toBeUndefined();
+    expect(recordText(b, 200)).toBe("plain");
+  });
+
   it("survives a rejected listing", async () => {
     listTranscriptRecords.mockRejectedValue(new Error("no disk"));
     await loadHistory(true);

@@ -336,20 +336,27 @@ mod imp {
 
     /// Does `text` hold a letter of a non-Latin script that the active layout cannot type?
     /// Scripts from Greek (U+0370) up, cased or not. The Latin blocks above that floor
-    /// (phonetic extensions, Latin Extended Additional/-C/-D/-E, super/subscript letters,
-    /// letterlike symbols, the ﬁ ligatures, fullwidth Latin) and the Latin-context modifier
-    /// letters below it (Hawaiʻi's ʻokina U+02BB) stay with the per-character skip.
+    /// (phonetic extensions, Latin Extended Additional/-C/-D/-E/-F/-G, super/subscript letters,
+    /// letterlike symbols, the ﬁ ligatures, fullwidth Latin), the Latin-letter symbols Unicode
+    /// also counts as alphabetic (circled Ⓜ, squared 🅿 emoji, math alphanumerics) and the
+    /// Latin-context modifier letters below it (Hawaiʻi's ʻokina U+02BB) stay with the
+    /// per-character skip.
     fn unreachable_non_latin(text: &str, map: &HashMap<char, KeySpec>) -> bool {
-        const LATIN_ABOVE_GREEK: [std::ops::RangeInclusive<u32>; 9] = [
-            0x1D00..=0x1DFF, // phonetic extensions (+ supplement), combining Latin letters
-            0x1E00..=0x1EFF, // Latin Extended Additional (Vietnamese ạ, Welsh ẁ)
-            0x2070..=0x209F, // superscript/subscript letters (ⁿ, ₐ)
-            0x2100..=0x218F, // letterlike symbols and number forms (ℓ, Ⅻ)
-            0x2C60..=0x2C7F, // Latin Extended-C
-            0xA700..=0xA7FF, // Latin Extended-D
-            0xAB30..=0xAB6F, // Latin Extended-E
-            0xFB00..=0xFB06, // Latin ligatures (ﬁ, ﬂ)
-            0xFF21..=0xFF5A, // fullwidth Latin letters
+        const LATIN_ABOVE_GREEK: [std::ops::RangeInclusive<u32>; 14] = [
+            0x1D00..=0x1DFF,   // phonetic extensions (+ supplement), combining Latin letters
+            0x1E00..=0x1EFF,   // Latin Extended Additional (Vietnamese ạ, Welsh ẁ)
+            0x2070..=0x209F,   // superscript/subscript letters (ⁿ, ₐ)
+            0x2100..=0x218F,   // letterlike symbols and number forms (ℓ, Ⅻ)
+            0x2C60..=0x2C7F,   // Latin Extended-C
+            0xA700..=0xA7FF,   // Latin Extended-D
+            0xAB30..=0xAB6F,   // Latin Extended-E
+            0xFB00..=0xFB06,   // Latin ligatures (ﬁ, ﬂ)
+            0xFF21..=0xFF5A,   // fullwidth Latin letters
+            0x2460..=0x24FF,   // enclosed alphanumerics (Ⓜ)
+            0x10780..=0x107BF, // Latin Extended-F
+            0x1D400..=0x1D7FF, // mathematical alphanumerics (𝐀)
+            0x1DF00..=0x1DFFF, // Latin Extended-G
+            0x1F100..=0x1F1FF, // enclosed alphanumeric supplement (🅰 🅿 emoji)
         ];
         text.chars().any(|c| {
             let u = c as u32;
@@ -1098,6 +1105,12 @@ mod imp {
             // skip too; Hebrew does not.
             assert!(!unreachable_non_latin("a\u{a7f7}b", &us_letters()));
             assert!(unreachable_non_latin("a\u{05d0}b", &us_letters()));
+            // A squared-letter or circled-letter emoji is a symbol, not a word: skipped per
+            // character, the rest typed.
+            assert!(!divert_unreachable(
+                "Park on level 3 \u{1f17f}\u{fe0f} near the \u{24c2} exit",
+                &us_letters()
+            ));
             // So is Vietnamese's ạ (Latin Extended Additional) in a Latin line.
             assert!(!divert_unreachable(
                 "Ha\u{1ea1} is in Hanoi today",

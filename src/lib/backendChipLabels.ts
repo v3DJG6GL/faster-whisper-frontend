@@ -1,6 +1,7 @@
 // The small chips that say which server build a backend runs and where its model runs:
 // "v0.1.153" (connections[id].serverVersion, from /v1/models) and "CUDA" / "CPU" (the backend's
-// model's `device` in /v1/models — a loaded model's real device, so a CPU fallback shows).
+// model's `device` in /v1/models — a loaded model's real device, so a CPU fallback shows for a
+// named model, or for the server default when the listed models leave no doubt; see modelDevice).
 // Shown in the backend pickers, the Backends list row and the editor header; ModelPicker shows
 // each model's device chip. Both values come from the server, so both are bounded here.
 
