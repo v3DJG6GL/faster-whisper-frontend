@@ -112,6 +112,9 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 /// a cancel should discard the in-flight session, not fire wasted server work. Also the idempotent
 /// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
 /// server-initiated close that never went through stop_stream): a no-op when already taken.
+/// A recovery cancel (`user_initiated` with `discard_recording: false`: wake from sleep) keeps a
+/// LIVE session's audio too: it `finish`es that session instead, so the drain writes the recording
+/// (its events are already silenced by the epoch retire), and never claims it, so the keep is final.
 #[tauri::command]
 pub async fn cancel_stream(
     app: AppHandle,
@@ -130,12 +133,13 @@ pub async fn cancel_stream(
             // discard its recording, as cancel_record does for a detached batch. Not for the
             // closed-handler release, nor for a recovery cancel (stuck finalize, wake from sleep)
             // where the saved audio may be the only copy of what was said: that one RELEASES the
-            // drain instead, so its keep is final and no later stray Cancel can still reach it.
-            if sess.is_none() && user_initiated {
-                if discard_recording {
-                    session::cancel_detached_stream();
-                } else {
+            // drain instead — whether or not it also found a live session — so its keep is final
+            // and no later stray Cancel can still reach it.
+            if user_initiated {
+                if !discard_recording {
                     session::forget_detached_stream();
+                } else if sess.is_none() {
+                    session::cancel_detached_stream();
                 }
             }
             // Retire while the lock is held: start_stream claims its epoch under the same lock, so
@@ -144,7 +148,13 @@ pub async fn cancel_stream(
             session::retire_active_epoch();
             sess
         };
-        drop(sess); // Drop (not finish) runs OUTSIDE the lock — capture join, mute release, etc.
+        // OUTSIDE the lock — capture join, mute release, etc. Drop (not finish) for a Cancel or the
+        // closed-handler release; a recovery cancel drains instead, so the live session's recording
+        // is written rather than aborted with the WS task. Unclaimed, so no later Cancel reaches it.
+        match sess {
+            Some(s) if user_initiated && !discard_recording => s.finish(),
+            sess => drop(sess),
+        }
 
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept
@@ -257,7 +267,9 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 /// transcribe POST — a cancel should discard the clip, not fire a wasted server transcription. Also
 /// the idempotent teardown the `closed` handler calls to release a parked session on capture death.
 /// `discard_recording: false` (a recovery cancel: wake from sleep) leaves a transcription already
-/// detached by a stop alone, so its saved `.wav` and `.txt` survive — the stream path's rule.
+/// detached by a stop alone, so its saved `.wav` and `.txt` survive — the stream path's rule. That
+/// holds for a LIVE session too: it is dropped, not discarded, so a device-loss salvage the sleep
+/// already spawned (or one that fires inside the capture join) keeps its recording.
 #[tauri::command]
 pub async fn cancel_record(
     app: AppHandle,
@@ -280,19 +292,19 @@ pub async fn cancel_record(
         // session, and disowning here would instead kill a legitimate earlier transcription that
         // is still in flight (stop A → start B → cancel B would have discarded A's result). Nor
         // for a recovery cancel (`discard_recording: false`), where the saved audio may be the
-        // only copy of what was said: that keep is final, so a later Cancel cannot disown it.
+        // only copy of what was said: that keep is final, so a later Cancel cannot disown it —
+        // released even when a live session WAS found, since its device-loss salvage may already
+        // have published its epoch as the detached batch.
         let sess = {
             let mut guard = state
                 .0
                 .lock()
                 .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
-            if sess.is_none() {
-                if discard_recording {
-                    session::cancel_detached_batch();
-                } else {
-                    session::forget_detached_batch();
-                }
+            if !discard_recording {
+                session::forget_detached_batch();
+            } else if sess.is_none() {
+                session::cancel_detached_batch();
             }
             session::retire_active_epoch();
             sess
@@ -300,8 +312,15 @@ pub async fn cancel_record(
         // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
         // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
         // not upload the audio or write the .wav/.txt. Then Drop stops capture and releases the mute.
+        // A recovery cancel keeps a live session's audio too, so it only drops: Drop never
+        // transcribes (a healthy session uploads nothing), while a salvage already spawned — or
+        // one that fires inside the join — keeps its .wav/.txt, its UI events epoch-suppressed.
         if let Some(s) = sess {
-            s.discard();
+            if discard_recording {
+                s.discard();
+            } else {
+                drop(s);
+            }
         }
         // …and abandon any transcript still being typed out. The typing paths emit one key at a
         // time, so without this a cancel only stopped FUTURE inserts while the current one kept

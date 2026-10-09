@@ -147,7 +147,7 @@ pub struct StreamParams {
     /// Set by a Cancel that arrives after Stop, while this session drains detached: from then on
     /// the drain writes no recording file (no session `.wav`/`.txt`, no further clip) — the same
     /// discard the batch path gives a Cancel during "transcribing…".
-    pub discard: Arc<AtomicBool>,
+    pub detached: Arc<crate::session::DetachedStream>,
 }
 
 /// Case-insensitive `strip_prefix` for an ASCII prefix. `s.get(..len)` returns None on a
@@ -262,7 +262,7 @@ pub async fn run<F>(
             tracing::warn!("[stream] {m}");
             // A stop during setup already claimed the discard slot: retire it here too, or the
             // next session's Cancel takes it and logs a discard for a session that saved nothing.
-            let _ = crate::session::settle_detached_stream(&params.discard);
+            let _ = crate::session::settle_detached_stream(&params.detached);
             on_event(StreamEvent::Error(m));
             on_event(StreamEvent::Closed);
             return;
@@ -419,7 +419,7 @@ pub async fn run<F>(
     let mut transcript_docs: Vec<String> = Vec::new();
     let mut transcript_cur = String::new();
     let save_dir = params.save_dir.as_deref();
-    let discard = params.discard.clone();
+    let detached = params.detached.clone();
     let mut clips = (saving && params.per_utterance_clips).then(ClipCutter::new);
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long hands-free session doesn't store hours
@@ -573,7 +573,7 @@ pub async fn run<F>(
                 match from {
                     Some(FromReader::Event(e)) => {
                         if matches!(e, StreamEvent::Partial { .. }) { partials_seen += 1; }
-                        forward_saved(e, save_dir, &discard, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
+                        forward_saved(e, save_dir, &detached.discard, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
                     }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
@@ -699,7 +699,7 @@ pub async fn run<F>(
                     forward_saved(
                         e,
                         save_dir,
-                        &discard,
+                        &detached.discard,
                         &mut saved,
                         &mut clips,
                         &mut transcript_docs,
@@ -746,7 +746,7 @@ pub async fn run<F>(
                     forward_saved(
                         e,
                         save_dir,
-                        &discard,
+                        &detached.discard,
                         &mut saved,
                         &mut clips,
                         &mut transcript_docs,
@@ -776,7 +776,7 @@ pub async fn run<F>(
         forward_saved(
             e,
             save_dir,
-            &discard,
+            &detached.discard,
             &mut saved,
             &mut clips,
             &mut transcript_docs,
@@ -790,7 +790,7 @@ pub async fn run<F>(
     drop(reader);
     // The drain's one decision point: every clip cut is done, so retire this session's slot and
     // read the Cancel under its lock (see `session::settle_detached_stream`).
-    let discarded = crate::session::settle_detached_stream(&discard);
+    let discarded = crate::session::settle_detached_stream(&detached);
 
     if let Some(c) = clips.as_mut().filter(|c| c.cut_any) {
         // Per-utterance clips: the last one's text is complete now, and what is still
@@ -873,7 +873,7 @@ fn forward_saved<F: Fn(StreamEvent)>(
     let mut clip = None;
     if let Some(dir) = save_dir {
         if let Some(c) = clips {
-            // A Cancel after stop (see `StreamParams::discard`) cuts no further clip, but the
+            // A Cancel after stop (see `StreamParams::detached`) cuts no further clip, but the
             // transcript still folds in, so the clip already kept gets its complete `.txt`.
             if discard.load(Ordering::SeqCst) {
                 c.observe_discarded(&e, current);
@@ -1496,6 +1496,44 @@ mod clip_tests {
             })
             .count();
         assert_eq!(wavs, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Cancel after stop that lands before any clip was cut: nothing is written at all, and
+    /// `cut_any` stays false so the end of `run` takes its discard arm for the session audio.
+    #[test]
+    fn a_drain_discarded_before_any_clip_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!("fwf-discard-early-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let clips_seen = RefCell::new(Vec::new());
+        let on_event = |e: StreamEvent| {
+            if let StreamEvent::RecordingSaved { path, .. } = e {
+                clips_seen.borrow_mut().push(path);
+            }
+        };
+        let mut saved = vec![0u8; 64_000];
+        let mut clips = Some(ClipCutter::new());
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let discard = AtomicBool::new(true);
+        for e in [
+            fin(" Hallo Welt", Some(1)),
+            fin(" Hallo Welt und weiter", Some(2)),
+        ] {
+            forward_saved(
+                e,
+                Some(&dir),
+                &discard,
+                &mut saved,
+                &mut clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
+        }
+        assert!(clips_seen.into_inner().is_empty(), "no clip is saved");
+        assert!(!clips.as_ref().unwrap().cut_any, "nothing was cut");
+        assert_eq!(saved.len(), 64_000, "no audio was split off");
+        assert!(!dir.exists(), "no file was written");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

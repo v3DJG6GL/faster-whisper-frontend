@@ -109,7 +109,7 @@ fn batch_cancelled(epoch: u64) -> bool {
             .unwrap_or(false)
 }
 
-/// The discard flag of the stream session most recently DETACHED by `stop_stream` — the stream
+/// The discard state of the stream session most recently DETACHED by `stop_stream` — the stream
 /// twin of [`DETACHED_BATCH_EPOCH`]. `finish()` detaches the WS drain, so a Cancel pressed while
 /// it finalizes found no session and the drain went on to write the `.wav` and its `.txt` while
 /// the UI showed a clean cancel (the batch path discards there since 1be5966). One slot is
@@ -118,9 +118,22 @@ fn batch_cancelled(epoch: u64) -> bool {
 ///
 /// The drain retires its own entry at its one decision point ([`settle_detached_stream`]), so a
 /// Cancel after the recording was already written finds the slot empty instead of logging a
-/// discard that never happens. Every access holds the lock across the flag's store/load, which
+/// discard that never happens — and a stop that claims the session only after that (its WS task
+/// failed first) publishes nothing. Every access holds the lock across the flag's store/load, which
 /// totally orders a Cancel against that decision.
-static DETACHED_STREAM: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
+static DETACHED_STREAM: Mutex<Option<Arc<DetachedStream>>> = Mutex::new(None);
+
+/// One stream session's entry in [`DETACHED_STREAM`], shared by the session (which claims it on
+/// stop) and its WS task (which settles it, see `StreamParams::detached`).
+#[derive(Default)]
+pub struct DetachedStream {
+    /// Set by a user's Cancel after stop: the drain writes no recording from then on.
+    pub discard: AtomicBool,
+    /// Set once the drain has decided, and never cleared: a claim landing after it (the
+    /// frontend's stopStream on a session whose WS task already failed) publishes nothing, so a
+    /// later Cancel cannot log a discard for a session that saved nothing.
+    settled: AtomicBool,
+}
 
 /// Discard the recording of the stream session still draining after a stop, if any. Called by
 /// `cancel_stream` only for a user's Cancel that found no live session. The guard is held across
@@ -128,7 +141,7 @@ static DETACHED_STREAM: Mutex<Option<Arc<AtomicBool>>> = Mutex::new(None);
 pub fn cancel_detached_stream() {
     if let Ok(mut s) = DETACHED_STREAM.lock() {
         if let Some(flag) = s.take() {
-            flag.store(true, Ordering::SeqCst);
+            flag.discard.store(true, Ordering::SeqCst);
             tracing::info!(
                 "[stream] cancel after stop: the draining session will save no recording"
             );
@@ -144,18 +157,33 @@ pub fn forget_detached_stream() {
     }
 }
 
+/// Publish `flag` as the newest detached drain — unless that drain already settled (see
+/// [`DetachedStream::settled`]); checked under the lock, so a settle and a claim never interleave.
+pub fn claim_detached_stream(flag: &Arc<DetachedStream>) {
+    if let Ok(mut s) = DETACHED_STREAM.lock() {
+        if !flag.settled.load(Ordering::SeqCst) {
+            *s = Some(flag.clone());
+        }
+    }
+}
+
 /// The drain's single decision point: retire its own slot entry (by `Arc` identity, so a newer
-/// session's claim is never wiped) and return whether a Cancel discarded it — read under the
-/// lock, so a Cancel either landed before this (discard) or finds the slot empty (no-op).
-pub fn settle_detached_stream(flag: &Arc<AtomicBool>) -> bool {
+/// session's claim is never wiped), mark it settled so no later claim re-publishes it, and return
+/// whether a Cancel discarded it — read under the lock, so a Cancel either landed before this
+/// (discard) or finds the slot empty (no-op).
+pub fn settle_detached_stream(flag: &Arc<DetachedStream>) -> bool {
     match DETACHED_STREAM.lock() {
         Ok(mut s) => {
+            flag.settled.store(true, Ordering::SeqCst);
             if s.as_ref().is_some_and(|f| Arc::ptr_eq(f, flag)) {
                 *s = None;
             }
-            flag.load(Ordering::SeqCst)
+            flag.discard.load(Ordering::SeqCst)
         }
-        Err(_) => flag.load(Ordering::SeqCst),
+        Err(_) => {
+            flag.settled.store(true, Ordering::SeqCst);
+            flag.discard.load(Ordering::SeqCst)
+        }
     }
 }
 
@@ -242,8 +270,8 @@ pub struct StreamSession {
     capture_join: Option<JoinHandle<()>>,
     ws_stop: watch::Sender<bool>,
     ws_task: Option<tauri::async_runtime::JoinHandle<()>>,
-    /// Shared with the WS task's `StreamParams::discard` (see [`cancel_detached_stream`]).
-    discard: Arc<AtomicBool>,
+    /// Shared with the WS task's `StreamParams::detached` (see [`cancel_detached_stream`]).
+    detached: Arc<DetachedStream>,
     // Unmutes system audio on drop (after the Drop body below runs).
     _mute: SystemMuteGuard,
 }
@@ -253,9 +281,7 @@ impl StreamSession {
     /// `RecordSession::claim_detached` does: a Cancel landing between stop and finish must
     /// reach this session, not the one before it.
     pub fn claim_detached(&self) {
-        if let Ok(mut s) = DETACHED_STREAM.lock() {
-            *s = Some(self.discard.clone());
-        }
+        claim_detached_stream(&self.detached);
     }
 
     /// User-requested stop: stop capture, then let the WS task drain (flush, stop,
@@ -341,7 +367,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
 
     let (pcm_tx, pcm_rx) = mpsc::unbounded_channel::<Vec<f32>>();
     let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
-    let discard = Arc::new(AtomicBool::new(false));
+    let detached = Arc::new(DetachedStream::default());
     let level = Arc::new(AtomicU32::new(0));
     let capture_stop = Arc::new(AtomicBool::new(false));
     announce_mic(
@@ -387,7 +413,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         save_dir: p.save_dir,
         trim_silence: p.trim_silence,
         per_utterance_clips: p.per_utterance_clips,
-        discard: discard.clone(),
+        detached: detached.clone(),
     };
 
     let appc = app.clone();
@@ -519,7 +545,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         capture_join: Some(capture_join),
         ws_stop: ws_stop_tx,
         ws_task: Some(ws_task),
-        discard,
+        detached,
         _mute: mute,
     })
 }
@@ -1755,26 +1781,25 @@ Sink Input #12\n\
         // Everything touching the DETACHED_STREAM static stays in this ONE fn: tests run in
         // parallel, and a second fn would race the global.
         use super::{
-            cancel_detached_stream, forget_detached_stream, settle_detached_stream, DETACHED_STREAM,
+            cancel_detached_stream, claim_detached_stream, forget_detached_stream,
+            settle_detached_stream, DetachedStream, DETACHED_STREAM,
         };
-        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::atomic::Ordering;
         use std::sync::Arc;
-        let claim = |f: &Arc<AtomicBool>| *DETACHED_STREAM.lock().unwrap() = Some(f.clone());
-        let flag = || Arc::new(AtomicBool::new(false));
+        let claim = claim_detached_stream;
+        let flag = || Arc::new(DetachedStream::default());
+        let discarded = |f: &Arc<DetachedStream>| f.discard.load(Ordering::SeqCst);
         let (a, b) = (flag(), flag());
         claim(&a);
         claim(&b);
         cancel_detached_stream();
-        assert!(b.load(Ordering::SeqCst), "the newest drain is discarded");
-        assert!(!a.load(Ordering::SeqCst), "an earlier drain is left alone");
+        assert!(discarded(&b), "the newest drain is discarded");
+        assert!(!discarded(&a), "an earlier drain is left alone");
         // The slot is consumed: a second Cancel with nothing detached does nothing.
         assert!(DETACHED_STREAM.lock().unwrap().is_none());
-        b.store(false, Ordering::SeqCst);
+        b.discard.store(false, Ordering::SeqCst);
         cancel_detached_stream();
-        assert!(
-            !b.load(Ordering::SeqCst),
-            "a consumed slot discards nothing again"
-        );
+        assert!(!discarded(&b), "a consumed slot discards nothing again");
 
         // The drain settles its own entry: a Cancel after that decision is a no-op.
         let d = flag();
@@ -1789,15 +1814,32 @@ Sink Input #12\n\
         );
         cancel_detached_stream();
         assert!(
-            !d.load(Ordering::SeqCst),
+            !discarded(&d),
             "a Cancel after the drain decided reaches nothing"
         );
 
-        // A Cancel before the decision is the one the drain reads.
-        claim(&d);
+        // Settling is sticky: a stop that claims a drain only after it settled (the WS task
+        // failed first, then the error handler's stopStream ran) publishes nothing, so a later
+        // Cancel neither reaches it nor logs a discard.
+        let f = flag();
+        settle_detached_stream(&f);
+        claim(&f);
+        assert!(
+            DETACHED_STREAM.lock().unwrap().is_none(),
+            "a settled drain is never re-published"
+        );
         cancel_detached_stream();
         assert!(
-            settle_detached_stream(&d),
+            !discarded(&f),
+            "a Cancel after a settled claim reaches nothing"
+        );
+
+        // A Cancel before the decision is the one the drain reads.
+        let g = flag();
+        claim(&g);
+        cancel_detached_stream();
+        assert!(
+            settle_detached_stream(&g),
             "a Cancel before the decision discards"
         );
 
@@ -1816,10 +1858,7 @@ Sink Input #12\n\
         claim(&c);
         forget_detached_stream();
         cancel_detached_stream();
-        assert!(
-            !c.load(Ordering::SeqCst),
-            "a forgotten drain is never discarded"
-        );
+        assert!(!discarded(&c), "a forgotten drain is never discarded");
         *DETACHED_STREAM.lock().unwrap() = None;
     }
 
