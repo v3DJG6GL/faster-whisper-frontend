@@ -185,9 +185,15 @@ export async function initConfig(): Promise<void> {
         .getState()
         .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");
       // The held save still hands Rust its live switches (Remote desktop rules, clipboard
-      // privacy): the paste path reads them per insert, so without this push-to-talk, Quick-Add
-      // and clipboard writes would keep the frozen ones until the conflict is resolved.
-      void applyLiveSwitches(s.appRules, s.settings.general.excludeFromClipboardHistory).catch(() => {});
+      // privacy, log level): the paste path reads them per insert, so without this push-to-talk,
+      // Quick-Add and clipboard writes would keep the frozen ones until the conflict is resolved
+      // — and a switch to Debug would show in Settings while the log kept the old level.
+      void applyLiveSwitches(
+        s.appRules,
+        s.settings.general.excludeFromClipboardHistory,
+        // `logging` is optional on a config that predates it: Rust's default, as Settings shows.
+        s.settings.logging?.logLevel ?? "info",
+      ).catch(() => {});
       return Promise.resolve();
     }
     const reReg = pendingBindingChange;

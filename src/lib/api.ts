@@ -17,6 +17,7 @@ import type {
   DecodeOverrides,
   FocusedApp,
   InsertMethod,
+  LogLevelSetting,
   MicInventory,
   PipelineFetch,
   PipelineSaveResult,
@@ -92,12 +93,17 @@ export async function saveConfig(config: Config): Promise<void> {
 }
 
 /** Apply the in-memory switches `save_config` applies before its write (per-app "Remote desktop"
- *  rules, clipboard-history privacy) without writing — for a save the webview holds back (the
- *  shortcut-conflict freeze), so push-to-talk, Quick-Add and clipboard writes keep following the
- *  live settings the paste path already uses. */
-export async function applyLiveSwitches(appRules: AppRule[], excludeFromClipboardHistory: boolean): Promise<void> {
+ *  rules, clipboard-history privacy, log level) without writing — for a save the webview holds
+ *  back (the shortcut-conflict freeze), so push-to-talk, Quick-Add and clipboard writes keep
+ *  following the live settings the paste path already uses, and the log records at the level
+ *  Settings shows. */
+export async function applyLiveSwitches(
+  appRules: AppRule[],
+  excludeFromClipboardHistory: boolean,
+  logLevel: LogLevelSetting,
+): Promise<void> {
   if (!isTauri) return;
-  await invoke("apply_live_switches", { appRules, excludeFromClipboardHistory });
+  await invoke("apply_live_switches", { appRules, excludeFromClipboardHistory, logLevel });
 }
 
 export async function setBackendKey(backendId: string, key: string): Promise<void> {

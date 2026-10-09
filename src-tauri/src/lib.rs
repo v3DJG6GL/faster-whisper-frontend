@@ -252,12 +252,13 @@ pub fn run() {
             // while `retention_held`), and start the batched log stream for the Logs screen.
             logging::apply_log_settings(app.handle(), &cfg, retention_held);
             logging::spawn_emit_pump(app.handle().clone());
-            // "Keep dictated text out of clipboard history" — a process-wide switch every
-            // transcript write reads; re-applied by apply_live_switches (save_config included).
-            inject::set_clipboard_privacy(cfg.settings.general.exclude_from_clipboard_history);
-            // Per-app "Remote desktop" overrides for the Quick-Add grab and push-to-talk; re-applied
-            // by apply_live_switches (save_config included).
-            inject::rdp_client::set_rules(&cfg.app_rules);
+            // The live process switches (clipboard privacy, Remote desktop rules, log level);
+            // save_config and apply_live_switches re-apply them.
+            commands::set_live_switches(
+                &cfg.app_rules,
+                cfg.settings.general.exclude_from_clipboard_history,
+                cfg.settings.logging.log_level,
+            );
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
             commands::apply_bindings(app.handle());

@@ -38,40 +38,54 @@ pub fn load_config(app: AppHandle) -> LoadedConfig {
     }
 }
 
-/// Apply the two in-memory process switches that mirror the webview's live settings. Called by
-/// `save_config` before its write, and directly by the webview when it holds a save back (the
-/// shortcut-conflict freeze), so these switches follow the webview on every save, written or not.
+/// Apply the in-memory process switches that mirror the webview's live settings (clipboard
+/// privacy, Remote desktop rules, log level). Called by `save_config` before its write, and
+/// directly by the webview when it holds a save back (the shortcut-conflict freeze), so these
+/// switches follow the webview on every save, written or not.
 #[tauri::command]
 pub fn apply_live_switches(
     app_rules: Vec<serde_json::Value>,
     exclude_from_clipboard_history: bool,
+    log_level: crate::config::LogLevel,
 ) {
-    set_live_switches(&app_rules, exclude_from_clipboard_history);
+    set_live_switches(&app_rules, exclude_from_clipboard_history, log_level);
 }
 
-fn set_live_switches(app_rules: &[serde_json::Value], exclude_from_clipboard_history: bool) {
+/// The live switches themselves — also applied once at startup (lib.rs setup), so a switch added
+/// here is never skipped at launch.
+pub(crate) fn set_live_switches(
+    app_rules: &[serde_json::Value],
+    exclude_from_clipboard_history: bool,
+    log_level: crate::config::LogLevel,
+) {
     // Clipboard privacy is a process-wide switch every transcript write reads (see inject/mod.rs), so
     // it is applied here rather than carried on each insert.
     crate::inject::set_clipboard_privacy(exclude_from_clipboard_history);
     // The per-app "Remote desktop" overrides the Quick-Add grab and the push-to-talk liveness gate
     // read (the paste path gets them with each insert).
     crate::inject::rdp_client::set_rules(app_rules);
+    // The capture level is an in-memory filter reload (no folder move or prune — those stay on a
+    // written save, in apply_log_settings), so a held or refused save still records at the level
+    // Settings shows.
+    crate::logging::apply_log_level(log_level);
 }
 
 #[tauri::command]
 pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     let dir = config_dir(&app)?;
-    // The two in-memory process switches mirror the webview's live settings (the paste path
-    // already acts on them unsaved), not the disk, so they apply BEFORE the write — and the
-    // webview applies them itself on a save it holds back (shortcut conflict): on every held or
-    // refused save (BACKUP_FAILED session, full/read-only disk) push-to-talk, Quick-Add and
-    // clipboard writes still follow the paste path instead of lagging until restart. The
+    // The in-memory process switches (clipboard privacy, Remote desktop rules, log level) mirror
+    // the webview's live settings (the paste path already acts on them unsaved), not the disk,
+    // so they apply BEFORE the write — and the webview applies them itself on a save it holds
+    // back (shortcut conflict): on every held or refused save (BACKUP_FAILED session,
+    // full/read-only disk) push-to-talk, Quick-Add and clipboard writes still follow the paste
+    // path, and the log records at the level Settings shows, instead of lagging until restart. The
     // Quick-Add window's own paste reads the rules from disk, so after a held or refused save its
     // grab (here) and its paste can disagree until the next good save — the lesser split: before,
     // the main window's paste and push-to-talk disagreed instead.
     set_live_switches(
         &config.app_rules,
         config.settings.general.exclude_from_clipboard_history,
+        config.settings.logging.log_level,
     );
     // A save over a reset (this session, or one nobody has saved over yet) carries the defaults'
     // retention windows, not the backed-up settings' — its sweeps must not delete that history.
