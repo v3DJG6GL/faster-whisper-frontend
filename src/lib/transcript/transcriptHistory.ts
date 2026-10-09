@@ -184,7 +184,8 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
           m && typeof m === "object"
             ? Object.fromEntries(
                 Object.entries(m).flatMap(([k, v]) => {
-                  const to = moved.get(Number(k));
+                  // Only a canonical index key ("1", not "1.0" or ""): no reader looks the others up.
+                  const to = String(Number(k)) === k ? moved.get(Number(k)) : undefined;
                   return to === undefined ? [] : [[to, v]];
                 }),
               )

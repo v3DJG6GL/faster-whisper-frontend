@@ -192,7 +192,7 @@ describe("loadHistory", () => {
         sourcePath: "/a.wav",
         sourceName: "a.wav",
         status: "done",
-        edits: { 0: "gone", 1: 9, 2: "TWO" },
+        edits: { 0: "gone", 1: 9, 2: "TWO", "2.0": "junk", "": "x" },
         speakerEdits: { 2: "Ana" },
         translationsStale: { 0: true },
         result: { text: "ok", segments: [{ start: 0, end: 1, text: 5 }, null, { start: 1, end: 2, text: "two" }] },
