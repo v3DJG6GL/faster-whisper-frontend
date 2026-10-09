@@ -666,7 +666,7 @@ export default function History() {
                     type="button"
                     onClick={() => copyTrack(rec, lang, text)}
                     className="absolute right-0 top-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-faint opacity-0 transition hover:text-text focus-visible:opacity-100 group-hover/track:opacity-100"
-                    title={`Copy the ${langCode(lang, 8)} track`}
+                    title={`Copy the ${langCode(lang, 12)} track`}
                   >
                     {copiedId === `${rec.id}:${lang}` ? "copied" : "copy"}
                   </button>

@@ -947,9 +947,10 @@ export function pct(n: number, of: number): number {
 
 /** Targets as `DE→EN 61 %`-style shares of the stage's runs, top `max`. */
 export function targetShares(stage: UsageStage, max = 4): { code: string; pct: number }[] {
-  const list = (stage.targets ?? []).filter((t) => t && typeof t.code === "string" && t.runs > 0);
+  // Same trimmed 12-char code as translationRows, so the chip and the facet name a target alike.
+  const list = (stage.targets ?? []).filter((t) => t && typeof t.code === "string" && t.code.trim() !== "" && t.runs > 0);
   list.sort((a, b) => b.runs - a.runs);
-  return list.slice(0, max).map((t) => ({ code: t.code.toUpperCase(), pct: pct(t.runs, stage.runs) }));
+  return list.slice(0, max).map((t) => ({ code: t.code.trim().slice(0, 12).toUpperCase(), pct: pct(t.runs, stage.runs) }));
 }
 
 /* ── horizontal-bar facets ──────────────────────────────────────────────── */

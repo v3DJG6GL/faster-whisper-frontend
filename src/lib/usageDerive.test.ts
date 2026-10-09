@@ -443,6 +443,21 @@ describe("usageDerive", () => {
     ]);
   });
 
+  it("targetShares: trims, clips to 12 like translationRows and drops blank codes", () => {
+    const st: UsageStage = {
+      stage: "translating",
+      runs: 10,
+      of_runs: 10,
+      audio_s: 0,
+      secs: 0,
+      targets: [{ code: " zh-Hant-TW ", runs: 5 }, { code: "", runs: 4 }, { code: "  ", runs: 3 }, { code: "de", runs: 1 }],
+    };
+    expect(targetShares(st)).toEqual([
+      { code: "ZH-HANT-TW", pct: 50 },
+      { code: "DE", pct: 10 },
+    ]);
+  });
+
   it("translationRows: languages as upper-case codes scaled among themselves, outcomes dim", () => {
     const rows = translationRows({
       targets: [

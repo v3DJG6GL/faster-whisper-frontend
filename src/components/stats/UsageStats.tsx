@@ -171,8 +171,8 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
               {(targets.length > 0 || kept > 0 || (narrowed && !pinned)) && (
                 <div className="col-start-2 col-end-[-1] -mt-1 flex flex-wrap items-center gap-1.5 text-[11.5px] text-faint">
                   {narrowed && !pinned && <span>of the filtered sessions, {share} % were also {STAGE_CHIP_LABEL[row.key].toLowerCase()} ·</span>}
-                  {targets.map((t) => (
-                    <span key={t.code} className="rounded-pill border border-line px-2 py-px font-mono text-[11px] text-dim">
+                  {targets.map((t, i) => (
+                    <span key={`${i}:${t.code}`} className="rounded-pill border border-line px-2 py-px font-mono text-[11px] text-dim">
                       {safeDisplayText(t.code)} {t.pct} %
                     </span>
                   ))}
