@@ -2697,8 +2697,10 @@ async function ensureListeners(): Promise<void> {
       resetServerWork();
       setDictation({ level: 0, warming: false, serverWork: null, status: "transcribing" });
       // (The saved recording and its transcript .txt sidecar are written in Rust, in the streaming
-      // drain — a superseded or errored session still gets them; a user's Cancel after stop
-      // discards both, matching the batch path; a recovery cancel (keepRecording) keeps them.)
+      // drain — a superseded or errored session still gets them. A user's Cancel after stop
+      // discards the session recording, matching the batch path, but per-utterance clips already
+      // cut before that Cancel stay, each with its complete .txt. A recovery cancel (keepRecording)
+      // keeps them all.)
       // Release a session that reached `closed` WITHOUT a user stop (capture-thread death / a
       // server-initiated close): stopLive's finish() already removed the session from Rust state, so
       // this is a no-op on a normal stop — but on a never-stopped session it drops the parked session
@@ -3207,6 +3209,16 @@ let startingSession = false;
 // session left wedged "listening" forever (the chord is already released, nothing re-triggers a
 // stop). This records that a stop is owed; startLiveInner honors it the moment the session is up.
 let stopRequestedDuringStart = false;
+// The start INVOKE (startRecord/startStream) is in flight: status is already "listening" and
+// `capturing` true, so a stop or cancel gesture reaches stopLive/cancelLive, but Rust has not
+// stored the session yet — start_* reads the keyring before taking the state lock, and a locked
+// keyring can park it behind an unlock prompt for seconds. A stop or cancel then found no session
+// and the start stored it afterwards, leaving the mic open behind a "finalizing…" or idle chip.
+// stopLive defers to the post-invoke stopRequestedDuringStart check; cancelLive marks
+// cancelDuringStartInvoke (with the cancel's keepRecording), and startLiveInner cancels the
+// session the start stored after it.
+let startInvokeInFlight = false;
+let cancelDuringStartInvoke: { keepRecording: boolean } | null = null;
 
 /** Called by dictate()'s stopOrCancel when status is idle/error: if a session is mid-start (status
  *  not yet "listening"), remember a stop was requested so the starting session is torn down as soon
@@ -3569,6 +3581,8 @@ async function startLiveInner(
   // Per-device address override ("use this URL on this device") wins over the
   // synced canonical serverUrl for the actual connection.
   const sessionServerUrl = effectiveServerUrl(backend, useApp.getState().settings);
+  startInvokeInFlight = true;
+  cancelDuringStartInvoke = null;
   try {
     if (endpoint === "batch") {
       await startRecord({
@@ -3623,6 +3637,24 @@ async function startLiveInner(
         muteSystem: rec.muteSystemAudio,
       });
     }
+    startInvokeInFlight = false;
+    // A Cancel landed during the invoke: cancelLive already tore the TS side down and left the
+    // Rust half to here. The session exists now, so this cancel finds it live and aborts it —
+    // never the previous session's drain/transcription (that one is reached only with no live
+    // session). A recovery cancel keeps its usual meaning (Rust drains/drops instead of discarding).
+    // (TS narrows the module `let` to the `null` set above; cancelLive sets it during the await.)
+    const owedCancel = cancelDuringStartInvoke as { keepRecording: boolean } | null;
+    if (owedCancel) {
+      cancelDuringStartInvoke = null;
+      stopRequestedDuringStart = false;
+      try {
+        if (endpoint === "batch") await cancelRecord(true, !owedCancel.keepRecording);
+        else await cancelStream(true, !owedCancel.keepRecording);
+      } catch (e) {
+        console.error("cancel after start failed:", e);
+      }
+      return;
+    }
     // A stop landed during the start prologue (a fast PTT tap released the chord before status was
     // "listening", so stopOrCancel no-op'd against idle). The session is up now → stop it promptly
     // (a short tap-dictation) instead of leaving it wedged "listening" with the chord released.
@@ -3632,6 +3664,7 @@ async function startLiveInner(
       void stopLive();
     }
   } catch (e) {
+    startInvokeInFlight = false;
     clearWarmTimer();
     // The start invoke rejected before any stream exists, so no closed/error event will fire to
     // tear these down — do it here, else the 700ms focus-poll interval leaks (republishing a
@@ -3640,6 +3673,11 @@ async function startLiveInner(
     activeEndpoint = null;
     capturing = false;
     console.error("start dictation failed:", e);
+    // The user already cancelled this start: the chip is idle, so no error flash.
+    if (cancelDuringStartInvoke) {
+      cancelDuringStartInvoke = null;
+      return;
+    }
     flashError(String(e));
   }
 }
@@ -3746,6 +3784,12 @@ function applyReclassify(profile: Profile): void {
 }
 
 export async function stopLive(): Promise<void> {
+  // Rust holds no session yet (see startInvokeInFlight): stopping now would find none and the
+  // start would store a session nobody stops. startLiveInner runs this stop once the invoke returns.
+  if (startInvokeInFlight) {
+    stopRequestedDuringStart = true;
+    return;
+  }
   autoStopMs = 0; // disarm hands-free auto-stop — we're stopping now
   // The mic closes with this call, not with the `closed` that follows it: from here a
   // second stop gesture is a CANCEL again (the recovery for a wedged finalize), even if a
@@ -3835,6 +3879,12 @@ export async function stopLive(): Promise<void> {
  *  stuck "down" in the evdev backend (a dropped key-release) — so the one action
  *  recovers both the recording state AND the shortcuts. */
 export async function cancelLive(opts?: CancelOpts): Promise<void> {
+  // Mid start invoke Rust holds no session yet (see startInvokeInFlight), so a cancel now would be
+  // read as one aimed at the PREVIOUS session still draining/transcribing and discard its recording,
+  // while the start goes on to store a session nobody cancels. Leave the Rust half to startLiveInner,
+  // which cancels the session the moment the invoke returns.
+  const owedToStart = startInvokeInFlight;
+  if (owedToStart) cancelDuringStartInvoke = { keepRecording: !!opts?.keepRecording };
   autoStopMs = 0; // disarm hands-free auto-stop
   voidPendingHoldStart(); // a deliberate cancel also voids a queued fast re-press (in-flight check included)
   pendingReclassify = null; // …and a queued chord-family upgrade
@@ -3909,7 +3959,9 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
     // `true`: the user pressed Cancel, so Rust also aborts a transcript that is being typed
     // right now — in stop-timing mode the session is already gone by then, and the flag is
     // the only thing that distinguishes this from the closed-handler's release below.
-    if (endpoint === "batch") await cancelRecord(true, !opts?.keepRecording);
+    if (owedToStart) {
+      // startLiveInner's post-invoke cancel
+    } else if (endpoint === "batch") await cancelRecord(true, !opts?.keepRecording);
     else await cancelStream(true, !opts?.keepRecording);
   } catch (e) {
     console.error("cancelLive: cancel failed:", e);

@@ -551,3 +551,61 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(calls, "call restoreClipboardSnapshot only from giveClipboardBack").toBe(1);
   });
 });
+
+describe("a stop or cancel during the start invoke", () => {
+  // Status is "listening" and `capturing` true while startRecord/startStream is awaited, but Rust
+  // stores the session only when the invoke returns (start_* reads the keyring first, which can sit
+  // behind an unlock prompt). A gesture in that window found no session: the start then stored one
+  // nobody stopped (mic open behind the chip), and a cancel discarded the PREVIOUS session's drain.
+  const fns = topLevelFunctions(streamingSrc);
+
+  it("stopLive defers to the post-invoke stop before touching anything", () => {
+    const body = mask(fns.stopLive);
+    const gate = body.indexOf("if (startInvokeInFlight)");
+    expect(gate, "stopLive must open with the start-invoke deferral").toBeGreaterThanOrEqual(0);
+    const deferral = bodyAfter(body, "if (startInvokeInFlight)");
+    expect(deferral).toContain("stopRequestedDuringStart = true");
+    expect(deferral).toContain("return");
+    for (const step of ["autoStopMs = 0", "capturing = false", "stopStream()", "stopRecord()"]) {
+      expect(body.indexOf(step), `${step} must come after the deferral`).toBeGreaterThan(gate);
+    }
+  });
+
+  it("cancelLive leaves the Rust cancel to startLiveInner while the invoke is in flight", () => {
+    const body = mask(fns.cancelLive);
+    const owed = body.indexOf("const owedToStart = startInvokeInFlight");
+    expect(owed, "cancelLive must read the start invoke at entry").toBeGreaterThanOrEqual(0);
+    // Read before the teardown below resets `capturing`.
+    expect(owed).toBeLessThan(body.indexOf("capturing = false"));
+    expect(body).toContain("if (owedToStart) cancelDuringStartInvoke = {");
+    const skip = body.indexOf("if (owedToStart) {");
+    expect(skip, "the Rust cancel must be skipped for a starting session").toBeGreaterThanOrEqual(0);
+    expect(skip).toBeLessThan(body.indexOf("cancelRecord("));
+    expect(skip).toBeLessThan(body.indexOf("cancelStream("));
+  });
+
+  it("startLiveInner brackets the invoke and cancels the session a mid-invoke Cancel owed", () => {
+    const body = mask(fns.startLiveInner);
+    const begin = body.indexOf("startInvokeInFlight = true");
+    expect(begin, "the flag must be raised before the invoke").toBeGreaterThanOrEqual(0);
+    const invoke = body.indexOf("await startStream(");
+    expect(begin).toBeLessThan(body.indexOf("await startRecord("));
+    expect(begin).toBeLessThan(invoke);
+    const end = body.indexOf("startInvokeInFlight = false", invoke);
+    expect(end, "the flag must drop once the invoke returns").toBeGreaterThan(invoke);
+    const owed = body.indexOf("if (owedCancel)", end);
+    expect(owed, "the owed cancel must be honoured after the invoke").toBeGreaterThan(end);
+    // …before the owed-stop check, which would otherwise stop (and save) a cancelled session.
+    expect(owed).toBeLessThan(body.indexOf("void stopLive()"));
+    const branch = bodyAfter(body, "if (owedCancel)");
+    expect(branch).toContain("cancelStream(true,");
+    expect(branch).toContain("cancelRecord(true,");
+    expect(branch).toContain("return");
+    // The reject path drops the flag too, and a cancelled start never flashes its error.
+    const reject = bodyAfter(body.slice(body.indexOf("void stopLive()")), "} catch (e)");
+    expect(reject).toContain("startInvokeInFlight = false");
+    const quiet = reject.indexOf("if (cancelDuringStartInvoke)");
+    expect(quiet, "a cancelled start must skip flashError").toBeGreaterThanOrEqual(0);
+    expect(quiet).toBeLessThan(reject.indexOf("flashError("));
+  });
+});
