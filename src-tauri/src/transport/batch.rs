@@ -2077,21 +2077,8 @@ pub async fn download_result_media(
         let mut f = tokio::fs::File::create(&tmp)
             .await
             .context("creating the media file")?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = f
-                .set_permissions(std::fs::Permissions::from_mode(0o600))
-                .await;
-        }
-        // Same per-file DACL as the recordings: `links/` may have pre-existed the pick.
-        #[cfg(windows)]
-        if let Err(e) = crate::audio::windows_owner_only_dacl(&tmp) {
-            tracing::warn!(
-                "[transport] could not restrict {} to the current user: {e}",
-                tmp.display()
-            );
-        }
+        // Owner-only like the recordings: `links/` or `video/` may have pre-existed the pick.
+        crate::audio::restrict_file_private(&tmp);
         let mut total: u64 = 0;
         while let Some(chunk) = resp
             .chunk()
