@@ -276,7 +276,10 @@ export function ChipToggle({
             : on
               ? "border-accent/35 bg-accent-soft text-accent"
               : "border-line bg-surface-2 text-dim hover:text-text",
-        disabled && "cursor-not-allowed opacity-50 hover:text-dim",
+        disabled && "cursor-not-allowed opacity-50",
+        // Cancel the hover lift only on the plain inactive face: cn is plain clsx (no
+        // tailwind-merge), so hover:text-dim would grey an on or locked chip's label.
+        disabled && !on && !lock && "hover:text-dim",
         className,
       )}
     >
