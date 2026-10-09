@@ -119,8 +119,8 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
             crate::store::transcripts::apply_transcripts_retention(&app, &config);
         });
     }
-    // Log level reload / session-file move / prune — so Settings changes
-    // apply live, not at the next restart.
+    // Session-file move / prune (written saves only; the level went with the live switches
+    // above) — so Settings changes apply live, not at the next restart.
     crate::logging::apply_log_settings(&app, &config, reset);
     Ok(())
 }

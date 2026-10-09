@@ -247,18 +247,19 @@ pub fn run() {
             // earlier one's): the retention sweeps below and the log pruning wait on it.
             // (No config dir means no load ran, so no reset this session either.)
             let retention_held = cfg_dir.as_deref().is_some_and(config::retention_held);
-            // Apply the saved log level, open this session's log file (ring
-            // replayed in, so it's complete from launch), prune old ones (not
-            // while `retention_held`), and start the batched log stream for the Logs screen.
-            logging::apply_log_settings(app.handle(), &cfg, retention_held);
-            logging::spawn_emit_pump(app.handle().clone());
             // The live process switches (clipboard privacy, Remote desktop rules, log level);
-            // save_config and apply_live_switches re-apply them.
+            // save_config and apply_live_switches re-apply them. First, so the saved level is
+            // in force before the session file opens and filters the prune-hold lines below.
             commands::set_live_switches(
                 &cfg.app_rules,
                 cfg.settings.general.exclude_from_clipboard_history,
                 cfg.settings.logging.log_level,
             );
+            // Open this session's log file (ring replayed in, so it's complete from launch),
+            // prune old ones (not while `retention_held`), and start the batched log stream for
+            // the Logs screen.
+            logging::apply_log_settings(app.handle(), &cfg, retention_held);
+            logging::spawn_emit_pump(app.handle().clone());
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
             commands::apply_bindings(app.handle());

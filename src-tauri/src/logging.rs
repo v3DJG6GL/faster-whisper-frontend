@@ -214,18 +214,18 @@ type ReloadHandle =
 static RELOAD: OnceLock<ReloadHandle> = OnceLock::new();
 static ENV_OVERRIDE: OnceLock<bool> = OnceLock::new();
 
-fn env_filter() -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level_directive(LogLevel::Info)))
-}
-
 /// Install the subscriber stack: reloadable filter → ring → console → file.
 /// Called once, first thing in `run()`.
 pub fn init(ring: LogRing, writer: SwapWriter) {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-    let _ = ENV_OVERRIDE.set(std::env::var_os("RUST_LOG").is_some());
-    let (filter, handle) = tracing_subscriber::reload::Layer::new(env_filter());
+    // Only a RUST_LOG that parses overrides the Settings level: a mistyped one falls back to
+    // Info, and the setting must stay live rather than leave the log at a level nobody chose.
+    let env = tracing_subscriber::EnvFilter::try_from_default_env();
+    let _ = ENV_OVERRIDE.set(env.is_ok());
+    let filter0 =
+        env.unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level_directive(LogLevel::Info)));
+    let (filter, handle) = tracing_subscriber::reload::Layer::new(filter0);
     let _ = RELOAD.set(handle);
     tracing_subscriber::registry()
         .with(filter)
@@ -241,7 +241,7 @@ pub fn init(ring: LogRing, writer: SwapWriter) {
 }
 
 /// Live level swap from the Settings control. `RUST_LOG` keeps priority: when
-/// the env var was set at launch, the setting is inert.
+/// a valid one was set at launch, the setting is inert.
 pub fn apply_log_level(level: LogLevel) {
     if ENV_OVERRIDE.get().copied().unwrap_or(false) {
         return;
@@ -369,13 +369,13 @@ pub fn prune_log_files(dir: &Path, keep_days: u32) {
 /// The pruning-hold line is logged once per session: `apply_log_settings` runs on every save.
 static LOGGED_PRUNE_HOLD: AtomicBool = AtomicBool::new(false);
 
-/// Config-save side effect (also run once in setup, after the config load): reload the level,
-/// move the session file if the folder changed, and prune old files unless `held`: a reset
+/// Config-save side effect (also run once in setup, after the config load): move the session
+/// file if the folder changed, and prune old files unless `held` (the level is a live switch,
+/// applied by `commands::set_live_switches`): a reset
 /// nobody has saved over (`config::retention_held`), as the caller computed before any write —
 /// the same hold as the retention sweeps. The defaults' `keep_days` would otherwise delete logs
 /// the user's real (backed-up or unreadable) settings kept — the very logs that explain the reset.
 pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
-    apply_log_level(config.settings.logging.log_level);
     let Some(dir) = log_dir(app, config) else {
         return;
     };
