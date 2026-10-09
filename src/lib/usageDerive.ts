@@ -6,6 +6,7 @@
 // lay these numbers out.
 
 import { dayToDate, plural } from "@/lib/format";
+import { langCode } from "@/lib/languages";
 import type {
   UsageHourCell,
   UsageKind,
@@ -945,12 +946,20 @@ export function pct(n: number, of: number): number {
   return Math.max(0, Math.min(100, Math.round((n / of) * 100)));
 }
 
-/** Targets as `DE→EN 61 %`-style shares of the stage's runs, top `max`. */
+/** A server-sent target code as shown: sanitized (no bidi/control characters — the Rust
+ *  mirror does not bound these), clipped to 12 code points, upper-case. The outer trim drops
+ *  a space a stripped leading or trailing format character leaves behind. */
+const targetCode = (c: string) => langCode(c.trim(), 12).trim();
+
+/** Target codes as `DE 61 %`-style shares of the stage's runs (sanitized and clipped like
+ *  translationRows), top `max`. */
 export function targetShares(stage: UsageStage, max = 4): { code: string; pct: number }[] {
-  // Same trimmed 12-char code as translationRows, so the chip and the facet name a target alike.
-  const list = (stage.targets ?? []).filter((t) => t && typeof t.code === "string" && t.code.trim() !== "" && t.runs > 0);
+  // Same code as translationRows, so the chip and the facet name a target alike.
+  const list = (stage.targets ?? []).filter(
+    (t) => t && typeof t.code === "string" && targetCode(t.code) !== "" && t.runs > 0,
+  );
   list.sort((a, b) => b.runs - a.runs);
-  return list.slice(0, max).map((t) => ({ code: t.code.trim().slice(0, 12).toUpperCase(), pct: pct(t.runs, stage.runs) }));
+  return list.slice(0, max).map((t) => ({ code: targetCode(t.code), pct: pct(t.runs, stage.runs) }));
 }
 
 /* ── horizontal-bar facets ──────────────────────────────────────────────── */
@@ -990,7 +999,8 @@ export function facetRows(
 
 /** The "Translated into" facet: one row per target code (upper-case, the picker's codes),
  *  then the outcomes that were not a translation, dim. Codes come from the server and are
- *  shown as-is (D26: code only), so a stray value is clipped to 12 chars — the bound the
+ *  shown as-is (D26: code only) through langCode — sanitized, so a bidi or control character
+ *  cannot reach the label or its title, and clipped to 12 code points — the bound the
  *  dictation targets themselves carry (chipController.ts), so two regional variants such as
  *  zh-Hant-TW and zh-Hant-HK stay apart. */
 export function translationRows(d: {
@@ -998,10 +1008,10 @@ export function translationRows(d: {
   translation?: { kept_original: number; not_asked: number; aborted: number; unreported: number };
 }): FacetRow[] {
   const langs = (d.targets ?? [])
-    .filter((t) => t && typeof t.code === "string" && t.code.trim() !== "")
+    .filter((t) => t && typeof t.code === "string" && targetCode(t.code) !== "")
     .slice(0, 6)
     .map((t) => {
-      const code = t.code.trim().slice(0, 12).toUpperCase();
+      const code = targetCode(t.code);
       const kept = typeof t.kept_original === "number" && t.kept_original > 0 ? t.kept_original : 0;
       const runs = typeof t.runs === "number" ? t.runs : 0;
       return {

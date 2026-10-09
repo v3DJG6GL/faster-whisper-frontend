@@ -492,6 +492,30 @@ describe("usageDerive", () => {
     expect(rows.slice(0, 2).map((r) => r.label)).toEqual(["ZH-HANT-TW", "ZH-HANT-HK"]);
   });
 
+  it("target codes are sanitized like the stage chip and clipped by code point", () => {
+    const rows = translationRows({
+      targets: [
+        { code: "de‮", runs: 3, kept_original: 0 },
+        { code: "‮", runs: 2, kept_original: 0 },
+      ],
+    });
+    expect(rows[0].label).toBe("DE");
+    expect(rows[0].title?.startsWith("DE ·")).toBe(true);
+    expect(rows[1].label).toBe("Kept original"); // the bidi-only code is dropped, not a blank row
+    const st: UsageStage = {
+      stage: "translating",
+      runs: 10,
+      of_runs: 10,
+      audio_s: 0,
+      secs: 0,
+      targets: [{ code: "‮", runs: 6 }, { code: "​ fr", runs: 3 }, { code: "😀".repeat(13), runs: 1 }],
+    };
+    expect(targetShares(st)).toEqual([
+      { code: "FR", pct: 30 },
+      { code: "😀".repeat(12), pct: 10 },
+    ]);
+  });
+
   it("translationRows without any target keeps the two outcome rows", () => {
     const rows = translationRows({ translation: { kept_original: 0, not_asked: 4, aborted: 0, unreported: 0 } });
     expect(rows.map((r) => [r.label, r.pct])).toEqual([["Kept original", 0], ["Not asked", 100]]);
