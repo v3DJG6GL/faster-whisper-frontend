@@ -671,7 +671,9 @@ mod imp {
 
     /// With the clipboard OPEN: empty it (becoming the owner), announce CF_UNICODETEXT without
     /// data, and — when asked — mark the item as not-for-history / not-for-cloud. Returns
-    /// Ok(excluded) or Err(Unavailable) when the delayed announcement did not take.
+    /// Ok(excluded); Err(Busy) when EmptyClipboard fails (nothing was emptied — an offer reports
+    /// "nothing written" so its caller re-sends); Err(Unavailable) when the delayed announcement
+    /// did not take (an offer falls back to the legacy write).
     ///
     /// Never sets `ExcludeClipboardContentFromMonitorProcessing`: that hides the item from
     /// clipboard LISTENERS, and mstsc is one — it could stop syncing our text to the remote.

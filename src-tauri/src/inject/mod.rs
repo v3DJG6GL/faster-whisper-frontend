@@ -251,13 +251,14 @@ pub fn take_delivered_on_clipboard() -> bool {
 
 /// "Keep dictated text out of clipboard history & cloud clipboard" (settings.general
 /// `excludeFromClipboardHistory`). A process-wide switch rather than an IPC argument, applied at
-/// startup and on every `save_config` (like the log settings), so EVERY transcript write honours it
+/// startup and by `apply_live_switches` on every save (`save_config` included, and a save the
+/// webview holds back), so EVERY transcript write honours it
 /// — paste, clipboard-only, the diverts, the error-abort recovery, Quick-Add — without each call
 /// site having to carry it. 0 = off, 1 = on, 2 = not applied yet (treated as on: private is the
 /// default, and the startup apply follows within milliseconds).
 static CLIP_PRIVATE: AtomicU8 = AtomicU8::new(2);
 
-/// Apply the setting. Logged on change only (save_config runs on every autosave).
+/// Apply the setting. Logged on change only (it is re-applied on every autosave).
 pub fn set_clipboard_privacy(on: bool) {
     let prev = CLIP_PRIVATE.swap(u8::from(on), Ordering::SeqCst);
     if prev != u8::from(on) {

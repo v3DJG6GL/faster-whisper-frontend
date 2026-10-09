@@ -20,8 +20,9 @@
 //! detector fired and whether the rule overrode it, so a support log answers "why was this
 //! treated as remote" without a repro. The paste path gets the rule from the webview with each
 //! insert; the Quick-Add grab and the push-to-talk liveness gate have no webview round trip, so
-//! they read the same rules from [`set_rules`]' process-wide copy (applied at startup and on every
-//! config save) through [`focus_is_remote_desktop`].
+//! they read the same rules from [`set_rules`]' process-wide copy (applied at startup and by
+//! `commands::apply_live_switches` on every webview save, written or held back for a shortcut
+//! conflict — so it can run ahead of config.json) through [`focus_is_remote_desktop`].
 
 /// Remote-desktop / VDI clients, matched on the focused app id. Their clipboard reaches the
 /// remote host ASYNCHRONOUSLY (RDP "delayed rendering" even fetches the data only when the
@@ -166,7 +167,8 @@ static RULES: std::sync::RwLock<Vec<(String, Option<bool>)>> = std::sync::RwLock
 /// `wellFormedAppRules` floors them: a rule needs a string `id` and a string `appId` whose key is
 /// not empty. Every surviving rule is kept, Auto ones too, because `resolveInjectionTarget` finds
 /// the first rule for the key and only THEN reads its `remoteDesktop` — anything but a real
-/// boolean falls back to detection. Called at startup and by `save_config`.
+/// boolean falls back to detection. Called at startup and by `commands::apply_live_switches`
+/// (whose switches `save_config` also applies before its write).
 pub fn set_rules(app_rules: &[serde_json::Value]) {
     let rules: Vec<(String, Option<bool>)> = app_rules
         .iter()

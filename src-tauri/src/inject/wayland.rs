@@ -324,24 +324,28 @@ mod imp {
 
     /// Should a typed job go on the clipboard instead, because the active layout cannot produce
     /// its letters? Two cases divert. Most letters are unreachable (Chinese on a US layout, digits
-    /// or not). Or ANY unreachable letter is from a non-Latin script (Han, Kana, Hangul, Arabic,
-    /// Hebrew, Thai, but also cased Cyrillic, Greek, Armenian...): it belongs to a whole foreign
-    /// word, so "我在用iPhone 15 Pro Max" must not be typed as "iPhone 15 Pro Max", nor "Ich habe
-    /// gestern Привет gesagt" lose "Привет", just because the Latin letters outnumber it. Only
-    /// stray Latin letters (an accent a US layout lacks) are left to the per-character skip.
+    /// or not). Or ANY unreachable letter belongs to a foreign word: a non-Latin script (Han,
+    /// Kana, Hangul, Arabic, Hebrew, Thai, but also cased Cyrillic, Greek, Armenian...) on any
+    /// layout, so "我在用iPhone 15 Pro Max" must not be typed as "iPhone 15 Pro Max", nor "Ich habe
+    /// gestern Привет gesagt" lose "Привет", just because the Latin letters outnumber it — and,
+    /// symmetrically, a Latin letter on a layout that types no basic Latin (Russian, Greek), so
+    /// "Я купил новый iPhone вчера" keeps its "iPhone". Only stray Latin letters on a Latin
+    /// layout (an accent a US layout lacks) are left to the per-character skip.
     fn divert_unreachable(text: &str, map: &HashMap<char, KeySpec>) -> bool {
         let (reachable, unreachable) = letter_reach(text, map);
-        unreachable > 0 && (unreachable >= reachable || unreachable_non_latin(text, map))
+        unreachable > 0 && (unreachable >= reachable || unreachable_foreign_word(text, map))
     }
 
-    /// Does `text` hold a letter of a non-Latin script that the active layout cannot type?
-    /// Scripts from Greek (U+0370) up, cased or not. The Latin blocks above that floor
-    /// (phonetic extensions, Latin Extended Additional/-C/-D/-E/-F/-G, super/subscript letters,
-    /// letterlike symbols, the ﬁ ligatures, fullwidth Latin), the Latin-letter symbols Unicode
-    /// also counts as alphabetic (circled Ⓜ, squared 🅿 emoji, math alphanumerics) and the
-    /// Latin-context modifier letters below it (Hawaiʻi's ʻokina U+02BB) stay with the
-    /// per-character skip.
-    fn unreachable_non_latin(text: &str, map: &HashMap<char, KeySpec>) -> bool {
+    /// Does `text` hold a letter of a foreign word that the active layout cannot type? On any
+    /// layout: a letter of a non-Latin script, from Greek (U+0370) up, cased or not. The Latin
+    /// blocks above that floor (phonetic extensions, Latin Extended Additional/-C/-D/-E/-F/-G,
+    /// super/subscript letters, letterlike symbols, the ﬁ ligatures, fullwidth Latin), the
+    /// Latin-letter symbols Unicode also counts as alphabetic (circled Ⓜ, squared 🅿 emoji, math
+    /// alphanumerics) and the Latin-context modifier letters below it (Hawaiʻi's ʻokina U+02BB)
+    /// stay with the per-character skip. On a layout that types no basic Latin letter (Cyrillic,
+    /// Greek...): also any unreachable letter below U+0370 — ASCII or accented Latin there is an
+    /// English brand or name, not a stray accent.
+    fn unreachable_foreign_word(text: &str, map: &HashMap<char, KeySpec>) -> bool {
         const LATIN_ABOVE_GREEK: [std::ops::RangeInclusive<u32>; 14] = [
             0x1D00..=0x1DFF,   // phonetic extensions (+ supplement), combining Latin letters
             0x1E00..=0x1EFF,   // Latin Extended Additional (Vietnamese ạ, Welsh ẁ)
@@ -358,12 +362,13 @@ mod imp {
             0x1DF00..=0x1DFFF, // Latin Extended-G
             0x1F100..=0x1F1FF, // enclosed alphanumeric supplement (🅰 🅿 emoji)
         ];
+        let latin_layout = ('a'..='z').any(|l| map.contains_key(&l));
         text.chars().any(|c| {
             let u = c as u32;
-            u >= 0x0370
-                && !LATIN_ABOVE_GREEK.iter().any(|r| r.contains(&u))
-                && c.is_alphabetic()
+            c.is_alphabetic()
                 && key_spec_for(c, map).is_none()
+                && ((u >= 0x0370 && !LATIN_ABOVE_GREEK.iter().any(|r| r.contains(&u)))
+                    || (!latin_layout && u < 0x0370))
         })
     }
 
@@ -759,9 +764,11 @@ mod imp {
                 // an on-clipboard divert, not an error, so a live session keeps running. A letter
                 // of a non-Latin script (Han, Kana, Hangul, Arabic, Hebrew, Thai, Cyrillic,
                 // Greek...) always diverts, even inside a mostly Latin line: it is part of a foreign
-                // word, not a stray accent. Symbols (a "♪" or "…" phrase, curly quotes, an em dash,
-                // emoji) and a few stray accented Latin letters in an otherwise typeable line are
-                // still skipped per character below.
+                // word, not a stray accent. The rule is symmetric: on a layout that types no basic
+                // Latin (Russian, Greek), an unreachable Latin letter ("iPhone" in a Russian line)
+                // diverts too. Symbols (a "♪" or "…" phrase, curly quotes, an em dash, emoji) and a
+                // few stray accented Latin letters in an otherwise typeable line on a Latin layout
+                // are still skipped per character below.
                 if !job.paste && !job.text.is_empty() {
                     let (reachable, unreachable) = letter_reach(&job.text, &charmap);
                     if divert_unreachable(&job.text, &charmap) {
@@ -1054,6 +1061,24 @@ mod imp {
                 .collect()
         }
 
+        /// A Russian layout: lowercase а..я plus ё, and the capital Я — no basic Latin.
+        fn ru_letters() -> HashMap<char, KeySpec> {
+            ('\u{430}'..='\u{44f}')
+                .chain(['\u{451}', '\u{42f}'])
+                .enumerate()
+                .map(|(i, c)| {
+                    let spec = KeySpec {
+                        keycode: 16 + i as i32,
+                        shift: false,
+                        altgr: false,
+                        lock: false,
+                        caps_safe: true,
+                    };
+                    (c, spec)
+                })
+                .collect()
+        }
+
         #[test]
         fn letter_reach_counts_a_script_the_layout_cannot_type_digits_or_not() {
             // Chinese on a US layout: the digits are typeable, the words are not — divert.
@@ -1083,17 +1108,17 @@ mod imp {
         fn a_non_latin_script_letter_diverts_even_in_a_mostly_latin_line() {
             // 9 typeable letters vs 6 unreachable (P, P, M and 3 Han): not a majority, so only the
             // non-Latin rule diverts it. The Han words must not be dropped.
-            assert!(unreachable_non_latin(
+            assert!(unreachable_foreign_word(
                 "我在用iPhone 15 Pro Max",
                 &us_letters()
             ));
             assert!(divert_unreachable("我在用iPhone 15 Pro Max", &us_letters()));
             assert!(divert_unreachable("你好 世界", &us_letters()));
             // A stray accented cased letter is still skipped per character.
-            assert!(!unreachable_non_latin("caf\u{e9}", &us_letters()));
+            assert!(!unreachable_foreign_word("caf\u{e9}", &us_letters()));
             assert!(!divert_unreachable("Caf\u{c9} au lait", &us_letters()));
             // A Latin-context modifier letter (the ʻokina) is not a non-Latin word.
-            assert!(!unreachable_non_latin(
+            assert!(!unreachable_foreign_word(
                 "I flew to Hawai\u{2bb}i today",
                 &us_letters()
             ));
@@ -1103,8 +1128,8 @@ mod imp {
             ));
             // Latin Extended-D's caseless letters (U+A7F7 sideways I) stay with the per-character
             // skip too; Hebrew does not.
-            assert!(!unreachable_non_latin("a\u{a7f7}b", &us_letters()));
-            assert!(unreachable_non_latin("a\u{05d0}b", &us_letters()));
+            assert!(!unreachable_foreign_word("a\u{a7f7}b", &us_letters()));
+            assert!(unreachable_foreign_word("a\u{05d0}b", &us_letters()));
             // A squared-letter or circled-letter emoji is a symbol, not a word: skipped per
             // character, the rest typed.
             assert!(!divert_unreachable(
@@ -1120,8 +1145,9 @@ mod imp {
 
         #[test]
         fn a_cased_non_latin_word_diverts_even_in_a_mostly_latin_line() {
-            // Cyrillic and Greek letters are cased, so a caseless test let them through: 20
-            // typeable vs 6 unreachable, and "Привет" was skipped letter by letter.
+            // Cyrillic and Greek letters are cased, so a caseless test let them through: 19
+            // typeable vs 7 unreachable (the capital I — us_letters has no capitals — and the 6
+            // Cyrillic letters), and "Привет" was skipped letter by letter.
             assert!(divert_unreachable(
                 "Ich habe gestern \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} gesagt",
                 &us_letters()
@@ -1129,6 +1155,21 @@ mod imp {
             assert!(divert_unreachable(
                 "hello \u{3ba}\u{3b1}\u{3bb}\u{3b7}\u{3bc}\u{3ad}\u{3c1}\u{3b1} world",
                 &us_letters()
+            ));
+        }
+
+        #[test]
+        fn a_latin_word_diverts_on_a_layout_without_latin_letters() {
+            // 16 typeable vs 6 unreachable: not a majority, so only the foreign-word rule keeps
+            // "iPhone" from being skipped letter by letter on a Russian layout.
+            let ru = ru_letters();
+            assert!(divert_unreachable(
+                "\u{42f} \u{43a}\u{443}\u{43f}\u{438}\u{43b} \u{43d}\u{43e}\u{432}\u{44b}\u{439} iPhone \u{432}\u{447}\u{435}\u{440}\u{430}",
+                &ru
+            ));
+            assert!(!divert_unreachable(
+                "\u{44f} \u{43a}\u{443}\u{43f}\u{438}\u{43b} \u{43d}\u{43e}\u{432}\u{44b}\u{439} \u{442}\u{435}\u{43b}\u{435}\u{444}\u{43e}\u{43d}",
+                &ru
             ));
         }
     }

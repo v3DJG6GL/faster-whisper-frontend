@@ -197,9 +197,10 @@ export interface AppRule {
   restoreClipboard?: boolean | null;
   /** Treat THIS app as a remote-desktop client (longer paste settle, no clipboard restore; on
    *  Windows also the push-to-talk liveness rule and Quick-Add's held copy grab, which Rust reads
-   *  from the saved rules — `rdp_client::set_rules`). null/absent = auto-detect by app id — the
-   *  Rust side knows mstsc, Citrix, AnyDesk and friends; the override exists for the client it
-   *  doesn't know, or a false positive. */
+   *  from the webview's live rules — `rdp_client::set_rules`, applied on every save, held or
+   *  refused (`apply_live_switches`); only Quick-Add's own paste reads the saved file). null/absent
+   *  = auto-detect by app id — the Rust side knows mstsc, Citrix, AnyDesk and friends; the
+   *  override exists for the client it doesn't know, or a false positive. */
   remoteDesktop?: boolean | null;
 }
 
