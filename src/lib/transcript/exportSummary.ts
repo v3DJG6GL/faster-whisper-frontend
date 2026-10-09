@@ -114,11 +114,17 @@ export function exportSummary(a: {
   const sub = isSubtitleFormat(a.format);
   const item = (k: ContentItem["key"]) => a.content.find((c) => c.key === k)!;
   const rows: SummaryRow[] = [];
-  rows.push(
+  const timing: SummaryRow =
     sub ? { label: "Cue timings", state: "on", why: "start and end of every subtitle" }
       : a.format === "lrc" ? { label: "Line timings", state: "on", why: "a time tag on every line" }
         : a.format === "json" ? { label: "Timestamps", state: "on", why: "every segment and word" }
-          : { label: "Timestamps", state: a.showTs ? "on" : "off", why: a.showTs ? "a time before each line" : "off" },
+          : { label: "Timestamps", state: a.showTs ? "on" : "off", why: a.showTs ? "a time before each line" : "off" };
+  // A plain-text source's clocks are 1 s placeholders: the file carries them, but they
+  // are not timing and must not read as fine.
+  rows.push(
+    a.timingSynthesized && timing.state === "on"
+      ? { label: timing.label, state: "warn", why: "placeholders, 1 s per line — the source has no timing" }
+      : timing,
   );
   rows.push({
     label: "Tracks",

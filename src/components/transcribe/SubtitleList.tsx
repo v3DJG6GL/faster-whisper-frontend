@@ -256,11 +256,14 @@ export function SubtitleList({
       // The column reading fastest against its own language's limit.
       const rates = cols.map(([t, text]) => ({ t, rate: text.length / d, limit: trackCps(result, cues, t) }));
       const worst = rates.reduce((a, b) => (b.rate - b.limit > a.rate - a.limit ? b : a));
-      const fast = worst.rate > worst.limit;
+      // Synthesized clocks (a clock-less text source) are placeholders, not
+      // timing — no reading speed to judge, as the export panel says too.
+      const synth = !!result.timingSynthesized;
+      const fast = !synth && worst.rate > worst.limit;
       return {
         key, n, seg: c.seg, start: c.start, end: c.end, first,
         lines: cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig")),
-        cps: `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
+        cps: synth ? "no timing" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
         fast,
         bar: Math.min(100, (d / maxDur) * 100),
       };

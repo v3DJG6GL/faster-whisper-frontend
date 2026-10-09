@@ -411,7 +411,10 @@ function parseJsonExport(body: string): ImportedText {
     language?: unknown;
     segments?: unknown;
     text?: unknown;
+    timingSynthesized?: unknown;
   };
+  // Our export of a plain-text source: its clocks are placeholders, so it has no timing.
+  const synth = obj.timingSynthesized === true;
   const segments: ImportedText["segments"] = [];
   if (Array.isArray(obj.segments)) {
     for (const s of obj.segments) {
@@ -430,8 +433,8 @@ function parseJsonExport(body: string): ImportedText {
       segments.push({
         text,
         // JSON.parse turns `1e999` into Infinity: a non-finite or negative clock is none.
-        start: typeof seg.start === "number" && Number.isFinite(seg.start) && seg.start >= 0 ? seg.start : undefined,
-        end: typeof seg.end === "number" && Number.isFinite(seg.end) && seg.end >= 0 ? seg.end : undefined,
+        start: !synth && typeof seg.start === "number" && Number.isFinite(seg.start) && seg.start >= 0 ? seg.start : undefined,
+        end: !synth && typeof seg.end === "number" && Number.isFinite(seg.end) && seg.end >= 0 ? seg.end : undefined,
         speaker: name === undefined ? undefined : safeDisplayText(name, 40).trim() || undefined,
       });
     }

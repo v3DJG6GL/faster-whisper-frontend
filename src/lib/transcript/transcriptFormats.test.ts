@@ -463,6 +463,12 @@ describe("kept-original translations (quality guard)", () => {
     };
     expect(cpsWarnings(synth, { tracks: ["de"] })).toEqual([]);
   });
+
+  it("json says when the clocks are synthesized, and only then", () => {
+    const synth: BatchResult = { ...KEPT, timingSynthesized: true };
+    expect(JSON.parse(generateExport(synth, { format: "json" })).timingSynthesized).toBe(true);
+    expect(JSON.parse(generateExport(KEPT, { format: "json" }))).not.toHaveProperty("timingSynthesized");
+  });
 });
 
 // ── multi-target: the flattening bug ────────────────────────────────────────

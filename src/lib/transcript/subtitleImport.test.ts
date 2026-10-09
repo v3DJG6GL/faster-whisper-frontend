@@ -356,6 +356,15 @@ describe("site subtitle cleanup", () => {
     expect(segs[0].end).toBeUndefined();
     expect(segs[1]).toMatchObject({ start: 1, end: 2 });
   });
+  it("a JSON export of a plain-text source re-imports without timing", () => {
+    const r: BatchResult = {
+      ...RESULT,
+      timingSynthesized: true,
+      segments: [{ start: 0, end: 1, text: "Hello." }, { start: 1, end: 2, text: "Bye." }],
+    };
+    const segs = parseImportedText("json", generateExport(r, { format: "json" })).segments;
+    expect(segs.map((s) => [s.text, s.start, s.end])).toEqual([["Hello.", undefined, undefined], ["Bye.", undefined, undefined]]);
+  });
   it("an empty cue does not make a file look rolling", () => {
     // srtExport writes an empty segment as an empty zero-length cue: it "repeats" its
     // neighbours vacuously and used to merge the line said twice.

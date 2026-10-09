@@ -592,6 +592,9 @@ function jsonExport(result: BatchResult, ctx: Ctx): string {
       text: stripControlChars(result.text),
       language: stripControlChars(result.language ?? "") || null,
       duration: result.duration ?? null,
+      // The segment clocks below are 1 s placeholders (plain-text source): say so, or a
+      // re-import reads them as real timing and checks reading speed against them.
+      ...(result.timingSynthesized ? { timingSynthesized: true } : {}),
       speakers: ctx.order.map((label) => ({
         // The raw label is the lookup key; the EMITTED value is defanged like every other
         // string in this file (the header's promise).
