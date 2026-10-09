@@ -49,8 +49,9 @@ mod imp {
     const REARM_ANON_MB: u64 = 1024;
     const WARN_PEAK_JUMP_MB: u64 = 1024;
     /// tauri.conf.json's creation order. WebKit starts one web process per webview as each
-    /// window is built, so with exactly four children, pid order is this order; with any
-    /// other count (a crashed and relaunched web process) the line falls back to pids.
+    /// window is built, so at the first sample with exactly four children, pid order is this
+    /// order: the labels are pinned to those pids then. A process outside that set (e.g. a
+    /// crashed and relaunched web process, which takes the newest pid) shows as `web<pid>`.
     const LABELS: [&str; 4] = ["main", "overlay", "quickadd", "langpick"];
 
     #[derive(Default)]
@@ -62,28 +63,42 @@ mod imp {
     pub fn run() {
         let me = std::process::id();
         let mut seen: HashMap<u32, Seen> = HashMap::new();
+        let mut labels: HashMap<u32, &'static str> = HashMap::new();
         loop {
             std::thread::sleep(INTERVAL);
-            sample(me, &mut seen);
+            sample(me, &mut seen, &mut labels);
         }
     }
 
-    fn sample(me: u32, seen: &mut HashMap<u32, Seen>) {
+    /// Pins `LABELS` to `web` (sorted) the first time exactly four web processes exist, and
+    /// forgets pids that are gone, so the map stays bounded.
+    fn pin_labels(labels: &mut HashMap<u32, &'static str>, web: &[u32]) {
+        labels.retain(|pid, _| web.contains(pid));
+        if labels.is_empty() && web.len() == LABELS.len() {
+            labels.extend(web.iter().copied().zip(LABELS));
+        }
+    }
+
+    fn label(labels: &HashMap<u32, &'static str>, pid: u32) -> String {
+        labels
+            .get(&pid)
+            .map(|l| l.to_string())
+            .unwrap_or_else(|| format!("web{pid}"))
+    }
+
+    fn sample(me: u32, seen: &mut HashMap<u32, Seen>, labels: &mut HashMap<u32, &'static str>) {
         let mut web = children(me, "WebKitWebProces");
         web.sort_unstable();
+        pin_labels(labels, &web);
         let route = super::ROUTE.lock().map(|r| r.clone()).unwrap_or_default();
         let mut line = format!("[mem] core {}M", anon_mb(me).unwrap_or(0));
         let mut alive = Vec::with_capacity(web.len());
-        for (i, pid) in web.iter().copied().enumerate() {
+        for pid in web.iter().copied() {
             let (Some(anon), Some(peak)) = (anon_mb(pid), peak_mb(pid)) else {
                 continue;
             };
             alive.push(pid);
-            let name = if web.len() == LABELS.len() {
-                LABELS[i].to_string()
-            } else {
-                format!("web{pid}")
-            };
+            let name = label(labels, pid);
             line.push_str(&format!(" | {name} {anon}M (peak {peak}M)"));
             // A first-seen process (the first sample, or a relaunched web process) is seeded
             // with its current peak, so the jump check below cannot fire for it: a spike that
@@ -173,5 +188,33 @@ mod imp {
         text.lines()
             .find_map(|l| l.strip_prefix(key))
             .and_then(|rest| rest.split_whitespace().next()?.parse().ok())
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn labels_stay_on_their_pids_after_a_web_process_relaunch() {
+            let mut labels = HashMap::new();
+            pin_labels(&mut labels, &[10, 11, 12, 13]);
+            assert_eq!(label(&labels, 12), "quickadd");
+            // quickadd's web process crashed; WebKit relaunched it with a newer pid, so the
+            // count is four again but sorted order no longer matches creation order.
+            let web = [10, 11, 13, 14];
+            pin_labels(&mut labels, &web);
+            let names: Vec<String> = web.iter().map(|&p| label(&labels, p)).collect();
+            assert_eq!(names, ["main", "overlay", "langpick", "web14"]);
+        }
+
+        #[test]
+        fn labels_wait_for_exactly_four_web_processes() {
+            let mut labels = HashMap::new();
+            pin_labels(&mut labels, &[10, 11]);
+            assert_eq!(label(&labels, 10), "web10");
+            pin_labels(&mut labels, &[10, 11, 12, 13]);
+            assert_eq!(label(&labels, 10), "main");
+            assert_eq!(label(&labels, 13), "langpick");
+        }
     }
 }
