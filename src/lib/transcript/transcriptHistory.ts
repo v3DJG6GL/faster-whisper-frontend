@@ -159,27 +159,44 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   }
   if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
   if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
-  const segs = out.result?.segments as unknown;
-  if (out.result && segs != null) {
-    if (!Array.isArray(segs)) out = { ...out, result: { ...out.result, segments: undefined } };
-    else if (segs.some((s) => !s || typeof s !== "object" || typeof (s as { text?: unknown }).text !== "string")) {
-      // A bad entry becomes a blank placeholder at the previous end, never dropped: the
-      // corrections (edits, speakerEdits, translationsStale) are keyed by segment index.
-      let end = 0;
-      const clean = segs.map((s) => {
-        if (!s || typeof s !== "object") return { start: end, end, text: "" };
-        const e = (s as { end?: unknown }).end;
-        if (typeof e === "number" && Number.isFinite(e)) end = e;
-        return typeof (s as { text?: unknown }).text === "string" ? s : { ...s, text: "" };
-      });
-      out = { ...out, result: { ...out.result, segments: clean as typeof out.result.segments } };
-    }
-  }
   const edits = r.edits as unknown;
   if (edits != null) {
     if (typeof edits !== "object" || Array.isArray(edits)) out = { ...out, edits: undefined };
     else if (Object.values(edits).some((v) => typeof v !== "string")) {
       out = { ...out, edits: Object.fromEntries(Object.entries(edits).filter(([, v]) => typeof v === "string")) };
+    }
+  }
+  const segs = out.result?.segments as unknown;
+  if (out.result && segs != null) {
+    if (!Array.isArray(segs)) out = { ...out, result: { ...out.result, segments: undefined } };
+    else {
+      // A bad entry (not an object, or no string text) is dropped, never kept as a blank: a
+      // blank segment would export as an empty cue and read as untranslated forever. The
+      // corrections are keyed by segment index, so they move with their segments and the
+      // dropped slots' keys go.
+      const ok = (s: unknown) => !!s && typeof s === "object" && typeof (s as { text?: unknown }).text === "string";
+      if (!segs.every(ok)) {
+        const moved = new Map<number, number>();
+        segs.forEach((s, i) => {
+          if (ok(s)) moved.set(i, moved.size);
+        });
+        const remap = <V,>(m: Record<number, V> | undefined): Record<number, V> | undefined =>
+          m && typeof m === "object"
+            ? Object.fromEntries(
+                Object.entries(m).flatMap(([k, v]) => {
+                  const to = moved.get(Number(k));
+                  return to === undefined ? [] : [[to, v]];
+                }),
+              )
+            : undefined;
+        out = {
+          ...out,
+          result: { ...out.result, segments: segs.filter(ok) as typeof out.result.segments },
+          edits: remap(out.edits),
+          speakerEdits: remap(out.speakerEdits),
+          translationsStale: remap(out.translationsStale),
+        };
+      }
     }
   }
   if (r.appId != null && typeof r.appId !== "string") out = { ...out, appId: undefined };
