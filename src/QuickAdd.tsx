@@ -485,7 +485,7 @@ export default function QuickAdd() {
     // and top, 36px bottom. Change one and the other must follow, plus the window size
     // (quickadd.rs QA_W/QA_H + tauri.conf.json), which is the 576×456 panel + this margin.
     <div className="flex h-screen w-screen bg-transparent px-6 pb-9 pt-6">
-      <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_12px_32px_-12px_rgba(0,0,0,0.75),0_0_32px_-12px_rgba(255,158,44,0.2)]">
+      <div className="flex min-h-0 w-full flex-col overflow-hidden rounded-2xl border border-line bg-panel shadow-[0_12px_32px_-12px_rgba(0,0,0,0.75),0_0_32px_-12px_color-mix(in_srgb,var(--c-accent)_20%,transparent)]">
         {/* header */}
         <div className="flex items-center gap-2.5 border-b border-line px-4 py-3">
           <Plus className="size-4 text-accent" />

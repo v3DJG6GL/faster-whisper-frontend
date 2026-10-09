@@ -77,6 +77,8 @@ fn window_size(monitor_logical_w: f64) -> (f64, f64) {
 }
 
 /// Logical width the overlay window was last sized to (`f64` bits; 0 = never sized).
+/// On KDE Wayland the width follows KWin's ACTIVE output and is written only from
+/// `show_overlay`'s placement thread (after the first show) — see `sizes_from_window_monitor`.
 static SIZED_W: AtomicU64 = AtomicU64::new(0);
 
 /// Resize the overlay to `(w, h)` only when the width differs from the last one applied
@@ -85,6 +87,16 @@ fn size_window(win: &WebviewWindow, (w, h): (f64, f64)) {
     if SIZED_W.swap(w.to_bits(), Ordering::Relaxed) != w.to_bits() {
         let _ = win.set_size(tauri::LogicalSize::new(w, h));
     }
+}
+
+/// Whether `show_overlay` sizes the window from its CURRENT (GTK) monitor. Not on KDE Wayland
+/// once sized: the window is hidden there, GTK has dropped its entered output and reports the
+/// primary / origin monitor, while the placement thread sizes to KWin's active output — both
+/// writing `SIZED_W` made the chip flash to the wrong width on every show when the two
+/// outputs differ. The very first KDE show still sizes here, so the window maps sane before
+/// the thread's correction lands.
+fn sizes_from_window_monitor(kde_wayland: bool, sized_w_bits: u64) -> bool {
+    !kde_wayland || sized_w_bits == 0
 }
 
 /// Logical width of the monitor the chip lives on (unbounded when it can't be read).
@@ -204,13 +216,25 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
     if let Some(s) = scale {
         apply_scale(&win, clamp_scale(s));
     }
+    let kde = {
+        #[cfg(target_os = "linux")]
+        {
+            kwin::is_kde_wayland()
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            false
+        }
+    };
     // Size before position: the centring reads the window size.
-    size_window(&win, window_size(monitor_logical_w(&win)));
+    if sizes_from_window_monitor(kde, SIZED_W.load(Ordering::Relaxed)) {
+        size_window(&win, window_size(monitor_logical_w(&win)));
+    }
     self::position(&win, &position);
     let _ = win.set_always_on_top(true);
 
     #[cfg(target_os = "linux")]
-    if kwin::is_kde_wayland() {
+    if kde {
         let _ = win.set_title(CHIP_TITLE);
         crate::aux_windows::visibility::show(&win);
         ignore_cursor(&win);
@@ -226,9 +250,10 @@ pub fn show_overlay(app: AppHandle, position: String, scale: Option<f64>) {
         // it runs on the GTK/UI thread — a hang here freezes the whole app and every
         // queued command (text injection included). Do it on a detached thread; the
         // window is already shown, the rule only nudges it into position afterwards.
-        // The size above came from the window's CURRENT (GTK) monitor, but the rule pins it on
-        // KWin's active output — on a narrower one the wide strip would be clamped to its left
-        // edge and the pill land off-centre. Re-size to the output the chip actually lands on,
+        // The rule pins the chip on KWin's active output, not the window's GTK monitor — on a
+        // narrower one the wide strip would be clamped to its left edge and the pill land
+        // off-centre. This thread is the only width writer here after the first show (see
+        // `sizes_from_window_monitor`): it sizes to the output the chip actually lands on,
         // gated by the same generation as the position so a stale thread doesn't resize.
         let gen = kwin::next_place_gen();
         let win = win.clone();
@@ -895,6 +920,18 @@ mod kwin {
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::kwin::chip_placement;
+    use super::sizes_from_window_monitor;
+
+    /// On KDE Wayland only the first show sizes from the (hidden) window's GTK monitor; after
+    /// that the placement thread owns the width, so the two never ping-pong it.
+    #[test]
+    fn kde_wayland_show_sizes_from_window_monitor_only_once() {
+        let sized = 1640.0_f64.to_bits();
+        assert!(sizes_from_window_monitor(true, 0));
+        assert!(!sizes_from_window_monitor(true, sized));
+        assert!(sizes_from_window_monitor(false, 0));
+        assert!(sizes_from_window_monitor(false, sized));
+    }
 
     /// The pill is centred in the window, so the window's centre must be the output's centre —
     /// also on an output narrower than the full strip (a 1280-wide laptop next to a wide one).
