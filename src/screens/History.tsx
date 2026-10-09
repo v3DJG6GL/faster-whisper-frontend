@@ -649,12 +649,12 @@ export default function History() {
                 // which would give the original track and a target the same code.
                 key={`${i}:${lang}`}
                 className={cn(
-                  "grid grid-cols-[2.5rem_1fr] gap-2 py-2",
+                  "grid grid-cols-[minmax(2.5rem,max-content)_minmax(0,1fr)] gap-2 py-2",
                   i > 0 && "border-t border-line",
                 )}
               >
                 <div className="pt-[3px]">
-                  <LangTag code={safeDisplayText(lang, 8)} orig={orig} />
+                  <LangTag code={safeDisplayText(lang, 12)} orig={orig} />
                 </div>
                 <div className="group/track relative">
                   <div
@@ -839,7 +839,7 @@ export default function History() {
               {rec.language ? ` · ${safeDisplayText(rec.language, 12)}` : ""}
               {speakers > 1 ? ` · ${speakers} speakers` : ""}
               {rec.result?.translation?.targets?.length
-                ? ` · ${rec.result.translation.targets.map((t) => safeDisplayText(t, 8)).join("+")}`
+                ? ` · ${rec.result.translation.targets.map((t) => safeDisplayText(t, 12)).join("+")}`
                 : ""}
               {rec.model ? ` · ${shortModelName(rec.model, 40) ?? ""}` : ""}
             </span>

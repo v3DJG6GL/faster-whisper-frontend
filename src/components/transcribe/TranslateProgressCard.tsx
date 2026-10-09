@@ -109,7 +109,7 @@ export function TranslateProgressCard({
         <span className="text-[12px] text-dim">{stageText}</span>
         {run.target && !done && (
           <span className="rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
-            {safeDisplayText(run.target, 8)}
+            {safeDisplayText(run.target, 12)}
             {typeof run.targetProgress === "number" ? ` ${Math.round(run.targetProgress * 100)}%` : ""}
           </span>
         )}

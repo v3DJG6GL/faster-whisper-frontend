@@ -30,7 +30,7 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
             <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
               {run.targets.join(", ")}
               {run.target && run.phase !== "done" ? (
-                <span className="text-[color:var(--c-translate)]"> → {safeDisplayText(run.target, 8)}</span>
+                <span className="text-[color:var(--c-translate)]"> → {safeDisplayText(run.target, 12)}</span>
               ) : null}
             </span>
             <span className="shrink-0 font-mono text-[11px] tabular-nums text-[color:var(--c-translate)]">

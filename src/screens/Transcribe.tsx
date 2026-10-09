@@ -2509,7 +2509,7 @@ export default function Transcribe() {
                                       <span className="ml-1.5 text-faint">{safeDisplayText(u.target, 16)}</span>
                                     </>
                                   ) : (
-                                    safeDisplayText(u.target, 8)
+                                    safeDisplayText(u.target, 12)
                                   )}
                                 </span>
                                 <span className="h-[5px] overflow-hidden rounded-pill bg-surface-2">
@@ -2624,7 +2624,7 @@ export default function Transcribe() {
                                 className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim"
                               >
                                 <span className={cn("font-medium text-text", st === "translating" && "uppercase")}>
-                                  {st === "diarizing" ? safeDisplayText(u.target, 16) : safeDisplayText(u.target, 8)}
+                                  {st === "diarizing" ? safeDisplayText(u.target, 16) : safeDisplayText(u.target, 12)}
                                 </span>
                                 {u.state === "instant" || u.instant
                                   ? " instant"
@@ -2705,7 +2705,7 @@ export default function Transcribe() {
                           <span className="size-[7px] shrink-0 rounded-full bg-live" />
                           {st === "translating" && progress.target ? (
                             <span className="shrink-0 rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
-                              {safeDisplayText(progress.target, 8)}
+                              {safeDisplayText(progress.target, 12)}
                             </span>
                           ) : null}
                           {progress.position ? (
