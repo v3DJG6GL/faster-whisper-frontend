@@ -3,6 +3,7 @@ import {
   buildMicView,
   isAlsaPin,
   isLegacyPin,
+  isSelectable,
   labelForPick,
   pathText,
   pinHost,
@@ -134,6 +135,37 @@ describe("buildMicView", () => {
     expect(v.missing).toBe(false);
     expect(v.triggerLabel).toBe("RØDE PodMic USB Mono · hw:CARD=USB,DEV=0");
     expect(buildMicView(inv(true), null, null, false).rows.some((r) => r.type === "path")).toBe(false);
+  });
+
+  it("lists a mic before the path that shares its id (the picker marks the first one)", () => {
+    // No sound server: the mic's id is its card's first path.
+    const card = "alsa:sysdefault:CARD=USB";
+    const bare: MicInventory = {
+      server: null,
+      defaultLabel: null,
+      mics: [
+        {
+          id: card,
+          label: "USB Audio",
+          bluetooth: false,
+          isDefault: true,
+          paths: [
+            { id: card, kind: "alsa-shared" },
+            { id: "alsa:hw:CARD=USB,DEV=0", kind: "alsa-raw" },
+          ],
+        },
+      ],
+      otherPaths: [],
+      advancedSupported: true,
+    };
+    const v = buildMicView(bare, card, "USB Audio", true);
+    const same = v.rows.filter(isSelectable).flatMap((r, i) => (r.value === card ? [{ i, type: r.type }] : []));
+    expect(same).toEqual([
+      { i: 1, type: "mic" },
+      { i: 2, type: "path" },
+    ]);
+    expect(v.missing).toBe(false);
+    expect(v.triggerLabel).toBe("USB Audio");
   });
 
   it("labels the server path after the server", () => {

@@ -121,7 +121,10 @@ export function MicPicker({
     }
     n += 1;
     const idx = n;
-    const selected = r.value === value;
+    // A mic's id can also be one of its paths (the server path; the first card path with no
+    // sound server), so mark only the first row holding the value — the mic row, which leads.
+    // The value check stays: selectedIndex falls back to 0 when nothing matches.
+    const selected = r.value === value && idx === selectedIndex;
     const isActive = idx === activeIdx;
     const prev = view.rows[i - 1];
     const divider = r.type === "mic" && prev?.type === "default";

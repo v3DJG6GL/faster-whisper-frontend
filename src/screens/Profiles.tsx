@@ -203,7 +203,14 @@ function Editor({
   // Unsaved-work guard: this form runs well past a screen height, and until it
   // grew a top exit the only way out was a Cancel button below the fold — while
   // a sidebar click discarded everything in silence.
-  const dirty = isDirty(p, initial);
+  // Only a take-over the saved chord still needs: re-recording something else since leaves
+  // the other binding alone. A pending one is unsaved work too — "Use it here" on the
+  // profile's own stored chord leaves `p` unchanged.
+  const effectiveTakeovers = takeovers.filter((id) => {
+    const o = others.find((x) => x.id === id);
+    return !!o && !!findChordConflict(p.hotkey, [o], !lowLevelActive, selfKind);
+  });
+  const dirty = isDirty(p, initial) || effectiveTakeovers.length > 0;
   const guard = useUnsavedGuard(dirty);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -233,12 +240,7 @@ function Editor({
       // or `isDirty` reports a change the moment the disclosure is opened.
       insertionOverrides: hasInsertionOverrides(p.insertionOverrides) ? p.insertionOverrides : undefined,
       },
-      // Only a take-over the saved chord still needs: re-recording something else since
-      // leaves the other binding alone.
-      takeovers.filter((id) => {
-        const o = others.find((x) => x.id === id);
-        return !!o && !!findChordConflict(p.hotkey, [o], !lowLevelActive, p.activation === "handsfree" ? "handsfree" : "hold");
-      }),
+      effectiveTakeovers,
     );
 
   return (
