@@ -119,8 +119,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         return;
       }
       // The tested server becomes Backend #1 no matter which branch follows —
-      // via the shared factory, so (unlike before) the server's detected model
-      // and the standard-server batch endpoint are picked up here too.
+      // via the shared factory, so the model rule (a full server's default, a
+      // standard server's loaded model) and the standard-server batch endpoint
+      // are picked up here too.
       // Key goes to the OS keyring FIRST (mirrors the Backends editor).
       const backend: Backend = newBackendDraft({ serverUrl, hasApiKey: key.length > 0, info: res });
       if (key) {

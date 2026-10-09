@@ -131,8 +131,11 @@ export function insecureUrlWarning(url: string): string | null {
 
 /** THE fresh-Backend factory — every surface that mints one (Backends manual
  *  add, Backends connect-first add, Onboarding) goes through here, so the
- *  defaults can't diverge. With a connection: name from the host, the server's
- *  loaded (else first) model, batch endpoint for standard servers. */
+ *  defaults can't diverge. With a connection: name from the host, batch endpoint
+ *  for standard servers, and the model: a full server's default (the inherit
+ *  alias, like the language — decided 2026-10-09: /v1/models has no default
+ *  marker, so its loaded model may be one another client asked for), a standard
+ *  server's loaded (else first) model, since there the alias is a literal name. */
 export function newBackendDraft(conn?: {
   serverUrl: string;
   hasApiKey: boolean;
@@ -152,13 +155,17 @@ export function newBackendDraft(conn?: {
     responseFormat: "verbose_json",
   };
   if (!conn) return base;
+  const kind = classifyConnection(conn.info);
   return {
     ...base,
     name: nameFromUrl(conn.serverUrl),
     serverUrl: conn.serverUrl,
     hasApiKey: conn.hasApiKey,
-    model: conn.info.models.find((m) => m.loaded)?.id ?? conn.info.models[0]?.id ?? "whisper-1",
-    endpoint: classifyConnection(conn.info) === "standard" ? "batch" : "stream",
+    model:
+      kind === "standard"
+        ? (conn.info.models.find((m) => m.loaded)?.id ?? conn.info.models[0]?.id ?? base.model)
+        : base.model,
+    endpoint: kind === "standard" ? "batch" : "stream",
   };
 }
 

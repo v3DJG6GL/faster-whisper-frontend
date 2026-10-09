@@ -6,6 +6,18 @@ describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
     expect(newBackendDraft().language).toBe("");
   });
+  const models = [
+    { id: "large-v3", loaded: false },
+    { id: "small", loaded: true }, // another client's pick, not the server default
+  ];
+  it("a backend added from a full server follows the server's default model", () => {
+    const info = { ok: true, openMode: false, models, bootId: "b" };
+    expect(newBackendDraft({ serverUrl: "http://h:8000", hasApiKey: false, info }).model).toBe("whisper-1");
+  });
+  it("a standard server has no default to follow: its loaded model is prefilled", () => {
+    const info = { ok: true, openMode: false, models };
+    expect(newBackendDraft({ serverUrl: "http://h:8000", hasApiKey: false, info }).model).toBe("small");
+  });
 });
 
 describe("insecureUrlWarning", () => {
