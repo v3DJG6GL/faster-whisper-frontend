@@ -914,9 +914,10 @@ export function TranscriptViewer({
     };
     // The run's audio copy landing on the SAME record is no switch: keep the
     // edit, the playhead and the play state (a link run's <audio> mounts on its
-    // own). Only a player that already gave up retries, now with the copy.
+    // own). Only a player that already gave up — or is mid-fallback, whose step
+    // still holds "no copy" and would end on broken — retries, now with the copy.
     if (lateLink) {
-      if (audioBrokenRef.current) resetFallback();
+      if (audioBrokenRef.current || decodePendingRef.current || bufferPendingRef.current) resetFallback();
       return;
     }
     // New file: stop playback, forget position/errors, re-arm follow. The

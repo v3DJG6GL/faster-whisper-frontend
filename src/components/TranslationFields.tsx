@@ -7,7 +7,7 @@ import { OverrideHeader, OverrideText } from "./OverrideField";
 import { OVERRIDE_CONTROL_W } from "./styles";
 import { envDesc } from "../lib/envDesc";
 import { TRANSLATION_MAX_TARGETS } from "../lib/languages";
-import { chipCodes, pruneTranslationOverrides } from "../lib/translationTargets";
+import { chipCodes, pruneTranslationOverrides, wireCodes } from "../lib/translationTargets";
 import { maxTranslationTargets, translationTargetInfo } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
@@ -74,8 +74,10 @@ export function TranslationTargetChips({
         if (!parts?.[code]) return chip;
         return <CompoundChip key={code} head={chip} parts={parts[code]} onPart={onPart} disabled={disabled} />;
       })}
+      {/* The picker hands its list back to onChange, which persists it: give it the wire-bound
+          codes, not the 12-char chip clip (a seeded ca-ES-valencia must survive adding French). */}
       <TargetLanguagePicker
-        value={shown}
+        value={wireCodes(value)}
         onChange={onChange}
         supported={supported}
         modelName={modelName}

@@ -227,7 +227,7 @@ mod imp {
         Some(charmap_from_keymap(
             &keymap,
             group,
-            compose_table(&ctx).as_ref(),
+            compose_table().as_ref(),
         ))
     }
 
@@ -235,13 +235,29 @@ mod imp {
     /// locale's character type (LC_ALL, then LC_CTYPE, then LANG — the precedence toolkits use),
     /// or the `C` table when none is set. `None` when no table compiles: the dead-key pass is then
     /// skipped and dead-key letters stay unreachable, as before.
-    fn compose_table(ctx: &xkb::Context) -> Option<xkb::compose::Table> {
+    ///
+    /// Compiled on a context of its own at `Critical` log level: the charmap is rebuilt per job,
+    /// and a locale with no UTF-8 table (a Latin-1 `LANG=de_CH`, an uninstalled locale) would
+    /// otherwise print a burst of xkbcommon errors on every dictation. The fallback is noted once.
+    fn compose_table() -> Option<xkb::compose::Table> {
+        static NOTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         let locale = ["LC_ALL", "LC_CTYPE", "LANG"]
             .iter()
             .filter_map(std::env::var_os)
             .find(|v| !v.is_empty())
             .unwrap_or_else(|| "C".into());
-        xkb::compose::Table::new_from_locale(ctx, &locale, xkb::compose::COMPILE_NO_FLAGS).ok()
+        let mut ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+        ctx.set_log_level(xkb::LogLevel::Critical);
+        let table =
+            xkb::compose::Table::new_from_locale(&ctx, &locale, xkb::compose::COMPILE_NO_FLAGS)
+                .ok();
+        if table.is_none() && !NOTED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            tracing::info!(
+                ?locale,
+                "no compose table for this locale; dead-key letters are not typed directly"
+            );
+        }
+        table
     }
 
     /// The char → key map of `keymap` in layout group `group`. Split from `build_charmap` so tests
@@ -307,42 +323,6 @@ mod imp {
             }
         }
 
-        // Dead-key pass, BEFORE the Caps Lock capitals below: every char that a dead key composes
-        // with a key we already type directly, and that no key types on its own. The compose table
-        // is the same kind of table the focused app resolves the sequence with (see
-        // `compose_table`). Directly typed chars always win: `or_insert`, and only direct keys
-        // serve as bases. Bases are tried simplest key first (no modifier, then one), so the
-        // cheapest sequence wins when two compose the same char.
-        if let Some(table) = compose {
-            let mut bases: Vec<(char, KeySpec)> = map.iter().map(|(&c, &s)| (c, s)).collect();
-            bases.sort_by_key(|&(c, s)| (u8::from(s.shift) + u8::from(s.altgr), s.keycode, c));
-            let mut state = xkb::compose::State::new(table, xkb::compose::STATE_NO_FLAGS);
-            for &(dead_sym, prefix) in &deads {
-                for &(base, spec) in &bases {
-                    state.reset();
-                    state.feed(dead_sym);
-                    state.feed(xkb::utf32_to_keysym(base as u32));
-                    if state.status() != xkb::compose::Status::Composed {
-                        continue;
-                    }
-                    let Some(out) = state.utf8() else {
-                        continue;
-                    };
-                    let mut chars = out.chars();
-                    let (Some(ch), None) = (chars.next(), chars.next()) else {
-                        continue; // a multi-char result is not one transcript char
-                    };
-                    if ch.is_control() {
-                        continue;
-                    }
-                    map.entry(ch).or_insert(KeySpec {
-                        dead: Some(prefix),
-                        ..spec
-                    });
-                }
-            }
-        }
-
         // Second pass: capitals NOT directly on any level. On layouts like Swiss-German
         // (ch/de_nodeadkeys) the ü/ä/ö keys are XKB type `FOUR_LEVEL` — Shift yields è/à/é, and
         // the type doesn't consume Lock, so the capital Ü/Ä/Ö (and È/É/À) exists only because
@@ -353,10 +333,7 @@ mod imp {
         let extras: Vec<(char, KeySpec)> = map
             .iter()
             .filter_map(|(&ch, &spec)| {
-                // A dead-key letter keeps to its composed capital (dead key + Shift+base, found by
-                // the pass above): a Caps Lock bracket around the base of a compose sequence is a
-                // guess about the app's compose handling this map does not make.
-                if !ch.is_lowercase() || spec.dead.is_some() {
+                if !ch.is_lowercase() {
                     return None;
                 }
                 let up: Vec<char> = ch.to_uppercase().collect();
@@ -374,7 +351,61 @@ mod imp {
         for (u, spec) in extras {
             map.entry(u).or_insert(spec);
         }
+        // Dead-key pass, AFTER the Caps Lock capitals above: every char that a dead key composes
+        // with a key we already type directly, and that no key types on its own. The compose table
+        // is the same kind of table the focused app resolves the sequence with (see
+        // `compose_table`). Directly typed chars and the Caps Lock capitals (Swiss-German Ü É À,
+        // the proven route) always win: `or_insert`, and only plain level keys (no `lock`) serve
+        // as bases. Bases are tried simplest key first (no modifier, then one), so the cheapest
+        // sequence wins when two compose the same char.
+        if let Some(table) = compose {
+            let mut bases: Vec<(char, KeySpec)> = map
+                .iter()
+                .filter(|(_, s)| !s.lock)
+                .map(|(&c, &s)| (c, s))
+                .collect();
+            bases.sort_by_key(|&(c, s)| (u8::from(s.shift) + u8::from(s.altgr), s.keycode, c));
+            let mut state = xkb::compose::State::new(table, xkb::compose::STATE_NO_FLAGS);
+            for &(dead_sym, prefix) in &deads {
+                for &(base, spec) in &bases {
+                    state.reset();
+                    state.feed(dead_sym);
+                    state.feed(xkb::utf32_to_keysym(base as u32));
+                    if state.status() != xkb::compose::Status::Composed {
+                        continue;
+                    }
+                    let Some(out) = state.utf8() else {
+                        continue;
+                    };
+                    let mut chars = out.chars();
+                    let (Some(ch), None) = (chars.next(), chars.next()) else {
+                        continue; // a multi-char result is not one transcript char
+                    };
+                    // The typer's live-Caps compensation reads the case pair of the char it
+                    // types, but Caps acts on the BASE key: keep only a composed char that pairs
+                    // like its base (é/e, έ/ε). İ (lowercases to two chars), ǰ ẗ (uppercase to
+                    // two) or ᾳ would come out as another glyph or a cancelled compose under
+                    // Caps Lock — they stay unreachable, as before.
+                    if ch.is_control() || case_pairs(ch) != case_pairs(base) {
+                        continue;
+                    }
+                    map.entry(ch).or_insert(KeySpec {
+                        dead: Some(prefix),
+                        ..spec
+                    });
+                }
+            }
+        }
+
         map
+    }
+
+    /// Whether Caps Lock folds `c` to a different single char — the test the typer's live-Caps
+    /// compensation applies (not merely `is_alphabetic`: caseless letters and ß → "SS" don't fold).
+    fn case_pairs(c: char) -> bool {
+        let lo: Vec<char> = c.to_lowercase().collect();
+        let up: Vec<char> = c.to_uppercase().collect();
+        lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
     }
 
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
@@ -1092,11 +1123,7 @@ mod imp {
                         let (flip_caps, needs_shift) = if spec.lock {
                             (!caps, spec.shift)
                         } else {
-                            let caps_affects = caps && {
-                                let lo: Vec<char> = ch.to_lowercase().collect();
-                                let up: Vec<char> = ch.to_uppercase().collect();
-                                lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
-                            };
+                            let caps_affects = caps && case_pairs(ch);
                             (
                                 caps_affects && !spec.caps_safe,
                                 spec.shift ^ (caps_affects && spec.caps_safe),
@@ -1398,37 +1425,34 @@ mod imp {
         }
 
         #[test]
-        fn dead_key_letters_count_as_reachable() {
-            // es/pt: ó í á are typed through dead_acute (here keycode 40), never on a key of their own.
-            let acute = Some((40, false, false));
-            let es = latin_with(&[
-                ('\u{f3}', spec(24, false, acute)),
-                ('\u{e1}', spec(30, false, acute)),
-                ('\u{ed}', spec(23, false, acute)),
-            ]);
-            assert!(!divert_unreachable(
-                "La canci\u{f3}n est\u{e1} aqu\u{ed}",
-                &es
-            ));
-            assert_eq!(
-                letter_reach("La canci\u{f3}n est\u{e1} aqu\u{ed}", &es),
-                (17, 0)
-            );
-            // gr: the tonos letters ό έ come through dead_acute too, so a toned line is typed,
-            // not diverted.
-            let gr: HashMap<char, KeySpec> = ('\u{3b1}'..='\u{3c9}')
-                .chain(['\u{39a}'])
-                .enumerate()
-                .map(|(i, c)| (c, spec(16 + i as i32, false, None)))
-                .chain([
-                    ('\u{3ad}', spec(18, false, acute)),
-                    ('\u{3cc}', spec(24, false, acute)),
-                ])
-                .collect();
-            assert!(!divert_unreachable(
-                "\u{39a}\u{3b1}\u{3bb}\u{3b7}\u{3bc}\u{3ad}\u{3c1}\u{3b1} \u{3c3}\u{3b5} \u{3cc}\u{3bb}\u{3bf}\u{3c5}\u{3c2}",
-                &gr
-            ));
+        fn caps_lock_capitals_win_over_composes_and_caps_unsafe_composes_stay_out() {
+            // Swiss-German Ü É À: the proven Caps Lock bracket on the ü/é/à key, not dead key +
+            // Shift+base (which the dead pass would also find).
+            if let Some(ch) = real_charmap("ch") {
+                for c in ['\u{dc}', '\u{c9}', '\u{c0}'] {
+                    let spec = ch.get(&c).copied();
+                    assert!(
+                        spec.is_some_and(|s| s.lock && s.dead.is_none()),
+                        "{c}: {:?}",
+                        spec.map(|s| (s.lock, s.dead))
+                    );
+                }
+            } else {
+                eprintln!("skipped: no XKB data or compose table for `ch`");
+            }
+            // İ lowercases to two chars, so live-Caps compensation could not type it through
+            // dead_abovedot + Shift+i: it is never registered as a compose.
+            for layout in ["de", "fr", "es", "pl"] {
+                if let Some(m) = real_charmap(layout) {
+                    assert!(
+                        m.get(&'\u{130}').is_none_or(|s| s.dead.is_none()),
+                        "{layout}: \u{130} composed"
+                    );
+                    assert!(m.values().all(|s| !(s.lock && s.dead.is_some())));
+                }
+            }
+            assert!(case_pairs('\u{e9}') && case_pairs('E'));
+            assert!(!case_pairs('\u{130}') && !case_pairs('\u{1f0}') && !case_pairs('\u{df}'));
         }
 
         #[test]

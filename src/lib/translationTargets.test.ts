@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chipCodes, pruneTargets, pruneTranslationOverrides, seedTargets, translationRunOptions } from "./translationTargets";
+import { chipCodes, pruneTargets, pruneTranslationOverrides, seedTargets, translationRunOptions, wireCodes } from "./translationTargets";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the
 // sanitizers; the chip renderer is the last line of defence (mirrors dictation/chipController.test.ts).
@@ -14,6 +14,14 @@ describe("chipCodes", () => {
   });
   it("returns nothing for a non-array", () => {
     expect(chipCodes("fr")).toEqual([]);
+  });
+});
+
+// The list the chip picker edits and hands back to be persisted: wire-bound, never the chip clip.
+describe("wireCodes", () => {
+  it("keeps a 13-16 char tag whole where the chips clip it, and skips a longer one", () => {
+    expect(chipCodes(["ca-ES-valencia"])).not.toEqual(["ca-ES-valencia"]);
+    expect(wireCodes(["ca-ES-valencia", " fr ", 7, "x".repeat(17)])).toEqual(["ca-ES-valencia", "fr"]);
   });
 });
 

@@ -409,10 +409,13 @@ pub async fn package_to_path(
         let _ = tokio::fs::remove_file(&tmp).await;
         return Err(e);
     }
-    if let Err(e) = tokio::fs::rename(&tmp, dest).await {
-        let _ = tokio::fs::remove_file(&tmp).await;
-        return Err(anyhow::anyhow!("saving the export file: {e}"));
-    }
+    // Synchronous on purpose: the caller races this future against Cancel, and an awaited
+    // rename would keep running on the blocking pool after the drop — the finished export would
+    // land on `dest` while the UI says "cancelled". A same-directory rename is metadata only.
+    std::fs::rename(&tmp, dest).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        anyhow::anyhow!("saving the export file: {e}")
+    })?;
     Ok(PackageOutcome {
         kind: "ok",
         detail: String::new(),
