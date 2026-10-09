@@ -1468,8 +1468,12 @@ describe("linkPrefetchFor — a prefetched media id only goes back to the server
     expect(linkPrefetchFor(undefined, "A")).toBeUndefined();
   });
 
-  it("drops an expired id and keeps one whose expiry is unknown", () => {
+  it("drops an expired id or one inside the last minute, and keeps one whose expiry is unknown", () => {
+    const now = Math.floor(Date.now() / 1000);
     expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: 1 }, "A")).toBeUndefined();
+    // The 60 s margin: an id the server drops mid-run would cost the transcript its playback.
+    expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: now + 30 }, "A")).toBeUndefined();
+    expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: now + 600 }, "A")).toBe("m");
     expect(linkPrefetchFor({ prefetchMediaId: "m", prefetchBackendId: "A", prefetchExpiresAt: undefined }, "A")).toBe("m");
   });
 });

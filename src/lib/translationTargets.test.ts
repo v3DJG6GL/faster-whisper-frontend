@@ -34,6 +34,10 @@ describe("seedTargets", () => {
   it("drops non-string entries a peer synced in", () => {
     expect(seedTargets({ backendTargets: [123, null], serverDefault: ["es"], max: 8 })).toEqual(["es"]);
   });
+  it("keeps a long language tag whole and skips one the wire would refuse", () => {
+    expect(seedTargets({ serverDefault: ["ca-ES-valencia"], max: 8 })).toEqual(["ca-ES-valencia"]);
+    expect(seedTargets({ backendTargets: ["x".repeat(20)], serverDefault: ["es"], max: 8 })).toEqual(["es"]);
+  });
 });
 
 describe("pruneTargets", () => {

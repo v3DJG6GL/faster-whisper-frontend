@@ -20,19 +20,29 @@ export function pruneTargets(targets: string[], source: string): string[] {
  *  the code). Removal still filters the ORIGINAL array, so nothing is lost by rendering less. */
 export const chipCodes = (v: unknown, max = 32) => cleanCodes(v, { max, bound: 12 });
 
+/** The seed's codes as the wire takes them: a seeded code is persisted and SENT, so it must
+ *  never be cut the way `chipCodes` cuts for display — `ca-ES-valencia` clipped at 12 became a
+ *  code nobody picked. Rust's `is_lang_code` takes 2..=16 chars, so a longer one is skipped
+ *  whole rather than shortened. */
+const seedCodes = (v: unknown) =>
+  cleanCodes(Array.isArray(v) ? v.filter((c) => typeof c === "string" && c.trim().length <= 16) : v, {
+    max: 32,
+    bound: 16,
+  });
+
 /** The targets a translation run starts from before the user touches the chips: the Backend's
  *  Translation defaults → the server's default list → English, never the known source (a
  *  source→source stage is a no-op), and within the server's target cap as the picker is.
- *  `backendTargets` / `serverDefault` are synced or server-sent, so only their renderable
- *  codes count. */
+ *  `backendTargets` / `serverDefault` are synced or server-sent, so only their wire-valid
+ *  codes count (`seedCodes`). */
 export function seedTargets(o: {
   backendTargets?: unknown;
   serverDefault?: unknown;
   source?: string | null;
   max: number;
 }): string[] {
-  const own = chipCodes(o.backendTargets);
-  const server = chipCodes(o.serverDefault);
+  const own = seedCodes(o.backendTargets);
+  const server = seedCodes(o.serverDefault);
   const list = (own.length ? own : server.length ? server : ["en"]).filter((c) => c !== o.source);
   return (list.length ? list : [o.source === "en" ? "de" : "en"]).slice(0, o.max);
 }
