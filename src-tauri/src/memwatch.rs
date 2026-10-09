@@ -75,8 +75,8 @@ mod imp {
 
     /// Pins `LABELS` to `web` (sorted) the first time exactly four web processes exist, and
     /// forgets pids that are gone, so the map stays bounded. `pinned` keeps it the first time
-    /// only: the map empties again once every pinned pid is gone (all four relaunched, or one
-    /// sample whose /proc read failed), and re-pinning then would name windows by relaunch order.
+    /// only: the map empties again once every pinned pid is gone (all four relaunched), and
+    /// re-pinning then would name windows by relaunch order.
     /// A sample with no web process at all is a failed /proc read (the main webview lives as long
     /// as the app): it forgets nothing, so the same pids keep their labels on the next sample.
     fn pin_labels(labels: &mut HashMap<u32, &'static str>, pinned: &mut bool, web: &[u32]) {
@@ -88,6 +88,18 @@ mod imp {
             labels.extend(web.iter().copied().zip(LABELS));
             *pinned = true;
         }
+    }
+
+    /// Forgets the peak / warned state of pids no longer listed in /proc, so the map stays
+    /// bounded. Keyed on `web`, not on the pids whose memory read succeeded: a transient
+    /// per-pid read failure keeps that pid's state. Like `pin_labels`, a sample with no web
+    /// process at all (a failed /proc read) forgets nothing — else the next sample would take
+    /// the same pids for new ones and repeat an old spike's warning.
+    fn forget_gone(seen: &mut HashMap<u32, Seen>, web: &[u32]) {
+        if web.is_empty() {
+            return;
+        }
+        seen.retain(|pid, _| web.contains(pid));
     }
 
     fn label(labels: &HashMap<u32, &'static str>, pid: u32) -> String {
@@ -108,12 +120,10 @@ mod imp {
         pin_labels(labels, pinned, &web);
         let route = super::ROUTE.lock().map(|r| r.clone()).unwrap_or_default();
         let mut line = format!("[mem] core {}M", anon_mb(me).unwrap_or(0));
-        let mut alive = Vec::with_capacity(web.len());
         for pid in web.iter().copied() {
             let (Some(anon), Some(peak)) = (anon_mb(pid), peak_mb(pid)) else {
                 continue;
             };
-            alive.push(pid);
             let name = label(labels, pid);
             line.push_str(&format!(" | {name} {anon}M (peak {peak}M)"));
             // A first-seen process (the first sample, or a relaunched web process) is seeded
@@ -152,7 +162,7 @@ mod imp {
             }
             s.peak_mb = peak;
         }
-        seen.retain(|pid, _| alive.contains(pid));
+        forget_gone(seen, &web);
         for pid in children(me, "WebKitNetworkPr") {
             if let Some(anon) = anon_mb(pid) {
                 line.push_str(&format!(" | network {anon}M"));
@@ -221,6 +231,22 @@ mod imp {
             pin_labels(&mut labels, &mut pinned, &web);
             let names: Vec<String> = web.iter().map(|&p| label(&labels, p)).collect();
             assert_eq!(names, ["main", "overlay", "langpick", "web14"]);
+        }
+
+        #[test]
+        fn spike_state_survives_a_failed_proc_read() {
+            let mut seen = HashMap::from([(
+                10,
+                Seen {
+                    peak_mb: 2000,
+                    warned: true,
+                },
+            )]);
+            forget_gone(&mut seen, &[]);
+            let s = seen.get(&10).expect("a failed /proc read forgets nothing");
+            assert_eq!((s.peak_mb, s.warned), (2000, true));
+            forget_gone(&mut seen, &[11]);
+            assert!(!seen.contains_key(&10));
         }
 
         #[test]
