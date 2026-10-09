@@ -147,21 +147,29 @@ function stringTargets(v: unknown): string[] | undefined {
 
 /** Repair the fields a malformed file would crash the History render with, keeping the record:
  *  a non-string appId throws in the search and app chips (`.toLowerCase()` / `.split()`), a
- *  non-array target list in the route badge and the provenance line (`.map`). */
+ *  non-array target list in the route badge, the provenance line and the bug report's
+ *  `options.translateTo` fallback (`.map` / `.join`), and a non-string `translatedText` or
+ *  `result.text` in the snippet sanitizer (`for..of`). Every step composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
   let out = r;
+  const tt = (r.options as { translateTo?: unknown } | undefined)?.translateTo;
+  if (tt !== undefined && (!Array.isArray(tt) || tt.some((t) => typeof t !== "string"))) {
+    out = { ...out, options: { ...out.options, translateTo: stringTargets(tt) } as TranscribeOptions };
+  }
+  if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
+  if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
   if (r.appId != null && typeof r.appId !== "string") out = { ...out, appId: undefined };
   if (r.translationTargets != null && !Array.isArray(r.translationTargets)) {
     out = { ...out, translationTargets: undefined };
   } else if (r.translationTargets?.some((t) => typeof t !== "string")) {
     out = { ...out, translationTargets: stringTargets(r.translationTargets) };
   }
-  const tr = r.result?.translation as unknown;
-  if (r.result && tr && typeof tr === "object") {
+  const tr = out.result?.translation as unknown;
+  if (out.result && tr && typeof tr === "object") {
     const targets = (tr as { targets?: unknown }).targets;
     const clean = stringTargets(targets) ?? [];
     if (!Array.isArray(targets) || clean.length !== targets.length) {
-      out = { ...out, result: { ...r.result, translation: { ...(tr as object), targets: clean } } };
+      out = { ...out, result: { ...out.result, translation: { ...(tr as object), targets: clean } } };
     }
   }
   return out;

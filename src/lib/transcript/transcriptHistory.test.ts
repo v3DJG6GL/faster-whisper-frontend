@@ -157,6 +157,31 @@ describe("loadHistory", () => {
     expect(m.result?.translation?.targets).toEqual(["it"]);
   });
 
+  it("repairs a string translateTo and non-string texts so the bug report and the snippet cannot throw", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "bad-texts",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "/a.wav",
+        sourceName: "a.wav",
+        status: "done",
+        options: { translateTo: "de", diarize: true },
+        translatedText: 5,
+        result: { text: 7, translation: { targets: "de" } },
+      },
+    ]);
+    await loadHistory(true);
+    const s = saved("bad-texts");
+    expect(s.options?.translateTo).toBeUndefined();
+    expect(s.options?.diarize).toBe(true);
+    expect(s.translatedText).toBeUndefined();
+    expect(s.result?.text).toBe("");
+    expect(s.result?.translation?.targets).toEqual([]);
+    expect(() => [...recordText(s, 200)]).not.toThrow();
+  });
+
   it("survives a rejected listing", async () => {
     listTranscriptRecords.mockRejectedValue(new Error("no disk"));
     await loadHistory(true);
