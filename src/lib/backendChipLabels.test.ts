@@ -35,6 +35,21 @@ describe("modelDevice", () => {
     expect(modelDevice(models, "whisper-1")).toBe("CUDA");
     expect(modelDevice([...models, { id: "whisper-1", loaded: false, device: "cpu" }], "whisper-1")).toBe("CPU");
   });
+  it("the server default among loaded models on different devices is unknown: no chip", () => {
+    const split: ServerModel[] = [
+      { id: "small", loaded: true, device: "cpu" },
+      { id: "Systran/faster-whisper-large-v3", loaded: true, device: "cuda" },
+    ];
+    expect(modelDevice(split, "")).toBeUndefined();
+    expect(modelDevice(split, "whisper-1")).toBeUndefined();
+    expect(modelDevice(split, "small")).toBe("CPU");
+    const same: ServerModel[] = [
+      { id: "small", loaded: true, device: "cuda" },
+      { id: "Systran/faster-whisper-large-v3", loaded: true, device: "cuda" },
+      { id: "medium", loaded: false, device: "cpu" },
+    ];
+    expect(modelDevice(same, "")).toBe("CUDA");
+  });
   it("an unknown model has no chip", () => {
     expect(modelDevice(models, "medium")).toBeUndefined();
   });
