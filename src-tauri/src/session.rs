@@ -1877,6 +1877,14 @@ Sink Input #12\n\
             !discarded(&h),
             "the release with no live session leaves the drain alone"
         );
+        assert!(
+            DETACHED_STREAM
+                .lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|f| Arc::ptr_eq(f, &h)),
+            "the release with no live session leaves the drain published"
+        );
         settle_detached_on_cancel(false, true, false);
         cancel_detached_stream();
         assert!(

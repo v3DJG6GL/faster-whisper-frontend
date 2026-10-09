@@ -73,10 +73,7 @@ pub fn decode_to_cached_wav(app: &tauri::AppHandle, path: &str) -> Result<String
 /// tmp + rename, and no tmp left behind on EITHER failure — a WAV here can be hundreds of
 /// MB, so ENOSPC mid-write is the realistic case (`save_text_file` has the same shape).
 fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
-    // A unique suffix so two concurrent decodes of the same file (e.g. a retry
-    // while the first decode is still running) write independent tmp files and
-    // the loser's rename simply overwrites with identical bytes.
-    let tmp = out.with_extension(format!("wav.{:x}.tmp", std::process::id()));
+    let tmp = cache_tmp_path(out);
     if let Err(e) = std::fs::write(&tmp, wav) {
         let _ = std::fs::remove_file(&tmp);
         return Err(e.to_string());
@@ -87,6 +84,21 @@ fn write_cached(out: &std::path::Path, wav: &[u8]) -> Result<(), String> {
         return Err(e.to_string());
     }
     Ok(())
+}
+
+/// Tmp-file sequence: the pid alone is shared by every call in this process.
+static TMP_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// A per-CALL unique tmp name, so two concurrent decodes of the same file (e.g. a retry while
+/// the first decode is still running) write independent tmp files and the loser's rename simply
+/// overwrites with identical bytes — a shared name let the first rename take the second call's
+/// tmp, failing that rename with ENOENT. Still ends in `.tmp`, so `prune_cache_to` skips it.
+fn cache_tmp_path(out: &std::path::Path) -> std::path::PathBuf {
+    out.with_extension(format!(
+        "wav.{:x}-{}.tmp",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ))
 }
 
 /// Keep the playback cache under `MAX_CACHE_BYTES`, deleting oldest-modified
@@ -107,7 +119,7 @@ fn prune_cache_to(dir: &std::path::Path, keep: &std::path::Path, max_bytes: u64)
                 return None;
             }
             // Skip in-progress tmp files: a concurrent decode is writing to
-            // `<hash>.wav.tmp` and will rename it on completion. Unlinking it
+            // `<hash>.wav.<pid>-<seq>.tmp` and will rename it on completion. Unlinking it
             // makes that rename fail with ENOENT and the viewer declares
             // playback broken for a file that decoded fine.
             if p.extension().is_some_and(|ext| ext == "tmp") {
@@ -244,8 +256,21 @@ mod tests {
         let out = dir.join("abc.wav");
         std::fs::create_dir_all(out.join("occupied")).unwrap();
         assert!(write_cached(&out, b"RIFF").is_err());
-        assert!(!dir.join("abc.wav.tmp").exists());
+        let tmps = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().extension().is_some_and(|x| x == "tmp"))
+            .count();
+        assert_eq!(tmps, 0, "no tmp file is left in the cache dir");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_cache_writes_of_one_file_get_distinct_tmp_names() {
+        let out = std::path::Path::new("/cache/abc.wav");
+        let (a, b) = (cache_tmp_path(out), cache_tmp_path(out));
+        assert_ne!(a, b, "a shared tmp lets one rename steal the other's");
+        assert!(a.extension().is_some_and(|x| x == "tmp"));
     }
 
     #[test]
