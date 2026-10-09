@@ -88,6 +88,11 @@ const CATEGORY_META: { key: SyncCategory; title: string; desc: string }[] = [
   { key: "logging", title: "Logging", desc: "Log level, file retention, sidebar visibility. Log files themselves never sync." },
 ];
 
+/** A category's display name ("recording" → "Dictation"), as every sync surface spells it. */
+export function categoryTitle(c: SyncCategory): string {
+  return CATEGORY_META.find((m) => m.key === c)?.title ?? c;
+}
+
 
 /** What a selection would overwrite on this device, for the two preview dialogs' replace
  *  warning: a selected category the blob carries AND the device already has data for. "Carries"
@@ -614,6 +619,26 @@ export function IncomingAddresses({ list }: { list: unknown }) {
   );
 }
 
+/** The restore offers' disclosure chips (Onboarding and the Backends restore offer): the
+ *  categories a pulled blob carries, by display name. Migrated once per blob, not per category
+ *  per render, so pre-split categories (chip, dictionary, recording/fileTranscriptions) show. */
+export function SyncedCategoryChips({ blob }: { blob: SyncBlob | null | undefined }) {
+  const present = useMemo(() => {
+    if (!blob) return [];
+    const m = migrateBlob(blob);
+    return ALL_CATEGORIES.filter((c) => m[c] !== undefined);
+  }, [blob]);
+  return (
+    <div className="mt-2.5 flex flex-wrap gap-1.5">
+      {present.map((c) => (
+        <span key={c} className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim">
+          {categoryTitle(c)}
+        </span>
+      ))}
+    </div>
+  );
+}
+
 const MAX_SHOWN_ADDRESSES = 20;
 /** Bound on the list fed to the hazard PREVIEWS. `conflicts()` is an O(n²) pair scan that also
  *  pushes O(n²) result objects, and it runs in the render body — before the user has consented to
@@ -791,11 +816,11 @@ function ConflictDialogBody({
       </div>
       <div className="mt-4">
         {pending.categories.map((c, i) => {
-          const meta = CATEGORY_META.find((m) => m.key === c);
+          const title = categoryTitle(c);
           return (
-            <SettingRow key={c} title={meta?.title ?? c} last={i === pending.categories.length - 1}>
+            <SettingRow key={c} title={title} last={i === pending.categories.length - 1}>
               <Segmented
-                ariaLabel={`Resolve ${meta?.title ?? c}`}
+                ariaLabel={`Resolve ${title}`}
                 value={picks[c] ?? "local"}
                 onChange={(v) => onPick(c, v)}
                 options={[

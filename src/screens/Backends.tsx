@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { useSearchParams } from "react-router-dom";
 import { Server, Pencil, Copy, Trash2, Plug, Loader2 } from "lucide-react";
@@ -26,7 +26,6 @@ import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLa
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
-import { ALL_CATEGORIES, migrateBlob } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
@@ -35,7 +34,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { credentialGeneration, forgetCaps, refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
-import { RestoreFromServer } from "@/components/sync/SettingsSync";
+import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
 import { plural, relTime } from "@/lib/format";
 
 function Editor({
@@ -914,10 +913,6 @@ function RestoreOffer({
   onDone: () => void;
 }) {
   const [restoring, setRestoring] = useState(false);
-  const remoteCategories = useMemo(() => {
-    const m = remote.blob ? migrateBlob(remote.blob) : {};
-    return ALL_CATEGORIES.filter((c) => m[c] !== undefined);
-  }, [remote.blob]);
 
   // After the blob applied: make sure a backend for this server exists (the
   // restore may or may not have brought one — the backends category can be
@@ -990,16 +985,7 @@ function RestoreOffer({
           last synced{remote.device ? ` from ${safeDisplayText(remote.device, 60)}` : ""}
           {remote.updated_ts ? ` · ${relTime(remote.updated_ts * 1000)}` : ""}
         </div>
-        <div className="mt-2.5 flex flex-wrap gap-1.5">
-          {remoteCategories.map((c) => (
-            <span
-              key={c}
-              className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim"
-            >
-              {c === "appRules" ? "app rules" : c}
-            </span>
-          ))}
-        </div>
+        <SyncedCategoryChips blob={remote.blob} />
         <div className="mt-3.5 flex items-center gap-2.5">
           <Button variant="accent" onClick={() => setRestoring(true)}>
             Restore…

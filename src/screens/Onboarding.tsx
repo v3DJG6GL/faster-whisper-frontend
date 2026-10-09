@@ -19,14 +19,14 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
-import { ALL_CATEGORIES, applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
+import { applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
-import { ImportPreview, IncomingAddresses } from "@/components/sync/SettingsSync";
+import { ImportPreview, IncomingAddresses, SyncedCategoryChips } from "@/components/sync/SettingsSync";
 import { stripMachineFolders } from "@/lib/sync/settingsFile";
 import { relTime } from "@/lib/format";
 import type { ImportResult, SyncPullResult } from "@/lib/sync/syncTypes";
@@ -55,16 +55,6 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // synced, or neither is known (standard server, failed pull) — its copy must not lie.
   const [startersIntro, setStartersIntro] = useState<StartersIntro>("none");
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
-  // The restore offer's disclosure chips. Migrate the raw blob (once per pull, not per
-  // category per render) so pre-split categories (chip, dictionary,
-  // recording/fileTranscriptions) show.
-  const pulledCategories = useMemo(() => {
-    const b = pull?.state?.blob;
-    if (!b) return [];
-    const m = migrateBlob(b);
-    return ALL_CATEGORIES.filter((c) => m[c] !== undefined);
-  }, [pull]);
-
   // Every exit marks setup handled so the gate never re-opens; later gaps
   // (deleted backends, skipped steps) fall to the Home checklist instead.
   const finish = () => {
@@ -319,13 +309,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 last synced{pull.state.device ? ` from ${safeDisplayText(pull.state.device, 60)}` : ""}
                 {pull.state.updated_ts ? ` · ${relTime(pull.state.updated_ts * 1000)}` : ""}
               </div>
-              <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {pulledCategories.map((c) => (
-                  <span key={c} className="rounded-pill border border-line-strong px-2.5 py-0.5 font-mono text-[10px] text-dim">
-                    {c === "appRules" ? "app rules" : c}
-                  </span>
-                ))}
-              </div>
+              <SyncedCategoryChips blob={pull.state.blob} />
               {pull.state.blob?.backends ? (
                 <div className="mt-2.5">
                   {/* What the restore installs, at the address this device uses — as Settings'
