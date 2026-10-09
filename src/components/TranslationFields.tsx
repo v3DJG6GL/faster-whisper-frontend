@@ -53,7 +53,10 @@ export function TranslationTargetChips({
   disabled?: boolean;
   ariaLabel?: string;
 }) {
-  const shown = chipCodes(value);
+  // The chips, their count and the picker read ONE list — the wire-bound codes the picker edits
+  // and persists — clipped only for display; a code too long to send shows no chip.
+  const wire = wireCodes(value);
+  const shown = chipCodes(wire);
   const counted = used ?? shown.length;
   // Membership and removal go through the SAME sanitizer as the chips: a synced " de " renders
   // "DE", so removing it must match on that code, not on the raw entry.
@@ -77,7 +80,7 @@ export function TranslationTargetChips({
       {/* The picker hands its list back to onChange, which persists it: give it the wire-bound
           codes, not the 12-char chip clip (a seeded ca-ES-valencia must survive adding French). */}
       <TargetLanguagePicker
-        value={wireCodes(value)}
+        value={wire}
         onChange={onChange}
         supported={supported}
         modelName={modelName}

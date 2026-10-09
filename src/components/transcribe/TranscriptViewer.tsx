@@ -336,6 +336,10 @@ export function TranscriptViewer({
   // The identity the record-switch reset last saw — tells a late-linked audio
   // copy (same record, mediaPath undefined → set) apart from a real switch.
   const prevMediaRef = useRef({ path, okey, mediaPath });
+  // The copy as of NOW, for a fallback step that started before a late link: its "no copy"
+  // branch must see the copy that landed meanwhile (the render-captured one is undefined).
+  const mediaPathRef = useRef(mediaPath);
+  mediaPathRef.current = mediaPath;
   const fileRenames = useMemo(() => renames[okey] ?? {}, [renames, okey]);
   const fileColors = useMemo(() => speakerColors[okey] ?? {}, [speakerColors, okey]);
   const displayName = useCallback(
@@ -914,10 +918,11 @@ export function TranscriptViewer({
     };
     // The run's audio copy landing on the SAME record is no switch: keep the
     // edit, the playhead and the play state (a link run's <audio> mounts on its
-    // own). Only a player that already gave up — or is mid-fallback, whose step
-    // still holds "no copy" and would end on broken — retries, now with the copy.
+    // own). Only a player that already gave up retries, now with the copy; a step
+    // still in flight is left to finish — it may play, and if it fails its "no
+    // copy" branch reads mediaPathRef and falls through to the copy.
     if (lateLink) {
-      if (audioBrokenRef.current || decodePendingRef.current || bufferPendingRef.current) resetFallback();
+      if (audioBrokenRef.current) resetFallback();
       return;
     }
     // New file: stop playback, forget position/errors, re-arm follow. The
@@ -1059,7 +1064,7 @@ export function TranscriptViewer({
       // stored copy — don't pay a second round trip into a path known to be gone (and
       // let ITS failure decide the "gone"-vs-"codec" wording).
       else if (audioNote === "copy" && mediaPath) tryDecode(mediaPath);
-      else tryDecode(path, (why, detail) => tryDecode(mediaPath, undefined, { why, detail }));
+      else tryDecode(path, (why, detail) => tryDecode(mediaPathRef.current, undefined, { why, detail }));
       return;
     }
     blobTriedRef.current = true;
@@ -1099,16 +1104,17 @@ export function TranscriptViewer({
         if (stale()) return;
         if (isTooLargeToBuffer(e)) return onAudioError(String(e));
         // Original unreadable (moved/deleted) — fall back to the app's copy.
-        if (!mediaPath) {
+        const copy = mediaPathRef.current;
+        if (!copy) {
           setAudioBroken(true);
           setBrokenWhy("gone");
           setBrokenDetail(`could not read the file: ${String(e)}`);
           return;
         }
-        return readMediaFile(mediaPath)
+        return readMediaFile(copy)
           .then((buf) => {
             if (stale()) return;
-            asBlob(buf, mediaPath);
+            asBlob(buf, copy);
             setAudioNote("copy");
           })
           .catch((e2) => {
