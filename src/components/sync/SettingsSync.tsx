@@ -738,20 +738,32 @@ function ConflictDialog() {
   // The picks live here, not in the body: resolve nulls the pending conflict before it awaits
   // the apply, so the body unmounts; a refused apply restores the SAME conflict (same id) and a
   // fresh body would show every row back on "local" — the next Apply then keeps this device's
-  // settings without asking. Tagged with the conflict id, so a NEW conflict still starts empty
-  // (a retained "remote" pick would silently hand the peer a category with no second prompt).
-  const [picks, setPicks] = useState<{ id: number; p: Record<string, "local" | "remote"> }>({ id: -1, p: {} });
+  // settings without asking. Tagged with the conflict id and its remote key: a NEW remote still
+  // starts empty (a retained "remote" pick would silently hand the peer content the user never
+  // chose), while a re-raise of the same remote over a changed category list (the resolve's
+  // widening re-merge) keeps the picks for the categories it still shows.
+  const [picks, setPicks] = useState<{ id: number; remoteKey: number; p: Record<string, "local" | "remote"> }>({
+    id: -1,
+    remoteKey: -1,
+    p: {},
+  });
   const pending = getPendingConflict();
   if (!pending) return null;
+  const carried = (s: typeof picks): Record<string, "local" | "remote"> =>
+    s.id === pending.id
+      ? s.p
+      : s.remoteKey === pending.remoteKey
+        ? Object.fromEntries(Object.entries(s.p).filter(([c]) => (pending.categories as string[]).includes(c)))
+        : {};
   // Keyed on the conflict's identity so a new conflict (or a restored one) remounts the body
   // with busy cleared.
   return (
     <ConflictDialogBody
       key={pending.id}
       pending={pending}
-      picks={picks.id === pending.id ? picks.p : {}}
+      picks={carried(picks)}
       onPick={(c, v) =>
-        setPicks((s) => ({ id: pending.id, p: { ...(s.id === pending.id ? s.p : {}), [c]: v } }))
+        setPicks((s) => ({ id: pending.id, remoteKey: pending.remoteKey, p: { ...carried(s), [c]: v } }))
       }
     />
   );

@@ -31,9 +31,10 @@ function reset() {
   useApp.setState({ settings, backends: [backend()], profiles: [], appRules: [], status: "idle" });
 }
 
-// The conflict dialog's body is keyed on this id: a second conflict must get a
-// NEW id so React remounts it with fresh picks — a retained "remote" pick from
-// the previous conflict would silently hand the peer a category, no prompt.
+// The conflict dialog tags its picks with the id and the remote key: a new remote must get a
+// NEW remote key so the picks start empty — a retained "remote" pick from the previous conflict
+// would silently hand the peer content the user never chose. A re-raise of the same remote over a
+// changed category list keeps the key, and the dialog keeps the picks for the categories shown.
 describe("pending-conflict identity", () => {
   it("each raised conflict gets a distinct id", () => {
     raiseConflictForTests();
@@ -54,6 +55,47 @@ describe("pending-conflict identity", () => {
     // A different category set is a different conflict.
     raiseConflictForTests({ remoteVersion: 7, remoteDevice: "laptop-b", categories: ["general", "chip"] });
     expect(getPendingConflict()?.id).not.toBe(first?.id);
+  });
+
+  it("a re-raise of the same remote over other categories keeps the remote key", () => {
+    // resolveLocked's widening re-raise keeps the remote version, stamp and writer. A new id
+    // there reset the dialog's picks, so a "remote" pick came back on "This device" and the next
+    // Apply silently kept this device's settings.
+    raiseConflictForTests({ remoteVersion: 9, remoteUpdatedAt: 1700000000, remoteDevice: "laptop-b" });
+    const first = getPendingConflict()!;
+    raiseConflictForTests({
+      remoteVersion: 9,
+      remoteUpdatedAt: 1700000000,
+      remoteDevice: "laptop-b",
+      categories: ["general", "chip"],
+    });
+    const widened = getPendingConflict()!;
+    expect(widened.id).not.toBe(first.id);
+    expect(widened.remoteKey).toBe(first.remoteKey);
+    // Another remote version, stamp or writer is another remote: the picks start empty.
+    raiseConflictForTests({
+      remoteVersion: 10,
+      remoteUpdatedAt: 1700000000,
+      remoteDevice: "laptop-b",
+      categories: ["general", "chip"],
+    });
+    const newer = getPendingConflict()!;
+    expect(newer.remoteKey).not.toBe(widened.remoteKey);
+    raiseConflictForTests({
+      remoteVersion: 10,
+      remoteUpdatedAt: 1700000000,
+      remoteDevice: "laptop-c",
+      categories: ["general", "chip"],
+    });
+    const otherWriter = getPendingConflict()!;
+    expect(otherWriter.remoteKey).not.toBe(newer.remoteKey);
+    raiseConflictForTests({
+      remoteVersion: 10,
+      remoteUpdatedAt: 1700009999,
+      remoteDevice: "laptop-c",
+      categories: ["general", "chip"],
+    });
+    expect(getPendingConflict()!.remoteKey).not.toBe(otherWriter.remoteKey);
   });
 
   it("picks made on one conflict never resolve another", async () => {

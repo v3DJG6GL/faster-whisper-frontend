@@ -1986,17 +1986,32 @@ interface PendingConflict {
   remoteUpdatedAt: number | null;
 }
 let pendingConflict: PendingConflict | null = null;
-/** Monotonic identity for the CURRENT pending conflict: the dialog keys its
- *  body on it so a later conflict remounts with fresh picks — a retained
- *  "remote" pick from the previous conflict would otherwise silently hand the
- *  peer a category with no second prompt. A re-raise of the SAME conflict keeps
+/** Monotonic identity for the CURRENT pending conflict (remote version, stamp, writer AND
+ *  category list). ConflictDialog tags the user's picks with it and with `pendingConflictRemoteKey`,
+ *  and resolveSyncConflicts refuses picks made on another id. A re-raise of the SAME conflict keeps
  *  it (see raiseConflict). */
 let pendingConflictId = 0;
+/** Monotonic identity for the pending conflict's REMOTE side alone (version, stamp, writer). A new
+ *  remote starts the dialog's picks empty — a retained "remote" pick would silently hand the peer
+ *  content the user never chose. A re-raise of the same remote over a changed category list (the
+ *  resolve's widening re-merge, a focus pull, a 409) bumps the id but keeps this key, so the dialog
+ *  keeps the picks for the categories still shown instead of putting every row back on "local". */
+let pendingConflictRemoteKey = 0;
 /** The Sync tab reads the pending conflict through this (set into the store
  *  would drag blob payloads through every subscriber). */
-export function getPendingConflict(): { id: number; categories: SyncCategory[]; remoteDevice: string | null } | null {
+export function getPendingConflict(): {
+  id: number;
+  remoteKey: number;
+  categories: SyncCategory[];
+  remoteDevice: string | null;
+} | null {
   return pendingConflict
-    ? { id: pendingConflictId, categories: pendingConflict.categories, remoteDevice: pendingConflict.remoteDevice }
+    ? {
+        id: pendingConflictId,
+        remoteKey: pendingConflictRemoteKey,
+        categories: pendingConflict.categories,
+        remoteDevice: pendingConflict.remoteDevice,
+      }
     : null;
 }
 
@@ -3480,16 +3495,19 @@ function raiseConflict(c: PendingConflict): void {
   // A pending conflict adopts no base, so every focus pull / 409 re-raises it: keep the id when it
   // is the SAME conflict (same server version, write stamp, writer and categories — so the same
   // remote content, and a retained "remote" pick hands over nothing unseen), or the dialog
-  // remounts and resets the user's half-made picks on every window switch.
-  const same =
+  // remounts and resets the user's half-made picks on every window switch. The remote key keeps
+  // over a changed category list alone: the remote content is the same, so the dialog keeps the
+  // picks for the categories it still shows (see pendingConflictRemoteKey).
+  const sameRemote =
     pendingConflict !== null &&
     pendingConflict.remoteVersion === c.remoteVersion &&
     (pendingConflict.remoteUpdatedAt === c.remoteUpdatedAt ||
       (pendingConflict.remoteUpdatedAt !== null &&
         c.remoteUpdatedAt !== null &&
         sameStamp(pendingConflict.remoteUpdatedAt, c.remoteUpdatedAt))) &&
-    pendingConflict.remoteDevice === c.remoteDevice &&
-    pendingConflict.categories.join() === c.categories.join();
+    pendingConflict.remoteDevice === c.remoteDevice;
+  const same = sameRemote && pendingConflict!.categories.join() === c.categories.join();
+  if (!sameRemote) pendingConflictRemoteKey++;
   if (!same) pendingConflictId++;
   setPendingConflict(c);
   // Same rule as raiseReview: a review against an older server version is moot now.
