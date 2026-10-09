@@ -133,7 +133,10 @@ export function Segmented<T extends string>({
               // wrapping one across two lines makes the group look broken.
               "ring-signal inline-flex items-center gap-1.5 whitespace-nowrap rounded-pill px-3.5 py-1 text-[13px] font-medium transition-colors",
               active ? "bg-accent text-accent-ink" : "text-dim hover:text-text",
-              off && "cursor-not-allowed hover:text-dim",
+              off && "cursor-not-allowed",
+              // The hover cancel only belongs on inactive faces: on the active pill it would
+              // fade the label to grey on the accent fill (cn is plain clsx, no tailwind-merge).
+              off && !active && "hover:text-dim",
               o.disabled && !disabled && "opacity-40",
             )}
           >
@@ -260,7 +263,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   },
 );
 
-/** Lists longer than this get a search field. */
+/** Lists with at least this many options get a search field. */
 const SELECT_SEARCH_MIN = 9;
 
 /** A single-choice dropdown: the app's ListPicker under a FieldTrigger face, as wide as its
