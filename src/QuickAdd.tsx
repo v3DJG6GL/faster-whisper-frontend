@@ -748,7 +748,9 @@ function errTitle(f: PipelineFetch | null): string {
   }
 }
 function errBody(f: PipelineFetch | null): string {
-  if (f?.error) return f.error;
+  // Mirrors Dictionary's describeFetchError: a whitespace-only proxy body falls through to the status hint.
+  const err = f?.error?.trim();
+  if (err) return err;
   switch (f?.status) {
     case 401:
       return "Set or fix the API key for this Backend on the Backends screen.";

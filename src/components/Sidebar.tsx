@@ -18,7 +18,7 @@ function TranscribeRunBadge() {
   const frac = useTranscribeRun(runBadgeFraction);
   if (frac === null) return null;
   return (
-    <span className="ml-auto font-mono text-[10.5px] tabular-nums text-accent">
+    <span className="font-mono text-[10.5px] tabular-nums text-accent">
       {Math.round(frac * 100)}%
     </span>
   );
@@ -195,8 +195,14 @@ export function Sidebar() {
                 />
                 {label}
                 {setupDot(id, backendCount, profileCount)}
-                {id === "transcribe" && <TranscribeRunBadge />}
-                {id === "transcribe" && <TranslateRunBadge />}
+                {/* One right-aligned wrapper: either badge can render alone (each returns
+                    null when idle), so neither may carry ml-auto itself. */}
+                {id === "transcribe" && (
+                  <span className="ml-auto flex items-center gap-2">
+                    <TranscribeRunBadge />
+                    <TranslateRunBadge />
+                  </span>
+                )}
                 {id === "logs" && <LogsBadge />}
               </>
             )}
