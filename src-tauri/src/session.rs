@@ -100,6 +100,23 @@ pub fn forget_detached_batch() {
     DETACHED_BATCH_EPOCH.store(0, Ordering::SeqCst);
 }
 
+/// The detached-batch half of `cancel_record`, decided under the `RecordState` lock — the batch
+/// twin of [`settle_detached_on_cancel`]. Taking a LIVE session (any Cancel, the closed-handler
+/// release) supersedes the earlier detached batch as the Cancel target, so a later Cancel cannot
+/// disown it; a recovery cancel (`discard_recording: false`) releases it so its keep is final.
+/// With no live session, only a user's Cancel disowns it; the release leaves it alone.
+pub fn settle_detached_batch_on_cancel(
+    took_live: bool,
+    user_initiated: bool,
+    discard_recording: bool,
+) {
+    if took_live || !discard_recording {
+        forget_detached_batch();
+    } else if user_initiated {
+        cancel_detached_batch();
+    }
+}
+
 /// Was the detached transcription for `epoch` cancelled? Epoch 0 is "none detached yet".
 fn batch_cancelled(epoch: u64) -> bool {
     epoch != 0
@@ -1928,9 +1945,11 @@ Sink Input #12\n\
 
     #[test]
     fn a_later_cancel_keeps_an_earlier_batch_cancelled() {
+        // Everything touching the DETACHED_BATCH_EPOCH static stays in this ONE fn: tests run in
+        // parallel, and a second fn would race the global.
         use super::{
             batch_cancelled, cancel_detached_batch, forget_detached_batch, mark_batch_cancelled,
-            DETACHED_BATCH_EPOCH,
+            settle_detached_batch_on_cancel, DETACHED_BATCH_EPOCH,
         };
         use std::sync::atomic::Ordering;
         // Epochs far above anything a real session claims in a test run.
@@ -1949,5 +1968,38 @@ Sink Input #12\n\
         forget_detached_batch();
         cancel_detached_batch();
         assert!(!batch_cancelled(c), "a kept transcription stays kept");
+
+        // Taking a live session supersedes the earlier detached batch on every cancel path; with
+        // none, only the user's Cancel disowns it.
+        let (d, e, f, g) = (u64::MAX - 7, u64::MAX - 6, u64::MAX - 5, u64::MAX - 4);
+        DETACHED_BATCH_EPOCH.store(d, Ordering::SeqCst);
+        settle_detached_batch_on_cancel(true, true, true);
+        cancel_detached_batch();
+        assert!(
+            !batch_cancelled(d),
+            "a Cancel of a newer live session superseded the batch"
+        );
+        DETACHED_BATCH_EPOCH.store(e, Ordering::SeqCst);
+        settle_detached_batch_on_cancel(false, false, true);
+        assert!(
+            !batch_cancelled(e),
+            "the release with no live session leaves the batch alone"
+        );
+        assert_eq!(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst), e);
+        DETACHED_BATCH_EPOCH.store(f, Ordering::SeqCst);
+        settle_detached_batch_on_cancel(false, true, false);
+        assert_eq!(
+            DETACHED_BATCH_EPOCH.load(Ordering::SeqCst),
+            0,
+            "a recovery cancel releases the batch"
+        );
+        assert!(!batch_cancelled(f));
+        DETACHED_BATCH_EPOCH.store(g, Ordering::SeqCst);
+        settle_detached_batch_on_cancel(false, true, true);
+        assert!(
+            batch_cancelled(g),
+            "a user's Cancel with no live session disowns the batch"
+        );
+        DETACHED_BATCH_EPOCH.store(0, Ordering::SeqCst);
     }
 }

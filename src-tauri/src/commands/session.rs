@@ -284,25 +284,26 @@ pub async fn cancel_record(
         // audio is not uploaded and neither the .wav nor its verbatim .txt is left on disk after
         // a UI that says cancelled.
         //
-        // Only when there was no live session: a cancel that DID find one is aimed at that
-        // session, and disowning here would instead kill a legitimate earlier transcription that
-        // is still in flight (stop A → start B → cancel B would have discarded A's result). Nor
-        // for a recovery cancel (`discard_recording: false`), where the saved audio may be the
-        // only copy of what was said: that keep is final, so a later Cancel cannot disown it —
-        // released even when a live session WAS found, since its device-loss salvage may already
-        // have published its epoch as the detached batch (a salvage that fires inside the join
-        // below publishes after this forget, so that one stays reachable).
+        // Only a user's Cancel with no live session: a live session taken on ANY path (a Cancel,
+        // the closed-handler release) supersedes the earlier detached batch, which is released so
+        // a later Cancel cannot disown a legitimate earlier transcription still in flight (stop A
+        // → start B → cancel B → stray Cancel would have discarded A's result); the release with
+        // no live session leaves it alone. A recovery cancel (`discard_recording: false`) releases
+        // it too, since the saved audio may be the only copy of what was said: that keep is
+        // final — released even when a live session WAS found, since its device-loss salvage may
+        // already have published its epoch as the detached batch (a salvage that fires inside the
+        // join below publishes after this forget, so that one stays reachable).
         let sess = {
             let mut guard = state
                 .0
                 .lock()
                 .map_err(|_| "record state poisoned".to_string())?;
             let sess = guard.take();
-            if !discard_recording {
-                session::forget_detached_batch();
-            } else if sess.is_none() {
-                session::cancel_detached_batch();
-            }
+            session::settle_detached_batch_on_cancel(
+                sess.is_some(),
+                user_initiated,
+                discard_recording,
+            );
             session::retire_active_epoch();
             sess
         };
