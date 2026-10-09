@@ -287,6 +287,8 @@ export function TranscriptViewer({
    *  follow's visible-strip math. */
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const [audioBroken, setAudioBroken] = useState(false);
+  const audioBrokenRef = useRef(audioBroken);
+  audioBrokenRef.current = audioBroken;
   // Why playback is unavailable — a missing file and an undecodable codec are
   // different failures and get different sentences.
   const [brokenWhy, setBrokenWhy] = useState<"gone" | "codec">("codec");
@@ -331,6 +333,9 @@ export function TranscriptViewer({
   // The record on screen NOW — a run's completion must not fold another record's panel.
   const okeyRef = useRef(okey);
   okeyRef.current = okey;
+  // The identity the record-switch reset last saw — tells a late-linked audio
+  // copy (same record, mediaPath undefined → set) apart from a real switch.
+  const prevMediaRef = useRef({ path, okey, mediaPath });
   const fileRenames = useMemo(() => renames[okey] ?? {}, [renames, okey]);
   const fileColors = useMemo(() => speakerColors[okey] ?? {}, [speakerColors, okey]);
   const displayName = useCallback(
@@ -889,7 +894,43 @@ export function TranscriptViewer({
   }, [playing, syncPlayhead]);
 
   useEffect(() => {
-    // New file: stop playback, forget position/errors, re-arm follow.
+    const prev = prevMediaRef.current;
+    prevMediaRef.current = { path, okey, mediaPath };
+    const lateLink =
+      prev.path === path && prev.okey === okey && prev.mediaPath === undefined && mediaPath !== undefined;
+    const resetFallback = () => {
+      setAudioBroken(false);
+      setBrokenWhy("codec");
+      setBrokenDetail(null);
+      setAudioNote(null);
+      if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
+      blobTriedRef.current = false;
+      wavTriedRef.current = false;
+      decodePendingRef.current = false;
+      bufferPendingRef.current = false;
+      audioGenRef.current += 1;
+      setBlobSrc(null);
+    };
+    // The run's audio copy landing on the SAME record is no switch: keep the
+    // edit, the playhead and the play state (a link run's <audio> mounts on its
+    // own). Only a player that already gave up retries, now with the copy.
+    if (lateLink) {
+      if (audioBrokenRef.current) resetFallback();
+      return;
+    }
+    // New file: stop playback, forget position/errors, re-arm follow. The
+    // element itself survives a switch that keeps its src (same local file),
+    // so it is paused here — setPlaying alone would leave it playing.
+    const a = audioRef.current;
+    if (a) {
+      try {
+        a.pause();
+        a.currentTime = 0;
+      } catch {
+        /* no source yet */
+      }
+    }
     setPlaying(false);
     shownTimeRef.current = 0;
     setCurTime(0);
@@ -898,25 +939,22 @@ export function TranscriptViewer({
     setPassedWordIdx(-1);
     setPassedSegIdx(-1);
     setAudioLen(0);
-    setAudioBroken(false);
-    setBrokenWhy("codec");
-    setBrokenDetail(null);
-    setAudioNote(null);
     setFollow(true);
     setMode((m) => (m === "edit" ? "read" : m));
     setReassignRow(null);
-    if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
-    blobUrlRef.current = null;
-    blobTriedRef.current = false;
-    wavTriedRef.current = false;
-    decodePendingRef.current = false;
-    bufferPendingRef.current = false;
-    audioGenRef.current += 1;
-    setBlobSrc(null);
+    resetFallback();
     // mediaPath, not just path: two same-URL records share a path but each holds its OWN
     // copy (keyed on the record id), so a record switch that changes only mediaPath must
-    // still clear the previous record's broken/blob/fallback state.
+    // still clear the previous record's broken/blob/fallback state. Not okey: it moves
+    // path → id at run finish while the same transcript stays on screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- okey is read, not a trigger (above)
   }, [path, mediaPath]);
+  // okey moving path → id at run finish (no reset) must not make the later
+  // late-linked copy look like a record switch. Declared after the reset so a
+  // real switch (okey and mediaPath in one commit) is compared first.
+  useEffect(() => {
+    prevMediaRef.current = { ...prevMediaRef.current, okey };
+  }, [okey]);
   useEffect(
     () => () => {
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
@@ -1963,7 +2001,7 @@ export function TranscriptViewer({
               { value: "subtitles", label: "Subtitles", disabled: editMode, title: subtitlesTitle },
             ]}
           />
-          <span className="h-5 w-px bg-line" />
+          {(!result.timingSynthesized || hasSpeakers) && <span className="h-5 w-px bg-line" />}
           {(
             [
               ["Timestamps", showTs, setShowTs, !result.timingSynthesized],
@@ -1981,7 +2019,9 @@ export function TranscriptViewer({
             {/* Copy always writes per-segment lines, never the cue rows or a site track. */}
             {subtitlesView
               ? "files match what you see — Copy writes the segments"
-              : "the view is the export — Copy and files match what you see"}
+              : result.timingSynthesized && showTs
+                ? "Copy matches what you see — files keep placeholder clocks unless Timestamps is off in Export"
+                : "the view is the export — Copy and files match what you see"}
           </span>
         </div>
       )}
