@@ -205,6 +205,9 @@ describe("loadHistory", () => {
         sourcePath: "/b.wav",
         sourceName: "b.wav",
         status: "done",
+        edits: { 0: "x" },
+        speakerEdits: { 0: "Ana" },
+        translationsStale: { 0: true },
         result: { text: "plain", segments: "abc" },
       },
     ]);
@@ -219,7 +222,60 @@ describe("loadHistory", () => {
     expect(recordText(a, 200)).toBe("TWO");
     const b = saved("str-segs");
     expect(b.result?.segments).toBeUndefined();
+    // No segment left for an index-keyed correction to land on: the maps go with the list,
+    // or the viewer marks the record edited and rebuilds an empty text for Copy/export.
+    expect(b.edits).toBeUndefined();
+    expect(b.speakerEdits).toBeUndefined();
+    expect(b.translationsStale).toBeUndefined();
     expect(recordText(b, 200)).toBe("plain");
+  });
+
+  it("drops non-string speaker names so the viewer's speaker-name sanitizer cannot throw", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "bad-speakers",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "/a.wav",
+        sourceName: "a.wav",
+        status: "done",
+        speakerEdits: { 0: 5, 1: "Ana" },
+        renames: { A: 1, B: "Bo" },
+        result: {
+          text: "hi there",
+          speakers: ["A", 7, "B"],
+          segments: [
+            { start: 0, end: 1, text: "hi", speaker: 5 },
+            { start: 1, end: 2, text: "there", speaker: "B" },
+          ],
+        },
+      },
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "obj-renames",
+        createdAt: "2026-01-02T03:04:06.000Z",
+        sourcePath: "/b.wav",
+        sourceName: "b.wav",
+        status: "done",
+        speakerEdits: ["Ana"],
+        renames: "Bo",
+        result: { text: "x", speakers: "A" },
+      },
+    ]);
+    await loadHistory(true);
+    const a = saved("bad-speakers");
+    expect(a.speakerEdits).toEqual({ 1: "Ana" });
+    expect(a.renames).toEqual({ B: "Bo" });
+    expect(a.result?.speakers).toEqual(["A", "B"]);
+    // The segment keeps its text and only loses the label; nothing was dropped, nothing moved.
+    expect(a.result?.segments?.map((s) => [s.text, s.speaker])).toEqual([["hi", undefined], ["there", "B"]]);
+    expect(recordText(a, 200)).toBe("hi there");
+    const b = saved("obj-renames");
+    expect(b.speakerEdits).toBeUndefined();
+    expect(b.renames).toBeUndefined();
+    expect(b.result?.speakers).toBeUndefined();
   });
 
   it("survives a rejected listing", async () => {

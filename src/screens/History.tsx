@@ -26,7 +26,7 @@ import { fmtDuration, fmtTimestamp } from "@/lib/format";
 import { seekKeyTarget } from "@/lib/seekKeys";
 import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
-  appChipLabel, appLabel, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks,
+  appChipLabel, appLabel, currentRecord, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks,
   useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
@@ -491,23 +491,26 @@ export default function History() {
       return;
     }
     if (!path) return;
+    // The dialog awaited: a retranslate chunk or edit may have landed meanwhile, so the
+    // file is built from the record's latest copy (the stem stays the one the path used).
+    const live = currentRecord(rec.id) ?? rec;
     try {
       // EVERY track the record has (not the viewer's visible pick — the export panel writes
       // that), in the viewer's order (a dragged order included), site tracks named from the
       // link. Inside the try: an
       // on-disk record is unvalidated, and a throw here must land in the row's export note
       // rather than escape the fire-and-forget `void quickExport(rec)` as a rejection.
-      const result = withTrackSites(recordEditedResult(rec), rec.sourcePath, extractor);
+      const result = withTrackSites(recordEditedResult(live), live.sourcePath, extractor);
       const all = transcriptTracks(result);
       const files = generateExports(result, exportOptionsFor({
         format,
-        speakers: speakerOrder(rec.result ?? { text: "" }),
-        renames: rec.renames ?? {},
-        colorPicks: rec.speakerColors ?? {},
+        speakers: speakerOrder(live.result ?? { text: "" }),
+        renames: live.renames ?? {},
+        colorPicks: live.speakerColors ?? {},
         // The viewer's display toggles (legacy speakerColorMode migration included).
         toggles: displayToggles(t),
         cues: cueOptionsOf(t),
-        tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(rec.exportTracks).order) : [],
+        tracks: all.length > 1 ? trackOrder(result, all, readTrackPrefs(live.exportTracks).order) : [],
       }));
       const written: string[] = [];
       if (files.length === 1) {

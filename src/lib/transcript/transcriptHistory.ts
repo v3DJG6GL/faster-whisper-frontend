@@ -145,12 +145,24 @@ function stringTargets(v: unknown): string[] | undefined {
   return Array.isArray(v) ? v.filter((t): t is string => typeof t === "string") : undefined;
 }
 
+/** Only the string entries of a correction/rename map read back from disk; `undefined` when it
+ *  is not a plain object. A number reaches the speaker-name sanitizer (`for..of`) and throws in
+ *  the render. Hands the same object back when it is already clean. */
+function stringMap<K extends string | number>(v: unknown): Record<K, string> | undefined {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return undefined;
+  const entries = Object.entries(v);
+  if (entries.every(([, x]) => typeof x === "string")) return v as Record<K, string>;
+  return Object.fromEntries(entries.filter(([, x]) => typeof x === "string")) as Record<K, string>;
+}
+
 /** Repair the fields a malformed file would crash the History render with, keeping the record:
  *  a non-string appId throws in the search and app chips (`.toLowerCase()` / `.split()`), a
  *  non-array target list in the route badge, the provenance line and the bug report's
  *  `options.translateTo` fallback (`.map` / `.join`), a non-string `translatedText` or
- *  `result.text` in the snippet sanitizer (`for..of`), and a damaged segment list or correction
- *  map in the snippet's per-segment `.trim()`. Every step composes on `out`. */
+ *  `result.text` in the snippet sanitizer (`for..of`), a damaged segment list or correction
+ *  map in the snippet's per-segment `.trim()`, and a non-string speaker name (segment label,
+ *  rename, speaker correction, legend list) in the viewer's speaker-name sanitizer. Every step
+ *  composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
   let out = r;
   const tt = (r.options as { translateTo?: unknown } | undefined)?.translateTo;
@@ -159,23 +171,45 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   }
   if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
   if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
-  const edits = r.edits as unknown;
-  if (edits != null) {
-    if (typeof edits !== "object" || Array.isArray(edits)) out = { ...out, edits: undefined };
-    else if (Object.values(edits).some((v) => typeof v !== "string")) {
-      out = { ...out, edits: Object.fromEntries(Object.entries(edits).filter(([, v]) => typeof v === "string")) };
-    }
+  // Before the segment step, so a remap below moves already-clean maps.
+  const edits = stringMap<number>(r.edits);
+  if (r.edits != null && edits !== r.edits) out = { ...out, edits };
+  const speakerEdits = stringMap<number>(r.speakerEdits);
+  if (r.speakerEdits != null && speakerEdits !== r.speakerEdits) out = { ...out, speakerEdits };
+  const renames = stringMap<string>(r.renames);
+  if (r.renames != null && renames !== r.renames) out = { ...out, renames };
+  const spk = out.result?.speakers as unknown;
+  if (out.result && spk != null && (!Array.isArray(spk) || spk.some((x) => typeof x !== "string"))) {
+    out = { ...out, result: { ...out.result, speakers: stringTargets(spk) } };
   }
   const segs = out.result?.segments as unknown;
   if (out.result && segs != null) {
-    if (!Array.isArray(segs)) out = { ...out, result: { ...out.result, segments: undefined } };
-    else {
+    if (!Array.isArray(segs)) {
+      // No segment left for an index-keyed correction to land on: the maps go with the list
+      // (the drop path below does the same when every slot is dropped).
+      out = {
+        ...out,
+        result: { ...out.result, segments: undefined },
+        edits: undefined,
+        speakerEdits: undefined,
+        translationsStale: undefined,
+      };
+    } else {
       // A bad entry (not an object, or no string text) is dropped, never kept as a blank: a
       // blank segment would export as an empty cue and read as untranslated forever. The
       // corrections are keyed by segment index, so they move with their segments and the
-      // dropped slots' keys go.
+      // dropped slots' keys go. A kept segment with a non-string speaker keeps its text and
+      // loses only the label.
       const ok = (s: unknown) => !!s && typeof s === "object" && typeof (s as { text?: unknown }).text === "string";
-      if (!segs.every(ok)) {
+      const badSpeaker = (s: unknown) => {
+        const sp = (s as { speaker?: unknown }).speaker;
+        return sp !== undefined && typeof sp !== "string";
+      };
+      const kept = () =>
+        segs.filter(ok).map((s) => (badSpeaker(s) ? { ...(s as object), speaker: undefined } : s)) as typeof out.result.segments;
+      if (segs.every(ok)) {
+        if (segs.some(badSpeaker)) out = { ...out, result: { ...out.result, segments: kept() } };
+      } else {
         const moved = new Map<number, number>();
         segs.forEach((s, i) => {
           if (ok(s)) moved.set(i, moved.size);
@@ -192,7 +226,7 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
             : undefined;
         out = {
           ...out,
-          result: { ...out.result, segments: segs.filter(ok) as typeof out.result.segments },
+          result: { ...out.result, segments: kept() },
           edits: remap(out.edits),
           speakerEdits: remap(out.speakerEdits),
           translationsStale: remap(out.translationsStale),
