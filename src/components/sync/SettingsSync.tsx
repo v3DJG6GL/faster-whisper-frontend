@@ -621,12 +621,14 @@ export function IncomingAddresses({ list }: { list: unknown }) {
 
 /** The restore offers' disclosure chips (Onboarding and the Backends restore offer): the
  *  categories a pulled blob carries, by display name. Migrated once per blob, not per category
- *  per render, so pre-split categories (chip, dictionary, recording/fileTranscriptions) show. */
+ *  per render, so pre-split categories (chip, dictionary, recording/fileTranscriptions) show.
+ *  "Present" is applyBlob's own arm test (a plain object), same as presentSel, so the chips
+ *  never name a category the restore skips (a `null`/scalar section migrateBlob passes on). */
 export function SyncedCategoryChips({ blob }: { blob: SyncBlob | null | undefined }) {
   const present = useMemo(() => {
     if (!blob) return [];
     const m = migrateBlob(blob);
-    return ALL_CATEGORIES.filter((c) => m[c] !== undefined);
+    return ALL_CATEGORIES.filter((c) => isPlainObject(m[c]));
   }, [blob]);
   return (
     <div className="mt-2.5 flex flex-wrap gap-1.5">
