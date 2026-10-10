@@ -1,8 +1,8 @@
 // Media export (audio / video / video + embedded subtitle tracks): the pure
 // half of the export panel's Media section. No Tauri imports — unit-tested
-// in plain node. The React side (TranscriptViewer) wires these to the
-// dialogs, the Tauri commands and the record. Also home to the one export
-// queue every viewer shares (bottom).
+// in plain node. The React side (components/transcribe/TranscriptExport)
+// wires these to the dialogs, the Tauri commands and the record. Also home
+// to the one export queue every viewer shares (bottom).
 
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptFormats";
@@ -124,6 +124,17 @@ export function embeddedSubtitleTracks(
       ? [{ lang: packageLang(t.lang), label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
       : [];
   });
+}
+
+/** The largest embedded SRT the packager takes, in UTF-8 bytes: mirrors src-tauri
+ *  `media::MAX_SRT_BYTES` and the server's subtitle_mux cap. */
+export const MAX_EMBED_SRT_BYTES = 2 * 1024 * 1024;
+
+/** The first track whose SRT is over the embed cap, or null — checked before the save
+ *  dialog, since the packager refuses the whole video for one oversized track. */
+export function oversizedEmbeddedTrack(tracks: readonly EmbeddedTrack[]): EmbeddedTrack | null {
+  const enc = new TextEncoder();
+  return tracks.find((t) => enc.encode(t.srt).length > MAX_EMBED_SRT_BYTES) ?? null;
 }
 
 /** The wire's legacy indices (servers before the per-track flags): the

@@ -37,7 +37,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, mediaExportPlan, mp4Disabled, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
+  legacyTrackIndices, linkServerAudioLive, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -674,6 +674,16 @@ export function TranscriptExport({
     setSaveError(null);
     setMediaError(null);
     setAudioSavedAs(null);
+    // The packager refuses the whole video for one subtitle track over its size cap: say
+    // which one before the dialog, not after the file name was picked and the video fetched.
+    if (plan.primary.kind === "video" && plan.embedded.length) {
+      const big = oversizedEmbeddedTrack(embeddedSubtitleTracks(liveResult(started), exportOptions, plan.embedded, trackNames));
+      if (big) {
+        setSaveError(`The "${safeDisplayText(big.label || big.lang, 60)}" subtitle track is too large to put ` +
+          "inside a video (over 2 MB) — leave it out or save the subtitles as files.");
+        return;
+      }
+    }
     let target: string | null;
     try {
       target = await pickExportPath(

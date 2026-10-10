@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
-  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, mediaExportPlan, queueMediaExport, queuedExportFor, revealAfterSaveOn,
+  isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
@@ -132,6 +132,22 @@ describe("embeddedSubtitleTracks", () => {
     expect(tracks.map((t) => t.lang)).toEqual(["de", "zh", "en"]);
     expect(packageLang("pt-BR")).toBe("pt-BR");
     expect(packageLang("!!")).toBe("und");
+  });
+});
+
+describe("oversizedEmbeddedTrack", () => {
+  const track = (label: string, srt: string) =>
+    ({ lang: "de", label, srt, original: false, default: false, hearingImpaired: false });
+  it("names the first track over the packager's cap, counted in UTF-8 bytes", () => {
+    const atCap = track("At cap", "a".repeat(MAX_EMBED_SRT_BYTES));
+    const over = track("Over", "a".repeat(MAX_EMBED_SRT_BYTES + 1));
+    // 3 bytes per char: under the cap in UTF-16 units, over it in UTF-8 bytes.
+    const wide = track("Wide", "語".repeat(Math.floor(MAX_EMBED_SRT_BYTES / 3) + 1));
+    expect(wide.srt.length).toBeLessThan(MAX_EMBED_SRT_BYTES);
+    expect(oversizedEmbeddedTrack([atCap])).toBeNull();
+    expect(oversizedEmbeddedTrack([])).toBeNull();
+    expect(oversizedEmbeddedTrack([atCap, over, wide])?.label).toBe("Over");
+    expect(oversizedEmbeddedTrack([atCap, wide])?.label).toBe("Wide");
   });
 });
 
