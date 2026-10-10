@@ -61,7 +61,7 @@ import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 import { TranscriptExport } from "@/components/transcribe/TranscriptExport";
 import { SubtitleList, TIME_ANCHOR_ID } from "@/components/transcribe/SubtitleList";
-import { cueOptionsOf, limitsFor, limitsTitle, trText } from "@/lib/transcript/cueSplit";
+import { cueOptionsOf, limitsTitle, trackLimits, trText } from "@/lib/transcript/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
@@ -733,7 +733,8 @@ export function TranscriptViewer({
             {
               model: prov.model,
               targets,
-              source: prov.source ?? translateSourceCode(result.language) ?? undefined,
+              // `||`: an auto-detect answer's empty source falls back too.
+              source: prov.source || translateSourceCode(result.language) || undefined,
               mode,
             },
             kept,
@@ -1597,7 +1598,7 @@ export function TranscriptViewer({
   /** The Subtitles option's tooltip: the limits the cues follow. */
   const subtitlesTitle = (() => {
     if (!cueOpts) return "As transcribed: one subtitle per segment";
-    const l = limitsFor(cueOpts, result.language);
+    const l = trackLimits(result, cueOpts, "orig")!;
     return `${limitsTitle(l)} · ${cueOpts.timing === "own" ? "own timing per language" : "same timing for every language"}`;
   })();
 

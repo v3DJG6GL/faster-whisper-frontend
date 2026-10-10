@@ -1019,6 +1019,8 @@ function awaitRunUrlVideo(
     fetchRunUrlVideo(rec, ctx, mediaId);
   };
   let requestSettled = !request;
+  // The on-demand request failed: its 'failed' row stands, no poll repaints it.
+  let ended = false;
   let inFlight = false;
   // An unreachable server backs the poll off (2, 4, … up to 30 s between
   // tries) instead of failing once a second until the deadline; a short
@@ -1045,7 +1047,7 @@ function awaitRunUrlVideo(
       .then((p) => {
         failures = 0;
         // The request's answer landed while this poll was out: it must not repaint the row.
-        if (pulled) return;
+        if (pulled || ended) return;
         // The epoch stays the same across the files of one run: only the link
         // the rail is showing may take this video's progress — and a same-path retry is a
         // different file on the rail (`railFileSeq`).
@@ -1065,12 +1067,17 @@ function awaitRunUrlVideo(
         }
         const video = p.video;
         if (video && painting) {
-          set((s) => ({
-            stageMeta: {
-              ...s.stageMeta,
-              downloading: foldVideo(s.stageMeta.downloading, video, Date.now()),
-            },
-          }));
+          set((s) => {
+            // The request's own failure is on the row (Try again resets it to "queued"
+            // before this poll starts): the handler, a microtask behind, ends the poll.
+            if (request && s.stageMeta.downloading?.video?.state === "failed") return s;
+            return {
+              stageMeta: {
+                ...s.stageMeta,
+                downloading: foldVideo(s.stageMeta.downloading, video, Date.now()),
+              },
+            };
+          });
         }
         const st = p.video?.state;
         if (videoTerminal(st)) {
@@ -1084,19 +1091,28 @@ function awaitRunUrlVideo(
       })
       .finally(() => { inFlight = false; });
   }, 1000);
-  // A failed request (null) already marked the Video row: the poll then ends as before.
+  // A failed request (null) already marked the Video row failed: the poll ends with it
+  // (Try again recovers).
   void request?.then((dl) => {
     requestSettled = true;
-    if (!dl || pulled) return;
+    if (pulled) return;
     window.clearInterval(timer);
+    if (!dl) {
+      ended = true;
+      return;
+    }
     if (!registeredIds.has(rec.id)) return;
     if (epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath) {
+      const prev = get().stageMeta.downloading?.video;
+      // The answer's own height/container: a short fetch no poll saw still names its format.
       const video: VideoProgress = {
-        ...get().stageMeta.downloading?.video,
+        ...prev,
         state: "done",
         mediaId: dl.mediaId,
         expiresAt: dl.expiresAt,
         bytes: dl.bytes,
+        height: dl.height ?? prev?.height,
+        container: dl.container ?? prev?.container,
         error: null,
       };
       set((s) => ({
@@ -1341,7 +1357,8 @@ export function mergeSegmentTranslations(
       translation: {
         ...rec.result.translation,
         model: provenance?.model ?? rec.result.translation?.model,
-        source: provenance?.source ?? rec.result.translation?.source ?? translateSourceCode(rec.result.language) ?? undefined,
+        // `||`: an auto-detect answer's empty source never overwrites a known one.
+        source: provenance?.source || rec.result.translation?.source || translateSourceCode(rec.result.language) || undefined,
         mode: provenance?.mode ?? rec.result.translation?.mode,
         targets,
       },
@@ -1768,7 +1785,8 @@ export async function translateParsed(
     for (let k = 0; k < r.results.length; k++) keptAll.push(r.kept?.[k] ?? []);
     if (r.warnings?.length) for (const w of r.warnings) if (!warnings.includes(w)) warnings.push(w);
     model = model ?? r.model;
-    source = source ?? r.source;
+    // An auto-detect answer names no source (""): it never becomes the parsed language.
+    source = source || r.source || undefined;
     // The last chunk's receipt stands for the run (each chunk is its own
     // one-stage plan on the server).
     if (r.plan?.length) plan = r.plan;

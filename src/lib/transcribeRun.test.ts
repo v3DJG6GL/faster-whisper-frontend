@@ -634,6 +634,24 @@ describe("mergeSegmentTranslations kept-original marks", () => {
   });
 });
 
+describe("mergeSegmentTranslations keeps a known translation source", () => {
+  it("an auto-detect answer's empty source never overwrites the record's code", async () => {
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    openHistoryRecord({
+      schemaVersion: 1, kind: "file", id: "src-1", createdAt: "2026-10-11T12:00:00Z",
+      sourcePath: "/s.json", sourceName: "s.json", status: "done",
+      result: {
+        text: "a", language: "english",
+        segments: [{ start: 0, end: 1, text: "a" }],
+        translation: { source: "en", targets: ["de"] },
+      },
+    });
+    mergeSegmentTranslations("src-1", { 0: { de: "A" } }, { targets: ["de"], source: "" });
+    const saved = useTranscriptHistory.getState().records.find((r) => r.id === "src-1")!;
+    expect(saved.result!.translation?.source).toBe("en");
+  });
+});
+
 describe("mergeSegmentTranslations respects the OPEN record", () => {
   it("a background merge of record A never repaints the open record B of the same source", async () => {
     const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
@@ -1277,6 +1295,18 @@ describe("an on-demand video that finishes is pulled once", () => {
     expect(cleared).toBe(1);
   });
 
+  it("a request that answers before any poll names the video's format on the row", async () => {
+    let answer: (d: typeof dl) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
+    retryRunVideo(url, ctx);
+    answer(dl);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    const video = useTranscribeRun.getState().stageMeta.downloading?.video;
+    expect(video?.state).toBe("done");
+    expect(video?.container).toBe("mp4");
+    expect(video?.height).toBe(720);
+  });
+
   it("a poll that sees done first pulls it, and the request's answer does not pull it again", async () => {
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "downloading", video: { state: "done", mediaId: "v1" },
@@ -1292,6 +1322,81 @@ describe("an on-demand video that finishes is pulled once", () => {
   });
 });
 
+describe("an on-demand video whose request fails stays failed", () => {
+  // The request's catch paints the row failed; a poll still out (or a later one while the
+  // server keeps downloading) must not fold "downloading" back over it and hide Try again.
+  const url = "https://youtu.be/ondemand-fail";
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  let tick: (() => void) | null = null;
+  let cleared = 0;
+  beforeEach(() => {
+    tick = null;
+    cleared = 0;
+    vi.stubGlobal("window", {
+      setInterval: (fn: () => void) => { tick = fn; return 1; },
+      // A cleared timer never fires again.
+      clearInterval: () => { cleared += 1; tick = null; },
+    });
+    fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/rec-odf.mp4"));
+    openHistoryRecord({
+      schemaVersion: 1, kind: "url", id: "rec-odf", createdAt: "2026-10-05T12:00:00Z",
+      sourcePath: url, sourceName: "Talk", status: "done",
+    });
+    useTranscribeRun.setState({ lastRunPath: url,
+      stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+  });
+  afterEach(() => {
+    getTranscribeProgress.mockReset();
+    fetchUrlVideoOnDemand.mockReset();
+    fetchUrlVideo.mockReset();
+    vi.unstubAllGlobals();
+    useTranscribeRun.setState({ stageMeta: {} });
+  });
+
+  it("a poll answering 'downloading' after the request failed does not repaint the row", async () => {
+    let poll: (p: import("./types").BatchProgress) => void = () => {};
+    getTranscribeProgress.mockImplementation(() => new Promise((r) => { poll = r; }));
+    let fail: (e: unknown) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((_r, j) => { fail = j; }));
+    retryRunVideo(url, ctx);
+    tick!();
+    expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+    fail(new Error("boom"));
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    poll({ stage: "downloading", video: { state: "downloading", progress: 0.4 } } as import("./types").BatchProgress);
+    await flush(); await flush();
+    const video = useTranscribeRun.getState().stageMeta.downloading?.video;
+    expect(video?.state).toBe("failed");
+    expect(video?.error).toContain("boom");
+    expect(fetchUrlVideo).not.toHaveBeenCalled();
+  });
+
+  it("the poll ends with the failed request, and Try again starts a fresh one", async () => {
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({
+      stage: "downloading", video: { state: "downloading", progress: 0.4 },
+    } as import("./types").BatchProgress));
+    fetchUrlVideoOnDemand.mockImplementation(() => Promise.reject(new Error("boom")));
+    retryRunVideo(url, ctx);
+    await flush(); await flush();
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed");
+    expect(cleared).toBe(1);
+    // No timer left to tick: no further polls.
+    tick?.(); await flush();
+    expect(getTranscribeProgress).not.toHaveBeenCalled();
+    // Try again: the row is queued afresh and its own poll paints it.
+    let answer: (d: import("./api").UrlMediaDownload) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
+    retryRunVideo(url, ctx);
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
+    tick!(); await flush();
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
+    answer({ mediaId: "v2", expiresAt: null, height: null, container: null, bytes: null });
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
+  });
+});
+
 describe("a pending video's poll slows down once its link is off screen", () => {
   it("polls every second while painting, every fifth tick once another link is shown", async () => {
     let tick: (() => void) | null = null;
@@ -1299,6 +1404,8 @@ describe("a pending video's poll slows down once its link is off screen", () => 
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
     } as import("./types").BatchProgress));
+    // The on-demand request is still out (a failed one ends the poll).
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/cadence";
     const flush = () => new Promise((r) => setTimeout(r, 0));
     try {
@@ -1329,6 +1436,7 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       expect(getTranscribeProgress).toHaveBeenCalledTimes(8);
     } finally {
       getTranscribeProgress.mockReset();
+      fetchUrlVideoOnDemand.mockReset();
       vi.unstubAllGlobals();
       useTranscribeRun.setState({ stageMeta: {} });
     }
@@ -1347,6 +1455,8 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
         ? { stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 } }
         : { stage: "waiting", progress: 0 }) as import("./types").BatchProgress);
     });
+    // The first watcher's on-demand request is still out (a failed one ends its poll).
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
     const url = "https://youtu.be/retry";
     const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
     const flush = () => new Promise((r) => setTimeout(r, 0));
@@ -1359,7 +1469,7 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
         stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
       retryRunVideo(url, ctx);
       const watcher = ticks[0];
-      // Outside Tauri the on-demand request fails at once; let that land, then the watcher paints.
+      // The retry queued the row; clear it, then the watcher paints.
       await flush();
       useTranscribeRun.setState({ stageMeta: {} });
       watcher();
@@ -1375,6 +1485,7 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
       expect(useTranscribeRun.getState().stageMeta.downloading?.video).toBeUndefined();
     } finally {
       getTranscribeProgress.mockReset();
+      fetchUrlVideoOnDemand.mockReset();
       vi.unstubAllGlobals();
       useTranscribeRun.setState({ stageMeta: {} });
     }
