@@ -824,9 +824,10 @@ export function TranscriptViewer({
         // A blank original beside a translation keeps its bare timed slot, as
         // the TXT export does: a stamped, untagged translation line would read
         // as the spoken original.
+        // With originals shown a translation is always indented, so one under a
+        // blank original never reads as spoken text when timestamps are off.
         if (origVisible && !body && ts && trLines.length) lines.push(ts.trimEnd());
-        const indent = origVisible && lines.length;
-        for (const l of trLines) lines.push(`${indent ? "  " : ts}${l}`);
+        for (const l of trLines) lines.push(`${origVisible ? "  " : ts}${l}`);
         return lines.join("\n");
       })
       .filter(Boolean)
