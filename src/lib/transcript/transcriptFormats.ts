@@ -265,11 +265,15 @@ function cueLines(
   seg: TranscriptSegment,
   orig: string,
   mt: (text: string, seg: TranscriptSegment, lang: string) => string,
+  keepBlankOrig = false,
 ): string[] {
   // A blank original beside a translation would be an empty payload line, which ends an
   // SRT/VTT cue and orphans the translation under it: drop it then. An original-only cue
-  // keeps its (deliberately) empty line.
-  const dropOrig = !clean(seg.text) && ctx.lineTracks.some((l) => l !== "orig" && trOf(seg, l) !== null);
+  // keeps its (deliberately) empty line. TXT has no cue to end (`keepBlankOrig`): there the
+  // blank keeps its timed slot, so the translation indents under it instead of reading as
+  // the original.
+  const dropOrig = !keepBlankOrig && !clean(seg.text)
+    && ctx.lineTracks.some((l) => l !== "orig" && trOf(seg, l) !== null);
   return ctx.lineTracks.flatMap((lang) => {
     if (lang === "orig") return dropOrig ? [] : [orig];
     const t = trOf(seg, lang);
@@ -331,11 +335,14 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
         .flatMap((seg) => {
           const prefix = namePrefix(ctx, seg.speaker);
           const time = `[${txtTime(seg.start)}] `;
+          // A blank original keeps its slot but no bare "Name: ".
+          const o = clean(seg.text);
           return cueLines(
             ctx,
             seg,
-            `${prefix}${clean(seg.text)}`,
+            `${o ? prefix : ""}${o}`,
             (t, _s, lang) => `${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
+            true,
           ).map((line, i) => (i && ctx.origIncluded ? "        " : time) + line);
         })
         .join("\n") + "\n"
@@ -420,7 +427,8 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
  *  speaker (and their color) is language-independent, so a translations-only
  *  export keeps the same names/colors the original would carry. */
 function srtStyled(ctx: Ctx, seg: TranscriptSegment, text: string): string {
-  if (!seg.speaker || !ctx.hasSpeakers) return text;
+  // An empty line stays empty: a bare "Name: " re-imports as a phantom "Name:" segment.
+  if (!text || !seg.speaker || !ctx.hasSpeakers) return text;
   const mode = ctx.opts.speakerColors ?? "off";
   if (mode === "off") {
     return ctx.names ? `${nameOf(ctx, seg.speaker)}: ${text}` : text;
@@ -505,7 +513,7 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
   (result.segments ?? []).forEach((seg) => {
     /** An escaped line in the original's speaker markup (the original and site tracks). */
     const plain = (text: string): string => {
-      if (!seg.speaker || !ctx.hasSpeakers) return text;
+      if (!text || !seg.speaker || !ctx.hasSpeakers) return text; // no bare name on a blank line
       const cls = `spk${Math.max(0, ctx.order.indexOf(seg.speaker)) + 1}`;
       if (!ctx.names) return mode === "off" ? text : `<c.${cls}>${text}</c>`;
       const name = vttEscape(nameOf(ctx, seg.speaker));
@@ -594,7 +602,8 @@ function lrcExport(result: BatchResult, ctx: Ctx, track: string = "orig"): strin
         continue;
       }
     }
-    out.push(`[${lrcTime(seg.start)}]${prefix}${clean(seg.text)}`);
+    const t = clean(seg.text);
+    out.push(`[${lrcTime(seg.start)}]${t ? prefix : ""}${t}`);
   }
   return out.join("\n") + "\n";
 }

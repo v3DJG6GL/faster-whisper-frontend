@@ -128,9 +128,33 @@ describe("srt", () => {
     expect(srt).toBe("1\n00:00:01,000 --> 00:00:02,000\nLeer\n");
     expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["Leer"]);
     expect(generateExport(blank, { ...opts, format: "vtt" })).toContain("00:00:01.000 --> 00:00:02.000\n<c.mt>Leer</c>\n");
-    expect(generateExport(blank, { ...opts, format: "txt", timestamps: true })).toBe("[00:01] Leer\n");
+    // TXT has no cue to end: the blank keeps its timed slot and the translation indents under
+    // it, rather than taking the original's time and place.
+    expect(generateExport(blank, { ...opts, format: "txt", timestamps: true })).toBe("[00:01] \n        Leer\n");
     // Original-only keeps its (empty) cue.
     expect(generateExport(blank, { format: "srt" })).toBe("1\n00:00:01,000 --> 00:00:02,000\n\n");
+  });
+  it("a blank speaker segment keeps its line but writes no bare name onto it", () => {
+    const blank: BatchResult = {
+      text: "",
+      speakers: ["SPEAKER_01"],
+      segments: [{ start: 1, end: 2, text: "", speaker: "SPEAKER_01" }],
+    };
+    const empty = "1\n00:00:01,000 --> 00:00:02,000\n\n";
+    expect(generateExport(blank, { format: "srt" })).toBe(empty);
+    expect(generateExport(blank, { format: "srt", speakerColors: "name" })).toBe(empty);
+    expect(generateExport(blank, { format: "srt", speakerColors: "line" })).toBe(empty);
+    expect(generateExport(blank, { format: "vtt" })).toContain("00:00:01.000 --> 00:00:02.000\n\n");
+    expect(generateExport(blank, { format: "vtt", speakerColors: "name" })).toContain("00:00:01.000 --> 00:00:02.000\n\n");
+    expect(generateExport(blank, { format: "lrc" })).toBe("[00:01.00]\n");
+    expect(generateExport(blank, { format: "txt", timestamps: true })).toBe("[00:01] \n");
+    // Re-imported, the blank cue is no phantom "Speaker 2:" line.
+    const two: BatchResult = {
+      ...blank,
+      segments: [...blank.segments!, { start: 3, end: 4, text: "Hi", speaker: "SPEAKER_01" }],
+    };
+    expect(parseImportedText("srt", generateExport(two, { format: "srt" })).segments.map((s) => s.text))
+      .toEqual(["Hi"]);
   });
 });
 
