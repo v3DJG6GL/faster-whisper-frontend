@@ -8,7 +8,7 @@ import { SETTING } from "@/lib/settingsManifest";
 import { LOG_RETENTION_OPTIONS, withCurrentDay } from "@/lib/retentionOptions";
 
 /** Settings → General → Logging: the in-app log viewer's knobs. Level changes
- *  apply live (the Rust filter reloads on config save); `RUST_LOG` overrides
+ *  apply live (the Rust filter reloads on config save); a valid `RUST_LOG` overrides
  *  the level control when set at launch. */
 export function LoggingSection() {
   const logging = useApp((s) => s.settings.logging);
@@ -32,7 +32,7 @@ export function LoggingSection() {
       <SectionLabel className="mb-1 mt-4">Logging</SectionLabel>
       <SettingRow
         title={SETTING.logLevel.label}
-        desc="How much detail is captured — lower levels aren’t recorded at all. Debug helps when reporting a problem; Info is right for every day. A RUST_LOG environment variable overrides this."
+        desc="How much detail is captured — lower levels aren’t recorded at all. Debug helps when reporting a problem; Info is right for every day. A valid RUST_LOG environment variable overrides this."
       >
         <Segmented
           value={logging?.logLevel ?? "info"}

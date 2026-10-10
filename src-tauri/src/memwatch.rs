@@ -56,7 +56,6 @@ mod imp {
     /// no longer say which window is which.
     const LABELS: [&str; 4] = ["main", "overlay", "quickadd", "langpick"];
 
-    #[derive(Default)]
     struct Seen {
         peak_mb: u64,
         warned: bool,

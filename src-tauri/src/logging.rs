@@ -219,12 +219,18 @@ static ENV_OVERRIDE: OnceLock<bool> = OnceLock::new();
 pub fn init(ring: LogRing, writer: SwapWriter) {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-    // Only a RUST_LOG that parses overrides the Settings level: a mistyped one falls back to
-    // Info, and the setting must stay live rather than leave the log at a level nobody chose.
-    let env = tracing_subscriber::EnvFilter::try_from_default_env();
-    let _ = ENV_OVERRIDE.set(env.is_ok());
-    let filter0 =
-        env.unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(level_directive(LogLevel::Info)));
+    // Only a non-blank RUST_LOG that parses overrides the Settings level: a blank one counts as
+    // unset (it would parse to an enable-nothing filter), a mistyped one falls back to Info with a
+    // warning, and the setting must stay live rather than leave the log at a level nobody chose.
+    let raw = std::env::var("RUST_LOG").ok();
+    let env = env_override(raw.as_deref());
+    let _ = ENV_OVERRIDE.set(matches!(env, Some(Ok(_))));
+    let info = || tracing_subscriber::EnvFilter::new(level_directive(LogLevel::Info));
+    let (filter0, rejected) = match env {
+        Some(Ok(f)) => (f, None),
+        Some(Err(e)) => (info(), Some(e)),
+        None => (info(), None),
+    };
     let (filter, handle) = tracing_subscriber::reload::Layer::new(filter0);
     let _ = RELOAD.set(handle);
     tracing_subscriber::registry()
@@ -238,6 +244,22 @@ pub fn init(ring: LogRing, writer: SwapWriter) {
                 .with_writer(writer),
         )
         .init();
+    if let Some(e) = rejected {
+        tracing::warn!(
+            "[logging] RUST_LOG {:?} is not a valid filter ({e}); using the Settings log level",
+            raw.unwrap_or_default()
+        );
+    }
+}
+
+/// The launch filter `RUST_LOG` asks for: `None` when it is unset or blank (every
+/// comma piece empty), else whether it parses — one bad directive rejects it all.
+fn env_override(raw: Option<&str>) -> Option<Result<tracing_subscriber::EnvFilter, String>> {
+    let raw = raw?;
+    if raw.split(',').all(|p| p.trim().is_empty()) {
+        return None;
+    }
+    Some(tracing_subscriber::EnvFilter::try_new(raw).map_err(|e| e.to_string()))
 }
 
 /// Live level swap from the Settings control. `RUST_LOG` keeps priority: when
@@ -560,11 +582,25 @@ mod tests {
             level_directive(LogLevel::Debug),
             "faster_whisper_frontend_lib=debug,info"
         );
-        // The launch filter (no RUST_LOG) is the Info directive.
+        // The launch filter (no valid RUST_LOG) is the Info directive.
         assert_eq!(
             level_directive(LogLevel::Info),
             "faster_whisper_frontend_lib=info,info"
         );
+    }
+
+    #[test]
+    fn only_a_non_blank_rust_log_that_parses_overrides_the_level() {
+        // Unset or blank: no override (a blank one would parse to an enable-nothing filter).
+        for raw in [None, Some(""), Some(","), Some(" , ")] {
+            assert!(env_override(raw).is_none(), "{raw:?}");
+        }
+        assert!(matches!(env_override(Some("debug")), Some(Ok(_))));
+        // A mistyped level is rejected (and warned about), not silently dropped.
+        assert!(matches!(
+            env_override(Some("faster_whisper_frontend_lib=verbose")),
+            Some(Err(_))
+        ));
     }
 
     #[test]
