@@ -225,7 +225,8 @@ export default function QuickAdd() {
       const rules = ruleListOf(res);
       const rule = rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
       if (!rule) {
-        setFetchErr({ ok: false, status: 404, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
+        // status -2: a LOCAL sentinel (like -1) — a real server 404 means the rules endpoint itself is missing.
+        setFetchErr({ ok: false, status: -2, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
         setPhase("error");
         return;
       }
@@ -741,14 +742,16 @@ function errTitle(f: PipelineFetch | null): string {
       return "This server needs a valid API key";
     case 403:
       return "Your account can't edit this list";
-    case 404:
+    case -2:
       return "List unavailable";
+    case 404:
+      return "This server doesn't support editable rules";
     default:
       return `Server error (HTTP ${f?.status ?? "?"})`;
   }
 }
 function errBody(f: PipelineFetch | null): string {
-  // Mirrors Dictionary's describeFetchError: fixed 401/403 hints (the Rust side always fills `error` on a
+  // Mirrors Dictionary's describeFetchError: fixed 401/403/404 hints (the Rust side always fills `error` on a
   // non-2xx, so checking it first would hide them), otherwise the trimmed server text — a whitespace-only
   // proxy body falls through to the generic hint.
   switch (f?.status) {
@@ -756,6 +759,8 @@ function errBody(f: PipelineFetch | null): string {
       return "Set or fix the API key for this Backend on the Backends screen.";
     case 403:
       return "Ask an admin to grant your key access to the rules editor.";
+    case 404:
+      return "It's a standard Whisper server or an older faster-whisper-backend — update the server to use Quick-Add.";
     default:
       return f?.error?.trim() || "Check the server and the pinned list, then retry.";
   }
