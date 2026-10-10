@@ -179,10 +179,16 @@ export function parseLadderInput(
 ): number | string | undefined | null {
   const t = raw.trim();
   if (!t) return undefined;
-  // Foreign characters (anything but digits, dots, commas, spaces) may only shrink: fresh input
-  // refuses every one, while a stored or synced "1e-7" can still be edited down.
-  const odd = (s: string) => s.replace(/[0-9., ]/g, "").length;
-  if (odd(raw) > odd(prev)) return null;
+  // Foreign characters (anything but digits, dots, commas, spaces) may only be deleted: fresh
+  // input refuses every one, while a stored or synced "1e-7" can still be edited down — but
+  // never swap one for another ("1e-7" → "1x7"), so the new ones must be a subsequence of the old.
+  const odd = (s: string) => s.replace(/[0-9., ]/g, "");
+  const was = odd(prev);
+  let at = 0;
+  for (const ch of odd(raw)) {
+    at = was.indexOf(ch, at) + 1;
+    if (at === 0) return null;
+  }
   const spec = keySpec("temperature");
   const max = spec.max ?? Infinity;
   const parts = raw.split(",");

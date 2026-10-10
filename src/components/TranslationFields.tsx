@@ -254,6 +254,10 @@ export function TranslationDefaultsEditor({
     ? `Always Faithful while “Type as I speak” is on — a live phrase is translated on its own, and Fluent merges sentences across it, which can drop the opening clause. ${v.mode ? `Set to ${v.mode}; applies` : "Applies"} when this profile inserts on stop.`
     : undefined;
 
+  // The header reads the list the chips show (wireCodes): an override whose every entry the
+  // wire refuses translates into nothing, so it must say so instead of an overridden blank row.
+  const shownTargets = v.translateTo === undefined ? undefined : wireCodes(v.translateTo);
+
   return (
     <div>
       <OverrideHeader
@@ -261,14 +265,14 @@ export function TranslationDefaultsEditor({
         desc={envDesc("TRANSLATE_TO")}
         overridden={v.translateTo !== undefined}
         onClear={() => patch({ translateTo: [] })}
-        canClear={v.translateTo?.length !== 0}
+        canClear={shownTargets?.length !== 0}
         clearTitle="Override with none (translate into nothing, ignoring the inherited targets)"
         onReset={() => patch({ translateTo: undefined })}
         note={
           // An empty chip row cannot tell "none set" from "explicitly none" on its own, and the
           // two resolve differently — so while the row IS empty it names which one it is.
-          !v.translateTo?.length
-            ? v.translateTo === undefined
+          !shownTargets?.length
+            ? shownTargets === undefined
               ? inheritLabel(inherited.targets)
               : "Empty · no translation"
             : undefined

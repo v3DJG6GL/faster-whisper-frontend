@@ -776,7 +776,7 @@ export default function Transcribe() {
   useEffect(() => () => {
     const cap = releaseCap.current;
     if (!panelHeldChips.current || cap === null) return;
-    const cur = useApp.getState().settings.transcribe?.translateTo ?? [];
+    const cur = wireCodes(useApp.getState().settings.transcribe?.translateTo);
     const keep = Math.max(cap, panelBase.current);
     if (cur.length > keep) persistOptions({ translateTo: cur.slice(0, keep) });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- unmount only; reads refs and the store

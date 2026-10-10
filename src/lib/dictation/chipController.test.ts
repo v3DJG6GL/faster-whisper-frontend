@@ -44,6 +44,11 @@ describe("configuredRouteTargets", () => {
     expect(configuredRouteTargets({}, {})).toBeUndefined();
     expect(configuredRouteTargets(null, undefined)).toBeUndefined();
   });
+  it("previews only the codes the session sends", () => {
+    // A synced code the wire refuses is never sent, so no readout may promise it.
+    expect(configuredRouteTargets({ translationOverrides: { translateTo: ["de_CH", " fr "] } }, backend)).toEqual(["fr"]);
+    expect(configuredRouteTargets({ translationOverrides: { translateTo: ["de_CH"] } }, backend)).toEqual([]);
+  });
 });
 
 describe("chipRouteTargets", () => {

@@ -1640,7 +1640,8 @@ function capTargets(targets: string[], backendId: string): string[] {
  *  the targets change. An EMPTY list is a real answer ("insert the original only") and
  *  clears translation for the session, which is why it isn't treated as "no opinion". */
 function applySessionTargets(targets: string[]): void {
-  const raw = targets.map((t) => t.trim()).filter(Boolean);
+  // The wire-valid codes only (as startLiveInner): a refused one must not take a capped slot.
+  const raw = wireCodes(targets);
   const backendId = sessionTranslation?.backendId ?? sessionTranslationBase?.backendId;
   const clean = backendId ? capTargets(raw, backendId) : raw;
   if (clean.length === 0) {

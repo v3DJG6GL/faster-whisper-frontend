@@ -18,6 +18,7 @@ import { effectiveLanguage } from "../backends";
 import { isActiveDictation, sessionNoteHoldMs } from "./dictationVisual";
 import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
 import { DEFAULT_SETTINGS } from "../defaults";
+import { wireCodes } from "../translationTargets";
 
 const REC_DEFAULTS = DEFAULT_SETTINGS.recording;
 
@@ -52,12 +53,15 @@ export function chipRouteTargets(
 /** The CONFIGURED route targets for a profile: the Backend's translation defaults with the
  *  Profile's overrides spread on top — the same per-field merge the session freezes
  *  (streaming.ts trOv). Every readout of the route (chip, Home, the Profiles row) goes
- *  through this, or an inheriting profile reads as "no translation" while it translates. */
+ *  through this, or an inheriting profile reads as "no translation" while it translates.
+ *  Only the wire-valid codes (wireCodes, what the session sends): a synced "de_CH" must not
+ *  preview a route the session drops; a list of only refused codes reads as none. */
 export function configuredRouteTargets(
   profile?: { translationOverrides?: { translateTo?: string[] } } | null,
   backend?: { translationOverrides?: { translateTo?: string[] } } | null,
 ): string[] | undefined {
-  return { ...backend?.translationOverrides, ...profile?.translationOverrides }.translateTo;
+  const list = { ...backend?.translationOverrides, ...profile?.translationOverrides }.translateTo;
+  return list === undefined ? undefined : wireCodes(list);
 }
 
 /** How many targets `chipRouteTargets` left out. A route is a promise about what will be

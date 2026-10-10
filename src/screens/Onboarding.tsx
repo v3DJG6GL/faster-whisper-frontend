@@ -161,7 +161,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           setStep("restore");
           return;
         }
-        setStartersIntro(p.ok ? "empty" : "none");
+        // "Nothing synced yet" only when there is no copy at all: one this version cannot
+        // restore from (`{}`, or only newer categories) is still a synced copy.
+        setStartersIntro(p.ok && !p.state?.blob ? "empty" : "none");
       } else {
         setStartersIntro("none");
       }

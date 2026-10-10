@@ -266,8 +266,9 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
       out = { ...out, result: { ...out.result, timedTracks: undefined } };
     } else {
       // A track with no string id/lang or no cue list is dropped whole; a kept track keeps only
-      // its cues with string text and finite times. A clean track (and list) is handed back as
-      // the same object.
+      // its cues with string text and finite times and loses a non-string label/site (the JSON
+      // export iterates them), and one the repair empties of cues goes (the app never stores a
+      // cue-less track). A clean track (and list) is handed back as the same object.
       const okCue = (c: unknown) => {
         const q = c as { start?: unknown; end?: unknown; text?: unknown };
         return (
@@ -281,9 +282,20 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
         return !!k && typeof k === "object" && typeof k.id === "string" && typeof k.lang === "string" && Array.isArray(k.cues);
       };
       const cuesOf = (t: unknown) => (t as { cues: unknown[] }).cues;
-      const fixTrack = (t: unknown) => (cuesOf(t).every(okCue) ? t : { ...(t as object), cues: cuesOf(t).filter(okCue) });
-      if (!tts.every(okTrack) || tts.some((t) => !cuesOf(t).every(okCue))) {
-        const timedTracks = tts.filter(okTrack).map(fixTrack) as typeof out.result.timedTracks;
+      const str = (v: unknown) => v == null || typeof v === "string";
+      const cleanTrack = (t: unknown) => {
+        const k = t as { label?: unknown; site?: unknown };
+        return cuesOf(t).every(okCue) && str(k.label) && str(k.site);
+      };
+      const fixTrack = (t: unknown): unknown[] => {
+        if (cleanTrack(t)) return [t];
+        const k = t as { label?: unknown; site?: unknown };
+        const cues = cuesOf(t).filter(okCue);
+        if (!cues.length && cuesOf(t).length) return [];
+        return [{ ...(t as object), cues, label: str(k.label) ? k.label : undefined, site: str(k.site) ? k.site : undefined }];
+      };
+      if (!tts.every(okTrack) || !tts.every(cleanTrack)) {
+        const timedTracks = tts.filter(okTrack).flatMap(fixTrack) as typeof out.result.timedTracks;
         out = { ...out, result: { ...out.result, timedTracks } };
       }
     }

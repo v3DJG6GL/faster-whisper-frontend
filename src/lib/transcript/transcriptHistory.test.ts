@@ -465,6 +465,8 @@ describe("loadHistory", () => {
             "junk",
             { ...track("t-noid", []), id: 7 },
             track("t-bad", [cue("keep"), cue(3), cue("nan", Number.NaN, 1), null, cue("also", 2, 3)]),
+            track("t-emptied", [cue(3), null]),
+            { ...track("t-label", [cue("x")]), label: 5, site: {} },
           ],
         },
       },
@@ -475,8 +477,12 @@ describe("loadHistory", () => {
     expect(o.result?.timedTracks).toBeUndefined();
     expect(o.result?.text).toBe("a");
     const m = saved("tt-mixed").result?.timedTracks ?? [];
-    expect(m.map((t) => t.id)).toEqual(["t-bad"]);
+    expect(m.map((t) => t.id)).toEqual(["t-bad", "t-label"]);
     expect(m[0]?.cues.map((c) => c.text)).toEqual(["keep", "also"]);
+    // A non-string label/site is dropped, not handed to the JSON export's string walk.
+    expect(m[1]?.label).toBeUndefined();
+    expect(m[1]?.site).toBeUndefined();
+    expect(m[1]?.cues.map((c) => c.text)).toEqual(["x"]);
     for (const t of m) for (const c of t.cues) expect(() => c.text.trim()).not.toThrow();
     // A clean list is handed back as the very object the listing read.
     expect(saved("tt-clean")).toBe(clean);

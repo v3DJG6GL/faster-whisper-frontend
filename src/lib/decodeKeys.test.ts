@@ -468,6 +468,9 @@ describe("parseLadderInput", () => {
     expect(parseLadderInput("0,1ee-1", false, "0,1e-1")).toBeNull();
     expect(parseLadderInput("0.2e", false)).toBeNull();
     expect(parseLadderInput("1e-77", false, "1e-7")).toBeNull(); // grows while a bad rung remains
+    expect(parseLadderInput("1x7", false, "1e-7")).toBeNull(); // swaps a foreign character
+    expect(parseLadderInput("1-e7", false, "1e-7")).toBeNull(); // reorders them
+    expect(parseLadderInput("1-7", false, "1e-7")).toBe("1-7"); // deletes one
   });
 
   it("lets a stored ladder on a standard server shrink, never gain a rung", () => {
