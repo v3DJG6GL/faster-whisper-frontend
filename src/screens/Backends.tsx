@@ -14,7 +14,7 @@ import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { TranslationDefaultsEditor } from "@/components/TranslationFields";
-import { targetsLabel } from "@/lib/translationTargets";
+import { targetsLabel, wireCodes } from "@/lib/translationTargets";
 import {
   inheritLabel, LOCKED_REASON, serverContextSegments, serverInherited, serverLanguageLabel, shortModelName,
 } from "@/lib/inherit";
@@ -32,7 +32,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, in
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { credentialGeneration, forgetCaps, refreshCaps } from "@/lib/capabilities";
+import { credentialGeneration, forgetCaps, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
@@ -703,9 +703,13 @@ function Editor({
             caps={caps}
             // The server's own values where it publishes them: TRANSLATE_TO from /v1/me (it seeds
             // the Transcribe page; dictation translates only into targets set here or on a
-            // profile), TRANSLATION_CONTEXT_SEGMENTS from /v1/request-default-settings.
+            // profile), TRANSLATION_CONTEXT_SEGMENTS from /v1/request-default-settings. The
+            // targets are cut to the server's per-request cap, as `seedTargets` sends them.
             inherited={{
-              targets: targetsLabel(caps?.translate_to_default, "server default"),
+              targets: targetsLabel(
+                wireCodes(caps?.translate_to_default).slice(0, maxTranslationTargets(caps)),
+                "server default",
+              ),
               model: "server default",
               contextSegments: serverContextSegments(decodeDefaults),
               includeOriginal: false,

@@ -105,7 +105,9 @@ export function SpokenLanguagePicker({
   disabled?: boolean;
 }) {
   const { recent, use, flush } = useRecent("recentSpokenLanguages");
-  const labelOf = (v: string) => (v === "" ? inheritLabel ?? "Inherit" : spokenLabel(v));
+  // Bounded: `value` and `inheritLabel` can be synced or server-sent, and an unknown code is
+  // shown as-is (`languageLabel`) — strip bidi/format marks and cap it like the Backends readout.
+  const labelOf = (v: string) => safeDisplayText(v === "" ? inheritLabel ?? "Inherit" : spokenLabel(v), 40);
   const current = labelOf(value);
   return (
     <ListPicker<LangRow>
