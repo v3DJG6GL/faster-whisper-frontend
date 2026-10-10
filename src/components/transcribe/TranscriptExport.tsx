@@ -38,7 +38,7 @@ import {
 import {
   basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
-  subscribeExportQueue, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
+  subscribeExportQueue, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
@@ -48,6 +48,11 @@ import type { Backend, BatchResult, Capabilities } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 import { ownProp } from "@/lib/own";
+
+/** Why a video Save stops for one subtitle track over the packager's embed cap. */
+const tooLargeToEmbed = (t: EmbeddedTrack) =>
+  `The "${safeDisplayText(t.label || t.lang, 60)}" subtitle track is too large to put ` +
+  "inside a video (over 2 MB) — leave it out or save the subtitles as files.";
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
@@ -457,9 +462,12 @@ export function TranscriptExport({
    *  exists; otherwise the server packages it (uploading a local file first,
    *  or fetching a link's video on demand). False = stopped with an error
    *  the panel now shows while `started`'s record still shows (no outcome lands
-   *  on another record's panel); otherwise a failure goes to `late`. */
+   *  on another record's panel); otherwise a failure goes to `late`. `checked` = the
+   *  tracks the pre-dialog size check built, reused while their result is still the
+   *  latest. */
   const exportVideoTo = async (
     dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
+    checked?: { res: BatchResult; tracks: EmbeddedTrack[] },
   ): Promise<boolean> => {
     const mine = () => latestResult.current.owner === started;
     if (!rec) throw new Error("This transcription has no record to export from.");
@@ -531,9 +539,19 @@ export function TranscriptExport({
       else late(msg);
       return false;
     }
-    // After the fetch: the subtitles carry the latest result (liveResult).
+    // After the fetch: the subtitles carry the latest result (liveResult). The size check's
+    // tracks are reused while nothing newer landed; a newer result (a translation or an
+    // edit during the dialog or the fetch) is rebuilt and checked against the cap again.
     const res = liveResult(started);
-    const subtitles = embedded.length ? embeddedSubtitleTracks(res, exportOptions, embedded, trackNames) : [];
+    const reuse = checked && checked.res === res;
+    const subtitles = !embedded.length ? [] : reuse ? checked.tracks : embeddedSubtitleTracks(res, exportOptions, embedded, trackNames);
+    const big = reuse ? null : oversizedEmbeddedTrack(subtitles);
+    if (big) {
+      const msg = tooLargeToEmbed(big);
+      if (mine()) setMediaError({ kind: "none", msg });
+      else late(msg);
+      return false;
+    }
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video).
@@ -676,13 +694,17 @@ export function TranscriptExport({
     setAudioSavedAs(null);
     // The packager refuses the whole video for one subtitle track over its size cap: say
     // which one before the dialog, not after the file name was picked and the video fetched.
+    // The tracks it built ride along to the packaging (exportVideoTo) while still current.
+    let checked: { res: BatchResult; tracks: EmbeddedTrack[] } | undefined;
     if (plan.primary.kind === "video" && plan.embedded.length) {
-      const big = oversizedEmbeddedTrack(embeddedSubtitleTracks(liveResult(started), exportOptions, plan.embedded, trackNames));
+      const res = liveResult(started);
+      const tracks = embeddedSubtitleTracks(res, exportOptions, plan.embedded, trackNames);
+      const big = oversizedEmbeddedTrack(tracks);
       if (big) {
-        setSaveError(`The "${safeDisplayText(big.label || big.lang, 60)}" subtitle track is too large to put ` +
-          "inside a video (over 2 MB) — leave it out or save the subtitles as files.");
+        setSaveError(tooLargeToEmbed(big));
         return;
       }
+      checked = { res, tracks };
     }
     let target: string | null;
     try {
@@ -725,7 +747,7 @@ export function TranscriptExport({
           if (landed !== dest && mine()) setAudioSavedAs(basename(landed));
           written.push(landed);
           continue;
-        } else if (!(await exportVideoTo(dest, plan.embedded, started, late))) {
+        } else if (!(await exportVideoTo(dest, plan.embedded, started, late, checked))) {
           return;
         }
         written.push(dest);
