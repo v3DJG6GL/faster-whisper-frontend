@@ -12,7 +12,8 @@
 //!   `SecondaryActivate` (middle click) from the shell; the menu is the right-click surface.
 //!   Where no StatusNotifierWatcher runs (GNOME without the AppIndicator extension) there is
 //!   no tray at all: [`tray_missing`] then turns close-to-tray into a real quit, and a window
-//!   already hidden comes back minimized so it is never stranded out of reach.
+//!   already hidden comes back minimized so it is never stranded out of reach. A watcher that
+//!   only appears after launch (login autostart before the panel) is still picked up.
 
 use tauri::{App, AppHandle, Emitter, Manager};
 
@@ -275,8 +276,9 @@ mod sni {
                 .collect()
         }
 
-        /// The shell's tray went away (plasmashell restarted, the GNOME extension disabled):
-        /// until it is back, close must not hide the window, and a hidden one comes back.
+        /// The shell's tray went away (plasmashell restarted, the GNOME extension disabled)
+        /// or was not up yet at launch (login autostart before the panel): until it is back,
+        /// close must not hide the window, and a hidden one comes back.
         fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
             tracing::warn!("[tray] StatusNotifierWatcher went offline: {reason:?}");
             mark_missing(&self.app);
@@ -305,7 +307,9 @@ mod sni {
         };
         let app = app.handle().clone();
         tauri::async_runtime::spawn(async move {
-            match tray.spawn().await {
+            // Assume a watcher: one missing at launch goes to `watcher_offline` and the
+            // service keeps waiting for it, instead of `spawn` failing for the session.
+            match tray.assume_sni_available(true).spawn().await {
                 Ok(handle) => {
                     let _ = HANDLE.set(handle);
                     // A status that arrived while connecting.
