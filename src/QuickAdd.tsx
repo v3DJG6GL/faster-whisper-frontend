@@ -748,15 +748,15 @@ function errTitle(f: PipelineFetch | null): string {
   }
 }
 function errBody(f: PipelineFetch | null): string {
-  // Mirrors Dictionary's describeFetchError: a whitespace-only proxy body falls through to the status hint.
-  const err = f?.error?.trim();
-  if (err) return err;
+  // Mirrors Dictionary's describeFetchError: fixed 401/403 hints (the Rust side always fills `error` on a
+  // non-2xx, so checking it first would hide them), otherwise the trimmed server text — a whitespace-only
+  // proxy body falls through to the generic hint.
   switch (f?.status) {
     case 401:
       return "Set or fix the API key for this Backend on the Backends screen.";
     case 403:
       return "Ask an admin to grant your key access to the rules editor.";
     default:
-      return "Check the server and the pinned list, then retry.";
+      return f?.error?.trim() || "Check the server and the pinned list, then retry.";
   }
 }
