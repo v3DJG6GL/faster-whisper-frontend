@@ -305,6 +305,16 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
   return out;
 }
 
+/** The categories a pulled blob can actually restore: present after migration (so pre-split
+ *  categories count) as a plain object, applyBlob's own arm test. The ONE predicate behind the
+ *  restore offers' gates and their chips, so an offer never opens on a blob that restores
+ *  nothing (`{}` from a peer syncing with every category off, or only unknown future keys). */
+export function restorableCategories(blob: SyncBlob | null | undefined): SyncCategory[] {
+  if (!blob) return [];
+  const m = migrateBlob(blob);
+  return ALL_CATEGORIES.filter((c) => isPlainObject(m[c]));
+}
+
 // ── extract: live config → category payloads ───────────────────────────────
 
 function extractGeneral(settings: AppSettings): SyncGeneral {

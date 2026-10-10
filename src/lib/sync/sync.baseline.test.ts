@@ -12,6 +12,7 @@ import {
   mergeBlobs,
   migrateBlob,
   rejectPendingReview,
+  restorableCategories,
   sanitizeProfiles,
   securityChanges,
 } from "./sync";
@@ -185,6 +186,24 @@ describe("migrateBlob (baseline)", () => {
 
   it("a non-object ROOT is treated as an empty blob, never spread per code unit", () => {
     expect(migrateBlob("abc" as never)).toEqual({});
+  });
+});
+
+describe("restorableCategories (the restore offers' gate and chips)", () => {
+  it("a blob with nothing applyBlob would restore offers nothing", () => {
+    expect(restorableCategories(null)).toEqual([]);
+    expect(restorableCategories(undefined)).toEqual([]);
+    // A peer syncing with every category off composes `{}`.
+    expect(restorableCategories({})).toEqual([]);
+    expect(restorableCategories({ general: null } as never)).toEqual([]);
+    expect(restorableCategories("abc" as never)).toEqual([]);
+    // Only a forward-compat key from a newer client.
+    expect(restorableCategories({ futureCat: {} } as never)).toEqual([]);
+  });
+
+  it("counts pre-split categories after migration", () => {
+    const cats = restorableCategories({ recording: { indicatorPosition: "top" } } as never);
+    expect(cats).toContain("chip");
   });
 });
 

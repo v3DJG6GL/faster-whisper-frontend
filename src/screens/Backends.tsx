@@ -26,6 +26,7 @@ import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLa
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
+import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
@@ -822,7 +823,8 @@ function ConnectStep({
       if (info.bootId) {
         const p = await syncPull({ serverUrl, apiKey: typedKey || null });
         if (liveTarget.current.url !== typedUrl || liveTarget.current.key !== typedKey) return;
-        if (p.ok && p.state?.blob) {
+        // Same gate as onboarding's offer: only a blob with something to restore opens it.
+        if (p.ok && p.state?.blob && restorableCategories(p.state.blob).length > 0) {
           onDone({ draft, key: typedKey, info, remote: p.state });
           return;
         }

@@ -38,6 +38,7 @@ import {
   rejectPendingReview,
   resetSyncState,
   resolveSyncConflicts,
+  restorableCategories,
   sanitizeBackends,
   sanitizeProfiles,
   type SecurityChange,
@@ -623,13 +624,10 @@ export function IncomingAddresses({ list }: { list: unknown }) {
  *  categories a pulled blob carries, by display name. Migrated once per blob, not per category
  *  per render, so pre-split categories (chip, dictionary, recording/fileTranscriptions) show.
  *  "Present" is applyBlob's own arm test (a plain object), same as presentSel, so the chips
- *  never name a category the restore skips (a `null`/scalar section migrateBlob passes on). */
+ *  never name a category the restore skips (a `null`/scalar section migrateBlob passes on).
+ *  Same predicate as the offers' gates (`restorableCategories`), so an offer never shows empty. */
 export function SyncedCategoryChips({ blob }: { blob: SyncBlob | null | undefined }) {
-  const present = useMemo(() => {
-    if (!blob) return [];
-    const m = migrateBlob(blob);
-    return ALL_CATEGORIES.filter((c) => isPlainObject(m[c]));
-  }, [blob]);
+  const present = useMemo(() => restorableCategories(blob), [blob]);
   return (
     <div className="mt-2.5 flex flex-wrap gap-1.5">
       {present.map((c) => (

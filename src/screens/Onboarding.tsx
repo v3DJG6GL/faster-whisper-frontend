@@ -19,7 +19,7 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
-import { applyBlob, categorySelection, migrateBlob } from "@/lib/sync/sync";
+import { applyBlob, categorySelection, migrateBlob, restorableCategories } from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
@@ -153,7 +153,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
           setBackendId(null);
           return;
         }
-        if (p.ok && p.state?.blob) {
+        // Gate on what the blob can RESTORE, not on its truthiness: a `{}` (a peer syncing with
+        // every category off) or a blob of unknown future keys opened an empty offer whose
+        // "Restore everything" applied nothing and still turned sync on.
+        if (p.ok && p.state?.blob && restorableCategories(p.state.blob).length > 0) {
           setPull(p);
           setStep("restore");
           return;
