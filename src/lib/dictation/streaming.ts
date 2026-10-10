@@ -30,7 +30,7 @@ import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "../backend
 import { effectiveServerKind } from "../serverKind";
 import { refreshCaps, sendableTargets, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
-import { hasOwn, ownProp } from "../own";
+import { ownProp } from "../own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   display as pendingDisplay, holdRemainingMs, isLive as pendingIsLive, msUntilStale, newUtterancePending,
@@ -1710,12 +1710,15 @@ export function incompleteSurface(
 
 /** Re-cap a session's targets once its Backend's caps are known (they were capped from whatever
  *  was cached). Shrink only, and as a NEW array: a phrase already in flight keeps the list it
- *  captured. routePending is left alone (an armed picker keeps its glyph; its pick re-caps live). */
+ *  captured. routePending is left alone (an armed picker keeps its glyph; its pick re-caps live).
+ *  Republished only while the session's route is (`sessionTargets` is never null while one
+ *  lives): an answer landing after the settle cleared it must not bring the finished run's route
+ *  back onto the idle chip and tray tooltip. */
 function shrinkToServerCap(tr: NonNullable<typeof sessionTranslation>): void {
   const capped = sendableTargets(tr.targets, tr.backendId);
   if (capped.length < tr.targets.length) {
     tr.targets = capped;
-    useApp.getState().setDictation({ sessionTargets: capped });
+    if (useApp.getState().sessionTargets !== null) useApp.getState().setDictation({ sessionTargets: capped });
   }
 }
 
@@ -1735,18 +1738,7 @@ function applySessionTargets(targets: string[]): void {
   } else if (sessionTranslationBase) {
     // A Profile that asks but configures no targets: the pick CREATES the translation.
     // It pays a cold model load — the preload plan and warm lease were made without it.
-    const tr = { ...sessionTranslationBase, targets: clean };
-    sessionTranslation = tr;
-    // startLiveInner's caps probe ran only for a session that started translated, so with no
-    // caps cached (a failed earlier fetch = the app's ceiling) nothing would re-cap this pick.
-    const backend = useApp.getState().backends.find((b) => b.id === tr.backendId);
-    if (backend && !hasOwn(useApp.getState().caps, backend.id)) {
-      void refreshCaps(backend, { force: true })
-        .then(() => {
-          if (sessionTranslation === tr) shrinkToServerCap(tr);
-        })
-        .catch(() => {});
-    }
+    sessionTranslation = { ...sessionTranslationBase, targets: clean };
   } else {
     // No session context to build on — don't advertise a route nothing will produce.
     return;

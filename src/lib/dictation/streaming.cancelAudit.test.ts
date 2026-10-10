@@ -704,14 +704,12 @@ describe("a translating session re-caps its targets once the server's limit is k
     expect(shrink).toContain("setDictation({ sessionTargets: capped })");
   });
 
-  // A Profile that asks at settle but configures no targets starts untranslated, so the probe
-  // above never runs; the pick that CREATES the translation must ask for caps it lacks itself.
-  it("a pick that creates the session's translation probes missing caps and re-caps", () => {
-    const fn = mask(topLevelFunctions(streamingSrc).applySessionTargets);
-    const create = fn.indexOf("sessionTranslation = tr;");
-    expect(create, "the create branch").toBeGreaterThanOrEqual(0);
-    const rest = fn.slice(create);
-    expect(rest.indexOf("refreshCaps(backend, { force: true })")).toBeGreaterThanOrEqual(0);
-    expect(rest).toContain("if (sessionTranslation === tr) shrinkToServerCap(tr)");
+  // The answer can land after the settle cleared the route (a quick stop on a slow /v1/me): it
+  // may still shrink the dead session's list, but must not republish its route onto the idle chip.
+  it("the re-cap republishes only while the session's route is published", () => {
+    const shrink = mask(topLevelFunctions(streamingSrc).shrinkToServerCap);
+    const guard = shrink.indexOf("if (useApp.getState().sessionTargets !== null)");
+    expect(guard, "republish guarded on a live route").toBeGreaterThanOrEqual(0);
+    expect(guard).toBeLessThan(shrink.indexOf("setDictation({ sessionTargets: capped })"));
   });
 });
