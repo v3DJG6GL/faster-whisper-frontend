@@ -8,6 +8,7 @@ import { create } from "zustand";
 import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "../api";
+import { languageCodeOf } from "../languages";
 import { safeDisplayText } from "../sanitize";
 import { useApp } from "../store";
 import { canonicalActivation, type BatchResult, type TranscribeOptions } from "../types";
@@ -195,6 +196,9 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   const rlang = out.result?.language as unknown;
   if (out.result && rlang != null && typeof rlang !== "string") {
     out = { ...out, result: { ...out.result, language: undefined } };
+  } else if (out.result && typeof rlang === "string" && languageCodeOf(rlang) !== rlang) {
+    // Saved before server results were filed by code: a standard server's "english".
+    out = { ...out, result: { ...out.result, language: languageCodeOf(rlang) } };
   }
   if (out.language != null && typeof (out.language as unknown) !== "string") out = { ...out, language: undefined };
   // Before the segment step, so a remap below moves already-clean maps.

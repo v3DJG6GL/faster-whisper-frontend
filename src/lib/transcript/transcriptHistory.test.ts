@@ -490,6 +490,23 @@ describe("loadHistory", () => {
     expect(saved("lang-ok").language).toBe("de");
   });
 
+  it("files a stored standard server's word language by its code", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "lang-word",
+        createdAt: "2026-01-02T03:04:08.000Z",
+        sourcePath: "/e.wav",
+        sourceName: "e.wav",
+        status: "done",
+        result: { text: "hi", language: "english" },
+      },
+    ]);
+    await loadHistory(true);
+    expect(saved("lang-word").result?.language).toBe("en");
+  });
+
   it("repairs damaged site subtitle tracks so the viewer and the exports cannot throw", async () => {
     const cue = (text: unknown, start: unknown = 0, end: unknown = 1) => ({ start, end, text });
     const track = (id: string, cues: unknown) => ({ id, lang: "en", source: "site", kind: "manual", cues });

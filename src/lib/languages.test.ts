@@ -235,6 +235,8 @@ describe("languageCodeOf", () => {
   it("files a Whisper language name as its code and leaves codes and unknown words alone", () => {
     expect(languageCodeOf("english")).toBe("en");
     expect(languageCodeOf("Tagalog")).toBe("tl");
+    expect(languageCodeOf("lao")).toBe("lo");
+    expect(languageCodeOf("en")).toBe("en");
     expect(languageCodeOf("pt-BR")).toBe("pt-BR");
     expect(languageCodeOf("klingon")).toBe("klingon");
   });

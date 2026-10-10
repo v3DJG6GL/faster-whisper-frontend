@@ -156,7 +156,10 @@ export function languageCodeFromName(name: string): string | undefined {
  *  ("english", what OpenAI's verbose_json writes — in an imported file or from a standard
  *  server) becomes its code; anything else stays as given. */
 export function languageCodeOf(lang: string): string {
-  return translateSourceCode(lang) === null ? (languageCodeFromName(lang) ?? lang) : lang;
+  // The name map first: a short name ("lao" for lo) also passes as a code. A Whisper code is
+  // never renamed.
+  const named = languageCodeFromName(lang);
+  return named && !WHISPER_LANGUAGES.includes(lang.trim().toLowerCase()) ? named : lang;
 }
 
 /** A track's language as its titles and chips name it: the English name with the region in
