@@ -70,6 +70,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // The backend created at the connect gate, kept so the restore can put it back if the applied
   // blob's list does not contain it (see restoreEverything).
   const gateBackend = useRef<Backend | null>(null);
+  // Set when a restore landed but carried no profiles, so the starters step follows it: the
+  // categories it restored, which decide whether the quick-add step still has anything to ask.
+  const restored = useRef<string[] | null>(null);
 
   const testAndContinue = async () => {
     // Re-entrancy guard, matching the Backends screen's twin. The submit Button is disabled while
@@ -219,6 +222,16 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         void deleteBackendKey(gate.id).catch(() => {});
       }
       s.updateSync({ enabled: true, backendId: match?.id ?? null });
+      // A copy with no profiles (a peer syncing only general or recording, or an empty list) would
+      // leave setup with no dictation profile and no hotkey: offer the starters, bound to the
+      // backend sync now uses (the restore may have replaced the gate's entry).
+      if (st.getState().profiles.length === 0) {
+        restored.current = restorableCategories(blob);
+        if (match) setBackendId(match.id);
+        setStartersIntro("none");
+        setStep("starters");
+        return;
+      }
       finish();
     } catch (e) {
       setError(String(e));
@@ -226,6 +239,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       setBusy(false);
     }
   };
+
+  // Whether "Restore everything" brings profiles (and with them the dictation hotkeys): the
+  // restore step promises them only then. (The starters fallback checks the store after the
+  // apply instead, which also catches a profiles category holding an empty list.)
+  const carriesProfiles = restorableCategories(pull?.state?.blob).includes("profiles");
 
   const doImport = async () => {
     setError(null);
@@ -340,8 +358,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               </div>
             </div>
             <p className="mt-4 max-w-[46ch] text-[12px] text-dim">
-              Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys
-              and quick add all arrive with your settings.
+              {carriesProfiles
+                ? "Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys and quick add all arrive with your settings."
+                : "Restoring turns sync on for this device. This copy carries no profiles — you’ll pick starters next."}
             </p>
             {error && <Notice className="mt-3">{error}</Notice>}
           </>
@@ -354,8 +373,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             onConfirm={(drafts) => {
               const s = st.getState();
               for (const p of drafts) s.upsertProfile(p);
+              // After a restore that carried the quick-add settings, finish: the step would re-ask
+              // (and could overwrite) what just arrived.
+              if (restored.current?.includes("dictionary")) finish();
               // Quick add needs a full faster-whisper-backend (pipeline rules).
-              if (info?.bootId) setStep("quickadd");
+              else if (info?.bootId) setStep("quickadd");
               else finish();
             }}
           />
