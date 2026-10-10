@@ -140,8 +140,10 @@ describe("srt", () => {
     };
     const opts: ExportOptions = { format: "srt", tracks: ["orig", "de"] };
     const srt = generateExport(blank, opts);
-    expect(srt).toBe("1\n00:00:01,000 --> 00:00:02,000\nLeer\n");
-    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["Leer"]);
+    // The lone translation says its language (SRT has no class to mark it), or its cue would
+    // read like an untranslated original's.
+    expect(srt).toBe("1\n00:00:01,000 --> 00:00:02,000\n[DE] Leer\n");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["[DE] Leer"]);
     expect(generateExport(blank, { ...opts, format: "vtt" })).toContain("00:00:01.000 --> 00:00:02.000\n<c.mt>Leer</c>\n");
     // TXT has no cue to end: the blank keeps its timed slot and the translation indents under
     // it, rather than taking the original's time and place.

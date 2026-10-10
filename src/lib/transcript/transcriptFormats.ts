@@ -467,8 +467,11 @@ function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
 function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string): string {
   // SRT has no class mechanism, so an ambiguous file tags in the text itself.
   // Prefixed rather than appended: a player truncating a long cue must not be
-  // able to cut off the only thing identifying the language.
-  const tag = ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : "";
+  // able to cut off the only thing identifying the language. A translation whose blank
+  // original was dropped (cueLines) stands alone like an untranslated original's cue, so it
+  // is tagged too (as the TXT export does).
+  const orphan = ctx.origIncluded && !clean(seg.text);
+  const tag = ambiguous(ctx) || orphan ? `[${lang.toUpperCase()}] ` : "";
   return srtStyled(ctx, seg, tag + ctx.wrap(text, lang, tag.length + nameReserve(ctx, seg)));
 }
 
