@@ -1034,8 +1034,9 @@ mod imp {
         )
     }
 
-    /// The manufactured-stop rule, shared by both teardown sites: emit the stop, and arm the
-    /// loss latch ONLY if a modifier of the chord is still physically down. The latch exists for
+    /// The manufactured-stop rule, shared by all three teardown sites (`stop_held_sessions`,
+    /// commit's teardown drain, the worker post-loop): emit the stop, and arm the loss latch
+    /// ONLY if a modifier of the chord is still physically down. The latch exists for
     /// exactly one situation — the teardown is about to wipe the map that proves the chord is
     /// held, and the injection that follows must not type into it. A chord the OS reports fully
     /// UP is not that situation: the user released it (its key-up was parked in the debouncer,
