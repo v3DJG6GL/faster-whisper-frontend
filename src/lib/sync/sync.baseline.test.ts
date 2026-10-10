@@ -1018,6 +1018,10 @@ describe("applyBlob keep-local (baseline)", () => {
     });
     // …and nothing changes when the local address is already blank.
     expect(rows([{ id: "b1", name: "Home", serverUrl: "ftp://h" }], [{ ...known[0], serverUrl: "" }])).toEqual([]);
+    // A known backend stored blank that a peer repoints names the blank source too.
+    expect(
+      changes([{ id: "b1", name: "Home", serverUrl: "http://h:1" }], [{ ...known[0], serverUrl: "" }])[0].detail,
+    ).toBe("(no address) → http://h:1");
   });
 
   it("an api-key row needs a key the apply would actually write", () => {

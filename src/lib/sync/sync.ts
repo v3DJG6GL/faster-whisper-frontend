@@ -1236,7 +1236,7 @@ export function sanitizeBackends(list: unknown): Backend[] {
  *  by the Rust importer (and not at all on the pull path), yet every injection resolves through
  *  `rule.appId.toLowerCase()` — one malformed entry throws there and no transcript is ever
  *  inserted again, including in the editor the user would need to remove it. */
-function sanitizeAppRules(rules: unknown): AppRule[] {
+export function sanitizeAppRules(rules: unknown): AppRule[] {
   if (!Array.isArray(rules)) return [];
   return rules
     .filter(
@@ -1326,9 +1326,14 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
 
 /** The inbound API key for `id`, read exactly as `reconcileBackendSecrets` would write it: a
  *  non-empty string, own property of a plain-object container. `secrets` is the one container in
- *  the blob with no shape check on either side, so the review gate (`securityChanges`) reads it
- *  through this too — a non-string value or a string container raised an api-key row whose
- *  approval wrote nothing and whose rejection re-raised on every pull. */
+ *  the blob with no shape check on either side — Rust forwards the blob as an opaque Value, and the
+ *  file-import path's `as_object()` floor has no sync-path twin — so a STRING container iterated
+ *  with `Object.entries` expanded per code unit: a 4 MiB value measured 4M entries, ~8s of frozen
+ *  main thread and +575 MB, on the pull that runs unattended at startup and on every window focus.
+ *  Reading by id is also own-property (`secrets.constructor` is a truthy function otherwise). The
+ *  review gate (`securityChanges`) reads through this too — a non-string value or a string
+ *  container raised an api-key row whose approval wrote nothing and whose rejection re-raised on
+ *  every pull. */
 function inboundSecret(secrets: unknown, id: string): string | undefined {
   const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
   return typeof key === "string" && key ? key : undefined;
@@ -1350,19 +1355,13 @@ async function reconcileBackendSecrets(
   // Only ids that are actually in the list: composeBlob reads keys for exactly the backends it
   // ships, so a secret for an unknown id can't come from a legitimate peer — but it WOULD be
   // written into the OS keyring under a name the sender chose.
-  // Iterate the BACKENDS, not the map. `secrets` is the one container in the blob with no shape
-  // check on either side — Rust forwards the blob as an opaque Value, and the file-import path's
-  // `as_object()` floor has no sync-path twin — so a STRING here made `Object.entries` expand it
-  // per code unit: a 4 MiB value measured 4M entries, ~8s of frozen main thread and +575 MB, on
-  // the pull that runs unattended at startup and on every window focus. Reading by id instead is
-  // O(backends), can never drop a legitimate key, and makes the lookup own-property at the same
-  // time (`secrets.constructor` is a truthy function otherwise — the class already fixed below).
-  const incoming = (id: string): string | undefined => inboundSecret(secrets, id);
+  // Iterate the BACKENDS and read each key by id (`inboundSecret`), never the map itself: that is
+  // O(backends) whatever the server put in `secrets`, and can never drop a legitimate key.
   // A key rotated on another device: read what this device stores BEFORE overwriting it, for
   // the backends it already runs. An unchanged rewritten key evicts nothing, and neither does a
   // degraded read (locked wallet, timed out) — the next connection test re-measures anyway.
   const known = new Set(useApp.getState().backends.map((b) => b.id));
-  const candidates = list.map((b) => b.id).filter((id) => known.has(id) && incoming(id) !== undefined);
+  const candidates = list.map((b) => b.id).filter((id) => known.has(id) && inboundSecret(secrets, id) !== undefined);
   const prior = candidates.length
     ? await withTimeout(readBackendKeys(candidates), 10_000, null as Record<string, string> | null)
     : null;
@@ -1371,7 +1370,7 @@ async function reconcileBackendSecrets(
       ? []
       : candidates.filter((id) => {
           const old = ownProp(prior as Record<string, unknown>, id);
-          return typeof old === "string" && old !== "" && old !== incoming(id);
+          return typeof old === "string" && old !== "" && old !== inboundSecret(secrets, id);
         });
   // An abort mid-loop still leaves the keys written so far replaced: report those as rotated.
   const written = new Set<string>();
@@ -1379,7 +1378,7 @@ async function reconcileBackendSecrets(
   for (const b of list) {
     if (aborted()) return { backends: list, rotated: landed() };
     const id = b.id;
-    const key = incoming(id);
+    const key = inboundSecret(secrets, id);
     if (key) {
       written.add(id);
       // Same locked-wallet hazard as composeBlob's read: a parked prompt must
@@ -2233,7 +2232,9 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
       if (ids.length >= MAX_SYNCED_ENTRIES) break;
       const id: unknown = (b as { id?: unknown } | null)?.id;
       if (typeof id !== "string" || seen.has(id)) continue;
-      if (typeof ownProp(secretsMap, id) !== "string") continue;
+      // Only a key the apply would write: `restoreSnapshotSecrets` drops an empty one, so recording
+      // its id latched `snapshotSecretsUnavailable` on every launch.
+      if (inboundSecret(secretsMap, id) === undefined) continue;
       seen.add(id);
       ids.push(id);
     }
@@ -2244,7 +2245,7 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
     // Stash the NARROWED map, not the original: stashing the attacker's map would put the ids
     // straight back into the keyring entry the id list was just bounded to keep out of.
     await stashSnapshotSecrets(
-      Object.fromEntries(ids.map((id) => [id, ownProp(secretsMap!, id) as string])),
+      Object.fromEntries(ids.map((id) => [id, inboundSecret(secretsMap, id)!])),
     );
   } else if (hadStash) {
     // The stash must never outlive the snapshot it belongs to. When the new snapshot carries no
@@ -3047,14 +3048,14 @@ export function securityChanges(
   // "syncing" and no error shown.
   if (!cats.backends || !incoming.backends) return out;
   const inBackends = sanitizeBackends(incoming.backends.list);
-  if (gates?.modelDecodeDefaults !== false) {
-    out.push(...typedTextChanges(inBackends, local.backends?.list, "backends"));
-  } else {
-    const localIds = new Set((local.backends?.list ?? []).map((b) => b.id));
-    const fresh = inBackends.filter((b) => !localIds.has(b.id));
-    out.push(...typedTextChanges(fresh, local.backends?.list, "backends"));
-  }
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
+  out.push(
+    ...typedTextChanges(
+      gates?.modelDecodeDefaults !== false ? inBackends : inBackends.filter((b) => !here.has(b.id)),
+      local.backends?.list,
+      "backends",
+    ),
+  );
   const localSecrets = local.backends?.secrets ?? {};
   // Walk the entries `applyBlob` INSTALLS (`sanitizeBackends`: reserved ids out, a duplicate id's
   // later copy out, the entry cap, a cleaned or blanked serverUrl), not the raw list. A reserved,
@@ -3081,7 +3082,7 @@ export function securityChanges(
       out.push({
         kind: "server-url",
         backend: cur.name || name,
-        detail: `${cur.serverUrl} → ${b.serverUrl || "(none: the address would be cleared)"}`,
+        detail: `${cur.serverUrl || "(no address)"} → ${b.serverUrl || "(none: the address would be cleared)"}`,
         url: b.serverUrl,
       });
     }

@@ -40,6 +40,7 @@ import {
   resetSyncState,
   resolveSyncConflicts,
   restorableCategories,
+  sanitizeAppRules,
   sanitizeBackends,
   sanitizeProfiles,
   type SecurityChange,
@@ -178,12 +179,18 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     () => (categories.profiles ? sanitizeProfiles(categories.profiles.list) : []),
     [categories],
   );
+  // And this OS's app rules: `sanitizeAppRules` drops malformed entries and duplicate app ids. The
+  // other-OS bucket passes through untouched, so its raw length is what lands.
+  const installAppRules = useMemo(
+    () => (isPlainObject(categories.appRules) ? sanitizeAppRules(categories.appRules[MY_BUCKET]) : []),
+    [categories],
+  );
 
   const counts: Partial<Record<SyncCategory, string>> = {
     backends: categories.backends ? `${installBackends.length}` : undefined,
     profiles: categories.profiles ? `${installProfiles.length}` : undefined,
     appRules: categories.appRules
-      ? `${arr(categories.appRules[MY_BUCKET]).length} this OS · ${arr(categories.appRules[OTHER_BUCKET]).length} other OS`
+      ? `${installAppRules.length} this OS · ${arr(categories.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
   };
 
@@ -397,11 +404,15 @@ export function RestoreFromServer({
     () => (blob.profiles ? sanitizeProfiles(blob.profiles.list) : []),
     [blob],
   );
+  const installAppRules = useMemo(
+    () => (isPlainObject(blob.appRules) ? sanitizeAppRules(blob.appRules[MY_BUCKET]) : []),
+    [blob],
+  );
   const counts: Partial<Record<SyncCategory, string>> = {
     backends: blob.backends ? `${installBackends.length}` : undefined,
     profiles: blob.profiles ? `${installProfiles.length}` : undefined,
     appRules: blob.appRules
-      ? `${arr(blob.appRules[MY_BUCKET]).length} this OS · ${arr(blob.appRules[OTHER_BUCKET]).length} other OS`
+      ? `${installAppRules.length} this OS · ${arr(blob.appRules[OTHER_BUCKET]).length} other OS`
       : undefined,
   };
 

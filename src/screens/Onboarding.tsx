@@ -270,6 +270,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     );
   }, [pulledBlob, st]);
   const switchesOff = (chordFix?.switchedOff.length ?? 0) > 0;
+  // The copy's quick-add chord collides with one of its profiles: this device keeps its own.
+  const qaKept = !!chordFix?.qaKept;
 
   const doImport = async () => {
     setError(null);
@@ -390,9 +392,15 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </div>
             <p className="mt-4 max-w-[46ch] text-[12px] text-dim">
               {carriesProfiles
-                ? switchesOff
-                  ? "Restoring turns sync on for this device and skips the remaining steps — profiles and quick add arrive with your settings; re-enable the switched-off profiles in Profiles."
-                  : "Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys and quick add all arrive with your settings."
+                ? !switchesOff && !qaKept
+                  ? "Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys and quick add all arrive with your settings."
+                  : `Restoring turns sync on for this device and skips the remaining steps — profiles ${
+                      qaKept ? "arrive" : "and quick add arrive"
+                    } with your settings; ${
+                      switchesOff
+                        ? "re-enable the switched-off profiles in Profiles."
+                        : "this device keeps its own quick-add shortcut."
+                    }`
                 : "Restoring turns sync on for this device. This copy carries no profiles — you’ll pick starters next."}
             </p>
             {error && <Notice className="mt-3">{error}</Notice>}
