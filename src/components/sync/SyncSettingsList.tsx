@@ -224,7 +224,24 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
               patchUi({ changedOnly: false, expanded: { [group]: !shownOpen } })
             }
             onGate={(id, v) => setGates({ [id]: v } as Partial<Record<SettingId, boolean>>)}
-            onGateMany={(patch) => setGates(patch)}
+            // Same contract as "Sync everything" above: a mixed group's master overwrites the
+            // user's per-row picks (machine-specific rows included) in one click, so snapshot
+            // them for an Undo toast instead of setting the gates silently.
+            onGroupMaster={(defs, v) => {
+              const undo = Object.fromEntries(
+                defs.map((d) => [d.id, gates[d.id as SettingId]]),
+              ) as Partial<Record<SettingId, boolean>>;
+              setGates(
+                Object.fromEntries(defs.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
+              );
+              setToast({
+                id: ++toastSeq.current,
+                text: v
+                  ? `Every ${SYNC_GROUP_LABEL[group]} setting now syncs${defs.some((d) => d.machineSpecific) ? ", including machine-specific ones" : ""}`
+                  : `Sync switched off for ${SYNC_GROUP_LABEL[group]}`,
+                undo,
+              });
+            }}
             onResetSetting={(def) => resetDefs([def], `“${def.label}” sync switch reset to default`)}
             onResetGroup={(defs) =>
               resetDefs(defs, `${defs.length} sync ${defs.length === 1 ? "switch" : "switches"} in ${SYNC_GROUP_LABEL[group]} reset to default`)
@@ -302,7 +319,7 @@ function GroupCard({
   changedOnly,
   onToggleExpand,
   onGate,
-  onGateMany,
+  onGroupMaster,
   onResetSetting,
   onResetGroup,
 }: {
@@ -313,7 +330,7 @@ function GroupCard({
   changedOnly: boolean;
   onToggleExpand: (shownOpen: boolean) => void;
   onGate: (id: SettingId, v: boolean) => void;
-  onGateMany: (patch: Partial<Record<SettingId, boolean>>) => void;
+  onGroupMaster: (defs: readonly SettingDef[], v: boolean) => void;
   onResetSetting: (def: SettingDef) => void;
   onResetGroup: (defs: SettingDef[]) => void;
 }) {
@@ -367,11 +384,7 @@ function GroupCard({
         <Toggle
           checked={master}
           ariaLabel={`Sync ${SYNC_GROUP_LABEL[group]}`}
-          onChange={(v) =>
-            onGateMany(
-              Object.fromEntries(defs.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
-            )
-          }
+          onChange={(v) => onGroupMaster(defs, v)}
         />
       </div>
       {visible.length > 0 && (

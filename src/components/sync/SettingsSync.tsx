@@ -209,12 +209,11 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // on a hand-authored file. Bonus: the preview now predicts exactly what apply would install.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && categories.profiles ? installProfiles : st.profiles;
-  // Post-migration the chord lives in the dictionary category.
+  // Post-migration the chord lives in the dictionary category. An absent or malformed chord
+  // keeps this device's chord, as `applyBlob` does — predicting an EMPTY chord there hid the
+  // conflict the apply then resolves by switching the colliding imported profiles off.
   const rawQa = categories.dictionary?.quickAddHotkey;
-  const wouldQa =
-    sel.dictionary && rawQa !== undefined
-      ? (isCodeList(rawQa) ? rawQa : [])
-      : st.settings.general.quickAddHotkey;
+  const wouldQa = sel.dictionary && isCodeList(rawQa) ? rawQa : st.settings.general.quickAddHotkey;
   const peers = withQuickAddPeer(wouldProfiles, wouldQa).slice(0, MAX_PREVIEW_PEERS);
   const predictedConflicts =
     chordConflicts(peers, !lowLevelActive).length > 0;
@@ -434,12 +433,10 @@ export function RestoreFromServer({
   // dialog renders before them and `chordConflicts` walks the elements in a render body.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && blob.profiles ? installProfiles : st.profiles;
-  // Post-migration the chord lives in the dictionary category.
+  // Post-migration the chord lives in the dictionary category; absent or malformed keeps this
+  // device's chord, as in ImportPreview.
   const rawQa = blob.dictionary?.quickAddHotkey;
-  const wouldQa =
-    sel.dictionary && rawQa !== undefined
-      ? (isCodeList(rawQa) ? rawQa : [])
-      : st.settings.general.quickAddHotkey;
+  const wouldQa = sel.dictionary && isCodeList(rawQa) ? rawQa : st.settings.general.quickAddHotkey;
   const peers = withQuickAddPeer(wouldProfiles, wouldQa).slice(0, MAX_PREVIEW_PEERS);
   const predictedConflicts = chordConflicts(peers, !lowLevelActive).length > 0;
   const replaced = replacedNames(sel, blob, st);
