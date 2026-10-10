@@ -512,6 +512,27 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(topLevelFunctions(streamingSrc).noteDroppedCarry).toContain('{ kind: "drop" }');
   });
 
+  it("a final that added no text neither books nor owes the earlier record it reports", () => {
+    // recordUtteranceFinal hands a re-sent/flush final its utterance's previous record with an
+    // empty delta; booking it re-stamps a clipboard record "typed", owing it re-owes booked text.
+    for (const name of ["bookUtteranceInsert", "oweUtterance"]) {
+      // Past the signature: its parameter's object type is the first brace topLevelFunctions sees.
+      const at = streamingSrc.indexOf(`function ${name}(`);
+      expect(at, `${name} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
+      const body = mask(bodyAfter(streamingSrc.slice(at), "): void"));
+      expect(body, `${name} must gate on the final's delta`).toContain("rec.delta.trim()");
+    }
+  });
+
+  it("a final dropped at the flood cap owes its record from a link that holds no phrase text", () => {
+    // An inline arrow in the final handler shares the dropped task's closure scope (target,
+    // phraseClip), keeping up to two transcript-sized strings per link alive until the chain drains.
+    const finalBody = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    expect(finalBody).toMatch(/!queued && uttRec\?\.id && uttRec\.delta\.trim\(\)\) oweDroppedInsert\(/);
+    expect(finalBody).not.toMatch(/injectChain = injectChain\.then\([^;]*oweUtterance\(/);
+    expect(mask(topLevelFunctions(streamingSrc).oweDroppedInsert)).toContain("insertCfg === cfg");
+  });
+
   it("the stuck-finalize recovery stands down for a session started while it awaited", () => {
     // cancelLive idles the chip synchronously, so a new session can start before the recovery's
     // awaits finish; an unguarded flashError then stamps THAT session "error" (frames dropped,

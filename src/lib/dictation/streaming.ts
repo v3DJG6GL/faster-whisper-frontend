@@ -922,7 +922,10 @@ function bookUtteranceInsert(
   sent: string,
   phrase: PhraseOut,
 ): void {
-  if (!rec?.id) return;
+  // A final that added no text (a re-sent or flush final) reports its utterance's EARLIER record,
+  // already booked or owed by the final that wrote it: re-stamping it would relabel a clipboard
+  // record "typed" off a carry-only insert.
+  if (!rec?.id || !rec.delta.trim()) return;
   const own = sessionTranslation != null && sent.trim() === rec.delta.trim();
   patchRecord(rec.id, (r) => ({
     ...r,
@@ -941,10 +944,26 @@ function bookUtteranceInsert(
 }
 
 /** Per-utterance sessions: this record's own insert delivered nothing, but its text stays owed
- *  (see OwedUtterance) — the insert that later carries it books it too. */
-function oweUtterance(rec: { id: string | null } | null, from: number): void {
-  if (!rec?.id || owedUtterances.some((o) => o.id === rec.id)) return;
-  owedUtterances.push({ id: rec.id, from });
+ *  (see OwedUtterance) — the insert that later carries it books it too. A final that added no
+ *  text owes nothing: the record it reports was already booked or owed by the final that wrote it. */
+function oweUtterance(rec: { id: string | null; delta: string } | null, from: number): void {
+  if (!rec?.id || !rec.delta.trim()) return;
+  oweRecord(rec.id, from);
+}
+
+function oweRecord(id: string, from: number): void {
+  if (owedUtterances.some((o) => o.id === id)) return;
+  owedUtterances.push({ id, from });
+}
+
+/** A phrase dropped at the flood cap: owe its record from a chained (uncounted) link. Lives out
+ *  here, not in the final handler, so the link's closure captures only the id, the offset and the
+ *  session token — never the dropped task's target/phraseClip, which would otherwise stay alive
+ *  until the chain drains and undo the flood cap's memory bound (MAX_INJECT_DEPTH). */
+function oweDroppedInsert(cfg: InsertCfg | null, id: string, from: number): void {
+  injectChain = injectChain.then(() => {
+    if (insertCfg === cfg) oweRecord(id, from);
+  });
 }
 
 /** Book the owed records `ev` delivered where they went. Where only: an insert that carried
@@ -2444,11 +2463,7 @@ async function ensureListeners(): Promise<void> {
       // Dropped at the flood cap: the task never runs, but its text stays past the typed baseline
       // and the next delivered insert carries it — owed like a skip. Chained (uncounted), so the
       // inserts queued before it, whose text ends before this phrase, cannot book it.
-      if (!queued && uttRec) {
-        injectChain = injectChain.then(() => {
-          if (insertCfg === cfg) oweUtterance(uttRec, uttFrom);
-        });
-      }
+      if (!queued && uttRec?.id && uttRec.delta.trim()) oweDroppedInsert(cfg, uttRec.id, uttFrom);
       // A phrase's text just landed AND the document actually GREW (`grew` is false for a re-sent
       // final — e.g. the flush `final` the drain emits when you end a hands-free session — so we must NOT re-arm
       // for text that was already typed + Entered; doing so is what fired a second Enter at hands-free
