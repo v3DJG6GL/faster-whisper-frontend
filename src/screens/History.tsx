@@ -22,7 +22,7 @@ import {
   TextInput,
 } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import { fmtDuration, fmtTimestamp, plural } from "@/lib/format";
+import { fmtDuration, fmtFull, fmtTimestamp, plural } from "@/lib/format";
 import { seekKeyTarget } from "@/lib/seekKeys";
 import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
@@ -957,11 +957,11 @@ export default function History() {
             if (v !== "dictation") setAppFilter(null);
           }}
           options={[
-            { value: "all", label: `All · ${searched.length}` },
-            { value: "file", label: `Files · ${fileMatches.length}` },
-            { value: "url", label: `Links · ${linkMatches.length}` },
-            { value: "text", label: `Text · ${textMatches.length}` },
-            { value: "dictation", label: `Dictations · ${dictMatches.length}` },
+            { value: "all", label: `All · ${fmtFull(searched.length)}` },
+            { value: "file", label: `Files · ${fmtFull(fileMatches.length)}` },
+            { value: "url", label: `Links · ${fmtFull(linkMatches.length)}` },
+            { value: "text", label: `Text · ${fmtFull(textMatches.length)}` },
+            { value: "dictation", label: `Dictations · ${fmtFull(dictMatches.length)}` },
           ]}
         />
         <div className="relative flex-1">
@@ -1000,7 +1000,7 @@ export default function History() {
                   : "border-line text-dim hover:text-text",
               )}
             >
-              {safeDisplayText(a.label, 30)} · {a.n}
+              {safeDisplayText(a.label, 30)} · {fmtFull(a.n)}
             </button>
           ))}
           {appFilter && (
@@ -1036,7 +1036,7 @@ export default function History() {
           <Search className="size-3.5 shrink-0 text-accent" />
           <span className="flex-1">
             {plural(visible.length, "match", "matches")} in {segLabel} —{" "}
-            {hiddenMatches} more outside {segLabel}
+            {fmtFull(hiddenMatches)} more outside {segLabel}
           </span>
           <Button variant="ghost" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
             Show all
@@ -1059,7 +1059,7 @@ export default function History() {
           <div className="mt-3 flex items-center justify-center gap-2">
             {hiddenMatches > 0 && (
               <Button variant="default" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
-                Show all types · {searched.length}
+                Show all types · {fmtFull(searched.length)}
               </Button>
             )}
             {query.trim() && (

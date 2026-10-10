@@ -92,7 +92,13 @@ describe("keepRows", () => {
       },
     };
     const row = (i: ServerInfo, env: string) => keepRows(i, true).find((r) => r.env === env);
-    expect(row(more, "CAPTURES_MAX")).toEqual({ env: "CAPTURES_MAX", value: "5000", tone: "warn" });
+    expect(row(more, "CAPTURES_MAX")).toEqual({ env: "CAPTURES_MAX", value: "5,000", tone: "warn" });
+    // Bare counts group like the day rows beside them ("3,650 days"); the MB cap keeps its raw env value.
+    expect(row({ keeps: { recent_transcriptions: { max: 10000 } } }, "RECENT_TRANSCRIPTIONS_MAX")).toEqual({
+      env: "RECENT_TRANSCRIPTIONS_MAX",
+      value: "10,000",
+      tone: "warn",
+    });
     expect(row(more, "CAPTURES_MAX_MB")).toEqual({ env: "CAPTURES_MAX_MB", value: "5000 · ~5.24 GB", tone: "warn" });
     expect(row(more, "USAGE_JOBS_RETENTION_DAYS")).toEqual({ env: "USAGE_JOBS_RETENTION_DAYS", value: "365 days", tone: "warn" });
     expect(row(more, "URL_MEDIA_TTL_S")).toEqual({ env: "URL_MEDIA_TTL_S", value: "3600 · 1h", tone: "warn" });

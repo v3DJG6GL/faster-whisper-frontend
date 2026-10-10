@@ -7,7 +7,7 @@ import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
-import { plural } from "@/lib/format";
+import { fmtFull, plural } from "@/lib/format";
 import { dropPendingWrites, loadHistory } from "@/lib/transcript/transcriptHistory";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
@@ -634,7 +634,7 @@ export default function Settings() {
                         {t.label}{" "}
                         <span className="text-text">
                           {storeStats[t.bytesKey] > 0
-                            ? `${fmtBytes(storeStats[t.bytesKey])} · ${storeStats[t.filesKey]}`
+                            ? `${fmtBytes(storeStats[t.bytesKey])} · ${fmtFull(storeStats[t.filesKey])}`
                             : "—"}
                         </span>
                       </span>
@@ -643,7 +643,7 @@ export default function Settings() {
                       total{" "}
                       <span className="text-text">
                         {fmtBytes(AUDIO_STORE_TYPES.reduce((n, t) => n + storeStats[t.bytesKey], 0))}{" "}
-                        · {AUDIO_STORE_TYPES.reduce((n, t) => n + storeStats[t.filesKey], 0)}
+                        · {fmtFull(AUDIO_STORE_TYPES.reduce((n, t) => n + storeStats[t.filesKey], 0))}
                       </span>
                     </span>
                   </div>

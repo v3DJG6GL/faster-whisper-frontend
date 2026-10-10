@@ -71,7 +71,7 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
   }
   // The caps evict the oldest captures; 0 turns that cap off.
   if (c?.max !== undefined)
-    rows.push({ env: "CAPTURES_MAX", value: c.max === 0 ? "0 · unbounded" : String(c.max), tone: on ? "warn" : "none" });
+    rows.push({ env: "CAPTURES_MAX", value: c.max === 0 ? "0 · unbounded" : c.max.toLocaleString("en-US"), tone: on ? "warn" : "none" });
   if (c?.max_mb !== undefined)
     rows.push({
       env: "CAPTURES_MAX_MB",
@@ -93,7 +93,7 @@ export function keepRows(info: ServerInfo | undefined, reportApp: boolean): Info
   if (rt?.retention_days !== undefined)
     rows.push({ env: "RECENT_TRANSCRIPTIONS_RETENTION_DAYS", value: rt.retention_days === 0 ? "0 · no age limit" : days(rt.retention_days), tone: "warn" });
   if (rt?.max !== undefined)
-    rows.push({ env: "RECENT_TRANSCRIPTIONS_MAX", value: rt.max === 0 ? "0 · unbounded" : String(rt.max), tone: "warn" });
+    rows.push({ env: "RECENT_TRANSCRIPTIONS_MAX", value: rt.max === 0 ? "0 · unbounded" : rt.max.toLocaleString("en-US"), tone: "warn" });
   if (k.usage_app_retention_days !== undefined)
     rows.push({
       env: "USAGE_APP_RETENTION_DAYS",
