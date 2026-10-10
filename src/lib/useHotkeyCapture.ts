@@ -26,6 +26,7 @@ import {
   altGrPhantomActive,
 } from "./keys";
 import { learnLetter } from "./keyboardLayout";
+import { onWindowHiddenChange } from "./windowVisibility";
 import { findChordConflict, type BindingKind, type ConflictKind } from "./hotkeyConflicts";
 import type { Profile } from "./types";
 
@@ -229,11 +230,20 @@ export function useHotkeyCapture(opts: {
     window.addEventListener("keydown", onKeyDown, true);
     window.addEventListener("keyup", onKeyUp, true);
     window.addEventListener("blur", onBlur);
+    // Hiding the window (close to tray, WebKitGTK minimize) cancels the capture. The webview is
+    // only hidden, never unmounted, so without this the capture stays open and the global
+    // hotkeys stay suspended until the window comes back. Not `blur` (an OS modifier grab
+    // mid-chord blurs too, and must not cancel) and not `visibilitychange` (WebView2 never fires
+    // it for a hidden window): the windowVisibility signal also carries Rust's own show/hide.
+    const offHidden = onWindowHiddenChange((hidden) => {
+      if (hidden && activeCapture === me) ref.current.onCancel();
+    });
     return () => {
       cancelled = true;
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
       window.removeEventListener("blur", onBlur);
+      offHidden();
       if (activeCapture === me) activeCapture = null;
       releaseSuspension();
     };
