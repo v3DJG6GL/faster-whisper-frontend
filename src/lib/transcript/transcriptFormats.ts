@@ -204,6 +204,12 @@ interface Ctx {
   wrap: (text: string, track: string, reserve: number) => string;
 }
 
+/** A code point stripControlChars + trim() always keep: not whitespace, Cc or Cf, not a Hangul
+ *  filler (category Lo, yet stripped as zero-width) and not in the TAG block (its unassigned
+ *  slots are stripped too). Over-excluding is safe: such a part merely takes joinSegmentTexts'
+ *  exact, stripping path. */
+const VISIBLE = /[^\s\p{Cc}\p{Cf}\u115f\u1160\u3164\uffa0\u{e0000}-\u{e007f}]/u;
+
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")` over the non-empty parts; an empty
@@ -216,10 +222,14 @@ export function joinSegmentTexts(parts: string[]): string {
   const out: string[] = [];
   let last = "";
   parts.forEach((p) => {
-    if (!stripControlChars(p).trim()) return;
-    const piece = out.length && !(unspacedChar(last) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
-    out.push(piece);
-    last = edgeChar(piece, true);
+    // The seam is judged on what survives the output's strip, not the raw edge: a caller's
+    // trim() keeps an edge U+200E/U+200B, which would otherwise put a space inside CJK.
+    // Fast path: with both edge code points visible, strip + trim can change neither edge
+    // nor blank the part, so the common part is not copied.
+    const s = p && VISIBLE.test(edgeChar(p, false)) && VISIBLE.test(edgeChar(p, true)) ? p : stripControlChars(p).trim();
+    if (!s) return;
+    out.push(out.length && !(unspacedChar(last) && unspacedChar(edgeChar(s, false))) ? " " + p : p);
+    last = edgeChar(s, true);
   });
   return out.join("");
 }
@@ -232,11 +242,15 @@ function trOf(seg: TranscriptSegment, lang: string): string | null {
 
 /** Is this export carrying more than one translated track?
  *
- *  The tag rule for every format: label a translated line ONLY when the file
- *  contains more than one translated language. With a single target the
- *  language is unambiguous and the output stays byte-identical to what it has
- *  always been; with two or more, an untagged line is genuinely unreadable —
- *  nothing in the file says which of them it is. */
+ *  The tag rule for every format: label a translated line when the file
+ *  contains more than one translated language — with two or more, an untagged
+ *  line is genuinely unreadable, nothing in the file says which of them it is.
+ *  With a single target the language is unambiguous and a translated line
+ *  normally stays untagged. The exception is a translation whose blank original
+ *  was dropped, which would otherwise read as the spoken original: it still
+ *  says `[LANG]` in an SRT cue, in timestamped TXT when the translation comes
+ *  first, and in a timestamps-off TXT turn whose originals are all blank. VTT
+ *  marks it through its `.mt` class instead. */
 function ambiguous(ctx: Ctx): boolean {
   return ctx.visLangs.length > 1;
 }

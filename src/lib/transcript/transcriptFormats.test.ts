@@ -9,6 +9,7 @@ import {
   type ExportOptions,
 } from "./transcriptFormats";
 import { parseImportedText } from "./subtitleImport";
+import { stripControlChars } from "../sanitize";
 import type { BatchResult } from "../types";
 
 const RESULT: BatchResult = {
@@ -802,6 +803,14 @@ describe("joinSegmentTexts", () => {
   it("skips a format-character-only part (a bare U+200E survives trim)", () => {
     expect(joinSegmentTexts(["a", "\u200e", "b"])).toBe("a b");
     expect(joinSegmentTexts(["你好", "\u200e", "世界"])).toBe("你好世界");
+    expect(joinSegmentTexts(["a", "\u200e \u200f", "b"])).toBe("a b");
+    // Hangul fillers are category Lo, yet the output strips them: still a blank part.
+    expect(joinSegmentTexts(["a", "\u3164\u115f", "b"])).toBe("a b");
+  });
+
+  it("judges a CJK seam past an edge format character the caller's trim() kept", () => {
+    expect(stripControlChars(joinSegmentTexts(["你好\u200e", "世界"]))).toBe("你好世界");
+    expect(stripControlChars(joinSegmentTexts(["你好", "\u200b世界"]))).toBe("你好世界");
   });
 });
 
