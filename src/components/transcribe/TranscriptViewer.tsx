@@ -46,6 +46,7 @@ import {
 } from "@/lib/transcript/transcriptFormats";
 import { applyTextEdits, segmentWordRanges } from "@/lib/transcript/wordAlign";
 import { cn } from "@/lib/cn";
+import { prefersReducedMotion } from "@/lib/theme";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/transcript/mediaExport";
@@ -327,10 +328,12 @@ export function TranscriptViewer({
   const hasSegments = !!result.segments?.length;
   const hasSpeakers = speakers.length > 0;
   // Per-transcript constant: computed once here, not per row in the (up to 5000-row) list.
-  const origLang = useMemo(() => safeDisplayText(result.language ?? "??", 16), [result.language]);
   // The header gates on the SANITIZED code: a format-only language would
   // otherwise leave a dangling " · ".
-  const langShown = safeDisplayText(result.language ?? "", 16).trim();
+  const langShown = useMemo(() => safeDisplayText(result.language ?? "", 16).trim(), [result.language]);
+  // The row tag falls back on the sanitized code too: a blank or format-only
+  // language would otherwise draw an empty tag beside every original line.
+  const origLang = langShown || "??";
   // Overlay slot: the record id when known, else the path (see overlayKey).
   const okey = overlayKey ?? path;
   // The record on screen NOW — a run's completion must not fold another record's panel.
@@ -1403,9 +1406,7 @@ export function TranscriptViewer({
     const pageDist = pageTarget - pageFrom;
     if (Math.abs(dist) < 1 && Math.abs(pageDist) < 1) return;
     if (followAnimRef.current) cancelAnimationFrame(followAnimRef.current);
-    const reduced =
-      typeof matchMedia === "function" &&
-      matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const reduced = prefersReducedMotion();
     if (reduced) {
       box.scrollTop = target;
       if (page) page.scrollTop = pageTarget;

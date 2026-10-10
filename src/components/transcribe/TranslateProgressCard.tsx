@@ -83,7 +83,7 @@ export function TranslateProgressCard({
     >
       <div className="flex items-start justify-between gap-3">
         <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
-          translate · {run.targets.join(", ")}
+          translate · {run.targets.map((t) => safeDisplayText(t, 12)).join(", ")}
         </span>
         {!done && (
           <button

@@ -53,6 +53,7 @@ import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitl
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
+import { prefersReducedMotion } from "@/lib/theme";
 import {
   NO_OVERRIDE_PROFILE,
   type BatchProgress, type DecodeOverrides, type TranscribeOptions,
@@ -1013,7 +1014,7 @@ export default function Transcribe() {
     );
     const dist = target - from;
     if (Math.abs(dist) < 1) return;
-    if (matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    if (prefersReducedMotion()) {
       scroller.scrollTop = target;
       return;
     }
@@ -2710,11 +2711,15 @@ export default function Transcribe() {
                       {(st === "transcribing" || st === "translating") && state === "active" && progress?.lastText && (
                         <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-1.5">
                           <span className="size-[7px] shrink-0 rounded-full bg-live" />
-                          {st === "translating" && progress.target ? (
-                            <span className="shrink-0 rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
-                              {safeDisplayText(progress.target, 12)}
-                            </span>
-                          ) : null}
+                          {(() => {
+                            // Gate on the SANITIZED target: a format-only code would draw an empty pill.
+                            const tgt = st === "translating" ? safeDisplayText(progress.target ?? "", 12).trim() : "";
+                            return tgt ? (
+                              <span className="shrink-0 rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
+                                {tgt}
+                              </span>
+                            ) : null;
+                          })()}
                           {progress.position ? (
                             <span className="shrink-0 font-mono text-[11px] tabular-nums text-faint">
                               {fmtTimestamp(progress.position)}
@@ -2867,14 +2872,16 @@ export default function Transcribe() {
                   </span>
                   {it.status === "done" && it.result && (
                     <span className="font-mono text-[11px] text-faint">
-                      {it.result.duration ? fmtDurationExact(it.result.duration) : ""}
                       {(() => {
+                        // Joined, not prefixed: a subtitle/text file has no duration and
+                        // would otherwise open on a stray " · ".
+                        const parts: string[] = [];
+                        if (it.result.duration) parts.push(fmtDurationExact(it.result.duration));
                         const lang = safeDisplayText(it.result.language ?? "", 12).trim();
-                        return lang ? ` · ${lang}` : "";
-                      })()}
-                      {(() => {
+                        if (lang) parts.push(lang);
                         const spk = speakersOf(it.result).length;
-                        return spk ? ` · ${plural(spk, "speaker")}` : "";
+                        if (spk) parts.push(plural(spk, "speaker"));
+                        return parts.join(" · ");
                       })()}
                     </span>
                   )}

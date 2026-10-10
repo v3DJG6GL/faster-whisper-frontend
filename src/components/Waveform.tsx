@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
+import { prefersReducedMotion } from "@/lib/theme";
 import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { PRIDE_RAINBOW_STOPS } from "@/lib/prideFlag";
 
@@ -115,7 +116,7 @@ export function Waveform({
     // Under "reduce motion", freeze to a static silhouette (no wobble, no amplitude
     // reaction). Combined with the idle-parking below, the loop settles in a frame
     // or two and then stops entirely — no perceived motion and no ongoing repaint.
-    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    const reduce = prefersReducedMotion();
 
     const heights = new Array(bars).fill(0.16);
     const phases = heights.map((_, i) => (i / bars) * Math.PI * 2 + Math.random());
