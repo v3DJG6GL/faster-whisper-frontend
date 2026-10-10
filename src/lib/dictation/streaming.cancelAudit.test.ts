@@ -486,6 +486,30 @@ describe("work that must wait for the queue or the cancel", () => {
     const between = streamingSrc.slice(copy, flash);
     expect(src.slice(copy, flash)).toContain("sessionClipboard = true");
     expect(between).toContain('bookUtteranceInsert(uttRec, "clipboard"');
+    // …and the skipped phrases re-sent with it: the recovery copy is that whole insert.
+    expect(between).toContain('bookOwedUtterances("clipboard", { kind: "body" })');
+  });
+
+  it("a live phrase skipped in our own window is booked by the insert that later carries it", () => {
+    // Its record opens as "none"; its text goes out with a later phrase's insert (un-advanced
+    // baseline, clipboard window or carry), which used to book only that later record.
+    for (const [anchor, book] of [
+      ["if (delivered)", 'bookOwedUtterances(diverted ? "clipboard" : "typed", { kind: "body" })'],
+      ["if (!t.isSelf && landed)", 'bookOwedUtterances("clipboard", { kind: "window", from: clipFrom })'],
+    ] as const) {
+      // The code, not the comments that quote it: anchor on the opening brace.
+      const at = streamingSrc.indexOf(`${anchor} {`);
+      expect(at, `${anchor} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
+      const block = bodyAfter(streamingSrc.slice(at), anchor);
+      expect(block, `${anchor} must book the owed records it delivered`).toContain(book);
+      const after = streamingSrc.slice(at + anchor.length + 1 + block.length).trimStart();
+      expect(after.startsWith("else {"), `${anchor} needs an else that owes the skipped record`).toBe(true);
+      expect(bodyAfter(after, "else")).toContain("oweUtterance(uttRec, uttFrom)");
+    }
+    // A hard break hands them to the carry (or drops them), and the carry's drop drops them too.
+    const link = bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(() =>");
+    expect(link).toContain('{ kind: "break", carried: !!rest.trim() }');
+    expect(topLevelFunctions(streamingSrc).noteDroppedCarry).toContain('{ kind: "drop" }');
   });
 
   it("the stuck-finalize recovery stands down for a session started while it awaited", () => {

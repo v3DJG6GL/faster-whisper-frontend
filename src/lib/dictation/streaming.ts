@@ -226,6 +226,50 @@ let injectedText = "";
 // cancelLive clear it, and a session that ends with a carry still pending logs its length.
 let carryText = "";
 let carrySep = "";
+/** A per-utterance record whose OWN insert delivered nothing (an own-window or sink skip) while
+ *  its text stayed owed: the un-advanced typed baseline, or the hard-break carry, re-sends it
+ *  with a later insert — which booked only ITS record, so History said "not inserted" for text
+ *  that did go out. `from` is where the record's text starts in the typed baseline's
+ *  coordinates (the final handler's `target`); null once a hard break moved it into the carry. */
+export interface OwedUtterance {
+  id: string;
+  from: number | null;
+}
+/** What happened to the owed text, as the inject queue sees it:
+ *  • body — a delivered (or clipboard-recovered) typed insert: it carries everything past the
+ *    typed baseline plus the carry, so every owed record went out with it.
+ *  • window — a delivered clipboard copy: it carries its window alone (`from` on, in the current
+ *    document); records before it or in the carry stay owed for a later typed insert.
+ *  • break — a hard break: what the old document never delivered moved into the carry
+ *    (`carried`), or nothing was carried and no later insert will send it.
+ *  • drop — the carry was dropped untyped. */
+export type OwedEvent =
+  | { kind: "body" }
+  | { kind: "window"; from: number }
+  | { kind: "break"; carried: boolean }
+  | { kind: "drop" };
+/** The records `ev` delivered (to book) and the ones still owed after it. */
+export function settleOwedUtterances(
+  owed: readonly OwedUtterance[],
+  ev: OwedEvent,
+): { booked: string[]; owed: OwedUtterance[] } {
+  switch (ev.kind) {
+    case "body":
+      return { booked: owed.map((o) => o.id), owed: [] };
+    case "window": {
+      const hit = (o: OwedUtterance) => o.from !== null && o.from >= ev.from;
+      return { booked: owed.filter(hit).map((o) => o.id), owed: owed.filter((o) => !hit(o)) };
+    }
+    case "break":
+      return {
+        booked: [],
+        owed: ev.carried ? owed.map((o) => ({ ...o, from: null })) : owed.filter((o) => o.from === null),
+      };
+    case "drop":
+      return { booked: [], owed: owed.filter((o) => o.from !== null) };
+  }
+}
+let owedUtterances: OwedUtterance[] = [];
 /** Typed-baseline divergence lines logged this session; capped so a server that rewrites every
  *  seam can't flood the log file. See noteDivergence. */
 let divergenceLogs = 0;
@@ -253,6 +297,7 @@ function noteDroppedCarry(): void {
   logLine("info", "dictation", `session ended with ${carryText.length} carried chars never typed (dropped)`);
   carryText = "";
   carrySep = "";
+  owedUtterances = settleOwedUtterances(owedUtterances, { kind: "drop" }).owed;
 }
 // The last final's document (advanced synchronously per final), used ONLY for the "did the document
 // grow" guard — distinguishes a real new phrase from a re-sent `final` (the flush final emitted at
@@ -893,6 +938,23 @@ function bookUtteranceInsert(
           }
         : { translationAttempted: true, translationFailure: sessionTranslateFailure ?? undefined }),
   }));
+}
+
+/** Per-utterance sessions: this record's own insert delivered nothing, but its text stays owed
+ *  (see OwedUtterance) — the insert that later carries it books it too. */
+function oweUtterance(rec: { id: string | null } | null, from: number): void {
+  if (!rec?.id || owedUtterances.some((o) => o.id === rec.id)) return;
+  owedUtterances.push({ id: rec.id, from });
+}
+
+/** Book the owed records `ev` delivered where they went. Where only: an insert that carried
+ *  more than one final's text has no translation of any one record's (bookUtteranceInsert). */
+function bookOwedUtterances(how: "typed" | "clipboard", ev: OwedEvent): void {
+  const { booked, owed } = settleOwedUtterances(owedUtterances, ev);
+  owedUtterances = owed;
+  for (const id of booked) {
+    patchRecord(id, (r) => ({ ...r, insertMethod: r.insertMethod === "typed" ? "typed" : how }));
+  }
 }
 
 /** Save the finished session to History — the settleIdle hook. Skips: empty
@@ -2031,7 +2093,10 @@ async function ensureListeners(): Promise<void> {
       // `final` (the flush final the drain emits at hands-free end). Advanced synchronously per final and
       // kept SEPARATE from the typed baseline (injectedText), so re-sent-final detection stays correct
       // regardless of whether/where the phrase actually typed.
-      const grew = commonPrefixLen(seenDoc, target) < target.length;
+      // Where this final's new text starts, in `target` coordinates — an owed record's place
+      // (oweUtterance) when its own insert delivers nothing.
+      const uttFrom = commonPrefixLen(seenDoc, target);
+      const grew = uttFrom < target.length;
       seenDoc = target;
       // Capture the session token SYNCHRONOUSLY (before the task's awaited resolveTarget) so the task
       // bails on BOTH a cancel (insertCfg→null) AND a cancel-then-fresh-restart (insertCfg→a NEW object)
@@ -2137,6 +2202,9 @@ async function ensureListeners(): Promise<void> {
             if (!t.isSelf && landed) {
               sessionClipboard = true;
               signalInsert("clipboard");
+              // The copy re-sends its whole window, so an earlier phrase of it skipped in our own
+              // window went out with it.
+              bookOwedUtterances("clipboard", { kind: "window", from: clipFrom });
               bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang });
               // The clipboard now holds THIS clipboard-only transcript (what the user wants to
               // paste), not our earlier paste transcript — so we no longer owe a restore. Clear
@@ -2168,6 +2236,10 @@ async function ensureListeners(): Promise<void> {
                   "dictation",
                   `clipboard phrase left the typed baseline behind: ${clipFrom - commonPrefixLen(injectedText, target)} untyped chars before its window`,
                 );
+            } else {
+              // Nothing reached a clipboard, and the typed baseline stays put: a later copy of this
+              // window, or the next typed insert, carries this phrase — and books it then.
+              oweUtterance(uttRec, uttFrom);
             }
           }
         } else {
@@ -2267,6 +2339,8 @@ async function ensureListeners(): Promise<void> {
               // patch, and the teardown never settles it. The baseline and carry stay un-advanced.
               if (recoverable) {
                 sessionClipboard = true;
+                // The copy is the whole insert: skipped phrases re-sent with it included.
+                bookOwedUtterances("clipboard", { kind: "body" });
                 bookUtteranceInsert(uttRec, "clipboard", body, phrase);
               }
               flashError(
@@ -2353,7 +2427,14 @@ async function ensureListeners(): Promise<void> {
                 lastPhraseDiverted = false;
                 signalInsert("typed");
               }
+              // Everything past the baseline went out with this insert, carry included — so did
+              // every earlier phrase whose own insert was skipped.
+              bookOwedUtterances(diverted ? "clipboard" : "typed", { kind: "body" });
               bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);
+            } else {
+              // Skipped (our own window, or the sink refused with nothing written): the baseline
+              // and the carry stay un-advanced, so the next delivered insert re-sends this phrase.
+              oweUtterance(uttRec, uttFrom);
             }
           }
         }
@@ -2521,6 +2602,8 @@ async function ensureListeners(): Promise<void> {
             carrySep = sep;
             logLine("info", "dictation", `hard break: carrying ${rest.length} untyped chars into the next phrase (${carryText.length} pending)`);
           }
+          // Records skipped in this document go out with the carry now — or nowhere.
+          owedUtterances = settleOwedUtterances(owedUtterances, { kind: "break", carried: !!rest.trim() }).owed;
         }
         injectedText = "";
       });
@@ -3507,6 +3590,7 @@ async function startLiveInner(
   // leftovers into session B's window. (A cancel already cleared it; a normal end logged it.)
   carryText = "";
   carrySep = "";
+  owedUtterances = [];
   divergenceLogs = 0;
   seenDoc = "";
   bankedDoc = "";
@@ -3911,6 +3995,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   // The user threw the session away, carry included — nothing of it may type later.
   carryText = "";
   carrySep = "";
+  owedUtterances = [];
   seenDoc = "";
   bankedDoc = "";
   resetPartialPreview();

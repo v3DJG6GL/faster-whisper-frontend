@@ -6,7 +6,7 @@
 // and it was previously only observable by running a dictation.
 
 import { describe, expect, it } from "vitest";
-import { holdCoerced, liveAllowed, resolveInjectionTarget } from "./streaming";
+import { holdCoerced, liveAllowed, resolveInjectionTarget, settleOwedUtterances, type OwedUtterance } from "./streaming";
 import type { AppRule, FocusedApp, GeneralSettings } from "../types";
 
 const G: GeneralSettings = {
@@ -185,5 +185,44 @@ describe("resolveInjectionTarget remoteDesktop", () => {
     // A synced or hand-edited "yes" is truthy — it must not force the remote path.
     const junk = rule({ remoteDesktop: "yes" as unknown as boolean });
     expect(resolveInjectionTarget(app(), [junk], G).remoteDesktop).toBeNull();
+  });
+});
+
+describe("settleOwedUtterances", () => {
+  // Per-utterance History: a phrase skipped in our own window goes out with a LATER insert, so
+  // that insert has to book the skipped record too, or History keeps it "not inserted".
+  const owed: OwedUtterance[] = [
+    { id: "a", from: 0 },
+    { id: "b", from: 12 },
+    { id: "c", from: null },
+  ];
+
+  it("books every owed record with a delivered typed insert (baseline onward, carry included)", () => {
+    expect(settleOwedUtterances(owed, { kind: "body" })).toEqual({ booked: ["a", "b", "c"], owed: [] });
+  });
+
+  it("books only the records inside a clipboard copy's window", () => {
+    // The copy carries its window alone; the earlier record and the carried one stay owed for
+    // the next typed insert.
+    expect(settleOwedUtterances(owed, { kind: "window", from: 12 })).toEqual({
+      booked: ["b"],
+      owed: [owed[0], owed[2]],
+    });
+  });
+
+  it("moves the document's owed records into the carry at a hard break", () => {
+    expect(settleOwedUtterances(owed, { kind: "break", carried: true }).owed).toEqual([
+      { id: "a", from: null },
+      { id: "b", from: null },
+      { id: "c", from: null },
+    ]);
+  });
+
+  it("drops the document's owed records at a break that carried nothing, keeping the older carry", () => {
+    expect(settleOwedUtterances(owed, { kind: "break", carried: false })).toEqual({ booked: [], owed: [owed[2]] });
+  });
+
+  it("drops the carried records with a dropped carry, booking nothing", () => {
+    expect(settleOwedUtterances(owed, { kind: "drop" })).toEqual({ booked: [], owed: [owed[0], owed[1]] });
   });
 });
