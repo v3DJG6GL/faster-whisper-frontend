@@ -95,6 +95,9 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   const navigate = useNavigate();
   const connections = useApp((s) => s.connections);
   const backend = backendForProfile(p, backends);
+  // Re-render when this backend's capabilities arrive: configuredRouteTargets reads the
+  // server's target cap from the store.
+  useApp((s) => (backend ? ownProp(s.caps, backend.id) : undefined));
   const Glyph = GLYPH[p.activation];
   const name = safeDisplayText(p.name, 80);
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias

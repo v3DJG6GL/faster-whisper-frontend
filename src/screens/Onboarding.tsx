@@ -70,9 +70,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // The backend created at the connect gate, kept so the restore can put it back if the applied
   // blob's list does not contain it (see restoreEverything).
   const gateBackend = useRef<Backend | null>(null);
-  // Set when a restore landed but carried no profiles, so the starters step follows it: the
-  // categories it restored, which decide whether the quick-add step still has anything to ask.
-  const restored = useRef<string[] | null>(null);
+  // Set when a restore landed but carried no profiles, so the starters step follows it (and the
+  // quick-add step only when the restore did not already pin a list).
+  const restored = useRef(false);
 
   const testAndContinue = async () => {
     // Re-entrancy guard, matching the Backends screen's twin. The submit Button is disabled while
@@ -226,7 +226,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // leave setup with no dictation profile and no hotkey: offer the starters, bound to the
       // backend sync now uses (the restore may have replaced the gate's entry).
       if (st.getState().profiles.length === 0) {
-        restored.current = restorableCategories(blob);
+        restored.current = true;
         if (match) setBackendId(match.id);
         setStartersIntro("none");
         setStep("starters");
@@ -373,9 +373,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             onConfirm={(drafts) => {
               const s = st.getState();
               for (const p of drafts) s.upsertProfile(p);
-              // After a restore that carried the quick-add settings, finish: the step would re-ask
-              // (and could overwrite) what just arrived.
-              if (restored.current?.includes("dictionary")) finish();
+              // After a restore that pinned a quick-add list, finish: the step would re-ask (and
+              // could overwrite) what just arrived. Read from the store, not the blob's
+              // categories: the apply lands a pin only when its backend came along.
+              if (restored.current && s.settings.quickAddList) finish();
               // Quick add needs a full faster-whisper-backend (pipeline rules).
               else if (info?.bootId) setStep("quickadd");
               else finish();

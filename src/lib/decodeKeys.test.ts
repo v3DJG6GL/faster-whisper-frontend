@@ -176,6 +176,9 @@ describe("clampDecodeOverrides", () => {
     expect(sanitizeDecodeValue("temperature", "0,1e-7")).toBe("0,0.0000001");
     expect(sanitizeDecodeValue("temperature", "+5e-7")).toBe("0.0000005");
     expect(sanitizeDecodeValue("temperature", "1.5e-7")).toBe("0.00000015");
+    // …unless the spelled-out form no longer fits the length cap: then the shorter form stays,
+    // rather than dropping a value that was kept before.
+    expect(sanitizeDecodeValue("temperature", "0,1e-20,1e-20,1e-20")).toBe("0,1e-20,1e-20,1e-20");
     expect(sanitizeDecodeValue("temperature", "")).toBeUndefined();
     expect(sanitizeDecodeValue("temperature", 0.3)).toBe(0.3);
   });

@@ -366,12 +366,14 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     bufs = Array.from({ length: trackCount }, () => []);
     for (const seg of result.segments) {
       const label = seg.speaker ?? null;
+      const texts = slotLangs.map((lang) => (lang === null ? clean(seg.text) : trOf(seg, lang)));
+      // A segment that writes nothing is no speaker change: it must not split the turn around it.
+      if (!texts.some(Boolean)) continue;
       if (label !== who) {
         flush();
         who = label;
       }
-      slotLangs.forEach((lang, slot) => {
-        const t = lang === null ? clean(seg.text) : trOf(seg, lang);
+      texts.forEach((t, slot) => {
         if (t) bufs[slot].push(t);
       });
     }
@@ -399,15 +401,16 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     buf = [];
   };
   for (const seg of result.segments) {
+    // A blank segment adds nothing (as in the interleaved branch): a turn of only blanks writes
+    // no bare "Name: " paragraph, and a blank one inside a turn does not split it.
+    const t = clean(seg.text);
+    if (!t) continue;
     const label = seg.speaker ?? null;
     if (label !== who) {
       flush();
       who = label;
     }
-    // A blank segment adds nothing (as in the interleaved branch): a turn of only blanks
-    // writes no bare "Name: " paragraph.
-    const t = clean(seg.text);
-    if (t) buf.push(t);
+    buf.push(t);
   }
   flush();
   return paras.join("\n\n") + "\n";

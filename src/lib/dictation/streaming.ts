@@ -1075,11 +1075,12 @@ let injectDepth = { n: 0 };
  *  machine can inject, which is the flood and not a user. Dropping the newest rather than the
  *  oldest keeps the text already committed to the queue intact. */
 const MAX_INJECT_DEPTH = 64;
-function enqueueInject(fn: () => Promise<void>): void {
+/** Queue `fn` on the inject chain; false when the queue is full and it was dropped. */
+function enqueueInject(fn: () => Promise<void>): boolean {
   const d = injectDepth;
   if (d.n >= MAX_INJECT_DEPTH) {
     console.warn(`inject queue at ${d.n} — dropping this insert (server outpacing injection)`);
-    return;
+    return false;
   }
   d.n++;
   injectChain = injectChain
@@ -1088,6 +1089,7 @@ function enqueueInject(fn: () => Promise<void>): void {
     .finally(() => {
       d.n--;
     });
+  return true;
 }
 
 /** Enqueue a real Enter into the window focused NOW. Empty text routes through the keystroke
@@ -2126,7 +2128,7 @@ async function ensureListeners(): Promise<void> {
       // `captured` frame ever comes for the closing final's phantom ordinal, so pairing on it
       // would only wait out CAPTURE_ID_WAIT_MS.
       const utterance = ordinal;
-      enqueueInject(async () => {
+      const queued = enqueueInject(async () => {
         const t = await resolveTarget(cfg);
         // Discard a cancelled/superseded session's phrase — don't inject it into the new/refocused
         // window, and don't let the bookkeeping/catches below touch the next session (insertCfg!==cfg
@@ -2439,6 +2441,14 @@ async function ensureListeners(): Promise<void> {
           }
         }
       });
+      // Dropped at the flood cap: the task never runs, but its text stays past the typed baseline
+      // and the next delivered insert carries it — owed like a skip. Chained (uncounted), so the
+      // inserts queued before it, whose text ends before this phrase, cannot book it.
+      if (!queued && uttRec) {
+        injectChain = injectChain.then(() => {
+          if (insertCfg === cfg) oweUtterance(uttRec, uttFrom);
+        });
+      }
       // A phrase's text just landed AND the document actually GREW (`grew` is false for a re-sent
       // final — e.g. the flush `final` the drain emits when you end a hands-free session — so we must NOT re-arm
       // for text that was already typed + Entered; doing so is what fired a second Enter at hands-free

@@ -372,6 +372,7 @@ export async function initOverlayController(): Promise<void> {
       state.activeProfile !== prev.activeProfile || // switching Profiles mid-session
       state.profiles !== prev.profiles || // a rename/tag/language edit changes the chip identity tag
       state.backends !== prev.backends || // a bound-backend language/endpoint edit changes language/mode
+      state.caps !== prev.caps || // a server's target cap bounds the configured route preview
       state.targetApp !== prev.targetApp || // injection target (chip "→ app" readout)
       state.targetSkip !== prev.targetSkip ||
       state.lastInsert !== prev.lastInsert || // per-phrase "inserted" pulse trigger

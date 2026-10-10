@@ -73,7 +73,7 @@ describe("txt", () => {
     const mixed = { ...ja, segments: [ja.segments![0], { ...ja.segments![1], text: "OK." }] };
     expect(generateExport(mixed, { format: "txt" })).toBe("Speaker 1: 今日は晴れ。 OK.\n");
   });
-  it("with speakers: a turn of only blank segments writes no bare name paragraph", () => {
+  it("with speakers: a blank segment writes no bare name paragraph and does not split the turn around it", () => {
     const gap: BatchResult = {
       text: "Hi there",
       speakers: ["SPEAKER_00", "SPEAKER_01"],
@@ -83,7 +83,14 @@ describe("txt", () => {
         { start: 2, end: 3, text: "there", speaker: "SPEAKER_00" },
       ],
     };
-    expect(generateExport(gap, { format: "txt" })).toBe("Speaker 1: Hi\n\nSpeaker 1: there\n");
+    expect(generateExport(gap, { format: "txt" })).toBe("Speaker 1: Hi there\n");
+    // The interleaved (translated) branch keeps the turn whole too.
+    const tr: BatchResult = {
+      ...gap,
+      segments: gap.segments!.map((s, i) => ({ ...s, translations: i === 1 ? {} : { de: i ? "da" : "Hallo" } as Record<string, string> })),
+    };
+    expect(generateExport(tr, { format: "txt", tracks: ["orig", "de"] })).not.toMatch(/Speaker 2/);
+    expect(generateExport(tr, { format: "txt", tracks: ["orig", "de"] }).match(/Speaker 1/g)).toHaveLength(2);
   });
 });
 

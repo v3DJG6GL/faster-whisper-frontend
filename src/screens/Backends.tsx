@@ -573,7 +573,7 @@ function Editor({
                 value={b.model}
                 onChange={(v) => set({ model: v })}
                 models={resultLive?.ok ? resultLive.models : stored?.ok ? stored.models : []}
-                placeholder={decodeDefaults?.model ? inheritLabel(shortModelName(decodeDefaults.model), "Default") : "whisper-1 / large-v3"}
+                placeholder={shortModelName(decodeDefaults?.model) ? inheritLabel(shortModelName(decodeDefaults?.model), "Default") : "whisper-1 / large-v3"}
               />
             </div>
           </OverrideHeader>

@@ -269,8 +269,15 @@ function sanitizeLadder(s: string, spec: KeySpec): string | undefined {
     const m = /^(\d)(?:\.(\d+))?e-(\d+)$/.exec(str);
     return m ? "0." + "0".repeat(Number(m[3]) - 1) + m[1] + (m[2] ?? "") : str;
   };
-  const out = fits ? text : rungs.slice(0, max).map((r) => plain(clamp(r, spec.min, spec.max))).join(",");
-  return out.length <= (spec.maxLen ?? Infinity) ? out : undefined;
+  const maxLen = spec.maxLen ?? Infinity;
+  if (fits) return text.length <= maxLen ? text : undefined;
+  const shown = rungs.slice(0, max).map((r) => clamp(r, spec.min, spec.max));
+  // The spelled-out form is longer: when it no longer fits where String()'s did, keep the shorter
+  // one (delete-only in the editor) rather than drop a value that was kept before.
+  const out = shown.map(plain).join(",");
+  if (out.length <= maxLen) return out;
+  const short = shown.map(String).join(",");
+  return short.length <= maxLen ? short : undefined;
 }
 
 /** One value as the table allows it for `key`, or undefined when it can't be kept. */
