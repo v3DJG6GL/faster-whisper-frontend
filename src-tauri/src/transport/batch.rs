@@ -427,21 +427,35 @@ mod wire_field_tests {
         assert!(is_track_id("de_orig-1") && !is_track_id("") && !is_track_id(&"x".repeat(33)));
     }
 
+    /// A track over the cap or past the gate is reported as failed, never silently lost; a
+    /// cp1252 track the server decoded to ~3x its 2 MB raw cap still fits; a track without a
+    /// minted id is dropped.
     #[test]
-    fn fetched_subtitles_keep_their_text_and_drop_bad_tracks() {
+    fn fetched_subtitles_keep_their_text_and_report_bad_tracks() {
         let raw = serde_json::json!({
             "tracks": [
                 {"id": "de", "lang": "de", "kind": "manual", "ext": "vtt", "text": "WEBVTT\n\n00:00.000 --> 00:01.000\nHallo"},
-                {"id": "big", "lang": "de", "kind": "manual", "ext": "vtt", "text": "x".repeat(3 * 1024 * 1024)},
+                {"id": "cp", "lang": "fr", "kind": "manual", "ext": "srt", "text": "é".repeat(3 * 1024 * 1024)},
+                {"id": "big", "lang": "de", "kind": "manual", "ext": "vtt", "text": "x".repeat(7 * 1024 * 1024)},
+                {"id": "odd", "lang": "de", "kind": "asr", "ext": "vtt", "text": "WEBVTT"},
                 {"id": "x/y", "lang": "de", "kind": "manual", "ext": "vtt", "text": ""},
             ],
             "failed": [{"id": "en", "error": "e".repeat(500)}, {"id": "../", "error": "x"}]
         });
         let s = bound_subtitles(serde_json::from_value::<UrlSubtitles>(raw).unwrap());
-        assert_eq!(s.tracks.len(), 1);
+        let ids: Vec<&str> = s.tracks.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, ["de", "cp"]);
         assert!(s.tracks[0].text.ends_with("Hallo"));
-        assert_eq!(s.failed.len(), 1);
+        let failed: Vec<(&str, &str)> = s
+            .failed
+            .iter()
+            .map(|f| (f.id.as_str(), f.error.as_str()))
+            .collect();
+        assert_eq!(failed.len(), 3);
+        assert_eq!(failed[0].0, "en");
         assert_eq!(s.failed[0].error.chars().count(), 201);
+        assert_eq!(failed[1], ("big", "the subtitles are too large"));
+        assert_eq!(failed[2], ("odd", "the server sent an unusable track"));
     }
 
     #[test]
@@ -1680,10 +1694,16 @@ pub struct UrlSubtitles {
 
 /// Most tracks one request asks for (the server refuses more).
 const MAX_SUBTITLE_FETCH: usize = 8;
-/// The server caps one track at 2 MB of text and the answer at 8 MB; JSON
-/// escaping (newlines, quotes) adds a little on top of that.
-const MAX_SUBTITLE_TEXT: usize = 2 * 1024 * 1024;
-const MAX_SUBTITLES_BODY: usize = 10 * 1024 * 1024;
+/// The server caps one track at 2 MB of RAW bytes, then decodes a non-UTF-8
+/// body as cp1252, where one byte can become three UTF-8 bytes — so the cap on
+/// the decoded text is three times that.
+const MAX_SUBTITLE_TEXT: usize = 3 * 2 * 1024 * 1024;
+/// The answer: 8 MB raw across a request, at the same worst-case expansion,
+/// plus JSON escaping (newlines, quotes) on top.
+const MAX_SUBTITLES_BODY: usize = 26 * 1024 * 1024;
+/// The fixed reasons for a track the server sent but this side refuses.
+const SUBTITLE_TOO_LARGE: &str = "the subtitles are too large";
+const SUBTITLE_UNUSABLE: &str = "the server sent an unusable track";
 /// A fresh probe plus up to eight small downloads.
 const URL_SUBTITLES_TIMEOUT: Duration = Duration::from_secs(90);
 
@@ -1717,28 +1737,38 @@ pub async fn url_subtitles(
 }
 
 /// Tracks keep their text (that IS the payload, capped per track); ids,
-/// languages and kinds are gated like the preview's, error texts bounded.
+/// languages and kinds are gated like the preview's, error texts bounded. A
+/// track with a minted id that fails the gate or the size cap is reported in
+/// `failed` (the webview warns about those) instead of vanishing silently;
+/// one without a minted id has nothing to name it by and is dropped.
 fn bound_subtitles(parsed: UrlSubtitles) -> UrlSubtitles {
-    UrlSubtitles {
-        tracks: parsed
-            .tracks
-            .into_iter()
-            .filter(|t| {
-                track_ok(&t.id, &t.lang, &t.kind, &t.ext) && t.text.len() <= MAX_SUBTITLE_TEXT
-            })
-            .take(MAX_SUBTITLE_FETCH)
-            .collect(),
-        failed: parsed
-            .failed
-            .into_iter()
-            .filter(|f| is_track_id(&f.id))
-            .take(MAX_SUBTITLE_FETCH)
-            .map(|f| FailedSubtitle {
-                error: super::bounded_server_text(&f.error, super::MAX_ERROR_TEXT),
-                ..f
-            })
-            .collect(),
+    let mut failed: Vec<FailedSubtitle> = parsed
+        .failed
+        .into_iter()
+        .filter(|f| is_track_id(&f.id))
+        .map(|f| FailedSubtitle {
+            error: super::bounded_server_text(&f.error, super::MAX_ERROR_TEXT),
+            ..f
+        })
+        .collect();
+    let mut tracks = Vec::new();
+    for t in parsed.tracks.into_iter().filter(|t| is_track_id(&t.id)) {
+        let error = if !track_ok(&t.id, &t.lang, &t.kind, &t.ext) {
+            SUBTITLE_UNUSABLE
+        } else if t.text.len() > MAX_SUBTITLE_TEXT {
+            SUBTITLE_TOO_LARGE
+        } else {
+            tracks.push(t);
+            continue;
+        };
+        failed.push(FailedSubtitle {
+            id: t.id,
+            error: error.to_string(),
+        });
     }
+    tracks.truncate(MAX_SUBTITLE_FETCH);
+    failed.truncate(MAX_SUBTITLE_FETCH);
+    UrlSubtitles { tracks, failed }
 }
 
 /// One sampled piece of the language check: where it starts and what Whisper heard.
