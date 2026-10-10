@@ -7,7 +7,7 @@ import { OverrideHeader, OverrideText } from "./OverrideField";
 import { OVERRIDE_CONTROL_W } from "./styles";
 import { envDesc } from "../lib/envDesc";
 import { TRANSLATION_MAX_TARGETS } from "../lib/languages";
-import { chipCodes, pruneTranslationOverrides, wireCodes } from "../lib/translationTargets";
+import { pruneTranslationOverrides, wireCodes } from "../lib/translationTargets";
 import { maxTranslationTargets, translationTargetInfo } from "../lib/capabilities";
 import { TargetLanguagePicker } from "./LanguagePicker";
 import { CompoundChip } from "./CompoundChip";
@@ -53,32 +53,31 @@ export function TranslationTargetChips({
   disabled?: boolean;
   ariaLabel?: string;
 }) {
-  // The chips, their count and the picker read ONE list — the wire-bound codes the picker edits
-  // and persists — clipped only for display; a code too long to send shows no chip.
+  // The chips, their keys, `parts` lookup, count, removal and the picker read ONE list — the
+  // wire-valid codes the picker edits, the store persists and a run sends. CodeChip clips only
+  // its face; a code the wire would refuse shows no chip and holds no slot.
   const wire = wireCodes(value);
-  const shown = chipCodes(wire);
-  const counted = used ?? shown.length;
-  // Membership and removal go through the SAME sanitizer as the chips: a synced " de " renders
-  // "DE", so removing it must match on that code, not on the raw entry.
-  const codeOf = (c: string) => chipCodes([c])[0] ?? "";
+  const counted = used ?? wire.length;
 
   return (
     <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={ariaLabel}>
-      {shown.map((code) => {
+      {wire.map((code) => {
         const chip = (
           <CodeChip
             key={code}
             code={code}
             disabled={disabled}
             head={!!parts?.[code]}
-            onRemove={() => onChange(value.filter((c) => codeOf(c) !== code))}
+            // Removal persists the same cleaned list the picker hands back: a synced " de " is
+            // stored as "de", and an unsendable entry is dropped rather than kept hidden.
+            onRemove={() => onChange(wire.filter((c) => c !== code))}
           />
         );
         if (!parts?.[code]) return chip;
         return <CompoundChip key={code} head={chip} parts={parts[code]} onPart={onPart} disabled={disabled} />;
       })}
       {/* The picker hands its list back to onChange, which persists it: give it the wire-bound
-          codes, not the 12-char chip clip (a seeded ca-ES-valencia must survive adding French). */}
+          codes (a seeded ca-ES-valencia must survive adding French). */}
       <TargetLanguagePicker
         value={wire}
         onChange={onChange}
@@ -90,7 +89,7 @@ export function TranslationTargetChips({
         free={free}
         disabled={disabled}
       />
-      {shown.length > 0 && (
+      {wire.length > 0 && (
         <span className={cn("text-[11px] tabular-nums", counted >= max ? "text-warn" : "text-faint")}>
           {counted} of {max}
         </span>

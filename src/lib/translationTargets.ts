@@ -13,22 +13,19 @@ export function pruneTargets(targets: string[], source: string): string[] {
   return targets.filter((c) => c !== source);
 }
 
-/** The renderable codes of a target list. `translationOverrides` is a SYNCED field neither
- *  sanitizer clamps element-wise, so a peer's `translateTo: [123]` reached `code.toUpperCase()`
- *  in the render body and — with no error boundary — unmounted the window on every launch.
- *  Strings only, trimmed, bounded per code and in count, de-duplicated (the chips are keyed on
- *  the code). Removal still filters the ORIGINAL array, so nothing is lost by rendering less. */
-export const chipCodes = (v: unknown, max = 32) => cleanCodes(v, { max, bound: 12 });
-
-/** A target list as the wire takes it: these codes are persisted and SENT (the seed, the list
- *  the chip picker edits), so they must never be cut the way `chipCodes` cuts for display —
- *  `ca-ES-valencia` clipped at 12 became a code nobody picked. Rust's `is_lang_code` takes
- *  2..=16 chars, so a longer one is skipped whole rather than shortened. */
+/** A target list as the wire takes it — and the ONE list the chips show, count and remove from,
+ *  and a run sends. Mirrors Rust's `is_lang_code` (src-tauri/src/transport/mod.rs): 2..=16
+ *  ASCII letters, digits or `-`, so a code the wire would refuse is skipped whole rather than
+ *  shortened (`ca-ES-valencia` clipped at 12 became a code nobody picked) and never shows a
+ *  chip, holds a slot or reaches a send. `translationOverrides` is a SYNCED field neither
+ *  sanitizer clamps element-wise, so strings only: a peer's `translateTo: [123]` reached
+ *  `code.toUpperCase()` in the render body and — with no error boundary — unmounted the window
+ *  on every launch. Trimmed, de-duplicated (the chips are keyed on the code), at most 32. */
 export const wireCodes = (v: unknown) =>
-  cleanCodes(Array.isArray(v) ? v.filter((c) => typeof c === "string" && c.trim().length <= 16) : v, {
-    max: 32,
-    bound: 16,
-  });
+  cleanCodes(
+    Array.isArray(v) ? v.filter((c) => typeof c === "string" && /^[A-Za-z0-9-]{2,16}$/.test(c.trim())) : v,
+    { max: 32, bound: 16 },
+  );
 
 /** The targets a translation run starts from before the user touches the chips: the Backend's
  *  Translation defaults → the server's default list → English, never the known source (a
@@ -115,6 +112,6 @@ export function translationRunOptions(args: {
 
 /** Display text for a list of target codes: their language names, or `none` when empty. */
 export function targetsLabel(codes: unknown, none: string): string {
-  const list = chipCodes(codes);
+  const list = wireCodes(codes);
   return list.length ? list.map((c) => languageLabel(c)).join(", ") : none;
 }

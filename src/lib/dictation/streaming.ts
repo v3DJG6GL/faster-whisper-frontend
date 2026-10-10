@@ -29,6 +29,7 @@ import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "../backends";
 import { effectiveServerKind } from "../serverKind";
 import { maxTranslationTargets, refreshCaps, translationWarm } from "../capabilities";
+import { wireCodes } from "../translationTargets";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
 import { ownProp } from "../own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
@@ -3336,7 +3337,9 @@ async function startLiveInner(
   // blank-line separated, original first when includeOriginal).
   {
     const trOv = { ...backend.translationOverrides, ...pov?.translationOverrides };
-    const trTargets = capTargets((trOv.translateTo ?? []).map((t) => t.trim()).filter(Boolean), backend.id);
+    // Only the wire-valid codes (wireCodes, the list the target chips show): the stored list is
+    // synced, and a code the wire refuses must not take one of the capped slots.
+    const trTargets = capTargets(wireCodes(trOv.translateTo), backend.id);
     sessionTranslationBase = {
       // The resolved source language, so the per-phrase request does not leave the server
       // to auto-detect a few words (every other T2T caller passes it); "auto"/"" → null.

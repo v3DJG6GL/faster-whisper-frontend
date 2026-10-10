@@ -16,7 +16,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
-import { pruneTargets, seedTargets, translationRunOptions } from "@/lib/translationTargets";
+import { pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
 import {
   inheritLabel, onOff, serverContextSegments, serverInherited, serverLanguageLabel, serverName, shortModelName,
   withDefaultModel,
@@ -235,9 +235,10 @@ export default function Transcribe() {
   );
   const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
   // T2T targets ([] = off) + sticky model and mode picks (all persisted via
-  // persistOptions; the server default for mode is "fluent").
+  // persistOptions; the server default for mode is "fluent"). Seeded through wireCodes: the
+  // stored list is synced, and the chips, the site panel's parts and the run read this one list.
   const [translateTo, setTranslateTo] = useState<string[]>(
-    () => settings.transcribe?.translateTo ?? [],
+    () => wireCodes(settings.transcribe?.translateTo),
   );
   const [translationModel, setTranslationModel] = useState(
     () => settings.transcribe?.translationModel ?? "",
@@ -905,7 +906,7 @@ export default function Transcribe() {
     // result warning naming them, and translateParsed (subtitle/text files, a link's site
     // transcript) cuts to the server's limit from the backend's caps with the same warning —
     // sent whole there, the text route rejects the whole translation.
-    const effTargets = translationAvailable ? translateTo : [];
+    const effTargets = translationAvailable ? wireCodes(translateTo) : [];
     const t2t = effTargets.length > 0;
     // "Authoritative" now has to be SAID, not just implied by omission: the server reads
     // an absent `translate_to` as "inherit my override-profile's TRANSLATE_TO", so an

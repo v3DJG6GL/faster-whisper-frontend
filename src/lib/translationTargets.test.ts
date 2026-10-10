@@ -1,27 +1,33 @@
 import { describe, expect, it } from "vitest";
-import { chipCodes, pruneTargets, pruneTranslationOverrides, seedTargets, translationRunOptions, wireCodes } from "./translationTargets";
+import { languageLabel } from "./languages";
+import { pruneTargets, pruneTranslationOverrides, seedTargets, targetsLabel, translationRunOptions, wireCodes } from "./translationTargets";
 
-// `translationOverrides.translateTo` is peer-synced and never element-clamped by the
-// sanitizers; the chip renderer is the last line of defence (mirrors dictation/chipController.test.ts).
-describe("chipCodes", () => {
+// `translationOverrides.translateTo` is peer-synced and never element-clamped by the sanitizers;
+// wireCodes is the ONE list the chips render, count and remove from and a run sends, so it is also
+// the chip renderer's last line of defence (mirrors dictation/chipController.test.ts).
+describe("wireCodes", () => {
   it("keeps only trimmed non-empty strings", () => {
-    expect(chipCodes([123, null, {}, "", "  ", "fr", " de "])).toEqual(["fr", "de"]);
+    expect(wireCodes([123, null, {}, "", "  ", "fr", " de "])).toEqual(["fr", "de"]);
   });
-  it("bounds each code and the count, and de-duplicates", () => {
-    expect(chipCodes(["x".repeat(40)])[0].length).toBeLessThanOrEqual(13);
-    expect(chipCodes(Array.from({ length: 100 }, (_, i) => `l${i}`), 5)).toHaveLength(5);
-    expect(chipCodes(["fr", "fr", "de"])).toEqual(["fr", "de"]);
+  it("bounds the count and de-duplicates", () => {
+    expect(wireCodes(Array.from({ length: 100 }, (_, i) => `l${i}`))).toHaveLength(32);
+    expect(wireCodes(["fr", "fr", " fr ", "de"])).toEqual(["fr", "de"]);
   });
   it("returns nothing for a non-array", () => {
-    expect(chipCodes("fr")).toEqual([]);
+    expect(wireCodes("fr")).toEqual([]);
+  });
+  it("keeps a 13-16 char tag whole and skips a longer one", () => {
+    expect(wireCodes(["ca-ES-valencia", " fr ", 7, "x".repeat(17)])).toEqual(["ca-ES-valencia", "fr"]);
+  });
+  it("mirrors Rust is_lang_code: skips what the wire would refuse rather than reshaping it", () => {
+    expect(wireCodes(["pt_BR", "x", " fr ", "pt BR", "ca-ES-valencia"])).toEqual(["fr", "ca-ES-valencia"]);
   });
 });
 
-// The list the chip picker edits and hands back to be persisted: wire-bound, never the chip clip.
-describe("wireCodes", () => {
-  it("keeps a 13-16 char tag whole where the chips clip it, and skips a longer one", () => {
-    expect(chipCodes(["ca-ES-valencia"])).not.toEqual(["ca-ES-valencia"]);
-    expect(wireCodes(["ca-ES-valencia", " fr ", 7, "x".repeat(17)])).toEqual(["ca-ES-valencia", "fr"]);
+describe("targetsLabel", () => {
+  it("names the wire list whole and leaves out what the wire would refuse", () => {
+    expect(targetsLabel(["ca-ES-valencia", "x".repeat(20)], "none")).toBe(languageLabel("ca-ES-valencia"));
+    expect(targetsLabel(["de_CH"], "none")).toBe("none");
   });
 });
 
@@ -45,6 +51,7 @@ describe("seedTargets", () => {
   it("keeps a long language tag whole and skips one the wire would refuse", () => {
     expect(seedTargets({ serverDefault: ["ca-ES-valencia"], max: 8 })).toEqual(["ca-ES-valencia"]);
     expect(seedTargets({ backendTargets: ["x".repeat(20)], serverDefault: ["es"], max: 8 })).toEqual(["es"]);
+    expect(seedTargets({ backendTargets: ["de_DE"], max: 8 })).toEqual(["en"]);
   });
 });
 
