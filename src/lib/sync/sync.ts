@@ -867,7 +867,12 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // has a default, so an absent key is fine — but a present non-string still fails the
       // typed parse, and its Backend twin below is already clamped this way.
       enabled: p.enabled === true,
-      overrideProfile: typeof p.overrideProfile === "string" ? p.overrideProfile : undefined,
+      // Trimmed, blank → unset: what every editor saves and the UI label shows. Untrimmed, a peer's
+      // "clinic-de " displayed as clinic-de but was sent verbatim, missing the server profile.
+      overrideProfile:
+        typeof p.overrideProfile === "string" && p.overrideProfile.trim()
+          ? p.overrideProfile.trim()
+          : undefined,
       // Same clamp as the Backend twin: the leaf rode the `...p` spread untouched, and Rust
       // forwards it into every session request as opaque JSON.
       decodeOverrides: clampDecodeOverrides(p.decodeOverrides),
@@ -892,6 +897,17 @@ function safeQuickAddTarget(v: unknown): QuickAddTarget | null {
   if (!v || typeof v !== "object") return null;
   const t = v as Partial<QuickAddTarget>;
   return typeof t.backendId === "string" && typeof t.slug === "string" ? (v as QuickAddTarget) : null;
+}
+
+/** Would a restore of `m` (migrated, every category on, gates ignored) land a quick-add pin?
+ *  The same conditions as `applyBlob`'s pin arm — a plain-object dictionary carrying a
+ *  well-formed pin, next to a backends section — plus the dangling-reference scrub after it,
+ *  which nulls a pin whose backend the incoming list does not hold. Without a pin the quick-add
+ *  chord is inert, so a restore must not promise quick add on the chord alone. */
+export function carriesQuickAddPin(m: SyncBlob): boolean {
+  if (!isPlainObject(m.dictionary) || !isPlainObject(m.backends)) return false;
+  const pin = safeQuickAddTarget(ownProp(m.dictionary as Record<string, unknown>, "quickAddList"));
+  return !!pin && sanitizeBackends(m.backends.list).some((b) => b.id === pin.backendId);
 }
 
 export function isCodeList(v: unknown): v is string[] {
@@ -1219,7 +1235,11 @@ export function sanitizeBackends(list: unknown): Backend[] {
       endpoint: oneOf<EndpointKind>(b.endpoint, ENDPOINT_KINDS, "stream"),
       responseFormat: oneOf<ResponseFormat>(b.responseFormat, RESPONSE_FORMATS, "json"),
       hasApiKey: b.hasApiKey === true,
-      overrideProfile: typeof b.overrideProfile === "string" ? b.overrideProfile : undefined,
+      // Trimmed, blank → unset, like the Profile twin.
+      overrideProfile:
+        typeof b.overrideProfile === "string" && b.overrideProfile.trim()
+          ? b.overrideProfile.trim()
+          : undefined,
       // The one backend enum this pass had missed. `Option<BackendKind>` defaults when the key
       // is ABSENT, but a present unknown string (or a non-string) has no serde fallback and
       // fails the typed parse like its two siblings above. Keep undefined = "infer from the
@@ -2157,23 +2177,34 @@ async function restoreSnapshotSecrets(): Promise<void> {
     10_000,
     {} as Record<string, string>,
   );
-  let secrets: Record<string, string> = {};
+  let secrets: unknown = {};
   try {
     secrets = JSON.parse(read[SNAPSHOT_SECRETS_ACCOUNT] ?? "{}");
   } catch {
     secrets = {};
   }
-  // Own-property reads: `secrets` is JSON-parsed, so a backend id of `constructor`/`toString`/…
-  // would read a truthy function off the prototype and be counted as PRESENT in a read-back that
-  // does not contain it. That defeats the only thing this function does — with a locked wallet the
-  // read-back is `{}`, the partial-read flag would never fire, and the pass-through push would
-  // upload a secrets map missing that key (the `Object` function does not survive JSON), erasing
-  // the server's copy. Exactly the hazard the flag exists to prevent.
-  const got = ids.filter((id) => !!ownProp(secrets, id));
+  // A PRESENT empty string is the legacy stash format, not a missing key: builds before
+  // `persistState` narrowed its writer to `inboundSecret` recorded a blank key's id and stashed
+  // `{id: ""}`, and counting it as missing latched the flag below on every launch (the `initSync`
+  // migration never re-ran, since the ids exist). Skip those ids instead. The recorded list is left
+  // as is: the next `persistState` re-derives it from the snapshot, and a still-set list is what
+  // makes it drop a stash left with nothing in it.
+  const want = isPlainObject(secrets)
+    ? ids.filter((id) => ownProp(secrets as Record<string, unknown>, id) !== "")
+    : ids;
+  if (want.length === 0) return;
+  // Read with the same `inboundSecret` rule `persistState` writes with — own-property, non-empty
+  // string, plain-object container. Own-property matters: `secrets` is JSON-parsed, so a backend id
+  // of `constructor`/`toString`/… would read a truthy function off the prototype and be counted as
+  // PRESENT in a read-back that does not contain it. That defeats the only thing this function
+  // does — with a locked wallet the read-back is `{}`, the partial-read flag would never fire, and
+  // the pass-through push would upload a secrets map missing that key (the `Object` function does
+  // not survive JSON), erasing the server's copy. Exactly the hazard the flag exists to prevent.
+  const got = want.filter((id) => inboundSecret(secrets, id) !== undefined);
   // A PARTIAL read-back is not a success: the whole point of the flag is to stop a pass-through
   // push from erasing the server's keys, and a partial map erases exactly the ones that are
   // missing. Only a complete read-back clears it.
-  if (got.length < ids.length) {
+  if (got.length < want.length) {
     snapshotSecretsUnavailable = true;
     console.warn("sync: snapshot keys unavailable — backends pass-through disabled this session");
     if (got.length === 0) return;
@@ -2181,7 +2212,7 @@ async function restoreSnapshotSecrets(): Promise<void> {
   if (state.snapshot?.backends) {
     // Only the ids this snapshot actually recorded — a stale entry from an older snapshot must
     // not re-enter the blob and get pushed back to the server.
-    state.snapshot.backends.secrets = Object.fromEntries(got.map((id) => [id, ownProp(secrets, id)!]));
+    state.snapshot.backends.secrets = Object.fromEntries(got.map((id) => [id, inboundSecret(secrets, id)!]));
   }
 }
 
@@ -2223,30 +2254,33 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   // list can never be composed — `composeBlob` builds `secrets` from the local backend list, so
   // legitimate keys are always a subset), and MAX_SYNCED_ENTRIES caps it by construction since the
   // raw list is itself server-authored.
-  const secretsMap = isPlainObject(secrets) ? (secrets as Record<string, unknown>) : undefined;
+  //
+  // `inboundSecret` carries the container's shape check (plain object, own property), so a
+  // non-object `secrets` reads undefined for every id and records none.
   const listed = Array.isArray(state.snapshot?.backends?.list) ? state.snapshot.backends.list : [];
   const ids: string[] = [];
-  if (secretsMap) {
-    const seen = new Set<string>();
-    for (const b of listed) {
-      if (ids.length >= MAX_SYNCED_ENTRIES) break;
-      const id: unknown = (b as { id?: unknown } | null)?.id;
-      if (typeof id !== "string" || seen.has(id)) continue;
-      // Only a key the apply would write: `restoreSnapshotSecrets` drops an empty one, so recording
-      // its id latched `snapshotSecretsUnavailable` on every launch.
-      if (inboundSecret(secretsMap, id) === undefined) continue;
-      seen.add(id);
-      ids.push(id);
-    }
+  // Entries, not a `{}` written by index: an id of `__proto__` would hit the setter and drop out
+  // of the stash while staying in `ids`, latching the flag on the next launch.
+  const stash: [string, string][] = [];
+  const seen = new Set<string>();
+  for (const b of listed) {
+    if (ids.length >= MAX_SYNCED_ENTRIES) break;
+    const id: unknown = (b as { id?: unknown } | null)?.id;
+    if (typeof id !== "string" || seen.has(id)) continue;
+    // Only a key the apply would write: `restoreSnapshotSecrets` drops an empty one, so recording
+    // its id latched `snapshotSecretsUnavailable` on every launch.
+    const key = inboundSecret(secrets, id);
+    if (key === undefined) continue;
+    seen.add(id);
+    ids.push(id);
+    stash.push([id, key]);
   }
   const hadStash = state.snapshotSecretIds !== undefined;
   state.snapshotSecretIds = ids.length > 0 ? ids : undefined;
   if (ids.length > 0) {
     // Stash the NARROWED map, not the original: stashing the attacker's map would put the ids
     // straight back into the keyring entry the id list was just bounded to keep out of.
-    await stashSnapshotSecrets(
-      Object.fromEntries(ids.map((id) => [id, inboundSecret(secretsMap, id)!])),
-    );
+    await stashSnapshotSecrets(Object.fromEntries(stash));
   } else if (hadStash) {
     // The stash must never outlive the snapshot it belongs to. When the new snapshot carries no
     // secrets (locked wallet, or a remote snapshot with no backends category) the old bundle was
@@ -3506,6 +3540,17 @@ export function raiseConflictForTests(over: Partial<PendingConflict> = {}): void
  *  device's live compose, as right after a sync that changed nothing. */
 export async function setSyncBaseForTests(base: "none" | "live"): Promise<void> {
   state = base === "live" ? { snapshot: await composeLive(syncCats()) } : {};
+}
+
+/** Test seam: run the launch-time snapshot-key restore for recorded `ids` (the keyring read goes
+ *  through `readBackendKeys`, which a test mocks) and report whether it blocked the backends
+ *  pass-through and which keys it put back into the snapshot. */
+export async function restoreSnapshotSecretsForTests(
+  ids: string[],
+): Promise<{ blocked: boolean; restored: Record<string, string> | undefined }> {
+  state = { snapshot: { backends: { list: [] } }, snapshotSecretIds: ids };
+  await restoreSnapshotSecrets();
+  return { blocked: backendsPushBlocked(), restored: state.snapshot?.backends?.secrets };
 }
 
 /** Test seam: is a re-pull parked for the end of the dictation session? */

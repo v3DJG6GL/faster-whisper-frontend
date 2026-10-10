@@ -20,7 +20,8 @@ import {
 import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import {
-  applyBlob, categorySelection, isPlainObject, migrateBlob, restorableCategories, sanitizeProfiles,
+  applyBlob, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob, restorableCategories,
+  sanitizeProfiles,
 } from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
@@ -253,6 +254,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     !!pulledBlob &&
     restorableCategories(pulledBlob).includes("profiles") &&
     sanitizeProfiles(migrateBlob(pulledBlob).profiles?.list).length > 0;
+  // Quick add arrives only with a pinned list the restore keeps: the chord alone is inert, and
+  // a peer that never pinned one would otherwise be promised quick add while setup skips it.
+  const bringsQuickAdd = !!pulledBlob && carriesQuickAddPin(migrateBlob(pulledBlob));
   // How the restore's collision pass resolves hotkeys (all categories on), predicted as the Sync
   // tab's restore preview does: `applyBlob` switches off an incoming profile that collides with
   // this device's quick-add chord (the default one, when the copy brings none) or with another
@@ -272,6 +276,21 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const switchesOff = (chordFix?.switchedOff.length ?? 0) > 0;
   // The copy's quick-add chord collides with one of its profiles: this device keeps its own.
   const qaKept = !!chordFix?.qaKept;
+  // The restore sentence: what arrives, then what is left to do here.
+  const arrives = [
+    "profiles",
+    ...(!switchesOff && !qaKept ? ["hotkeys"] : []),
+    ...(bringsQuickAdd && !qaKept ? ["quick add"] : []),
+  ];
+  const restoreTails = [
+    ...(switchesOff ? ["re-enable the switched-off profiles in Profiles"] : []),
+    ...(qaKept ? ["this device keeps its own quick-add shortcut"] : []),
+    ...(!bringsQuickAdd ? ["pin a quick-add list later in the Dictionary"] : []),
+  ];
+  const arrivesText =
+    arrives.length > 2
+      ? `${arrives.slice(0, -1).join(", ")} and ${arrives[arrives.length - 1]} all arrive`
+      : `${arrives.join(" and ")} arrive`;
 
   const doImport = async () => {
     setError(null);
@@ -392,15 +411,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </div>
             <p className="mt-4 max-w-[46ch] text-[12px] text-dim">
               {carriesProfiles
-                ? !switchesOff && !qaKept
-                  ? "Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys and quick add all arrive with your settings."
-                  : `Restoring turns sync on for this device and skips the remaining steps — profiles ${
-                      qaKept ? "arrive" : "and quick add arrive"
-                    } with your settings; ${
-                      switchesOff
-                        ? "re-enable the switched-off profiles in Profiles."
-                        : "this device keeps its own quick-add shortcut."
-                    }`
+                ? `Restoring turns sync on for this device and skips the remaining steps — ${arrivesText} with your settings${
+                    restoreTails.length ? `; ${restoreTails.join("; ")}` : ""
+                  }.`
                 : "Restoring turns sync on for this device. This copy carries no profiles — you’ll pick starters next."}
             </p>
             {error && <Notice className="mt-3">{error}</Notice>}

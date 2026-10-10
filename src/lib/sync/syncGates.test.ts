@@ -3,7 +3,9 @@
 // wire-neutrality proof (all gates on ≡ ungated compose).
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { applyBlob, backendsBlobIncomplete, categorySelection, composeBlob, mergeBlobs } from "./sync";
+import {
+  applyBlob, backendsBlobIncomplete, carriesQuickAddPin, categorySelection, composeBlob, mergeBlobs,
+} from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "../settingsManifest";
 import { catsFromGates, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
 import { stableStringify } from "../stable";
@@ -345,6 +347,27 @@ describe("backendsBlobIncomplete (the push refusal's real gate)", () => {
     expect(backendsBlobIncomplete({ backends: { list: [b("x", false)], secrets: {} } } as SyncBlob)).toBe(false);
     expect(backendsBlobIncomplete({} as SyncBlob)).toBe(false);
     expect(backendsBlobIncomplete({ backends: [] as never } as SyncBlob)).toBe(false);
+  });
+});
+
+// Onboarding promises "quick add arrives" from this: a restore that lands no pin leaves the
+// quick-add chord inert, so the prediction must match what `applyBlob` actually installs.
+describe("carriesQuickAddPin (the restore's quick-add promise)", () => {
+  const pin = { backendId: "b1", slug: "words" };
+  const cases: [string, SyncBlob, boolean][] = [
+    ["a pin next to its backend", { dictionary: { quickAddList: pin }, backends: { list: [backend()] } } as SyncBlob, true],
+    ["no dictionary", { backends: { list: [backend()] } } as SyncBlob, false],
+    ["a null pin", { dictionary: { quickAddList: null }, backends: { list: [backend()] } } as SyncBlob, false],
+    ["a malformed pin", { dictionary: { quickAddList: { backendId: "b1", slug: 7 } }, backends: { list: [backend()] } } as never, false],
+    ["no backends section", { dictionary: { quickAddList: pin } } as SyncBlob, false],
+    ["a pin whose backend the list lacks", { dictionary: { quickAddList: pin }, backends: { list: [backend({ id: "b2" })] } } as SyncBlob, false],
+  ];
+  it.each(cases)("%s", async (_name, blob, expected) => {
+    expect(carriesQuickAddPin(blob)).toBe(expected);
+    // Cross-check against the restore itself (onboarding's call: every category, gates ignored).
+    useApp.setState({ settings: { ...settings(), quickAddList: null }, backends: [], profiles: [], appRules: [] });
+    expect(await applyBlob(structuredClone(blob), CATS_ALL, 2, { ignoreGates: true })).toBe(true);
+    expect(useApp.getState().settings.quickAddList != null).toBe(expected);
   });
 });
 

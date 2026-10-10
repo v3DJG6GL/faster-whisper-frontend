@@ -3,7 +3,7 @@
 // proof. Outside Tauri every api call no-ops, so composeBlob/applyBlob run
 // as pure-ish functions over the store.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyBlob,
   categorySelection,
@@ -14,6 +14,8 @@ import {
   migrateBlob,
   rejectPendingReview,
   restorableCategories,
+  restoreSnapshotSecretsForTests,
+  sanitizeBackends,
   sanitizeProfiles,
   securityChanges,
 } from "./sync";
@@ -1133,5 +1135,53 @@ describe("applyBlob evicts a backend whose API key the pull rotated", () => {
       keyring.keys = null;
     }
     expect(useApp.getState().caps.b1).toBeDefined();
+  });
+});
+
+// Builds before `persistState` narrowed its writer stashed a blank key as `{id: ""}` and recorded
+// its id; counting that as missing latched the backends push refusal on every launch.
+describe("restoreSnapshotSecrets reads the stash by the writer's rule", () => {
+  const restore = async (stash: unknown, ids: string[]) => {
+    keyring.keys = { __sync_snapshot_secrets__: JSON.stringify(stash) };
+    try {
+      return await restoreSnapshotSecretsForTests(ids);
+    } finally {
+      keyring.keys = null;
+    }
+  };
+  afterEach(() => restoreSnapshotSecretsForTests([])); // clears the latch and the seeded state
+
+  it("a legacy blank entry is skipped, not counted missing", async () => {
+    expect(await restore({ a: "k", b: "" }, ["a", "b"])).toEqual({ blocked: false, restored: { a: "k" } });
+    expect((await restore({ b: "" }, ["b"])).blocked).toBe(false);
+  });
+
+  it("a genuinely missing or unreadable key still blocks the pass-through", async () => {
+    expect((await restore({ a: 5 }, ["a"])).blocked).toBe(true);
+    expect((await restore({}, ["a"])).blocked).toBe(true); // locked wallet
+    expect((await restore({ a: "k" }, ["a", "b"])).blocked).toBe(true); // partial read-back
+    expect((await restore("ab", ["0"])).blocked).toBe(true); // string container
+  });
+});
+
+// Every editor trims the server profile name on save and the UI shows it trimmed; a peer's
+// untrimmed copy was sent verbatim and missed the server profile.
+describe("sanitizers trim overrideProfile", () => {
+  it("Backend: trimmed, blank → unset", () => {
+    const [padded, blank] = sanitizeBackends([
+      backend({ id: "b1", overrideProfile: "  x " }),
+      backend({ id: "b2", overrideProfile: "   " }),
+    ]);
+    expect(padded.overrideProfile).toBe("x");
+    expect(blank.overrideProfile).toBeUndefined();
+  });
+
+  it("Profile: trimmed, blank → unset", () => {
+    const [padded, blank] = sanitizeProfiles([
+      profile({ id: "p1", overrideProfile: " clinic-de " }),
+      profile({ id: "p2", overrideProfile: "" }),
+    ]);
+    expect(padded.overrideProfile).toBe("clinic-de");
+    expect(blank.overrideProfile).toBeUndefined();
   });
 });
