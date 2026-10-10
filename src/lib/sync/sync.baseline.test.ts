@@ -875,6 +875,26 @@ describe("applyBlob keep-local (baseline)", () => {
     ).toEqual(["new-backend"]);
   });
 
+  it("a NEW backend's typed text is held even while decode defaults don't sync", () => {
+    // applyBlob re-pins only a backend this device knows; a new one keeps its inbound overrides.
+    const incoming = {
+      backends: {
+        list: [{ id: "b9", name: "Peer", serverUrl: "http://p:8000", decodeOverrides: { output_suffix: "!" } }],
+        secrets: {},
+      },
+    } as never;
+    const changes = securityChanges(incoming, { backends: { list: [], secrets: {} } } as never, CATS_ALL, {
+      modelDecodeDefaults: false,
+    } as never);
+    expect(changes.map((c) => [c.kind, c.category ?? ""])).toEqual([
+      ["typed-text", "backends"],
+      ["new-backend", ""],
+    ]);
+    // A known backend's text still raises nothing with the gate off (the apply re-pins it).
+    const known = { backends: { list: [{ id: "b9", name: "Peer", serverUrl: "http://p:8000" }], secrets: {} } } as never;
+    expect(securityChanges(incoming, known, CATS_ALL, { modelDecodeDefaults: false } as never)).toEqual([]);
+  });
+
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {
     const [junk, mixed] = sanitizeProfiles([
       profile({ id: "p1", decodeOverrides: "abc" as never }),

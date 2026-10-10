@@ -3033,9 +3033,20 @@ export function securityChanges(
     out.push(...typedTextChanges(incoming.profiles.list, local.profiles?.list, "profiles"));
   }
   // Backend decode defaults travel only under the "Model & decode defaults" switch; with it off
-  // the apply re-pins this device's values, so a peer's text could never land.
-  if (cats.backends && incoming.backends && gates?.modelDecodeDefaults !== false) {
-    out.push(...typedTextChanges(incoming.backends.list, local.backends?.list, "backends"));
+  // the apply re-pins a KNOWN backend's values, so a peer's text cannot land there. A backend new
+  // to this device has nothing local to re-pin and keeps its inbound overrides (like its
+  // serverUrl below), so its text is still held for review.
+  if (cats.backends && incoming.backends) {
+    const list = incoming.backends.list;
+    if (gates?.modelDecodeDefaults !== false) {
+      out.push(...typedTextChanges(list, local.backends?.list, "backends"));
+    } else {
+      const localIds = new Set((local.backends?.list ?? []).map((b) => b.id));
+      const fresh = Array.isArray(list)
+        ? list.filter((b) => isPlainObject(b) && typeof b.id === "string" && !localIds.has(b.id))
+        : [];
+      out.push(...typedTextChanges(fresh, local.backends?.list, "backends"));
+    }
   }
   if (!cats.backends || !incoming.backends) return out;
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
