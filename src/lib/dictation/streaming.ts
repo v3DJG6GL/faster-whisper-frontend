@@ -3521,6 +3521,16 @@ async function startLiveInner(
           // The session may have ended (or been replaced) during the fetch;
           // only the session that asked may take the answer.
           if (sessionTranslation !== tr) return;
+          // The targets were capped above from whatever caps were cached; a failed earlier
+          // fetch leaves them absent (= the app's ceiling), and a list over the server's
+          // TRANSLATION_MAX_TARGETS would 422 every phrase of the session. Shrink only, and as
+          // a NEW array: a phrase already in flight keeps the list it captured. routePending
+          // is left alone (an armed picker keeps its glyph; its pick re-caps live).
+          const capped = sendableTargets(tr.targets, backend.id);
+          if (capped.length < tr.targets.length) {
+            tr.targets = capped;
+            useApp.getState().setDictation({ sessionTargets: capped });
+          }
           // Never downgrade a PROVEN warm: this probe is fire-and-forget and
           // can resolve after a phrase has already had a translation land, and
           // its answer is a snapshot of the inventory, not of what just ran.
