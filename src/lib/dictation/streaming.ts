@@ -30,7 +30,7 @@ import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "../backend
 import { effectiveServerKind } from "../serverKind";
 import { refreshCaps, sendableTargets, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
-import { ownProp } from "../own";
+import { hasOwn, ownProp } from "../own";
 import { newSpeakMemo, stepSpeaking, type SpeakMemo } from "./speaking";
 import {
   display as pendingDisplay, holdRemainingMs, isLive as pendingIsLive, msUntilStale, newUtterancePending,
@@ -1708,6 +1708,17 @@ export function incompleteSurface(
   return !doc.trim() && outcome === "none" ? "flash" : "note";
 }
 
+/** Re-cap a session's targets once its Backend's caps are known (they were capped from whatever
+ *  was cached). Shrink only, and as a NEW array: a phrase already in flight keeps the list it
+ *  captured. routePending is left alone (an armed picker keeps its glyph; its pick re-caps live). */
+function shrinkToServerCap(tr: NonNullable<typeof sessionTranslation>): void {
+  const capped = sendableTargets(tr.targets, tr.backendId);
+  if (capped.length < tr.targets.length) {
+    tr.targets = capped;
+    useApp.getState().setDictation({ sessionTargets: capped });
+  }
+}
+
 /** Replace this session's translation targets with the user's pick.
  *
  *  Mutates the frozen `sessionTranslation` in place rather than rebuilding it, so the
@@ -1724,7 +1735,18 @@ function applySessionTargets(targets: string[]): void {
   } else if (sessionTranslationBase) {
     // A Profile that asks but configures no targets: the pick CREATES the translation.
     // It pays a cold model load — the preload plan and warm lease were made without it.
-    sessionTranslation = { ...sessionTranslationBase, targets: clean };
+    const tr = { ...sessionTranslationBase, targets: clean };
+    sessionTranslation = tr;
+    // startLiveInner's caps probe ran only for a session that started translated, so with no
+    // caps cached (a failed earlier fetch = the app's ceiling) nothing would re-cap this pick.
+    const backend = useApp.getState().backends.find((b) => b.id === tr.backendId);
+    if (backend && !hasOwn(useApp.getState().caps, backend.id)) {
+      void refreshCaps(backend, { force: true })
+        .then(() => {
+          if (sessionTranslation === tr) shrinkToServerCap(tr);
+        })
+        .catch(() => {});
+    }
   } else {
     // No session context to build on — don't advertise a route nothing will produce.
     return;
@@ -3523,14 +3545,8 @@ async function startLiveInner(
           if (sessionTranslation !== tr) return;
           // The targets were capped above from whatever caps were cached; a failed earlier
           // fetch leaves them absent (= the app's ceiling), and a list over the server's
-          // TRANSLATION_MAX_TARGETS would 422 every phrase of the session. Shrink only, and as
-          // a NEW array: a phrase already in flight keeps the list it captured. routePending
-          // is left alone (an armed picker keeps its glyph; its pick re-caps live).
-          const capped = sendableTargets(tr.targets, backend.id);
-          if (capped.length < tr.targets.length) {
-            tr.targets = capped;
-            useApp.getState().setDictation({ sessionTargets: capped });
-          }
+          // TRANSLATION_MAX_TARGETS would 422 every phrase of the session.
+          shrinkToServerCap(tr);
           // Never downgrade a PROVEN warm: this probe is fire-and-forget and
           // can resolve after a phrase has already had a translation land, and
           // its answer is a snapshot of the inventory, not of what just ran.

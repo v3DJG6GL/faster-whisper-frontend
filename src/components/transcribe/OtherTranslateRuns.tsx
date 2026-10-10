@@ -28,7 +28,7 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
               {safeDisplayText(run.title ?? rec?.sourceName ?? key, 60)}
             </span>
             <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
-              {run.targets.map((t) => safeDisplayText(t, 12)).join(", ")}
+              {run.targets.map((t) => safeDisplayText(t, 12).trim()).filter(Boolean).join(", ")}
               {run.target && run.phase !== "done" ? (
                 <span className="text-[color:var(--c-translate)]"> → {safeDisplayText(run.target, 12)}</span>
               ) : null}

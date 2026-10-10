@@ -695,10 +695,23 @@ describe("a translating session re-caps its targets once the server's limit is k
     const probe = fn.indexOf("refreshCaps(backend, { force: true })");
     expect(probe, "startLiveInner must probe the caps").toBeGreaterThanOrEqual(0);
     const then = mask(bodyAfter(fn.slice(probe), ".then(() =>"));
-    const recap = then.indexOf("sendableTargets(tr.targets");
+    const recap = then.indexOf("shrinkToServerCap(tr)");
     expect(recap, "the probe's answer must re-cap tr.targets").toBeGreaterThanOrEqual(0);
     expect(recap).toBeGreaterThan(then.indexOf("if (sessionTranslation !== tr) return"));
     expect(recap).toBeLessThan(then.indexOf("if (tr.warm === true) return"));
-    expect(then).toContain("setDictation({ sessionTargets: capped })");
+    const shrink = topLevelFunctions(streamingSrc).shrinkToServerCap;
+    expect(shrink).toContain("sendableTargets(tr.targets, tr.backendId)");
+    expect(shrink).toContain("setDictation({ sessionTargets: capped })");
+  });
+
+  // A Profile that asks at settle but configures no targets starts untranslated, so the probe
+  // above never runs; the pick that CREATES the translation must ask for caps it lacks itself.
+  it("a pick that creates the session's translation probes missing caps and re-caps", () => {
+    const fn = mask(topLevelFunctions(streamingSrc).applySessionTargets);
+    const create = fn.indexOf("sessionTranslation = tr;");
+    expect(create, "the create branch").toBeGreaterThanOrEqual(0);
+    const rest = fn.slice(create);
+    expect(rest.indexOf("refreshCaps(backend, { force: true })")).toBeGreaterThanOrEqual(0);
+    expect(rest).toContain("if (sessionTranslation === tr) shrinkToServerCap(tr)");
   });
 });
