@@ -22,7 +22,7 @@ import {
   TextInput,
 } from "@/components/ui";
 import { useApp } from "@/lib/store";
-import { fmtDuration, fmtTimestamp } from "@/lib/format";
+import { fmtDuration, fmtTimestamp, plural } from "@/lib/format";
 import { seekKeyTarget } from "@/lib/seekKeys";
 import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
@@ -573,7 +573,7 @@ export default function History() {
     const parts = [
       timeOf(rec.createdAt),
       rec.result?.duration ? fmtDuration(rec.result.duration) : "",
-      rec.wordCount ? `${rec.wordCount} word${rec.wordCount === 1 ? "" : "s"}` : "",
+      rec.wordCount ? plural(rec.wordCount, "word") : "",
       rec.language && rec.language !== "auto" ? safeDisplayText(rec.language, 12) : "",
       rec.insertMethod === "clipboard"
         ? "clipboard only"
@@ -582,6 +582,14 @@ export default function History() {
           : "",
     ].filter(Boolean);
     return parts.join(" · ");
+  };
+
+  // The profile-tag pill, gated on what it would SHOW: `profileTag` is stored after a plain
+  // trim, which keeps the format-only characters safeDisplayText deletes, so a raw-truthy tag
+  // of only those rendered an empty coloured pill.
+  const tagBadge = (rec: TranscriptRecord) => {
+    const tag = safeDisplayText(rec.profileTag ?? "", 20).trim();
+    return tag ? <Badge tone="accent">{tag}</Badge> : null;
   };
 
   const glyph = (rec: TranscriptRecord) => {
@@ -618,7 +626,7 @@ export default function History() {
         <div className="flex items-center gap-2.5">
           {glyph(rec)}
           <span className="text-[13px] font-medium text-text">{safeDisplayText(appLabel(rec), 60)}</span>
-          {rec.profileTag && <Badge tone="accent">{safeDisplayText(rec.profileTag, 20)}</Badge>}
+          {tagBadge(rec)}
           <span className="flex-1 font-mono text-[11px] text-faint">{dictMeta(rec)}</span>
           {copyButton(rec, true)}
           {deleteButton(rec)}
@@ -698,7 +706,7 @@ export default function History() {
                   from the same value as `translatedText` (streaming.ts), so it carries
                   nothing about whether the text reached the field — a label that could
                   only ever read "injected" is a claim, not a record. */}
-              {safeDisplayText(rec.translationTarget ?? "translated", 24)}
+              {safeDisplayText(rec.translationTarget ?? "", 24).trim() || "translated"}
             </span>
             <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
               {stripControlChars(rec.translatedText)}
@@ -715,7 +723,7 @@ export default function History() {
                 presents the original as the intended output. */}
             {rec.translationAttempted && (
               <div className="mt-3 font-mono text-[11px] text-warn">
-                translation to {safeDisplayText(rec.translationTarget ?? "the target language", 40)} failed
+                translation to {safeDisplayText(rec.translationTarget ?? "", 40).trim() || "the target language"} failed
                 {rec.translationFailure ? ` (${safeDisplayText(rec.translationFailure, 24)})` : ""}
                 {rec.insertMethod === "typed"
                   ? " — original inserted"
@@ -799,7 +807,7 @@ export default function History() {
           <span className="truncate text-[13px] font-medium text-text">
             {safeDisplayText(appLabel(rec), 60)}
           </span>
-          {rec.profileTag && <Badge tone="accent">{safeDisplayText(rec.profileTag, 20)}</Badge>}
+          {tagBadge(rec)}
           {/* Which languages this dictation produced. Without it a translated
               session and a plain one look identical in the list, and the only
               way to find out was to expand every row. */}
@@ -827,6 +835,12 @@ export default function History() {
     const edited =
       !!Object.keys(rec.edits ?? {}).length || !!Object.keys(rec.speakerEdits ?? {}).length;
     const shownModel = shortModelName(rec.model, 40);
+    // Gate the meta parts on their sanitized text, not the raw value: a code of only
+    // format characters would otherwise leave a dangling " · " (or an empty "+" join).
+    const langShown = safeDisplayText(rec.language ?? "", 12).trim();
+    const targetsShown = (rec.result?.translation?.targets ?? [])
+      .map((t) => safeDisplayText(t, 12).trim())
+      .filter(Boolean);
     const snippet = ok
       ? stripControlChars(recordText(rec, 200), 160)
       : stripControlChars(rec.error ?? "failed", 160);
@@ -842,11 +856,9 @@ export default function History() {
               {timeOf(rec.createdAt)}
               {rec.kind === "url" && rec.sourcePath ? ` · ${safeDisplayText(urlHost(rec.sourcePath), 60)}` : ""}
               {rec.result?.duration ? ` · ${fmtDuration(rec.result.duration)}` : ""}
-              {rec.language ? ` · ${safeDisplayText(rec.language, 12)}` : ""}
+              {langShown ? ` · ${langShown}` : ""}
               {speakers > 1 ? ` · ${speakers} speakers` : ""}
-              {rec.result?.translation?.targets?.length
-                ? ` · ${rec.result.translation.targets.map((t) => safeDisplayText(t, 12)).join("+")}`
-                : ""}
+              {targetsShown.length ? ` · ${targetsShown.join("+")}` : ""}
               {shownModel ? ` · ${shownModel}` : ""}
             </span>
             {edited && <span className="shrink-0 font-mono text-[11px] text-accent">· edited</span>}
@@ -1023,7 +1035,7 @@ export default function History() {
         <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-accent/25 bg-accent-soft/40 px-4 py-2.5 text-[12.5px] text-dim">
           <Search className="size-3.5 shrink-0 text-accent" />
           <span className="flex-1">
-            {visible.length} match{visible.length === 1 ? "" : "es"} in {segLabel} —{" "}
+            {plural(visible.length, "match", "matches")} in {segLabel} —{" "}
             {hiddenMatches} more outside {segLabel}
           </span>
           <Button variant="ghost" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
