@@ -92,6 +92,21 @@ describe("txt", () => {
     expect(generateExport(tr, { format: "txt", tracks: ["orig", "de"] })).not.toMatch(/Speaker 2/);
     expect(generateExport(tr, { format: "txt", tracks: ["orig", "de"] }).match(/Speaker 1/g)).toHaveLength(2);
   });
+  it("a turn whose original is blank tags its lone translation, so it does not read as spoken", () => {
+    const blank: BatchResult = {
+      text: "",
+      speakers: ["S1"],
+      segments: [{ start: 0, end: 1, text: "", speaker: "S1", translations: { de: "Leer" } }],
+    };
+    expect(generateExport(blank, { format: "txt", tracks: ["orig", "de"] })).toBe("[DE] S1: Leer\n");
+    // A turn with its original keeps the single target untagged.
+    const spoken: BatchResult = {
+      ...blank,
+      segments: [...blank.segments!, { start: 1, end: 2, text: "Hi", speaker: "S2", translations: { de: "Hallo" } }],
+    };
+    expect(generateExport(spoken, { format: "txt", tracks: ["orig", "de"] }))
+      .toBe("[DE] S1: Leer\n\nS2: Hi\n\nS2: Hallo\n");
+  });
 });
 
 describe("srt", () => {
@@ -130,7 +145,11 @@ describe("srt", () => {
     expect(generateExport(blank, { ...opts, format: "vtt" })).toContain("00:00:01.000 --> 00:00:02.000\n<c.mt>Leer</c>\n");
     // TXT has no cue to end: the blank keeps its timed slot and the translation indents under
     // it, rather than taking the original's time and place.
-    expect(generateExport(blank, { ...opts, format: "txt", timestamps: true })).toBe("[00:01] \n        Leer\n");
+    expect(generateExport(blank, { ...opts, format: "txt", timestamps: true })).toBe("[00:01]\n        Leer\n");
+    // Translation first: the stamp already sits on the translation, so the blank original
+    // trails no empty, space-filled line under it.
+    expect(generateExport(blank, { ...opts, format: "txt", timestamps: true, tracks: ["de", "orig"] }))
+      .toBe("[00:01] Leer\n");
     // Original-only keeps its (empty) cue.
     expect(generateExport(blank, { format: "srt" })).toBe("1\n00:00:01,000 --> 00:00:02,000\n\n");
   });
@@ -147,7 +166,7 @@ describe("srt", () => {
     expect(generateExport(blank, { format: "vtt" })).toContain("00:00:01.000 --> 00:00:02.000\n\n");
     expect(generateExport(blank, { format: "vtt", speakerColors: "name" })).toContain("00:00:01.000 --> 00:00:02.000\n\n");
     expect(generateExport(blank, { format: "lrc" })).toBe("[00:01.00]\n");
-    expect(generateExport(blank, { format: "txt", timestamps: true })).toBe("[00:01] \n");
+    expect(generateExport(blank, { format: "txt", timestamps: true })).toBe("[00:01]\n");
     // Re-imported, the blank cue is no phantom "Speaker 2:" line.
     const two: BatchResult = {
       ...blank,
@@ -775,6 +794,11 @@ describe("joinSegmentTexts", () => {
     expect(joinSegmentTexts(["", "world"])).toBe("world");
     expect(joinSegmentTexts(["world", ""])).toBe("world");
     expect(joinSegmentTexts(["", ""])).toBe("");
+  });
+
+  it("skips a format-character-only part (a bare U+200E survives trim)", () => {
+    expect(joinSegmentTexts(["a", "\u200e", "b"])).toBe("a b");
+    expect(joinSegmentTexts(["你好", "\u200e", "世界"])).toBe("你好世界");
   });
 });
 

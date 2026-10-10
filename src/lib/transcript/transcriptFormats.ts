@@ -207,15 +207,16 @@ interface Ctx {
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")` over the non-empty parts; an empty
- *  part (a blank segment) is skipped, so it leaves no double,
- *  leading or trailing space and no space inside CJK. */
+ *  or format-character-only part (a blank segment, a bare U+200E that survives trim()) is
+ *  skipped, so it leaves no double, leading or trailing space and no space inside CJK once
+ *  the output strips its control characters. */
 export function joinSegmentTexts(parts: string[]): string {
   // Pieces + one join, tracking the last char: reading the growing string's tail each step
   // made this quadratic (≈1 s at 6000 segments, rerun on every edit of a long transcript).
   const out: string[] = [];
   let last = "";
   parts.forEach((p) => {
-    if (!p) return;
+    if (!stripControlChars(p).trim()) return;
     const piece = out.length && !(unspacedChar(last) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
     out.push(piece);
     last = edgeChar(piece, true);
@@ -269,9 +270,11 @@ function cueLines(
 ): string[] {
   // A blank original beside a translation would be an empty payload line, which ends an
   // SRT/VTT cue and orphans the translation under it: drop it then. An original-only cue
-  // keeps its (deliberately) empty line. TXT has no cue to end (`keepBlankOrig`): there the
-  // blank keeps its timed slot, so the translation indents under it instead of reading as
-  // the original.
+  // keeps its (deliberately) empty line. TXT has no cue to end (`keepBlankOrig`, set when the
+  // original LEADS the segment's lines): there the blank keeps its timed slot, so the
+  // translation indents under it instead of reading as the original. With a translation
+  // first the stamp already sits on the translation, and the blank would only trail as an
+  // empty indented line.
   const dropOrig = !keepBlankOrig && !clean(seg.text)
     && ctx.lineTracks.some((l) => l !== "orig" && trOf(seg, l) !== null);
   return ctx.lineTracks.flatMap((lang) => {
@@ -337,13 +340,15 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
           const time = `[${txtTime(seg.start)}] `;
           // A blank original keeps its slot but no bare "Name: ".
           const o = clean(seg.text);
+          // trimEnd: a bare kept slot is "[mm:ss]", no trailing space (text lines are already
+          // clean()-trimmed, so only that slot changes).
           return cueLines(
             ctx,
             seg,
             `${o ? prefix : ""}${o}`,
             (t, _s, lang) => `${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
-            true,
-          ).map((line, i) => (i && ctx.origIncluded ? "        " : time) + line);
+            ctx.lineTracks[0] === "orig",
+          ).map((line, i) => ((i && ctx.origIncluded ? "        " : time) + line).trimEnd());
         })
         .join("\n") + "\n"
     );
@@ -361,10 +366,14 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
     const flush = () => {
       if (bufs.some((b) => b.length)) {
         const prefix = namePrefix(ctx, who);
+        // A turn whose originals are all blank writes only its translations: untagged, a
+        // lone target's paragraph would read as what was spoken, so it says its language.
+        const origSlot = slotLangs.indexOf(null);
+        const origBlank = origSlot >= 0 && !bufs[origSlot].length;
         bufs.forEach((b, i) => {
           if (!b.length) return;
           const lang = slotLangs[i];
-          const tag = lang && ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : "";
+          const tag = lang && (ambiguous(ctx) || origBlank) ? `[${lang.toUpperCase()}] ` : "";
           paras.push(tag + prefix + joinSegmentTexts(b));
         });
       }
