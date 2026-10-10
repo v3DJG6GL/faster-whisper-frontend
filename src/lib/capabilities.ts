@@ -16,6 +16,7 @@ import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";
 import { shortModelName } from "./inherit";
 import { targetCap } from "./languages";
+import { wireCodes } from "./translationTargets";
 import type { Backend, Capabilities } from "./types";
 
 /** Floor between two fetches for the same Backend. A queue edit, a profile
@@ -180,6 +181,22 @@ export function translationLanguages(caps: Capabilities | null | undefined, mode
  *  text route refuses a request over the server's cap, so dictation clamps to this too. */
 export function maxTranslationTargets(caps: Capabilities | null | undefined): number {
   return targetCap(caps?.server_info?.limits?.translation_max_targets);
+}
+
+/** `maxTranslationTargets` for a Backend, read live from the caps store: the ONE cap lookup
+ *  every sender and every route preview shares, so the chip never promises more targets than a
+ *  session sends. The text route answers a request over TRANSLATION_MAX_TARGETS with a 422,
+ *  which would fail every phrase of a dictation. No id (or caps never fetched) = the app's
+ *  ceiling. */
+export function backendTargetCap(backendId: string | undefined | null): number {
+  return maxTranslationTargets(backendId ? ownProp(useApp.getState().caps, backendId) : null);
+}
+
+/** A target list as a run on this Backend sends it: the wire-valid codes (`wireCodes`, so a
+ *  refused code never takes a capped slot), then the first `backendTargetCap` of them, in the
+ *  order the user put them. */
+export function sendableTargets(list: unknown, backendId: string | undefined | null): string[] {
+  return wireCodes(list).slice(0, backendTargetCap(backendId));
 }
 
 /** A translation model id as the "Supported by …" group names it: its last path part. */

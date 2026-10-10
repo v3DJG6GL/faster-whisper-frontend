@@ -34,7 +34,7 @@ import { trText } from "./transcript/cueSplit";
 import { joinSegmentTexts } from "./transcript/transcriptFormats";
 import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
-import { maxTranslationTargets, refreshCaps } from "./capabilities";
+import { backendTargetCap, refreshCaps } from "./capabilities";
 import { wireCodes } from "./translationTargets";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
@@ -1682,7 +1682,7 @@ export async function translateParsed(
       const b = useApp.getState().backends.find((x) => x.id === ctx.backendId);
       if (b) await refreshCaps(b, { force: true });
     }
-    cap = maxTranslationTargets(ownProp(useApp.getState().caps, ctx.backendId) ?? null);
+    cap = backendTargetCap(ctx.backendId);
   }
   const targets = cap !== undefined && all.length > cap ? all.slice(0, cap) : all;
   // Chunk well under the transport's 512-text cap — a feature-length .srt

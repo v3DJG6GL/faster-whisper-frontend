@@ -14,6 +14,7 @@ import {
   maxTranslationTargets,
   refreshCaps,
   requestCredentialGen,
+  sendableTargets,
   translationLanguages,
   translationTargetInfo,
   translationWarm,
@@ -136,6 +137,23 @@ describe("maxTranslationTargets", () => {
     expect(at(3)).toBe(3);
     expect(at(10)).toBe(8);
     expect(at(3.7)).toBe(3);
+  });
+});
+
+describe("sendableTargets", () => {
+  it("drops the codes the wire refuses before it caps, so they take no slot", () => {
+    useApp.setState({ caps: {} });
+    expect(sendableTargets(["de_CH", "fr", 7, "it", "fr"], "b1")).toEqual(["fr", "it"]);
+    expect(sendableTargets(undefined, null)).toEqual([]);
+  });
+
+  it("caps at this Backend's translation_max_targets, keeping the first in order", () => {
+    useApp.setState({ caps: { b1: caps({ server_info: { limits: { translation_max_targets: 2 } } }) } });
+    expect(sendableTargets(["de_CH", "fr", "it", "es"], "b1")).toEqual(["fr", "it"]);
+    // Another Backend, or none, is held only to the app's ceiling.
+    const ten = ["aa", "bb", "cc", "dd", "ee", "ff", "gg", "hh", "ii", "jj"];
+    expect(sendableTargets(ten, "b2")).toHaveLength(8);
+    expect(sendableTargets(ten, undefined)).toHaveLength(8);
   });
 });
 

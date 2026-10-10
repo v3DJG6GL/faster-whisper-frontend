@@ -34,7 +34,7 @@ import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { seedTargets } from "@/lib/translationTargets";
-import { maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
+import { backendTargetCap, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
@@ -679,7 +679,7 @@ export function TranscriptViewer({
             // Caps never fetched for this backend: fetch them now (never throws). A server that
             // really reports nothing (older backend) keeps the documented ceiling.
             if (!hasOwn(useApp.getState().caps, backend.id)) await refreshCaps(backend, { force: true });
-            const cap = maxTranslationTargets(ownProp(useApp.getState().caps, backend.id) ?? null);
+            const cap = backendTargetCap(backend.id);
             const gs: string[][] = [];
             for (let at = 0; at < targets.length; at += cap) gs.push(targets.slice(at, at + cap));
             groups = gs;
