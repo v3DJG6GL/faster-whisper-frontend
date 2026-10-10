@@ -18,6 +18,9 @@ const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUr
 const fetchUrlAudioOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlAudioOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 // Unset = the real outside-Tauri command; the video-poll cadence test answers it.
 const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
+// Unset = the real outside-Tauri commands; the on-demand video completion tests answer them.
+const fetchUrlVideoOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideoOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
+const fetchUrlVideo = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideo>[0]) => Promise<string | null>>();
 // Unset = the real outside-Tauri command (no copy); the late audio-copy test answers it.
 const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveTranscriptMedia>) => Promise<string | null>>();
 // Unset = the real caps fetch; the translateParsed caps-miss test answers it.
@@ -47,6 +50,10 @@ vi.mock("./api", async (importOriginal) => {
       fetchUrlAudioOnDemand.getMockImplementation() ? fetchUrlAudioOnDemand(a) : orig.fetchUrlAudioOnDemand(a),
     getTranscribeProgress: (a: Parameters<typeof orig.getTranscribeProgress>[0]) =>
       getTranscribeProgress.getMockImplementation() ? getTranscribeProgress(a) : orig.getTranscribeProgress(a),
+    fetchUrlVideoOnDemand: (a: Parameters<typeof orig.fetchUrlVideoOnDemand>[0]) =>
+      fetchUrlVideoOnDemand.getMockImplementation() ? fetchUrlVideoOnDemand(a) : orig.fetchUrlVideoOnDemand(a),
+    fetchUrlVideo: (a: Parameters<typeof orig.fetchUrlVideo>[0]) =>
+      fetchUrlVideo.getMockImplementation() ? fetchUrlVideo(a) : orig.fetchUrlVideo(a),
     saveTranscriptMedia: (...a: Parameters<typeof orig.saveTranscriptMedia>) =>
       saveTranscriptMedia.getMockImplementation() ? saveTranscriptMedia(...a) : orig.saveTranscriptMedia(...a),
   };
@@ -1220,6 +1227,71 @@ describe("an on-demand video that fails outright shows on the Video row", () => 
   });
 });
 
+describe("an on-demand video that finishes is pulled once", () => {
+  // The server closes an on-demand fetch's progress entry the moment the video is done, so
+  // the poll reads "unknown" with no video: the request's own answer must pull the file.
+  const url = "https://youtu.be/ondemand";
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+  const dl = { mediaId: "v1", expiresAt: 123, height: 720, container: "mp4", bytes: 1000 };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  let tick: (() => void) | null = null;
+  let cleared = 0;
+  beforeEach(() => {
+    tick = null;
+    cleared = 0;
+    vi.stubGlobal("window", {
+      setInterval: (fn: () => void) => { tick = fn; return 1; },
+      clearInterval: () => { cleared += 1; },
+    });
+    fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/rec-od.mp4"));
+    openHistoryRecord({
+      schemaVersion: 1, kind: "url", id: "rec-od", createdAt: "2026-10-05T12:00:00Z",
+      sourcePath: url, sourceName: "Talk", status: "done",
+    });
+    useTranscribeRun.setState({ lastRunPath: url,
+      stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+  });
+  afterEach(() => {
+    getTranscribeProgress.mockReset();
+    fetchUrlVideoOnDemand.mockReset();
+    fetchUrlVideo.mockReset();
+    vi.unstubAllGlobals();
+    useTranscribeRun.setState({ stageMeta: {} });
+  });
+
+  it("the request's answer pulls the video while the poll only reads the closed entry", async () => {
+    getTranscribeProgress.mockImplementation(() =>
+      Promise.resolve({ stage: "unknown" } as import("./types").BatchProgress));
+    let answer: (d: typeof dl) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
+    retryRunVideo(url, ctx);
+    // Before the handler claims the id (or after it closes it) there is no entry: an open
+    // request keeps the poll alive instead of giving up.
+    tick!(); await flush();
+    expect(cleared).toBe(0);
+    answer(dl);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    expect(fetchUrlVideo.mock.calls[0][0].mediaId).toBe("v1");
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.mediaId).toBe("v1");
+    expect(cleared).toBe(1);
+  });
+
+  it("a poll that sees done first pulls it, and the request's answer does not pull it again", async () => {
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({
+      stage: "downloading", video: { state: "done", mediaId: "v1" },
+    } as import("./types").BatchProgress));
+    let answer: (d: typeof dl) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
+    retryRunVideo(url, ctx);
+    tick!(); await flush();
+    expect(fetchUrlVideo).toHaveBeenCalledTimes(1);
+    answer(dl);
+    await flush(); await flush();
+    expect(fetchUrlVideo).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a pending video's poll slows down once its link is off screen", () => {
   it("polls every second while painting, every fifth tick once another link is shown", async () => {
     let tick: (() => void) | null = null;
@@ -1562,6 +1634,20 @@ describe("translateParsed joins a text source like the TXT export", () => {
     } finally {
       useApp.setState({ caps: before });
     }
+  });
+
+  it("a language named as a word is not sent as the source (the route 422s it); a code is", async () => {
+    // An OpenAI verbose_json import says `"language": "english"`.
+    translateText.mockImplementation(() => Promise.resolve({ results: [{ fr: "Salut." }] }));
+    const word = await translateParsed({ language: "english", segments: [{ text: "Hi." }] }, { translateTo: ["fr"] }, ctx);
+    expect(translateText.mock.calls[0][0].source).toBeNull();
+    expect(word.translation?.source).toBeUndefined();
+    // The display language stays what the file said.
+    expect(word.language).toBe("english");
+    translateText.mockClear();
+    const code = await translateParsed({ language: "de", segments: [{ text: "Hi." }] }, { translateTo: ["fr"] }, ctx);
+    expect(translateText.mock.calls[0][0].source).toBe("de");
+    expect(code.translation?.source).toBe("de");
   });
 
   it("within the limit, or with an unknown limit (the app's ceiling), the whole list goes out without a warning", async () => {

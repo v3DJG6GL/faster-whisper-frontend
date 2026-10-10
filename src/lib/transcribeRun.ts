@@ -10,7 +10,7 @@ import { create } from "zustand";
 import {
   audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlAudioOnDemand, fetchUrlMedia,
   fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
-  saveTranscriptMedia, transcribeFile, transcribeUrl, translateText,
+  saveTranscriptMedia, transcribeFile, transcribeUrl, translateText, type UrlMediaDownload,
 } from "./api";
 import {
   errorText, handedOffDoorway, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText,
@@ -994,16 +994,31 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
  *  until the `video` sub-object reaches a terminal state, folding it
  *  into the rail only while this run is still the one on screen, then pull
  *  the file. Gives up when the entry vanishes (server restart / stale
- *  sweep) or after two hours. */
+ *  sweep) or after two hours.
+ *
+ *  `request` = an on-demand fetch's own request (startOnDemandVideo): the
+ *  server closes that entry the moment the video is done, so a poll almost
+ *  never sees "done" — the request's answer is the completion signal, and
+ *  "no entry" only ends the poll once the request has settled (before the
+ *  handler claims the id the entry does not exist yet either). */
 function awaitRunUrlVideo(
   rec: TranscriptRecord,
   ctx: RunContext,
   pid: string,
   epoch: number,
+  request?: Promise<UrlMediaDownload | null>,
 ) {
   const startedAt = Date.now();
   // Started after its file took the rail (every caller): a later same-path file is a new seq.
   const railSeq = railFileSeq;
+  // The video is pulled once, whichever of a terminal poll and the request's answer is first.
+  let pulled = false;
+  const pull = (mediaId: string) => {
+    if (pulled) return;
+    pulled = true;
+    fetchRunUrlVideo(rec, ctx, mediaId);
+  };
+  let requestSettled = !request;
   let inFlight = false;
   // An unreachable server backs the poll off (2, 4, … up to 30 s between
   // tries) instead of failing once a second until the deadline; a short
@@ -1029,6 +1044,8 @@ function awaitRunUrlVideo(
     getTranscribeProgress({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid })
       .then((p) => {
         failures = 0;
+        // The request's answer landed while this poll was out: it must not repaint the row.
+        if (pulled) return;
         // The epoch stays the same across the files of one run: only the link
         // the rail is showing may take this video's progress — and a same-path retry is a
         // different file on the rail (`railFileSeq`).
@@ -1039,8 +1056,9 @@ function awaitRunUrlVideo(
         if (!painting) skip = 4;
         if (p.stage === "unknown" || !p.stage) {
           // Entry gone without a terminal state: the fetch is lost to us
-          // (the export panel can still fetch on demand).
-          if (!p.video) {
+          // (the export panel can still fetch on demand). An on-demand
+          // request still open has not claimed it yet, or answers itself.
+          if (!p.video && requestSettled) {
             window.clearInterval(timer);
             return;
           }
@@ -1057,7 +1075,7 @@ function awaitRunUrlVideo(
         const st = p.video?.state;
         if (videoTerminal(st)) {
           window.clearInterval(timer);
-          if (st === "done" && p.video?.mediaId) fetchRunUrlVideo(rec, ctx, p.video.mediaId);
+          if (st === "done" && p.video?.mediaId) pull(p.video.mediaId);
         }
       })
       .catch(() => {
@@ -1066,6 +1084,27 @@ function awaitRunUrlVideo(
       })
       .finally(() => { inFlight = false; });
   }, 1000);
+  // A failed request (null) already marked the Video row: the poll then ends as before.
+  void request?.then((dl) => {
+    requestSettled = true;
+    if (!dl || pulled) return;
+    window.clearInterval(timer);
+    if (!registeredIds.has(rec.id)) return;
+    if (epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath) {
+      const video: VideoProgress = {
+        ...get().stageMeta.downloading?.video,
+        state: "done",
+        mediaId: dl.mediaId,
+        expiresAt: dl.expiresAt,
+        bytes: dl.bytes,
+        error: null,
+      };
+      set((s) => ({
+        stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) },
+      }));
+    }
+    pull(dl.mediaId);
+  });
 }
 
 /** The Video row's "Try again": fetch the link's video on demand for the
@@ -1094,8 +1133,7 @@ export function retryRunVideo(path: string, ctx: RunContext): void {
       },
     },
   }));
-  awaitRunUrlVideo(rec, ctx, pid, epoch);
-  startOnDemandVideo(path, ctx, pid, epoch);
+  awaitRunUrlVideo(rec, ctx, pid, epoch, startOnDemandVideo(path, ctx, pid, epoch));
 }
 
 /** The video height a link downloads at: the link card's pick, else the Settings default. */
@@ -1107,10 +1145,16 @@ export function videoMaxHeightOf(url: string): number | null {
 }
 
 /** Fetch a link's video on demand under `pid` (awaitRunUrlVideo folds its progress into the
- *  Video row); a request that fails outright marks the Video row failed. */
-function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: number): void {
+ *  Video row); a request that fails outright marks the Video row failed. Resolves to the
+ *  server's answer, null on failure — hand it to awaitRunUrlVideo, which pulls the file. */
+function startOnDemandVideo(
+  url: string,
+  ctx: RunContext,
+  pid: string,
+  epoch: number,
+): Promise<UrlMediaDownload | null> {
   const railSeq = railFileSeq;
-  void fetchUrlVideoOnDemand({
+  return fetchUrlVideoOnDemand({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
     url,
@@ -1118,7 +1162,7 @@ function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: nu
     formatId: get().urlMeta[url]?.videoFormat ?? null,
     progressId: pid,
   }).catch((e) => {
-    if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url) return;
+    if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url) return null;
     set((st2) => ({
       stageMeta: {
         ...st2.stageMeta,
@@ -1129,6 +1173,7 @@ function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: nu
         },
       },
     }));
+    return null;
   });
 }
 
@@ -1697,6 +1742,10 @@ export async function translateParsed(
   let model: string | undefined;
   let source: string | undefined;
   let plan: PlanStage[] | undefined;
+  // An imported JSON may name its language as a word ("english"): the text route 422s any
+  // source that is not a code, failing every chunk. Only a code goes out; else auto-detect.
+  const lang = parsed.language?.trim();
+  const srcCode = lang && /^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/i.test(lang) ? lang : null;
   for (let at = 0; targets.length && at < parsed.segments.length; at += CHUNK) {
     // A cancel or an input change bumps the epoch; the pump only checks it after this
     // function returns, so without this a feature-length file kept POSTing chunk after
@@ -1707,7 +1756,7 @@ export async function translateParsed(
       backendId: ctx.backendId,
       texts: parsed.segments.slice(at, at + CHUNK).map((seg) => seg.text),
       targets,
-      source: parsed.language ?? null,
+      source: srcCode,
       model: options.translationModel ?? null,
       mode: options.translationMode ?? null,
       glossary: options.translationGlossary ?? null,
@@ -1742,7 +1791,7 @@ export async function translateParsed(
     ...(targets.length
       ? {
           translation: {
-            model, targets, source: source ?? parsed.language,
+            model, targets, source: source ?? srcCode ?? undefined,
             ...(options.translationMode ? { mode: options.translationMode } : {}),
           },
         }
@@ -1865,7 +1914,8 @@ export function linkPrefetchFor(
 /** A link run: the link card's spoken language and reused audio, and — when the
  *  card picked them — the site's own subtitles: as the transcript (no transcription;
  *  the audio is still fetched for playback, the video on demand when kept) or next
- *  to the transcription. `videoPid` = the progress id a kept video downloads under. */
+ *  to the transcription. `videoPid` = the progress id a kept video downloads under,
+ *  `videoReq` = that on-demand request (awaitRunUrlVideo's completion signal). */
 async function runLink(
   url: string,
   common: TranscribeCommon,
@@ -1875,7 +1925,7 @@ async function runLink(
   // Writes the in-flight ledger row for a planned site transcript that falls
   // back to a server transcription (the pump skipped it: no job was expected).
   ledger?: () => Promise<void>,
-): Promise<{ res: BatchResult; videoPid?: string }> {
+): Promise<{ res: BatchResult; videoPid?: string; videoReq?: Promise<UrlMediaDownload | null> }> {
   const meta = get().urlMeta[url];
   const site = meta?.siteSubs;
   const spoken = meta?.spokenLanguage;
@@ -1925,9 +1975,10 @@ async function runLink(
   const parsed = { ...got.transcript.parsed, language: primarySubtag(got.transcript.lang) };
   const res = await translateParsed(parsed, { ...options, translateTo: translateTo ?? [] }, ctx, pid, epoch);
   let videoPid: string | undefined;
+  let videoReq: Promise<UrlMediaDownload | null> | undefined;
   if (options.keepVideo && epoch === get().epoch) {
     videoPid = newProgressId();
-    startOnDemandVideo(url, ctx, videoPid, epoch);
+    videoReq = startOnDemandVideo(url, ctx, videoPid, epoch);
   }
   return {
     res: attachFetched(
@@ -1942,6 +1993,7 @@ async function runLink(
       meta,
     ),
     videoPid,
+    videoReq,
   };
 }
 
@@ -2106,12 +2158,13 @@ async function pump(
         // A cancel during the ledger write must not still post the request.
         if (epoch !== get().epoch) return;
         let videoPid: string | undefined;
+        let videoReq: Promise<UrlMediaDownload | null> | undefined;
         let res: BatchResult;
         if (isText) {
           res = await translateTextSource(next.path, options!, ctx, pid, epoch);
         } else if (isUrl) {
           const fallbackLedger = pid && ctx.jobsEnabled && siteTranscript ? ledgerRow : undefined;
-          ({ res, videoPid } = await runLink(next.path, common, ctx, pid, epoch, fallbackLedger));
+          ({ res, videoPid, videoReq } = await runLink(next.path, common, ctx, pid, epoch, fallbackLedger));
         } else {
           // The limit rides as an option, not a pre-check here: Rust reads the size from the
           // file it is about to stream, so the two can't disagree.
@@ -2135,7 +2188,7 @@ async function pump(
             // The transcript came back before the video did: keep polling
             // the same id (the server leaves the entry to the video task),
             // or the on-demand one a site-subtitle run started.
-            awaitRunUrlVideo(rec, ctx, (videoPid ?? pid)!, epoch);
+            awaitRunUrlVideo(rec, ctx, (videoPid ?? pid)!, epoch, videoReq);
           }
         } else if (!isText) {
           copyRunMedia(next.path, rec);
