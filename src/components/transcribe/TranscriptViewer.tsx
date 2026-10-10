@@ -802,19 +802,26 @@ export function TranscriptViewer({
         const ts = tsShown ? `[${fmtTimestamp(seg.start)}] ` : "";
         const who = showNames && seg.speaker ? `${displayName(seg.speaker)}: ` : "";
         const lines: string[] = [];
-        if (origVisible) lines.push(`${ts}${who}${seg.text.trim()}`);
+        // Test the CLEANED text, as the TXT export does: a mark-only line (a
+        // bare U+200E survives trim()) would otherwise paste as an empty
+        // "[ts] Name: " line once the outer strip drops the mark.
+        const body = stripControlChars(seg.text).trim();
+        const origLine = origVisible && !!body;
+        if (origLine) lines.push(`${ts}${who}${body}`);
         for (const lang of visLangs) {
           const src = result.segments?.[i];
           // trText skips a track the server's quality guard kept as the
           // ORIGINAL — pasting the source language under a translation's
           // label is worse than omitting it.
-          const tr = src && trText(src, lang);
+          const tr = src && stripControlChars(trText(src, lang) ?? "").trim();
           if (!tr) continue;
           // Tag only when the clipboard would otherwise be ambiguous: with
           // two targets an untagged line says nothing about which language it
           // is, and `lang` was in scope here all along and simply unused.
           const tag = visLangs.length > 1 ? `[${lang.toUpperCase()}] ` : "";
-          lines.push(`${origVisible ? "  " : ts}${tag}${who}${tr}`);
+          // Indent only under a pushed original — translations whose original
+          // was dropped lay out as with the original hidden, each stamped.
+          lines.push(`${origLine ? "  " : ts}${tag}${who}${tr}`);
         }
         return lines.join("\n");
       })
