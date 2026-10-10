@@ -3830,9 +3830,9 @@ export interface CancelOpts {
   keepShortcuts?: boolean;
   /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
    *  discarded — a live stream session is finished (drained, recording written), a live batch
-   *  session is dropped, not discarded (not transcribed, but a device-loss salvage under way keeps
-   *  its .wav/.txt), and a drain/transcription still running after stop is released, keeping its
-   *  saved recording — the audio may be the only copy of what was said. */
+   *  session is finished too (transcribed, .wav/.txt written, its events silenced), and a
+   *  drain/transcription still running after stop is released, keeping its saved recording — the
+   *  audio may be the only copy of what was said. */
   keepRecording?: boolean;
 }
 
