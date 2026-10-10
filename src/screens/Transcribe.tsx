@@ -95,10 +95,15 @@ function recentMeta(rec: TranscriptRecord): string {
     parts.push(`${day} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   }
   if (rec.result?.duration) parts.push(fmtDurationExact(rec.result.duration));
-  if (rec.language) parts.push(safeDisplayText(rec.language, 12));
+  // Gate on the sanitized text, as History does: a format-only code would
+  // otherwise leave a dangling " · " (or a count History hides).
+  const lang = safeDisplayText(rec.language ?? "", 12).trim();
+  if (lang) parts.push(lang);
   const spk = rec.result ? speakersOf(rec.result).length : 0;
   if (spk > 1) parts.push(`${spk} speakers`);
-  const trLangs = rec.result?.translation?.targets?.length ?? 0;
+  const trLangs = (rec.result?.translation?.targets ?? []).filter((t) =>
+    safeDisplayText(t, 12).trim(),
+  ).length;
   if (trLangs > 0) parts.push(plural(trLangs, "translation"));
   return parts.join(" · ");
 }
@@ -2863,7 +2868,10 @@ export default function Transcribe() {
                   {it.status === "done" && it.result && (
                     <span className="font-mono text-[11px] text-faint">
                       {it.result.duration ? fmtDurationExact(it.result.duration) : ""}
-                      {it.result.language ? ` · ${it.result.language}` : ""}
+                      {(() => {
+                        const lang = safeDisplayText(it.result.language ?? "", 12).trim();
+                        return lang ? ` · ${lang}` : "";
+                      })()}
                       {(() => {
                         const spk = speakersOf(it.result).length;
                         return spk ? ` · ${plural(spk, "speaker")}` : "";
@@ -2991,8 +2999,7 @@ export default function Transcribe() {
 
       {result?.overridesIgnored && result.overridesIgnored.length > 0 && (
         <Notice className="mt-3">
-          The server ignored {result.overridesIgnored.length} override
-          {result.overridesIgnored.length === 1 ? "" : "s"} (locked by the server admin):{" "}
+          The server ignored {plural(result.overridesIgnored.length, "override")} (locked by the server admin):{" "}
           <span className="font-mono text-[12px]">
             {result.overridesIgnored.slice(0, MAX_IGNORED_SHOWN).join(", ")}
           </span>

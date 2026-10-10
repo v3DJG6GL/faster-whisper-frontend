@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { isDurationMetric, legendRanges, type ChartMetric } from "@/lib/usageDerive";
 import { metricTick } from "@/components/stats/chartKit";
+import { plural } from "@/lib/format";
 import { type CellTipState, LEVEL_BG } from "@/components/stats/heatGridKit";
 
 /** The floating shell: measured after render so a multi-line tip flips and clamps by its
@@ -50,7 +51,7 @@ export function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: stri
           <span key={i} className="flex min-w-[58px] flex-col gap-1">
             <i className="block h-2.5 w-full rounded-[2px]" style={{ background: LEVEL_BG[i] }} />
             <span className="font-mono text-[10.5px] text-dim">{r}</span>
-            <span className="font-mono text-[10px] text-faint">{counts[i]} {counts[i] === 1 ? unit[0] : unit[1]}</span>
+            <span className="font-mono text-[10px] text-faint">{plural(counts[i], unit[0], unit[1])}</span>
           </span>
         ))}
       </span>

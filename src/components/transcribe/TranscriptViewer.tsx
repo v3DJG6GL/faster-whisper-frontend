@@ -328,6 +328,9 @@ export function TranscriptViewer({
   const hasSpeakers = speakers.length > 0;
   // Per-transcript constant: computed once here, not per row in the (up to 5000-row) list.
   const origLang = useMemo(() => safeDisplayText(result.language ?? "??", 16), [result.language]);
+  // The header gates on the SANITIZED code: a format-only language would
+  // otherwise leave a dangling " · ".
+  const langShown = safeDisplayText(result.language ?? "", 16).trim();
   // Overlay slot: the record id when known, else the path (see overlayKey).
   const okey = overlayKey ?? path;
   // The record on screen NOW — a run's completion must not fold another record's panel.
@@ -824,9 +827,10 @@ export function TranscriptViewer({
         // A blank original beside a translation keeps its bare timed slot, as
         // the TXT export does: a stamped, untagged translation line would read
         // as the spoken original.
-        // With originals shown a translation is always indented, so one under a
-        // blank original never reads as spoken text when timestamps are off.
-        if (origVisible && !body && ts && trLines.length) lines.push(ts.trimEnd());
+        // With originals shown a translation is always indented, and the slot is
+        // kept with timestamps off too (an empty line): without it the indented
+        // translation would paste as part of the previous segment's.
+        if (origVisible && !body && trLines.length) lines.push(ts.trimEnd());
         for (const l of trLines) lines.push(`${origVisible ? "  " : ts}${l}`);
         return lines.join("\n");
       })
@@ -1639,7 +1643,7 @@ export function TranscriptViewer({
           </>
         ) : null}
         {fileLabel ? ` · ${fileLabel}` : ""}
-        {result.language ? ` · ${safeDisplayText(result.language, 16)}` : ""}
+        {langShown ? ` · ${langShown}` : ""}
         {result.duration
           ? ` · ${result.duration < 60 ? `${result.duration.toFixed(1)}s` : fmtDurationExact(result.duration)}`
           : ""}

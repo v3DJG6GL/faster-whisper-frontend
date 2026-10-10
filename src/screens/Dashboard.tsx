@@ -14,6 +14,7 @@ import { HomeUsageStrip } from "@/components/stats/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/dictation/streaming";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { plural } from "@/lib/format";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
 import { effectiveLanguage } from "@/lib/backends";
 import { ownModelName } from "@/lib/backendChipLabels";
@@ -506,8 +507,7 @@ export default function Dashboard() {
 
       {overridesIgnored.length > 0 && (
         <Notice className="mt-3">
-          Server ignored {overridesIgnored.length} override
-          {overridesIgnored.length === 1 ? "" : "s"} (locked by the server admin):{" "}
+          Server ignored {plural(overridesIgnored.length, "override")} (locked by the server admin):{" "}
           <span className="font-mono text-[12px]">{overridesIgnored.join(", ")}</span>.
         </Notice>
       )}
