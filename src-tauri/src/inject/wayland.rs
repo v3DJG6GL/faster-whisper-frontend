@@ -313,7 +313,10 @@ mod imp {
                         if ch.is_control() {
                             continue;
                         }
-                        // First (lowest-level) occurrence wins.
+                        // First occurrence wins: lowest keycode, then lowest level on that key.
+                        // Unlike the dead keys above, this is NOT fewest-modifier: every key found
+                        // here types the glyph, and a cost-first pick would move ( and ) onto the
+                        // keypad-paren keycodes.
                         map.entry(ch).or_insert(KeySpec {
                             keycode: (kc - EVDEV_OFFSET) as i32,
                             shift: level == 1 || level == 3,

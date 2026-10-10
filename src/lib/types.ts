@@ -274,8 +274,10 @@ export interface GeneralSettings {
   restoreClipboard: boolean;
   /** Mark every clipboard write of OUR transcript as "keep out of history": Windows'
    *  Clipboard history (Win+V) and cloud clipboard skip it, and clipboard managers that
-   *  honour the hint (Klipper and others) don't keep it. Rust reads this from the saved
-   *  config — no IPC argument — so QuickAdd, recovery writes and diverts all obey it.
+   *  honour the hint (Klipper and others) don't keep it. Rust holds this as a process-wide
+   *  flag (`inject::set_clipboard_privacy`), loaded from the config at startup and then set
+   *  from the webview's live value on every save, written or held (`save_config` /
+   *  `apply_live_switches`), so QuickAdd, recovery writes and diverts all obey it.
    *  Clipboard RESTORES are always excluded regardless (a restored snapshot has lost its
    *  source's flags, e.g. a password manager's). Default on. */
   excludeFromClipboardHistory: boolean;

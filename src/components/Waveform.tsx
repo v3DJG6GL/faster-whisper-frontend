@@ -8,10 +8,10 @@ import { PRIDE_RAINBOW_STOPS } from "@/lib/prideFlag";
  * dictation chip's voice indicator and as ambient instrument readouts across the
  * app. Reacts to `level` (0..1 RMS); idles with a gentle breathing baseline.
  *
- * `pride`: a quiet solidarity touch — while the meter is ACTIVE (dictating) and you
- * HOVER it, the bars flicker between their normal colour and the rainbow Pride flag,
- * settling on it; they fade back when you leave or the session ends. No effect at idle.
- * Off by default; honours prefers-reduced-motion (no flicker).
+ * `pride`: a quiet solidarity touch — while you are SPEAKING (the green "live" tone) and
+ * you HOVER the meter, the bars flicker between their normal colour and the rainbow Pride
+ * flag, settling on it; they fade back when you leave, stop speaking, or the session ends.
+ * No effect at idle or while armed-but-silent. Off by default; honours prefers-reduced-motion (no flicker).
  */
 
 // Flicker envelope (fraction-of-duration → flag opacity). Dips toward the normal colour,
