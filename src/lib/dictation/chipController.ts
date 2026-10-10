@@ -15,6 +15,7 @@ import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
+import { langCode } from "../languages";
 import { isActiveDictation, sessionNoteHoldMs } from "./dictationVisual";
 import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
 import { DEFAULT_SETTINGS } from "../defaults";
@@ -141,11 +142,14 @@ export function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const undecided = state.routePending === "undecided";
   if (targets.length === 0 && !undecided) return "";
   const backend = backendForProfile(profile, state.backends);
-  const src = effectiveLanguage(profile?.language, backend?.language) ?? "";
-  if (targets.length === 0) return `${src.toUpperCase() || "AUTO"} → ?`;
+  // Sanitized and capped like the chip's LangPick: a synced language of only format characters
+  // falls back to AUTO here (Rust strips them after the fallback is decided), and a long one
+  // can't push the targets past the tray's 64-character route cap.
+  const src = langCode(effectiveLanguage(profile?.language, backend?.language) ?? "", 12).trim() || "AUTO";
+  if (targets.length === 0) return `${src} → ?`;
   const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.trim().toUpperCase());
   const more = targets.length - shown.length;
-  return `${src.toUpperCase() || "AUTO"} → ${shown.join(" ")}${more > 0 ? ` +${more}` : ""}`;
+  return `${src} → ${shown.join(" ")}${more > 0 ? ` +${more}` : ""}`;
 }
 
 /** The status word for the tray tooltip — the ONLY status surface on a chip-less desktop.
@@ -163,12 +167,14 @@ export function trayStatus(status: string, warming: boolean, serverWork: ServerW
 }
 
 /** Build the chip's tiny usage readout (today's value) for the chosen metric. */
-function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
+export function chipStatsLine(u: UsageStats, metric: OverlayStatsMetric): string {
   // `today.all` — every kind, like the Words tile; the per-kind split is a Statistics matter.
   const t = u.today.all;
   if (metric === "audio") return `${fmtDuration(t.audio_s)} today`;
   if (metric === "both") return `${fmtCompact(t.words)}w · ${fmtDuration(t.audio_s)}`;
-  return `${fmtCompact(t.words)} words`;
+  // Singular on the compact string, like chartKit's metricText: "1 word", "1.2k words".
+  const n = fmtCompact(t.words);
+  return `${n} ${n === "1" ? "word" : "words"}`;
 }
 
 let started = false;

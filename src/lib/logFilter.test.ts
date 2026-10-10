@@ -210,7 +210,7 @@ describe("formatLine / buildBugReport", () => {
       },
       shown,
     );
-    expect(report).toContain("—— last 1 lines —— filtered: warn+ · text: portal");
+    expect(report).toContain("—— last 1 line —— filtered: warn+ · text: portal");
     expect(report).toContain("kept");
   });
   it("omits absent context fields", () => {
@@ -219,7 +219,7 @@ describe("formatLine / buildBugReport", () => {
       [line()],
     );
     expect(report).not.toContain("backend:");
-    expect(report).toContain("—— last 1 lines ——");
+    expect(report).toContain("—— last 1 line ——");
   });
 });
 

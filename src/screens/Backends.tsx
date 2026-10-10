@@ -562,7 +562,9 @@ function Editor({
           summary={
             <span className="text-faint">
               · {shortModelName(ownModel) ?? serverModel ?? "server model"} ·{" "}
-              {safeDisplayText(spoken.value ? spokenLabel(spoken.value) : (serverLanguageLabel(decodeDefaults) ?? "server language"), 30)}{" "}
+              {spoken.value
+                ? safeDisplayText(spokenLabel(spoken.value), 30).trim() || "??"
+                : safeDisplayText(serverLanguageLabel(decodeDefaults) ?? "server language", 30)}{" "}
               · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
           }
@@ -1211,8 +1213,9 @@ export default function Backends() {
                           {safeIdentityText(b.name, 80)}
                         </span>
                         <Badge tone="accent">{b.endpoint}</Badge>
-                        {/* "" = the backend leaves the language to the server. */}
-                        <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40) : "server lang"}</Badge>
+                        {/* "" = the backend leaves the language to the server. A set language that
+                            sanitizes to blank is still sent verbatim, so it reads "??", not "server lang". */}
+                        <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40).trim() || "??" : "server lang"}</Badge>
                         {b.hasApiKey && <Badge>key</Badge>}
                         {backendChips(b, conn).map((c) => (
                           <Badge key={c}>{c}</Badge>

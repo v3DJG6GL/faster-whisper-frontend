@@ -175,6 +175,12 @@ const HOLD_H = 132;
 // the chip away from the edge, out from under the cursor) can't immediately re-peek.
 const PEEK_HOVER_GRACE_MS = 6000;
 
+// A chip timing from the payload, clamped to its Settings stepper range. Neither config.json nor
+// a synced blob is bounded on the way in, and a delay past setTimeout's 2^31-1 ms ceiling fires
+// at once — the chip would hide/dim/expand instantly instead of practically never.
+const finiteIn = (v: unknown, lo: number, hi: number, d: number) =>
+  typeof v === "number" && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d;
+
 // Edge-peek geometry — pure CSS. The overlay window is anchored FLUSH against the screen edge
 // (overlay.rs), so the webview's own edge IS the screen edge. At rest the chip is inset
 // EDGE_MARGIN from it; tucked, it slides by PEEK_TUCK so the status dot's centre lands on the
@@ -283,10 +289,11 @@ export default function Overlay() {
             theme,
             persistentDock: e.payload.persistentDock ?? REC.persistentDock,
             overlayPeek: e.payload.overlayPeek ?? REC.overlayPeek,
-            peekTimeoutSec: e.payload.peekTimeoutSec ?? REC.peekTimeoutSec,
+            peekTimeoutSec: finiteIn(e.payload.peekTimeoutSec, 1, 600, REC.peekTimeoutSec),
             peekWhileActive: e.payload.peekWhileActive ?? REC.peekWhileActive,
-            dimAfterSec: e.payload.dimAfterSec ?? REC.dimAfterSec,
-            hoverRevealMs: e.payload.hoverRevealMs ?? REC.hoverRevealMs,
+            // 0 = never dim.
+            dimAfterSec: finiteIn(e.payload.dimAfterSec, 0, 600, REC.dimAfterSec),
+            hoverRevealMs: finiteIn(e.payload.hoverRevealMs, 0, 3000, REC.hoverRevealMs),
             chipScale: e.payload.chipScale ?? REC.chipScale,
             dotScale: e.payload.dotScale ?? REC.dotScale,
             quickLaunch: e.payload.quickLaunch ?? REC.quickLaunch,

@@ -488,7 +488,7 @@ function Editor({
               inheritLabel={
                 backend?.overrideProfile === NO_OVERRIDE_PROFILE
                   ? "Inherit · none"
-                  : inheritLabel(backend?.overrideProfile || (backend ? "server default" : undefined))
+                  : inheritLabel(safeDisplayText(backend?.overrideProfile ?? "", 40).trim() || (backend ? "server default" : undefined))
               }
               onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
             />

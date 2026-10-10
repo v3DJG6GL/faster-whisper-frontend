@@ -251,6 +251,8 @@ function HeroTitle() {
 }
 
 export default function Dashboard() {
+  // The main window has no MotionConfig (only the chip does), so honor reduce-motion here.
+  const reduced = useReducedMotion();
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
   const status = useApp((s) => s.status);
@@ -408,7 +410,7 @@ export default function Dashboard() {
           </button>
           <div className="min-w-0">
             <div className={cn("flex items-center gap-2 font-mono text-[11px] uppercase tracking-label", STATE_TEXT[vis.tone] ?? "text-faint")}>
-              <i className={cn("inline-block size-[7px] rounded-full bg-current", vis.pulse && "animate-pulse")} aria-hidden />
+              <i className={cn("inline-block size-[7px] rounded-full bg-current", vis.pulse && "animate-pulse motion-reduce:animate-none motion-reduce:opacity-80")} aria-hidden />
               {vis.label}
             </div>
             <div className="mt-1 text-[16px] font-semibold text-text">
@@ -465,7 +467,7 @@ export default function Dashboard() {
             initial={{ opacity: 0, height: 0, marginTop: 0 }}
             animate={{ opacity: 1, height: "auto", marginTop: 16 }}
             exit={{ opacity: 0, height: 0, marginTop: 0 }}
-            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            transition={reduced ? { duration: 0 } : { duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
             className="overflow-hidden"
           >
             <Card className="p-5">

@@ -9,6 +9,7 @@ import {
   chipRoute,
   chipRouteMore,
   chipRoutePending,
+  chipStatsLine,
   chipRouteTargets,
   configuredRouteTargets,
   trayRoute,
@@ -224,6 +225,29 @@ describe("trayRoute", () => {
     // A failed start's error linger keeps activeProfile but nulls sessionTargets: nothing
     // runs, so the Profile's configured targets must not read as a live route.
     expect(trayRoute(state({ sessionTargets: null }))).toBe("");
+  });
+
+  it("falls back to AUTO for a language of only format characters", () => {
+    const p = { ...profile, language: "\u200b" };
+    expect(trayRoute(state({ profiles: [p], sessionTargets: ["fr", "it"] }))).toBe("AUTO → FR IT");
+  });
+
+  it("caps a long synced language so the targets stay in the route", () => {
+    const p = { ...profile, language: "x".repeat(100) };
+    const route = trayRoute(state({ profiles: [p], sessionTargets: ["fr", "it"] }));
+    expect(route.endsWith("→ FR IT")).toBe(true);
+    expect(route.split(" → ")[0]).toHaveLength(12);
+  });
+});
+
+describe("chipStatsLine", () => {
+  type Usage = Parameters<typeof chipStatsLine>[0];
+  const usage = (words: number) => ({ today: { all: { words, audio_s: 0 } } }) as unknown as Usage;
+
+  it("says 'word' for exactly one word and 'words' otherwise", () => {
+    expect(chipStatsLine(usage(1), "words")).toBe("1 word");
+    expect(chipStatsLine(usage(0), "words")).toBe("0 words");
+    expect(chipStatsLine(usage(1200), "words")).toBe("1.2k words");
   });
 });
 

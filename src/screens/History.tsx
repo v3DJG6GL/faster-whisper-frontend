@@ -622,6 +622,7 @@ export default function History() {
     // corrupted non-string one, is raw-truthy but sanitizes to "", leaving a bare "profile" label.
     const profileShown = safeDisplayText(rec.profileName ?? "", 40).trim();
     const backendShown = safeDisplayText(backends.find((b) => b.id === rec.backendId)?.name ?? "", 40).trim();
+    const failureShown = safeDisplayText(rec.translationFailure ?? "", 24).trim();
     const shownModel = shortModelName(rec.model, 40);
     const tracks = recordTracks(rec);
     return (
@@ -727,7 +728,7 @@ export default function History() {
             {rec.translationAttempted && (
               <div className="mt-3 font-mono text-[11px] text-warn">
                 translation to {safeDisplayText(rec.translationTarget ?? "", 40).trim() || "the target language"} failed
-                {rec.translationFailure ? ` (${safeDisplayText(rec.translationFailure, 24)})` : ""}
+                {failureShown ? ` (${failureShown})` : ""}
                 {rec.insertMethod === "typed"
                   ? " — original inserted"
                   : rec.insertMethod === "clipboard"

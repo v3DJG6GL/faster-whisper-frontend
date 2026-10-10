@@ -34,6 +34,7 @@ import {
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { plural } from "@/lib/format";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
 
@@ -242,7 +243,7 @@ export default function Logs() {
       text.trim() ? `text: ${text.trim()}` : null,
       // "Clear view" hides earlier lines from the report too; without this line the
       // header claimed the paste WAS the session tail.
-      cleared > 0 ? `${cleared.toLocaleString()} earlier lines cleared from view` : null,
+      cleared > 0 ? `${plural(cleared, "earlier line")} cleared from view` : null,
     ].filter(Boolean);
     return parts.length ? parts.join(" · ") : null;
   }, [threshold, tags, text, cleared]);
@@ -367,7 +368,7 @@ export default function Logs() {
           <StatusDot tone="live" pulse title="Streaming" /> Streaming
         </span>
         <span className="ml-auto font-mono text-[12px] tabular-nums text-faint">
-          {(all.length + cleared).toLocaleString()} lines this session
+          {plural(all.length + cleared, "line")} this session
         </span>
       </div>
 
@@ -442,7 +443,7 @@ export default function Logs() {
                 {emptyKind === "filtered"
                   ? "Loosen the level, tags, or text filter to see more."
                   : emptyKind === "cleared"
-                    ? `${cleared.toLocaleString()} earlier lines hidden. New lines will appear as they arrive.`
+                    ? `${plural(cleared, "earlier line")} hidden. New lines will appear as they arrive.`
                     : "Lines appear here as you dictate or transcribe. Earlier sessions live in the log folder."}
               </span>
             </div>
@@ -481,7 +482,7 @@ export default function Logs() {
             onClick={relatch}
             className="ring-signal absolute bottom-4 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-pill bg-accent px-4 py-1.5 text-[12px] font-bold text-accent-ink shadow-lg"
           >
-            {follow.pendingNew.toLocaleString()} new {follow.pendingNew === 1 ? "line" : "lines"}
+            {plural(follow.pendingNew, "new line")}
             <ArrowDown className="h-3.5 w-3.5" />
           </button>
         )}

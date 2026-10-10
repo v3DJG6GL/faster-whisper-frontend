@@ -3,6 +3,7 @@
 
 import type { LogLine } from "./api";
 import { stripControlChars } from "./sanitize";
+import { plural } from "./format";
 
 /** Threshold semantics: "info" = Info and above, "all" includes trace/debug. */
 export type LevelThreshold = "all" | "info" | "warn" | "error";
@@ -268,7 +269,7 @@ export function buildBugReport(hdr: BugReportHeader, raw: readonly LogLine[]): s
     ]
       .filter(Boolean)
       .join(" · "),
-    `—— last ${tail.length} lines ——${hdr.filters ? ` filtered: ${hdr.filters}` : ""}`,
+    `—— last ${plural(tail.length, "line")} ——${hdr.filters ? ` filtered: ${hdr.filters}` : ""}`,
   ]
     .filter((s) => s !== "")
     .join("\n");
