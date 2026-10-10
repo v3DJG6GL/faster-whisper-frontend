@@ -278,12 +278,15 @@ pub(crate) async fn inject_text(
         modifiers_stuck = modifiers_stuck || chord_lost;
     }
     // The per-app rule — including "never type into this app" — was resolved against the window
-    // focused when this insert was QUEUED, and getting here takes real time: the queue wait behind
-    // earlier inserts and the up-to-500ms modifier wait just above. In a live or hands-free session
-    // the user is expected to be switching windows, so the window that receives the keys may not be
-    // the one the decision was made for. Re-check now, at the sink. The later prev-clipboard read
-    // and settle are re-checked only for OUR OWN window (the probes at the clipboard write and the
-    // chord); a move to another app inside that window is not re-checked against the per-app rule.
+    // focused when the caller's queued insert task STARTED (streaming.ts `resolveTarget` runs
+    // inside the inject chain, after the queue wait), and getting here takes real time: the task's
+    // own awaits after that (a live phrase's server translation round trip and the
+    // `begin_injection` clipboard read), the IPC hop, and the up-to-500ms modifier wait just above.
+    // In a live or hands-free session the user is expected to be switching windows, so the window
+    // that receives the keys may not be the one the decision was made for. Re-check now, at the
+    // sink. The later prev-clipboard read and settle are re-checked only for OUR OWN window (the
+    // probes at the clipboard write and the chord); a move to another app inside that window is
+    // not re-checked against the per-app rule.
     //
     // A mismatch degrades to clipboard-only — the same treatment a blocked or non-editable target
     // already gets, so the text is preserved and nothing is typed into a window whose rule we
