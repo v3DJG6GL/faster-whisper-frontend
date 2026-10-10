@@ -316,8 +316,10 @@ mod tests {
             "startmenuexperiencehost",
             "searchhost",
             "searchapp",
+            "searchui",
             "shellexperiencehost",
             "lockapp",
+            "textinputhost",
         ] {
             assert!(is_shell_exe(shell), "{shell}");
         }

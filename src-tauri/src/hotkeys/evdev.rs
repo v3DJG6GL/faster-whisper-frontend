@@ -406,10 +406,11 @@ mod imp {
         })
     }
 
-    /// The manufactured-stop rule, shared by both teardown sites — the twin of
-    /// `windows::manufactured_stop`, see there. Emit the stop; arm the loss latch ONLY if the
-    /// chord is still physically down. A chord the kernel reports released is safe to type into,
-    /// and arming on it diverted the next phrase to the clipboard for nothing.
+    /// The manufactured-stop rule, shared by all three teardown sites (`stop_held_sessions`,
+    /// commit's teardown drain, the reader post-loop) — the twin of `windows::manufactured_stop`,
+    /// see there. Emit the stop; arm the loss latch ONLY if the chord is still physically down.
+    /// A chord the kernel reports released is safe to type into, and arming on it diverted the
+    /// next phrase to the clipboard for nothing.
     fn manufactured_stop(app: &AppHandle, profile_id: &str, keys: &[u16]) {
         // A chord with no shortcut modifier is never asked about (the latch keys on modifiers),
         // so its log line must not claim the kernel reported it released — and checking first

@@ -70,8 +70,10 @@ pub(crate) async fn inject_text(
     restore_clipboard: bool,
     paste_shortcut: Vec<String>,
     // `expect_app_id` is the app the CALLER resolved its per-app rule and insert method against.
-    // `None` = no identified target (the focus tracker has nothing: a cold a11y bridge, or no tracker on this platform or session), which skips the re-check below. Our own
-    // window is sent with its real app id on purpose (streaming.ts `resolveTarget`), so a focus
+    // `None` = no identified target (the focus tracker has nothing: a cold a11y bridge, or no
+    // tracker on this platform or session), which skips the re-check below. Our own window is
+    // sent as the synthetic id "self" (`get_focused_app`, forwarded by streaming.ts
+    // `resolveTarget`) on purpose; the sink's `focused_app_now` never reports "self", so a focus
     // move from it to another app before the keys go out is a mismatch and diverts to the
     // clipboard.
     expect_app_id: Option<String>,
