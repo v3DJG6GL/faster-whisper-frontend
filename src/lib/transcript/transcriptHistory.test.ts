@@ -981,6 +981,13 @@ describe("recordText", () => {
     const edited = rec(mixed, { edits: { 1: "Bonjour.", 5: "" } });
     const fullEdited = recordText(edited);
     for (const max of [2, 8, 10, 14, 25, 200]) expect(recordText(edited, max)).toBe(fullEdited.slice(0, max));
+    // Format-only segments: the join drops them, so the bound must not count them.
+    const marks = {
+      text: "",
+      segments: ["a", "\u200e", "\u200e", "bcd"].map((text, i) => ({ id: i, start: i, end: i + 1, text })),
+    };
+    const fullMarks = recordText(rec(marks));
+    for (const max of [1, 2, 3, 4, 5, 6]) expect(recordText(rec(marks), max)).toBe(fullMarks.slice(0, max));
   });
 
   it("fills the bound with many short CJK segments (no phantom seam spaces counted)", () => {
@@ -1113,6 +1120,13 @@ describe("history record display", () => {
         }),
       );
       expect(t![0]).toEqual({ lang: "orig", text: base.result.text, orig: true });
+    });
+
+    it("falls back too when the language is only format marks or not a string", () => {
+      for (const language of ["\u200e", 5 as never]) {
+        const t = recordTracks(rec({ language, translations: { en: "Hello" }, translationTargets: ["en"] }));
+        expect(t![0]).toEqual({ lang: "orig", text: base.result.text, orig: true });
+      }
     });
   });
 

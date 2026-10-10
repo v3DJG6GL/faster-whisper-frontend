@@ -8,6 +8,7 @@ import { create } from "zustand";
 import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "../api";
+import { safeDisplayText } from "../sanitize";
 import { useApp } from "../store";
 import { canonicalActivation, type BatchResult, type TranscribeOptions } from "../types";
 import { joinSegmentTexts } from "./transcriptFormats";
@@ -605,7 +606,9 @@ export function recordText(rec: TranscriptRecord, max = Infinity): string {
   for (let i = 0; i < segs.length && n < max; i++) {
     const p = part(i);
     parts.push(p);
-    n += p.length;
+    // Only a part the join keeps counts: a format-only part (a bare U+200E survives
+    // trim()) is dropped there, so counting it ended the loop short of `max`.
+    if (joinSegmentTexts([p])) n += p.length;
   }
   return joinSegmentTexts(parts).slice(0, max);
 }
@@ -638,8 +641,11 @@ export function recordTracks(
   // show — gating on it hid the spoken transcript for the default configuration. The
   // tracks come from the translations map, which never carries the source, so this
   // cannot duplicate anything.
+  // The code is judged on what History renders (sanitized), as the viewer's row tag does:
+  // a format-only or non-string (file-borne) language would draw an empty tag.
+  const shown = typeof rec.language === "string" ? safeDisplayText(rec.language, 16).trim() : "";
   const head = original
-    ? [{ lang: rec.language && rec.language !== "auto" ? rec.language : "orig", text: original, orig: true }]
+    ? [{ lang: shown && rec.language !== "auto" ? (rec.language as string) : "orig", text: original, orig: true }]
     : [];
   return [...head, ...langs.map((lang) => ({ lang, text: map[lang] as string }))];
 }

@@ -25,6 +25,8 @@ describe("source words", () => {
     expect(["orig", "en", "de-x-site"].map((t) => trackCode(RESULT, t))).toEqual(["DE", "EN", "DE"]);
     expect(trackCode({}, "orig")).toBe("UND");
     expect(trackCode({ language: "  " }, "orig")).toBe("UND");
+    expect(trackCode({ language: "\u200e" }, "orig")).toBe("UND");
+    expect(trackChipLabel({ language: "\u200e" }, "orig")).toBe("UND · Whisper");
   });
 });
 

@@ -67,6 +67,8 @@ export function TranslateProgressCard({
     if (secs >= 2 && got > 0) dlChips.push(`${fmtBytes(got / secs)}/s`);
   }
   const shownModel = shortModelName(run.model, 40);
+  // Gated on the SANITIZED target: a code that strips to blank would draw an empty pill.
+  const tgt = safeDisplayText(run.target ?? "", 12).trim();
   const chips: string[] = [
     ...(shownModel ? [shownModel] : []),
     ...(run.device ? [safeDisplayText(run.device, 16)] : []),
@@ -108,9 +110,9 @@ export function TranslateProgressCard({
           </span>
         )}
         <span className="text-[12px] text-dim">{stageText}</span>
-        {run.target && !done && (
+        {tgt && !done && (
           <span className="rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
-            {safeDisplayText(run.target, 12)}
+            {tgt}
             {typeof run.targetProgress === "number" ? ` ${Math.round(run.targetProgress * 100)}%` : ""}
           </span>
         )}

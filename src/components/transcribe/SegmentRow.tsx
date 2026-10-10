@@ -250,6 +250,9 @@ export const SegmentRow = memo(function SegmentRow({
         // an empty first word that shifts the follow-along highlight.
         const trText = stripControlChars(tr ?? "").trim();
         if (!trText) return null;
+        // Tagged on the SANITIZED code, falling back like the original line's tag
+        // (origLang): a code that strips to blank would draw an empty tag.
+        const tag = safeDisplayText(lang, 16).trim() || "??";
         // The quality guard kept the SOURCE text for this target: don't
         // present it as a translation — neutral faint line, flagged inline,
         // no follow-along (its "translation" is the original's words).
@@ -260,7 +263,7 @@ export const SegmentRow = memo(function SegmentRow({
               className="block min-w-0 whitespace-pre-wrap text-faint"
               onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
             >
-              <LangTag code={safeDisplayText(lang, 16)} color="var(--c-faint)" />
+              <LangTag code={tag} color="var(--c-faint)" />
               {trText}
               <span className="ml-2 align-middle font-mono text-[10.5px]">
                 · kept original — re-translate in Edit
@@ -300,7 +303,7 @@ export const SegmentRow = memo(function SegmentRow({
             style={{ color: mtColor }}
             onClick={!origVisible && canSeek ? () => seekTo(seg.start) : undefined}
           >
-            <LangTag code={safeDisplayText(lang, 16)} color={mtAccent} />
+            <LangTag code={tag} color={mtAccent} />
             {stale ? (
               <s>{trText}</s>
             ) : trWords ? (

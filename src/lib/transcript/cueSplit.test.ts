@@ -592,6 +592,11 @@ describe("trackLang", () => {
     expect(["orig", "en", "x"].map((t) => trackLang(r, t))).toEqual(["de", "en", "fr"]);
     expect(trackLang({}, "orig")).toBe("und");
     expect(timedTrack(r, "x")?.lang).toBe("fr");
+  });
+  it("a code of only format marks is unknown too", () => {
+    expect(trackLang({ language: "\u200e" }, "orig")).toBe("und");
+    const r: BatchResult = { text: "", timedTracks: [{ id: "x", lang: "\u200b", source: "site", kind: "manual", cues: [] }] };
+    expect(trackLang(r, "x")).toBe("und");
     expect(timedTrack(r, "orig")).toBeUndefined();
   });
 });

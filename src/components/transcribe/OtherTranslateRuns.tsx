@@ -21,6 +21,8 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
       {entries.map(([key, { run }]) => {
         // Runs key by record id (or, before one exists, by source path).
         const rec = records.find((r) => r.id === key || r.sourcePath === key);
+        // Gated on the SANITIZED target: a code that strips to blank would leave a stray arrow.
+        const tgt = safeDisplayText(run.target ?? "", 12).trim();
         return (
           <div key={key} className="flex items-center gap-3 py-1">
             <span className="size-1.5 shrink-0 rounded-full bg-[color:var(--c-translate)]" />
@@ -29,8 +31,8 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
             </span>
             <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
               {run.targets.map((t) => safeDisplayText(t, 12).trim()).filter(Boolean).join(", ")}
-              {run.target && run.phase !== "done" ? (
-                <span className="text-[color:var(--c-translate)]"> → {safeDisplayText(run.target, 12)}</span>
+              {tgt && run.phase !== "done" ? (
+                <span className="text-[color:var(--c-translate)]"> → {tgt}</span>
               ) : null}
             </span>
             <span className="shrink-0 font-mono text-[11px] tabular-nums text-[color:var(--c-translate)]">
