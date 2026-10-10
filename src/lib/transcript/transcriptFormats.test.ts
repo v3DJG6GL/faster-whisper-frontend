@@ -147,9 +147,10 @@ describe("srt", () => {
     // it, rather than taking the original's time and place.
     expect(generateExport(blank, { ...opts, format: "txt", timestamps: true })).toBe("[00:01]\n        Leer\n");
     // Translation first: the stamp already sits on the translation, so the blank original
-    // trails no empty, space-filled line under it.
+    // trails no empty, space-filled line under it — and the lone translation says its
+    // language, or it would read like an untranslated original.
     expect(generateExport(blank, { ...opts, format: "txt", timestamps: true, tracks: ["de", "orig"] }))
-      .toBe("[00:01] Leer\n");
+      .toBe("[00:01] [DE] Leer\n");
     // Original-only keeps its (empty) cue.
     expect(generateExport(blank, { format: "srt" })).toBe("1\n00:00:01,000 --> 00:00:02,000\n\n");
   });

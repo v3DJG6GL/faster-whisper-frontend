@@ -18,7 +18,7 @@ import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisu
 import { configuredRouteTargets } from "./chipController";
 import { wireCodes } from "../translationTargets";
 import { rememberRecent } from "../recent";
-import { maxTranslationTargets, translationTargetInfo } from "../capabilities";
+import { backendTargetCap, translationTargetInfo } from "../capabilities";
 import type { Backend, Profile } from "../types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
@@ -347,7 +347,7 @@ function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "
     accentMotion: st.settings.accentMotion,
     ...translationTargetInfo(ownProp(st.caps, backend.id), model),
     // The server's target cap: the picker never lets you choose more than it takes.
-    max: maxTranslationTargets(ownProp(st.caps, backend.id)),
+    max: backendTargetCap(backend.id),
   };
 }
 

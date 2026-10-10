@@ -340,13 +340,17 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
           const time = `[${txtTime(seg.start)}] `;
           // A blank original keeps its slot but no bare "Name: ".
           const o = clean(seg.text);
+          // A blank original after a translation is dropped (cueLines): the stamped translation
+          // then stands alone like an untranslated original, so it says its language (as the
+          // timestamps-off branch does for a turn of blank originals).
+          const orphan = ctx.origIncluded && !o && ctx.lineTracks[0] !== "orig";
           // trimEnd: a bare kept slot is "[mm:ss]", no trailing space (text lines are already
           // clean()-trimmed, so only that slot changes).
           return cueLines(
             ctx,
             seg,
             `${o ? prefix : ""}${o}`,
-            (t, _s, lang) => `${ambiguous(ctx) ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
+            (t, _s, lang) => `${ambiguous(ctx) || orphan ? `[${lang.toUpperCase()}] ` : ""}${prefix}${t}`,
             ctx.lineTracks[0] === "orig",
           ).map((line, i) => ((i && ctx.origIncluded ? "        " : time) + line).trimEnd());
         })
