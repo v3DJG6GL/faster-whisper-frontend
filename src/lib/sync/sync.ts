@@ -939,7 +939,7 @@ const MAX_CHORD_CODE_LEN = 64;
  *  the sanitizer a superset of the gate — which is the whole point, since anything the gate
  *  catches and this misses freezes saving. Two chords differing only by modifier side are in any
  *  case broken on the plugin backend, where one silently never registers. */
-function disableConflictingProfiles(
+export function disableConflictingProfiles(
   profiles: Profile[],
   quickAddHotkey: string[],
   /** Did the PROFILES in this call arrive in the same blob as the chord? When they did not,
@@ -952,9 +952,9 @@ function disableConflictingProfiles(
   let rejectQuickAddHotkey = false;
   // Collapse modifier SIDES only where the registrar does (the plugin / evdev-off platforms):
   // the Windows low-level hook registers side-distinct chords (hotkeys/windows.rs, VK_LCONTROL ≠
-  // VK_RCONTROL), the save gate (persistence.ts) and the Sync tab's preview both know that,
-  // and collapsing here anyway disabled a working LCtrl+Space / RCtrl+Space pair on every
-  // pull — persisted, and pushed back out. On Linux the over-detection is kept on purpose:
+  // VK_RCONTROL), the save gate (persistence.ts) knows that (the Sync tab's import/restore
+  // previews call this very function), and collapsing here anyway disabled a working
+  // LCtrl+Space / RCtrl+Space pair on every pull — persisted, and pushed back out. On Linux the over-detection is kept on purpose:
   // the sanitizer runs before the live backend is known and must be a superset of the gate.
   for (const c of conflicts(peers, !IS_WINDOWS)) {
     // Keep whichever came first — the quick-add peer always wins, since it is a single global
@@ -3040,13 +3040,18 @@ export function securityChanges(
   // the apply re-pins a KNOWN backend's values, so a peer's text cannot land there. A backend new
   // to this device has nothing local to re-pin and keeps its inbound overrides (like its
   // serverUrl below), so its text is still held for review.
+  // One sanitized list for the whole backends gate. `sanitizeBackends` also floors the shape —
+  // a non-array container, a non-string id/serverUrl — so the gate survives anything the server
+  // sends; the raw-list walk this replaced threw on `"list": 5` and on a non-string serverUrl
+  // (`normalizeUrl` calls `.trim()`), escaping into `void pullNow()` with syncStatus stuck on
+  // "syncing" and no error shown.
+  const inBackends = cats.backends && incoming.backends ? sanitizeBackends(incoming.backends.list) : [];
   if (cats.backends && incoming.backends) {
-    const list = sanitizeBackends(incoming.backends.list);
     if (gates?.modelDecodeDefaults !== false) {
-      out.push(...typedTextChanges(list, local.backends?.list, "backends"));
+      out.push(...typedTextChanges(inBackends, local.backends?.list, "backends"));
     } else {
       const localIds = new Set((local.backends?.list ?? []).map((b) => b.id));
-      const fresh = list.filter((b) => !localIds.has(b.id));
+      const fresh = inBackends.filter((b) => !localIds.has(b.id));
       out.push(...typedTextChanges(fresh, local.backends?.list, "backends"));
     }
   }
@@ -3054,20 +3059,13 @@ export function securityChanges(
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   const localSecrets = local.backends?.secrets ?? {};
   const nextSecrets = incoming.backends.secrets ?? {};
-  // `??` defends null/undefined only. The CONTAINER is as attacker-shaped as its elements —
-  // the blob is an opaque `serde_json::Value` all the way through Rust — so `"list": 5` threw
-  // "is not iterable" here, before the per-element guard below, with the same silent outcome:
-  // the rejection escapes `void pullNow()` (startup + every window focus), syncStatus sticks on
-  // "syncing" and syncError stays null. The three sanitizers all open with this check; the gate
-  // that protects the apply did not.
-  for (const b of Array.isArray(incoming.backends.list) ? incoming.backends.list : []) {
-    // The gate runs on the RAW list — sanitization happens later, inside `applyBlob` — so it must
-    // survive anything the server sends. `normalizeUrl` calls `.trim()`, and a non-string
-    // serverUrl threw right here, inside the consent gate itself: the rejection escaped
-    // `reconcileRemote` into `void pullNow()`, leaving syncStatus stuck on "syncing" with no error
-    // shown and every later focus pull repeating it. Match `sanitizeBackends`' own floor, so an
-    // entry that would be dropped anyway cannot disable the gate that protects the apply.
-    if (!b || typeof b.id !== "string" || typeof b.serverUrl !== "string") continue;
+  // Walk the entries `applyBlob` INSTALLS (`sanitizeBackends`: reserved ids out, a duplicate id's
+  // later copy out, the entry cap, a cleaned or blanked serverUrl), not the raw list. A reserved,
+  // duplicate or over-cap entry raised new-backend/server-url/api-key rows that parked the
+  // category for an approval that changed nothing — and re-raised on every pull — and a blanked
+  // scheme was shown as the raw address the transport never receives. Fail-closed still holds:
+  // the apply stores exactly this list and `reconcileBackendSecrets` writes keys only for its ids.
+  for (const b of inBackends) {
     const cur = here.get(b.id);
     const name = b.name || b.serverUrl || b.id;
     // A backend new to this device keeps its inbound address even with "Server addresses" off

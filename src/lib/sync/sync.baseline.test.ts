@@ -8,6 +8,7 @@ import {
   applyBlob,
   categorySelection,
   composeBlob,
+  disableConflictingProfiles,
   hasPendingApplyForTests,
   mergeBlobs,
   migrateBlob,
@@ -728,6 +729,31 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(after.settings.general.quickAddHotkey).toEqual(before);
   });
 
+  it("the import/restore preview's collision prediction is what applyBlob installs", async () => {
+    // The Sync tab's previews call `disableConflictingProfiles` on the would-be state; it once
+    // ran its own `conflicts()` and warned of a save freeze the apply never leaves behind.
+    const inbound = [
+      profile({ id: "p1", hotkey: ["ControlLeft", "Space"] }),
+      profile({ id: "p2", hotkey: ["ControlRight", "Space"] }), // an L/R-only pair
+      profile({ id: "p3", hotkey: ["ControlLeft", "KeyQ"] }),
+    ];
+    const qa = useApp.getState().settings.general.quickAddHotkey;
+    const predicted = disableConflictingProfiles(sanitizeProfiles(inbound), qa, true);
+    await applyBlob({ profiles: { list: inbound } } as never, CATS_ALL);
+    const enabled = (ps: Profile[]) => ps.map((p) => [p.id, p.enabled !== false]);
+    expect(enabled(useApp.getState().profiles)).toEqual(enabled(predicted.profiles));
+    // Off Windows the registrar collapses sides, so the later member is switched off.
+    expect(predicted.profiles[1].enabled).toBe(IS_WINDOWS);
+    // A dictionary-only chord against this device's own profiles: the chord is dropped instead.
+    useApp.setState({ profiles: [profile({ hotkey: ["ControlLeft", "KeyX"] })] });
+    const local = useApp.getState();
+    const chord = disableConflictingProfiles(local.profiles, ["ControlLeft"], false);
+    expect(chord.rejectQuickAddHotkey).toBe(true);
+    expect(chord.profiles[0].enabled).toBe(true);
+    await applyBlob({ dictionary: { quickAddHotkey: ["ControlLeft"] } } as never, CATS_ALL);
+    expect(useApp.getState().settings.general.quickAddHotkey).toEqual(local.settings.general.quickAddHotkey);
+  });
+
   it("a store edit made while the keyring wait is parked is not hydrated away", async () => {
     // Everything applyBlob computes is derived from a PRE-wait snapshot, and hydrate replaces
     // the slices wholesale — so the staleness check must cover `backends` too, not just
@@ -945,6 +971,42 @@ describe("applyBlob keep-local (baseline)", () => {
         CATS_ALL,
       ).filter(typed),
     ).toHaveLength(1);
+  });
+
+  it("server rows judge the backends the apply installs, not the raw list", () => {
+    const rows = (list: unknown[], localList: unknown[], secrets = {}) =>
+      securityChanges(
+        { backends: { list, secrets } } as never,
+        { backends: { list: localList, secrets: {} } } as never,
+        CATS_ALL,
+      ).map((c) => [c.kind, c.url ?? ""]);
+    // (a) A reserved id is dropped by the apply: no new-backend row, no key row.
+    expect(rows([{ id: "__x__", name: "Peer", serverUrl: "http://p:8000" }], [], { __x__: "k" })).toEqual([]);
+    // (b) A duplicate id: only the FIRST copy lands, so one row naming its address.
+    expect(
+      rows(
+        [
+          { id: "b9", name: "Peer", serverUrl: "http://p:8000" },
+          { id: "b9", name: "Peer", serverUrl: "http://evil:8000" },
+        ],
+        [],
+      ),
+    ).toEqual([["new-backend", "http://p:8000"]]);
+    // (c) A known backend's dropped second copy cannot repoint it.
+    const known = [{ id: "b1", name: "Home", serverUrl: "http://p:8000" }];
+    expect(
+      rows(
+        [
+          { id: "b1", name: "Home", serverUrl: "http://p:8000" },
+          { id: "b1", name: "Home", serverUrl: "http://evil:8000" },
+        ],
+        known,
+      ),
+    ).toEqual([]);
+    // (d) An unsupported scheme is stored blank: the row names the blank value…
+    expect(rows([{ id: "b1", name: "Home", serverUrl: "ftp://h" }], known)).toEqual([["server-url", ""]]);
+    // …and nothing changes when the local address is already blank.
+    expect(rows([{ id: "b1", name: "Home", serverUrl: "ftp://h" }], [{ ...known[0], serverUrl: "" }])).toEqual([]);
   });
 
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {
