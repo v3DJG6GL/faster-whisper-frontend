@@ -11,7 +11,9 @@
 //!
 //! Outcomes are typed rather than `bail!`ed: a 404 (unknown / expired /
 //! foreign — one answer, no oracle), a 409 (result asked for while running)
-//! and a 403 (feature off) each drive a different client decision.
+//! and the server's own jobs-gate 403 (feature off) each drive a different
+//! client decision. Any other 403 (a proxy or WAF in front of the server) is
+//! an ordinary `HTTP 403` error, so it never wipes the reattach ledger.
 
 use super::batch::{bound_progress, to_batch_result, BatchProgress, BatchResult, VerboseJson};
 use super::{
@@ -39,7 +41,7 @@ pub enum JobOutcome<T> {
     NotFound,
     /// The result was asked for while the run is still going (409).
     Running,
-    /// The server does not keep jobs (403 — JOBS_ENABLED off).
+    /// The server does not keep jobs (its jobs-gate 403 — JOBS_ENABLED off).
     Disabled,
     /// Transport failure or an unexpected status; `message` is client-safe.
     Error {
@@ -110,12 +112,19 @@ pub(crate) fn bound_job_status(parsed: JobStatus) -> JobStatus {
     }
 }
 
-/// Map a non-2xx status to the outcome the client acts on.
-fn outcome_for<T>(status: reqwest::StatusCode) -> JobOutcome<T> {
+/// The detail the backend's jobs gate answers its 403 with ("server jobs are
+/// not enabled on this server").
+const JOBS_GATE_DETAIL: &str = "jobs are not enabled";
+
+/// Map a non-2xx status to the outcome the client acts on. `detail` is the
+/// error body's detail, read only for a 403: just the server's jobs gate means
+/// "feature off" (terminal for the ledger row); a 403 from anything in front
+/// of the server stays a retryable `HTTP 403`.
+fn outcome_for<T>(status: reqwest::StatusCode, detail: Option<&str>) -> JobOutcome<T> {
     match status.as_u16() {
         404 => JobOutcome::NotFound,
         409 => JobOutcome::Running,
-        403 => JobOutcome::Disabled,
+        403 if detail.is_some_and(|d| d.contains(JOBS_GATE_DETAIL)) => JobOutcome::Disabled,
         code => JobOutcome::Error {
             message: format!("HTTP {code}"),
         },
@@ -149,7 +158,12 @@ async fn job_request<T>(
     })?;
     let status = resp.status();
     if !status.is_success() {
-        return Err(outcome_for(status));
+        let detail = if status == reqwest::StatusCode::FORBIDDEN {
+            Some(super::error_detail(resp).await.1)
+        } else {
+            None
+        };
+        return Err(outcome_for(status, detail.as_deref()));
     }
     Ok(resp)
 }
@@ -309,10 +323,32 @@ mod wire_field_tests {
                 .unwrap()
                 .to_string()
         };
-        assert_eq!(k(outcome_for(StatusCode::NOT_FOUND)), "not_found");
-        assert_eq!(k(outcome_for(StatusCode::CONFLICT)), "running");
-        assert_eq!(k(outcome_for(StatusCode::FORBIDDEN)), "disabled");
-        assert_eq!(k(outcome_for(StatusCode::INTERNAL_SERVER_ERROR)), "error");
+        assert_eq!(k(outcome_for(StatusCode::NOT_FOUND, None)), "not_found");
+        assert_eq!(k(outcome_for(StatusCode::CONFLICT, None)), "running");
+        assert_eq!(
+            k(outcome_for(StatusCode::INTERNAL_SERVER_ERROR, None)),
+            "error"
+        );
+        // Only the server's own jobs gate means "feature off"; the detail is
+        // what `error_detail` pulls out of its JSON body.
+        let gate =
+            super::super::detail_from(r#"{"detail":"server jobs are not enabled on this server"}"#);
+        assert_eq!(
+            k(outcome_for(StatusCode::FORBIDDEN, Some(&gate))),
+            "disabled"
+        );
+        // A 403 from a proxy / WAF / allowlist in front of the server is a
+        // retryable per-row error, never "disabled" (which drops the row).
+        let msg = |o: JobOutcome<()>| serde_json::to_value(o).unwrap()["message"].clone();
+        for other in [
+            Some("<html><body>403 Forbidden</body></html>"),
+            Some("Access denied"),
+            Some(""),
+            None,
+        ] {
+            let o = outcome_for::<()>(StatusCode::FORBIDDEN, other);
+            assert_eq!(msg(o), "HTTP 403", "{other:?}");
+        }
         let ok = serde_json::to_value(JobOutcome::Ok { value: 3 }).unwrap();
         assert_eq!(ok, serde_json::json!({"kind": "ok", "value": 3}));
     }
