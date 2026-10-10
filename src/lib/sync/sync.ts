@@ -3029,22 +3029,24 @@ export function securityChanges(
       "history-retention",
     );
   }
+  // Judge the lists the apply KEEPS: `applyBlob` installs `sanitizeProfiles`/`sanitizeBackends`
+  // output, which drops a malformed entry, a reserved id, a duplicate id's later copy and
+  // everything past the entry cap. Text on an entry the apply discards raised a typed-text row
+  // and parked the whole category for an approval that changed nothing.
   if (cats.profiles && incoming.profiles) {
-    out.push(...typedTextChanges(incoming.profiles.list, local.profiles?.list, "profiles"));
+    out.push(...typedTextChanges(sanitizeProfiles(incoming.profiles.list), local.profiles?.list, "profiles"));
   }
   // Backend decode defaults travel only under the "Model & decode defaults" switch; with it off
   // the apply re-pins a KNOWN backend's values, so a peer's text cannot land there. A backend new
   // to this device has nothing local to re-pin and keeps its inbound overrides (like its
   // serverUrl below), so its text is still held for review.
   if (cats.backends && incoming.backends) {
-    const list = incoming.backends.list;
+    const list = sanitizeBackends(incoming.backends.list);
     if (gates?.modelDecodeDefaults !== false) {
       out.push(...typedTextChanges(list, local.backends?.list, "backends"));
     } else {
       const localIds = new Set((local.backends?.list ?? []).map((b) => b.id));
-      const fresh = Array.isArray(list)
-        ? list.filter((b) => isPlainObject(b) && typeof b.id === "string" && !localIds.has(b.id))
-        : [];
+      const fresh = list.filter((b) => !localIds.has(b.id));
       out.push(...typedTextChanges(fresh, local.backends?.list, "backends"));
     }
   }

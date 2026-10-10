@@ -895,6 +895,58 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(securityChanges(incoming, known, CATS_ALL, { modelDecodeDefaults: false } as never)).toEqual([]);
   });
 
+  it("typed text on an entry the apply drops raises no review", () => {
+    const typed = (c: { kind: string }) => c.kind === "typed-text";
+    const text = { output_suffix: "!" };
+    // A non-string serverUrl and a reserved id: `sanitizeBackends` drops both, so the text never lands.
+    const backends = {
+      backends: {
+        list: [
+          { id: "b9", name: "Peer", serverUrl: 5, decodeOverrides: text },
+          { id: "__x__", name: "Peer", serverUrl: "http://p:8000", decodeOverrides: text },
+        ],
+        secrets: {},
+      },
+    } as never;
+    const empty = { backends: { list: [], secrets: {} } } as never;
+    for (const g of [undefined, { modelDecodeDefaults: false }])
+      expect(securityChanges(backends, empty, CATS_ALL, g as never).filter(typed)).toEqual([]);
+    // A duplicate id's second copy is dropped too (first wins).
+    const dupe = {
+      backends: {
+        list: [
+          { id: "b9", name: "Peer", serverUrl: "http://p:8000" },
+          { id: "b9", name: "Peer", serverUrl: "http://p:8000", decodeOverrides: text },
+        ],
+        secrets: {},
+      },
+    } as never;
+    for (const g of [undefined, { modelDecodeDefaults: false }])
+      expect(securityChanges(dupe, empty, CATS_ALL, g as never).filter(typed)).toEqual([]);
+    // Profiles: a non-string name, a non-code-list hotkey and a duplicate id are all dropped.
+    const profiles = {
+      profiles: {
+        list: [
+          { ...profile({ id: "p8" }), name: 5, decodeOverrides: text },
+          { ...profile({ id: "p7" }), hotkey: [1], decodeOverrides: text },
+          profile({ id: "p6" }),
+          profile({ id: "p6", decodeOverrides: text }),
+        ],
+      },
+    } as never;
+    expect(
+      securityChanges(profiles, { profiles: { list: [] } } as never, CATS_ALL).filter(typed),
+    ).toEqual([]);
+    // The kept entry's text is still held.
+    expect(
+      securityChanges(
+        { profiles: { list: [profile({ id: "p6", decodeOverrides: text })] } } as never,
+        { profiles: { list: [] } } as never,
+        CATS_ALL,
+      ).filter(typed),
+    ).toHaveLength(1);
+  });
+
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {
     const [junk, mixed] = sanitizeProfiles([
       profile({ id: "p1", decodeOverrides: "abc" as never }),
