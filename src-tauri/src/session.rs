@@ -1007,10 +1007,11 @@ impl RecordSession {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
     }
 
-    /// Whether this session writes its clip to disk ("Keep recordings"). A recovery cancel
-    /// finishes a live session only when this is true: its point is to keep the saved audio, and
-    /// without a save dir `finish()` would upload the whole clip for a transcription whose every
-    /// event the cancel's epoch retire already suppresses.
+    /// Whether this session has a save dir ("Keep recordings"). A recovery cancel finishes a live
+    /// session only when this is true: its point is to keep the saved audio, and without a save
+    /// dir `finish()` would upload the whole clip for a transcription whose every event the
+    /// cancel's epoch retire already suppresses. A save dir does not promise a file: trimming an
+    /// all-silence clip, or a failed write, still leaves nothing on disk after the upload.
     pub fn keeps_recording(&self) -> bool {
         self.params.save_dir.is_some()
     }

@@ -29,7 +29,7 @@ import type {
 import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath, siteDisplayName } from "./transcript/mediaExport";
 import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
-import { applyMultilingual, primarySubtag, spokenLanguage } from "./languages";
+import { applyMultilingual, primarySubtag, spokenLanguage, translateSourceCode } from "./languages";
 import { trText } from "./transcript/cueSplit";
 import { joinSegmentTexts } from "./transcript/transcriptFormats";
 import { newProgressId } from "./ids";
@@ -1341,7 +1341,7 @@ export function mergeSegmentTranslations(
       translation: {
         ...rec.result.translation,
         model: provenance?.model ?? rec.result.translation?.model,
-        source: provenance?.source ?? rec.result.translation?.source ?? rec.result.language,
+        source: provenance?.source ?? rec.result.translation?.source ?? translateSourceCode(rec.result.language) ?? undefined,
         mode: provenance?.mode ?? rec.result.translation?.mode,
         targets,
       },
@@ -1742,10 +1742,8 @@ export async function translateParsed(
   let model: string | undefined;
   let source: string | undefined;
   let plan: PlanStage[] | undefined;
-  // An imported JSON may name its language as a word ("english"): the text route 422s any
-  // source that is not a code, failing every chunk. Only a code goes out; else auto-detect.
-  const lang = parsed.language?.trim();
-  const srcCode = lang && /^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/i.test(lang) ? lang : null;
+  // An imported JSON may name its language as a word ("english"): only a code goes out.
+  const srcCode = translateSourceCode(parsed.language);
   for (let at = 0; targets.length && at < parsed.segments.length; at += CHUNK) {
     // A cancel or an input change bumps the epoch; the pump only checks it after this
     // function returns, so without this a feature-length file kept POSTing chunk after

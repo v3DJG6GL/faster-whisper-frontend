@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
-  nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode,
+  nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
 
 const values = (rows: { value: string }[]) => rows.map((r) => r.value);
@@ -206,5 +206,12 @@ describe("trackLanguageName", () => {
 describe("namedLanguage", () => {
   it("a code names a language; inherit, Auto-detect and Multiple languages do not", () => {
     expect(["de", "", "auto", MULTI_LANGUAGE, null, undefined].map(namedLanguage)).toEqual([true, false, false, false, false, false]);
+  });
+});
+
+describe("translateSourceCode", () => {
+  it("only a code goes out as a translation source; a language name or blank auto-detects", () => {
+    expect(["de", " pt-BR ", "zh_Hans", "yue", "english", "auto", "", null, undefined].map(translateSourceCode))
+      .toEqual(["de", "pt-BR", "zh_Hans", "yue", null, null, null, null, null]);
   });
 });

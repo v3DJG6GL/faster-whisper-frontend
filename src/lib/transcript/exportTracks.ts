@@ -80,10 +80,15 @@ const SOURCE_RANK: Record<TrackSource, number> = { whisper: 0, site: 1, auto: 2,
 /** The language a track counts for — its primary subtag ("de-CH" and "de" are one language). */
 const langOf = (result: TrackResult, track: string) => primarySubtag(trackLang(result, track));
 
+/** The spoken language, read the way the original track is filed (trackLang: a code of only
+ *  format marks is "und"), so the original's group still matches it; "" when none is named. */
+const spokenOf = (result: TrackResult) =>
+  (result.language ?? "").trim() ? primarySubtag(trackLang({ language: result.language }, "orig")) : "";
+
 /** The order nothing was dragged into: the spoken language first, then the other languages in
  *  the order `tracks` brings them; within a language by source (SOURCE_RANK). */
 export function defaultTrackOrder(result: TrackResult, tracks: readonly string[]): string[] {
-  const spoken = primarySubtag(result.language ?? "");
+  const spoken = spokenOf(result);
   const langs = [...new Set(tracks.map((t) => langOf(result, t)))];
   const rank = (t: string) => {
     const l = langOf(result, t);
@@ -230,7 +235,7 @@ export function cleanTrackTitle(s: string | undefined): string {
 export function planTracks(
   result: TrackResult, chosen: readonly string[], names: Readonly<Record<string, string>> = {},
 ): PlannedTrack[] {
-  const spoken = primarySubtag(result.language ?? "");
+  const spoken = spokenOf(result);
   const groups = languageGroups(result, chosen);
   return chosen.map((id) => {
     const info = trackInfo(result, id);

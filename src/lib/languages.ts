@@ -84,6 +84,14 @@ export function primarySubtag(code: string | null | undefined): string {
   return (code ?? "").toLowerCase().split(/[-_]/)[0];
 }
 
+/** A transcript language as a translation `source`: only a code ("en", "pt-BR", "zh_Hans") —
+ *  the text route 422s anything else, failing every chunk. An imported JSON may name its
+ *  language as a word ("english"), which goes out as null (auto-detect) instead. */
+export function translateSourceCode(lang: string | null | undefined): string | null {
+  const l = lang?.trim();
+  return l && /^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/i.test(l) ? l : null;
+}
+
 /** A language code as chips, tabs and summaries show it: bounded, then in caps ("DE", "PT-BR"). */
 export function langCode(code: string, max = 16): string {
   return safeDisplayText(code, max).toUpperCase();

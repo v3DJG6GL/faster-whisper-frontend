@@ -179,18 +179,20 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     () => (categories.profiles ? sanitizeProfiles(categories.profiles.list) : []),
     [categories],
   );
-  // And this OS's app rules: `sanitizeAppRules` drops malformed entries and duplicate app ids. The
-  // other-OS bucket passes through untouched, so its raw length is what lands.
+  // And this OS's app rules: `sanitizeAppRules` drops malformed entries and duplicate app ids. A
+  // file's other-OS bucket never lands: the apply installs only this OS's rules, and a later push
+  // takes the other bucket from the sync snapshot, not from the file.
   const installAppRules = useMemo(
     () => (isPlainObject(categories.appRules) ? sanitizeAppRules(categories.appRules[MY_BUCKET]) : []),
     [categories],
   );
 
+  const otherOs = isPlainObject(categories.appRules) ? arr(categories.appRules[OTHER_BUCKET]).length : 0;
   const counts: Partial<Record<SyncCategory, string>> = {
     backends: categories.backends ? `${installBackends.length}` : undefined,
     profiles: categories.profiles ? `${installProfiles.length}` : undefined,
     appRules: categories.appRules
-      ? `${installAppRules.length} this OS · ${arr(categories.appRules[OTHER_BUCKET]).length} other OS`
+      ? `${installAppRules.length} this OS${otherOs ? ` · ${otherOs} other OS (not imported)` : ""}`
       : undefined,
   };
 

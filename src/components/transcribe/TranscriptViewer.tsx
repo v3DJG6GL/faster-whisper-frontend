@@ -34,6 +34,7 @@ import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { seedTargets } from "@/lib/translationTargets";
+import { translateSourceCode } from "@/lib/languages";
 import { backendTargetCap, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
@@ -696,7 +697,8 @@ export function TranscriptViewer({
               backendId: backend.id,
               texts,
               targets: group,
-              source: result.language ?? null,
+              // A word-named language from an imported file would 422 every chunk.
+              source: translateSourceCode(result.language),
               model: (opts?.model ?? trOv?.model) || null,
               mode: mode ?? null,
               glossary: trOv?.glossary ?? null,
@@ -731,7 +733,7 @@ export function TranscriptViewer({
             {
               model: prov.model,
               targets,
-              source: prov.source ?? result.language,
+              source: prov.source ?? translateSourceCode(result.language) ?? undefined,
               mode,
             },
             kept,

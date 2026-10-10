@@ -342,11 +342,12 @@ mod sni {
                 }
                 Err(e) => {
                     // With `assume_sni_available`, ksni routes only a missing watcher
-                    // (`ServiceUnknown`) to `watcher_offline`; any other refusal of the first
-                    // registration lands here as `Error::Watcher`, from a watcher that did answer.
+                    // (`ServiceUnknown`) to `watcher_offline`; any other failed first registration
+                    // lands here as `Error::Watcher` — a refusal, but also a timeout or a sandbox
+                    // proxy's AccessDenied, so the log names the failure, not who caused it.
                     if matches!(e, ksni::Error::Watcher(_)) {
                         tracing::warn!(
-                            "[tray] the StatusNotifierWatcher refused the registration; running without a tray: {e}"
+                            "[tray] registering with the StatusNotifierWatcher failed; running without a tray: {e}"
                         );
                     } else {
                         tracing::warn!("[tray] no system tray, running without one: {e}");
