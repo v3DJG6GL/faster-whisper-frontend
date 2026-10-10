@@ -169,7 +169,8 @@ function stringMap<K extends string | number>(v: unknown): Record<K, string> | u
  *  is not one of the three known values in the expanded row's footer (an object as a JSX
  *  child), an `activation` that is neither "hold" nor "handsfree" in the same footer (the
  *  legacy "latch" of older records reads as "handsfree"), a non-number `result.duration` in
- *  the viewer's meta line (`.toFixed`), and a damaged `result.timedTracks` list (a non-array,
+ *  the viewer's meta line (`.toFixed`), a non-string `result.language` / `language` in every
+ *  track reader's `.trim()` / `.toLowerCase()`, and a damaged `result.timedTracks` list (a non-array,
  *  a track with no cue list, a cue with non-string text or non-finite times) in the viewer's,
  *  the media export's and the cue splitter's `.map` / `.some` / `.trim()`. Every step composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
@@ -191,6 +192,11 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   if (out.result && dur != null && !(typeof dur === "number" && Number.isFinite(dur))) {
     out = { ...out, result: { ...out.result, duration: undefined } };
   }
+  const rlang = out.result?.language as unknown;
+  if (out.result && rlang != null && typeof rlang !== "string") {
+    out = { ...out, result: { ...out.result, language: undefined } };
+  }
+  if (out.language != null && typeof (out.language as unknown) !== "string") out = { ...out, language: undefined };
   // Before the segment step, so a remap below moves already-clean maps.
   const edits = stringMap<number>(r.edits);
   if (r.edits != null && edits !== r.edits) out = { ...out, edits };

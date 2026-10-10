@@ -456,6 +456,40 @@ describe("loadHistory", () => {
     expect(saved("dur-ok").result?.duration).toBe(12.5);
   });
 
+  it("drops a non-string result.language / language so the track readers cannot throw", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "lang-bad",
+        createdAt: "2026-01-02T03:04:07.000Z",
+        sourcePath: "/c.wav",
+        sourceName: "c.wav",
+        status: "done",
+        language: {},
+        result: { text: "hi", language: 5 },
+      },
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "lang-ok",
+        createdAt: "2026-01-02T03:04:07.500Z",
+        sourcePath: "/d.wav",
+        sourceName: "d.wav",
+        status: "done",
+        language: "de",
+        result: { text: "ok", language: "de" },
+      },
+    ]);
+    await loadHistory(true);
+    const r = saved("lang-bad");
+    expect(r.result?.language).toBeUndefined();
+    expect(r.language).toBeUndefined();
+    expect(r.result?.text).toBe("hi");
+    expect(saved("lang-ok").result?.language).toBe("de");
+    expect(saved("lang-ok").language).toBe("de");
+  });
+
   it("repairs damaged site subtitle tracks so the viewer and the exports cannot throw", async () => {
     const cue = (text: unknown, start: unknown = 0, end: unknown = 1) => ({ start, end, text });
     const track = (id: string, cues: unknown) => ({ id, lang: "en", source: "site", kind: "manual", cues });

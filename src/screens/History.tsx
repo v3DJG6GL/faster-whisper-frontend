@@ -36,7 +36,6 @@ import {
 } from "@/lib/transcript/transcriptFormats";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
-import { langCode } from "@/lib/languages";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
 import { readTrackPrefs, trackOrder, transcriptTracks } from "@/lib/transcript/exportTracks";
@@ -660,39 +659,45 @@ export default function History() {
              transcript contains its own line breaks and a blank line does not
              read as a language boundary. */
           <div className="mt-3 grid max-h-56 grid-cols-[minmax(2.5rem,max-content)_minmax(0,1fr)] gap-x-2 overflow-y-auto">
-            {tracks.map(({ lang, text, orig }, i) => (
-              <div
-                // A profile may translate INTO its own source language (nothing excludes it),
-                // which would give the original track and a target the same code.
-                key={`${i}:${lang}`}
-                className={cn(
-                  "col-span-full grid grid-cols-subgrid py-2", // one tag column for every track, so texts align
-                  i > 0 && "border-t border-line",
-                )}
-              >
-                <div className="pt-[3px]">
-                  <LangTag code={safeDisplayText(lang, 12)} orig={orig} />
-                </div>
-                <div className="group/track relative">
-                  <div
-                    className={cn(
-                      "select-text whitespace-pre-wrap text-[13px] leading-relaxed",
-                      orig ? "text-dim" : "text-text/90",
-                    )}
-                  >
-                    {stripControlChars(text)}
+            {tracks.map(({ lang, text, orig }, i) => {
+              // A format-only code (file-borne, or a synced translateTo entry) displays as nothing
+              // once safeDisplayText strips it — "??" keeps the tag and the copy tooltip readable.
+              // The raw lang stays the key, the copy target and the "copied" id.
+              const tag = safeDisplayText(lang, 12).trim() || "??";
+              return (
+                <div
+                  // A profile may translate INTO its own source language (nothing excludes it),
+                  // which would give the original track and a target the same code.
+                  key={`${i}:${lang}`}
+                  className={cn(
+                    "col-span-full grid grid-cols-subgrid py-2", // one tag column for every track, so texts align
+                    i > 0 && "border-t border-line",
+                  )}
+                >
+                  <div className="pt-[3px]">
+                    <LangTag code={tag} orig={orig} />
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => copyTrack(rec, lang, text)}
-                    className="absolute right-0 top-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-faint opacity-0 transition hover:text-text focus-visible:opacity-100 group-hover/track:opacity-100"
-                    title={`Copy the ${langCode(lang, 12)} track`}
-                  >
-                    {copiedId === `${rec.id}:${lang}` ? "copied" : "copy"}
-                  </button>
+                  <div className="group/track relative">
+                    <div
+                      className={cn(
+                        "select-text whitespace-pre-wrap text-[13px] leading-relaxed",
+                        orig ? "text-dim" : "text-text/90",
+                      )}
+                    >
+                      {stripControlChars(text)}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyTrack(rec, lang, text)}
+                      className="absolute right-0 top-0 rounded px-1.5 py-0.5 font-mono text-[10px] text-faint opacity-0 transition hover:text-text focus-visible:opacity-100 group-hover/track:opacity-100"
+                      title={`Copy the ${tag.toUpperCase()} track`}
+                    >
+                      {copiedId === `${rec.id}:${lang}` ? "copied" : "copy"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         ) : rec.translatedText ? (
           /* A record written before per-language tracks existed. The blob is

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
+  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
   isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
@@ -132,6 +132,17 @@ describe("embeddedSubtitleTracks", () => {
     expect(tracks.map((t) => t.lang)).toEqual(["de", "zh", "en"]);
     expect(packageLang("pt-BR")).toBe("pt-BR");
     expect(packageLang("!!")).toBe("und");
+  });
+  it("tags the audio with the spoken language the way the original subtitle track is filed", () => {
+    const tag = (language: string | undefined) => audioPackageLang({ language })?.lang ?? null;
+    expect(["de", "pt-BR", "EN", "pt_BR", "zh-Hant-TW", " de "].map(tag)).toEqual(["de", "pt-BR", "en", "pt", "zh", "de"]);
+    // Unknown (only format marks, blank, missing, a word): the source file's tag is kept.
+    expect(["\u200e", "", undefined, "english"].map(tag)).toEqual([null, null, null, null]);
+    // The title names the full spoken value, not the packager's cut.
+    expect(audioPackageLang({ language: "zh-Hant-TW" })).toEqual({ lang: "zh", spoken: "zh-Hant-TW" });
+    // The same tag the Original subtitle track gets.
+    const res: BatchResult = { text: "Hi", language: "EN", segments: [{ start: 0, end: 1, text: "Hi" }] };
+    expect(embeddedSubtitleTracks(res, { format: "srt" }, ["orig"])[0].lang).toBe(tag("EN"));
   });
 });
 

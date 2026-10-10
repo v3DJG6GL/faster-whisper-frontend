@@ -3,6 +3,7 @@
 // translate-only run needs: ordered segments with optional timing/speaker.
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
+import { languageCodeFromName, translateSourceCode } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
 import { edgeChar, unspacedChar } from "./cueSplit";
 
@@ -442,7 +443,11 @@ function parseJsonExport(body: string): ImportedText {
   // Bounded like Rust bounds a server's `language` (LANGUAGE_MAX = 64): this one comes
   // from a locally parsed file and otherwise reached the meta line and track chips raw.
   // Trimmed, blank = none — one rule for both shapes below.
-  const language = safeDisplayText(obj.language, 64).trim() || undefined;
+  // A word ("english", what OpenAI's verbose_json writes) becomes its code when it names a
+  // Whisper language, so the original groups, limits and titles like the code it stands for and
+  // goes out as the translation source; a word no language goes by stays as the file said.
+  const shown = safeDisplayText(obj.language, 64).trim() || undefined;
+  const language = shown && translateSourceCode(shown) === null ? (languageCodeFromName(shown) ?? shown) : shown;
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
     // Decoded by JSON.parse after the control-char pass, like the segment text above.
     return { ...parsePlainText(stripControlChars(obj.text)), language };

@@ -4,6 +4,7 @@
 // wires these to the dialogs, the Tauri commands and the record. Also home
 // to the one export queue every viewer shares (bottom).
 
+import { trackLang } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { generateExports, type ExportOptions, type SubtitleFormat } from "./transcriptFormats";
 import { primarySubtag } from "../languages";
@@ -106,6 +107,18 @@ export function packageLang(lang: string): string {
   if (/^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(lang)) return lang;
   const primary = primarySubtag(lang);
   return /^[a-z]{2,3}$/.test(primary) ? primary : "und";
+}
+
+/** The spoken language as the audio stream's tag, read exactly the way the original subtitle
+ *  track is filed (trackLang, then packageLang): "EN" is "en", "pt_BR" and "zh-Hant-TW" their
+ *  primary — the raw value failed Rust's `is_package_lang` and left the audio with the uploader's
+ *  tag while its Original subtitle said the right one. Null when unknown (blank, only format
+ *  marks, a word): the source file's tag is kept then. `spoken` is the trimmed value, for the
+ *  stream's title (its full name, like the subtitle titles). */
+export function audioPackageLang(result: Pick<BatchResult, "language">): { lang: string; spoken: string } | null {
+  const spoken = trackLang({ language: result.language }, "orig");
+  const lang = packageLang(spoken);
+  return lang !== "und" ? { lang, spoken } : null;
 }
 
 /** One single-language SRT per chosen track (in track order), generated

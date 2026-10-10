@@ -36,7 +36,7 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
+  audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
@@ -554,8 +554,10 @@ export function TranscriptExport({
     }
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
-    // whatever the uploader's default was ("en" on a German video).
-    const audioLang = (res.language ?? "").trim() || null;
+    // whatever the uploader's default was ("en" on a German video). Tagged the
+    // way the original subtitle track is, so the two always agree.
+    const audio = audioPackageLang(res);
+    const audioLang = audio?.lang ?? null;
     const jobId = newProgressId();
     const fromFile = !!source.sourcePath;
     // A busy answer after an upload names that upload's server copy (and its expiry,
@@ -577,7 +579,7 @@ export function TranscriptExport({
             serverUrl, backendId: trBackend.id, jobId,
             ...source,
             container: effContainer, subtitles, defaultTrack, originalTrack,
-            audioLang, audioLabel: audioLang ? trackLanguageName(audioLang) : null,
+            audioLang, audioLabel: audio ? trackLanguageName(audio.spoken) : null,
             destPath: dest, filename: fileStem(dest),
             maxUploadBytes: trCaps?.media_package?.max_upload_bytes ?? null,
             audioBase,

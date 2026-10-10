@@ -170,6 +170,16 @@ describe("plain text + errors", () => {
     expect([seg(" de "), plain(" de ")]).toEqual(["de", "de"]);
     expect([seg("  "), plain("  ")]).toEqual([undefined, undefined]);
   });
+  it("json language named as a word (OpenAI verbose_json) becomes its Whisper code", () => {
+    const seg = (language: string) =>
+      parseImportedText("json", JSON.stringify({ language, segments: [{ start: 0, end: 1, text: "Hi" }] })).language;
+    const plain = (language: string) => parseImportedText("json", JSON.stringify({ language, text: "Hi" })).language;
+    expect([seg("English"), seg("english"), seg(" ENGLISH "), plain("english")]).toEqual(["en", "en", "en", "en"]);
+    // Whisper's own spellings the runtime names differently.
+    expect([seg("tagalog"), seg("myanmar"), seg("Maori"), seg("cantonese")]).toEqual(["tl", "my", "mi", "yue"]);
+    // A code stays as the file wrote it; a word no language goes by stays too.
+    expect([seg("EN"), seg("pt-BR"), seg("klingon")]).toEqual(["EN", "pt-BR", "klingon"]);
+  });
   it("a whitespace-only line separates paragraphs", () => {
     expect(parseImportedText("txt", "One para.\n \t\nTwo para.").segments.map((s) => s.text))
       .toEqual(["One para.", "Two para."]);

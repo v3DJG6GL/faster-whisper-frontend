@@ -110,6 +110,48 @@ export function languageLabel(code: string): string {
   return l;
 }
 
+/** Whisper's own spellings (its tokenizer's names and TO_LANGUAGE_CODE aliases) that the
+ *  runtime names differently: ICU says "Filipino" for tl, "Burmese" for my, "Māori" for mi, …
+ *  Read own-only, like LABEL_FIX. */
+const NAME_ALIASES: Record<string, string> = {
+  burmese: "my",
+  cantonese: "yue",
+  castilian: "es",
+  flemish: "nl",
+  haitian: "ht",
+  javanese: "jw",
+  letzeburgesch: "lb",
+  mandarin: "zh",
+  maori: "mi",
+  moldavian: "ro",
+  moldovan: "ro",
+  myanmar: "my",
+  nynorsk: "nn",
+  panjabi: "pa",
+  pushto: "ps",
+  sinhalese: "si",
+  tagalog: "tl",
+  valencian: "ca",
+};
+
+let codesByName: Map<string, string> | undefined;
+/** The Whisper code a language NAME stands for ("English", "english", "tagalog" → "en", "tl"),
+ *  case-insensitive; undefined for a word no Whisper language goes by. An imported JSON (OpenAI's
+ *  verbose_json) names its language as a word, which every track reader would otherwise take
+ *  for an unknown code. */
+export function languageCodeFromName(name: string): string | undefined {
+  const key = name.trim().toLowerCase();
+  if (!key) return undefined;
+  if (!codesByName) {
+    codesByName = new Map();
+    for (const code of WHISPER_LANGUAGES) {
+      const label = languageLabel(code).toLowerCase();
+      if (label !== code && !codesByName.has(label)) codesByName.set(label, code);
+    }
+  }
+  return ownProp(NAME_ALIASES, key) ?? codesByName.get(key);
+}
+
 /** A track's language as its titles and chips name it: the English name with the region in
  *  caps ("Portuguese (BR)"); a script subtag named with the language when the runtime knows the
  *  pair ("zh-Hant-TW" is "Traditional Chinese (TW)", "sr-Latn-RS" is "Serbian (Latin, RS)"); a code with

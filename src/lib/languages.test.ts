@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
 
@@ -30,6 +30,20 @@ describe("languageLabel", () => {
   it("every Whisper language has a real name", () => {
     expect(WHISPER_LANGUAGES).toHaveLength(100);
     for (const c of WHISPER_LANGUAGES) expect(languageLabel(c), c).not.toBe(c);
+  });
+});
+
+describe("languageCodeFromName", () => {
+  it("maps a language name to its Whisper code, case-insensitively", () => {
+    expect(["English", "english", " ENGLISH ", "German", "Chinese"].map(languageCodeFromName)).toEqual(["en", "en", "en", "de", "zh"]);
+    // Whisper's own spellings the runtime names differently, and the names LABEL_FIX gives.
+    expect(["tagalog", "Filipino", "nynorsk", "burmese", "maori", "javanese", "haitian creole"].map(languageCodeFromName))
+      .toEqual(["tl", "tl", "nn", "my", "mi", "jw", "ht"]);
+  });
+  it("answers undefined for a word no language goes by, a code, a blank or an inherited key", () => {
+    expect(["klingon", "en", "", "  ", "constructor", "auto-detect"].map(languageCodeFromName)).toEqual(
+      [undefined, undefined, undefined, undefined, undefined, undefined],
+    );
   });
 });
 
