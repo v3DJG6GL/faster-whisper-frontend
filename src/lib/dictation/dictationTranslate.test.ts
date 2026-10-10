@@ -195,6 +195,23 @@ describe("runDictationTranslate", () => {
     expect(r.cause).toBe("empty");
   });
 
+  it("sends only a language code as the source, the shared rule every T2T sender uses", async () => {
+    // The text route 422s a word: a synced "english" or an invisible value would fail every
+    // phrase's translation, so they go out as null (auto-detect); a padded code is trimmed.
+    const sourceFor = async (source: string) => {
+      let seen: unknown = "unset";
+      const d = deps((a) => {
+        seen = a.source;
+        return Promise.resolve(answer(a.texts));
+      });
+      await runDictationTranslate(req({ source }), d);
+      return seen;
+    };
+    expect(await sourceFor("english")).toBeNull();
+    expect(await sourceFor("\u200b")).toBeNull();
+    expect(await sourceFor(" de ")).toBe("de");
+  });
+
   it("forwards the capture id so the server can complete its held receipt", async () => {
     let seen: unknown;
     const d = deps((a) => {

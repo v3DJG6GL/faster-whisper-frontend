@@ -23,7 +23,7 @@ export function sessionShape(profile: Profile, backend: Backend | undefined): st
     effectiveLanguage(profile.language, backend.language),
     profile.prompt !== undefined ? profile.prompt : backendPrompt(backend),
     { ...backend.decodeOverrides, ...profile.decodeOverrides },
-    profile.overrideProfile?.trim() || backend.overrideProfile,
+    profile.overrideProfile?.trim() || backend.overrideProfile?.trim() || undefined,
     profile.endpoint ?? backend.endpoint,
     { ...backend.translationOverrides, ...profile.translationOverrides },
     profile.askTranslationTargets ? (profile.activation === "hold" ? "ask-at-release" : "ask-before-start") : false,

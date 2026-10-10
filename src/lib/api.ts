@@ -992,9 +992,9 @@ export async function stopRecord(): Promise<void> {
  *  `discardRecording`: a cancel during "transcribing…" disowns the detached transcription and
  *  its saved .wav/.txt; a recovery cancel passes false to keep them. With false a LIVE session
  *  is finished, not discarded (`cancelStream`'s rule), when "Keep recordings" is on: its clip is
- *  transcribed and its .wav/.txt written, its UI events epoch-silenced. With recordings off it is
- *  dropped and nothing is uploaded. Either way a device-loss salvage already under way keeps its
- *  own .wav/.txt. */
+ *  transcribed and its .wav/.txt written, its UI events epoch-silenced, and a device-loss salvage
+ *  already under way keeps its own .wav/.txt. With recordings off it is discarded: nothing is
+ *  uploaded, a device-loss salvage included. */
 export async function cancelRecord(userInitiated = false, discardRecording = true): Promise<void> {
   if (!isTauri) return;
   await invoke("cancel_record", { userInitiated, discardRecording });

@@ -75,6 +75,7 @@ import { isActiveDictation } from "./dictationVisual";
 import { appRuleKey, stripControlChars } from "../sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
 import { newProgressId } from "../ids";
+import { translateSourceCode } from "../languages";
 
 let wired = false;
 
@@ -2809,8 +2810,10 @@ async function ensureListeners(): Promise<void> {
       // keeps them all.)
       // Release a session that reached `closed` WITHOUT a user stop (capture-thread death / a
       // server-initiated close): stopLive's finish() already removed the session from Rust state, so
-      // this is a no-op on a normal stop — but on a never-stopped session it drops the parked session
-      // and releases the system-mute guard (otherwise other apps stay muted until the next dictation).
+      // this is a no-op on a normal stop — but on a never-stopped session it releases the parked
+      // session (a stream's is dropped; a batch one takes cancel_record's discard arm, harmless
+      // because a device-loss salvage wrote its .wav/.txt before emitting this `closed`) and releases
+      // the system-mute guard (otherwise other apps stay muted until the next dictation).
       // Fire-and-forget + idempotent.
       void (activeEndpoint === "batch" ? cancelRecord() : cancelStream()).catch((e) =>
         console.error("closed: release parked session failed:", e),
@@ -3449,7 +3452,8 @@ async function startLiveInner(
   const prompt = pov?.prompt !== undefined ? pov.prompt : backendPrompt(backend);
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
   // A set per-Profile override-profile name wins; else inherit the Backend's.
-  const overrideProfile = pov?.overrideProfile?.trim() ? pov.overrideProfile.trim() : backend.overrideProfile;
+  // Both sides trimmed (a blank inherited name → undefined), so what is sent matches the label.
+  const overrideProfile = pov?.overrideProfile?.trim() || backend.overrideProfile?.trim() || undefined;
   // A set per-Profile endpoint wins; else inherit the Backend's (stream vs batch transport).
   const endpoint = pov?.endpoint ?? backend.endpoint;
   // T2T dictation translation: per-field merge (Profile wins over Backend);
@@ -3462,8 +3466,9 @@ async function startLiveInner(
     const trTargets = sendableTargets(trOv.translateTo, backend.id);
     sessionTranslationBase = {
       // The resolved source language, so the per-phrase request does not leave the server
-      // to auto-detect a few words (every other T2T caller passes it); "auto"/"" → null.
-      source: language && language !== "auto" ? language : null,
+      // to auto-detect a few words (every other T2T caller passes it). The shared code-only rule
+      // maps "auto", blank and anything that is not a language code (a synced "english") to null.
+      source: translateSourceCode(language),
       includeOriginal: trOv.includeOriginal,
       model: trOv.model,
       glossary: trOv.glossary,
@@ -3760,7 +3765,7 @@ async function startLiveInner(
     // never the previous session's drain/transcription (that one is reached only with no live
     // session). A recovery cancel keeps its usual meaning: Rust finishes the session instead of
     // discarding it (a stream drains, a batch clip is transcribed, and the recording is written)
-    // — except a batch session with "Keep recordings" off, which is dropped with nothing uploaded.
+    // — except a batch session with "Keep recordings" off, which is discarded with nothing uploaded.
     // (TS narrows the module `let` to the `null` set above; cancelLive sets it during the await.)
     const owedCancel = cancelDuringStartInvoke as { keepRecording: boolean } | null;
     if (owedCancel) {
@@ -3831,11 +3836,12 @@ export interface CancelOpts {
    *  the user is still holding the chord (re-enumerating keyboards then would lose its keys). */
   keepShortcuts?: boolean;
   /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
-   *  discarded — a live stream session is finished (drained, recording written), a live batch
-   *  session is finished too when "Keep recordings" is on (transcribed, .wav/.txt written, its
-   *  events silenced; with recordings off it is dropped and nothing is uploaded), and a
-   *  drain/transcription still running after stop is released, keeping its saved recording — the
-   *  audio may be the only copy of what was said. */
+   *  discarded that has a recording to keep — a live stream session is finished (drained,
+   *  recording written), a live batch session is finished too when "Keep recordings" is on
+   *  (transcribed, .wav/.txt written, its events silenced; with recordings off it is discarded and
+   *  nothing is uploaded, a device-loss salvage included), and a drain/transcription still running
+   *  after stop is released, keeping its saved recording — the audio may be the only copy of what
+   *  was said. */
   keepRecording?: boolean;
 }
 

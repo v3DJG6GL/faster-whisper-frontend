@@ -21,6 +21,7 @@
 import type { TextTranslationResult } from "../api";
 import type { BatchProgress } from "../types";
 import { newProgressId } from "../ids";
+import { translateSourceCode } from "../languages";
 
 /** The translation mode a dictation request must use.
  *
@@ -280,7 +281,8 @@ export async function runDictationTranslate(
         // (the current text) is consumed.
         texts: [...context, original],
         targets: req.targets,
-        source: req.source?.trim() ? req.source.trim() : null,
+        // Only a code reaches the text route (it 422s a word like "english"): the shared rule.
+        source: translateSourceCode(req.source),
         model: req.model,
         mode: req.mode,
         glossary: req.glossary,
