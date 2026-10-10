@@ -279,8 +279,11 @@ mod sni {
         /// The shell's tray went away (plasmashell restarted, the GNOME extension disabled)
         /// or was not up yet at launch (login autostart before the panel): until it is back,
         /// close must not hide the window, and a hidden one comes back.
-        /// Also called when a watcher that came back refuses the registration, right after
-        /// `watcher_online`: that one is logged as a failure, not as an absent watcher.
+        /// Also called when a watcher refuses the registration: after `watcher_online` when
+        /// the watcher came back, or without it when a new watcher took the name over directly
+        /// (ksni calls `watcher_online` only when there was no owner, so a later successful
+        /// takeover leaves MISSING set until the watcher goes away and returns). A refusal is
+        /// logged as a failure, not as an absent watcher.
         fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
             if watcher_absent(&reason) {
                 tracing::warn!(
@@ -338,7 +341,16 @@ mod sni {
                     nudge();
                 }
                 Err(e) => {
-                    tracing::warn!("[tray] no system tray, running without one: {e}");
+                    // With `assume_sni_available`, ksni routes only a missing watcher
+                    // (`ServiceUnknown`) to `watcher_offline`; any other refusal of the first
+                    // registration lands here as `Error::Watcher`, from a watcher that did answer.
+                    if matches!(e, ksni::Error::Watcher(_)) {
+                        tracing::warn!(
+                            "[tray] the StatusNotifierWatcher refused the registration; running without a tray: {e}"
+                        );
+                    } else {
+                        tracing::warn!("[tray] no system tray, running without one: {e}");
+                    }
                     mark_missing(&app);
                 }
             }

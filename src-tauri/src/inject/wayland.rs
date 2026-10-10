@@ -929,11 +929,12 @@ mod imp {
                 // Own-window re-check at the SINK, not only at `inject_text`'s entry. This is the
                 // last Wayland arm without one: the paste branch got its guards at the clipboard
                 // write and at the chord, and the X11/Windows twin got one per typed chunk — but
-                // everything reaching HERE crossed the widest gap on any path. Between the entry
-                // guard and this point sit the <=500ms held-modifier wait, the latch consume, the
-                // `focused_app_now` snapshot read, `ensure_started`'s thread spawn + portal
-                // session (and possibly the KDE "Control input devices" consent modal), and the
-                // queue wait behind any job already typing. A focus change anywhere in there
+                // a typing job reaching HERE crossed a wide gap. Between `inject_text`'s last
+                // own-window check (after the held-modifier wait) and this point sit the latch
+                // consume, the `focused_app_now` snapshot read, on the fallback path a failed
+                // virtual-keyboard attempt, `submit`'s task spawn + portal session (and possibly
+                // the KDE "Control input devices" consent modal), and the queue wait behind any
+                // job already typing. A focus change anywhere in there
                 // otherwise types the server's transcript into our own settings, API-key or
                 // dictionary fields — where `sanitize_injected` deliberately preserves `\n`, so
                 // it commits them.

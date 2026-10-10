@@ -278,11 +278,12 @@ pub(crate) async fn inject_text(
         modifiers_stuck = modifiers_stuck || chord_lost;
     }
     // The per-app rule — including "never type into this app" — was resolved against the window
-    // focused when this insert was QUEUED, and getting here takes real time: the up-to-500ms
-    // modifier wait just above. In a live or hands-free session the user is expected to be
-    // switching windows, so the window that receives the keys may not be the one the decision was
-    // made for. Re-check now, at the sink. The later prev-clipboard read and settle are covered by
-    // the own-window probes at the clipboard write and the chord, not by this per-app re-check.
+    // focused when this insert was QUEUED, and getting here takes real time: the queue wait behind
+    // earlier inserts and the up-to-500ms modifier wait just above. In a live or hands-free session
+    // the user is expected to be switching windows, so the window that receives the keys may not be
+    // the one the decision was made for. Re-check now, at the sink. The later prev-clipboard read
+    // and settle are re-checked only for OUR OWN window (the probes at the clipboard write and the
+    // chord); a move to another app inside that window is not re-checked against the per-app rule.
     //
     // A mismatch degrades to clipboard-only — the same treatment a blocked or non-editable target
     // already gets, so the text is preserved and nothing is typed into a window whose rule we
@@ -546,9 +547,10 @@ pub(crate) async fn inject_text(
                 });
             }
             // Own-window re-check, at the sink rather than at the top of the function. The guard
-            // that decides "our own window took focus" runs ~0.5s earlier: the latch consume, the
-            // focus read and up to 400ms of bounded prev-clipboard read sit between it and this
-            // write (the settle follows it and is covered by the chord-time check below). Without this, a focus change inside that window clobbers the
+            // that decides "our own window took focus" runs up to ~0.4s+ earlier: the latch
+            // consume, the focus read and up to 400ms of bounded prev-clipboard read sit between
+            // it and this write (the settle follows it and is covered by the chord-time check
+            // below). Without this, a focus change inside that window clobbers the
             // user's clipboard and then fires Ctrl+V into one of our own windows — the exact
             // outcome the entry guard was moved above the clipboard-only branch to prevent.
             //
