@@ -49,10 +49,16 @@ const ACTIVATION = {
 } as const;
 
 /** What a profile's empty translation fields inherit: its backend's values. For the targets
- *  dictation stops at the backend — none there means no translation (streaming.ts trOv). */
-function translationInherited(t: TranslationOverrides | undefined, serverContext: number | undefined): TranslationInherited {
+ *  dictation stops at the backend — none there means no translation (streaming.ts trOv) —
+ *  and reads them as the session sends them (configuredRouteTargets: wire codes within the
+ *  server's cap), so five saved targets on a three-target server inherit three. */
+function translationInherited(
+  backend: { id?: string; translationOverrides?: TranslationOverrides } | null | undefined,
+  serverContext: number | undefined,
+): TranslationInherited {
+  const t = backend?.translationOverrides;
   return {
-    targets: targetsLabel(t?.translateTo, "no translation"),
+    targets: targetsLabel(configuredRouteTargets(null, backend), "no translation"),
     model: safeDisplayText(t?.model ?? "", 60).trim() || "server default",
     mode: t?.mode === "fluent" ? "Fluent" : t?.mode === "faithful" ? "Faithful" : undefined,
     contextSegments: t?.contextSegments ?? serverContext,
@@ -692,7 +698,7 @@ function Editor({
               activation: p.activation,
               method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
             })}
-            inherited={translationInherited(backend?.translationOverrides, serverContextSegments(decodeDefaults))}
+            inherited={translationInherited(backend, serverContextSegments(decodeDefaults))}
             inheritedModel={backend?.translationOverrides?.model}
             inheritedFrom={backend?.translationOverrides?.contextSegments !== undefined ? "backend" : "server"}
           />
