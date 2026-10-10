@@ -66,8 +66,9 @@ export function TranslateProgressCard({
     const secs = run.dlStartedAt ? (now - run.dlStartedAt) / 1000 : 0;
     if (secs >= 2 && got > 0) dlChips.push(`${fmtBytes(got / secs)}/s`);
   }
+  const shownModel = shortModelName(run.model, 40);
   const chips: string[] = [
-    ...(run.model ? [shortModelName(run.model, 40) ?? ""] : []),
+    ...(shownModel ? [shownModel] : []),
     ...(run.device ? [safeDisplayText(run.device, 16)] : []),
     ...(modeLabel ? [modeLabel] : []),
     ...dlChips,

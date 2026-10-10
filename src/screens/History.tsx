@@ -611,6 +611,7 @@ export default function History() {
 
   const dictationExpanded = (rec: TranscriptRecord) => {
     const backendName = backends.find((b) => b.id === rec.backendId)?.name;
+    const shownModel = shortModelName(rec.model, 40);
     const tracks = recordTracks(rec);
     return (
       <div key={rec.id} className="my-2 rounded-xl border border-accent/25 bg-accent-soft/30 px-4 py-3">
@@ -739,9 +740,9 @@ export default function History() {
               backend <span className="text-dim">{safeDisplayText(backendName, 40)}</span>
             </span>
           )}
-          {rec.model && (
+          {shownModel && (
             <span className="font-mono text-[11px] text-faint">
-              model <span className="text-dim">{shortModelName(rec.model, 40) ?? ""}</span>
+              model <span className="text-dim">{shownModel}</span>
             </span>
           )}
           {typeof rec.insertMethod === "string" && rec.insertMethod && rec.insertMethod !== "none" && (
@@ -825,6 +826,7 @@ export default function History() {
     const speakers = ok ? speakerOrder(rec.result ?? { text: "" }).length : 0;
     const edited =
       !!Object.keys(rec.edits ?? {}).length || !!Object.keys(rec.speakerEdits ?? {}).length;
+    const shownModel = shortModelName(rec.model, 40);
     const snippet = ok
       ? stripControlChars(recordText(rec, 200), 160)
       : stripControlChars(rec.error ?? "failed", 160);
@@ -845,7 +847,7 @@ export default function History() {
               {rec.result?.translation?.targets?.length
                 ? ` · ${rec.result.translation.targets.map((t) => safeDisplayText(t, 12)).join("+")}`
                 : ""}
-              {rec.model ? ` · ${shortModelName(rec.model, 40) ?? ""}` : ""}
+              {shownModel ? ` · ${shownModel}` : ""}
             </span>
             {edited && <span className="shrink-0 font-mono text-[11px] text-accent">· edited</span>}
           </div>

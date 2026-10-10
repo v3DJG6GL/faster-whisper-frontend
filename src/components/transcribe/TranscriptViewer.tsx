@@ -1574,6 +1574,7 @@ export function TranscriptViewer({
   );
 
   const canSeek = !!audioSrc && !audioBroken;
+  const mtModel = shortModelName(result.translation?.model, 40);
   /** The Subtitles option's tooltip: the limits the cues follow. */
   const subtitlesTitle = (() => {
     if (!cueOpts) return "As transcribed: one subtitle per segment";
@@ -1911,9 +1912,9 @@ export function TranscriptViewer({
               onOrder={(next) => setTrackPrefs({ order: subtitlesView ? next : mergeOrder(result, trackOrd, next) })}
             />
           )}
-          {result.translation?.model && (
+          {mtModel && (
             <span className="text-[11px] text-faint">
-              MT · {shortModelName(result.translation.model, 40) ?? ""}
+              MT · {mtModel}
             </span>
           )}
           {/* The way back into a half-translated transcript: a cancelled or interrupted

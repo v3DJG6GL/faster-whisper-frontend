@@ -58,6 +58,11 @@ describe("server default names (W6–W8)", () => {
     expect(serverName(e(null))).toBeUndefined();
     expect(serverName(undefined)).toBeUndefined();
   });
+  it("a name of only format characters is no name (tested as displayed)", () => {
+    expect(shortModelName("‏ ‏")).toBeUndefined();
+    expect(shortModelName("x/ ‏")).toBeUndefined();
+    expect(shortModelName("‏ large-v3")).toBe("large-v3");
+  });
   it("the inherit row of the language pickers: the server's language, \"\" = auto-detect", () => {
     expect(serverLanguageLabel(dd({ language: e("de") }))).toBe("German");
     expect(serverLanguageLabel(dd({ language: e("") }))).toBe(serverLanguageLabel(dd({ language: e("auto") })));

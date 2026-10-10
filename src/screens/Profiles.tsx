@@ -53,7 +53,7 @@ const ACTIVATION = {
 function translationInherited(t: TranslationOverrides | undefined, serverContext: number | undefined): TranslationInherited {
   return {
     targets: targetsLabel(t?.translateTo, "no translation"),
-    model: t?.model ? safeDisplayText(t.model, 60) : "server default",
+    model: safeDisplayText(t?.model ?? "", 60).trim() || "server default",
     mode: t?.mode === "fluent" ? "Fluent" : t?.mode === "faithful" ? "Faithful" : undefined,
     contextSegments: t?.contextSegments ?? serverContext,
     glossary: t?.glossary,
@@ -151,7 +151,8 @@ function Editor({
   });
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
   // loads the server's DEFAULT_MODEL, so it reads as inherited (as on the Backends screen).
-  const backendOwnModel = ownModelName(backend?.model, serverKind);
+  // Tested as displayed: a synced name of only format characters falls through to the next layer.
+  const backendOwnModel = safeDisplayText(ownModelName(backend?.model, serverKind), 60).trim();
   const multiInherited = typeof server.values.multilingual === "boolean" ? server.values.multilingual : undefined;
   const spoken = spokenField(p.language ?? "", p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
@@ -410,7 +411,9 @@ function Editor({
               onChange={(v) => set({ model: v || undefined })}
               models={models}
               defaultLabel={inheritLabel(
-                backendOwnModel || (p.model ? undefined : decodeDefaults?.model) || (backend ? "server model" : undefined),
+                backendOwnModel ||
+                  (p.model ? undefined : safeDisplayText(decodeDefaults?.model ?? "", 60).trim()) ||
+                  (backend ? "server model" : undefined),
               )}
             />
           </div>
@@ -746,7 +749,8 @@ function ProfileRow({
   const effLang = effLangCode ? languageLabel(effLangCode) : "";
   // The DISPLAYED name, not the raw string: a synced model of only whitespace or format
   // characters renders nothing, so it gets no (empty) badge.
-  const shortModel = shortModelName(p.model, 40)?.trim();
+  const shortModel = shortModelName(p.model, 40);
+  const tag = safeDisplayText(p.tag ?? "", 40).trim();
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
       <div className="flex items-center gap-4">
@@ -762,7 +766,7 @@ function ProfileRow({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
             <span className="truncate text-[14px] font-semibold text-text">{safeDisplayText(p.name, 80)}</span>
-            {p.tag?.trim() && <Badge tone="accent">{safeDisplayText(p.tag.trim(), 40)}</Badge>}
+            {tag && <Badge tone="accent">{tag}</Badge>}
             <Badge>{meta.label}</Badge>
             {/* The dictation ROUTE, not just the input language: a translating profile's
                 row would otherwise say "German" about output that lands in French. The

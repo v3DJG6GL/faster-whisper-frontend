@@ -97,7 +97,9 @@ export function serverContextSegments(dd: DecodeDefaults | null | undefined): nu
 export function shortModelName(id: unknown, max = 60): string | undefined {
   if (typeof id !== "string" || !id.trim()) return undefined;
   const t = id.trim();
-  return safeDisplayText(t.split("/").pop() || t, max) || undefined;
+  // Trimmed after sanitizing: a name of only format characters ("\u200f \u200f") sanitizes to
+  // blank space, which is no name either.
+  return safeDisplayText(t.split("/").pop() || t, max).trim() || undefined;
 }
 
 /** The name a request-default-settings entry gives (the default model, a stage model), short. */

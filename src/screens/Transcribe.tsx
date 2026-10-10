@@ -404,8 +404,10 @@ export default function Transcribe() {
   // The model a blank Model field runs with: the Backend's, else the server's default (named by
   // request-default-settings — only while no per-run model is picked, else it names that one).
   // On a non-standard server the `whisper-1` alias loads DEFAULT_MODEL, so it is no name of its own.
-  const backendOwnModel = ownModelName(backend?.model, serverKind);
-  const defaultModelName = backendOwnModel || (model ? undefined : decodeDefaults?.model) || "server model";
+  // Each name tested as displayed: a synced name of only format characters falls through.
+  const backendOwnModel = safeDisplayText(ownModelName(backend?.model, serverKind), 60).trim();
+  const defaultModelName =
+    backendOwnModel || (model ? undefined : safeDisplayText(decodeDefaults?.model ?? "", 60).trim()) || "server model";
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
   const serverLang = serverLanguageLabel(decodeDefaults);
   // The context segments a blank pick runs with: the backend's own, else the server's (unknown

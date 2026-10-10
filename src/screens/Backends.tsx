@@ -559,7 +559,7 @@ function Editor({
           title="Defaults"
           summary={
             <span className="text-faint">
-              · {shortModelName(ownModel || decodeDefaults?.model) ?? "server model"} ·{" "}
+              · {shortModelName(ownModel) ?? shortModelName(decodeDefaults?.model) ?? "server model"} ·{" "}
               {safeDisplayText(spoken.value ? spokenLabel(spoken.value) : (serverLanguageLabel(decodeDefaults) ?? "server language"), 30)}{" "}
               · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
