@@ -270,22 +270,31 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
       </div>
 
       <div className="mt-4">
-        {CATEGORY_META.map(({ key, title, desc }, i) => (
-          <SettingRow
-            key={key}
-            title={title}
-            desc={present(key) ? (counts[key] ? `${desc} (${counts[key]})` : desc) : "Not in this file."}
-            disabled={!present(key)}
-            last={i === CATEGORY_META.length - 1}
-          >
-            <Toggle
-              checked={sel[key]}
+        {CATEGORY_META.map(({ key, title, desc: metaDesc }, i) => {
+          // The shared appRules line ("other-OS rules pass through untouched") holds for a
+          // server restore, where the server copy keeps the other bucket — but an import installs
+          // only this OS's bucket, which the "(N other OS (not imported))" count says next to it.
+          const desc =
+            key === "appRules"
+              ? `Per-app rules for this OS (${MY_BUCKET}); a file's other-OS rules are not imported.`
+              : metaDesc;
+          return (
+            <SettingRow
+              key={key}
+              title={title}
+              desc={present(key) ? (counts[key] ? `${desc} (${counts[key]})` : desc) : "Not in this file."}
               disabled={!present(key)}
-              onChange={(v) => setSel((s) => ({ ...s, [key]: v }))}
-              ariaLabel={`Import ${title}`}
-            />
-          </SettingRow>
-        ))}
+              last={i === CATEGORY_META.length - 1}
+            >
+              <Toggle
+                checked={sel[key]}
+                disabled={!present(key)}
+                onChange={(v) => setSel((s) => ({ ...s, [key]: v }))}
+                ariaLabel={`Import ${title}`}
+              />
+            </SettingRow>
+          );
+        })}
       </div>
 
       <div className="mt-3 flex flex-col gap-2">

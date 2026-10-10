@@ -34,7 +34,7 @@ import {
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
-import { plural } from "@/lib/format";
+import { fmtFull, plural } from "@/lib/format";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
 
@@ -150,7 +150,7 @@ function LogRow({ r, wrap, open, onToggle }: {
           ))}
           <div className="px-2 pb-1 pl-[98px] font-mono text-[10.5px] text-faint">
             {r.count} in {spanText(l.ts - r.firstTs)} · first {rowTime(r.firstTs)}
-            {dropped > 0 && ` · ${dropped.toLocaleString()} more not kept — turn off Merge repeats to see every line`}
+            {dropped > 0 && ` · ${fmtFull(dropped)} more not kept — turn off Merge repeats to see every line`}
           </div>
         </div>
       )}
@@ -506,7 +506,7 @@ export default function Logs() {
           <Eraser className="h-3.5 w-3.5" /> Clear view
         </Button>
         <span className="ml-auto font-mono text-[11px] tabular-nums text-faint">
-          buffer {(all.length + cleared).toLocaleString()} / {LOG_BUFFER_CAP.toLocaleString()}
+          buffer {fmtFull(all.length + cleared)} / {fmtFull(LOG_BUFFER_CAP)}
         </span>
       </div>
     </div>

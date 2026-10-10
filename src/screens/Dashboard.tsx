@@ -159,10 +159,12 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
 // updates re-render ONLY this line — not the whole Home tree (the hero hotkey rows, the
 // profile rows don't depend on the transcript). Mirrors how
 // the 30Hz level meter is isolated inside LiveWaveform.
-// The chip caps its own copy of this at 400 chars; the same cap has to exist here, because the
-// partial is 100% server-authored and this card is WRAPPING — a multi-megabyte partial becomes
+// The chip keeps its own 400-char cap; this card needs a cap of its own, because the partial
+// is 100% server-authored and this card is WRAPPING — a multi-megabyte partial becomes
 // millions of line boxes, re-laid-out several times a second, and freezes the main window.
 // Render-only, and a tail slice: only the end of a live partial is of any use while speaking.
+// The slice counts UTF-16 units, so a cut through a surrogate pair drops the lone leading low
+// surrogate rather than render it as U+FFFD (as the Overlay twin does).
 const MAX_PARTIAL_CHARS = 4000;
 
 function LiveTranscriptText() {
@@ -170,7 +172,9 @@ function LiveTranscriptText() {
   // Cf/bidi survive the Rust bound by design (see the Overlay twin): the transcript keeps its
   // newlines, so `bounded` is used instead of `bounded_server_text`. Strip them here, at the one
   // surface whose whole purpose is letting the user supervise the text before it is typed.
-  return <>{stripControlChars(partial.slice(-MAX_PARTIAL_CHARS)) || <span className="text-faint">…</span>}</>;
+  let tail = partial.slice(-MAX_PARTIAL_CHARS);
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
+  return <>{stripControlChars(tail) || <span className="text-faint">…</span>}</>;
 }
 
 /** Free-software apps the hero names while hovered — the promise is "any field", so the
@@ -393,7 +397,7 @@ export default function Dashboard() {
               toggle();
             }}
             className={
-              "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-colors transition-transform hover:scale-105 " +
+              "ring-signal grid size-16 shrink-0 place-items-center rounded-full transition-[color,background-color,transform,scale] motion-safe:hover:scale-105 " +
               heroFill
             }
             title={
