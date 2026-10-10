@@ -18,6 +18,8 @@ const fetchUrlSubtitles = vi.fn<(args: Parameters<typeof import("./api").fetchUr
 const fetchUrlAudioOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlAudioOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 // Unset = the real outside-Tauri command; the video-poll cadence test answers it.
 const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").getTranscribeProgress>[0]) => Promise<import("./types").BatchProgress>>();
+// Unset = the real outside-Tauri command (no copy); the late audio-copy test answers it.
+const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveTranscriptMedia>) => Promise<string | null>>();
 // Unset = the real caps fetch; the translateParsed caps-miss test answers it.
 const refreshCaps = vi.fn<(...a: Parameters<typeof import("./capabilities").refreshCaps>) => Promise<void>>();
 vi.mock("./capabilities", async (importOriginal) => {
@@ -45,6 +47,8 @@ vi.mock("./api", async (importOriginal) => {
       fetchUrlAudioOnDemand.getMockImplementation() ? fetchUrlAudioOnDemand(a) : orig.fetchUrlAudioOnDemand(a),
     getTranscribeProgress: (a: Parameters<typeof orig.getTranscribeProgress>[0]) =>
       getTranscribeProgress.getMockImplementation() ? getTranscribeProgress(a) : orig.getTranscribeProgress(a),
+    saveTranscriptMedia: (...a: Parameters<typeof orig.saveTranscriptMedia>) =>
+      saveTranscriptMedia.getMockImplementation() ? saveTranscriptMedia(...a) : orig.saveTranscriptMedia(...a),
   };
 });
 
@@ -667,6 +671,56 @@ describe("mergeSegmentTranslations respects the OPEN record", () => {
     const rowA = useTranscribeRun.getState().queue.find((q) => q.path === "/a.mp3")!;
     expect(rowA.result!.segments![0].translations).toEqual({ de: "A-de" });
     expect(useTranscribeRun.getState().openRecordId).toBe("diff-b");
+  });
+});
+
+describe("a run's late audio copy respects the OPEN record", () => {
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+  // Runs /late.mp3 to done with its audio copy held open; returns the copy's resolver.
+  async function runHeldCopy() {
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    useTranscriptHistory.setState({ records: [], loaded: true });
+    let land!: (p: string) => void;
+    saveTranscriptMedia.mockImplementation(() => new Promise<string | null>((r) => { land = r; }));
+    transcribeFile.mockImplementation((async () => ({ text: "new", segments: [{ start: 0, end: 1, text: "new" }] })) as never);
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    useTranscribeRun.setState({ files: ["/late.mp3"], queue: [], running: false, stageMeta: {}, stageTimes: {} });
+    startRun(undefined, {}, ctx);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+    await vi.waitFor(() => expect(saveTranscriptMedia).toHaveBeenCalled());
+    const fresh = useTranscriptHistory.getState().records.find((r) => r.sourcePath === "/late.mp3")!;
+    const saved = () => useTranscriptHistory.getState().records.find((r) => r.id === fresh.id)!;
+    return { land, fresh, saved };
+  }
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    transcribeFile.mockReset();
+    saveTranscriptMedia.mockReset();
+    useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {} });
+  });
+
+  it("an older record of the same file opened meanwhile keeps its own audio", async () => {
+    const { land, saved } = await runHeldCopy();
+    const older: TranscriptRecord = {
+      schemaVersion: 1, kind: "file", id: "late-older", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/late.mp3", sourceName: "late.mp3", status: "done",
+      result: { text: "old", segments: [{ start: 0, end: 1, text: "old" }] },
+    };
+    expect(openHistoryRecord(older)).toBe(true);
+    land("/store/new-copy.mp3");
+    // The fresh record still gets its copy...
+    await vi.waitFor(() => expect(saved().mediaPath).toBe("/store/new-copy.mp3"));
+    // ...but the open older transcript's row never plays (or exports) it.
+    expect(useTranscribeRun.getState().openRecordId).toBe("late-older");
+    expect(useTranscribeRun.getState().queue[0].mediaPath).toBeUndefined();
+  });
+
+  it("the run's own row still gets its copy", async () => {
+    const { land, fresh, saved } = await runHeldCopy();
+    land("/store/own-copy.mp3");
+    await vi.waitFor(() => expect(saved().mediaPath).toBe("/store/own-copy.mp3"));
+    expect(useTranscribeRun.getState().openRecordId).toBe(fresh.id);
+    expect(useTranscribeRun.getState().queue[0].mediaPath).toBe("/store/own-copy.mp3");
   });
 });
 

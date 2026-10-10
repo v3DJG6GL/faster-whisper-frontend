@@ -907,6 +907,18 @@ function recordRun(
   return rec;
 }
 
+/** Patch a record's own queue row. The row is keyed by PATH, and two records of one source
+ *  share it: while record A's late work (a chunk merge, an audio copy) is still in flight, the
+ *  user may open record B of the same file or link from History — patching by path then
+ *  painted A's data under B's header (A's segments, or A's audio played and exported as B's).
+ *  Only THAT collision is suppressed: an open record of a different path leaves A's own row
+ *  updated. */
+function patchOwnRow(rec: TranscriptRecord, patch: Partial<QueueItem>) {
+  const openId = get().openRecordId;
+  const open = openId ? registered(openId) : undefined;
+  if (!open || open.id === rec.id || open.sourcePath !== rec.sourcePath) patchItem(rec.sourcePath, patch);
+}
+
 /** Copy the finished run's input audio into the app's media store (unless the
  *  setting is off), then late-link the path into the record and queue row —
  *  exactly the dictation recording-path pattern. Best-effort: a failed copy
@@ -917,7 +929,7 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
   void saveTranscriptMedia(rec.id, path, audioBasePref(s.recording))
     .then((mediaPath) => {
       if (!mediaPath) return;
-      patchItem(path, { mediaPath });
+      patchOwnRow(rec, { mediaPath });
       // Merge onto the record's LATEST copy, by id — and only while it is still ours: a
       // record deleted (or wiped) during the copy stays gone.
       if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, mediaPath }));
@@ -930,7 +942,7 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
  *  (keepUrlAudioCopies, default on) — never on keepAudioCopies, because a
  *  link run has no other playable source. Best-effort: null (retention
  *  expired) or an error leaves the transcript fully usable, minus playback. */
-function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
+function fetchRunUrlMedia(rec: TranscriptRecord, ctx: RunContext, mediaId: string) {
   const s = useApp.getState().settings;
   if (s.transcribe?.keepUrlAudioCopies === false) return;
   void fetchUrlMedia({
@@ -942,7 +954,7 @@ function fetchRunUrlMedia(path: string, rec: TranscriptRecord, ctx: RunContext, 
   })
     .then((mediaPath) => {
       if (!mediaPath) return;
-      patchItem(path, { mediaPath });
+      patchOwnRow(rec, { mediaPath });
       // Merge onto the record's LATEST copy, by id — and only while it is still ours: a
       // record deleted (or wiped) during the copy stays gone.
       if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, mediaPath }));
@@ -1292,15 +1304,8 @@ export function mergeSegmentTranslations(
   updated.translationsStale = get().translationsStale[key];
   registerRecord(updated);
   upsertRecord(updated);
-  // The queue row is keyed by PATH, and two records of one URL share it: while record A is
-  // still merging chunks, the user may open record B of the same link from History — patching
-  // by path then swapped the OPEN transcript to A's segments under B's header. Only THAT
-  // collision is suppressed: an open record of a different path leaves A's own row updated.
-  const openId = get().openRecordId;
-  const open = openId ? registered(openId) : undefined;
-  if (!open || open.id === rec.id || open.sourcePath !== rec.sourcePath) {
-    patchItem(rec.sourcePath, { result: updated.result });
-  }
+  // Never onto another open record of the same source (patchOwnRow).
+  patchOwnRow(rec, { result: updated.result });
 }
 
 /** Fold a video sub-object into the download row's meta: its clock starts at
@@ -1563,7 +1568,7 @@ export function ingestJobResult(
   }
   const rec = recordRun(row.path, row.ctx, row.options, { status: "done", result: res, tookMs }, extra);
   if (isUrl) {
-    if (res.sourceMediaId) fetchRunUrlMedia(row.path, rec, row.ctx, res.sourceMediaId);
+    if (res.sourceMediaId) fetchRunUrlMedia(rec, row.ctx, res.sourceMediaId);
     if (res.sourceVideoMediaId) {
       fetchRunUrlVideo(rec, row.ctx, res.sourceVideoMediaId);
     } else if (res.sourceVideoPending) {
@@ -2106,7 +2111,7 @@ async function pump(
         set({ selectedPath: next.path, openRecordId: null });
         const rec = recordRun(next.path, ctx, options, { status: "done", result: res, tookMs });
         if (isUrl) {
-          if (res.sourceMediaId) fetchRunUrlMedia(next.path, rec, ctx, res.sourceMediaId);
+          if (res.sourceMediaId) fetchRunUrlMedia(rec, ctx, res.sourceMediaId);
           if (res.sourceVideoMediaId) {
             fetchRunUrlVideo(rec, ctx, res.sourceVideoMediaId);
           } else if (res.sourceVideoPending && (videoPid ?? pid)) {
