@@ -30,6 +30,11 @@ describe("routeParts", () => {
     expect(routeParts("German", ["", "  ", "fr"]).targets).toEqual(["French"]);
   });
 
+  it("drops an entry the sanitizer empties, and does not count it in +N", () => {
+    expect(routeParts("German", ["\u200f", "en"])).toEqual({ source: "German", targets: ["English"], more: 0 });
+    expect(routeParts("German", ["fr", "\u200f", "it", "es"]).more).toBe(0);
+  });
+
   it("caps the list at three and counts the rest", () => {
     const r = routeParts("German", ["fr", "it", "es", "pt", "nl"]);
     expect(r.targets).toEqual(["French", "Italian", "Spanish"]);

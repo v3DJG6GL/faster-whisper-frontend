@@ -22,7 +22,10 @@ export function routeParts(
   const labels = (Array.isArray(targets) ? targets : [])
     .map((t) => (typeof t === "string" ? t.trim() : ""))
     .filter(Boolean)
-    .map((t) => safeDisplayText(languageLabel(t), 24));
+    // Filtered again after the sanitize: a code made only of invisible format characters
+    // trims to something, then sanitizes to nothing, and would show as a blank slot.
+    .map((t) => safeDisplayText(languageLabel(t), 24).trim())
+    .filter(Boolean);
   return {
     source: safeDisplayText(languageLabel(source), 24),
     targets: labels.slice(0, ROUTE_TARGETS_SHOWN),

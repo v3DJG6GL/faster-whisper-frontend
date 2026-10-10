@@ -32,6 +32,7 @@ import {
   fmtCompact,
   fmtDuration,
   localTodayDay,
+  plural,
 } from "@/lib/format";
 import { TREND_DAYS, sameViewSource, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
 import { effectiveServerUrl } from "@/lib/backends";
@@ -104,7 +105,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
       title={`Stages · share of sessions that used them, ${rangeWord}`}
       // The stage rows are the document's own, which has no per-kind split (the Kind filter is
       // client-side): say so under a narrowed kind rather than let them read as filtered.
-      right={<><Pill>{fmtFull(media)} file &amp; link sessions · {fmtFull(win.dictation.sessions)} dictations</Pill><Pill>counts sessions</Pill>{scope !== "all" && <Pill>all kinds</Pill>}</>}
+      right={<><Pill>{plural(Math.round(media || 0), "file & link session")} · {plural(Math.round(win.dictation.sessions || 0), "dictation")}</Pill><Pill>counts sessions</Pill>{scope !== "all" && <Pill>all kinds</Pill>}</>}
     >
       <div>
         {orderedStageRows(withS).map((row) => {
@@ -133,7 +134,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
             );
           }
           const share = pct(st.runs, st.of_runs);
-          const runsWord = row.key === "translating" ? "sessions" : "file & link sessions";
+          const runsWord = row.key === "translating" ? "session" : "file & link session";
           let detail: ReactNode;
           if (row.key === "translating") {
             detail = <>avg <Num>+{(st.secs / st.runs).toFixed(1)} s</Num> / run</>;
@@ -163,7 +164,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
                   <i className="block h-full rounded-pill" style={{ width: `${share}%`, background: row.colorVar }} />
                 </div>
                 <span className="w-[150px] font-num text-[12px] text-text">
-                  {share} % · {fmtFull(st.runs)} {runsWord}
+                  {share} % · {plural(Math.round(st.runs || 0), runsWord)}
                 </span>
               </div>
               <div className="text-dim"><Num>{fmtDuration(st.audio_s)}</Num> audio</div>
@@ -241,7 +242,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
       title="Dictation"
       right={
         <>
-          <Pill>{fmtFull(d?.sessions ?? 0)} sessions</Pill>
+          <Pill>{plural(Math.round(d?.sessions ?? 0), "session")}</Pill>
           <Pill>counts sessions</Pill>
           {collapsible && (
             <button type="button" onClick={() => setOpen(false)} className="ring-signal rounded-md px-1 text-[12px] text-faint underline underline-offset-4 hover:text-text">
