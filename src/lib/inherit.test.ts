@@ -68,6 +68,11 @@ describe("server default names (W6–W8)", () => {
     expect(serverLanguageLabel(dd({ language: e("") }))).toBe(serverLanguageLabel(dd({ language: e("auto") })));
     expect(serverLanguageLabel(dd())).toBeUndefined();
   });
+  it("a server language of only format characters reads \"??\", not blank", () => {
+    expect(serverLanguageLabel(dd({ language: e("\u200f") }))).toBe("??");
+    expect(serverLanguageLabel(dd({ language: e("\u200b\u2066") }))).toBe("??");
+    expect(serverLanguageLabel(dd({ language: e("de") }))).toBe("German");
+  });
   it("adds an identity-only default model to the picker's list once", () => {
     const models = [{ id: "a", loaded: true }];
     expect(withDefaultModel(models, "b").map((m) => m.id)).toEqual(["a", "b"]);

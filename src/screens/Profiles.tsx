@@ -77,33 +77,29 @@ function blankProfile(backendId: string | null): Profile {
 function Editor({
   initial,
   others,
+  lowLevelActive,
   onSave,
   onCancel,
 }: {
   initial: Profile;
   others: Profile[];
+  /** A low-level backend owns the chords: evdev enabled AND permitted (Linux) or always on
+   *  Windows (the hook backend) — the screen's own probe, passed down so the editor never starts
+   *  on a not-yet-probed `false` (collapsed L/R sides, a capture re-armed when it flips). Same
+   *  gate as the Dictionary screen's QuickAddShortcutField, so both rebind surfaces accept the
+   *  same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then). */
+  lowLevelActive: boolean;
   /** `takeovers`: bindings whose shortcut this profile took ("Use it here") — cleared on save. */
   onSave: (p: Profile, takeovers: string[]) => void;
   onCancel: () => void;
 }) {
   const backends = useApp((s) => s.backends);
   const connections = useApp((s) => s.connections);
-  const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   const globalTypeAsISpeak = useApp((s) => s.settings.general.typeAsISpeak);
   const globalInsertMethod = useApp((s) => s.settings.general.insertMethod);
   const globalPasteShortcut = useApp((s) => s.settings.general.pasteShortcut);
   const globalAutoEnter = useApp((s) => s.settings.general.autoEnter);
   const globalRestoreClipboard = useApp((s) => s.settings.general.restoreClipboard);
-  // A low-level backend owns the chords when evdev is enabled AND permitted (Linux) or always on
-  // Windows (the hook backend) — same gate as the Dictionary screen's QuickAddShortcutField
-  // (formerly the Settings quick-add row), so both rebind surfaces accept the same chords (useHotkeyCapture commits modifier-only / AltGr chords ONLY then).
-  // Gating on `evdevEnabled` alone would let this editor accept a chord that can't fire when
-  // evdev is toggled on but not permitted.
-  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
-  useEffect(() => {
-    void evdevStatus().then(setEvdev).catch(() => {}); // match Settings' chain; ignore an IPC reject
-  }, []);
-  const lowLevelActive = IS_WINDOWS || (!!evdev?.permitted && evdevEnabled);
   const [p, setP] = useState<Profile>(initial);
   const [capturing, setCapturing] = useState(false);
   // Shortcuts taken from other bindings in this edit ("Use it here"); applied with Save, so
@@ -253,7 +249,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={p.name.trim() || "New profile"}
+        title={safeDisplayText(p.name, 80).trim() || "New profile"}
         subtitle={
           <span className="inline-flex items-center gap-1.5">
             <Glyph className="size-3 text-accent" />
@@ -314,12 +310,12 @@ function Editor({
           {/* A duplicate clashes before any nesting exemption, so no activation change clears it. */}
           {liveClash.kind === "duplicate" ? (
             <>
-              Same shortcut as “{safeDisplayText(liveClash.name, 60) || "another profile"}” — saving would pause
+              Same shortcut as “{safeDisplayText(liveClash.name, 60).trim() || "another profile"}” — saving would pause
               all settings saves. Change the shortcut.
             </>
           ) : (
             <>
-              Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60) || "another profile"}” as{" "}
+              Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60).trim() || "another profile"}” as{" "}
               {ACTIVATION[p.activation].label} — saving would pause all settings saves.{" "}
               {flipClears ? "Change the shortcut or the activation." : "Change the shortcut."}
             </>
@@ -377,7 +373,7 @@ function Editor({
               {p.backendId
                 ? "The backend this profile used was deleted."
                 : "No backend picked for this profile."}{" "}
-              Dictation uses “{safeDisplayText(backend.name, 60) || "your first backend"}” (your first
+              Dictation uses “{safeDisplayText(backend.name, 60).trim() || "your first backend"}” (your first
               backend) until you pick one.
             </Notice>
           )}
@@ -400,11 +396,15 @@ function Editor({
                       // folding the inherited multilingual flag like the branch below.
                       (() => {
                         const v = decodeDefaults?.language?.value;
+                        // Tested as displayed: a format-only value falls back to the bare "Inherit".
                         return typeof v === "string"
-                          ? spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited))
+                          ? safeDisplayText(spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited)), 40).trim() ||
+                              undefined
                           : undefined;
                       })()
-                    : spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)),
+                    : // A format-only synced language reads "??", as on the Backends screen.
+                      safeDisplayText(spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)), 40).trim() ||
+                      "??",
               )}
             />
           </div>
@@ -445,7 +445,7 @@ function Editor({
           {p.endpoint === "stream" && serverKind === "standard" && (
             <Notice className="mt-1">
               A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
-              <span className="font-medium">{safeDisplayText(backend?.name, 80) || "this backend"}</span>.
+              <span className="font-medium">{safeDisplayText(backend?.name, 80).trim() || "this backend"}</span>.
             </Notice>
           )}
         </OverrideHeader>
@@ -488,7 +488,11 @@ function Editor({
               inheritLabel={
                 backend?.overrideProfile === NO_OVERRIDE_PROFILE
                   ? "Inherit · none"
-                  : inheritLabel(safeDisplayText(backend?.overrideProfile ?? "", 40).trim() || (backend ? "server default" : undefined))
+                  : backend?.overrideProfile
+                    ? // Set: the request sends this raw name (stream.rs forwards any non-empty one),
+                      // so a name that sanitizes to blank reads "??", never "server default".
+                      inheritLabel(safeDisplayText(backend.overrideProfile, 40).trim() || "??")
+                    : inheritLabel(backend ? "server default" : undefined)
               }
               onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
             />
@@ -834,7 +838,8 @@ export default function Profiles() {
   const quickAddHotkey = useApp((s) => s.settings.general.quickAddHotkey);
   const evdevEnabled = useApp((s) => s.settings.general.evdevEnabled);
   // A low-level backend is live when evdev is enabled AND permitted (Linux) or always on Windows
-  // (same gate as the Editor + Rust's apply_bindings). When only the plugin is live it collapses
+  // (same gate as Rust's apply_bindings; the Editor takes this value). Gating on `evdevEnabled`
+  // alone would accept a chord that can't fire when evdev is toggled on but not permitted. When only the plugin is live it collapses
   // L/R modifier sides, so the per-card conflict banner must collapse too — else a side-only-
   // different chord shows no conflict here yet silently clobbers one binding under the plugin.
   const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
@@ -876,7 +881,7 @@ export default function Profiles() {
   const nameOf = (id: string) =>
     id === QUICK_ADD_PEER_ID
       ? "Quick add"
-      : safeDisplayText(profiles.find((p) => p.id === id)?.name, 60) || "another profile";
+      : safeDisplayText(profiles.find((p) => p.id === id)?.name, 60).trim() || "another profile";
   const conflictText = (id: string): string | null => {
     const list = conflicts.get(id);
     if (!list || list.length === 0) return null;
@@ -936,6 +941,7 @@ export default function Profiles() {
             // profile's fields. Normally draft just toggles null↔value, so this is inert.
             key={editingId}
             initial={draft}
+            lowLevelActive={lowLevelActive}
             // Include the global quick-add shortcut as a pseudo-profile so capturing a chord that
             // clashes with it is WARNED: the evdev matcher silently drops the quick-add chord when
             // it duplicates a profile chord (profiles register first), so a rebind could otherwise
@@ -989,24 +995,29 @@ export default function Profiles() {
             )
           ) : (
             <div className="flex flex-col gap-3">
-              {profiles.map((p, i) => (
-                <ProfileRow
-                  key={p.id}
-                  p={p}
-                  backendName={safeDisplayText(backendForProfile(p, backends)?.name, 80) || "No backend"}
-                  backendId={backendForProfile(p, backends)?.id}
-                  backendLanguage={backendForProfile(p, backends)?.language}
-                  backendTargets={backendForProfile(p, backends)?.translationOverrides?.translateTo}
-                  conflictText={conflictText(p.id)}
-                  canUp={i > 0}
-                  canDown={i < profiles.length - 1}
-                  onMoveUp={() => moveProfile(p.id, "up")}
-                  onMoveDown={() => moveProfile(p.id, "down")}
-                  onEdit={() => startEdit(p)}
-                  onDuplicate={() => duplicateProfile(p.id)}
-                  onRemove={() => removeProfile(p.id)}
-                />
-              ))}
+              {profiles.map((p, i) => {
+                // Resolved once: a bound/fallback backend whose name sanitizes to blank is still
+                // the one dictation uses — "No backend" only when there is none.
+                const b = backendForProfile(p, backends);
+                return (
+                  <ProfileRow
+                    key={p.id}
+                    p={p}
+                    backendName={b ? safeDisplayText(b.name, 80).trim() || "Unnamed backend" : "No backend"}
+                    backendId={b?.id}
+                    backendLanguage={b?.language}
+                    backendTargets={b?.translationOverrides?.translateTo}
+                    conflictText={conflictText(p.id)}
+                    canUp={i > 0}
+                    canDown={i < profiles.length - 1}
+                    onMoveUp={() => moveProfile(p.id, "up")}
+                    onMoveDown={() => moveProfile(p.id, "down")}
+                    onEdit={() => startEdit(p)}
+                    onDuplicate={() => duplicateProfile(p.id)}
+                    onRemove={() => removeProfile(p.id)}
+                  />
+                );
+              })}
             </div>
           )}
         </>

@@ -22,7 +22,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLabel } from "@/lib/languages";
+import { namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
@@ -382,7 +382,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={b.name.trim() || "New backend"}
+        title={safeIdentityText(b.name, 80) || "New backend"}
         subtitle={
           chips.length ? (
             <span className="inline-flex items-center gap-1.5">
@@ -1210,12 +1210,27 @@ export default function Backends() {
                               truncates with no marker and leaves whitespace runs to CSS, so
                               `"Work" + 100 spaces + "Evil"` renders as exactly `Work` on the very
                               card this comment calls the audit surface. */}
-                          {safeIdentityText(b.name, 80)}
+                          {safeIdentityText(b.name, 80) || "Untitled backend"}
                         </span>
                         <Badge tone="accent">{b.endpoint}</Badge>
                         {/* "" = the backend leaves the language to the server. A set language that
-                            sanitizes to blank is still sent verbatim, so it reads "??", not "server lang". */}
-                        <Badge>{b.language ? safeDisplayText(languageLabel(b.language), 40).trim() || "??" : "server lang"}</Badge>
+                            sanitizes to blank is still sent verbatim, so it reads "??", not "server lang".
+                            Multiple languages is "auto" + the multilingual flag — folded back as the
+                            editor's Defaults summary does, or this badge reads "Auto-detect". */}
+                        <Badge>
+                          {b.language
+                            ? safeDisplayText(
+                                spokenLabel(
+                                  spokenValue(
+                                    b.language,
+                                    typeof b.decodeOverrides?.multilingual === "boolean" ? b.decodeOverrides.multilingual : undefined,
+                                    undefined,
+                                  ),
+                                ),
+                                40,
+                              ).trim() || "??"
+                            : "server lang"}
+                        </Badge>
                         {b.hasApiKey && <Badge>key</Badge>}
                         {backendChips(b, conn).map((c) => (
                           <Badge key={c}>{c}</Badge>

@@ -267,7 +267,10 @@ export default function Settings() {
     }
   }, [searchParams, setSearchParams]);
 
+  // Only the Permissions tab reads `evdev` (runEvdevSetup refreshes it itself); re-probe on each
+  // visit so a permission granted outside the app shows up.
   useEffect(() => {
+    if (tab !== "Permissions") return;
     void evdevStatus().then(setEvdev).catch(() => {}); // match the file's other chains; ignore an IPC reject
   }, [tab]);
 

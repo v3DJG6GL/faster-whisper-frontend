@@ -112,7 +112,10 @@ export function serverName(d: Pick<DecodeDefault, "value"> | null | undefined): 
 export function serverLanguageLabel(dd: DecodeDefaults | null | undefined): string | undefined {
   const v = dd?.language?.value;
   if (typeof v !== "string") return undefined;
-  return languageLabel(v.trim() || "auto");
+  // Tested as displayed: a code of only format characters names no language, but the server does
+  // send one — "??", like a backend's own such language, not a blank "Default · ".
+  const l = safeDisplayText(languageLabel(v.trim() || "auto"), 40).trim();
+  return l || "??";
 }
 
 /** A picker's model list with the server's default model in it: a default bound to the caller's

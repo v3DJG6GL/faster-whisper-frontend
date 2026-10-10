@@ -141,7 +141,7 @@ export function useHotkeyCapture(opts: {
             // A rejected validateCodes (IPC failure) would otherwise wedge the capture: `done` was set
             // true by the keydown caller, so the keyup modifier-only fallback is skipped and nothing
             // commits or warns — the pill hangs on the held chord. Reset + surface so the user can retry.
-            if (cancelled) return;
+            if (cancelled || activeCapture !== me) return; // as in .then
             console.error("validateCodes failed", e);
             setWarn("Couldn’t check that shortcut — try again.");
             done = false;
@@ -176,6 +176,10 @@ export function useHotkeyCapture(opts: {
         setHeldCodes(cur);
         return;
       }
+      // A chord is already being validated/settled: a second key (or auto-repeat) before the
+      // reply would start a second finalize, and both could settle — one parking a clash while
+      // the other commits a different chord. The invalid/catch paths reset `done` for a retry.
+      if (done) return;
       // The user is holding modifiers here, so the passive learner skipped this key;
       // learn its layout label now so the committed chip shows the right keycap.
       learnLetter(code, e.key);
@@ -266,7 +270,7 @@ export function useHotkeyCapture(opts: {
       codes,
       clear: false,
       otherId: live.id,
-      otherName: safeDisplayText(live.name, 60) || "another profile",
+      otherName: safeDisplayText(live.name, 60).trim() || "another profile",
       kind: live.kind,
     };
   };
