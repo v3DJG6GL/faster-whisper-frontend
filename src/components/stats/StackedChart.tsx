@@ -3,7 +3,7 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { cn } from "@/lib/cn";
-import { fmtDateTick, fmtDateFull } from "@/lib/format";
+import { fmtDateTick, fmtDateFull, plural } from "@/lib/format";
 import {
   KINDS, KIND_LABEL, KIND_VAR, METRIC_LABEL, metricValue, niceMax, presentKinds, safeTotals, type BucketMode,
   type ChartMetric, type UsageBucket, type UsageScope,
@@ -134,7 +134,7 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
               className="ring-signal block"
               tabIndex={0}
               role="img"
-              aria-label={`${METRIC_LABEL[metric]} per ${unit} by kind, ${n} ${unit}s. Use the arrow keys to step through them.`}
+              aria-label={`${METRIC_LABEL[metric]} per ${unit} by kind, ${plural(n, unit)}. Use the arrow keys to step through them.`}
               onKeyDown={onKey}
               onBlur={() => setHover(null)}
             >

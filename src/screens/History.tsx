@@ -618,7 +618,10 @@ export default function History() {
   };
 
   const dictationExpanded = (rec: TranscriptRecord) => {
-    const backendName = backends.find((b) => b.id === rec.backendId)?.name;
+    // Gated on what each label would SHOW (as tagBadge): a name of only format characters, or a
+    // corrupted non-string one, is raw-truthy but sanitizes to "", leaving a bare "profile" label.
+    const profileShown = safeDisplayText(rec.profileName ?? "", 40).trim();
+    const backendShown = safeDisplayText(backends.find((b) => b.id === rec.backendId)?.name ?? "", 40).trim();
     const shownModel = shortModelName(rec.model, 40);
     const tracks = recordTracks(rec);
     return (
@@ -738,14 +741,14 @@ export default function History() {
           </>
         )}
         <div className="mt-3 flex items-center gap-4 border-t border-line pt-3">
-          {rec.profileName && (
+          {profileShown && (
             <span className="font-mono text-[11px] text-faint">
-              profile <span className="text-dim">{safeDisplayText(rec.profileName, 40)}{rec.activation ? ` · ${rec.activation}` : ""}</span>
+              profile <span className="text-dim">{profileShown}{rec.activation ? ` · ${rec.activation}` : ""}</span>
             </span>
           )}
-          {backendName && (
+          {backendShown && (
             <span className="font-mono text-[11px] text-faint">
-              backend <span className="text-dim">{safeDisplayText(backendName, 40)}</span>
+              backend <span className="text-dim">{backendShown}</span>
             </span>
           )}
           {shownModel && (

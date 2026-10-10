@@ -154,7 +154,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={r.name?.trim() || r.appId || "New rule"}
+        title={safeIdentityText(r.name?.trim(), 80) || safeIdentityText(r.appId, 80) || "New rule"}
         subtitle={r.block ? "Per-app rule · never type here" : "Per-app rule"}
         dirty={dirty}
         saveLabel="Save rule"

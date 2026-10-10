@@ -330,7 +330,7 @@ function KindMultiple({ kind, dense, max, hatchId }: { kind: UsageKind; dense: U
         <span className="flex items-center gap-1.5"><Swatch kind={kind} />{KIND_LABEL[kind]}</span>
         <span className="font-num normal-case tracking-normal text-text">{fmtCompact(sum)}</span>
       </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[70px] w-full" aria-label={`${KIND_LABEL[kind]}: ${fmtFull(sum)} words in 30 days`} role="img">
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="block h-[70px] w-full" aria-label={`${KIND_LABEL[kind]}: ${plural(Math.round(sum || 0), "word")} in 30 days`} role="img">
         <line x1={0} x2={W} y1={H - 6} y2={H - 6} stroke="var(--c-line)" />
         {dense.map((p, i) => {
           const v = safeTotals(p[kind]).words;

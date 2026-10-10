@@ -1,6 +1,7 @@
 import { cn } from "@/lib/cn";
-import { fmtFull } from "@/lib/format";
-import { KIND_LABEL, KIND_VAR } from "@/lib/usageDerive";
+import { plural } from "@/lib/format";
+import { KIND_VAR } from "@/lib/usageDerive";
+import type { UsageKind } from "@/lib/types";
 import { linePath } from "@/components/stats/chartKit";
 import { Swatch } from "@/components/stats/primitives";
 import { type TileSpec } from "@/components/stats/tileSpecs";
@@ -22,6 +23,10 @@ function Sparkline({ vals, color }: { vals: number[]; color: string }) {
 // "dict" is the Words tile: a figure about you, not about the Dictation kind, so it wears the
 // Signal colour like the chip's readout (D27). Kind series keep --c-chart-* (kindFill).
 const TONE: Record<TileSpec["tone"], string> = { dict: "text-accent", ok: "text-ok", warn: "text-warn" };
+
+// The split legend counts sessions per kind, so it takes a counted noun ("1 file", "2 links"),
+// not the plural kind label lower-cased.
+const KIND_NOUN: Record<UsageKind, string> = { dictation: "dictation", file: "file", url: "link", text: "text" };
 
 /** A ledger figure's size: 22 px up to eight characters ("1h 04m", "51,239"), one step
  *  down for longer ones ("1,234,567") so they fit the row instead of truncating. */
@@ -58,7 +63,7 @@ export function StatTile({ tile, spark, active, onPick }: { tile: TileSpec; spar
           </div>
           <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-0.5 font-mono text-[11px] text-dim">
             {tile.split.map((r) => (
-              <span key={r.kind} className="inline-flex items-center gap-1.5"><Swatch kind={r.kind} />{fmtFull(r.value)} {KIND_LABEL[r.kind].toLowerCase()}</span>
+              <span key={r.kind} className="inline-flex items-center gap-1.5"><Swatch kind={r.kind} />{plural(Math.round(r.value || 0), KIND_NOUN[r.kind])}</span>
             ))}
           </div>
         </>
