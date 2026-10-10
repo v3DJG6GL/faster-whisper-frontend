@@ -206,16 +206,19 @@ interface Ctx {
 
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
- *  had one there. Spaced text joins exactly as `.join(" ")`. */
+ *  had one there. Spaced text joins exactly as `.join(" ")` over the non-empty parts; an empty
+ *  part (a blank segment, one cleared in the viewer) is skipped, so it leaves no double,
+ *  leading or trailing space and no space inside CJK. */
 export function joinSegmentTexts(parts: string[]): string {
   // Pieces + one join, tracking the last char: reading the growing string's tail each step
   // made this quadratic (≈1 s at 6000 segments, rerun on every edit of a long transcript).
   const out: string[] = [];
   let last = "";
-  parts.forEach((p, i) => {
-    const piece = i && !(unspacedChar(last) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
+  parts.forEach((p) => {
+    if (!p) return;
+    const piece = out.length && !(unspacedChar(last) && unspacedChar(edgeChar(p, false))) ? " " + p : p;
     out.push(piece);
-    if (piece) last = edgeChar(piece, true);
+    last = edgeChar(piece, true);
   });
   return out.join("");
 }
