@@ -17,6 +17,7 @@ import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
 import { effectiveLanguage } from "@/lib/backends";
 import { ownModelName } from "@/lib/backendChipLabels";
+import { shortModelName } from "@/lib/inherit";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { ownProp } from "@/lib/own";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
@@ -104,12 +105,14 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   // loads the server's DEFAULT_MODEL, so it is no name of its own (as on Profiles/Backends).
   const kind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
   const ownModel = ownModelName(backend?.model, kind);
-  // Each candidate as DISPLAYED, trimmed before the cap as it is sent: a synced model of only
-  // whitespace or format characters falls through to the next one instead of printing a dash.
-  const model =
-    safeDisplayText(p.model?.trim() ?? "", 40).trim() ||
-    safeDisplayText(ownModel, 40).trim() ||
-    (backend ? "server model" : "");
+  // Each candidate as DISPLAYED, by its last path part as Profiles/History/Backends show it
+  // (shortModelName trims, sanitizes and re-trims): a synced model of only whitespace or format
+  // characters falls through to the next one instead of printing a dash. The full id, org
+  // prefix included, is the cell's hover title.
+  const profShort = shortModelName(p.model, 40);
+  const ownShort = shortModelName(ownModel, 40);
+  const model = profShort ?? ownShort ?? (backend ? "server model" : "");
+  const modelFull = profShort ? p.model?.trim() : ownShort ? ownModel : undefined;
   return (
     <div
       role="row"
@@ -138,7 +141,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
         </div>
       </div>
       <div role="gridcell"><HotkeyChips codes={p.hotkey} /></div>
-      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text">{model || "—"}</div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={modelFull ? safeDisplayText(modelFull, 200) : undefined}>{model || "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${safeDisplayText(backend.name, 80)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
       <div role="gridcell" className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>

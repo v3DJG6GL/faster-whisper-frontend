@@ -376,6 +376,8 @@ function Editor({
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  const serverModel = shortModelName(decodeDefaults?.model);
+
   return (
     <Card className="p-6">
       <EditorHeader
@@ -559,7 +561,7 @@ function Editor({
           title="Defaults"
           summary={
             <span className="text-faint">
-              · {shortModelName(ownModel) ?? shortModelName(decodeDefaults?.model) ?? "server model"} ·{" "}
+              · {shortModelName(ownModel) ?? serverModel ?? "server model"} ·{" "}
               {safeDisplayText(spoken.value ? spokenLabel(spoken.value) : (serverLanguageLabel(decodeDefaults) ?? "server language"), 30)}{" "}
               · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
@@ -573,7 +575,7 @@ function Editor({
                 value={b.model}
                 onChange={(v) => set({ model: v })}
                 models={resultLive?.ok ? resultLive.models : stored?.ok ? stored.models : []}
-                placeholder={shortModelName(decodeDefaults?.model) ? inheritLabel(shortModelName(decodeDefaults?.model), "Default") : "whisper-1 / large-v3"}
+                placeholder={serverModel ? inheritLabel(serverModel, "Default") : "whisper-1 / large-v3"}
               />
             </div>
           </OverrideHeader>
