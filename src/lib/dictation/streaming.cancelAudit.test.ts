@@ -472,6 +472,22 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(src.slice(copy, flash)).toContain("sessionClipboard = true");
   });
 
+  it("the live per-phrase failed-insert recovery books the phrase's utterance record before flashing", () => {
+    // A per-utterance session opens each record as "none" for bookUtteranceInsert to patch, and
+    // teardownAfterFatalInject never settles it: unbooked, History says "not inserted" for a phrase
+    // the chip says is on the clipboard.
+    const src = mask(streamingSrc); // same offsets as streamingSrc; literals are masked
+    const reason = streamingSrc.indexOf('"failed live insert"');
+    expect(reason, "live failed-insert recovery moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const copy = streamingSrc.lastIndexOf("recoverToClipboard(", reason);
+    expect(copy).toBeGreaterThanOrEqual(0);
+    const flash = src.indexOf("flashError(", reason);
+    expect(flash).toBeGreaterThan(reason);
+    const between = streamingSrc.slice(copy, flash);
+    expect(src.slice(copy, flash)).toContain("sessionClipboard = true");
+    expect(between).toContain('bookUtteranceInsert(uttRec, "clipboard"');
+  });
+
   it("the stuck-finalize recovery stands down for a session started while it awaited", () => {
     // cancelLive idles the chip synchronously, so a new session can start before the recovery's
     // awaits finish; an unguarded flashError then stamps THAT session "error" (frames dropped,

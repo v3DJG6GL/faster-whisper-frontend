@@ -2261,6 +2261,13 @@ async function ensureListeners(): Promise<void> {
               // The recovery copy is another await — a cancel / fresh session landing during it
               // must not get the discarded session's error flash or teardown either.
               if (insertCfg !== cfg) return;
+              // Book the recovered phrase where it went, like the divert branch below and the
+              // stop-mode recovery: its utterance record was opened as "none" for this call to
+              // patch, and the teardown never settles it. The baseline and carry stay un-advanced.
+              if (recoverable) {
+                sessionClipboard = true;
+                bookUtteranceInsert(uttRec, "clipboard", body, phrase);
+              }
               flashError(
                 recoverable
                   ? t.method === "direct"
@@ -2916,10 +2923,10 @@ async function ensureListeners(): Promise<void> {
             // A divert means the transcript went to the clipboard rather than into the window,
             // so record THAT outcome — `endOutcome()` reports it and the done marker shows the
             // clipboard result instead of a green "typed" over text that was never typed. No
-            // flashError, for the reason given on the per-phrase path: it would set status "error"
-            // and `settleToIdleAfterInjection` would then never call `settleIdle()`, leaving the
-            // outcome unstamped and dropping a queued hold-start — in the very scenario where the
-            // user is still holding the chord.
+            // flashError: it would paint a red error chip over a delivery that worked, and void a
+            // queued hold-start (flashError → voidPendingHoldStart) in the very scenario where the
+            // user is still holding the chord. (The error path itself still settles —
+            // `settleToIdleAfterInjection` runs settleIdle(true) on "error".)
             if (t.method === "clipboard" || diverted) sessionClipboard = true;
             else sessionTyped = true;
           } else if (!t.isSelf && !landed) {
