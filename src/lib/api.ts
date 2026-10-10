@@ -339,7 +339,8 @@ export async function packageMedia(args: ServerTarget & {
   destPath: string;
   filename: string;
   maxUploadBytes?: number | null;
-  /** The custom audio base (`audioBasePref`), so a source under it counts as app storage. */
+  /** The custom audio base (`audioBasePref`), so an export folder under it counts as app
+   *  storage and is refused. */
   audioBase?: string | null;
 }): Promise<PackageOutcome> {
   return invokeServer<PackageOutcome>("package_media", args, {

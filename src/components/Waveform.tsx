@@ -225,8 +225,8 @@ export function Waveform({
         const x = (i + 0.5) * slot;
         const baseAlpha = isActive ? 1 : isProcessing ? 0.92 : 0.55;
         // Build the bar shape, then fill it with the normal colour and (cross-faded by
-        // prideMix) the flag pattern. The pattern is anchored to the canvas origin, so
-        // each bar reveals the flag column at its x — together rebuilding the flag.
+        // prideMix) the vertical flag gradient — the same stripes behind every bar, so a
+        // taller bar reveals more of the flag.
         if (variant === "dots") {
           const r = bw / 2 + heights[i] * (h * 0.16);
           ctx.beginPath();
