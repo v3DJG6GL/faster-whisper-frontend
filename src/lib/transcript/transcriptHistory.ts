@@ -9,7 +9,7 @@ import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "../api";
 import { useApp } from "../store";
-import type { BatchResult, TranscribeOptions } from "../types";
+import { LEGACY_HANDSFREE, type BatchResult, type TranscribeOptions } from "../types";
 import { joinSegmentTexts } from "./transcriptFormats";
 import { applyTextEdits } from "./wordAlign";
 
@@ -166,10 +166,11 @@ function stringMap<K extends string | number>(v: unknown): Record<K, string> | u
  *  `.includes()` (a string map also lists its indexes as ghost tracks), a non-string
  *  `error` / `title` in the failed row's sanitizer and the export stem, an `insertMethod` that
  *  is not one of the three known values in the expanded row's footer (an object as a JSX
- *  child), a non-number `result.duration` in the viewer's meta line (`.toFixed`), and a damaged
- *  `result.timedTracks` list (a non-array, a track with no cue list, a cue with non-string text
- *  or non-finite times) in the viewer's, the media export's and the cue splitter's `.map` /
- *  `.some` / `.trim()`. Every step composes on `out`. */
+ *  child), an `activation` that is neither "hold" nor "handsfree" in the same footer (the
+ *  legacy "latch" of older records reads as "handsfree"), a non-number `result.duration` in
+ *  the viewer's meta line (`.toFixed`), and a damaged `result.timedTracks` list (a non-array,
+ *  a track with no cue list, a cue with non-string text or non-finite times) in the viewer's,
+ *  the media export's and the cue splitter's `.map` / `.some` / `.trim()`. Every step composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
   let out = r;
   const tt = (r.options as { translateTo?: unknown } | undefined)?.translateTo;
@@ -179,6 +180,9 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
   const im = r.insertMethod as unknown;
   if (im != null && im !== "typed" && im !== "clipboard" && im !== "none") out = { ...out, insertMethod: undefined };
+  const act = r.activation as unknown;
+  if (act === LEGACY_HANDSFREE) out = { ...out, activation: "handsfree" };
+  else if (act != null && act !== "hold" && act !== "handsfree") out = { ...out, activation: undefined };
   if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
   const dur = out.result?.duration as unknown;
   if (out.result && dur != null && !(typeof dur === "number" && Number.isFinite(dur))) {

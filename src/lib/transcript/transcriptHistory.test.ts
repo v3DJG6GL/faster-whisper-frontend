@@ -400,6 +400,31 @@ describe("loadHistory", () => {
     expect(saved("im-ok").insertMethod).toBe("clipboard");
   });
 
+  it("maps the legacy \"latch\" activation to handsfree and drops an unknown one", async () => {
+    const base = {
+      schemaVersion: 1,
+      kind: "dictation",
+      sourcePath: "",
+      sourceName: "Dictation",
+      status: "done",
+      result: { text: "hi" },
+    };
+    listTranscriptRecords.mockResolvedValue([
+      { ...base, id: "act-obj", createdAt: "2026-01-02T03:04:05.000Z", activation: {} },
+      { ...base, id: "act-str", createdAt: "2026-01-02T03:04:06.000Z", activation: "x".repeat(500) },
+      { ...base, id: "act-latch", createdAt: "2026-01-02T03:04:07.000Z", activation: "latch" },
+      { ...base, id: "act-hold", createdAt: "2026-01-02T03:04:08.000Z", activation: "hold" },
+    ]);
+    await loadHistory(true);
+    for (const id of ["act-obj", "act-str"]) {
+      const r = saved(id);
+      expect(r.activation).toBeUndefined();
+      expect(r.result?.text).toBe("hi");
+    }
+    expect(saved("act-latch").activation).toBe("handsfree");
+    expect(saved("act-hold").activation).toBe("hold");
+  });
+
   it("drops a non-number result.duration so the viewer's meta line cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
       {
