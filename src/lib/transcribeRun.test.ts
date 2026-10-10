@@ -129,6 +129,12 @@ describe("railStages", () => {
     ]);
     expect(railStages({ translateTo: [] })).toEqual(["transcribing"]);
   });
+  it("a saved target the wire refuses is no translating stage", () => {
+    // A History record from before the chips were wire-checked: the run sends nothing for it.
+    expect(railStages({ translateTo: ["de_CH"] })).toEqual(["transcribing"]);
+    expect(railStages({ translateTo: ["x"] }, true, false, true)).toEqual(["downloading"]);
+    expect(railStages({ translateTo: ["de_CH", "fr"] })).toEqual(["transcribing", "translating"]);
+  });
   it("a link whose site tracks cover every target drops the translating stage", () => {
     const site = { fetch: ["de"], transcriptTrackId: null, mtTargets: [] as string[] };
     const opts = { translateTo: ["de"] };
@@ -818,6 +824,14 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions(undefined, false, true)).toBeUndefined();
   });
 
+  it("a retried History record keeps only the wire-valid targets", () => {
+    // Records saved before the chips were wire-checked may hold codes the transport refuses.
+    expect(reconcileRetryOptions({ translateTo: ["de_CH", "fr"] }, false, true)!.translateTo).toEqual(["fr"]);
+    // Still defined (an explicit "no targets"), so a site plan's choice is unchanged.
+    expect(reconcileRetryOptions({ translateTo: ["x"] }, false, true)!.translateTo).toEqual([]);
+    expect(reconcileRetryOptions({ diarize: true }, false, true)!.translateTo).toBeUndefined();
+  });
+
   it("no last options: a standard server still gets its flag", () => {
     expect(reconcileRetryOptions(undefined, true)).toEqual({ standard: true });
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
@@ -1249,6 +1263,52 @@ describe("a pending video's poll slows down once its link is off screen", () => 
   });
 });
 
+describe("a same-link retry takes the Video row from the first run's watcher", () => {
+  it("the first run's still-polling video watcher stops painting once the retry has the rail", async () => {
+    const ticks: (() => void)[] = [];
+    vi.stubGlobal("window", { setInterval: (fn: () => void) => { ticks.push(fn); return ticks.length; }, clearInterval: () => {} });
+    // Only the first watcher's id reports a video; every other poll (the retry's) has none.
+    let watcherPid: string | null = null;
+    getTranscribeProgress.mockImplementation((a) => {
+      watcherPid ??= a.progressId;
+      return Promise.resolve((a.progressId === watcherPid
+        ? { stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 } }
+        : { stage: "waiting", progress: 0 }) as import("./types").BatchProgress);
+    });
+    const url = "https://youtu.be/retry";
+    const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      openHistoryRecord({
+        schemaVersion: 1, kind: "url", id: "rec-retry", createdAt: "2026-10-05T12:00:00Z",
+        sourcePath: url, sourceName: "Talk", status: "done",
+      });
+      useTranscribeRun.setState({ lastRunPath: url,
+        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      retryRunVideo(url, ctx);
+      const watcher = ticks[0];
+      // Outside Tauri the on-demand request fails at once; let that land, then the watcher paints.
+      await flush();
+      useTranscribeRun.setState({ stageMeta: {} });
+      watcher();
+      await flush();
+      expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
+      // The same link is retried under the same epoch (outside Tauri it fails at once).
+      useTranscribeRun.setState({ queue: [{ path: url, status: "failed", kind: "url" }] as QueueItem[], running: false });
+      retryFile(url, ctx);
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      expect(useTranscribeRun.getState().lastRunPath).toBe(url);
+      useTranscribeRun.setState({ stageMeta: {} });
+      for (let i = 0; i < 6; i++) { watcher(); await flush(); }
+      expect(useTranscribeRun.getState().stageMeta.downloading?.video).toBeUndefined();
+    } finally {
+      getTranscribeProgress.mockReset();
+      vi.unstubAllGlobals();
+      useTranscribeRun.setState({ stageMeta: {} });
+    }
+  });
+});
+
 describe("withSiteTracks", () => {
   it("a site-track download that fails becomes a warning on the result, never an error", async () => {
     const res = { text: "x", warnings: ["w1"] };
@@ -1483,6 +1543,24 @@ describe("translateParsed joins a text source like the TXT export", () => {
     } finally {
       refreshCaps.mockReset();
       useApp.setState({ caps: before, backends: prevBackends });
+    }
+  });
+
+  it("a saved target the wire refuses is neither sent nor recorded", async () => {
+    const { useApp } = await import("./store");
+    const before = useApp.getState().caps;
+    useApp.setState({
+      caps: { ...before, b1: { server_info: { limits: { translation_max_targets: 1 } } } as never },
+    });
+    try {
+      translateText.mockImplementation(() => Promise.resolve({ results: [{ fr: "Salut." }] }));
+      const r = await translateParsed({ segments: [{ text: "Hi." }] }, { translateTo: ["de_CH", "fr"] }, ctx);
+      // Within the limit of one once the refused code is gone: no dropped-targets warning.
+      expect(translateText.mock.calls[0][0].targets).toEqual(["fr"]);
+      expect(Object.keys(r.translations ?? {})).toEqual(["fr"]);
+      expect(r.warnings ?? []).toEqual([]);
+    } finally {
+      useApp.setState({ caps: before });
     }
   });
 

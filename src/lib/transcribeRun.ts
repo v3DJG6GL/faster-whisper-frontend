@@ -35,6 +35,7 @@ import { joinSegmentTexts } from "./transcript/transcriptFormats";
 import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { maxTranslationTargets, refreshCaps } from "./capabilities";
+import { wireCodes } from "./translationTargets";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./transcript/siteSubtitles";
@@ -159,13 +160,16 @@ export function railStages(
   siteTranscript?: boolean,
 ): RailStage[] {
   if (forText) return ["translating"];
-  if (siteTranscript) return ["downloading", ...(opts?.translateTo?.length ? (["translating"] as const) : [])];
+  // Wire-valid targets only, as the run sends them: a History record from before the chips
+  // were wire-checked may hold a code the server refuses, which is no translating stage.
+  const translates = wireCodes(opts?.translateTo).length > 0;
+  if (siteTranscript) return ["downloading", ...(translates ? (["translating"] as const) : [])];
   return [
     ...(forUrl ? (["downloading"] as const) : []),
     ...(opts?.separateBgm ? (["separating"] as const) : []),
     "transcribing" as const,
     ...(opts?.diarize ? (["diarizing"] as const) : []),
-    ...(opts?.translateTo?.length ? (["translating"] as const) : []),
+    ...(translates ? (["translating"] as const) : []),
   ];
 }
 
@@ -998,6 +1002,8 @@ function awaitRunUrlVideo(
   epoch: number,
 ) {
   const startedAt = Date.now();
+  // Started after its file took the rail (every caller): a later same-path file is a new seq.
+  const railSeq = railFileSeq;
   let inFlight = false;
   // An unreachable server backs the poll off (2, 4, … up to 30 s between
   // tries) instead of failing once a second until the deadline; a short
@@ -1024,8 +1030,9 @@ function awaitRunUrlVideo(
       .then((p) => {
         failures = 0;
         // The epoch stays the same across the files of one run: only the link
-        // the rail is showing may take this video's progress.
-        const painting = epoch === get().epoch && get().lastRunPath === rec.sourcePath;
+        // the rail is showing may take this video's progress — and a same-path retry is a
+        // different file on the rail (`railFileSeq`).
+        const painting = epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath;
         // A poll that paints nothing (headless, epoch -1, or its link no longer
         // on screen) only feeds the terminal check: match the headless watcher's
         // 5 s cadence. Recomputed each poll, so a link back on screen resumes 1 s.
@@ -1102,6 +1109,7 @@ export function videoMaxHeightOf(url: string): number | null {
 /** Fetch a link's video on demand under `pid` (awaitRunUrlVideo folds its progress into the
  *  Video row); a request that fails outright marks the Video row failed. */
 function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: number): void {
+  const railSeq = railFileSeq;
   void fetchUrlVideoOnDemand({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
@@ -1110,7 +1118,7 @@ function startOnDemandVideo(url: string, ctx: RunContext, pid: string, epoch: nu
     formatId: get().urlMeta[url]?.videoFormat ?? null,
     progressId: pid,
   }).catch((e) => {
-    if (epoch !== get().epoch || get().lastRunPath !== url) return;
+    if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url) return;
     set((st2) => ({
       stageMeta: {
         ...st2.stageMeta,
@@ -1432,6 +1440,12 @@ export function foldProgress(p: BatchProgress) {
   });
 }
 
+/** Bumped each time a file takes the rail (the pump's per-file reset, a reattach). A same-path
+ *  retry re-pumps the link under the same epoch, so epoch + `lastRunPath` cannot tell the
+ *  first run's still-polling video watcher from the retry's: the watcher captures this at its
+ *  start and paints only while it is still the rail's file. */
+let railFileSeq = 0;
+
 /** The in-flight file's server-side progress id + where to send a cancel for
  *  it. Module-level (not store state): only cancelRun reads it, and it must
  *  survive component unmounts exactly like the pump itself. */
@@ -1518,6 +1532,7 @@ export function reattachRun(row: LedgerRow): number {
     : row.options?.separateBgm ? "separating" : "transcribing";
   const s = get();
   const epoch = s.epoch + 1;
+  railFileSeq += 1;
   set({
     epoch,
     files: [row.path],
@@ -1654,8 +1669,9 @@ export async function translateParsed(
   epoch?: number,
 ): Promise<BatchResult> {
   // Over the server's limit the text route rejects the whole request: keep the first ones and
-  // name the rest, in the audio route's own words (it drops them server-side).
-  const all = options.translateTo ?? [];
+  // name the rest, in the audio route's own words (it drops them server-side). Wire-valid codes
+  // only: a retried History record may carry one the transport refuses, failing the whole send.
+  const all = wireCodes(options.translateTo);
   let cap: number | undefined;
   if (all.length) {
     // The limit is read live from this backend's caps (a long batch follows a server that
@@ -1958,7 +1974,7 @@ async function pump(
       }
       // A text source runs the translation stage ONLY — it needs targets and
       // a full backend with the T2T endpoint.
-      if (isText && (ctx.standard || !options?.translateTo?.length)) {
+      if (isText && (ctx.standard || !wireCodes(options?.translateTo).length)) {
         // A full server with translation off has no Translation section to turn on.
         const error = ctx.standard || ctx.translationAvailable === false
           ? "Text files need a full backend with translation enabled."
@@ -1985,6 +2001,7 @@ async function pump(
           ? "downloading"
           : options?.separateBgm ? "separating" : "transcribing";
       const fileT0 = Date.now();
+      railFileSeq += 1;
       set({
         progress: null,
         lastRunPath: next.path,
@@ -2269,6 +2286,10 @@ export function reconcileRetryOptions(
     standard: standard || undefined,
     ...(opts.task === "translate" ? { useTranslationsEndpoint: standard } : {}),
   };
+  // A History record saved before the chips were wire-checked may hold codes the server
+  // refuses ("de_CH"): keep only the wire-valid ones. A defined list stays defined (even
+  // empty), so `linkTranslateTo` still reads it as "this run had a translating slice".
+  if (out.translateTo !== undefined) out.translateTo = wireCodes(out.translateTo);
   if (standard || !(translationAvailable ?? !standard)) {
     delete out.translateTo;
     delete out.translationMode;
