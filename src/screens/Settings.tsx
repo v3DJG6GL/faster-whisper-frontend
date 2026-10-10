@@ -7,6 +7,7 @@ import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
+import { plural } from "@/lib/format";
 import { dropPendingWrites, loadHistory } from "@/lib/transcript/transcriptHistory";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
@@ -726,16 +727,16 @@ export default function Settings() {
 
             <SettingRow
               title="Delete all dictations"
-              desc={`Removes all ${dictN} stored dictations${dictAudioN > 0 ? ` and ${dictAudioN} audio file(s)` : " and their audio"}. The retention clock stays as set.`}
+              desc={`Removes all ${plural(dictN, "stored dictation")}${dictAudioN > 0 ? ` and ${plural(dictAudioN, "audio file")}` : " and their audio"}. The retention clock stays as set.`}
               last
             >
               {confirming === "dict" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")}>
                     {dictN > 0
-                      ? `Delete ${dictN} dictations${dictAudioN > 0 ? ` + ${dictAudioN} audio files` : ""}`
+                      ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
                       : dictAudioN > 0
-                        ? `Delete ${dictAudioN} audio files`
+                        ? `Delete ${plural(dictAudioN, "audio file")}`
                         : "Delete"}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
