@@ -163,9 +163,13 @@ function stringMap<K extends string | number>(v: unknown): Record<K, string> | u
  *  map in the snippet's per-segment `.trim()`, a non-string speaker name (segment label,
  *  rename, speaker correction, legend list) in the viewer's speaker-name sanitizer, a segment's
  *  non-string translation or non-array kept-source list in the viewer's and exports' `.trim()` /
- *  `.includes()` (a string map also lists its indexes as ghost tracks), and a non-string
- *  `error` / `title` in the failed row's sanitizer and the export stem. Every step composes on
- *  `out`. */
+ *  `.includes()` (a string map also lists its indexes as ghost tracks), a non-string
+ *  `error` / `title` in the failed row's sanitizer and the export stem, an `insertMethod` that
+ *  is not one of the three known values in the expanded row's footer (an object as a JSX
+ *  child), a non-number `result.duration` in the viewer's meta line (`.toFixed`), and a damaged
+ *  `result.timedTracks` list (a non-array, a track with no cue list, a cue with non-string text
+ *  or non-finite times) in the viewer's, the media export's and the cue splitter's `.map` /
+ *  `.some` / `.trim()`. Every step composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
   let out = r;
   const tt = (r.options as { translateTo?: unknown } | undefined)?.translateTo;
@@ -173,7 +177,13 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
     out = { ...out, options: { ...out.options, translateTo: stringTargets(tt) } as TranscribeOptions };
   }
   if (r.translatedText != null && typeof r.translatedText !== "string") out = { ...out, translatedText: undefined };
+  const im = r.insertMethod as unknown;
+  if (im != null && im !== "typed" && im !== "clipboard" && im !== "none") out = { ...out, insertMethod: undefined };
   if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
+  const dur = out.result?.duration as unknown;
+  if (out.result && dur != null && !(typeof dur === "number" && Number.isFinite(dur))) {
+    out = { ...out, result: { ...out.result, duration: undefined } };
+  }
   // Before the segment step, so a remap below moves already-clean maps.
   const edits = stringMap<number>(r.edits);
   if (r.edits != null && edits !== r.edits) out = { ...out, edits };
@@ -247,6 +257,34 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
           speakerEdits: remap(out.speakerEdits),
           translationsStale: remap(out.translationsStale),
         };
+      }
+    }
+  }
+  const tts = out.result?.timedTracks as unknown;
+  if (out.result && tts != null) {
+    if (!Array.isArray(tts)) {
+      out = { ...out, result: { ...out.result, timedTracks: undefined } };
+    } else {
+      // A track with no string id/lang or no cue list is dropped whole; a kept track keeps only
+      // its cues with string text and finite times. A clean track (and list) is handed back as
+      // the same object.
+      const okCue = (c: unknown) => {
+        const q = c as { start?: unknown; end?: unknown; text?: unknown };
+        return (
+          !!q && typeof q === "object" && typeof q.text === "string" &&
+          typeof q.start === "number" && Number.isFinite(q.start) &&
+          typeof q.end === "number" && Number.isFinite(q.end)
+        );
+      };
+      const okTrack = (t: unknown) => {
+        const k = t as { id?: unknown; lang?: unknown; cues?: unknown };
+        return !!k && typeof k === "object" && typeof k.id === "string" && typeof k.lang === "string" && Array.isArray(k.cues);
+      };
+      const cuesOf = (t: unknown) => (t as { cues: unknown[] }).cues;
+      const fixTrack = (t: unknown) => (cuesOf(t).every(okCue) ? t : { ...(t as object), cues: cuesOf(t).filter(okCue) });
+      if (!tts.every(okTrack) || tts.some((t) => !cuesOf(t).every(okCue))) {
+        const timedTracks = tts.filter(okTrack).map(fixTrack) as typeof out.result.timedTracks;
+        out = { ...out, result: { ...out.result, timedTracks } };
       }
     }
   }
@@ -539,13 +577,17 @@ export function recordText(rec: TranscriptRecord, max = Infinity): string {
   const part = (i: number) => (rec.edits?.[i] ?? segs[i].text).trim();
   if (max === Infinity) return joinSegmentTexts(segs.map((_, i) => part(i)));
   // Bounded: a History snippet keeps 160 chars, so joining a 900-segment transcript per row
-  // per keystroke defeated the sanitizer's own output bound. Built seam by seam with the
-  // same rule, so the bound tests the real joined length (a CJK seam adds no space).
-  let out = "";
-  for (let i = 0; i < segs.length && out.length < max; i++) {
-    out = i ? joinSegmentTexts([out, part(i)]) : part(i);
+  // per keystroke defeated the sanitizer's own output bound. Joined once from just enough
+  // parts: a seam only ever adds (a CJK seam adds nothing), so once the parts alone reach
+  // `max` the joined text does too, and its prefix is the full join's prefix.
+  const parts: string[] = [];
+  let n = 0;
+  for (let i = 0; i < segs.length && n < max; i++) {
+    const p = part(i);
+    parts.push(p);
+    n += p.length;
   }
-  return out.slice(0, max);
+  return joinSegmentTexts(parts).slice(0, max);
 }
 
 /** The record's language tracks, original first, or null when it has none.

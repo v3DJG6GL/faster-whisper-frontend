@@ -744,7 +744,7 @@ export default function History() {
               model <span className="text-dim">{shortModelName(rec.model, 40) ?? ""}</span>
             </span>
           )}
-          {rec.insertMethod && rec.insertMethod !== "none" && (
+          {typeof rec.insertMethod === "string" && rec.insertMethod && rec.insertMethod !== "none" && (
             <span className="font-mono text-[11px] text-faint">
               inserted <span className="text-dim">{rec.insertMethod}</span>
             </span>

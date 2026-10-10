@@ -376,6 +376,113 @@ describe("loadHistory", () => {
     expect(r.title).toBeUndefined();
   });
 
+  it("drops an unknown or non-string insertMethod so the expanded row cannot render an object", async () => {
+    const base = {
+      schemaVersion: 1,
+      kind: "dictation",
+      sourcePath: "",
+      sourceName: "Dictation",
+      status: "done",
+      result: { text: "hi" },
+    };
+    listTranscriptRecords.mockResolvedValue([
+      { ...base, id: "im-obj", createdAt: "2026-01-02T03:04:05.000Z", insertMethod: {} },
+      { ...base, id: "im-str", createdAt: "2026-01-02T03:04:06.000Z", insertMethod: "x".repeat(500) },
+      { ...base, id: "im-ok", createdAt: "2026-01-02T03:04:07.000Z", insertMethod: "clipboard" },
+    ]);
+    await loadHistory(true);
+    for (const id of ["im-obj", "im-str"]) {
+      const r = saved(id);
+      expect(r.insertMethod).toBeUndefined();
+      expect(r.result?.text).toBe("hi");
+      expect(r.sourceName).toBe("Dictation");
+    }
+    expect(saved("im-ok").insertMethod).toBe("clipboard");
+  });
+
+  it("drops a non-number result.duration so the viewer's meta line cannot throw", async () => {
+    listTranscriptRecords.mockResolvedValue([
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "dur-str",
+        createdAt: "2026-01-02T03:04:05.000Z",
+        sourcePath: "/a.wav",
+        sourceName: "a.wav",
+        status: "done",
+        result: { text: "hi", duration: "12.5", language: "en" },
+      },
+      {
+        schemaVersion: 1,
+        kind: "file",
+        id: "dur-ok",
+        createdAt: "2026-01-02T03:04:06.000Z",
+        sourcePath: "/b.wav",
+        sourceName: "b.wav",
+        status: "done",
+        result: { text: "ok", duration: 12.5 },
+      },
+    ]);
+    await loadHistory(true);
+    const r = saved("dur-str");
+    expect(r.result?.duration).toBeUndefined();
+    expect(r.result?.text).toBe("hi");
+    expect(r.result?.language).toBe("en");
+    expect(saved("dur-ok").result?.duration).toBe(12.5);
+  });
+
+  it("repairs damaged site subtitle tracks so the viewer and the exports cannot throw", async () => {
+    const cue = (text: unknown, start: unknown = 0, end: unknown = 1) => ({ start, end, text });
+    const track = (id: string, cues: unknown) => ({ id, lang: "en", source: "site", kind: "manual", cues });
+    const cleanTracks = [track("t-clean", [cue("Hello"), cue("there", 1, 2)])];
+    const clean = {
+      schemaVersion: 1,
+      kind: "url",
+      id: "tt-clean",
+      createdAt: "2026-01-02T03:04:08.000Z",
+      sourcePath: "https://example.com/c",
+      sourceName: "c",
+      status: "done",
+      result: { text: "hi", timedTracks: cleanTracks },
+    };
+    const base = {
+      schemaVersion: 1,
+      kind: "url",
+      sourcePath: "https://example.com/v",
+      sourceName: "v",
+      status: "done",
+    };
+    listTranscriptRecords.mockResolvedValue([
+      { ...base, id: "tt-obj", createdAt: "2026-01-02T03:04:05.000Z", result: { text: "a", timedTracks: {} } },
+      {
+        ...base,
+        id: "tt-mixed",
+        createdAt: "2026-01-02T03:04:06.000Z",
+        result: {
+          text: "b",
+          timedTracks: [
+            track("t-nocues", 5),
+            "junk",
+            { ...track("t-noid", []), id: 7 },
+            track("t-bad", [cue("keep"), cue(3), cue("nan", Number.NaN, 1), null, cue("also", 2, 3)]),
+          ],
+        },
+      },
+      clean,
+    ]);
+    await loadHistory(true);
+    const o = saved("tt-obj");
+    expect(o.result?.timedTracks).toBeUndefined();
+    expect(o.result?.text).toBe("a");
+    const m = saved("tt-mixed").result?.timedTracks ?? [];
+    expect(m.map((t) => t.id)).toEqual(["t-bad"]);
+    expect(m[0]?.cues.map((c) => c.text)).toEqual(["keep", "also"]);
+    for (const t of m) for (const c of t.cues) expect(() => c.text.trim()).not.toThrow();
+    // A clean list is handed back as the very object the listing read.
+    expect(saved("tt-clean")).toBe(clean);
+    expect(saved("tt-clean").result?.timedTracks).toBe(cleanTracks);
+  });
+
   it("survives a rejected listing", async () => {
     listTranscriptRecords.mockRejectedValue(new Error("no disk"));
     await loadHistory(true);
@@ -819,6 +926,21 @@ describe("recordText", () => {
     const en = { text: "", segments: [{ id: 0, start: 0, end: 1, text: " Hello." }, { id: 1, start: 1, end: 2, text: " Bye." }] };
     expect(recordText(rec(en))).toBe("Hello. Bye.");
     expect(recordText(rec(en), 160)).toBe("Hello. Bye.");
+  });
+
+  it("bounds to the unbounded join's prefix on mixed CJK/Latin seams and blank segments", () => {
+    const texts = [" Hello.", "你好。", "  ", "世界", " world", "テスト。", "", "end.", "再见", "x"];
+    const mixed = {
+      text: "",
+      segments: texts.map((text, i) => ({ id: i, start: i, end: i + 1, text })),
+    };
+    const full = recordText(rec(mixed));
+    for (const max of [0, 1, 3, 6, 7, 9, 12, 15, 20, 30, full.length, 200]) {
+      expect(recordText(rec(mixed), max)).toBe(full.slice(0, max));
+    }
+    const edited = rec(mixed, { edits: { 1: "Bonjour.", 5: "" } });
+    const fullEdited = recordText(edited);
+    for (const max of [2, 8, 10, 14, 25, 200]) expect(recordText(edited, max)).toBe(fullEdited.slice(0, max));
   });
 
   it("fills the bound with many short CJK segments (no phantom seam spaces counted)", () => {
