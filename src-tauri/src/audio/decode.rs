@@ -108,7 +108,8 @@ static INFLIGHT: std::sync::LazyLock<std::sync::Mutex<InflightMap>> =
 /// holds it, so the map doesn't grow by one key per transcript ever opened.
 struct InflightSlot {
     out: std::path::PathBuf,
-    lock: InflightLock,
+    /// `Some` for the slot's whole life; `Drop` takes it to release it under the map lock.
+    lock: Option<InflightLock>,
 }
 
 impl InflightSlot {
@@ -117,24 +118,32 @@ impl InflightSlot {
         let lock = map.entry(out.to_path_buf()).or_default().clone();
         Self {
             out: out.to_path_buf(),
-            lock,
+            lock: Some(lock),
         }
     }
 
     /// Poison-tolerant: a panicked decode stored no error, so the next waiter just retries.
     fn lock(&self) -> std::sync::MutexGuard<'_, Option<String>> {
-        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+        let lock = self.lock.as_ref().expect("held until drop");
+        lock.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
 impl Drop for InflightSlot {
     fn drop(&mut self) {
         let mut map = INFLIGHT.lock().unwrap_or_else(|e| e.into_inner());
-        // Every clone is taken under the map lock, so 2 (the map's + ours) means nobody else
-        // is waiting on this path.
-        if std::sync::Arc::strong_count(&self.lock) == 2 {
+        // Every clone is taken AND every one released under the map lock, so 2 (the map's +
+        // ours) means nobody else is waiting on this path. Releasing ours only after the guard
+        // was gone let two holders dropping together both still count 3 and both keep the entry
+        // — leaving a failed flight's error behind for the next fresh open to return undecoded.
+        let lock = self.lock.take();
+        if lock
+            .as_ref()
+            .is_some_and(|l| std::sync::Arc::strong_count(l) == 2)
+        {
             map.remove(&self.out);
         }
+        drop(lock);
     }
 }
 
@@ -484,5 +493,30 @@ mod tests {
             "a fresh open after the flight retries"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn holders_dropping_together_never_strand_the_entry() {
+        // Two holders of one slot dropping at the same moment: each must see the other's
+        // release, or both count 3, the entry outlives them, and a later fresh open is handed
+        // the dead flight's error without decoding.
+        let out =
+            std::path::PathBuf::from(format!("/fwf-decode-drop-{}/abc.wav", std::process::id()));
+        for _ in 0..20_000 {
+            let (a, b) = (InflightSlot::acquire(&out), InflightSlot::acquire(&out));
+            let go = std::sync::Barrier::new(2);
+            std::thread::scope(|s| {
+                s.spawn(|| {
+                    go.wait();
+                    drop(a);
+                });
+                go.wait();
+                drop(b);
+            });
+            assert!(
+                !INFLIGHT.lock().unwrap().contains_key(&out),
+                "the last of two concurrent releases removes the entry"
+            );
+        }
     }
 }
