@@ -206,6 +206,9 @@ mod sni {
     /// (each nudge re-reads whatever is newest).
     static TOOLTIP: Mutex<String> = Mutex::new(String::new());
     static MISSING: AtomicBool = AtomicBool::new(false);
+    /// `mark_missing` brought a hidden main window back minimized; a tray that shows up
+    /// later sends it back (`watcher_online`).
+    static REVEALED: AtomicBool = AtomicBool::new(false);
 
     pub(super) fn missing() -> bool {
         MISSING.load(Ordering::Relaxed)
@@ -280,14 +283,31 @@ mod sni {
         /// or was not up yet at launch (login autostart before the panel): until it is back,
         /// close must not hide the window, and a hidden one comes back.
         fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
-            tracing::warn!("[tray] StatusNotifierWatcher went offline: {reason:?}");
+            tracing::warn!(
+                "[tray] no StatusNotifierWatcher (not up yet, or it went away); close quits until a tray appears: {reason:?}"
+            );
             mark_missing(&self.app);
             true
         }
 
+        /// The tray is up (again). A window `mark_missing` revealed and the user left
+        /// minimized goes back to the tray, as start minimized / close-to-tray meant; one the
+        /// user restored stays. Queued after any pending `mark_missing` closure (FIFO), and it
+        /// re-checks `MISSING` in case the registration that follows this call failed.
         fn watcher_online(&self) {
-            tracing::info!("[tray] StatusNotifierWatcher back online");
+            tracing::info!("[tray] StatusNotifierWatcher available; the tray is up");
             MISSING.store(false, Ordering::Relaxed);
+            let handle = self.app.clone();
+            let _ = self.app.run_on_main_thread(move || {
+                if MISSING.load(Ordering::Relaxed) || !REVEALED.swap(false, Ordering::Relaxed) {
+                    return;
+                }
+                if let Some(window) = handle.get_webview_window("main") {
+                    if window.is_minimized().unwrap_or(false) {
+                        crate::aux_windows::visibility::hide(&window);
+                    }
+                }
+            });
         }
     }
 
@@ -333,6 +353,7 @@ mod sni {
                 if !window.is_visible().unwrap_or(true) {
                     crate::aux_windows::visibility::show(&window);
                     let _ = window.minimize();
+                    REVEALED.store(true, Ordering::Relaxed);
                 }
             }
         });
