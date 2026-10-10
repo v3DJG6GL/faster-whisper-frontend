@@ -122,11 +122,9 @@ export function TranscriptExport({
   // The panel stays mounted across records, so a job names the record it saves: a running
   // export shows on its own record only, and another record's Save can queue behind it.
   const owner = rec?.id ?? path;
-  /** The record on screen now — an export's late UI writes (its outcome, "Saved") land
-   *  only while its own record still shows. */
-  const ownerRef = useRef(owner);
-  ownerRef.current = owner;
-  /** The latest render's result, tagged with its record. */
+  /** The latest render's result, tagged with its record. Its `owner` is the record on screen
+   *  now — an export's late UI writes (its outcome, "Saved") land only while its own record
+   *  still shows. */
   const latestResult = useRef({ owner, editedResult });
   latestResult.current = { owner, editedResult };
   /** The result a Save writes once its dialog (or a link's video fetch) has been awaited: a
@@ -458,11 +456,12 @@ export function TranscriptExport({
   /** The video: a plain copy when no tracks ride inside it and a local copy
    *  exists; otherwise the server packages it (uploading a local file first,
    *  or fetching a link's video on demand). False = stopped with an error
-   *  the panel now shows. `mine` = its record still shows (no outcome lands on
-   *  another record's panel); otherwise a failure goes to `late`. */
+   *  the panel now shows while `started`'s record still shows (no outcome lands
+   *  on another record's panel); otherwise a failure goes to `late`. */
   const exportVideoTo = async (
-    dest: string, embedded: string[], started: typeof owner, mine: () => boolean, late: (msg: string) => void,
+    dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
   ): Promise<boolean> => {
+    const mine = () => latestResult.current.owner === started;
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
@@ -662,7 +661,7 @@ export function TranscriptExport({
     }
   };
   const runExport = async (started: typeof owner) => {
-    const mine = () => ownerRef.current === started;
+    const mine = () => latestResult.current.owner === started;
     // Another record on screen by then: its failure would land nowhere, so it goes to
     // the app's banner, naming the record (taken now, before the awaits).
     const title = safeDisplayText(rec?.title || basename(path), 60);
@@ -716,7 +715,7 @@ export function TranscriptExport({
           if (landed !== dest && mine()) setAudioSavedAs(basename(landed));
           written.push(landed);
           continue;
-        } else if (!(await exportVideoTo(dest, plan.embedded, started, mine, late))) {
+        } else if (!(await exportVideoTo(dest, plan.embedded, started, late))) {
           return;
         }
         written.push(dest);
