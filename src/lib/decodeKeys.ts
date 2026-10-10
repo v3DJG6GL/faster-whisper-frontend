@@ -169,8 +169,8 @@ export function sectionKeys(section: KeySection): DecodeKey[] {
  *  or clamp. `prev` = the stored text: where it already breaks one of these rules (an earlier
  *  build stored it unchecked, a full backend synced a ladder to a standard one, or a synced
  *  value is in exponent form like "1e-7") it may only shrink — never gain a comma, a bad rung, a
- *  foreign character, or a character while a bad rung remains — so it can
- *  still be edited down one keystroke at a time. Empty and half-typed rungs ("", "0.", "1.")
+ *  foreign character, a rung outside the range, or a character while a bad rung remains — so it
+ *  can still be edited down one keystroke at a time. Empty and half-typed rungs ("", "0.", "1.")
  *  pass, so typing is never blocked mid-entry. */
 export function parseLadderInput(
   raw: string,
@@ -210,6 +210,16 @@ export function parseLadderInput(
     }).length;
   const nb = bad(raw);
   if (nb > bad(prev) || (nb > 0 && t.length > prevT.length)) return null;
+  // A deletion may also turn a bad rung that reads in range into one that does not ("1e-7" →
+  // "1e7", "1-7" → "17"): the bad count stays equal, so count the out-of-range rungs too — that
+  // count may never rise (half-typed rungs like "1e-" read as NaN and count as in range).
+  const min = spec.min ?? -Infinity;
+  const out = (s: string) =>
+    s.split(",").filter((p) => {
+      const n = Number(p.trim());
+      return n > max || n < min;
+    }).length;
+  if (out(raw) > out(prev)) return null;
   return /^\d+(\.\d+)?$/.test(t) && String(Number(t)) === t ? Number(t) : raw;
 }
 
@@ -234,8 +244,8 @@ const EDITOR_RUNG = /^\d+(\.\d*)?$|^\.\d+$/;
 
 /** A temperature ladder kept verbatim when it is valid and in the editor's alphabet, so a synced
  *  value comes back exactly as typed; out-of-range rungs are clamped, extra rungs dropped, an
- *  empty rung ("0.2,") skipped as the server skips it, and sign/exponent forms ("+0.5", "1e-1")
- *  written plainly (rewritten only then). A rung that is not a decimal number (hex "0x1", a word)
+ *  empty rung ("0.2,") skipped as the server skips it, and sign/exponent forms ("+0.5", "1e-1",
+ *  "1e-7") written plainly (rewritten only then). A rung that is not a decimal number (hex "0x1", a word)
  *  drops the whole value — the server would drop it too. */
 function sanitizeLadder(s: string, spec: KeySpec): string | undefined {
   const text = s.replace(CONTROLS, "").trim();
@@ -251,7 +261,15 @@ function sanitizeLadder(s: string, spec: KeySpec): string | undefined {
     kept.every((r) => EDITOR_RUNG.test(r)) &&
     rungs.length <= max &&
     rungs.every((r) => r === clamp(r, spec.min, spec.max));
-  const out = fits ? text : rungs.slice(0, max).map((r) => String(clamp(r, spec.min, spec.max))).join(",");
+  // String() writes anything below 1e-6 in exponent form ("1e-7"), outside the editor's alphabet;
+  // spell it out exactly (toFixed would round 3e-21 to 0). The range is [0, 1], so only negative
+  // exponents occur.
+  const plain = (n: number) => {
+    const str = String(n);
+    const m = /^(\d)(?:\.(\d+))?e-(\d+)$/.exec(str);
+    return m ? "0." + "0".repeat(Number(m[3]) - 1) + m[1] + (m[2] ?? "") : str;
+  };
+  const out = fits ? text : rungs.slice(0, max).map((r) => plain(clamp(r, spec.min, spec.max))).join(",");
   return out.length <= (spec.maxLen ?? Infinity) ? out : undefined;
 }
 

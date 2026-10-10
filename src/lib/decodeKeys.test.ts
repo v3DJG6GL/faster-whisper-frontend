@@ -171,6 +171,11 @@ describe("clampDecodeOverrides", () => {
     expect(sanitizeDecodeValue("temperature", "0x1")).toBeUndefined();
     expect(sanitizeDecodeValue("temperature", "1e-1")).toBe("0.1");
     expect(sanitizeDecodeValue("temperature", "+0.5")).toBe("0.5");
+    // Below 1e-6 String() would write exponent form again; the rewrite spells it out.
+    expect(sanitizeDecodeValue("temperature", "1e-7")).toBe("0.0000001");
+    expect(sanitizeDecodeValue("temperature", "0,1e-7")).toBe("0,0.0000001");
+    expect(sanitizeDecodeValue("temperature", "+5e-7")).toBe("0.0000005");
+    expect(sanitizeDecodeValue("temperature", "1.5e-7")).toBe("0.00000015");
     expect(sanitizeDecodeValue("temperature", "")).toBeUndefined();
     expect(sanitizeDecodeValue("temperature", 0.3)).toBe(0.3);
   });
@@ -471,6 +476,12 @@ describe("parseLadderInput", () => {
     expect(parseLadderInput("1x7", false, "1e-7")).toBeNull(); // swaps a foreign character
     expect(parseLadderInput("1-e7", false, "1e-7")).toBeNull(); // reorders them
     expect(parseLadderInput("1-7", false, "1e-7")).toBe("1-7"); // deletes one
+    expect(parseLadderInput("1e-", false, "1e-7")).toBe("1e-");
+    // ...but never a deletion that leaves a rung outside the range.
+    expect(parseLadderInput("1e7", false, "1e-7")).toBeNull();
+    expect(parseLadderInput("17", false, "1-7")).toBeNull();
+    expect(parseLadderInput("-7", false, "1-7")).toBeNull();
+    expect(parseLadderInput("0.2,1e7", false, "0.2,1e-7")).toBeNull();
   });
 
   it("lets a stored ladder on a standard server shrink, never gain a rung", () => {
