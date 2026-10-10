@@ -720,8 +720,14 @@ mod tests {
         assert!(!dir.join("fwf.log").exists(), "legacy file removed");
         assert!(!dir.join("fwf.prev.log").exists(), "legacy prev removed");
 
-        // keep_days = 0 → forever (only legacy files go).
+        // keep_days = 0 → forever (only legacy files go), however old the file is.
         std::fs::write(&old, "x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&old)
+            .unwrap()
+            .set_modified(past)
+            .unwrap();
         prune_log_files(&dir, 0);
         assert!(old.exists());
         let _ = std::fs::remove_dir_all(&dir);
