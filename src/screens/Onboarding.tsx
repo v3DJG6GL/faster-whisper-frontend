@@ -19,14 +19,18 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
-import { applyBlob, categorySelection, migrateBlob, restorableCategories, sanitizeProfiles } from "@/lib/sync/sync";
+import {
+  applyBlob, categorySelection, isPlainObject, migrateBlob, restorableCategories, sanitizeProfiles,
+} from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText } from "@/lib/sanitize";
-import { ImportPreview, IncomingAddresses, SyncedCategoryChips } from "@/components/sync/SettingsSync";
+import {
+  ChordFixNotices, ImportPreview, IncomingAddresses, SyncedCategoryChips, predictChordFix,
+} from "@/components/sync/SettingsSync";
 import { stripMachineFolders } from "@/lib/sync/settingsFile";
 import { relTime } from "@/lib/format";
 import type { ImportResult, SyncPullResult } from "@/lib/sync/syncTypes";
@@ -249,6 +253,23 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     !!pulledBlob &&
     restorableCategories(pulledBlob).includes("profiles") &&
     sanitizeProfiles(migrateBlob(pulledBlob).profiles?.list).length > 0;
+  // How the restore's collision pass resolves hotkeys (all categories on), predicted as the Sync
+  // tab's restore preview does: `applyBlob` switches off an incoming profile that collides with
+  // this device's quick-add chord (the default one, when the copy brings none) or with another
+  // profile, and `finish()` then skips Profiles — so say so here.
+  const chordFix = useMemo(() => {
+    if (!pulledBlob) return null;
+    const m = migrateBlob(pulledBlob);
+    const s = st.getState();
+    const inbound = isPlainObject(m.profiles);
+    return predictChordFix(
+      inbound ? sanitizeProfiles(m.profiles?.list) : s.profiles,
+      m.dictionary?.quickAddHotkey,
+      s.settings.general.quickAddHotkey,
+      inbound,
+    );
+  }, [pulledBlob, st]);
+  const switchesOff = (chordFix?.switchedOff.length ?? 0) > 0;
 
   const doImport = async () => {
     setError(null);
@@ -346,6 +367,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   <IncomingAddresses list={pull.state.blob.backends.list} />
                 </div>
               ) : null}
+              {chordFix && (chordFix.switchedOff.length > 0 || chordFix.qaKept) && (
+                <div className="mt-2.5 flex flex-col gap-2">
+                  <ChordFixNotices fix={chordFix} source="backup" />
+                </div>
+              )}
               <div className="mt-3.5 flex items-center gap-2.5">
                 <Button variant="accent" onClick={() => void restoreEverything()} disabled={busy}>
                   {busy ? "Restoring…" : "Restore everything"}
@@ -364,7 +390,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             </div>
             <p className="mt-4 max-w-[46ch] text-[12px] text-dim">
               {carriesProfiles
-                ? "Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys and quick add all arrive with your settings."
+                ? switchesOff
+                  ? "Restoring turns sync on for this device and skips the remaining steps — profiles and quick add arrive with your settings; re-enable the switched-off profiles in Profiles."
+                  : "Restoring turns sync on for this device and skips the remaining steps — profiles, hotkeys and quick add all arrive with your settings."
                 : "Restoring turns sync on for this device. This copy carries no profiles — you’ll pick starters next."}
             </p>
             {error && <Notice className="mt-3">{error}</Notice>}

@@ -46,7 +46,8 @@ import {
 } from "@/lib/sync/sync";
 import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
-import { relTime } from "@/lib/format";
+import { plural, relTime } from "@/lib/format";
+import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
@@ -201,12 +202,14 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // on a hand-authored file. Bonus: the preview now predicts exactly what apply would install.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && categories.profiles ? installProfiles : st.profiles;
-  // Post-migration the chord lives in the dictionary category. An absent or malformed chord
-  // keeps this device's chord, as `applyBlob` does — predicting an EMPTY chord there hid the
-  // conflict the apply then resolves by switching the colliding imported profiles off.
-  const rawQa = categories.dictionary?.quickAddHotkey;
-  const wouldQa = sel.dictionary && isCodeList(rawQa) ? rawQa : st.settings.general.quickAddHotkey;
-  const chordFix = predictChordFix(wouldProfiles, wouldQa, sel.profiles && isPlainObject(categories.profiles));
+  // Post-migration the chord lives in the dictionary category (see `predictChordFix` for how an
+  // absent or malformed one resolves).
+  const chordFix = predictChordFix(
+    wouldProfiles,
+    sel.dictionary ? categories.dictionary?.quickAddHotkey : undefined,
+    st.settings.general.quickAddHotkey,
+    sel.profiles && isPlainObject(categories.profiles),
+  );
 
   // Judged on what the apply installs (sanitized, as above). Import never deletes a stored key
   // and the apply re-derives `hasApiKey` from the keyring by id, so a same-id backend this
@@ -409,11 +412,13 @@ export function RestoreFromServer({
   // dialog renders before them and `conflicts()` walks the elements in a render body.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && blob.profiles ? installProfiles : st.profiles;
-  // Post-migration the chord lives in the dictionary category; absent or malformed keeps this
-  // device's chord, as in ImportPreview.
-  const rawQa = blob.dictionary?.quickAddHotkey;
-  const wouldQa = sel.dictionary && isCodeList(rawQa) ? rawQa : st.settings.general.quickAddHotkey;
-  const chordFix = predictChordFix(wouldProfiles, wouldQa, sel.profiles && isPlainObject(blob.profiles));
+  // Post-migration the chord lives in the dictionary category, as in ImportPreview.
+  const chordFix = predictChordFix(
+    wouldProfiles,
+    sel.dictionary ? blob.dictionary?.quickAddHotkey : undefined,
+    st.settings.general.quickAddHotkey,
+    sel.profiles && isPlainObject(blob.profiles),
+  );
   const replaced = replacedNames(sel, blob, st);
 
   const apply = async () => {
@@ -613,24 +618,37 @@ const MAX_SHOWN_ADDRESSES = 20;
 const MAX_PREVIEW_PEERS = 500;
 
 /** What `applyBlob`'s collision pass would do to the would-be bindings: which profiles it
- *  switches off (by name), and whether it drops the incoming quick-add chord. */
-function predictChordFix(
+ *  switches off (by name), and whether it drops an INCOMING quick-add chord that differs from this
+ *  device's (`qaKept`).
+ *
+ *  `incomingQa` is the blob's `dictionary.quickAddHotkey` when that category is applied, else
+ *  `undefined`. An absent or malformed chord keeps this device's chord, as `applyBlob` does —
+ *  predicting an EMPTY chord there hid the conflict the apply then resolves by switching the
+ *  colliding imported profiles off. `qaKept` needs a chord that actually arrives and differs:
+ *  the collision pass also "rejects" this device's OWN chord when it is the fallback (and always
+ *  collapses L/R sides off Windows, where the evdev save gate does not), and the apply then just
+ *  re-pins the identical chord — blaming the file or backup for that warned about nothing. */
+export function predictChordFix(
   wouldProfiles: Profile[],
-  wouldQa: string[],
+  incomingQa: unknown,
+  localQa: string[],
   profilesAreInbound: boolean,
 ): { switchedOff: string[]; qaKept: boolean } {
+  const inbound = isCodeList(incomingQa);
+  const wouldQa = inbound ? incomingQa : localQa;
+  const qaDiffers = inbound && !sameCodes(canonicalizeCodes(incomingQa), canonicalizeCodes(localQa));
   const before = wouldProfiles.slice(0, MAX_PREVIEW_PEERS);
   const resolved = disableConflictingProfiles(before, wouldQa, profilesAreInbound);
   return {
     switchedOff: resolved.profiles
       .filter((p, i) => p.enabled === false && before[i]?.enabled !== false)
       .map((p) => p.name),
-    qaKept: resolved.rejectQuickAddHotkey,
+    qaKept: qaDiffers && resolved.rejectQuickAddHotkey,
   };
 }
 
 const MAX_SHOWN_SWITCHED_OFF = 3;
-function ChordFixNotices({ fix, source }: { fix: ReturnType<typeof predictChordFix>; source: "file" | "backup" }) {
+export function ChordFixNotices({ fix, source }: { fix: ReturnType<typeof predictChordFix>; source: "file" | "backup" }) {
   const names = fix.switchedOff.slice(0, MAX_SHOWN_SWITCHED_OFF).map((n) => `“${safeText(n, 60)}”`);
   const more = fix.switchedOff.length - names.length;
   if (more > 0) names.push(`${more} more`);
@@ -731,7 +749,7 @@ function SecurityReviewDialog() {
           );
         })}
         {hidden > 0 && (
-          <div className="text-[12px] text-faint">…and {hidden} more change(s) not shown.</div>
+          <div className="text-[12px] text-faint">…and {plural(hidden, "more change", "more changes")} not shown.</div>
         )}
       </div>
       <Notice className="mt-3">
