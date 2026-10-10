@@ -806,8 +806,8 @@ export function TranscriptViewer({
         // bare U+200E survives trim()) would otherwise paste as an empty
         // "[ts] Name: " line once the outer strip drops the mark.
         const body = stripControlChars(seg.text).trim();
-        const origLine = origVisible && !!body;
-        if (origLine) lines.push(`${ts}${who}${body}`);
+        if (origVisible && body) lines.push(`${ts}${who}${body}`);
+        const trLines: string[] = [];
         for (const lang of visLangs) {
           const src = result.segments?.[i];
           // trText skips a track the server's quality guard kept as the
@@ -819,10 +819,14 @@ export function TranscriptViewer({
           // two targets an untagged line says nothing about which language it
           // is, and `lang` was in scope here all along and simply unused.
           const tag = visLangs.length > 1 ? `[${lang.toUpperCase()}] ` : "";
-          // Indent only under a pushed original — translations whose original
-          // was dropped lay out as with the original hidden, each stamped.
-          lines.push(`${origLine ? "  " : ts}${tag}${who}${tr}`);
+          trLines.push(`${tag}${who}${tr}`);
         }
+        // A blank original beside a translation keeps its bare timed slot, as
+        // the TXT export does: a stamped, untagged translation line would read
+        // as the spoken original.
+        if (origVisible && !body && ts && trLines.length) lines.push(ts.trimEnd());
+        const indent = origVisible && lines.length;
+        for (const l of trLines) lines.push(`${indent ? "  " : ts}${l}`);
         return lines.join("\n");
       })
       .filter(Boolean)

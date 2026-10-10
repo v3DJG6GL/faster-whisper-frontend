@@ -574,7 +574,7 @@ export default function History() {
       timeOf(rec.createdAt),
       rec.result?.duration ? fmtDuration(rec.result.duration) : "",
       rec.wordCount ? plural(rec.wordCount, "word") : "",
-      rec.language && rec.language !== "auto" ? safeDisplayText(rec.language, 12) : "",
+      rec.language !== "auto" ? safeDisplayText(rec.language ?? "", 12).trim() : "",
       rec.insertMethod === "clipboard"
         ? "clipboard only"
         : rec.insertMethod === "none"

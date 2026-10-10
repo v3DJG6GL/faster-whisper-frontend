@@ -134,7 +134,12 @@ export const MAX_EMBED_SRT_BYTES = 2 * 1024 * 1024;
  *  dialog, since the packager refuses the whole video for one oversized track. */
 export function oversizedEmbeddedTrack(tracks: readonly EmbeddedTrack[]): EmbeddedTrack | null {
   const enc = new TextEncoder();
-  return tracks.find((t) => enc.encode(t.srt).length > MAX_EMBED_SRT_BYTES) ?? null;
+  // A UTF-16 unit encodes to at most 3 UTF-8 bytes: only a track that could be over the cap is
+  // encoded, so the usual click pays no byte copy before the dialog.
+  return (
+    tracks.find((t) => t.srt.length * 3 > MAX_EMBED_SRT_BYTES && enc.encode(t.srt).length > MAX_EMBED_SRT_BYTES) ??
+    null
+  );
 }
 
 /** The wire's legacy indices (servers before the per-track flags): the
