@@ -308,24 +308,28 @@ pub(crate) fn valid_id(id: &str) -> bool {
 
 /// Is `s` shaped like the ids this app actually writes — a `crypto.randomUUID()`, 36 chars
 /// in 8-4-4-4-12 hex, or the dash-stripped 32-lowercase-hex job id (`newProgressId`) a
-/// re-attached / lost-contact run keeps as its record id? The dashless form must also carry
-/// the UUIDv4 version and variant nibbles: a bare 32-hex stem is the common MD5 file name,
-/// and a user's MD5-named download must not read as ours. `valid_id` is the looser
-/// PATH-SAFETY predicate for command inputs; as an OWNERSHIP predicate it accepted any 8+
-/// hex-ish stem, so a user's own `20260901.mp3` or `12345678.wav` in the media folder read
-/// as ours and was deleted.
+/// re-attached / lost-contact run keeps as its record id? Both forms must be lowercase and
+/// carry the UUIDv4 version and variant nibbles: a bare 32-hex stem is the common MD5 file
+/// name, and an uppercase or non-v4 dashed GUID is a foreign (e.g. Windows-minted) name — a
+/// user's file named either way must not read as ours. `valid_id` is the looser PATH-SAFETY
+/// predicate for command inputs; as an OWNERSHIP predicate it accepted any 8+ hex-ish stem,
+/// so a user's own `20260901.mp3` or `12345678.wav` in the media folder read as ours and was
+/// deleted.
 fn is_uuid_id(s: &str) -> bool {
-    let dashed = s.len() == 36
-        && s.bytes().enumerate().all(|(i, b)| match i {
-            8 | 13 | 18 | 23 => b == b'-',
-            _ => b.is_ascii_hexdigit(),
-        });
     let b = s.as_bytes();
-    let dashless = b.len() == 32
-        && b.iter().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
-        && b[12] == b'4'
-        && matches!(b[16], b'8' | b'9' | b'a' | b'b');
-    dashed || dashless
+    let dashless: Vec<u8> = match b.len() {
+        32 => b.to_vec(),
+        36 if [8, 13, 18, 23].iter().all(|&i| b[i] == b'-') => {
+            b.iter().copied().filter(|&c| c != b'-').collect()
+        }
+        _ => return false,
+    };
+    dashless.len() == 32
+        && dashless
+            .iter()
+            .all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+        && dashless[12] == b'4'
+        && matches!(dashless[16], b'8' | b'9' | b'a' | b'b')
 }
 
 /// Is this a media copy THIS app wrote (`<uuid>.<ext>`)? The audio base is a free user
@@ -1004,6 +1008,20 @@ mod tests {
         // An MD5-named file (no UUIDv4 version/variant nibbles) is the user's.
         assert!(!is_own_media(Path::new(
             "/x/files/5d41402abc4b2a76b9719d911017c592.mp3"
+        )));
+        // A dashed GUID that is uppercase or not v4 is a foreign name, not ours.
+        assert!(!is_own_media(Path::new(
+            "/x/files/6F9619FF-8B86-D011-B42D-00C04FC964FF.mp3"
+        )));
+        assert!(!is_own_media(Path::new(
+            "/x/files/6f9619ff-8b86-1011-b42d-00c04fc964ff.mp3"
+        )));
+        assert!(!is_own_media(Path::new(
+            "/x/files/9F8A7B6C-1D2E-4F30-9A8B-7C6D5E4F3A2B.m4a"
+        )));
+        // Dashes anywhere but the 8-4-4-4-12 positions are not a UUID.
+        assert!(!is_own_media(Path::new(
+            "/x/files/9f8a7b6c1-d2e-4f30-9a8b-7c6d5e4f3a2b.m4a"
         )));
     }
 
