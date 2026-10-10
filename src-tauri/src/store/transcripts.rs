@@ -307,15 +307,18 @@ pub(crate) fn valid_id(id: &str) -> bool {
 }
 
 /// Is `s` shaped like the ids this app actually writes — a `crypto.randomUUID()`, 36 chars
-/// in 8-4-4-4-12 hex? `valid_id` is the looser PATH-SAFETY predicate for command inputs;
-/// as an OWNERSHIP predicate it accepted any 8+ hex-ish stem, so a user's own
-/// `20260901.mp3` or `12345678.wav` in the media folder read as ours and was deleted.
+/// in 8-4-4-4-12 hex, or the dash-stripped 32-lowercase-hex job id (`newProgressId`) a
+/// re-attached / lost-contact run keeps as its record id? `valid_id` is the looser
+/// PATH-SAFETY predicate for command inputs; as an OWNERSHIP predicate it accepted any 8+
+/// hex-ish stem, so a user's own `20260901.mp3` or `12345678.wav` in the media folder read
+/// as ours and was deleted.
 fn is_uuid_id(s: &str) -> bool {
-    s.len() == 36
+    let dashed = s.len() == 36
         && s.bytes().enumerate().all(|(i, b)| match i {
             8 | 13 | 18 | 23 => b == b'-',
             _ => b.is_ascii_hexdigit(),
-        })
+        });
+    dashed || (s.len() == 32 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
 /// Is this a media copy THIS app wrote (`<uuid>.<ext>`)? The audio base is a free user
@@ -978,6 +981,19 @@ mod tests {
         assert!(!is_own_media(Path::new("/x/files/20260901.mp3")));
         assert!(!is_own_media(Path::new("/x/files/12345678.wav")));
         assert!(!is_own_media(Path::new("/x/files/cafe1234.wav")));
+        // The dash-stripped job id a re-attached / lost-contact run records under.
+        assert!(is_own_media(Path::new(
+            "/x/links/9f8a7b6c1d2e4f309a8b7c6d5e4f3a2b.webm"
+        )));
+        assert!(!is_own_media(Path::new(
+            "/x/files/9f8a7b6c1d2e4f309a8b7c6d5e4f3a2.mp3"
+        )));
+        assert!(!is_own_media(Path::new(
+            "/x/files/9f8a7b6c1d2e4f309a8b7c6d5e4f3a2b0.mp3"
+        )));
+        assert!(!is_own_media(Path::new(
+            "/x/files/9F8A7B6C1D2E4F309A8B7C6D5E4F3A2B.mp3"
+        )));
     }
 
     #[test]
