@@ -161,13 +161,15 @@ export function sectionKeys(section: KeySection): DecodeKey[] {
 /** What the TEMPERATURE field stores for what was typed: undefined = inherit (empty), a number
  *  for one plain rung ("0.2" — what a standard server takes), else the text as typed (a retry
  *  ladder "0.0,0.4", or a rung half-typed like "0."; the sync sanitizer and the server parse it).
- *  null = refused: anything but digits, dots, commas and spaces, a comma when `singleOnly`
+ *  null = refused: anything but digits, dots, commas and spaces (a stored one only shrinks), a
+ *  comma when `singleOnly`
  *  (a standard Whisper server takes one number, no ladder), a rung with a space inside ("0 2")
  *  or two dots ("0.2.4"), a rung above the spec max ("5"), or more rungs or characters than the
  *  spec allows (16 rungs, 64 characters) — values the sync sanitizer and the server would drop
  *  or clamp. `prev` = the stored text: where it already breaks one of these rules (an earlier
- *  build stored it unchecked, or a full backend synced a ladder to a standard one) it may only
- *  shrink — never gain a comma, a bad rung or a character while a bad rung remains — so it can
+ *  build stored it unchecked, a full backend synced a ladder to a standard one, or a synced
+ *  value is in exponent form like "1e-7") it may only shrink — never gain a comma, a bad rung, a
+ *  foreign character, or a character while a bad rung remains — so it can
  *  still be edited down one keystroke at a time. Empty and half-typed rungs ("", "0.", "1.")
  *  pass, so typing is never blocked mid-entry. */
 export function parseLadderInput(
@@ -177,7 +179,10 @@ export function parseLadderInput(
 ): number | string | undefined | null {
   const t = raw.trim();
   if (!t) return undefined;
-  if (!/^[0-9., ]*$/.test(raw)) return null;
+  // Foreign characters (anything but digits, dots, commas, spaces) may only shrink: fresh input
+  // refuses every one, while a stored or synced "1e-7" can still be edited down.
+  const odd = (s: string) => s.replace(/[0-9., ]/g, "").length;
+  if (odd(raw) > odd(prev)) return null;
   const spec = keySpec("temperature");
   const max = spec.max ?? Infinity;
   const parts = raw.split(",");
@@ -195,7 +200,7 @@ export function parseLadderInput(
   const bad = (s: string) =>
     s.split(",").filter((p) => {
       const r = p.trim();
-      return r.includes(" ") || r.split(".").length > 2 || Number(r) > max;
+      return r.includes(" ") || /[^0-9. ]/.test(r) || r.split(".").length > 2 || Number(r) > max;
     }).length;
   const nb = bad(raw);
   if (nb > bad(prev) || (nb > 0 && t.length > prevT.length)) return null;
@@ -216,17 +221,30 @@ function capChars(s: string, n: number): string {
   return Array.from(s).slice(0, n).join("");
 }
 
-/** A temperature ladder kept verbatim when it is valid, so a synced value comes back exactly as
- *  typed; out-of-range rungs are clamped and extra rungs dropped (rewritten only then). A rung
- *  that is not a number drops the whole value — the server would drop it too. */
+/** A rung the server's float() reads as a decimal (JS Number also takes hex/binary/octal). */
+const DECIMAL_RUNG = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+/** A rung in the editor's own alphabet (what parseLadderInput lets a user type). */
+const EDITOR_RUNG = /^\d+(\.\d*)?$|^\.\d+$/;
+
+/** A temperature ladder kept verbatim when it is valid and in the editor's alphabet, so a synced
+ *  value comes back exactly as typed; out-of-range rungs are clamped, extra rungs dropped, an
+ *  empty rung ("0.2,") skipped as the server skips it, and sign/exponent forms ("+0.5", "1e-1")
+ *  written plainly (rewritten only then). A rung that is not a decimal number (hex "0x1", a word)
+ *  drops the whole value — the server would drop it too. */
 function sanitizeLadder(s: string, spec: KeySpec): string | undefined {
   const text = s.replace(CONTROLS, "").trim();
   if (!text) return undefined;
   const parts = text.split(",").map((r) => r.trim());
-  const rungs = parts.map((r) => (r === "" ? NaN : Number(r)));
+  const kept = parts.filter((r) => r !== "");
+  if (kept.length === 0 || !kept.every((r) => DECIMAL_RUNG.test(r))) return undefined;
+  const rungs = kept.map(Number);
   if (rungs.some((r) => !Number.isFinite(r))) return undefined;
   const max = spec.maxRungs ?? rungs.length;
-  const fits = rungs.length <= max && rungs.every((r) => r === clamp(r, spec.min, spec.max));
+  const fits =
+    kept.length === parts.length &&
+    kept.every((r) => EDITOR_RUNG.test(r)) &&
+    rungs.length <= max &&
+    rungs.every((r) => r === clamp(r, spec.min, spec.max));
   const out = fits ? text : rungs.slice(0, max).map((r) => String(clamp(r, spec.min, spec.max))).join(",");
   return out.length <= (spec.maxLen ?? Infinity) ? out : undefined;
 }

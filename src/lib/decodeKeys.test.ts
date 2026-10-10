@@ -162,7 +162,15 @@ describe("clampDecodeOverrides", () => {
     expect(sanitizeDecodeValue("temperature", "0,1.5")).toBe("0,1");
     expect(sanitizeDecodeValue("temperature", Array(20).fill("0").join(","))).toBe(Array(16).fill("0").join(","));
     expect(sanitizeDecodeValue("temperature", "0,x")).toBeUndefined();
-    expect(sanitizeDecodeValue("temperature", "0,,1")).toBeUndefined();
+    // An empty rung is skipped, as the server's ladder parser skips it.
+    expect(sanitizeDecodeValue("temperature", "0,,1")).toBe("0,1");
+    expect(sanitizeDecodeValue("temperature", "0.2,")).toBe("0.2");
+    expect(sanitizeDecodeValue("temperature", ",")).toBeUndefined();
+    // Non-decimal forms Python's float() rejects drop the value; sign/exponent forms are rewritten
+    // into the editor's alphabet.
+    expect(sanitizeDecodeValue("temperature", "0x1")).toBeUndefined();
+    expect(sanitizeDecodeValue("temperature", "1e-1")).toBe("0.1");
+    expect(sanitizeDecodeValue("temperature", "+0.5")).toBe("0.5");
     expect(sanitizeDecodeValue("temperature", "")).toBeUndefined();
     expect(sanitizeDecodeValue("temperature", 0.3)).toBe(0.3);
   });
@@ -453,6 +461,13 @@ describe("parseLadderInput", () => {
     expect(parseLadderInput("0.2.4,0.", false, "0.2.4,0.6")).toBe("0.2.4,0.");
     expect(parseLadderInput("255", false, "25")).toBeNull(); // longer while a bad rung remains
     expect(parseLadderInput("0.2.", false, "0.2")).toBeNull(); // adds a bad rung
+  });
+
+  it("lets a stored exponent-form value shrink, never gain a foreign character", () => {
+    expect(parseLadderInput("0,1e-", false, "0,1e-1")).toBe("0,1e-");
+    expect(parseLadderInput("0,1ee-1", false, "0,1e-1")).toBeNull();
+    expect(parseLadderInput("0.2e", false)).toBeNull();
+    expect(parseLadderInput("1e-77", false, "1e-7")).toBeNull(); // grows while a bad rung remains
   });
 
   it("lets a stored ladder on a standard server shrink, never gain a rung", () => {
