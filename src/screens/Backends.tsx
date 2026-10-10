@@ -1215,8 +1215,10 @@ export default function Backends() {
                         <Badge tone="accent">{b.endpoint}</Badge>
                         {/* "" = the backend leaves the language to the server. A set language that
                             sanitizes to blank is still sent verbatim, so it reads "??", not "server lang".
-                            Multiple languages is "auto" + the multilingual flag — folded back as the
-                            editor's Defaults summary does, or this badge reads "Auto-detect". */}
+                            Multiple languages is "auto" + the multilingual flag: the badge folds the
+                            backend's OWN flag back (else it reads "Auto-detect"). Unlike the editor's
+                            Defaults summary it has no server caps, so it neither drops a flag the
+                            model cannot honour nor shows an inherited server default. */}
                         <Badge>
                           {b.language
                             ? safeDisplayText(

@@ -1395,6 +1395,31 @@ describe("an on-demand video whose request fails stays failed", () => {
     await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
   });
+
+  it("an earlier attempt's late failure does not mark a Try again's download failed", async () => {
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({
+      stage: "downloading", video: { state: "downloading", progress: 0.4 },
+    } as import("./types").BatchProgress));
+    // Two attempts, two timers: clearing the stale one must leave the new one ticking.
+    const timers = new Map<number, () => void>();
+    let nextId = 0;
+    vi.stubGlobal("window", {
+      setInterval: (fn: () => void) => { timers.set(++nextId, fn); return nextId; },
+      clearInterval: (id: number) => { timers.delete(id); },
+    });
+    const fails: ((e: unknown) => void)[] = [];
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((_r, j) => { fails.push(j); }));
+    retryRunVideo(url, ctx);
+    // Try again while the first request is still out: a new attempt.
+    retryRunVideo(url, ctx);
+    expect(fails).toHaveLength(2);
+    fails[0](new Error("stale"));
+    await flush(); await flush();
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
+    expect(timers.has(2)).toBe(true);
+    timers.get(2)!(); await flush();
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
+  });
 });
 
 describe("a pending video's poll slows down once its link is off screen", () => {

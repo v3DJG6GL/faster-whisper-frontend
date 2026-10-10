@@ -363,7 +363,7 @@ mod sni {
                     // occur with `assume_sni_available`).
                     if registration_failed(&e) {
                         tracing::warn!(
-                            "[tray] the StatusNotifierWatcher did not accept the registration; running without a tray: {e}"
+                            "[tray] registering with the StatusNotifierWatcher failed; running without a tray: {e}"
                         );
                     } else {
                         tracing::warn!(

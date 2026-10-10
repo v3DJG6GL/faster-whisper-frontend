@@ -125,7 +125,7 @@ function Editor({
     : "unknown";
   // The effective override-profile (Profile over Backend) and the caller's
   // capabilities, so the decode editor gates on what this connection allows.
-  const effectiveProfile = p.overrideProfile?.trim() ? p.overrideProfile.trim() : backend?.overrideProfile;
+  const effectiveProfile = p.overrideProfile?.trim() || backend?.overrideProfile?.trim() || undefined;
   // Per-device address override wins for the actual requests (display
   // contexts elsewhere keep showing the canonical serverUrl).
   const serverUrl = backend ? effectiveServerUrl(backend, useApp.getState().settings) : "";
@@ -488,9 +488,9 @@ function Editor({
               inheritLabel={
                 backend?.overrideProfile === NO_OVERRIDE_PROFILE
                   ? "Inherit · none"
-                  : backend?.overrideProfile
-                    ? // Set: the request sends this raw name (stream.rs forwards any non-empty one),
-                      // so a name that sanitizes to blank reads "??", never "server default".
+                  : backend?.overrideProfile?.trim()
+                    ? // Set: the request sends this name trimmed (stream.rs forwards any non-empty
+                      // one), so a name that sanitizes to blank reads "??", never "server default".
                       inheritLabel(safeDisplayText(backend.overrideProfile, 40).trim() || "??")
                     : inheritLabel(backend ? "server default" : undefined)
               }

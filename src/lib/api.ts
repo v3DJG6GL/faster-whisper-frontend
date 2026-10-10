@@ -4,6 +4,7 @@
 import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./transcript/subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
 import { safeDisplayText } from "./sanitize";
+import { languageCodeOf } from "./languages";
 import type {
   AppRule,
   PlanStage,
@@ -159,6 +160,12 @@ export async function testConnection(args: ServerTarget): Promise<ConnectionInfo
   return invokeServer<ConnectionInfo>("test_connection", args, {}, offline);
 }
 
+/** A server result's language as tracks file it: a standard (OpenAI-compatible) server answers
+ *  verbose_json's word ("english"), which every track reader would take for an unknown code. */
+function withLanguageCode(r: BatchResult): BatchResult {
+  return typeof r.language === "string" && r.language ? { ...r, language: languageCodeOf(r.language) } : r;
+}
+
 export async function transcribeFile(args: ServerTarget & {
   model: string;
   language: string;
@@ -179,7 +186,7 @@ export async function transcribeFile(args: ServerTarget & {
     overrideProfile: args.overrideProfile ?? null,
     filePath: args.filePath,
     options: args.options ?? null,
-  }, new Error("Transcription requires the desktop app."));
+  }, new Error("Transcription requires the desktop app.")).then(withLanguageCode);
 }
 
 /** Read a subtitle/text source file (translate-only runs; 10 MB cap). */
@@ -277,7 +284,7 @@ export async function transcribeUrl(args: ServerTarget & {
     overrideProfile: args.overrideProfile ?? null,
     sourceUrl: args.sourceUrl,
     options: args.options ?? null,
-  }, new Error("Transcription requires the desktop app."));
+  }, new Error("Transcription requires the desktop app.")).then(withLanguageCode);
 }
 
 /** Metadata preview of a pasted media link (title/duration/thumbnail) —
@@ -653,9 +660,10 @@ export async function getJob(args: ServerTarget & {
 export async function getJobResult(args: ServerTarget & {
   jobId: string;
 }): Promise<JobOutcome<BatchResult>> {
-  return invokeServer<JobOutcome<BatchResult>>("get_job_result", args, {
+  const o = await invokeServer<JobOutcome<BatchResult>>("get_job_result", args, {
     jobId: args.jobId,
   }, { kind: "error", message: "Not running in the desktop app." });
+  return o.kind === "ok" ? { ...o, value: withLanguageCode(o.value) } : o;
 }
 
 /** `DELETE /v1/jobs/{id}` — cancel a running job or delete a finished one. */

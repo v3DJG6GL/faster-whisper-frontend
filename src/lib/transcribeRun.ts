@@ -1068,9 +1068,9 @@ function awaitRunUrlVideo(
         const video = p.video;
         if (video && painting) {
           set((s) => {
-            // The request's own failure is on the row (Try again resets it to "queued"
-            // before this poll starts): the handler, a microtask behind, ends the poll.
-            if (request && s.stageMeta.downloading?.video?.state === "failed") return s;
+            // This attempt's request failed and marked the row (the handler, a microtask
+            // behind, ends the poll); a stale attempt's failure cannot paint (pid check).
+            if (request && onDemandVideoPid === pid && s.stageMeta.downloading?.video?.state === "failed") return s;
             return {
               stageMeta: {
                 ...s.stageMeta,
@@ -1160,6 +1160,9 @@ export function videoMaxHeightOf(url: string): number | null {
     : useApp.getState().settings.transcribe?.urlVideoMaxHeight ?? null;
 }
 
+/** The latest on-demand video attempt's pid: only its request may mark the Video row failed. */
+let onDemandVideoPid: string | null = null;
+
 /** Fetch a link's video on demand under `pid` (awaitRunUrlVideo folds its progress into the
  *  Video row); a request that fails outright marks the Video row failed. Resolves to the
  *  server's answer, null on failure — hand it to awaitRunUrlVideo, which pulls the file. */
@@ -1170,6 +1173,7 @@ function startOnDemandVideo(
   epoch: number,
 ): Promise<UrlMediaDownload | null> {
   const railSeq = railFileSeq;
+  onDemandVideoPid = pid;
   return fetchUrlVideoOnDemand({
     serverUrl: ctx.serverUrl,
     backendId: ctx.backendId,
@@ -1178,7 +1182,9 @@ function startOnDemandVideo(
     formatId: get().urlMeta[url]?.videoFormat ?? null,
     progressId: pid,
   }).catch((e) => {
-    if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url) return null;
+    // A Try again started a new attempt (same file, new pid): this stale failure is not its.
+    if (epoch !== get().epoch || railSeq !== railFileSeq || get().lastRunPath !== url
+        || onDemandVideoPid !== pid) return null;
     set((st2) => ({
       stageMeta: {
         ...st2.stageMeta,

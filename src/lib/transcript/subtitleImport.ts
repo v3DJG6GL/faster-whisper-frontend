@@ -3,7 +3,7 @@
 // translate-only run needs: ordered segments with optional timing/speaker.
 // Pure, no Tauri imports; unit-tested round-trip against generateExport.
 
-import { languageCodeFromName, translateSourceCode } from "../languages";
+import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
 import { edgeChar, unspacedChar } from "./cueSplit";
 
@@ -447,7 +447,7 @@ function parseJsonExport(body: string): ImportedText {
   // Whisper language, so the original groups, limits and titles like the code it stands for and
   // goes out as the translation source; a word no language goes by stays as the file said.
   const shown = safeDisplayText(obj.language, 64).trim() || undefined;
-  const language = shown && translateSourceCode(shown) === null ? (languageCodeFromName(shown) ?? shown) : shown;
+  const language = shown ? languageCodeOf(shown) : undefined;
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
     // Decoded by JSON.parse after the control-char pass, like the segment text above.
     return { ...parsePlainText(stripControlChars(obj.text)), language };

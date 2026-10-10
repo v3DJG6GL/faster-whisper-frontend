@@ -152,6 +152,13 @@ export function languageCodeFromName(name: string): string | undefined {
   return ownProp(NAME_ALIASES, key) ?? codesByName.get(key);
 }
 
+/** A language as a track files it: a code stays; a word that names a Whisper language
+ *  ("english", what OpenAI's verbose_json writes — in an imported file or from a standard
+ *  server) becomes its code; anything else stays as given. */
+export function languageCodeOf(lang: string): string {
+  return translateSourceCode(lang) === null ? (languageCodeFromName(lang) ?? lang) : lang;
+}
+
 /** A track's language as its titles and chips name it: the English name with the region in
  *  caps ("Portuguese (BR)"); a script subtag named with the language when the runtime knows the
  *  pair ("zh-Hant-TW" is "Traditional Chinese (TW)", "sr-Latn-RS" is "Serbian (Latin, RS)"); a code with

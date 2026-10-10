@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  languageCodeOf,
   MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
@@ -227,5 +228,14 @@ describe("translateSourceCode", () => {
   it("only a code goes out as a translation source; a language name or blank auto-detects", () => {
     expect(["de", " pt-BR ", "zh_Hans", "yue", "english", "auto", "", null, undefined].map(translateSourceCode))
       .toEqual(["de", "pt-BR", "zh_Hans", "yue", null, null, null, null, null]);
+  });
+});
+
+describe("languageCodeOf", () => {
+  it("files a Whisper language name as its code and leaves codes and unknown words alone", () => {
+    expect(languageCodeOf("english")).toBe("en");
+    expect(languageCodeOf("Tagalog")).toBe("tl");
+    expect(languageCodeOf("pt-BR")).toBe("pt-BR");
+    expect(languageCodeOf("klingon")).toBe("klingon");
   });
 });
