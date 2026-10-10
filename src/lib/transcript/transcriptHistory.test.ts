@@ -466,9 +466,16 @@ describe("loadHistory", () => {
             { ...track("t-noid", []), id: 7 },
             track("t-bad", [cue("keep"), cue(3), cue("nan", Number.NaN, 1), null, cue("also", 2, 3)]),
             track("t-emptied", [cue(3), null]),
+            track("t-empty", []),
             { ...track("t-label", [cue("x")]), label: 5, site: {} },
           ],
         },
+      },
+      {
+        ...base,
+        id: "tt-only-empty",
+        createdAt: "2026-01-02T03:04:07.000Z",
+        result: { text: "e", timedTracks: [track("t-empty", [])] },
       },
       clean,
     ]);
@@ -484,6 +491,8 @@ describe("loadHistory", () => {
     expect(m[1]?.site).toBeUndefined();
     expect(m[1]?.cues.map((c) => c.text)).toEqual(["x"]);
     for (const t of m) for (const c of t.cues) expect(() => c.text.trim()).not.toThrow();
+    // A stored cue-less track goes too, even in an otherwise clean list: no blank lane, no empty export.
+    expect(saved("tt-only-empty").result?.timedTracks).toEqual([]);
     // A clean list is handed back as the very object the listing read.
     expect(saved("tt-clean")).toBe(clean);
     expect(saved("tt-clean").result?.timedTracks).toBe(cleanTracks);

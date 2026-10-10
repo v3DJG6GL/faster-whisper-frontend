@@ -267,8 +267,10 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
     } else {
       // A track with no string id/lang or no cue list is dropped whole; a kept track keeps only
       // its cues with string text and finite times and loses a non-string label/site (the JSON
-      // export iterates them), and one the repair empties of cues goes (the app never stores a
-      // cue-less track). A clean track (and list) is handed back as the same object.
+      // export iterates them), and any track left without cues goes, stored empty or emptied by
+      // the repair (the app never stores a cue-less track; a kept one would show a blank lane and
+      // an export choice that writes an empty file). A clean track (and list) is handed back as
+      // the same object.
       const okCue = (c: unknown) => {
         const q = c as { start?: unknown; end?: unknown; text?: unknown };
         return (
@@ -285,13 +287,13 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
       const str = (v: unknown) => v == null || typeof v === "string";
       const cleanTrack = (t: unknown) => {
         const k = t as { label?: unknown; site?: unknown };
-        return cuesOf(t).every(okCue) && str(k.label) && str(k.site);
+        return cuesOf(t).length > 0 && cuesOf(t).every(okCue) && str(k.label) && str(k.site);
       };
       const fixTrack = (t: unknown): unknown[] => {
         if (cleanTrack(t)) return [t];
         const k = t as { label?: unknown; site?: unknown };
         const cues = cuesOf(t).filter(okCue);
-        if (!cues.length && cuesOf(t).length) return [];
+        if (!cues.length) return [];
         return [{ ...(t as object), cues, label: str(k.label) ? k.label : undefined, site: str(k.site) ? k.site : undefined }];
       };
       if (!tts.every(okTrack) || !tts.every(cleanTrack)) {
