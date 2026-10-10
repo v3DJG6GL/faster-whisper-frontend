@@ -256,18 +256,20 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-/// Hard-ABORT the record session: take it out and let `Drop` run (stops capture + joins WITHOUT
-/// transcribing, releases the system-mute guard). Unlike `stop_record`, it does NOT spawn the
-/// transcribe POST — a cancel should discard the clip, not fire a wasted server transcription. Also
-/// the idempotent teardown the `closed` handler calls to release a parked session on capture death.
+/// Hard-ABORT the record session: take it out and stop capture WITHOUT transcribing (releases the
+/// system-mute guard). A user's Cancel and the `closed` handler's idempotent release of a parked
+/// session (capture death) do NOT spawn the transcribe POST — a cancel should discard the clip, not
+/// fire a wasted server transcription. The one exception is a recovery cancel (below), which
+/// finishes a live session whose recording is kept.
 /// `discard_recording: false` (a recovery cancel: wake from sleep) leaves a transcription already
 /// detached by a stop alone, so its saved `.wav` and `.txt` survive — the stream path's rule. That
-/// holds for a LIVE session too: it is `finish`ed, not discarded, so its clip is transcribed and
-/// saved like `cancel_stream`'s drain (its events are already silenced by the epoch retire), and a
-/// device-loss salvage the sleep already spawned (or one that fires inside the capture join) keeps
-/// its recording. The keep is final for a salvage published before the cancel; one that fires
-/// inside the join publishes its epoch after the forget, so a later Cancel with no live session
-/// can still disown it.
+/// holds for a LIVE session too when "Keep recordings" is on: it is `finish`ed, not discarded, so
+/// its clip is transcribed and saved like `cancel_stream`'s drain (its events are already silenced
+/// by the epoch retire). With recordings off there is nothing to keep, so it is dropped and nothing
+/// is uploaded. Either way a device-loss salvage the sleep already spawned (or one that fires
+/// inside the capture join) keeps its recording. The keep is final for a salvage published before
+/// the cancel; one that fires inside the join publishes its epoch after the forget, so a later
+/// Cancel with no live session can still disown it.
 #[tauri::command]
 pub async fn cancel_record(
     app: AppHandle,
@@ -309,17 +311,22 @@ pub async fn cancel_record(
             session::retire_active_epoch();
             sess
         };
-        // discard() (not finish, not a bare drop) runs OUTSIDE the lock: it marks the clip discarded
-        // BEFORE Drop joins the capture thread, so the device-loss salvage arm inside that join does
-        // not upload the audio or write the .wav/.txt. Then Drop stops capture and releases the mute.
-        // A recovery cancel keeps a live session's audio too, so it finishes it instead — the
-        // `cancel_stream` rule: the clip is transcribed and its .wav/.txt written, its UI events
-        // epoch-suppressed, and it is never claimed, so no later Cancel reaches it. finish() bails
-        // after the join when a device-loss salvage already took the clip. The closed-handler
-        // release (not user-initiated) only drops: a parked session has nothing left to keep.
+        // discard() runs OUTSIDE the lock: it marks the clip discarded BEFORE Drop joins the capture
+        // thread, so the device-loss salvage arm inside that join does not upload the audio or
+        // write the .wav/.txt. Then Drop stops capture and releases the mute. A user's Cancel takes
+        // that arm, and so does the closed-handler release (TS `cancelRecord()` defaults
+        // `discard_recording` to true) — harmless there: a parked session's salvage emitted its
+        // `closed` only after its .wav/.txt were written, so there is nothing left to discard.
+        // A recovery cancel keeps a live session's audio when "Keep recordings" is on, so it
+        // finishes it instead — the `cancel_stream` rule: the clip is transcribed and its .wav/.txt
+        // written, its UI events epoch-suppressed, and it is never claimed, so no later Cancel
+        // reaches it. finish() bails after the join when a device-loss salvage already took the
+        // clip. The bare drop covers no session, and a recovery cancel with nothing to keep
+        // (recordings off): a POST whose every event is suppressed would only upload the clip.
+        // Drop still joins capture (a salvage inside it keeps its own path) and releases the mute.
         match sess {
             Some(s) if discard_recording => s.discard(),
-            Some(s) if user_initiated => s.finish(),
+            Some(s) if user_initiated && s.keeps_recording() => s.finish(),
             sess => drop(sess),
         }
         // …and abandon any transcript still being typed out. The typing paths emit one key at a

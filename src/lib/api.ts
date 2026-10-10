@@ -982,12 +982,18 @@ export async function stopRecord(): Promise<void> {
 }
 
 /** Hard-abort the record session WITHOUT transcribing (no wasted server POST; releases the system
- *  mute). Used by cancelLive (`userInitiated: true`), and as the closed-handler's idempotent
- *  release of a parked session (`false`) — see `cancelStream` for what the flag decides.
+ *  mute), except for a recovery cancel (`userInitiated` true, `discardRecording` false), which
+ *  finishes a live session when its recording is kept (see below). Used by cancelLive
+ *  (`userInitiated: true`), and as the closed-handler's idempotent release of a parked session,
+ *  which calls with the defaults (`userInitiated` false, `discardRecording` true — unlike
+ *  `cancelStream`, whose `discardRecording` default follows `userInitiated`): a parked live
+ *  session is discarded, which is safe because a device-loss salvage has already written its
+ *  .wav/.txt before the `closed` that triggers the release.
  *  `discardRecording`: a cancel during "transcribing…" disowns the detached transcription and
- *  its saved .wav/.txt; a recovery cancel passes false to keep them. With false a LIVE session is
- *  finished, not discarded (`cancelStream`'s rule): its clip is transcribed and its .wav/.txt
- *  written, its UI events epoch-silenced, and a device-loss salvage already under way keeps its
+ *  its saved .wav/.txt; a recovery cancel passes false to keep them. With false a LIVE session
+ *  is finished, not discarded (`cancelStream`'s rule), when "Keep recordings" is on: its clip is
+ *  transcribed and its .wav/.txt written, its UI events epoch-silenced. With recordings off it is
+ *  dropped and nothing is uploaded. Either way a device-loss salvage already under way keeps its
  *  own .wav/.txt. */
 export async function cancelRecord(userInitiated = false, discardRecording = true): Promise<void> {
   if (!isTauri) return;

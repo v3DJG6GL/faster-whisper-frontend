@@ -1007,6 +1007,14 @@ impl RecordSession {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
     }
 
+    /// Whether this session writes its clip to disk ("Keep recordings"). A recovery cancel
+    /// finishes a live session only when this is true: its point is to keep the saved audio, and
+    /// without a save dir `finish()` would upload the whole clip for a transcription whose every
+    /// event the cancel's epoch retire already suppresses.
+    pub fn keeps_recording(&self) -> bool {
+        self.params.save_dir.is_some()
+    }
+
     /// Stop recording and transcribe the captured clip in the background.
     pub fn finish(mut self) {
         self.capture_stop.store(true, Ordering::SeqCst);
@@ -1029,8 +1037,11 @@ impl RecordSession {
         let app = self.app.clone();
         let epoch = self.epoch;
         let params = self.params.clone();
-        // The epoch was already published by `claim_detached`, under the RecordState lock, in the
-        // one caller that reaches here (`stop_record`). Re-publishing it now — AFTER the ~33-50ms
+        // `stop_record` already published the epoch via `claim_detached`, under the RecordState
+        // lock. `cancel_record`'s recovery finish deliberately publishes nothing: its
+        // `settle_detached_batch_on_cancel` already forgot DETACHED_BATCH_EPOCH, so its keep is
+        // final and no later Cancel reaches it. Either way, never publish here. Re-publishing
+        // the epoch after `stop_record`'s claim — AFTER the ~33-50ms
         // capture-thread join above — is not merely redundant, it can move a monotonic epoch
         // BACKWARDS: `start_record`/`stop_record` for session N+1 can acquire the freed lock
         // inside that join and set DETACHED to N+1, and this store would then put it back to N.

@@ -3758,7 +3758,9 @@ async function startLiveInner(
     // A Cancel landed during the invoke: cancelLive already tore the TS side down and left the
     // Rust half to here. The session exists now, so this cancel finds it live and aborts it —
     // never the previous session's drain/transcription (that one is reached only with no live
-    // session). A recovery cancel keeps its usual meaning (Rust drains/drops instead of discarding).
+    // session). A recovery cancel keeps its usual meaning: Rust finishes the session instead of
+    // discarding it (a stream drains, a batch clip is transcribed, and the recording is written)
+    // — except a batch session with "Keep recordings" off, which is dropped with nothing uploaded.
     // (TS narrows the module `let` to the `null` set above; cancelLive sets it during the await.)
     const owedCancel = cancelDuringStartInvoke as { keepRecording: boolean } | null;
     if (owedCancel) {
@@ -3830,7 +3832,8 @@ export interface CancelOpts {
   keepShortcuts?: boolean;
   /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
    *  discarded — a live stream session is finished (drained, recording written), a live batch
-   *  session is finished too (transcribed, .wav/.txt written, its events silenced), and a
+   *  session is finished too when "Keep recordings" is on (transcribed, .wav/.txt written, its
+   *  events silenced; with recordings off it is dropped and nothing is uploaded), and a
    *  drain/transcription still running after stop is released, keeping its saved recording — the
    *  audio may be the only copy of what was said. */
   keepRecording?: boolean;

@@ -697,8 +697,12 @@ describe("a translating session re-caps its targets once the server's limit is k
     const then = mask(bodyAfter(fn.slice(probe), ".then(() =>"));
     const recap = then.indexOf("shrinkToServerCap(tr)");
     expect(recap, "the probe's answer must re-cap tr.targets").toBeGreaterThanOrEqual(0);
-    expect(recap).toBeGreaterThan(then.indexOf("if (sessionTranslation !== tr) return"));
-    expect(recap).toBeLessThan(then.indexOf("if (tr.warm === true) return"));
+    const guard = then.indexOf("if (sessionTranslation !== tr) return");
+    expect(guard, "the caps answer is identity-checked").toBeGreaterThanOrEqual(0);
+    expect(recap).toBeGreaterThan(guard);
+    const warm = then.indexOf("if (tr.warm === true) return");
+    expect(warm, "the warm check stays in the probe's answer").toBeGreaterThanOrEqual(0);
+    expect(recap).toBeLessThan(warm);
     const shrink = topLevelFunctions(streamingSrc).shrinkToServerCap;
     expect(shrink).toContain("sendableTargets(tr.targets, tr.backendId)");
     expect(shrink).toContain("setDictation({ sessionTargets: capped })");
