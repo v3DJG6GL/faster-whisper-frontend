@@ -38,7 +38,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -400,7 +400,7 @@ export default function Transcribe() {
     serverUrl,
     backendId: backend?.id,
     model: model || backend?.model,
-    profileName: runOverrideProfile || backend?.overrideProfile,
+    profileName: runOverrideProfile.trim() || backend?.overrideProfile,
     serverKind,
   });
   // What a blank per-run field inherits: the server's values, the Backend's stored decode
@@ -507,7 +507,7 @@ export default function Transcribe() {
   // only of control/format characters draws no empty pill.
   const previewUploader = safeDisplayText(urlPreviewData?.uploader, 60).trim();
   const previewFormat = safeDisplayText(formatLabel(urlPreviewData?.ext, urlPreviewData?.abr), 32).trim();
-  const previewExtractor = safeDisplayText(urlPreviewData?.extractor, 24).trim();
+  const previewExtractor = extractorPill(urlPreviewData?.extractor);
   const siteInput = siteState && caps?.url_subtitles_enabled === true && urlPreviewData?.subtitle_tracks?.length
     ? {
         tracks: urlPreviewData.subtitle_tracks,
@@ -895,7 +895,7 @@ export default function Transcribe() {
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
       // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
       // verbatim (it forces "no profile" server-side).
-      overrideProfile: runOverrideProfile || backend.overrideProfile,
+      overrideProfile: runOverrideProfile.trim() || backend.overrideProfile,
       standard:
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
@@ -1872,11 +1872,14 @@ export default function Transcribe() {
               canRequest={caps?.can_request_override_profile}
               value={runOverrideProfile}
               inheritLabel={
+                // Gate on the raw value (it is what the run sends), show the sanitized name:
+                // a set name made only of control/format characters reads "??", never a
+                // bare "Backend default" that would claim no profile is sent.
                 !backend?.overrideProfile
                   ? "Backend default"
                   : backend.overrideProfile === NO_OVERRIDE_PROFILE
                     ? "Backend default · none"
-                    : `Backend default · ${safeDisplayText(backend.overrideProfile, 40)}`
+                    : `Backend default · ${safeDisplayText(backend.overrideProfile, 40).trim() || "??"}`
               }
               onChange={(v) => setRunOverrideProfile(v.trim() ? v : "")}
             />
@@ -1991,11 +1994,7 @@ export default function Transcribe() {
         const shownAudio = complete && multi && totals.audioSec > 0 ? totals.audioSec : audioDur;
         const overallRt =
           complete && shownAudio && shownElapsed > 0 ? shownAudio / (shownElapsed / 1000) : null;
-        const extractorLabel = panelUrlMeta?.extractor
-          ? panelUrlMeta.extractor === "Generic"
-            ? "direct link"
-            : safeDisplayText(panelUrlMeta.extractor, 24)
-          : null;
+        const extractorLabel = extractorPill(panelUrlMeta?.extractor) || null;
         const panelFormat = safeDisplayText(panelUrlMeta?.format, 32).trim();
         // Through speakersOf, which falls back to the segments' labels when a backend omits
         // the top-level list — the queue row counts the same way.

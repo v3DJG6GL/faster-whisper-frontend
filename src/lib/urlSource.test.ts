@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, urlHost } from "./urlSource";
+import { displayLabel, extractorPill, isSourceUrl, linkTooLong, normalizeMediaUrl, urlHost } from "./urlSource";
 
 describe("linkTooLong", () => {
   it("names the server's limit when the link runs longer", () => {
@@ -90,6 +90,19 @@ describe("displayLabel", () => {
       "media.example/talks/ep1.mp3",
     );
     expect(displayLabel("https://media.example/")).toBe("media.example");
+  });
+});
+
+describe("extractorPill", () => {
+  it("reads Generic as a direct link and keeps a real site name", () => {
+    expect(extractorPill("Generic")).toBe("direct link");
+    expect(extractorPill("Youtube")).toBe("Youtube");
+  });
+
+  it("is empty for a name with nothing visible left, so no pill is drawn", () => {
+    expect(extractorPill("\u200b\u202e")).toBe("");
+    expect(extractorPill("  ")).toBe("");
+    expect(extractorPill(undefined)).toBe("");
   });
 });
 

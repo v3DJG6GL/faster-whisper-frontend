@@ -72,6 +72,13 @@ export function displayLabel(key: string, title?: string | null): string {
   }
 }
 
+/** The source pill for a link's extractor: yt-dlp's "Generic" reads as
+ *  "direct link"; anything else is sanitized and trimmed, so a name made
+ *  only of control/format characters yields "" (callers draw no pill). */
+export function extractorPill(extractor: unknown): string {
+  return extractor === "Generic" ? "direct link" : safeDisplayText(extractor, 24).trim();
+}
+
 /** Hostname of a URL key, for secondary lines in queue rows and history. */
 export function urlHost(key: string): string {
   try {
