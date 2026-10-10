@@ -279,18 +279,38 @@ mod sni {
         /// The shell's tray went away (plasmashell restarted, the GNOME extension disabled)
         /// or was not up yet at launch (login autostart before the panel): until it is back,
         /// close must not hide the window, and a hidden one comes back.
+        /// Also called when a watcher that came back refuses the registration, right after
+        /// `watcher_online`: that one is logged as a failure, not as an absent watcher.
         fn watcher_offline(&self, reason: ksni::OfflineReason) -> bool {
-            tracing::warn!(
-                "[tray] no StatusNotifierWatcher (not up yet, or it went away); close quits until a tray appears: {reason:?}"
-            );
+            if watcher_absent(&reason) {
+                tracing::warn!(
+                    "[tray] no StatusNotifierWatcher (not up yet, or it went away); close quits until a tray appears: {reason:?}"
+                );
+            } else {
+                tracing::warn!(
+                    "[tray] could not register with the StatusNotifierWatcher; close quits until a tray appears: {reason:?}"
+                );
+            }
             mark_missing(&self.app);
             true
         }
 
         fn watcher_online(&self) {
-            tracing::info!("[tray] StatusNotifierWatcher available; the tray is up");
+            tracing::info!("[tray] StatusNotifierWatcher available; registering the tray");
             MISSING.store(false, Ordering::Relaxed);
         }
+    }
+
+    /// The watcher is gone (`No`) or not there yet (ksni's launch path reports a missing
+    /// one as `ServiceUnknown`); anything else is a registration that failed.
+    pub(super) fn watcher_absent(reason: &ksni::OfflineReason) -> bool {
+        matches!(
+            reason,
+            ksni::OfflineReason::No
+                | ksni::OfflineReason::Error(ksni::Error::Watcher(
+                    atspi::zbus::fdo::Error::ServiceUnknown(_)
+                ))
+        )
     }
 
     pub(super) fn spawn(app: &App) {
@@ -531,6 +551,20 @@ mod tests {
             Some(MenuAction::Screen("settings"))
         );
         assert_eq!(parse_action("nope"), None);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_a_missing_watcher_is_logged_as_absent() {
+        use atspi::zbus::fdo::Error as Fdo;
+        use ksni::{Error, OfflineReason};
+        assert!(super::sni::watcher_absent(&OfflineReason::No));
+        let unknown = OfflineReason::Error(Error::Watcher(Fdo::ServiceUnknown("gone".into())));
+        assert!(super::sni::watcher_absent(&unknown));
+        let refused = OfflineReason::Error(Error::Watcher(Fdo::Failed("refused".into())));
+        assert!(!super::sni::watcher_absent(&refused));
+        let denied = OfflineReason::Error(Error::Watcher(Fdo::AccessDenied("no".into())));
+        assert!(!super::sni::watcher_absent(&denied));
     }
 
     #[cfg(target_os = "linux")]

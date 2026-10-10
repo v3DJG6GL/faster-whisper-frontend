@@ -294,8 +294,8 @@ mod imp {
             }
             // Own-window re-check at the sink, the sibling of the cancel check above and of the
             // guard the X11/Windows and Wayland-paste arms already carry. `inject_text`'s entry
-            // guard ran before the <=500ms held-modifier wait, the latch consume, a `focused_app_now`
-            // AT-SPI round trip and `ensure_started`'s thread spawn + Wayland connect — and this
+            // guard ran before the <=500ms held-modifier wait, the latch consume, the `focused_app_now`
+            // snapshot read and `ensure_started`'s thread spawn + Wayland connect — and this
             // job may also have queued behind another. `NothingWritten` is truthful (no key has
             // been transmitted) and makes the caller's re-send safe rather than duplicating text.
             if own_window_focused() {

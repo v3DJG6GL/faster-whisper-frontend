@@ -930,8 +930,8 @@ mod imp {
                 // last Wayland arm without one: the paste branch got its guards at the clipboard
                 // write and at the chord, and the X11/Windows twin got one per typed chunk — but
                 // everything reaching HERE crossed the widest gap on any path. Between the entry
-                // guard and this point sit the <=500ms held-modifier wait, the latch consume, a
-                // `focused_app_now` AT-SPI round trip, `ensure_started`'s thread spawn + portal
+                // guard and this point sit the <=500ms held-modifier wait, the latch consume, the
+                // `focused_app_now` snapshot read, `ensure_started`'s thread spawn + portal
                 // session (and possibly the KDE "Control input devices" consent modal), and the
                 // queue wait behind any job already typing. A focus change anywhere in there
                 // otherwise types the server's transcript into our own settings, API-key or

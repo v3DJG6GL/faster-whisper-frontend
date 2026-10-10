@@ -234,10 +234,10 @@ pub(crate) async fn inject_text(
 
     // The own-window guard at the top of this command has the same decided-at-T/applied-at-T+n
     // problem the per-app re-check below was written to fix, and it was left at the entry: the
-    // held-modifier wait, the focus IPC and the bounded clipboard read can take a second, and in a
-    // live or hands-free session the user is expected to be moving between windows. Clicking our own
-    // window in that gap landed the keys in the app's own settings/dictionary fields — and on the
-    // paste path the clipboard was clobbered first, regardless.
+    // held-modifier wait can take half a second, and in a live or hands-free session the user is
+    // expected to be moving between windows. Clicking our own window in that gap landed the keys
+    // in the app's own settings/dictionary fields — and on the paste path the clipboard was
+    // clobbered first, regardless.
     //
     // The per-app re-check below CANNOT stand in for this. `focused_app_now` (and `focus::windows`'s
     // twin) classify our own window as noise and fall back to `last_other`, so they report the
@@ -278,10 +278,11 @@ pub(crate) async fn inject_text(
         modifiers_stuck = modifiers_stuck || chord_lost;
     }
     // The per-app rule — including "never type into this app" — was resolved against the window
-    // focused when this insert was QUEUED, and getting here takes real time: a focus IPC, up to
-    // 400ms of clipboard read, and the 500ms modifier wait just above. In a live or hands-free session
-    // the user is expected to be switching windows, so the window that receives the keys may not
-    // be the one the decision was made for. Re-check now, at the sink.
+    // focused when this insert was QUEUED, and getting here takes real time: the up-to-500ms
+    // modifier wait just above. In a live or hands-free session the user is expected to be
+    // switching windows, so the window that receives the keys may not be the one the decision was
+    // made for. Re-check now, at the sink. The later prev-clipboard read and settle are covered by
+    // the own-window probes at the clipboard write and the chord, not by this per-app re-check.
     //
     // A mismatch degrades to clipboard-only — the same treatment a blocked or non-editable target
     // already gets, so the text is preserved and nothing is typed into a window whose rule we
@@ -545,9 +546,9 @@ pub(crate) async fn inject_text(
                 });
             }
             // Own-window re-check, at the sink rather than at the top of the function. The guard
-            // that decides "our own window took focus" runs ~0.5s earlier: the latch consume, a
-            // focus IPC, up to 400ms of bounded prev-clipboard read and the settle all sit between
-            // it and this write. Without this, a focus change inside that window clobbers the
+            // that decides "our own window took focus" runs ~0.5s earlier: the latch consume, the
+            // focus read and up to 400ms of bounded prev-clipboard read sit between it and this
+            // write (the settle follows it and is covered by the chord-time check below). Without this, a focus change inside that window clobbers the
             // user's clipboard and then fires Ctrl+V into one of our own windows — the exact
             // outcome the entry guard was moved above the clipboard-only branch to prevent.
             //

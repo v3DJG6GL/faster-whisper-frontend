@@ -273,11 +273,18 @@ pub async fn move_audio_base(
         // partial move leaves the preference on the old base, which the startup heal
         // then searches — so an unrewritten record would stay broken for good.
         rewrite_media_paths(&app, &map);
-        tracing::info!(
-            "[audio] base moved: {} file(s) → {}",
-            map.len(),
-            to.display()
-        );
+        match &res {
+            Ok(()) => tracing::info!(
+                "[audio] base moved: {} file(s) → {}",
+                map.len(),
+                to.display()
+            ),
+            Err(e) => tracing::warn!(
+                "[audio] base move stopped after {} file(s) moved to {}: {e}",
+                map.len(),
+                to.display()
+            ),
+        }
         res
     })
     .await
