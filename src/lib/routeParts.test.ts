@@ -35,6 +35,12 @@ describe("routeParts", () => {
     expect(routeParts("German", ["fr", "\u200f", "it", "es"]).more).toBe(0);
   });
 
+  it("blanks a blank or format-only source so the readers fall back to auto, and labels a padded one", () => {
+    expect(routeParts("  ").source).toBe("");
+    expect(routeParts("\u200f").source).toBe("");
+    expect(routeParts(" de").source).toBe("German");
+  });
+
   it("caps the list at three and counts the rest", () => {
     const r = routeParts("German", ["fr", "it", "es", "pt", "nl"]);
     expect(r.targets).toEqual(["French", "Italian", "Spanish"]);

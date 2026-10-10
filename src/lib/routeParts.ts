@@ -26,8 +26,11 @@ export function routeParts(
     // trims to something, then sanitizes to nothing, and would show as a blank slot.
     .map((t) => safeDisplayText(languageLabel(t), 24).trim())
     .filter(Boolean);
+  // The source gets the same trim-then-recheck: a blank or format-only one must come back as
+  // "" so the readers' `|| "auto"` fallback applies, and a padded " de" must still find its label.
+  const src = typeof source === "string" ? source.trim() : "";
   return {
-    source: safeDisplayText(languageLabel(source), 24),
+    source: src ? safeDisplayText(languageLabel(src), 24).trim() : "",
     targets: labels.slice(0, ROUTE_TARGETS_SHOWN),
     more: Math.max(0, labels.length - ROUTE_TARGETS_SHOWN),
   };
