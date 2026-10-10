@@ -503,6 +503,11 @@ export default function Transcribe() {
   });
   /** The previewed link's site ("YouTube"): the source words of its subtitles and the spoken pill. */
   const previewSite = urlPreviewData ? siteDisplayName(draftUrl ?? "", urlPreviewData.extractor) : "";
+  // The preview card's meta line: sanitized once and gated on what survives, so a value made
+  // only of control/format characters draws no empty pill.
+  const previewUploader = safeDisplayText(urlPreviewData?.uploader, 60).trim();
+  const previewFormat = safeDisplayText(formatLabel(urlPreviewData?.ext, urlPreviewData?.abr), 32).trim();
+  const previewExtractor = safeDisplayText(urlPreviewData?.extractor, 24).trim();
   const siteInput = siteState && caps?.url_subtitles_enabled === true && urlPreviewData?.subtitle_tracks?.length
     ? {
         tracks: urlPreviewData.subtitle_tracks,
@@ -990,8 +995,11 @@ export default function Transcribe() {
   // view so the user isn't left staring at the unchanged elements above it.
   // Studio needs nothing: the right pane always shows the viewer. Eased by
   // hand — WebKitGTK ignores scrollTo({behavior:"smooth"}).
+  const openedKey = selected?.result
+    ? `${selected.path}\u0000${selected.createdAt ?? ""}\u0000${selected.tookMs ?? ""}`
+    : null;
   useEffect(() => {
-    if (!result || studio) return;
+    if (!openedKey || studio) return;
     const el = document.querySelector("[data-transcript-viewer]");
     if (!(el instanceof HTMLElement)) return;
     let scroller: HTMLElement | null = el.parentElement;
@@ -1028,9 +1036,14 @@ export default function Transcribe() {
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
     // Trigger on the OPENED TRANSCRIPT changing, never on a layout switch or
-    // a re-render — `result` is a stable object per record/run.
+    // a re-render. Keyed on its identity (path / createdAt / tookMs), not the
+    // `result` object: a translation merge into the open transcript replaces
+    // that object and must not yank the column back down. A re-run of the
+    // same path passes through null while running, so its fresh result still
+    // scrolls; openRecordId stays out — it flips to null when the open
+    // record is deleted from History while its row stays on screen.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [result]);
+  }, [openedKey]);
 
   // ── render ───────────────────────────────────────────────────────────────
   // The page assembles from four blocks so the stacked column and the studio
@@ -1322,9 +1335,7 @@ export default function Transcribe() {
                   {displayLabel(draftUrl ?? urlDraft, urlPreviewData.title)}
                 </div>
                 <div className="mt-1 flex flex-wrap gap-x-3.5 gap-y-1 text-[12px] text-dim">
-                  {urlPreviewData.uploader && (
-                    <span>{safeDisplayText(urlPreviewData.uploader, 60)}</span>
-                  )}
+                  {previewUploader && <span>{previewUploader}</span>}
                   {typeof urlPreviewData.duration === "number" && urlPreviewData.duration > 0 && (
                     <span className="font-mono tabular-nums">
                       {fmtDurationExact(urlPreviewData.duration)}
@@ -1336,14 +1347,10 @@ export default function Transcribe() {
                         ≈ {fmtBytes(urlPreviewData.estimated_bytes)}
                       </span>
                     )}
-                  {formatLabel(urlPreviewData.ext, urlPreviewData.abr) && (
-                    <span className="font-mono tabular-nums">
-                      {safeDisplayText(formatLabel(urlPreviewData.ext, urlPreviewData.abr)!, 32)}
-                    </span>
-                  )}
-                  {urlPreviewData.extractor && (
+                  {previewFormat && <span className="font-mono tabular-nums">{previewFormat}</span>}
+                  {previewExtractor && (
                     <span className="rounded-pill bg-accent-soft px-2 py-px font-mono text-[10.5px] uppercase tracking-label text-accent">
-                      {safeDisplayText(urlPreviewData.extractor, 24)}
+                      {previewExtractor}
                     </span>
                   )}
                 </div>
@@ -1989,6 +1996,7 @@ export default function Transcribe() {
             ? "direct link"
             : safeDisplayText(panelUrlMeta.extractor, 24)
           : null;
+        const panelFormat = safeDisplayText(panelUrlMeta?.format, 32).trim();
         // Through speakersOf, which falls back to the segments' labels when a backend omits
         // the top-level list — the queue row counts the same way.
         const speakerCount = panelItem?.result ? speakersOf(panelItem.result).length : 0;
@@ -2271,6 +2279,14 @@ export default function Transcribe() {
                   st === "separating" && state === "active" && progress?.step === "preparing";
                 const time = stageTimes[st];
                 const meta = stageMeta[st];
+                // Sanitized once and gated on what survives: a value made only of
+                // control/format characters draws no empty chip or dangling " · ".
+                const metaModel = safeDisplayText(meta?.model).trim();
+                // The chip stays keyed on the device (as before); compute only rides along.
+                const metaDev = safeDisplayText(meta?.device).trim();
+                const metaCompute = safeDisplayText(meta?.compute).trim();
+                const metaDevice = metaDev && (metaCompute ? `${metaDev} · ${metaCompute}` : metaDev);
+                const diarStep = st === "diarizing" ? safeDisplayText(progress?.step).trim() : "";
                 const stageElapsedMs =
                   state === "active" && time ? now - time.start
                     : state === "done" && time?.end ? time.end - time.start
@@ -2410,9 +2426,7 @@ export default function Transcribe() {
                           {state === "active" && units && units.length > 1
                             ? ` · ${unitsDone} of ${units.length} ${UNIT_NOUN[st] ?? "units"}`
                             : ""}
-                          {st === "diarizing" && state === "active" && progress?.step
-                            ? ` · ${safeDisplayText(progress.step)}`
-                            : ""}
+                          {state === "active" && diarStep ? ` · ${diarStep}` : ""}
                           {st === "transcribing" && state === "active" && progress?.position && audioDur
                             ? ` · ${fmtDurationExact(progress.position)} of ${fmtDurationExact(audioDur)} audio`
                             : ""}
@@ -2566,25 +2580,24 @@ export default function Transcribe() {
                                 {extractorLabel}
                               </span>
                             )}
-                            {st === "downloading" && panelUrlMeta?.format && (
+                            {st === "downloading" && panelFormat && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                {safeDisplayText(panelUrlMeta.format, 32)}
+                                {panelFormat}
                               </span>
                             )}
-                            {meta?.model && (
+                            {metaModel && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
-                                {safeDisplayText(meta.model)}
+                                {metaModel}
                               </span>
                             )}
-                            {meta?.device && (
+                            {metaDevice && (
                               <span
                                 className={cn(
                                   "rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px]",
-                                  meta.device === "cuda" ? "text-ok" : "text-warn",
+                                  meta?.device === "cuda" ? "text-ok" : "text-warn",
                                 )}
                               >
-                                {safeDisplayText(meta.device)}
-                                {meta.compute ? ` · ${safeDisplayText(meta.compute)}` : ""}
+                                {metaDevice}
                               </span>
                             )}
                             {/* Receipts: a finished stage keeps its evidence
@@ -2626,19 +2639,23 @@ export default function Transcribe() {
                             )}
                             {/* Per-language receipts: what each target took,
                                 kept after the run like every other chip. */}
-                            {state === "done" && hasUnits && planStage?.units?.map((u) => (
-                              <span
-                                key={u.target}
-                                className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim"
-                              >
-                                <span className={cn("font-medium text-text", st === "translating" && "uppercase")}>
-                                  {st === "diarizing" ? safeDisplayText(u.target, 16) : safeDisplayText(u.target, 12)}
+                            {state === "done" && hasUnits && planStage?.units?.map((u) => {
+                              const tgt = safeDisplayText(u.target, st === "diarizing" ? 16 : 12).trim();
+                              if (!tgt) return null;
+                              return (
+                                <span
+                                  key={u.target}
+                                  className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim"
+                                >
+                                  <span className={cn("font-medium text-text", st === "translating" && "uppercase")}>
+                                    {tgt}
+                                  </span>
+                                  {u.state === "instant" || u.instant
+                                    ? " instant"
+                                    : u.tookS != null ? ` ${fmtElapsed(u.tookS * 1000)}` : ""}
                                 </span>
-                                {u.state === "instant" || u.instant
-                                  ? " instant"
-                                  : u.tookS != null ? ` ${fmtElapsed(u.tookS * 1000)}` : ""}
-                              </span>
-                            ))}
+                              );
+                            })}
                             {state === "done" && st === "diarizing" && speakerCount > 0 && (
                               <span className="rounded-md bg-surface-2 px-2 py-0.5 font-mono text-[10.5px] text-dim">
                                 <span className="font-medium text-text">{speakerCount}</span>
