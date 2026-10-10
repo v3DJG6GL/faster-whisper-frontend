@@ -242,6 +242,15 @@ const DECIMAL_RUNG = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 /** A rung in the editor's own alphabet (what parseLadderInput lets a user type). */
 const EDITOR_RUNG = /^\d+(\.\d*)?$|^\.\d+$/;
 
+/** One rung in the editor's alphabet. String() writes anything below 1e-6 in exponent form
+ *  ("1e-7"); spell it out exactly (toFixed would round 3e-21 to 0). The range is [0, 1], so only
+ *  negative exponents occur. */
+function plainRung(n: number): string {
+  const str = String(n);
+  const m = /^(\d)(?:\.(\d+))?e-(\d+)$/.exec(str);
+  return m ? "0." + "0".repeat(Number(m[3]) - 1) + m[1] + (m[2] ?? "") : str;
+}
+
 /** A temperature ladder kept verbatim when it is valid and in the editor's alphabet, so a synced
  *  value comes back exactly as typed; out-of-range rungs are clamped, extra rungs dropped, an
  *  empty rung ("0.2,") skipped as the server skips it, and sign/exponent forms ("+0.5", "1e-1",
@@ -261,20 +270,12 @@ function sanitizeLadder(s: string, spec: KeySpec): string | undefined {
     kept.every((r) => EDITOR_RUNG.test(r)) &&
     rungs.length <= max &&
     rungs.every((r) => r === clamp(r, spec.min, spec.max));
-  // String() writes anything below 1e-6 in exponent form ("1e-7"), outside the editor's alphabet;
-  // spell it out exactly (toFixed would round 3e-21 to 0). The range is [0, 1], so only negative
-  // exponents occur.
-  const plain = (n: number) => {
-    const str = String(n);
-    const m = /^(\d)(?:\.(\d+))?e-(\d+)$/.exec(str);
-    return m ? "0." + "0".repeat(Number(m[3]) - 1) + m[1] + (m[2] ?? "") : str;
-  };
   const maxLen = spec.maxLen ?? Infinity;
   if (fits) return text.length <= maxLen ? text : undefined;
   const shown = rungs.slice(0, max).map((r) => clamp(r, spec.min, spec.max));
   // The spelled-out form is longer: when it no longer fits where String()'s did, keep the shorter
   // one (delete-only in the editor) rather than drop a value that was kept before.
-  const out = shown.map(plain).join(",");
+  const out = shown.map(plainRung).join(",");
   if (out.length <= maxLen) return out;
   const short = shown.map(String).join(",");
   return short.length <= maxLen ? short : undefined;
@@ -293,7 +294,15 @@ export function sanitizeDecodeValue(key: DecodeKey, v: unknown): number | boolea
       return clamp(n, spec.min, spec.max);
     }
     case "ladder":
-      if (typeof v === "number") return Number.isFinite(v) ? clamp(v, spec.min, spec.max) : undefined;
+      if (typeof v === "number") {
+        if (!Number.isFinite(v)) return undefined;
+        // A synced number below 1e-6 would show as "1e-7" and leave a delete-only field: hand the
+        // editor the spelled-out rung instead (the server parses a string rung the same way).
+        const n = clamp(v, spec.min, spec.max);
+        if (!String(n).includes("e")) return n;
+        const p = plainRung(n);
+        return p.length <= (spec.maxLen ?? Infinity) ? p : n;
+      }
       return typeof v === "string" ? sanitizeLadder(v, spec) : undefined;
     case "text": {
       if (typeof v !== "string") return undefined;
