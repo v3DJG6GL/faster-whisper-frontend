@@ -19,7 +19,7 @@ import {
 } from "@/lib/api";
 import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
-import { applyBlob, categorySelection, migrateBlob, restorableCategories } from "@/lib/sync/sync";
+import { applyBlob, categorySelection, migrateBlob, restorableCategories, sanitizeProfiles } from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
 import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
@@ -241,9 +241,14 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   };
 
   // Whether "Restore everything" brings profiles (and with them the dictation hotkeys): the
-  // restore step promises them only then. (The starters fallback checks the store after the
-  // apply instead, which also catches a profiles category holding an empty list.)
-  const carriesProfiles = restorableCategories(pull?.state?.blob).includes("profiles");
+  // restore step promises them only then — a profiles category whose list holds no entry
+  // applyBlob would keep (empty, or only malformed ones) promises nothing. (The starters
+  // fallback still checks the store after the apply.)
+  const pulledBlob = pull?.state?.blob;
+  const carriesProfiles =
+    !!pulledBlob &&
+    restorableCategories(pulledBlob).includes("profiles") &&
+    sanitizeProfiles(migrateBlob(pulledBlob).profiles?.list).length > 0;
 
   const doImport = async () => {
     setError(null);
