@@ -49,6 +49,24 @@ describe("configuredRouteTargets", () => {
     expect(configuredRouteTargets({ translationOverrides: { translateTo: ["de_CH", " fr "] } }, backend)).toEqual(["fr"]);
     expect(configuredRouteTargets({ translationOverrides: { translateTo: ["de_CH"] } }, backend)).toEqual([]);
   });
+  it("previews no more targets than the session sends per request", () => {
+    // The session caps at the server's TRANSLATION_MAX_TARGETS (else the app's 8): a longer
+    // synced list must not promise languages dictation never types.
+    const ten = ["de", "fr", "it", "es", "pt", "nl", "pl", "sv", "da", "fi"];
+    const b = { id: "b1", translationOverrides: { translateTo: ten } };
+    const caps = useApp.getState().caps;
+    try {
+      expect(configuredRouteTargets({}, b)).toEqual(ten.slice(0, 8));
+      useApp.setState({
+        caps: { b1: { server_info: { limits: { translation_max_targets: 3 } } } } as unknown as typeof caps,
+      });
+      expect(configuredRouteTargets({}, b)).toEqual(["de", "fr", "it"]);
+      // No id: no server to ask, the app's ceiling.
+      expect(configuredRouteTargets({}, { translationOverrides: { translateTo: ten } })).toEqual(ten.slice(0, 8));
+    } finally {
+      useApp.setState({ caps });
+    }
+  });
 });
 
 describe("chipRouteTargets", () => {

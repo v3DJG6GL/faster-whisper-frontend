@@ -714,6 +714,7 @@ function Editor({
 function ProfileRow({
   p,
   backendName,
+  backendId,
   backendLanguage,
   backendTargets,
   conflictText,
@@ -727,6 +728,8 @@ function ProfileRow({
 }: {
   p: Profile;
   backendName: string;
+  /** The bound Backend's id: its server's per-request target cap bounds the route preview. */
+  backendId?: string;
   /** The bound Backend's language — the fallback half of the effective-language
    *  resolution the chip does (a set Profile override wins). Resolved by the parent,
    *  which holds the backend list. */
@@ -743,6 +746,9 @@ function ProfileRow({
   onRemove: () => void;
 }) {
   const updateProfile = useApp((s) => s.updateProfile);
+  // Re-render when this backend's capabilities arrive: configuredRouteTargets reads the
+  // server's target cap from the store.
+  useApp((s) => (backendId ? ownProp(s.caps, backendId) : undefined));
   const meta = ACTIVATION[p.activation];
   const Glyph = meta.icon;
   const effLangCode = effectiveLanguage(p.language, backendLanguage);
@@ -774,7 +780,7 @@ function ProfileRow({
                 override, else the bound backend), so the row can't disagree with the chip. */}
             <RouteBadge
               source={effLang}
-              targets={configuredRouteTargets(p, { translationOverrides: { translateTo: backendTargets } })}
+              targets={configuredRouteTargets(p, { id: backendId, translationOverrides: { translateTo: backendTargets } })}
             />
             {shortModel && <Badge>{shortModel}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
@@ -982,6 +988,7 @@ export default function Profiles() {
                   key={p.id}
                   p={p}
                   backendName={safeDisplayText(backendForProfile(p, backends)?.name, 80) || "No backend"}
+                  backendId={backendForProfile(p, backends)?.id}
                   backendLanguage={backendForProfile(p, backends)?.language}
                   backendTargets={backendForProfile(p, backends)?.translationOverrides?.translateTo}
                   conflictText={conflictText(p.id)}

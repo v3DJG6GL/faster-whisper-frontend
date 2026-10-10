@@ -16,6 +16,7 @@ import { effectiveLanguage } from "../backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./chipController";
+import { wireCodes } from "../translationTargets";
 import { rememberRecent } from "../recent";
 import { maxTranslationTargets, translationTargetInfo } from "../capabilities";
 import type { Backend, Profile } from "../types";
@@ -298,7 +299,10 @@ function askTranslationTargets(seed: Record<string, unknown>, stillWanted?: () =
     const unlisten: (() => void)[] = [];
     void import("@tauri-apps/api/event")
       .then(async ({ listen }) => {
-        unlisten.push(await listen<string[]>("langpick://commit", (e) => finish({ kind: "picked", targets: e.payload ?? [] })));
+        // Only the codes the wire takes: the picker's recent/supported rows are not checked
+        // against the wire alphabet, and a pick of only refused codes is "original", not a
+        // silent no-translation that is remembered as a recent pick.
+        unlisten.push(await listen<string[]>("langpick://commit", (e) => finish({ kind: "picked", targets: wireCodes(e.payload) })));
         unlisten.push(await listen("langpick://abort", () => finish({ kind: "aborted" })));
         unlisten.push(await listen("langpick://unavailable", () => finish({ kind: "unavailable" })));
         // Cancelled during the import/listen awaits: never show (and focus) a picker nobody
