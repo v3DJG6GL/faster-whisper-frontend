@@ -107,6 +107,13 @@ export interface Backend {
 export type ActivationKind = "hold" | "handsfree";
 /** The pre-rename spelling of `"handsfree"`, accepted on every inbound path. */
 export const LEGACY_HANDSFREE = "latch";
+/** An untrusted activation value in its canonical spelling: the legacy `"latch"` reads as
+ *  `"handsfree"`, a known kind passes through, anything else is `undefined` — each inbound
+ *  path picks its own fallback for that (drop, "hold", or clear). */
+export function canonicalActivation(v: unknown): ActivationKind | undefined {
+  if (v === LEGACY_HANDSFREE) return "handsfree";
+  return v === "hold" || v === "handsfree" ? v : undefined;
+}
 
 /** A user-defined dictation setup: activation + chord + a target Backend + overrides. */
 export interface Profile {
@@ -1273,7 +1280,10 @@ export interface JobStatus {
 
 /** What a jobs call came back with — a typed outcome, not an exception,
  *  because a 404 (unknown / expired / foreign), a 409 (result asked for
- *  while running) and a 403 (feature off) each drive a different decision. */
+ *  while running) and the server's own jobs-gate 403 (feature off →
+ *  `disabled`) each drive a different decision. Any other 403 (a proxy / WAF
+ *  in front of the server) arrives as a retryable `error` "HTTP 403", so it
+ *  never drops the ledger row. */
 export type JobOutcome<T> =
   | { kind: "ok"; value: T }
   | { kind: "not_found" }

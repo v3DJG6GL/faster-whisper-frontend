@@ -38,11 +38,11 @@ import { hasOwn, ownProp } from "../own";
 import { sanitizeCueLimits } from "../transcript/cueSplit";
 import { appRuleKey, normalizeAppId, safeDisplayText } from "../sanitize";
 import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflicts";
-import { LEGACY_HANDSFREE } from "../types";
+import { canonicalActivation } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
+import { fmtFull, plural } from "../format";
 import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "../decodeKeys";
 import type {
-  ActivationKind,
   AppRule,
   AppSettings,
   Backend,
@@ -822,13 +822,7 @@ export function sanitizeProfiles(list: unknown): Profile[] {
       // through to the "hold" fallback would silently demote every hands-free profile on the
       // receiving device to push-to-talk — a behavior change from a spelling change. Rust's
       // `#[serde(alias = "latch")]` covers the config-file path; this covers the sync one.
-      activation: oneOf<ActivationKind>(
-        ((p as Profile).activation as string) === LEGACY_HANDSFREE
-          ? "handsfree"
-          : (p as Profile).activation,
-        ACTIVATIONS,
-        "hold",
-      ),
+      activation: canonicalActivation((p as Profile).activation) ?? "hold",
       // Rendered as React CHILDREN (`<Badge>{p.endpoint}</Badge>`, `languageLabel(p.language)`,
       // which returns its argument unchanged when the code is unknown) — an object leaf throws
       // "Objects are not valid as a React child" — and `endpoint` is another fallback-less enum.
@@ -1166,7 +1160,6 @@ const THEMES = ["dark", "light", "auto"] as const;
 const LOG_LEVELS = ["error", "warn", "info", "debug"] as const;
 const INDICATOR_POSITIONS = ["top", "bottom", "off"] as const;
 const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
-const ACTIVATIONS = ["hold", "handsfree"] as const;
 const ENDPOINT_KINDS = ["stream", "batch"] as const;
 const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
 const BACKEND_KINDS = ["auto", "full", "standard"] as const;
@@ -1331,6 +1324,16 @@ function sanitizeAppRules(rules: unknown): AppRule[] {
     .slice(0, MAX_SYNCED_ENTRIES);
 }
 
+/** The inbound API key for `id`, read exactly as `reconcileBackendSecrets` would write it: a
+ *  non-empty string, own property of a plain-object container. `secrets` is the one container in
+ *  the blob with no shape check on either side, so the review gate (`securityChanges`) reads it
+ *  through this too — a non-string value or a string container raised an api-key row whose
+ *  approval wrote nothing and whose rejection re-raised on every pull. */
+function inboundSecret(secrets: unknown, id: string): string | undefined {
+  const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
+  return typeof key === "string" && key ? key : undefined;
+}
+
 /** Write incoming secrets to the keyring, then re-derive every backend's
  *  hasApiKey from KEYRING TRUTH (imported key present, or one already stored
  *  on this machine) — so a synced "hasApiKey: true" can't claim a key that
@@ -1354,10 +1357,7 @@ async function reconcileBackendSecrets(
   // the pull that runs unattended at startup and on every window focus. Reading by id instead is
   // O(backends), can never drop a legitimate key, and makes the lookup own-property at the same
   // time (`secrets.constructor` is a truthy function otherwise — the class already fixed below).
-  const incoming = (id: string): string | undefined => {
-    const key = isPlainObject(secrets) ? ownProp(secrets as Record<string, unknown>, id) : undefined;
-    return typeof key === "string" && key ? key : undefined;
-  };
+  const incoming = (id: string): string | undefined => inboundSecret(secrets, id);
   // A key rotated on another device: read what this device stores BEFORE overwriting it, for
   // the backends it already runs. An unchanged rewritten key evicts nothing, and neither does a
   // degraded read (locked wallet, timed out) — the next connection test re-measures anyway.
@@ -2959,8 +2959,8 @@ export function securityChanges(
         backend: "",
         detail:
           hereDays === 0
-            ? `${what} older than ${nextDays} day(s) would start being deleted (currently kept forever)`
-            : `${what} would be deleted after ${nextDays} day(s) instead of ${hereDays}`,
+            ? `${what} older than ${plural(nextDays, "day")} would start being deleted (currently kept forever)`
+            : `${what} would be deleted after ${plural(nextDays, "day")} instead of ${fmtFull(hereDays)}`,
       });
     }
   };
@@ -3045,20 +3045,17 @@ export function securityChanges(
   // sends; the raw-list walk this replaced threw on `"list": 5` and on a non-string serverUrl
   // (`normalizeUrl` calls `.trim()`), escaping into `void pullNow()` with syncStatus stuck on
   // "syncing" and no error shown.
-  const inBackends = cats.backends && incoming.backends ? sanitizeBackends(incoming.backends.list) : [];
-  if (cats.backends && incoming.backends) {
-    if (gates?.modelDecodeDefaults !== false) {
-      out.push(...typedTextChanges(inBackends, local.backends?.list, "backends"));
-    } else {
-      const localIds = new Set((local.backends?.list ?? []).map((b) => b.id));
-      const fresh = inBackends.filter((b) => !localIds.has(b.id));
-      out.push(...typedTextChanges(fresh, local.backends?.list, "backends"));
-    }
-  }
   if (!cats.backends || !incoming.backends) return out;
+  const inBackends = sanitizeBackends(incoming.backends.list);
+  if (gates?.modelDecodeDefaults !== false) {
+    out.push(...typedTextChanges(inBackends, local.backends?.list, "backends"));
+  } else {
+    const localIds = new Set((local.backends?.list ?? []).map((b) => b.id));
+    const fresh = inBackends.filter((b) => !localIds.has(b.id));
+    out.push(...typedTextChanges(fresh, local.backends?.list, "backends"));
+  }
   const here = new Map((local.backends?.list ?? []).map((b) => [b.id, b]));
   const localSecrets = local.backends?.secrets ?? {};
-  const nextSecrets = incoming.backends.secrets ?? {};
   // Walk the entries `applyBlob` INSTALLS (`sanitizeBackends`: reserved ids out, a duplicate id's
   // later copy out, the entry cap, a cleaned or blanked serverUrl), not the raw list. A reserved,
   // duplicate or over-cap entry raised new-backend/server-url/api-key rows that parked the
@@ -3073,8 +3070,10 @@ export function securityChanges(
     // A KNOWN backend's address change, or an incoming key with "API keys" off, can never land —
     // applyBlob re-pins serverUrl / drops inbound secrets — so raising them made approval a no-op
     // and a rejection re-raise on every pull.
+    // An empty `serverUrl` is `sanitizeBackends` blanking an unsupported scheme: say so rather
+    // than render a blank target. `url` stays empty so the repoint footer stays off.
     if (!cur) {
-      out.push({ kind: "new-backend", backend: name, detail: b.serverUrl, url: b.serverUrl });
+      out.push({ kind: "new-backend", backend: name, detail: b.serverUrl || "(no address)", url: b.serverUrl });
     } else if (
       gates?.serverAddresses !== false &&
       normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)
@@ -3082,7 +3081,7 @@ export function securityChanges(
       out.push({
         kind: "server-url",
         backend: cur.name || name,
-        detail: `${cur.serverUrl} → ${b.serverUrl}`,
+        detail: `${cur.serverUrl} → ${b.serverUrl || "(none: the address would be cleared)"}`,
         url: b.serverUrl,
       });
     }
@@ -3095,7 +3094,8 @@ export function securityChanges(
     // rejects only the `__…__` namespace — so `toString`/`constructor` otherwise make both maps
     // return the same inherited function (comparison false, no prompt) or mislabel the detail line
     // as "the stored key would be replaced" for a key that does not exist locally.
-    const incomingKey = ownProp(nextSecrets, b.id);
+    // The incoming side goes through `inboundSecret`, the same reader the apply writes with.
+    const incomingKey = inboundSecret(incoming.backends.secrets, b.id);
     const localKey = ownProp(localSecrets, b.id);
     if (gates?.apiKeys !== false && incomingKey && cur && incomingKey !== localKey) {
       out.push({

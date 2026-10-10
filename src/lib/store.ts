@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { LEGACY_HANDSFREE } from "./types";
+import { canonicalActivation } from "./types";
 import { DEFAULT_PAGE_QUERY, type UsagePageQuery } from "./usageDerive";
 import type {
   AppRule,
@@ -177,16 +177,17 @@ function wellFormedProfiles(v: unknown): Profile[] {
         // unknown one is rendered AS A COMPONENT and unmounts the window). Dropped, not
         // rewritten, matching the shape-only rule: Rust's typed load rejects such a config
         // anyway; this covers the no-Rust dev path. The legacy spelling survives to the map.
-        (["hold", "handsfree", LEGACY_HANDSFREE] as string[]).includes((p as Profile).activation as string),
+        canonicalActivation((p as Profile).activation) !== undefined,
     )
     // Normalize the pre-rename `"latch"` spelling of `"handsfree"`. Rust's `#[serde(alias)]`
     // already does this for every config it parses, so this only covers the paths that skip
     // Rust — the browser dev path and a hand-edited config.json. Worth doing anyway: the
     // value indexes `GLYPH[p.activation]` in Home, which is rendered AS A COMPONENT, so an
     // unmatched key is `React.createElement(undefined)` and unmounts the main window.
-    .map((p) =>
-      (p.activation as string) === LEGACY_HANDSFREE ? { ...p, activation: "handsfree" as const } : p,
-    );
+    .map((p) => {
+      const activation = canonicalActivation(p.activation)!;
+      return activation === p.activation ? p : { ...p, activation };
+    });
 }
 
 function wellFormedBackends(v: unknown): Backend[] {

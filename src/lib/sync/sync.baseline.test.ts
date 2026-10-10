@@ -565,7 +565,7 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(dictChange({ dictationRetentionDays: 0.3 })).toBeUndefined(); // rounds to 0 = off
     expect(dictChange({ recordingsRetentionDays: 2.5 })).toBeUndefined(); // not a u32: dropped
     expect(dictChange({ recordingsRetentionDays: -3 })).toBeUndefined();
-    expect(dictChange({ dictationRetentionDays: 6.6 })?.detail).toContain("after 7 day(s) instead of 30");
+    expect(dictChange({ dictationRetentionDays: 6.6 })?.detail).toContain("after 7 days instead of 30");
     const fileLocal = { fileTranscriptions: { historyRetentionDays: 30 } } as never;
     const fileChange = (v: unknown) =>
       securityChanges({ fileTranscriptions: { historyRetentionDays: v } } as never, fileLocal, CATS_ALL).some(
@@ -974,12 +974,14 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("server rows judge the backends the apply installs, not the raw list", () => {
-    const rows = (list: unknown[], localList: unknown[], secrets = {}) =>
+    const changes = (list: unknown[], localList: unknown[], secrets: unknown = {}) =>
       securityChanges(
         { backends: { list, secrets } } as never,
         { backends: { list: localList, secrets: {} } } as never,
         CATS_ALL,
-      ).map((c) => [c.kind, c.url ?? ""]);
+      );
+    const rows = (list: unknown[], localList: unknown[], secrets: unknown = {}) =>
+      changes(list, localList, secrets).map((c) => [c.kind, c.url ?? ""]);
     // (a) A reserved id is dropped by the apply: no new-backend row, no key row.
     expect(rows([{ id: "__x__", name: "Peer", serverUrl: "http://p:8000" }], [], { __x__: "k" })).toEqual([]);
     // (b) A duplicate id: only the FIRST copy lands, so one row naming its address.
@@ -1005,8 +1007,33 @@ describe("applyBlob keep-local (baseline)", () => {
     ).toEqual([]);
     // (d) An unsupported scheme is stored blank: the row names the blank value…
     expect(rows([{ id: "b1", name: "Home", serverUrl: "ftp://h" }], known)).toEqual([["server-url", ""]]);
+    // …and says the address would be cleared rather than rendering a blank target.
+    expect(changes([{ id: "b1", name: "Home", serverUrl: "ftp://h" }], known)[0].detail).toBe(
+      "http://p:8000 → (none: the address would be cleared)",
+    );
+    expect(changes([{ id: "b2", name: "Peer", serverUrl: "ftp://h" }], known)[0]).toMatchObject({
+      kind: "new-backend",
+      detail: "(no address)",
+      url: "",
+    });
     // …and nothing changes when the local address is already blank.
     expect(rows([{ id: "b1", name: "Home", serverUrl: "ftp://h" }], [{ ...known[0], serverUrl: "" }])).toEqual([]);
+  });
+
+  it("an api-key row needs a key the apply would actually write", () => {
+    const known = [{ id: "b1", name: "Home", serverUrl: "http://p:8000" }];
+    const keyRows = (list: unknown[], secrets: unknown) =>
+      securityChanges(
+        { backends: { list, secrets } } as never,
+        { backends: { list, secrets: {} } } as never,
+        CATS_ALL,
+      ).filter((c) => c.kind === "api-key");
+    // A non-string value: `reconcileBackendSecrets` writes nothing for it.
+    expect(keyRows(known, { b1: 5 })).toEqual([]);
+    // A string container: own-property reads index it per code unit, so id "0" found "a".
+    expect(keyRows([{ id: "0", name: "Zero", serverUrl: "http://p:8000" }], "abc")).toEqual([]);
+    // A real key still asks.
+    expect(keyRows(known, { b1: "sk-1" })).toHaveLength(1);
   });
 
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {

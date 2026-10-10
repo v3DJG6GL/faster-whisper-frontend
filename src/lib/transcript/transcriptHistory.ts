@@ -9,7 +9,7 @@ import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "../api";
 import { useApp } from "../store";
-import { LEGACY_HANDSFREE, type BatchResult, type TranscribeOptions } from "../types";
+import { canonicalActivation, type BatchResult, type TranscribeOptions } from "../types";
 import { joinSegmentTexts } from "./transcriptFormats";
 import { applyTextEdits } from "./wordAlign";
 
@@ -181,8 +181,10 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   const im = r.insertMethod as unknown;
   if (im != null && im !== "typed" && im !== "clipboard" && im !== "none") out = { ...out, insertMethod: undefined };
   const act = r.activation as unknown;
-  if (act === LEGACY_HANDSFREE) out = { ...out, activation: "handsfree" };
-  else if (act != null && act !== "hold" && act !== "handsfree") out = { ...out, activation: undefined };
+  if (act != null) {
+    const canon = canonicalActivation(act);
+    if (canon !== act) out = { ...out, activation: canon };
+  }
   if (out.result && typeof out.result.text !== "string") out = { ...out, result: { ...out.result, text: "" } };
   const dur = out.result?.duration as unknown;
   if (out.result && dur != null && !(typeof dur === "number" && Number.isFinite(dur))) {
