@@ -1176,7 +1176,9 @@ export default function Backends() {
               // Once per card, not five URL parses per render.
               const eff = effectiveUrl(b);
               const auth = authorityOf(eff);
-              const rowModel = ownModelName(b.model, effectiveServerKind(b, conn));
+              // Sanitized BEFORE the presence test: a synced model of only format characters
+              // (an RLM) would otherwise leave the separator dangling before nothing.
+              const rowModel = safeDisplayText(ownModelName(b.model, effectiveServerKind(b, conn)), 80).trim();
               return (
                 <Card key={b.id} className="p-5">
                   <div className="flex items-center gap-4">
@@ -1239,7 +1241,7 @@ export default function Backends() {
                         {rowModel && (
                           <>
                             <span className="text-faint">·</span>
-                            <span className="text-faint">{safeDisplayText(rowModel, 80)}</span>
+                            <span className="text-faint">{rowModel}</span>
                           </>
                         )}
                       </div>

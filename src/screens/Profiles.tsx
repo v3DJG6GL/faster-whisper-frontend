@@ -744,6 +744,9 @@ function ProfileRow({
   const Glyph = meta.icon;
   const effLangCode = effectiveLanguage(p.language, backendLanguage);
   const effLang = effLangCode ? languageLabel(effLangCode) : "";
+  // The DISPLAYED name, not the raw string: a synced model of only whitespace or format
+  // characters renders nothing, so it gets no (empty) badge.
+  const shortModel = shortModelName(p.model, 40)?.trim();
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
       <div className="flex items-center gap-4">
@@ -769,7 +772,7 @@ function ProfileRow({
               source={effLang}
               targets={configuredRouteTargets(p, { translationOverrides: { translateTo: backendTargets } })}
             />
-            {p.model && <Badge>{shortModelName(p.model, 40) ?? ""}</Badge>}
+            {shortModel && <Badge>{shortModel}</Badge>}
             {p.endpoint && <Badge>{p.endpoint}</Badge>}
           </div>
           <div className="mt-1.5 flex items-center gap-3">
