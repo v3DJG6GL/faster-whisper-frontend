@@ -8,6 +8,7 @@ import {
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
 } from "./transcriptFormats";
+import { parseImportedText } from "./subtitleImport";
 import type { BatchResult } from "../types";
 
 const RESULT: BatchResult = {
@@ -72,6 +73,18 @@ describe("txt", () => {
     const mixed = { ...ja, segments: [ja.segments![0], { ...ja.segments![1], text: "OK." }] };
     expect(generateExport(mixed, { format: "txt" })).toBe("Speaker 1: 今日は晴れ。 OK.\n");
   });
+  it("with speakers: a turn of only blank segments writes no bare name paragraph", () => {
+    const gap: BatchResult = {
+      text: "Hi there",
+      speakers: ["SPEAKER_00", "SPEAKER_01"],
+      segments: [
+        { start: 0, end: 1, text: "Hi", speaker: "SPEAKER_00" },
+        { start: 1, end: 2, text: "  ", speaker: "SPEAKER_01" },
+        { start: 2, end: 3, text: "there", speaker: "SPEAKER_00" },
+      ],
+    };
+    expect(generateExport(gap, { format: "txt" })).toBe("Speaker 1: Hi\n\nSpeaker 1: there\n");
+  });
 });
 
 describe("srt", () => {
@@ -97,6 +110,20 @@ describe("srt", () => {
     const only = generateExport(RESULT, { format: "srt", speakerColors: "line-only" });
     expect(only).toContain('<font color="#ff9e2c">Hello there.</font>');
     expect(only).not.toContain("Speaker 1");
+  });
+  it("a blank original beside its translation leaves no empty line that would end the cue", () => {
+    const blank: BatchResult = {
+      text: "\u200e",
+      segments: [{ start: 1, end: 2, text: "\u200e", translations: { de: "Leer" } }],
+    };
+    const opts: ExportOptions = { format: "srt", tracks: ["orig", "de"] };
+    const srt = generateExport(blank, opts);
+    expect(srt).toBe("1\n00:00:01,000 --> 00:00:02,000\nLeer\n");
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["Leer"]);
+    expect(generateExport(blank, { ...opts, format: "vtt" })).toContain("00:00:01.000 --> 00:00:02.000\n<c.mt>Leer</c>\n");
+    expect(generateExport(blank, { ...opts, format: "txt", timestamps: true })).toBe("[00:01] Leer\n");
+    // Original-only keeps its (empty) cue.
+    expect(generateExport(blank, { format: "srt" })).toBe("1\n00:00:01,000 --> 00:00:02,000\n\n");
   });
 });
 
@@ -881,6 +908,16 @@ describe("subtitle cues", () => {
     };
     expect(previewExport(zh, { format: "txt" }, 12).text).toBe(generateExport(zh, { format: "txt" }));
     expect(previewExport(zh, { format: "txt" }, 1).text).toBe("你好。\n");
+  });
+
+  it("the TXT preview's fallback (a segment not found in the text) joins like the export", () => {
+    const zh: BatchResult = {
+      text: "edited",
+      language: "zh",
+      segments: [{ start: 0, end: 1, text: "你好。" }, { start: 1, end: 2, text: " " }, { start: 2, end: 3, text: "世界。" }, { start: 3, end: 4, text: "再见。" }],
+    };
+    // Two cues (the blank segment has none) = the first three segments.
+    expect(previewExport(zh, { format: "txt" }, 2).text).toBe("你好。世界。\n");
   });
 
   it("preview and cps reuse a grid the caller already built", () => {

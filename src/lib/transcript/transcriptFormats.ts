@@ -207,7 +207,7 @@ interface Ctx {
 /** Segment texts joined into one paragraph: a space between two, except where both sides of
  *  the seam are unspaced script (CJK) — the plain TXT writes result.text verbatim, which never
  *  had one there. Spaced text joins exactly as `.join(" ")` over the non-empty parts; an empty
- *  part (a blank segment, one cleared in the viewer) is skipped, so it leaves no double,
+ *  part (a blank segment) is skipped, so it leaves no double,
  *  leading or trailing space and no space inside CJK. */
 export function joinSegmentTexts(parts: string[]): string {
   // Pieces + one join, tracking the last char: reading the growing string's tail each step
@@ -266,8 +266,12 @@ function cueLines(
   orig: string,
   mt: (text: string, seg: TranscriptSegment, lang: string) => string,
 ): string[] {
+  // A blank original beside a translation would be an empty payload line, which ends an
+  // SRT/VTT cue and orphans the translation under it: drop it then. An original-only cue
+  // keeps its (deliberately) empty line.
+  const dropOrig = !clean(seg.text) && ctx.lineTracks.some((l) => l !== "orig" && trOf(seg, l) !== null);
   return ctx.lineTracks.flatMap((lang) => {
-    if (lang === "orig") return [orig];
+    if (lang === "orig") return dropOrig ? [] : [orig];
     const t = trOf(seg, lang);
     return t === null ? [] : [mt(t, seg, lang)];
   });
@@ -400,7 +404,10 @@ function txtExport(result: BatchResult, ctx: Ctx): string {
       flush();
       who = label;
     }
-    buf.push(clean(seg.text));
+    // A blank segment adds nothing (as in the interleaved branch): a turn of only blanks
+    // writes no bare "Name: " paragraph.
+    const t = clean(seg.text);
+    if (t) buf.push(t);
   }
   flush();
   return paras.join("\n\n") + "\n";
@@ -790,14 +797,14 @@ export function exportFileGroups(
 
 /** The part of `text` the first `until` segments make up. The plain TXT export
  *  writes result.text verbatim, so a space-joined sample showed spaces unspaced
- *  (CJK) text never had; the join stays the fallback when a segment isn't found. */
+ *  (CJK) text never had; joinSegmentTexts stays the fallback when a segment isn't found. */
 function textPrefix(text: string, segs: TranscriptSegment[], until: number): string {
   if (until >= segs.length) return text;
   let cur = 0;
   for (const s of segs.slice(0, until)) {
     const t = s.text.trim();
     const at = text.indexOf(t, cur);
-    if (at < 0) return segs.slice(0, until).map((x) => x.text.trim()).join(" ");
+    if (at < 0) return joinSegmentTexts(segs.slice(0, until).map((x) => x.text.trim()));
     cur = at + t.length;
   }
   return text.slice(0, cur);
