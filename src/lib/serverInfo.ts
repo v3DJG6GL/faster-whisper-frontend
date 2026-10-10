@@ -17,7 +17,7 @@ export interface InfoRow {
   you?: string;
 }
 
-const days = (n: number) => (n === 1 ? "1 day" : `${n} days`);
+const days = (n: number) => plural(n, "day");
 /** A retention in days where the server reads 0 as "never auto-delete". */
 const keepDays = (n: number) => (n === 0 ? "0 · forever" : days(n));
 

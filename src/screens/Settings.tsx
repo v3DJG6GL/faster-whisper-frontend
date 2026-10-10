@@ -195,9 +195,9 @@ export default function Settings() {
     // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
     // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
     if (kind === "dict" || kind === "clear") dropPendingWrites();
-    const done = (n: number, what: string) => {
+    const done = (n: number, [one, many]: [string, string]) => {
       if (tabRef.current === "Recording & history") {
-        setStoreMsg({ text: `Removed ${n} ${what}.` });
+        setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
         setConfirming(null);
       }
       void loadHistory(true).catch(() => {});
@@ -209,15 +209,16 @@ export default function Settings() {
       } else console.error("store action failed:", e);
     };
     setBusy("store", true); // set with the IPC, so nothing above can leave it stuck
-    const [op, what]: [Promise<number>, string] =
+    // [one, many]: delete_all_dictations returns one combined count of records and audio.
+    const [op, what]: [Promise<number>, [string, string]] =
       kind === "dict"
-        ? [deleteAllDictations(basePref), "dictation(s) and audio file(s)"]
+        ? [deleteAllDictations(basePref), ["dictation or audio file", "dictations and audio files"]]
         : kind === "files"
-          ? [removeTranscriptMedia("file", basePref), "audio cop(y/ies)"]
+          ? [removeTranscriptMedia("file", basePref), ["audio copy", "audio copies"]]
           : kind === "links"
-            ? [removeTranscriptMedia("url", basePref), "downloaded file(s)"]
+            ? [removeTranscriptMedia("url", basePref), ["downloaded file", "downloaded files"]]
             : kind === "video"
-              ? [removeTranscriptMedia("video", basePref), "video file(s)"]
+              ? [removeTranscriptMedia("video", basePref), ["video file", "video files"]]
               : [
                   // forgetRecord's deleted path reads an earlier launch's lost requests from the
                   // history mirror, which only the Transcribe/History/Logs screens load: load it
@@ -228,7 +229,7 @@ export default function Settings() {
                     forgetRecord(null, { deleted: true });
                     return clearFileTranscriptions(basePref);
                   }),
-                  "transcript(s)",
+                  ["transcript", "transcripts"],
                 ];
     void op
       .then((n) => done(n, what))
@@ -820,7 +821,7 @@ export default function Settings() {
               {confirming === "files" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("files")}>
-                    Delete {storeStats?.fileMediaFiles ?? 0} files
+                    Delete {plural(storeStats?.fileMediaFiles ?? 0, "file")}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -846,7 +847,7 @@ export default function Settings() {
               {confirming === "links" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("links")}>
-                    Delete {storeStats?.linkMediaFiles ?? 0} files
+                    Delete {plural(storeStats?.linkMediaFiles ?? 0, "file")}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -872,7 +873,7 @@ export default function Settings() {
               {confirming === "video" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("video")}>
-                    Delete {storeStats?.videoMediaFiles ?? 0} files
+                    Delete {plural(storeStats?.videoMediaFiles ?? 0, "file")}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -893,13 +894,13 @@ export default function Settings() {
             </SettingRow>
             <SettingRow
               title="Delete all transcriptions"
-              desc={`Removes all ${storeStats?.fileCount ?? 0} file, link and text transcriptions, with their corrections, speaker names and stored audio.`}
+              desc={`Removes all ${plural(storeStats?.fileCount ?? 0, "file, link or text transcription", "file, link and text transcriptions")}, with their corrections, speaker names and stored audio.`}
               last
             >
               {confirming === "clear" ? (
                 <span className="flex items-center gap-2">
                   <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")}>
-                    Delete {storeStats?.fileCount ?? 0} transcripts
+                    Delete {plural(storeStats?.fileCount ?? 0, "transcript")}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel

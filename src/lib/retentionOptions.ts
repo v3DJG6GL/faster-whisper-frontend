@@ -1,3 +1,5 @@
+import { plural } from "./format";
+
 /** One `<Select>` option: the persisted day count as a string, and its label. */
 export type DayOption = { value: string; label: string };
 
@@ -12,7 +14,7 @@ export function withCurrentDay(options: DayOption[], days: number): DayOption[] 
   const v = String(days);
   return options.some((o) => o.value === v)
     ? options
-    : [...options, { value: v, label: days === 1 ? "1 day" : `${days} days` }];
+    : [...options, { value: v, label: plural(days, "day") }];
 }
 
 export const LOG_RETENTION_OPTIONS: DayOption[] = [

@@ -63,6 +63,10 @@ describe("keepRows", () => {
     expect(value("USAGE_APP_RETENTION_DAYS")).toBe("0 · forever");
     expect(keepRows(info, true).find((r) => r.env === "CAPTURES_RETENTION_DAYS")?.value).toBe("365 days");
   });
+  it("groups the thousands of a long retention", () => {
+    const long = { keeps: { captures: { enabled: true, retention_days: 3650 } } };
+    expect(keepRows(long, true).find((r) => r.env === "CAPTURES_RETENTION_DAYS")?.value).toBe("3,650 days");
+  });
   it("a sample rate never rounds to 0% or 100%", () => {
     const rate = (sample_fraction: number) =>
       keepRows({ keeps: { captures: { enabled: true, sample_fraction } } }, true).find(

@@ -28,6 +28,11 @@ describe("withCurrentDay", () => {
     expect(out[out.length - 1]).toEqual({ value: "1", label: "1 day" });
   });
 
+  it("groups the thousands of a large unlisted value like every other count", () => {
+    const out = withCurrentDay(LOG_RETENTION_OPTIONS, 3650);
+    expect(out[out.length - 1]).toEqual({ value: "3650", label: "3,650 days" });
+  });
+
   it("the three retention lists agree with the day the app would persist", () => {
     // Each value is one an older config can carry and its own list lacks.
     const out = withCurrentDay(DICTATION_RETENTION_OPTIONS, 14);
