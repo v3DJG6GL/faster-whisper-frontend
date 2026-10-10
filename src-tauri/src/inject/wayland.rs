@@ -206,8 +206,10 @@ mod imp {
         }
     }
 
-    /// Build a character → (keycode, modifiers) map for the active layout.
-    fn build_charmap() -> Option<HashMap<char, KeySpec>> {
+    /// Build a character → (keycode, modifiers) map for the active layout. `composes: false` (a
+    /// paste job, which only looks up the chord's ASCII letter) skips the compose table and the
+    /// dead-key pass: they only add accented chars no key types directly.
+    fn build_charmap(composes: bool) -> Option<HashMap<char, KeySpec>> {
         let (rules, model, layout, variant) = query_layout();
         // Look glyphs up in the ACTIVE layout group, not always group 0: with a multi-layout config
         // (us,de,…) the portal injects raw keycodes KWin resolves under the live group, so a group-0
@@ -224,11 +226,8 @@ mod imp {
             None,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )?;
-        Some(charmap_from_keymap(
-            &keymap,
-            group,
-            compose_table().as_ref(),
-        ))
+        let compose = if composes { compose_table() } else { None };
+        Some(charmap_from_keymap(&keymap, group, compose.as_ref()))
     }
 
     /// The compose table the focused app most likely resolves dead keys with: the one for the
@@ -269,9 +268,11 @@ mod imp {
     ) -> HashMap<char, KeySpec> {
         let mut map: HashMap<char, KeySpec> = HashMap::new();
         // Dead keysyms (dead_acute, dead_circumflex, dead_tilde...) and the key that types each,
-        // first (lowest-level) occurrence wins. They produce no character of their own, so the
-        // level scan below would otherwise drop them — and with them every letter a layout types
-        // ONLY through one (es/pt ó, fr ê, gr έ), silently skipped from the transcript.
+        // fewest-modifier occurrence wins, lowest keycode on a tie (de has dead_circumflex at
+        // AltGr on ä and bare on ^: ê must not cost an AltGr chord). They produce no character
+        // of their own, so the level scan below would otherwise drop them — and with them every
+        // letter a layout types ONLY through one (es/pt ó, fr ê, gr έ), silently skipped from the
+        // transcript.
         let mut deads: Vec<(xkb::Keysym, (i32, bool, bool))> = Vec::new();
         for kc in keymap.min_keycode().raw()..=keymap.max_keycode().raw() {
             let key = xkb::Keycode::new(kc);
@@ -291,15 +292,18 @@ mod imp {
             let caps_safe = key_is_caps_safe(keymap, key, g);
             for level in 0..levels {
                 for sym in keymap.key_get_syms_by_level(key, g, level) {
-                    if (0xfe50..=0xfe93).contains(&sym.raw())
-                        && !deads.iter().any(|(d, _)| d == sym)
-                    {
+                    if (0xfe50..=0xfe93).contains(&sym.raw()) {
                         let prefix = (
                             (kc - EVDEV_OFFSET) as i32,
                             level == 1 || level == 3,
                             level == 2 || level == 3,
                         );
-                        deads.push((*sym, prefix));
+                        let cost = |p: (i32, bool, bool)| u8::from(p.1) + u8::from(p.2);
+                        match deads.iter_mut().find(|(d, _)| d == sym) {
+                            Some(e) if cost(prefix) < cost(e.1) => e.1 = prefix,
+                            Some(_) => {}
+                            None => deads.push((*sym, prefix)),
+                        }
                     }
                     let cp = xkb::keysym_to_utf32(*sym);
                     if cp == 0 {
@@ -472,9 +476,18 @@ mod imp {
                 .filter(|&(i, _)| !taken(i))
                 .map(|(_, &m)| key_spec_for(m, map).map(|s| (m, s)))
                 .collect();
-            if let Some(rest) = rest {
-                return Some(std::iter::once((ch, spec)).chain(rest).collect());
-            }
+            // The typed keys must still spell `c`: a taken mark that follows an untaken one of
+            // the same combining class (ǖ = u + U+0308 + U+0304 typed as ū then U+0308) would
+            // swap their order — another glyph.
+            let Some(rest) = rest.filter(|rest| {
+                std::iter::once(ch)
+                    .chain(rest.iter().map(|&(m, _)| m))
+                    .nfd()
+                    .eq(std::iter::once(c).nfd())
+            }) else {
+                continue;
+            };
+            return Some(std::iter::once((ch, spec)).chain(rest).collect());
         }
         None
     }
@@ -846,11 +859,13 @@ mod imp {
             // A bare auto-Enter job (no text, no chord) presses only the constant KEY_ENTER and never
             // reads the map, so it skips the rebuild — and with it a keymap failure that would
             // otherwise fail an Enter that needs no keymap. Built on the blocking pool: setxkbmap,
-            // XOpenDisplay and the xkb compile must not stall a runtime worker.
+            // XOpenDisplay and the xkb compile must not stall a runtime worker. A paste job reads
+            // only the chord's letter key, so it skips the compose table and the dead-key pass.
             let charmap = if !job.paste && job.text.is_empty() {
                 Some(HashMap::new())
             } else {
-                tokio::task::spawn_blocking(build_charmap)
+                let paste = job.paste;
+                tokio::task::spawn_blocking(move || build_charmap(!paste))
                     .await
                     .ok()
                     .flatten()
@@ -1484,6 +1499,23 @@ mod imp {
             assert!(key_sequence('\u{1ebd}', &vn).is_none());
             // A letter on its own key is that one key.
             assert_eq!(key_sequence('a', &vn).map(|k| k.len()), Some(1));
+            // ǖ = u + U+0308 + U+0304 (same combining class): ū then U+0308 would type another
+            // glyph, so with no ü key the letter is unreachable; ü then U+0304 spells it.
+            let macron = latin_with(&[
+                ('\u{16b}', spec(3, false, None)),
+                ('\u{308}', spec(4, false, None)),
+            ]);
+            assert!(key_sequence('\u{1d6}', &macron).is_none());
+            let diaeresis = latin_with(&[
+                ('\u{fc}', spec(3, false, None)),
+                ('\u{304}', spec(4, false, None)),
+            ]);
+            let seq: Vec<char> = key_sequence('\u{1d6}', &diaeresis)
+                .unwrap()
+                .into_iter()
+                .map(|(ch, _)| ch)
+                .collect();
+            assert_eq!(seq, ['\u{fc}', '\u{304}']);
         }
 
         #[test]
@@ -1502,6 +1534,14 @@ mod imp {
             }
             // ñ has a key of its own and keeps it.
             assert!(es.get(&'\u{f1}').is_some_and(|s| s.dead.is_none()));
+            if let Some(de) = real_charmap("de") {
+                // de has dead_circumflex at AltGr on ä (AC11) and bare on ^ (TLDE, evdev 41): ê
+                // takes the bare one.
+                assert_eq!(
+                    de.get(&'\u{ea}').and_then(|s| s.dead),
+                    Some((41, false, false))
+                );
+            }
             assert!(!divert_unreachable(
                 "La canci\u{f3}n est\u{e1} aqu\u{ed}",
                 &es
