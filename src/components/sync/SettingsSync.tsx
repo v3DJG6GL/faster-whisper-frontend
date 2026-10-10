@@ -3,7 +3,7 @@
 // per-device category toggles + status/manual controls + conflict dialog).
 // The engine lives in lib/sync/sync.ts; this screen only drives it.
 
-import { useMemo, useState, type ReactNode, useEffect } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
@@ -18,7 +18,7 @@ import {
   StatusDot,
   Toggle,
 } from "@/components/ui";
-import { evdevStatus, pickAndImportSettings, pickSavePath, syncDelete, type EvdevStatus } from "@/lib/api";
+import { pickAndImportSettings, pickSavePath, syncDelete } from "@/lib/api";
 import { applyImport, exportToFile, stripMachineFolders } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/sync/SyncSettingsList";
 import { SETTING } from "@/lib/settingsManifest";
@@ -28,6 +28,7 @@ import {
   approvePendingReview,
   dismissSyncConflict,
   deleteFailureMessage,
+  disableConflictingProfiles,
   getPendingConflict,
   getPendingReview,
   isCodeList,
@@ -46,10 +47,9 @@ import {
 import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { relTime } from "@/lib/format";
-import { conflicts as chordConflicts, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { IS_WINDOWS } from "@/lib/platform";
 import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
-import type { Backend, SyncCategory } from "@/lib/types";
+import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
@@ -154,15 +154,6 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
 
 /** Per-category selection + hazard preview for a parsed import file. */
 export function ImportPreview({ result, onClose }: { result: ImportResult; onClose: () => void }) {
-  const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
-  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
-  useEffect(() => {
-    void evdevStatus().then(setEvdev).catch(() => {}); // match Profiles/Settings; ignore an IPC reject
-  }, []);
-  // Same predicate as the persistence save gate (persistence.ts): a low-level backend
-  // owns the chords only on Windows, or when evdev is enabled AND permitted. While the
-  // status is still loading, collapse — over-warn rather than under-warn.
-  const lowLevelActive = IS_WINDOWS || (evdevEnabled && !!evdev?.permitted);
   const dictating = useApp((st) => st.status !== "idle");
   // Normalize a pre-split file once for everything this dialog previews —
   // `applyImport` migrates again on apply (idempotent), so preview and apply
@@ -195,13 +186,14 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
       : undefined,
   };
 
-  // Predict hotkey conflicts in the WOULD-BE state (imported profiles and/or
-  // quick-add chord over the current ones) so the user isn't surprised by the
-  // save-freeze banner after applying. Conservative L/R collapse off-Windows —
-  // mirrors the persistence save-gate's no-low-level-backend assumption.
+  // Predict how the apply resolves hotkey collisions in the WOULD-BE state (imported profiles
+  // and/or quick-add chord over the current ones): `applyBlob` never leaves a conflicting set for
+  // the save gate to trip on — it switches the later colliding profile off, or keeps this
+  // device's quick-add chord over an incoming one that collides with local profiles. Run its own
+  // `disableConflictingProfiles` (same L/R collapse off-Windows) so the notice names what happens.
   // Run the SAME sanitizers `applyBlob` runs. This dialog is the consent step, so it renders
   // strictly BEFORE them — and `arr()` coerces only the CONTAINER, so every element was
-  // attacker-shaped at the point `chordConflicts` walked it, in a render body, with no error
+  // attacker-shaped at the point `conflicts()` walked it, in a render body, with no error
   // boundary anywhere in the tree. A profile missing `hotkey` threw on `p.hotkey.length` and a
   // numeric code threw in `canonicalizeCodes`' `localeCompare` tie-break — unmounting the very
   // window whose job is to let the user REJECT this blob. The same call also bounds chord LENGTH
@@ -214,9 +206,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // conflict the apply then resolves by switching the colliding imported profiles off.
   const rawQa = categories.dictionary?.quickAddHotkey;
   const wouldQa = sel.dictionary && isCodeList(rawQa) ? rawQa : st.settings.general.quickAddHotkey;
-  const peers = withQuickAddPeer(wouldProfiles, wouldQa).slice(0, MAX_PREVIEW_PEERS);
-  const predictedConflicts =
-    chordConflicts(peers, !lowLevelActive).length > 0;
+  const chordFix = predictChordFix(wouldProfiles, wouldQa, sel.profiles && isPlainObject(categories.profiles));
 
   // Judged on what the apply installs (sanitized, as above). Import never deletes a stored key
   // and the apply re-derives `hasApiKey` from the keyring by id, so a same-id backend this
@@ -353,12 +343,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
             {safeDisplayText(w, 300)}
           </Notice>
         ))}
-        {predictedConflicts && (
-          <Notice tone="warn">
-            Some imported shortcuts collide — saving stays paused after import until you resolve them
-            in Profiles.
-          </Notice>
-        )}
+        <ChordFixNotices fix={chordFix} source="file" />
         {dictating && <Notice tone="warn">Stop dictation before importing.</Notice>}
         {error && <Notice tone="warn">{error}</Notice>}
       </div>
@@ -392,15 +377,6 @@ export function RestoreFromServer({
   onCancel: () => void;
   onApplied: () => void | Promise<void>;
 }) {
-  const evdevEnabled = useApp((st) => st.settings.general.evdevEnabled);
-  const [evdev, setEvdev] = useState<EvdevStatus | null>(null);
-  useEffect(() => {
-    void evdevStatus().then(setEvdev).catch(() => {}); // match Profiles/Settings; ignore an IPC reject
-  }, []);
-  // Same predicate as the persistence save gate (persistence.ts): a low-level backend
-  // owns the chords only on Windows, or when evdev is enabled AND permitted. While the
-  // status is still loading, collapse — over-warn rather than under-warn.
-  const lowLevelActive = IS_WINDOWS || (evdevEnabled && !!evdev?.permitted);
   const dictating = useApp((st) => st.status !== "idle");
   // Normalize a pre-split server blob for the preview AND the apply below.
   const blob = useMemo(() => migrateBlob((state.blob ?? {}) as SyncBlob), [state.blob]);
@@ -426,19 +402,18 @@ export function RestoreFromServer({
       : undefined,
   };
 
-  // Same would-be-state hazard previews as ImportPreview: predicted hotkey
-  // collisions, and (new here) whether a selected category overwrites data the
+  // Same would-be-state hazard previews as ImportPreview: how the apply resolves
+  // hotkey collisions, and (new here) whether a selected category overwrites data the
   // device already has — on an empty app the restore is warning-free.
   // Same reasoning as ImportPreview above: sanitize with `applyBlob`'s own helpers, because this
-  // dialog renders before them and `chordConflicts` walks the elements in a render body.
+  // dialog renders before them and `conflicts()` walks the elements in a render body.
   const st = useApp.getState();
   const wouldProfiles = sel.profiles && blob.profiles ? installProfiles : st.profiles;
   // Post-migration the chord lives in the dictionary category; absent or malformed keeps this
   // device's chord, as in ImportPreview.
   const rawQa = blob.dictionary?.quickAddHotkey;
   const wouldQa = sel.dictionary && isCodeList(rawQa) ? rawQa : st.settings.general.quickAddHotkey;
-  const peers = withQuickAddPeer(wouldProfiles, wouldQa).slice(0, MAX_PREVIEW_PEERS);
-  const predictedConflicts = chordConflicts(peers, !lowLevelActive).length > 0;
+  const chordFix = predictChordFix(wouldProfiles, wouldQa, sel.profiles && isPlainObject(blob.profiles));
   const replaced = replacedNames(sel, blob, st);
 
   const apply = async () => {
@@ -510,12 +485,7 @@ export function RestoreFromServer({
         <Notice tone="ok">
           After restoring, settings sync turns on for this device against this server.
         </Notice>
-        {predictedConflicts && (
-          <Notice tone="warn">
-            Some restored shortcuts collide — saving stays paused after restoring until you resolve
-            them in Profiles.
-          </Notice>
-        )}
+        <ChordFixNotices fix={chordFix} source="backup" />
         {dictating && <Notice tone="warn">Stop dictation before restoring.</Notice>}
         {error && <Notice tone="warn">{error}</Notice>}
       </div>
@@ -641,6 +611,46 @@ const MAX_SHOWN_ADDRESSES = 20;
  *  pushes O(n²) result objects, and it runs in the render body — before the user has consented to
  *  anything. Truncating a predictive warning drops no data; the applied list is untouched. */
 const MAX_PREVIEW_PEERS = 500;
+
+/** What `applyBlob`'s collision pass would do to the would-be bindings: which profiles it
+ *  switches off (by name), and whether it drops the incoming quick-add chord. */
+function predictChordFix(
+  wouldProfiles: Profile[],
+  wouldQa: string[],
+  profilesAreInbound: boolean,
+): { switchedOff: string[]; qaKept: boolean } {
+  const before = wouldProfiles.slice(0, MAX_PREVIEW_PEERS);
+  const resolved = disableConflictingProfiles(before, wouldQa, profilesAreInbound);
+  return {
+    switchedOff: resolved.profiles
+      .filter((p, i) => p.enabled === false && before[i]?.enabled !== false)
+      .map((p) => p.name),
+    qaKept: resolved.rejectQuickAddHotkey,
+  };
+}
+
+const MAX_SHOWN_SWITCHED_OFF = 3;
+function ChordFixNotices({ fix, source }: { fix: ReturnType<typeof predictChordFix>; source: "file" | "backup" }) {
+  const names = fix.switchedOff.slice(0, MAX_SHOWN_SWITCHED_OFF).map((n) => `“${safeText(n, 60)}”`);
+  const more = fix.switchedOff.length - names.length;
+  if (more > 0) names.push(`${more} more`);
+  return (
+    <>
+      {fix.switchedOff.length > 0 && (
+        <Notice tone="warn">
+          Some shortcuts collide — {joinNames(names)} will be switched off. Give{" "}
+          {fix.switchedOff.length === 1 ? "it" : "each"} a free shortcut and re-enable it in Profiles.
+        </Notice>
+      )}
+      {fix.qaKept && (
+        <Notice tone="warn">
+          The {source}&apos;s quick-add shortcut collides with a profile on this device — this device
+          keeps its own quick-add shortcut.
+        </Notice>
+      )}
+    </>
+  );
+}
 
 /** A pulled update that would repoint a backend or replace a stored key, held for approval. */
 function SecurityReviewDialog() {

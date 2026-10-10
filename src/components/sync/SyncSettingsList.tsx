@@ -111,17 +111,27 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
     updateSync({ sub: withLegacySubKeys(next) });
   }
 
-  /** Reset the given switches to their DEFAULT position (not to off). */
-  function resetDefs(defs: readonly SettingDef[], label: string) {
+  /** Set the given switches in one step and raise an Undo toast that restores
+   *  exactly those switches — shared by every bulk action below. */
+  function setDefsWithUndo(
+    defs: readonly SettingDef[],
+    valueOf: (d: SettingDef) => boolean,
+    label: string,
+  ) {
     const undo = Object.fromEntries(
       defs.map((d) => [d.id, gates[d.id as SettingId]]),
     ) as Partial<Record<SettingId, boolean>>;
     setGates(
-      Object.fromEntries(
-        defs.map((d) => [d.id, DEFAULT_SETTING_SYNC[d.id as SettingId]]),
-      ) as Partial<Record<SettingId, boolean>>,
+      Object.fromEntries(defs.map((d) => [d.id, valueOf(d)])) as Partial<
+        Record<SettingId, boolean>
+      >,
     );
     setToast({ id: ++toastSeq.current, text: label, undo });
+  }
+
+  /** Reset the given switches to their DEFAULT position (not to off). */
+  function resetDefs(defs: readonly SettingDef[], label: string) {
+    setDefsWithUndo(defs, (d) => DEFAULT_SETTING_SYNC[d.id as SettingId], label);
   }
 
   // Tri-state like every GroupCard below: a boolean master read "Off" forever
@@ -150,21 +160,15 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
         <Toggle
           checked={master}
           ariaLabel="Sync everything"
-          onChange={(v) => {
-            const undo = Object.fromEntries(
-              DEFS.map((d) => [d.id, gates[d.id as SettingId]]),
-            ) as Partial<Record<SettingId, boolean>>;
-            setGates(
-              Object.fromEntries(DEFS.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
-            );
-            setToast({
-              id: ++toastSeq.current,
-              text: v
+          onChange={(v) =>
+            setDefsWithUndo(
+              DEFS,
+              () => v,
+              v
                 ? "Every setting now syncs, including machine-specific ones"
                 : "Sync switched off for every setting",
-              undo,
-            });
-          }}
+            )
+          }
         />
       </div>
 
@@ -227,21 +231,15 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
             // Same contract as "Sync everything" above: a mixed group's master overwrites the
             // user's per-row picks (machine-specific rows included) in one click, so snapshot
             // them for an Undo toast instead of setting the gates silently.
-            onGroupMaster={(defs, v) => {
-              const undo = Object.fromEntries(
-                defs.map((d) => [d.id, gates[d.id as SettingId]]),
-              ) as Partial<Record<SettingId, boolean>>;
-              setGates(
-                Object.fromEntries(defs.map((d) => [d.id, v])) as Partial<Record<SettingId, boolean>>,
-              );
-              setToast({
-                id: ++toastSeq.current,
-                text: v
+            onGroupMaster={(defs, v) =>
+              setDefsWithUndo(
+                defs,
+                () => v,
+                v
                   ? `Every ${SYNC_GROUP_LABEL[group]} setting now syncs${defs.some((d) => d.machineSpecific) ? ", including machine-specific ones" : ""}`
                   : `Sync switched off for ${SYNC_GROUP_LABEL[group]}`,
-                undo,
-              });
-            }}
+              )
+            }
             onResetSetting={(def) => resetDefs([def], `“${def.label}” sync switch reset to default`)}
             onResetGroup={(defs) =>
               resetDefs(defs, `${defs.length} sync ${defs.length === 1 ? "switch" : "switches"} in ${SYNC_GROUP_LABEL[group]} reset to default`)
