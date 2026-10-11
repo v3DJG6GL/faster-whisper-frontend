@@ -545,6 +545,28 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.transcribe?.translationModel).toBe("peer-m");
   });
 
+  it("a pulled backend pick clears the picks its blob does not carry (the language follows the Backend)", async () => {
+    // A peer's backend pick stores language undefined, which JSON drops: merged over, this
+    // device's old backend's language would stay pinned under the new backend and push back.
+    const st0 = settings();
+    st0.transcribe = { backendId: "bX", model: "m", language: "de", translationModel: "t" };
+    useApp.setState({ settings: st0 });
+    await applyBlob(
+      { transcription: { backendId: "bY", model: "", translationModel: "" } as never },
+      CATS_ALL,
+      2,
+      { ignoreGates: true },
+    );
+    const tr = useApp.getState().settings.transcribe;
+    expect(tr?.backendId).toBe("bY");
+    expect(tr?.model).toBe("");
+    expect(tr && "language" in tr).toBe(false);
+    // No backendId in the blob: nothing to clear against, the local picks stand.
+    useApp.setState({ settings: { ...settings(), transcribe: { backendId: "bX", language: "de" } } });
+    await applyBlob({ transcription: { model: "x" } as never }, CATS_ALL, 2, { ignoreGates: true });
+    expect(useApp.getState().settings.transcribe?.language).toBe("de");
+  });
+
   it("an explicit restore also brings the folders and Transcribe picks the legacy sub keys gate", async () => {
     // These arms used to read `sub` directly, which ignoreGates never neutralised —
     // the very folders the restore comment promises were still dropped.

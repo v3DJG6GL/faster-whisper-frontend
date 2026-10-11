@@ -11,7 +11,7 @@ import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
 import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import { normalizeAppId, safeIdentityText } from "@/lib/sanitize";
+import { appRuleKey, normalizeAppId, safeIdentityText } from "@/lib/sanitize";
 
 // App ids differ per platform: AT-SPI application names on Linux, lowercased exe
 // basenames on Windows — show examples the local detector will actually produce.
@@ -123,7 +123,7 @@ function Editor({
   // Same normalizer the two inbound floors use, so all three agree on what the stored key is.
   // `trim()` alone was not enough: an invisible character survives it, and this screen renders the
   // id through a filter that deletes such characters — so the rule read armed and matched nothing.
-  const canSave = normalizeAppId(r.appId).length > 0;
+  const canSave = appRuleKey(r.appId).length > 0;
 
   const save = () => {
     if (!canSave) {

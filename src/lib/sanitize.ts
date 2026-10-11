@@ -119,7 +119,8 @@ export function wellFormedAppRules(v: unknown): AppRule[] {
     // is a no-op, so it is not the silent rewrite the rule warns about. Rules whose key is
     // entirely invisible are dropped: they could never match and could never be read.
     .map((r) => ({ ...r, appId: normalizeAppId(r.appId) }))
-    .filter((r) => r.appId.length > 0);
+    // On the COMPARISON key: a joiner-only appId keeps its stored joiner but keys to "".
+    .filter((r) => appRuleKey(r.appId).length > 0);
 }
 
 /** Characters that render as NOTHING but are neither in the deceptive-format denylist above nor

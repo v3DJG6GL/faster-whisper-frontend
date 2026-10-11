@@ -1355,9 +1355,11 @@ export function resolveInjectionTarget(
   //
   // Both injecting windows route through this function, so this covers the main window and QuickAdd
   // in one place. `expectAppId` still crosses to Rust raw, so the sink re-check is unchanged.
-  const liveId = targetApp ? appRuleKey(targetApp.appId) : null;
+  // An id that keys to "" (only invisible or joiner characters) matches no rule, as Rust's
+  // rule_override returns None for it.
+  const liveId = targetApp ? appRuleKey(targetApp.appId) : "";
   const rule =
-    liveId !== null
+    liveId
       ? appRules.find((r) => appRuleKey(r.appId) === liveId)
       : undefined;
   const notEditable = !!(

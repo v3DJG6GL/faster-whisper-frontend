@@ -1308,8 +1308,9 @@ export function sanitizeAppRules(rules: unknown): AppRule[] {
       autoEnter: undefined,
     }))
     // An all-invisible appId normalizes to "", which matches nothing and displays as nothing —
-    // a zombie row on the audit screen. Drop it rather than store it.
-    .filter((r) => r.appId.length > 0)
+    // a zombie row on the audit screen. Drop it rather than store it. Tested on the comparison
+    // key: a joiner-only appId keeps its joiner when stored but keys to "".
+    .filter((r) => appRuleKey(r.appId).length > 0)
     // Rules are MATCHED by appId and `resolveInjectionTarget` takes the FIRST match, so two rules
     // sharing an appId shadow each other. `upsertAppRule` knows this and dedupes on the local
     // editor path — with a comment naming the hazard — and this inbound twin had neither that
@@ -1631,17 +1632,22 @@ export async function applyBlob(
       const raw = blob.transcription as Record<string, unknown>;
       const classified = pickFields(raw, TRANSCRIPTION_FIELD_SET);
       const picks = gates.transcribePicks ? pickFields(raw, TRANSCRIPTION_PICK_SET) : {};
-      nextSettings = {
-        ...nextSettings,
-        // Over nextSettings.transcribe, not settings.transcribe alone: the recording arm
-        // above already routed the dictation-history flags in here, and rebuilding from
-        // the pre-apply settings discarded them on every ordinary pull (the
-        // fileTranscriptions arm below had the right idiom).
-        transcribe: {
-          ...nextSettings.transcribe,
-          ...sanitizeTranscription({ ...classified, ...picks }),
-        },
-      };
+      const pulled = sanitizeTranscription({ ...classified, ...picks });
+      // Over nextSettings.transcribe, not settings.transcribe alone: the recording arm
+      // above already routed the dictation-history flags in here, and rebuilding from
+      // the pre-apply settings discarded them on every ordinary pull (the
+      // fileTranscriptions arm below had the right idiom).
+      const transcribe = { ...nextSettings.transcribe, ...pulled };
+      // The picks travel as one unit behind backendId. A peer's backend pick CLEARS its language
+      // (an untouched one follows the Backend's) and JSON drops the undefined key, so a pick the
+      // blob does not carry beside a carried backendId is cleared here too — merged over, this
+      // device's old backend's language would stay pinned under the new backend and push back.
+      if (typeof pulled.backendId === "string") {
+        for (const k of ["model", "language", "translationModel"] as const) {
+          if (!hasOwn(pulled, k)) delete transcribe[k];
+        }
+      }
+      nextSettings = { ...nextSettings, transcribe };
     }
     // The `fileTranscriptions` category — same routing into the opaque
     // transcribe blob, same per-field validation.

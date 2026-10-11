@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  wellFormedAppRules,
   appRuleKey,
   backendDisplayName,
   codeSlug,
@@ -143,5 +144,10 @@ describe("appRuleKey", () => {
     // Joiners stay in the stored key but leave the comparison key.
     expect(appRuleKey("kon\u200dsole")).toBe("konsole");
     expect(appRuleKey("\u200d konsole\u200c")).toBe("konsole");
+  });
+  it("a joiner-only app id keys to nothing, so the well-formed filter drops it", () => {
+    // Its stored id keeps the joiner, but a rule keyed "" would match every invisible-named app.
+    const rule = { id: "r", appId: "\u200d", insertMethod: "direct" };
+    expect(wellFormedAppRules([rule, { id: "k", appId: "konsole" }]).map((r) => r.id)).toEqual(["k"]);
   });
 });

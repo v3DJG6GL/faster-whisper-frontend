@@ -786,7 +786,11 @@ export function TranscriptViewer({
       console.error("re-translate failed:", e);
       setTrRun(null);
       if (!ctl.cancelled) {
-        useApp.getState().setLogsDoorway(transportErrorDoorway("translate", e, backend.name));
+        // Named as the pickers name it (host suffix on a same-name pair), like Transcribe's doorway.
+        const all = useApp.getState().backends;
+        useApp.getState().setLogsDoorway(
+          transportErrorDoorway("translate", e, backendLabels(all).get(backend.id) ?? backendDisplayName(backend.name, 80)),
+        );
       }
     } finally {
       window.clearInterval(pollTimer);
