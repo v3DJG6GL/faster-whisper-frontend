@@ -975,6 +975,36 @@ describe("applyBlob keep-local (baseline)", () => {
     ).toHaveLength(1);
   });
 
+  it("a consent row for a name that renders blank says 'Untitled' or the address, never blank or an id", () => {
+    const text = { output_prefix: ">" };
+    // Profiles: a blank and a spaces-only name read as the label the lists show.
+    for (const name of ["", "   ", "\u2800\u2800"]) {
+      const rows = securityChanges(
+        { profiles: { list: [profile({ id: "p6", name, decodeOverrides: text })] } } as never,
+        { profiles: { list: [] } } as never,
+        CATS_ALL,
+      ).filter((c) => c.kind === "typed-text");
+      expect(rows.map((c) => c.backend)).toEqual(["Untitled profile"]);
+    }
+    // Backends: a known one whose name renders blank is named by its address on the api-key row…
+    const blank = [{ id: "b1", name: "\u2800\u2800", serverUrl: "http://p:8000" }];
+    const keyRow = securityChanges(
+      { backends: { list: blank, secrets: { b1: "sk-1" } } } as never,
+      { backends: { list: blank, secrets: {} } } as never,
+      CATS_ALL,
+    ).filter((c) => c.kind === "api-key");
+    expect(keyRow.map((c) => c.backend)).toEqual(["http://p:8000"]);
+    // …and a visible name is still kept verbatim.
+    const named = [{ id: "b1", name: "Home", serverUrl: "http://p:8000" }];
+    expect(
+      securityChanges(
+        { backends: { list: named, secrets: { b1: "sk-1" } } } as never,
+        { backends: { list: named, secrets: {} } } as never,
+        CATS_ALL,
+      ).map((c) => c.backend),
+    ).toEqual(["Home"]);
+  });
+
   it("server rows judge the backends the apply installs, not the raw list", () => {
     const changes = (list: unknown[], localList: unknown[], secrets: unknown = {}) =>
       securityChanges(

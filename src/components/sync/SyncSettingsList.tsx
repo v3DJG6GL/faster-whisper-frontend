@@ -64,12 +64,12 @@ function saveUiState(s: UiState): void {
 const DEFS: readonly SettingDef[] = (MANIFEST as readonly SettingDef[]).filter((d) => !d.localOnly);
 
 export function SyncSettingsList({ enabled }: { enabled: boolean }) {
-  const settings = useApp((s) => s.settings);
+  const sync = useApp((s) => s.settings.sync);
   const updateSync = useApp((s) => s.updateSync);
 
   const gates = useMemo(
-    () => completeGates(settings.sync?.sub, settings.sync?.categories),
-    [settings.sync],
+    () => completeGates(sync?.sub, sync?.categories),
+    [sync],
   );
   // "Changed" on this screen means the SWITCH differs from its default —
   // not the setting's value; this list configures sync, not the settings.

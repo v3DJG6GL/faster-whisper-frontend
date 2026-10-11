@@ -36,7 +36,7 @@ import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
 import { sanitizeCueLimits } from "../transcript/cueSplit";
-import { appRuleKey, normalizeAppId, safeDisplayText } from "../sanitize";
+import { appRuleKey, normalizeAppId, safeDisplayText, safeIdentityText } from "../sanitize";
 import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflicts";
 import { canonicalActivation } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
@@ -2914,6 +2914,11 @@ function gatedSecurityCheck(
   return securityChanges(gateScalars(incoming, g), gateScalars(localForReview(localBlob), g), cats, g);
 }
 
+/** A consent row's label: the raw name only when it renders as something (the dialog shows it
+ *  through `safeIdentityText`, which folds a spaces-, invisible- or format-only name to nothing),
+ *  else "" so the caller falls back to the "Untitled …" label the lists use or the address. */
+const shownName = (n: unknown): string => (typeof n === "string" && safeIdentityText(n, 80) ? n : "");
+
 /**
  * The decode keys whose text the app TYPES into the focused window (the live hard-break
  * separator, the output prefix/suffix) — the same class as the `autoEnter` refusal: a peer that
@@ -2933,7 +2938,9 @@ function typedTextChanges(
     if (!isPlainObject(e) || typeof e.id !== "string") continue;
     const next = clampDecodeOverrides(e.decodeOverrides) ?? {};
     const cur = here.get(e.id)?.decodeOverrides ?? {};
-    const name = typeof e.name === "string" && e.name ? e.name : e.id;
+    const name =
+      shownName(e.name) ||
+      (category === "profiles" ? "Untitled profile" : (typeof e.serverUrl === "string" && e.serverUrl) || "Untitled backend");
     for (const key of TYPED_TEXT_KEYS) {
       const v = next[key];
       if (typeof v !== "string" || v === "" || v === cur[key]) continue;
@@ -3099,7 +3106,7 @@ export function securityChanges(
   // the apply stores exactly this list and `reconcileBackendSecrets` writes keys only for its ids.
   for (const b of inBackends) {
     const cur = here.get(b.id);
-    const name = b.name || b.serverUrl || b.id;
+    const name = shownName(b.name) || b.serverUrl || "Untitled backend";
     // A backend new to this device keeps its inbound address even with "Server addresses" off
     // (there is nothing local to re-pin), so `new-backend` is raised regardless of the gates.
     // A KNOWN backend's address change, or an incoming key with "API keys" off, can never land —
@@ -3115,7 +3122,7 @@ export function securityChanges(
     ) {
       out.push({
         kind: "server-url",
-        backend: cur.name || name,
+        backend: shownName(cur.name) || name,
         detail: `${cur.serverUrl || "(no address)"} → ${b.serverUrl || "(none: the address would be cleared)"}`,
         url: b.serverUrl,
       });
@@ -3135,7 +3142,7 @@ export function securityChanges(
     if (gates?.apiKeys !== false && incomingKey && cur && incomingKey !== localKey) {
       out.push({
         kind: "api-key",
-        backend: cur.name || name,
+        backend: shownName(cur.name) || name,
         detail: localKey
           ? "the stored key would be replaced"
           : "a key would be stored for this server",

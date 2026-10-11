@@ -3,6 +3,8 @@
 // name (uppercased, whitespace collapsed, capped). The chip also CSS-truncates, so
 // this is about a sensible default rather than a hard width guarantee.
 
+import { safeIdentityText } from "./sanitize";
+
 export function deriveChipTag(name: string): string {
   // Slice by code points (spread) not UTF-16 units, so an astral char (emoji) straddling the
   // cap isn't split into a lone surrogate that renders as the replacement glyph "�".
@@ -18,8 +20,15 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
  *  matters: it is the branch a sync blob controls (`sanitizeProfiles` checks id/name/hotkey, not
  *  `tag`), and it feeds the `dictation://update` payload rebuilt on every level tick — an
  *  unbounded tag was re-broadcast cross-window and re-laid-out several times a second. Display
- *  only; the stored tag is untouched. */
+ *  only; the stored tag is untouched. An authored tag that renders blank counts as unset. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
   const t = typeof profile.tag === "string" ? profile.tag.trim() : "";
-  return t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : deriveChipTag(profile.name);
+  const authored = t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
+  if (safeIdentityText(authored, AUTHORED_TAG_MAX)) return authored;
+  // Derive from the name as the lists show it (`profileDisplayName`'s rule): a synced name that renders
+  // blank (spaces, invisibles, format-only) would otherwise derive "" — the overlay then hides the
+  // tag group and the hover language/mode detail inside it — or a truthy tag that renders empty.
+  // The "Untitled profile" fallback reads "UNTITLED", not its 10-char cut "UNTITLED P".
+  const shown = safeIdentityText(profile.name);
+  return shown ? deriveChipTag(shown) : "UNTITLED";
 }

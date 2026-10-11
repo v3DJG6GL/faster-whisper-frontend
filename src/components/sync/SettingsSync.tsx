@@ -50,7 +50,7 @@ import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
-import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
@@ -325,7 +325,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
         )}
         {missingKeys.length > 0 && (
           <Notice tone="warn">
-            {missingKeys.map((b) => `“${safeText(b.name, 60)}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
+            {missingKeys.map((b) => `“${backendDisplayName(b.name, 60)}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
             API key re-entered after importing (not included in the file).
           </Notice>
         )}
@@ -337,7 +337,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           if (!to) {
             return (
               <Notice key={`moved-${b.id}`} tone="warn">
-                &ldquo;{safeText(b.name, 60)}&rdquo; is left without a usable server address — its
+                &ldquo;{backendDisplayName(b.name, 60)}&rdquo; is left without a usable server address — its
                 API key stays on this device and nothing is sent until you set one.
               </Notice>
             );
@@ -348,7 +348,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           const auth = authorityOf(to);
           return (
             <Notice key={`moved-${b.id}`} tone="warn">
-              &ldquo;{safeText(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
+              &ldquo;{backendDisplayName(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
               <span className="font-mono font-semibold">
                 {auth ? safeIdentityText(auth.host, 80) : "an unreadable address"}
               </span>
@@ -357,7 +357,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
           );
         })}
         {/* These interpolate a backend name straight out of the imported file. The missing-keys
-            line above renders the same field through safeText; this one did not, so a bidi
+            line above renders the same field through backendDisplayName; this one did not, so a bidi
             override could rewrite the sentence the user reads to decide whether to import. */}
         {result.warnings.slice(0, 20).map((w) => (
           <Notice key={w} tone="warn">
@@ -581,7 +581,7 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           if (url.trim() === "") {
             return (
               <li key={`${b.id}-${i}`} className="font-mono text-[12px]">
-                {safeText(b.name || b.id, 60)} →{" "}
+                {backendDisplayName(b.name, 60)} →{" "}
                 <span className="text-dim">no usable address — nothing is sent until one is set</span>
               </li>
             );
@@ -590,7 +590,7 @@ export function IncomingAddresses({ list }: { list: unknown }) {
           const warn = insecureUrlWarning(url);
           return (
             <li key={`${b.id}-${i}`} className="font-mono text-[12px]" title={safeText(url, 300)}>
-              {safeText(b.name || b.id, 60)} →{" "}
+              {backendDisplayName(b.name, 60)} →{" "}
               {/* The host through the IDENTITY helper, which marks a truncation. The plain display
                   filter cuts at 80 code points with no ellipsis, and `serverUrl` has no length cap
                   on the sync/import path — so a padded, fully resolvable hostname
@@ -671,7 +671,7 @@ export function predictChordFix(
 
 const MAX_SHOWN_SWITCHED_OFF = 3;
 export function ChordFixNotices({ fix, source }: { fix: ReturnType<typeof predictChordFix>; source: "file" | "backup" }) {
-  const names = fix.switchedOff.slice(0, MAX_SHOWN_SWITCHED_OFF).map((n) => `“${safeText(n, 60)}”`);
+  const names = fix.switchedOff.slice(0, MAX_SHOWN_SWITCHED_OFF).map((n) => `“${profileDisplayName(n, 60)}”`);
   const more = fix.switchedOff.length - names.length;
   if (more > 0) names.push(`${more} more`);
   return (
@@ -1060,7 +1060,7 @@ export function SyncTab() {
         {sync.enabled && syncBackend && !syncBackend.hasApiKey && (
           <div className="pb-3">
             <Notice tone="warn">
-              “{safeText(syncBackend.name, 80)}” has no API key. On an open-mode server every keyless device shares one
+              “{backendDisplayName(syncBackend.name, 80)}” has no API key. On an open-mode server every keyless device shares one
               settings set; on a locked-down server sync won't work at all. Add a key to give this account
               its own set.
             </Notice>

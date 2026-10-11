@@ -12,6 +12,7 @@ import {
 import type { TargetPick } from "./streaming";
 import { abortLangPick, getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
 import { ownProp } from "../own";
+import { profileDisplayName, safeIdentityText } from "../sanitize";
 import { effectiveLanguage } from "../backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
@@ -340,7 +341,9 @@ function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "
     source: effectiveLanguage(profile.language, backend.language),
     preset: configuredRouteTargets(profile, backend) ?? [],
     recent: st.settings.recentTranslationTargets ?? [],
-    tag: profile.tag?.trim() || profile.name,
+    // The authored tag unless it renders blank, else the name as the lists show it ("Untitled
+    // profile" for a blank synced one) — never an empty picker header.
+    tag: safeIdentityText(profile.tag, 80) || profileDisplayName(profile.name),
     when,
     theme: st.settings.theme,
     accentHue: st.settings.accentHue,
