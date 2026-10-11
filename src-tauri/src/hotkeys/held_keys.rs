@@ -92,6 +92,12 @@ pub fn clear_chord_lost() {
 /// release that producer observed. A chord held continuously across a re-registration (evdev
 /// switched off mid-hold) reaches the new X11 grab as an autorepeat press with no release in
 /// between — that is not a fresh edge, and it must not wipe the true positive.
+///
+/// Errs toward the safe divert: a plugin release never clears by itself (the chord's modifiers
+/// may still be down, and with evdev off nothing else can see them), so a dud latch survives on
+/// the plugin path when the release was not delivered to the grab (let go within the autorepeat
+/// delay of the re-registration) or when the chord was held across it — the next session's first
+/// phrase inside the TTL then goes to the clipboard instead of being typed.
 pub fn clear_chord_lost_if_armed_before(released_at: Option<Instant>) {
     if let Ok(mut g) = MODS_LOST_AT.lock() {
         if g.is_some_and(|at| released_at.is_some_and(|r| at <= r)) {

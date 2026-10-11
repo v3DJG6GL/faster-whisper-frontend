@@ -210,8 +210,10 @@ export default function Transcribe() {
     ),
   );
   // "" = use the Backend's configured model; anything else is a per-run pick
-  // from the models the server advertised on the last connection test.
-  const [model, setModel] = useState(savedBackend ? (settings.transcribe?.model ?? "") : "");
+  // from the models the server advertised on the last connection test. Trimmed at the seed (the
+  // persisted pick may be synced): a whitespace-only one is no pick, so the overridden dot, the
+  // reset and the default-model label agree with the run, which sends the Backend's model.
+  const [model, setModel] = useState(savedBackend ? (settings.transcribe?.model?.trim() ?? "") : "");
   // Run state lives in the transcribeRun store so it (and the pump driving
   // it) survives this screen unmounting on a tab switch.
   const files = useTranscribeRun((s) => s.files);
