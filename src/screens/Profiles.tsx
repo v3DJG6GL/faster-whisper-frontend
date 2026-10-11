@@ -490,7 +490,7 @@ function Editor({
               canRequest={caps?.can_request_override_profile}
               value={p.overrideProfile ?? ""}
               inheritLabel={
-                backend?.overrideProfile === NO_OVERRIDE_PROFILE
+                backend?.overrideProfile?.trim() === NO_OVERRIDE_PROFILE
                   ? "Inherit · none"
                   : backend?.overrideProfile?.trim()
                     ? // Set: the request sends this name trimmed (stream.rs forwards any non-empty

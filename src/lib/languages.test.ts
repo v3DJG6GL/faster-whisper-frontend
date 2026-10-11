@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  languageCodeOf,
+  languageCodeOf, routeSourceCode,
   MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
@@ -190,6 +190,17 @@ describe("langCode", () => {
     expect(langCode("de\u202e")).toBe("DE");
     expect(langCode("x".repeat(20))).toBe("X".repeat(16));
     expect(langCode("abcdefghij", 8)).toBe("ABCDEFGH");
+  });
+});
+
+describe("routeSourceCode", () => {
+  it("AUTO only for an unset or auto language; a set one that sanitizes blank reads ??", () => {
+    expect(routeSourceCode(undefined)).toBe("AUTO");
+    expect(routeSourceCode("")).toBe("AUTO");
+    expect(routeSourceCode("auto")).toBe("AUTO");
+    expect(routeSourceCode("\u200b")).toBe("??");
+    expect(routeSourceCode("  ")).toBe("??");
+    expect(routeSourceCode("pt-BR")).toBe("PT-BR");
   });
 });
 

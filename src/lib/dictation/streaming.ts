@@ -75,7 +75,7 @@ import { isActiveDictation } from "./dictationVisual";
 import { appRuleKey, stripControlChars } from "../sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
 import { newProgressId } from "../ids";
-import { languageCodeOf, translateSourceCode } from "../languages";
+import { translateSourceCode } from "../languages";
 
 let wired = false;
 
@@ -3443,12 +3443,9 @@ async function startLiveInner(
   autoStopMs = activation !== "hold" && rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const model = pov?.model?.trim() ? pov.model.trim() : backend.model;
-  // A word naming a Whisper language (a synced "english") is sent as its code: the server's
-  // handshake takes only codes and would decode a word in its default language. "auto", blank
-  // and anything else stay as given. Every sink below (stream/record, translate source,
-  // sessionMeta) reads this one value; sessionShape mirrors it.
-  const resolvedLanguage = effectiveLanguage(pov?.language, backend.language);
-  const language = resolvedLanguage ? languageCodeOf(resolvedLanguage) : resolvedLanguage;
+  // A word naming a Whisper language (a synced "english") comes back as its code, so every sink
+  // below (stream/record, translate source, sessionMeta) sends what sessionShape compares.
+  const language = effectiveLanguage(pov?.language, backend.language);
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
   // A profile that set its prompt (incl. an explicit "" clear) wins; else the backend's
@@ -3471,7 +3468,7 @@ async function startLiveInner(
     sessionTranslationBase = {
       // The resolved source language, so the per-phrase request does not leave the server
       // to auto-detect a few words (every other T2T caller passes it). A word naming a Whisper
-      // language is already mapped to its code above; the shared code-only rule maps "auto",
+      // language is already its code (effectiveLanguage); the shared code-only rule maps "auto",
       // blank and any other non-code to null.
       source: translateSourceCode(language),
       includeOriginal: trOv.includeOriginal,

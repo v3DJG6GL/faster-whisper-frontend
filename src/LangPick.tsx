@@ -26,7 +26,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri, subscribe } from "@/lib/api";
-import { langCode, targetCap, targetSections, toggleCode, untestedTitle, type LangRow } from "@/lib/languages";
+import { routeSourceCode, targetCap, targetSections, toggleCode, untestedTitle, type LangRow } from "@/lib/languages";
 import { comboboxInputProps, navKey } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
 import { KeyHint, OptionRows } from "@/components/ListPicker";
@@ -209,7 +209,7 @@ export default function LangPick() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onKeyDown]);
 
-  const src = langCode(seed.source ?? "", 12) || "AUTO";
+  const src = routeSourceCode(seed.source);
   const verb = seed.when === "after" ? "Insert" : "Start";
 
   return (

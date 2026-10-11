@@ -13,7 +13,7 @@ import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTar
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
-import { namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
+import { languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
@@ -368,7 +368,7 @@ export default function Transcribe() {
     const b = backends.find((x) => x.id === id);
     const lang = b?.language ?? "auto";
     setLanguage(lang);
-    const nextT = pruneTargets(translateTo, lang);
+    const nextT = pruneTargets(translateTo, languageCodeOf(lang));
     if (nextT.length !== translateTo.length) setTranslateTo(nextT);
     persistOptions({ backendId: id, model: "", translationModel: "", language: lang, translateTo: nextT });
   };
@@ -422,7 +422,7 @@ export default function Transcribe() {
   // The source a run's translation starts from: the picked language, else the server's
   // DEFAULT_LANGUAGE; "" when neither names one (auto-detect, several languages).
   const sourceOf = (lang: string): string => {
-    const s = lang || String(decodeDefaults?.language?.value ?? "").trim();
+    const s = languageCodeOf(lang || String(decodeDefaults?.language?.value ?? "").trim());
     return namedLanguage(s) ? s : "";
   };
   const knownSource = sourceOf(language) || undefined;
@@ -887,7 +887,9 @@ export default function Transcribe() {
       backendId: backend.id,
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
       model: model || backend.model,
-      language,
+      // A word naming a Whisper language (a synced Backend "english") is sent as its code, as
+      // dictation sends it (effectiveLanguage); "auto" and codes stay.
+      language: languageCodeOf(language),
       // Tri-state: unset = inherit the server DEFAULT_PROMPT (omit the field), an
       // explicit clear = send "" (suppress it), a value = send it. `|| undefined`
       // collapsed clear onto inherit.

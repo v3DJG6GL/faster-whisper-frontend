@@ -61,7 +61,8 @@ const TRANSCRIPT_LINGER_MS = 10000;
 function profileRoute(p: Profile | undefined, backend: Backend | undefined): string {
   const lang = effectiveLanguage(p?.language, backend?.language) ?? "auto";
   const route = routeParts(lang, configuredRouteTargets(p, backend));
-  return (route.source || "auto") + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
+  // A set language that sanitizes to blank is still sent (not auto-detect): "??", as the tray reads it.
+  return (route.source || (lang && lang !== "auto" ? "??" : "auto")) + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
 }
 
 /** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
@@ -71,7 +72,7 @@ function profileRouteShort(p: Profile | undefined, backend: Backend | undefined)
   // raw trim, then shows as a blank slot or a dangling comma.
   const code = (v: string) => langCode(v.trim(), 12).trim();
   const lang = effectiveLanguage(p?.language, backend?.language) ?? "";
-  const source = (lang && lang !== "auto" ? code(lang) : "") || "auto";
+  const source = !lang || lang === "auto" ? "auto" : code(lang) || "??";
   const targets = (configuredRouteTargets(p, backend) ?? [])
     .filter((t): t is string => typeof t === "string")
     .map(code)

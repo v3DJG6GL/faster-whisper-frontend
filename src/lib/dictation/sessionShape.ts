@@ -5,7 +5,6 @@
 // with. Two Profiles whose shapes differ can't share a session: dictation.ts restarts instead.
 
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile } from "../backends";
-import { languageCodeOf } from "../languages";
 import { stableStringify } from "../stable";
 import type { Backend, Profile } from "../types";
 
@@ -17,14 +16,13 @@ import type { Backend, Profile } from "../types";
  *  (dictation.ts `backendForProfile`); `null` when there is none. Compared as strings. */
 export function sessionShape(profile: Profile, backend: Backend | undefined): string | null {
   if (!backend) return null;
-  // The language as startLiveInner sends it: a word naming a Whisper language ("english") as its
-  // code, so an "english" and an "en" Profile are one session.
-  const language = effectiveLanguage(profile.language, backend.language);
   // Object keys sorted, so two override maps set in a different order compare equal.
   return stableStringify([
     backend.id,
     profile.model?.trim() || backend.model,
-    language ? languageCodeOf(language) : language,
+    // As startLiveInner sends it: a word naming a Whisper language ("english") is its code, so an
+    // "english" and an "en" Profile are one session.
+    effectiveLanguage(profile.language, backend.language),
     profile.prompt !== undefined ? profile.prompt : backendPrompt(backend),
     { ...backend.decodeOverrides, ...profile.decodeOverrides },
     effectiveOverrideProfile(profile.overrideProfile, backend.overrideProfile),

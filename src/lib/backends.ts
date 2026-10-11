@@ -4,6 +4,7 @@ import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
 import { safeIdentityText } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
+import { languageCodeOf } from "./languages";
 
 /** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
  *  judge the same string the parsers do.
@@ -191,13 +192,18 @@ export function backendPrompt(b: Pick<Backend, "prompt" | "promptCleared">): str
 /**
  * Effective language: a set per-Profile override wins; else the Backend's. Trims the
  * override so a padded value never reaches a server request — five call sites used to
- * open-code this and only one of them trimmed the value it returned.
+ * open-code this and only one of them trimmed the value it returned. A word naming a Whisper
+ * language (a synced "english") is returned as its code: the server's handshake takes only
+ * codes, and the session, its shape, the target picker and every route label must agree on
+ * the value that is sent. "auto", blank and anything else stay as given.
  */
 export function effectiveLanguage<B extends string | undefined>(
   profileLang: string | undefined,
   backendLang: B,
 ): string | B {
-  return profileLang?.trim() || backendLang;
+  const own = profileLang?.trim();
+  if (own) return languageCodeOf(own);
+  return backendLang ? languageCodeOf(backendLang) : backendLang;
 }
 
 /**

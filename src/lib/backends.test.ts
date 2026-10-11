@@ -47,6 +47,12 @@ describe("effectiveLanguage", () => {
   it("no backend language either → undefined", () => {
     expect(effectiveLanguage(undefined, undefined)).toBeUndefined();
   });
+  it("a word naming a Whisper language is its code; auto and codes stay", () => {
+    expect(effectiveLanguage("english", "de")).toBe("en");
+    expect(effectiveLanguage(undefined, "English")).toBe("en");
+    expect(effectiveLanguage("auto", "de")).toBe("auto");
+    expect(effectiveLanguage(undefined, "pt-BR")).toBe("pt-BR");
+  });
 });
 
 describe("effectiveOverrideProfile", () => {

@@ -97,6 +97,14 @@ export function langCode(code: string, max = 16): string {
   return safeDisplayText(code, max).toUpperCase();
 }
 
+/** A dictation route's source as the tray and the target picker write it, sanitized and capped
+ *  at 12. Only an unset or "auto" language reads AUTO: a set one of only format characters (or
+ *  whitespace) is still sent verbatim — Rust's wire_language passes any non-empty code — so it
+ *  reads "??". */
+export function routeSourceCode(lang: string | null | undefined): string {
+  return !lang || lang === "auto" ? "AUTO" : langCode(lang, 12).trim() || "??";
+}
+
 const labels = new Map<string, string>();
 /** English name for a language code; an unknown code comes back unchanged. Cached: the pickers
  *  sort ~100 codes by it on every render. LABEL_FIX is read own-only — a server-listed code like
