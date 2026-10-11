@@ -4,7 +4,9 @@ import {
   backendDisplayName,
   codeSlug,
   deviceDisplayName,
+  peerDeviceName,
   profileDisplayName,
+  ruleListLabel,
   safeIdentityText,
   stripControlChars,
   trimLeadingInvisible,
@@ -59,6 +61,14 @@ describe("safeIdentityText", () => {
     expect(safeIdentityText("\u200c".repeat(100) + "Work")).toBe("Work");
     expect(safeIdentityText("a\u200db")).toBe("a\u200db");
   });
+
+  it("folds joiner runs that join nothing, so they cannot pad the name past the cut", () => {
+    expect(safeIdentityText("Work" + " \u200d".repeat(100) + " Evil")).toBe("Work Evil");
+    expect(safeIdentityText("Work" + "\u200d".repeat(100) + "Evil")).toBe("Work\u200dEvil");
+    expect(safeIdentityText("Work\u200c \u200d Evil")).toBe("Work Evil");
+    // A ZWJ emoji sequence (one joiner between two visible characters) is untouched.
+    expect(safeIdentityText("\u{1F468}\u200d\u{1F4BB}")).toBe("\u{1F468}\u200d\u{1F4BB}");
+  });
 });
 
 describe("profileDisplayName / backendDisplayName", () => {
@@ -104,9 +114,34 @@ describe("deviceDisplayName", () => {
   });
 });
 
+describe("peerDeviceName", () => {
+  it("blanks a peer name that reads as this device's own label", () => {
+    expect(peerDeviceName("This\u2800device")).toBe("");
+    expect(peerDeviceName("this \u200ddevice")).toBe("");
+    expect(peerDeviceName(" THIS DEVICE\uFE0F ")).toBe("");
+    expect(peerDeviceName("laptop")).toBe("laptop");
+    expect(peerDeviceName("  ")).toBe("");
+    expect(peerDeviceName("Here", "here")).toBe("");
+  });
+});
+
+describe("ruleListLabel", () => {
+  it("names a list by its label, else its rule name, each defanged and trimmed", () => {
+    expect(ruleListLabel("\u2800 ", "my-list")).toBe("my-list");
+    expect(ruleListLabel("   ", "my-list")).toBe("my-list");
+    expect(ruleListLabel("  Foo ", "my-list")).toBe("Foo");
+    expect(ruleListLabel("\u200dFoo", "my-list")).toBe("Foo");
+    expect(ruleListLabel(undefined, " \u200b ")).toBe("");
+    expect(ruleListLabel("x".repeat(100), "n", 60)).toBe("x".repeat(60));
+  });
+});
+
 describe("appRuleKey", () => {
   it("keys an app id the way the matcher compares it", () => {
     expect(appRuleKey(" Konsole​ ")).toBe("konsole");
     expect(appRuleKey("Konsole️")).toBe(appRuleKey("konsole"));
+    // Joiners stay in the stored key but leave the comparison key.
+    expect(appRuleKey("kon\u200dsole")).toBe("konsole");
+    expect(appRuleKey("\u200d konsole\u200c")).toBe("konsole");
   });
 });

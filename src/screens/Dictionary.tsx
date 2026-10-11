@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
-import { safeDisplayText } from "@/lib/sanitize";
+import { backendDisplayName, ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 import { backendOptions, effectiveServerUrl } from "@/lib/backends";
 import {
@@ -255,7 +255,7 @@ function RuleCard({
           {dotHex && (
             <span className="size-2 shrink-0 rounded-full" style={{ backgroundColor: dotHex }} aria-hidden />
           )}
-          <span className="truncate text-[14px] font-medium text-text">{safeDisplayText(rule.label, 120)}</span>
+          <span className="truncate text-[14px] font-medium text-text">{ruleListLabel(rule.label, rule.name, 120)}</span>
           {dirty && <span className="size-1.5 shrink-0 rounded-full bg-accent" title="Unsaved changes" aria-hidden />}
           <Badge>{ownProp(TYPE_LABEL, rule.type) ?? safeDisplayText(rule.type, 40)}</Badge>
           {pinned && <Badge tone="accent">quick-add</Badge>}
@@ -676,13 +676,13 @@ export default function Dictionary() {
   const pinnedLabel = useMemo(() => {
     if (!quickAddList) return null;
     const b = backends.find((x) => x.id === quickAddList.backendId);
-    const backendName = b ? (backendLabels[b.id] ?? safeDisplayText(b.name, 80)) : null;
+    const backendName = b ? (backendLabels[b.id] ?? backendDisplayName(b.name)) : null;
     const rule =
       quickAddList.backendId === selectedId
         ? rules.find((r) => r.name === quickAddList.slug)
         : undefined;
     const listName = rule
-      ? safeDisplayText(rule.label, 60) || safeDisplayText(rule.name, 60)
+      ? ruleListLabel(rule.label, rule.name, 60)
       : safeDisplayText(quickAddList.slug, 60);
     return backendName ? `${backendName} · ${listName}` : listName;
   }, [quickAddList, backends, backendLabels, selectedId, rules]);
@@ -978,7 +978,7 @@ export default function Dictionary() {
                       : "border-line bg-surface-2 text-dim hover:text-text",
                   )}
                 >
-                  <span className="block max-w-[16rem] truncate">{backendLabels[b.id] ?? safeDisplayText(b.name, 80)}</span>
+                  <span className="block max-w-[16rem] truncate">{backendLabels[b.id] ?? backendDisplayName(b.name)}</span>
                 </button>
               );
             })}
@@ -1069,7 +1069,7 @@ export default function Dictionary() {
           {/* A save that went through, then lost its follow-up reload: keep its notice above the error
               (runSave sets `result` after load(); Retry's load() clears it). */}
           {result && <SaveBanner result={result} reloadFailed reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
-          <FetchError fetch={fetchRes} backendName={safeDisplayText(backend?.name, 80) || "the server"} onRetry={() => backend && load(backend)} />
+          <FetchError fetch={fetchRes} backendName={backend ? (backendLabels[backend.id] ?? backendDisplayName(backend.name)) : "the server"} onRetry={() => backend && load(backend)} />
         </Stack>
       ) : rules.length === 0 ? (
         <EmptyCard

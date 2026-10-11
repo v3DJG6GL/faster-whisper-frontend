@@ -521,6 +521,20 @@ describe("usageDerive", () => {
     ]);
   });
 
+  it("a joiner-only target code yields no language row or pill", () => {
+    const rows = translationRows({ targets: [{ code: "\u200d", runs: 3, kept_original: 0 }] });
+    expect(rows.map((r) => r.label)).toEqual(["Kept original", "Not asked"]);
+    const st: UsageStage = {
+      stage: "translating",
+      runs: 10,
+      of_runs: 10,
+      audio_s: 0,
+      secs: 0,
+      targets: [{ code: "\u200d", runs: 3 }, { code: " \u200c de", runs: 2 }],
+    };
+    expect(targetShares(st)).toEqual([{ code: "DE", pct: 20 }]);
+  });
+
   it("translationRows without any target keeps the two outcome rows", () => {
     const rows = translationRows({ translation: { kept_original: 0, not_asked: 4, aborted: 0, unreported: 0 } });
     expect(rows.map((r) => [r.label, r.pct])).toEqual([["Kept original", 0], ["Not asked", 100]]);

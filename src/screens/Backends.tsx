@@ -29,7 +29,7 @@ import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
-import { backendDisplayName, deviceDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { credentialGeneration, forgetCaps, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
@@ -932,8 +932,9 @@ function RestoreOffer({
 }) {
   const [restoring, setRestoring] = useState(false);
   // Filtered and trimmed before the truthiness test: a device named only spaces or invisible
-  // characters would otherwise print a dangling "last synced from ".
-  const device = deviceDisplayName(remote.device);
+  // characters would otherwise print a dangling "last synced from ", and one named "This device"
+  // would credit this device with the server copy (`peerDeviceName`).
+  const device = peerDeviceName(remote.device);
 
   // After the blob applied: make sure a backend for this server exists (the
   // restore may or may not have brought one — the backends category can be
@@ -1212,7 +1213,7 @@ export default function Backends() {
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-[14px] font-semibold text-text" title={safeDisplayText(b.name, 200)}>
+                        <span className="truncate text-[14px] font-semibold text-text" title={backendDisplayName(b.name, 200)}>
                           {/* Sanitized like the address line below it, and for the same reason: a
                               rename raises no security change, so a name arrives on this card from
                               an unattended pull with no prompt — and bidi marks in it can make one

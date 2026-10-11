@@ -191,6 +191,11 @@ describe("langCode", () => {
     expect(langCode("x".repeat(20))).toBe("X".repeat(16));
     expect(langCode("abcdefghij", 8)).toBe("ABCDEFGH");
   });
+
+  it("drops joiners: no code carries one, and a joiner-only code reads empty", () => {
+    expect(langCode("d\u200de")).toBe("DE");
+    expect(langCode("\u200c\u200d")).toBe("");
+  });
 });
 
 describe("routeSourceCode", () => {
@@ -199,6 +204,7 @@ describe("routeSourceCode", () => {
     expect(routeSourceCode("")).toBe("AUTO");
     expect(routeSourceCode("auto")).toBe("AUTO");
     expect(routeSourceCode("\u200b")).toBe("??");
+    expect(routeSourceCode("\u200d")).toBe("??");
     expect(routeSourceCode("  ")).toBe("??");
     expect(routeSourceCode("pt-BR")).toBe("PT-BR");
   });

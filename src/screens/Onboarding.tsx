@@ -28,7 +28,7 @@ import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
-import { deviceDisplayName, safeDisplayText } from "@/lib/sanitize";
+import { peerDeviceName, ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import {
   ChordFixNotices, ImportPreview, IncomingAddresses, SyncedCategoryChips, predictChordFix,
 } from "@/components/sync/SettingsSync";
@@ -250,7 +250,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // applyBlob would keep (empty, or only malformed ones) promises nothing. (The starters
   // fallback still checks the store after the apply.)
   const pulledBlob = pull?.state?.blob;
-  const pulledFrom = deviceDisplayName(pull?.state?.device);
+  const pulledFrom = peerDeviceName(pull?.state?.device);
   const carriesProfiles =
     !!pulledBlob &&
     restorableCategories(pulledBlob).includes("profiles") &&
@@ -635,7 +635,9 @@ function QuickAddStep({
     () =>
       (rules ?? []).map((r) => ({
         value: r.name,
-        label: safeDisplayText(r.label, 80) || safeDisplayText(r.name, 80),
+        // One render rule with the Dictionary and Quick add (`ruleListLabel`): a blank-looking
+        // label falls through to the name instead of rendering an empty option.
+        label: ruleListLabel(r.label, r.name, 80),
       })),
     [rules],
   );

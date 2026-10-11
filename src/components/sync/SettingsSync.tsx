@@ -50,7 +50,7 @@ import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
-import { backendDisplayName, deviceDisplayName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, deviceDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
@@ -473,7 +473,7 @@ export function RestoreFromServer({
     }
   };
 
-  const from = deviceDisplayName(state.device);
+  const from = peerName(state.device);
   return (
     <Modal onClose={applying ? () => {} : onCancel}>
       <div className="text-[15px] font-semibold text-text">Restore from server</div>
@@ -539,19 +539,9 @@ const MAX_REVIEW_ROWS = 50;
 const safeText = safeDisplayText;
 
 /** A peer device's name as this screen shows it, or "" when it would read as this device's own
- *  arm label (the caller then renders its neutral fallback). The name is server-supplied, so it
- *  must never be able to read as the arm beside it: a device calling itself "This device" would
- *  produce two identical buttons on the control that decides whose settings win, and the conflict
- *  sentence and review header would credit this device with the peer's changes. Compared as the
- *  name renders — case-insensitively, with whitespace, the invisible class (U+2800, variation
- *  selectors, …) and ZWNJ/ZWJ all folded away, since `"This\u2800device"`, `"This device\uFE0F"`
- *  and `"This \u200Ddevice"` all draw as "This device". */
-function peerName(device: string | null): string {
-  const name = deviceDisplayName(device);
-  const norm = (s: string) =>
-    safeIdentityText(s, 200).replace(/[\u200c\u200d]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
-  return name && norm(name) !== norm(LOCAL_ARM_LABEL) ? name : "";
-}
+ *  arm label (the caller then renders its neutral fallback) — `peerDeviceName`, which holds the
+ *  fold and the reasoning, against this screen's arm label. */
+const peerName = (device: string | null | undefined): string => peerDeviceName(device, LOCAL_ARM_LABEL);
 
 /** The label for the "adopt the other device's value" arm of a conflict choice: the peer's name
  *  (`peerName` — never one that collides with "This device", invisible and joiner characters
@@ -928,7 +918,7 @@ export function SyncTab() {
   const syncUnsupported = useApp((st) => st.syncUnsupported);
   const lastSyncedAt = useApp((st) => st.lastSyncedAt);
   const lastSyncDevice = useApp((st) => st.lastSyncDevice);
-  const lastSyncFrom = deviceDisplayName(lastSyncDevice);
+  const lastSyncFrom = peerName(lastSyncDevice);
 
   const [includeSecrets, setIncludeSecrets] = useState(false);
   const [exportState, setExportState] = useState<"idle" | "busy" | "done" | "nokeys" | "error">("idle");

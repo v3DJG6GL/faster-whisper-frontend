@@ -133,9 +133,10 @@ export function wellFormedAppRules(v: unknown): AppRule[] {
  *
  *  The union of this list and `isDeceptiveFormatChar`'s is `Default_Ignorable_Code_Point` minus the
  *  Arabic/Syriac format characters that one deliberately excludes and minus ZWNJ/ZWJ (U+200C/D),
- *  which shape scripts and emoji sequences, so they stay in keys and interior text and are dropped
- *  only from a display head (`trimLeadingInvisible`) — state that when extending either, so the
- *  next omission is visible.
+ *  which shape scripts and emoji sequences, so they stay in the stored key and interior text and are
+ *  dropped only from a display head (`trimLeadingInvisible`) and from the COMPARISON key
+ *  (`appRuleKey` / Rust `rule_key`) — state that when extending either, so the next omission is
+ *  visible.
  *
  *  Deliberately NOT added to `isDeceptiveFormatChar`: that list is the declared mirror of Rust's
  *  `sanitize_injected`, and deleting U+FE0F there would strip emoji-presentation selectors out of
@@ -187,6 +188,12 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // The invisible HEAD goes first (`trimLeadingInvisible`, hoisted below): a leading ZWNJ/ZWJ joins
   // nothing and renders as nothing, yet the fold keeps joiners (interior ones shape scripts and
   // emoji), so a joiner-only name read as content and a joiner run padded the name past the cut.
+  //
+  // Interior joiners pad too: `"Work" + " \u200d"×100 + " Evil"` is a hundred one-space runs the
+  // collapse cannot merge, so the cut lands in the padding exactly as the U+2800 case did. A joiner
+  // next to whitespace, or a second one in a row, joins nothing, so such a run is folded first: one
+  // touching whitespace becomes a space, a bare run keeps only its first joiner. Emoji and script
+  // sequences (a single joiner between two visible characters) are untouched.
   const raw = typeof s === "string" ? trimLeadingInvisible(s) : "";
   const defanged = [...raw]
     .map((ch) => {
@@ -196,7 +203,10 @@ export function safeIdentityText(s: unknown, max = 80): string {
       return ch;
     })
     .join("");
-  const collapsed = defanged.replace(/\s+/g, " ");
+  // No lookbehind: older WebKitGTK builds lack it.
+  const collapsed = defanged
+    .replace(/\s*[\u200c\u200d]+\s*/g, (m) => (/\s/.test(m) ? " " : m[0]))
+    .replace(/\s+/g, " ");
   // Trim BEFORE the cut, and trim what precedes the marker: a cut at `max + 1` that lands on the
   // collapsed space used to be trimmed away before the length test, so `"a"×80 + " evil"`
   // rendered as its own 80-char prefix with no ellipsis.
@@ -230,23 +240,51 @@ export function trimLeadingInvisible(s: string): string {
  *  A profile name RENDERS through the display filter, because the identity fold turns the emoji
  *  variation selector into a space ("☕️Café" would read "☕ Café"); its invisible head is dropped
  *  first, so leading padding can neither push the name past the cut nor leave a blank render. A
- *  backend name renders as an identity, as the Backends audit card always has. */
+ *  backend name renders as an identity, as the Backends audit card always has (`safeIdentityText`
+ *  drops the invisible head itself). */
 export const profileDisplayName = (name: unknown, max = 80): string =>
   (typeof name === "string" && safeDisplayText(trimLeadingInvisible(name), max).trim()) || "Untitled profile";
 export const backendDisplayName = (name: unknown, max = 80): string =>
-  (typeof name === "string" && safeIdentityText(trimLeadingInvisible(name), max)) || "Untitled backend";
+  safeIdentityText(name, max) || "Untitled backend";
 /** A server-supplied device name as shown ("… from <device>"): its invisible head dropped (as a
  *  profile name's), display-filtered and trimmed. A blank result (spaces, invisible characters
  *  only) means "render the fallback or omit it". */
 export const deviceDisplayName = (name: unknown, max = 60): string =>
   typeof name === "string" ? safeDisplayText(trimLeadingInvisible(name), max).trim() : "";
 
+/** A PEER device's name as a sync surface shows it ("… from <device>", a conflict arm), or "" when
+ *  it would read as this device's own label (`localLabel`) — the caller then renders its neutral
+ *  fallback or omits the clause. The name is server-supplied, so it must never be able to read as
+ *  this device: one calling itself "This device" would produce two identical buttons on the control
+ *  that decides whose settings win, and the conflict sentence, the restore header, the sync status
+ *  line and the restore offers (Backends, Onboarding) would credit this device with the peer's
+ *  copy. Compared as the name renders — case-insensitively, with whitespace, the invisible class
+ *  (U+2800, variation selectors, …) and ZWNJ/ZWJ all folded away, since `"This\u2800device"`,
+ *  `"This device\uFE0F"` and `"This \u200Ddevice"` all draw as "This device". */
+export function peerDeviceName(device: unknown, localLabel = "This device"): string {
+  const name = deviceDisplayName(device);
+  const norm = (s: string) =>
+    safeIdentityText(s, 200).replace(/[\u200c\u200d]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return name && norm(name) !== norm(localLabel) ? name : "";
+}
+
+/** The name a dictionary rule list is shown under — the one render rule for every site that names
+ *  a list (the Dictionary card header and pinned readout, Quick add, Onboarding): its label, else
+ *  its rule name, each through `deviceDisplayName` (invisible head dropped, display-filtered,
+ *  trimmed), so a label of only spaces or invisible characters falls through to the name instead of
+ *  rendering blank. "" when both are blank; the caller picks its own last fallback. */
+export const ruleListLabel = (label: unknown, name: unknown, max = 80): string =>
+  deviceDisplayName(label, max) || deviceDisplayName(name, max);
+
 /** The comparison key of an app rule — how two `appId`s are judged to name the same app, for
  *  both the dedupe on save/merge and the injection-target matcher. One function so they cannot
  *  drift: a dedupe looser or stricter than the matcher saves two rules where one silently
  *  shadows the other. */
 export function appRuleKey(appId: unknown): string {
-  return normalizeAppId(appId).toLowerCase();
+  // ZWNJ/ZWJ leave the COMPARISON key only (the stored key keeps them, see isInvisibleKeyChar):
+  // `"kon\u200dsole"` renders as exactly `konsole` in the audit row yet never equalled the live id.
+  // Trimmed again: `"\u200d konsole"` leaves a leading space once the joiner goes.
+  return normalizeAppId(appId).replace(/[\u200c\u200d]/g, "").trim().toLowerCase();
 }
 
 /** A user/server-authored code (a language, an extractor key) cut to what is safe in a file

@@ -645,6 +645,10 @@ export default function Overlay() {
   // The "only while speaking" and "on hover" reveal gates stack on top.
   const showTarget =
     !!state.targetTitle && (!state.targetOnlySpeaking || expanded) && (!state.targetOnHover || hoverReveal);
+  // The gate above reads the RAW title, the render the defanged one: a focused app named only
+  // spaces / U+2800 / joiners passes the gate and renders as nothing, leaving the Target glyph (and
+  // the blocked strike-through it carries) with no name. Such a name reads as a fallback instead.
+  const targetName = state.targetTitle ? safeIdentityText(state.targetTitle, 130) || "unnamed app" : "";
   const targetWarn = !!state.targetSkip;
   const skipLabel = state.targetSkip === "blocked" ? "blocked" : "not a text field";
 
@@ -1305,7 +1309,7 @@ export default function Overlay() {
               `"kate" + 190 spaces + "evil-term"` cuts inside the padding and renders as exactly
               `kate`. `AppRules` already renders this same class of string the defanged way; the
               chip disagreed with it about the same app. */}
-          {safeIdentityText(state.targetTitle, 130)}
+          {targetName}
         </span>
         {targetWarn && expanded && <span className="whitespace-nowrap">· {skipLabel}</span>}
       </span>,

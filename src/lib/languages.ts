@@ -92,9 +92,12 @@ export function translateSourceCode(lang: string | null | undefined): string | n
   return l && /^[a-z]{2,3}([-_][A-Za-z0-9]{2,8})?$/i.test(l) ? l : null;
 }
 
-/** A language code as chips, tabs and summaries show it: bounded, then in caps ("DE", "PT-BR"). */
+/** A language code as chips, tabs and summaries show it: bounded, then in caps ("DE", "PT-BR").
+ *  ZWNJ/ZWJ go too: the display filter keeps them (they shape scripts and emoji in prose), but no
+ *  language code carries one, and a joiner-only code must read empty — not as a blank pill, a
+ *  blank "Translated into" row or a blank route source instead of "??". */
 export function langCode(code: string, max = 16): string {
-  return safeDisplayText(code, max).toUpperCase();
+  return safeDisplayText(code.replace(/[\u200c\u200d]/g, ""), max).toUpperCase();
 }
 
 /** A dictation route's source as the tray and the target picker write it, sanitized and capped

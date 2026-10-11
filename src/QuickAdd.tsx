@@ -22,7 +22,7 @@ import {
   type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, envPinnedOf, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
-import { safeDisplayText, trimLeadingInvisible, wellFormedAppRules } from "@/lib/sanitize";
+import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri,
@@ -230,13 +230,10 @@ export default function QuickAdd() {
         setPhase("error");
         return;
       }
-      // Third render of the server-authored rule label; the Dictionary and Onboarding renders of
-      // the same field both defang it, this window did not. Its invisible head is dropped and the
-      // rest trimmed first, so a spaces- or blank-glyph-only label falls back instead of an empty title.
-      setLabel(
-        safeDisplayText(typeof rule.label === "string" ? trimLeadingInvisible(rule.label) : "", 80).trim() ||
-          "Word mappings",
-      );
+      // Third render of the server-authored rule label, through the same rule as the Dictionary
+      // and Onboarding (`ruleListLabel`): defanged, invisible head dropped and trimmed, a
+      // blank-looking label falls back to the list's name. "Word mappings" only when both are blank.
+      setLabel(ruleListLabel(rule.label, rule.name, 80) || "Word mappings");
       setColor(rule.color);
       setRows(mapRowsFromRule(rule));
       setSaveState("idle");

@@ -2,7 +2,7 @@
 
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
-import { backendDisplayName, safeIdentityText, trimLeadingInvisible } from "./sanitize";
+import { backendDisplayName, safeIdentityText } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
@@ -323,9 +323,9 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
   // SecurityChange, so it arrives on the unattended pull. The pickers this feeds choose which
   // server receives a profile's audio and bearer key, which receives an uploaded file, and which
   // receives the whole synced blob — and none of them shows an address.
-  // Invisible head dropped first, as backendDisplayName does: a joiner-only name then takes the
-  // blank branch, and a leading-joiner "Work" collides with "Work" and gets its host suffix.
-  const labels = all.map((b) => (typeof b.name === "string" ? safeIdentityText(trimLeadingInvisible(b.name), max) : ""));
+  // safeIdentityText drops the invisible head itself: a joiner-only name then takes the blank
+  // branch, and a leading-joiner "Work" collides with "Work" and gets its host suffix.
+  const labels = all.map((b) => safeIdentityText(b.name, max));
   const counts = new Map<string, number>();
   for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
   // A name that already CONTAINS the separator is forced into the suffix branch whatever the
@@ -336,6 +336,8 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
   // appends its REAL host, so the forgery reads `Work · good.tld · evil.tld` and gives itself away.
   // Tested on the joiner-stripped label like `norm`: an interior ZWJ ("Work \u00b7\u200d good.tld")
   // hides the separator from a raw `includes` while the label draws exactly as the suffixed form.
+  // (`safeIdentityText` now folds a joiner touching whitespace itself; the strip stays as the
+  // backstop for any joiner the fold keeps.)
   const forgesSuffix = (l: string) => l.replace(/[\u200c\u200d]/g, "").includes(SEP);
   const out = all.map((b, i) => {
     const label = labels[i];

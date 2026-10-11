@@ -209,8 +209,10 @@ pub fn rule_override(app_id: &str) -> Option<bool> {
 
 /// Rust twin of the webview's `appRuleKey` (sanitize.ts): `safeDisplayText` (control and
 /// deceptive-format characters dropped, 200 kept), then `normalizeAppId`'s invisible key
-/// characters dropped and the ends trimmed, lowercased. Both the stored key and the live id go
-/// through it, so a rule matches here exactly when it matches on the paste path.
+/// characters dropped and the ends trimmed, lowercased. ZWNJ/ZWJ leave the comparison key too
+/// (`appRuleKey` drops them; the stored key keeps them): `"kon\u{200d}sole"` renders as exactly
+/// `konsole` yet would never equal the live id. Both the stored key and the live id go through
+/// it, so a rule matches here exactly when it matches on the paste path.
 fn rule_key(s: &str) -> String {
     let shown: String = s
         .chars()
@@ -219,7 +221,7 @@ fn rule_key(s: &str) -> String {
         .collect();
     let kept: String = shown
         .chars()
-        .filter(|&c| !is_invisible_key_char(c))
+        .filter(|&c| !is_invisible_key_char(c) && !matches!(c, '\u{200c}' | '\u{200d}'))
         .collect();
     kept.trim().to_lowercase()
 }
@@ -287,6 +289,8 @@ mod tests {
         assert_eq!(rule_key(" Konsole\u{200b} "), "konsole");
         assert_eq!(rule_key("Konsole\u{fe0f}"), "konsole");
         assert_eq!(rule_key("x\u{034f}\u{2800}"), "x");
+        assert_eq!(rule_key("kon\u{200d}sole"), "konsole");
+        assert_eq!(rule_key("\u{200d} konsole"), "konsole");
     }
 
     #[cfg(not(windows))]
