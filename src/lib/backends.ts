@@ -203,7 +203,10 @@ export function effectiveLanguage<B extends string | undefined>(
 ): string | B {
   const own = profileLang?.trim();
   if (own) return languageCodeOf(own);
-  return backendLang ? languageCodeOf(backendLang) : backendLang;
+  // Trimmed like the profile side (a synced " de " would be sent padded); a whitespace-only
+  // value stays as given — still sent, it reads "??".
+  const inh = backendLang?.trim();
+  return inh ? languageCodeOf(inh) : backendLang;
 }
 
 /**

@@ -11,7 +11,7 @@ import { KeyHint, ListPicker, type TriggerProps } from "@/components/ListPicker"
 import { FieldTrigger } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import {
-  WHISPER_LANGUAGES, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
+  WHISPER_LANGUAGES, languageCodeOf, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
   toggleCode, untestedTitle, type LangRow,
 } from "@/lib/languages";
 import { cleanRecent, rememberRecent } from "@/lib/recent";
@@ -110,13 +110,18 @@ export function SpokenLanguagePicker({
   // A set value that sanitizes to blank is still sent, so it reads "??" (as the Backends badge).
   const labelOf = (v: string) =>
     v === "" ? safeDisplayText(inheritLabel ?? "Inherit", 40) : safeDisplayText(spokenLabel(v), 40).trim() || "??";
-  const current = labelOf(value);
+  // A synced word ("english") reads and ticks as its code's row, as it is sent
+  // (effectiveLanguage); the stored value only changes on a pick. A whitespace-only value stays
+  // as given (it is still sent, so it reads "??", not the inherit row).
+  const trimmed = value.trim();
+  const picked = namedLanguage(value) && trimmed ? languageCodeOf(trimmed) : value;
+  const current = labelOf(picked);
   return (
     <ListPicker<LangRow>
       label={ariaLabel}
       sections={(query) => spokenSections({ query, recent, inherit: inheritLabel !== undefined, multi })}
       rowKey={(r) => r.value || "inherit"}
-      isSelected={(r) => r.value === value}
+      isSelected={(r) => r.value === picked}
       onPick={(r) => {
         if (WHISPER_LANGUAGES.includes(r.value)) use(r.value);
         onChange(r.value);

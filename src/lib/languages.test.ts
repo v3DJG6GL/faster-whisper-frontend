@@ -251,4 +251,9 @@ describe("languageCodeOf", () => {
     expect(languageCodeOf("pt-BR")).toBe("pt-BR");
     expect(languageCodeOf("klingon")).toBe("klingon");
   });
+  it("leaves the spoken picker's other values alone, so Transcribe codes its state at ingress", () => {
+    expect(["auto", MULTI_LANGUAGE, "", " english "].map(languageCodeOf)).toEqual(["auto", MULTI_LANGUAGE, "", "en"]);
+    // A synced Backend "english" seeds the picker (and a link's spoken language) as "en".
+    expect(spokenField(languageCodeOf("english"), undefined, undefined, false).value).toBe("en");
+  });
 });

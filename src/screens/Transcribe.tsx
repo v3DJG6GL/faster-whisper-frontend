@@ -197,10 +197,14 @@ export default function Transcribe() {
       ? settings.transcribe.backendId
       : undefined;
   const [backendId, setBackendId] = useState(savedBackend ?? backends[0]?.id ?? "");
-  const [language, setLanguage] = useState(
-    (savedBackend ? settings.transcribe?.language : undefined) ??
-      backends.find((b) => b.id === (savedBackend ?? backends[0]?.id))?.language ??
-      "auto",
+  // Coded at ingress: a synced Backend's word language ("english") — or one persisted before
+  // this — would reach the spoken picker and the link's site-subtitle match as a raw word.
+  const [language, setLanguage] = useState(() =>
+    languageCodeOf(
+      (savedBackend ? settings.transcribe?.language : undefined) ??
+        backends.find((b) => b.id === (savedBackend ?? backends[0]?.id))?.language ??
+        "auto",
+    ),
   );
   // "" = use the Backend's configured model; anything else is a per-run pick
   // from the models the server advertised on the last connection test.
@@ -366,9 +370,9 @@ export default function Transcribe() {
     setTranslateExclNotice(null); // per-screen notice about a toggle made on the OLD server
     clearBackendScopedPicks(); // model, profile and stage models all name ONE server
     const b = backends.find((x) => x.id === id);
-    const lang = b?.language ?? "auto";
+    const lang = languageCodeOf(b?.language ?? "auto"); // a synced word ("english") as its code
     setLanguage(lang);
-    const nextT = pruneTargets(translateTo, languageCodeOf(lang));
+    const nextT = pruneTargets(translateTo, lang);
     if (nextT.length !== translateTo.length) setTranslateTo(nextT);
     persistOptions({ backendId: id, model: "", translationModel: "", language: lang, translateTo: nextT });
   };

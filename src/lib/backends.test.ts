@@ -53,6 +53,11 @@ describe("effectiveLanguage", () => {
     expect(effectiveLanguage("auto", "de")).toBe("auto");
     expect(effectiveLanguage(undefined, "pt-BR")).toBe("pt-BR");
   });
+  it("an inherited backend language is trimmed; a whitespace-only one stays as given", () => {
+    expect(effectiveLanguage(undefined, " de ")).toBe("de");
+    expect(effectiveLanguage(undefined, " english ")).toBe("en");
+    expect(effectiveLanguage(undefined, "   ")).toBe("   ");
+  });
 });
 
 describe("effectiveOverrideProfile", () => {
