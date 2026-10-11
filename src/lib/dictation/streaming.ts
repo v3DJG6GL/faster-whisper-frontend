@@ -395,22 +395,40 @@ let sessionMeta: {
 /** Set once the session's outcome has been queued (settle OR cancel — never both). */
 let sessionOutcomeReported = false;
 
+/** The outcome's translation answer. A cancelled (`abandoned`) translating session that
+ *  landed nothing reports "aborted", the picker abort's answer; one that already typed or
+ *  copied its original text really did keep the original. */
+export function translationOutcome(s: {
+  skipped: boolean;
+  asked: boolean;
+  translated: boolean;
+  abandoned: boolean;
+  landed: boolean;
+}): "aborted" | "not_asked" | "translated" | "kept_original" {
+  if (s.skipped) return "aborted";
+  if (!s.asked) return "not_asked";
+  if (s.translated) return "translated";
+  return s.abandoned && !s.landed ? "aborted" : "kept_original";
+}
+
 /** Queue this session's end-of-session facts for `POST /v1/usage/outcome` (lib/usageOutcome.ts).
- *  Once per session: settleIdle reports the truthful delivery, cancelLive reports "none".
+ *  Once per session: settleIdle reports the truthful delivery, cancelLive reports "none" with
+ *  `abandoned` — before it resets sessionTyped/sessionClipboard, which still say whether
+ *  anything landed, so a cancelled translating session with nothing landed reports "aborted".
  *  The app id goes only with "Report the app I dictate into" on and never for a target an
  *  App rule blocked (the same promise the history capture keeps). Words and audio seconds
  *  are the server's own — it counted the utterances. */
-function reportSessionOutcome(delivery: "typed" | "clipboard" | "none"): void {
+function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
   const meta = sessionMeta;
   if (!meta || !meta.clientJob || sessionOutcomeReported) return;
   sessionOutcomeReported = true;
-  const translation = sessionInsertSkipped
-    ? "aborted"
-    : sessionTranslation == null
-      ? "not_asked"
-      : sessionTranslatedText != null
-        ? "translated"
-        : "kept_original";
+  const translation = translationOutcome({
+    skipped: sessionInsertSkipped,
+    asked: sessionTranslation != null,
+    translated: sessionTranslatedText != null,
+    abandoned,
+    landed: sessionTyped || sessionClipboard,
+  });
   const reportApp = useApp.getState().settings.recording.reportTargetApp !== false;
   // stripControlChars bounds the UTF-16 length WITHOUT splitting a surrogate pair: a lone
   // surrogate makes serde_json reject the whole outcome batch and the persisted queue.
@@ -4042,8 +4060,9 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   // function, so this one call covers them all; don't add duplicates at those sites.
   abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); tell it
-  // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported".
-  reportSessionOutcome("none");
+  // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported". Before the
+  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer.
+  reportSessionOutcome("none", true);
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   committedDoc = "";

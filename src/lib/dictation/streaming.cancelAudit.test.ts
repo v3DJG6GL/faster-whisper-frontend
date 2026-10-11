@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
 import dictationSrc from "./dictation.ts?raw";
-import { incompleteSurface } from "./streaming";
+import { incompleteSurface, translationOutcome } from "./streaming";
 
 /** Blank out comments, strings and template literals — same length, so indexes
  *  into the original stay valid — so the brace scan can't be thrown off by a
@@ -715,5 +715,33 @@ describe("a translating session re-caps its targets once the server's limit is k
     const guard = shrink.indexOf("if (useApp.getState().sessionTargets !== null)");
     expect(guard, "republish guarded on a live route").toBeGreaterThanOrEqual(0);
     expect(guard).toBeLessThan(shrink.indexOf("setDictation({ sessionTargets: capped })"));
+  });
+});
+
+describe("a cancelled translating session's usage outcome", () => {
+  const out = (o: Partial<Parameters<typeof translationOutcome>[0]>) =>
+    translationOutcome({ skipped: false, asked: true, translated: false, abandoned: false, landed: false, ...o });
+
+  it("maps the five branches", () => {
+    expect(out({ skipped: true, translated: true })).toBe("aborted");
+    expect(out({ asked: false, abandoned: true })).toBe("not_asked");
+    expect(out({ translated: true, abandoned: true })).toBe("translated");
+    expect(out({ abandoned: true })).toBe("aborted");
+    expect(out({})).toBe("kept_original");
+  });
+
+  it("a cancelled session that already typed its original kept it", () => {
+    expect(out({ abandoned: true, landed: true })).toBe("kept_original");
+  });
+
+  it("cancelLive reports as abandoned before it resets what landed", () => {
+    const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
+    // mask() blanks the "none" literal; the `, true` is the abandoned flag.
+    const report = cancelLive.search(/\breportSessionOutcome\(\s+, true\)/);
+    expect(report, "cancelLive must report the outcome as abandoned").toBeGreaterThanOrEqual(0);
+    expect(report).toBeLessThan(cancelLive.indexOf("sessionTyped = false"));
+    expect(report).toBeLessThan(cancelLive.indexOf("sessionClipboard = false"));
+    // reportSessionOutcome feeds the flags into the abandoned branch.
+    expect(mask(topLevelFunctions(streamingSrc).reportSessionOutcome)).toContain("landed: sessionTyped || sessionClipboard");
   });
 });
