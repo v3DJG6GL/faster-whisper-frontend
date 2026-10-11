@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { backendLabel, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 
@@ -119,6 +119,12 @@ describe("backendOptions", () => {
     expect([...m.entries()]).toEqual([["aaaaaaaa11", "Work \u00b7 a.lan"], ["bbbbbbbb22", "Work \u00b7 b.lan"]]);
     expect(backendLabels(all)).toBe(m);
     expect(backendLabels([...all])).not.toBe(m);
+  });
+  it("backendLabel reads the picker label, a backend outside the list its own display name", () => {
+    const all = [be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "Work", "http://b.lan")];
+    expect(backendLabel(all, all[1])).toBe("Work \u00b7 b.lan");
+    expect(backendLabel(all, be("cccccccc33", "  Gone\u200b ", "http://c.lan"))).toBe("Gone");
+    expect(backendLabel([], be("cccccccc33", "", "http://c.lan"))).toBe("Untitled backend");
   });
 });
 

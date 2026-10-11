@@ -11,9 +11,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
-import { backendDisplayName, ruleListLabel, safeDisplayText } from "@/lib/sanitize";
+import { ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
-import { backendOptions, effectiveServerUrl } from "@/lib/backends";
+import { backendLabel, effectiveServerUrl } from "@/lib/backends";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair, Info,
@@ -618,11 +618,7 @@ export default function Dictionary() {
   const backends = useApp((s) => s.backends);
   // This chip row SELECTS which server's mapping list is edited, so it is a decision surface like
   // the three pickers, not a readout: two backends whose defanged names collide must not draw
-  // identically here either.
-  const backendLabels = useMemo(
-    () => Object.fromEntries(backendOptions(backends).map((o) => [o.value, o.label])),
-    [backends],
-  );
+  // identically here either — every backend name on this screen goes through `backendLabel`.
   const connections = useApp((s) => s.connections);
   const quickAddList = useApp((s) => s.settings.quickAddList);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -676,7 +672,7 @@ export default function Dictionary() {
   const pinnedLabel = useMemo(() => {
     if (!quickAddList) return null;
     const b = backends.find((x) => x.id === quickAddList.backendId);
-    const backendName = b ? (backendLabels[b.id] ?? backendDisplayName(b.name)) : null;
+    const backendName = b ? backendLabel(backends, b) : null;
     const rule =
       quickAddList.backendId === selectedId
         ? rules.find((r) => r.name === quickAddList.slug)
@@ -685,7 +681,7 @@ export default function Dictionary() {
       ? ruleListLabel(rule.label, rule.name, 60)
       : safeDisplayText(quickAddList.slug, 60);
     return backendName ? `${backendName} · ${listName}` : listName;
-  }, [quickAddList, backends, backendLabels, selectedId, rules]);
+  }, [quickAddList, backends, selectedId, rules]);
 
   // editable_fields is also forwarded as an opaque server value — coerce to a plain object,
   // and to an array per type, so a malformed shape can't make `.includes`/`.filter` throw.
@@ -978,7 +974,7 @@ export default function Dictionary() {
                       : "border-line bg-surface-2 text-dim hover:text-text",
                   )}
                 >
-                  <span className="block max-w-[16rem] truncate">{backendLabels[b.id] ?? backendDisplayName(b.name)}</span>
+                  <span className="block max-w-[16rem] truncate">{backendLabel(backends, b)}</span>
                 </button>
               );
             })}
@@ -1069,7 +1065,7 @@ export default function Dictionary() {
           {/* A save that went through, then lost its follow-up reload: keep its notice above the error
               (runSave sets `result` after load(); Retry's load() clears it). */}
           {result && <SaveBanner result={result} reloadFailed reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
-          <FetchError fetch={fetchRes} backendName={backend ? (backendLabels[backend.id] ?? backendDisplayName(backend.name)) : "the server"} onRetry={() => backend && load(backend)} />
+          <FetchError fetch={fetchRes} backendName={backend ? backendLabel(backends, backend) : "the server"} onRetry={() => backend && load(backend)} />
         </Stack>
       ) : rules.length === 0 ? (
         <EmptyCard

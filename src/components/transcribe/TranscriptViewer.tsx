@@ -16,7 +16,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { hasOwn, ownProp } from "@/lib/own";
-import { backendLabels, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
+import { backendLabel, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, ChipToggle, Segmented } from "@/components/ui";
@@ -40,7 +40,7 @@ import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
 } from "@/lib/transcribeRun";
-import { backendDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, joinSegmentTexts, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
@@ -789,7 +789,7 @@ export function TranscriptViewer({
         // Named as the pickers name it (host suffix on a same-name pair), like Transcribe's doorway.
         const all = useApp.getState().backends;
         useApp.getState().setLogsDoorway(
-          transportErrorDoorway("translate", e, backendLabels(all).get(backend.id) ?? backendDisplayName(backend.name, 80)),
+          transportErrorDoorway("translate", e, backendLabel(all, backend)),
         );
       }
     } finally {
@@ -2031,7 +2031,7 @@ export function TranscriptViewer({
                   Translate now
                 </Button>
                 <span className="text-[11.5px] text-faint">
-                  runs on {trBackend ? (backendLabels(backends).get(trBackend.id) ?? backendDisplayName(trBackend.name, 40)) : "the backend"} — the original
+                  runs on {trBackend ? backendLabel(backends, trBackend) : "the backend"} — the original
                   is kept; translated lines appear as they finish
                 </span>
               </div>

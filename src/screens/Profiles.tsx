@@ -31,7 +31,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { authoredChipTag, chipTagFor } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { backendLabels, backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
+import { backendLabel, backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { backendForProfile } from "@/lib/dictation/dictation";
 import { liveAllowed } from "@/lib/dictation/streaming";
@@ -40,7 +40,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { NO_OVERRIDE_PROFILE, type Profile, type TranslationOverrides } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import { backendDisplayName, profileDisplayName, safeDisplayText, trimLeadingInvisible } from "@/lib/sanitize";
+import { profileDisplayName, safeDisplayText, trimLeadingInvisible } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 
 const ACTIVATION = {
@@ -383,7 +383,7 @@ function Editor({
                 ? "The backend this profile used was deleted."
                 : "No backend picked for this profile."}{" "}
               Dictation uses “
-              {backendLabels(backends).get(backend.id) ?? backendDisplayName(backend.name, 60)}
+              {backendLabel(backends, backend)}
               ” (your first
               backend) until you pick one.
             </Notice>
@@ -454,7 +454,7 @@ function Editor({
           {p.endpoint === "stream" && serverKind === "standard" && (
             <Notice className="mt-1">
               A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
-              <span className="font-medium">{backend ? (backendLabels(backends).get(backend.id) ?? backendDisplayName(backend.name)) : "this backend"}</span>.
+              <span className="font-medium">{backend ? backendLabel(backends, backend) : "this backend"}</span>.
             </Notice>
           )}
         </OverrideHeader>
@@ -891,9 +891,8 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers = withQuickAddPeer(profiles, quickAddHotkey);
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
-  // Each row names its backend as the editor's picker does (`backendLabels`): two backends of
+  // Each row names its backend as the editor's picker does (`backendLabel`): two backends of
   // one name carry their host suffix here too, or the list cannot say which server gets the audio.
-  const labelOf = backendLabels(backends);
   // A peer that is gone reads "another profile"; one with a blank name reads as its row does.
   const nameOf = (id: string) => {
     if (id === QUICK_ADD_PEER_ID) return "Quick add";
@@ -1021,7 +1020,7 @@ export default function Profiles() {
                   <ProfileRow
                     key={p.id}
                     p={p}
-                    backendName={b ? (labelOf.get(b.id) ?? backendDisplayName(b.name)) : "No backend"}
+                    backendName={b ? backendLabel(backends, b) : "No backend"}
                     backendId={b?.id}
                     backendLanguage={b?.language}
                     backendTargets={b?.translationOverrides?.translateTo}

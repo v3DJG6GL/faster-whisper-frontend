@@ -18,8 +18,8 @@ import {
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
-import { backendDisplayName, safeDisplayText } from "./sanitize";
-import { backendLabels } from "./backends";
+import { safeDisplayText } from "./sanitize";
+import { backendLabel } from "./backends";
 import {
   currentRecord, patchRecord, setRecordForgetHook, upsertRecord, useTranscriptHistory, type TranscriptRecord,
 } from "./transcript/transcriptHistory";
@@ -1691,13 +1691,13 @@ export function ingestJobResult(
   return rec;
 }
 
-/** A configured backend as the doorway names it: the picker's label (`backendLabels`, so two
+/** A configured backend as the doorway names it: the picker's label (`backendLabel`, so two
  *  same-named backends carry their host suffix here as there). undefined once the id is gone —
  *  the doorway then keeps its own "the backend". */
 function configuredBackendLabel(id: string): string | undefined {
   const all = useApp.getState().backends;
   const b = all.find((x) => x.id === id);
-  return b ? (backendLabels(all).get(b.id) ?? backendDisplayName(b.name, 80)) : undefined;
+  return b ? backendLabel(all, b) : undefined;
 }
 
 /** The re-attached run failed (server error, cancelled, or the server no

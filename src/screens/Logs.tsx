@@ -33,8 +33,8 @@ import {
   type FollowState,
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
-import { backendDisplayName, safeDisplayText, stripControlChars } from "@/lib/sanitize";
-import { backendLabels } from "@/lib/backends";
+import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { backendLabel } from "@/lib/backends";
 import { fmtFull, plural } from "@/lib/format";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
@@ -331,7 +331,7 @@ export default function Logs() {
     // a deleted one still gives null.
     const backendOf = (id?: string) => {
       const b = s.backends.find((x) => x.id === id);
-      return b ? (backendLabels(s.backends).get(b.id) ?? backendDisplayName(b.name, 80)) : null;
+      return b ? backendLabel(s.backends, b) : null;
     };
     const report = buildBugReport(
       {

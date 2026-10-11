@@ -35,8 +35,8 @@ import {
   type ExportFormat,
 } from "@/lib/transcript/transcriptFormats";
 import { authoredChipTag } from "@/lib/profileTag";
-import { backendDisplayName, profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
-import { backendLabels } from "@/lib/backends";
+import { profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { backendLabel } from "@/lib/backends";
 import { shortModelName } from "@/lib/inherit";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
@@ -632,7 +632,7 @@ export default function History() {
     const profileShown = typeof rec.profileName === "string" ? profileDisplayName(rec.profileName, 40) : "";
     const recBackend = backends.find((b) => b.id === rec.backendId);
     const backendShown = recBackend
-      ? (backendLabels(backends).get(recBackend.id) ?? backendDisplayName(recBackend.name, 40))
+      ? backendLabel(backends, recBackend)
       : "";
     const failureShown = safeDisplayText(rec.translationFailure ?? "", 24).trim();
     const shownModel = shortModelName(rec.model, 40);

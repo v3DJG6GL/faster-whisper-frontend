@@ -381,3 +381,9 @@ export function backendLabels(all: Backend[]): Map<string, string> {
   }
   return m;
 }
+
+/** A backend as the pickers name it; one no longer in `all` (deleted mid-run) falls back to its
+ *  own display name. */
+export function backendLabel(all: Backend[], b: Backend): string {
+  return backendLabels(all).get(b.id) ?? backendDisplayName(b.name);
+}
