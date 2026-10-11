@@ -26,20 +26,28 @@ const HELD_CHORD_LATCH_TTL: std::time::Duration = std::time::Duration::from_secs
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InjectOutcome {
-    /// The text LANDED — typed, pasted, or deliberately left on the clipboard. `false` means
-    /// nothing reached the target or the clipboard: one of our own windows held focus and the whole
-    /// insert was skipped (at entry or at the sink), or the clipboard write failed on the
-    /// clipboard-only or divert/recovery path. The caller must not advance its typed baseline on
-    /// `false`; no keystroke was pressed, so there is nothing to recover, and a re-send is safe.
+    /// The text LANDED — typed, pasted, or deliberately left on the clipboard. `false` means no
+    /// key or chord went out and the transcript was not delivered: the caller must not advance its
+    /// typed baseline, there is nothing to recover, and a re-send is safe. That invariant is the
+    /// contract; the causes today are one of our own windows holding focus, so the insert was
+    /// skipped (at entry or at a sink — at a Wayland paste chord only when a user cancel landed
+    /// during that chord-time probe, otherwise it is a divert), or a clipboard write that was busy
+    /// or failed before any keystroke: on the clipboard-only, divert or recovery path, or at the
+    /// paste sink (on Windows: a stuck clipboard read still held it, or the remote-desktop owner
+    /// or legacy write failed or timed out — a timed-out offer may still reach the clipboard
+    /// later).
     ///
     /// The default for any future early return must be `true`. `false` means "send it again", and a
     /// wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
     /// worse than the silent drop this field exists to fix.
     pub landed: bool,
     /// We DIVERTED to the clipboard against the caller's wishes — it asked for typing or pasting
-    /// and got neither, because the trigger chord was still held or focus had moved to a different
-    /// app. The text is safe, but it did not go where the user was looking, and until this field
-    /// existed nothing said so: the caller stamped its green "typed" confirmation either way.
+    /// and got neither, because the trigger chord was still held, focus had moved to a different
+    /// app, one of our own windows took focus just before the paste chord, the active keyboard
+    /// layout cannot type the transcript's letters (Wayland portal typing), or a failed session's
+    /// transcript was recovered to the clipboard. The text is safe, but it did not go where the
+    /// user was looking, and until this field existed nothing said so: the caller stamped its
+    /// green "typed" confirmation either way.
     ///
     /// This matters more since the held-chord branch became reachable on the primary hotkey paths,
     /// and more again now that the wiped-map latch can reach it too.

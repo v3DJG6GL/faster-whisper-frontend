@@ -1425,7 +1425,8 @@ async function resolveTarget(cfg: InsertCfg | null): Promise<
  *  recovery copies after a failed insert. `expectAppId` is passed for
  *  uniformity only: on a clipboard-method call Rust returns from its clipboard arm BEFORE the
  *  per-app sink re-check that reads it, so it is inert here. The guard that CAN answer
- *  `landed: false` is inject_text's own-window ENTRY check (or a failed clipboard write) —
+ *  `landed: false` is inject_text's own-window ENTRY check (or a clipboard write that failed
+ *  before any keystroke) —
  *  callers believe that answer rather than the attempt. The target-less recovery copies
  *  (stuck-finalize, stream://error, stopLive reject) and the stop-mode sink-skip recovery go
  *  through the guard-free `recoverUnguarded` instead. */
@@ -3472,7 +3473,10 @@ async function startLiveInner(
       // blank and any other non-code to null.
       source: translateSourceCode(language),
       includeOriginal: trOv.includeOriginal,
-      model: trOv.model,
+      // Trimmed, and a blank Profile value inherits the Backend's — the Whisper model's rule
+      // above. The stored value is synced, so stray spaces must not reach the wire or name a
+      // different model than the preload plan and warm check below.
+      model: pov?.translationOverrides?.model?.trim() || backend.translationOverrides?.model?.trim() || undefined,
       glossary: trOv.glossary,
       mode: trOv.mode,
       contextSegments: trOv.contextSegments,
@@ -3517,7 +3521,7 @@ async function startLiveInner(
     // Best-effort and silent: a server that doesn't know the endpoint is
     // indistinguishable from one that does.
     releaseWarmLease(); // a previous session's lease, if a teardown was skipped
-    const trModel = sessionTranslation?.model?.trim() || undefined;
+    const trModel = sessionTranslation?.model; // already trimmed, blank = undefined (above)
     const plan = preloadPlanFor({
       stages: sessionTranslation ? ["transcribing", "translating"] : ["transcribing"],
       whisperModel: model,
@@ -3767,7 +3771,9 @@ async function startLiveInner(
     // never the previous session's drain/transcription (that one is reached only with no live
     // session). A recovery cancel keeps its usual meaning: Rust finishes the session instead of
     // discarding it (a stream drains, a batch clip is transcribed, and the recording is written)
-    // — except a batch session with "Keep recordings" off, which is discarded with nothing uploaded.
+    // — except a batch session with "Keep recordings" off, which is discarded: the live clip is not
+    // uploaded, and a device-loss salvage is stopped unless its upload had already started (then
+    // only its result is dropped).
     // (TS narrows the module `let` to the `null` set above; cancelLive sets it during the await.)
     const owedCancel = cancelDuringStartInvoke as { keepRecording: boolean } | null;
     if (owedCancel) {

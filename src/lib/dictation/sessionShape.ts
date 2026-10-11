@@ -27,7 +27,12 @@ export function sessionShape(profile: Profile, backend: Backend | undefined): st
     { ...backend.decodeOverrides, ...profile.decodeOverrides },
     effectiveOverrideProfile(profile.overrideProfile, backend.overrideProfile),
     profile.endpoint ?? backend.endpoint,
-    { ...backend.translationOverrides, ...profile.translationOverrides },
+    {
+      ...backend.translationOverrides,
+      ...profile.translationOverrides,
+      // As startLiveInner sends it: trimmed, a blank Profile model inherits the Backend's.
+      model: profile.translationOverrides?.model?.trim() || backend.translationOverrides?.model?.trim() || undefined,
+    },
     profile.askTranslationTargets ? (profile.activation === "hold" ? "ask-at-release" : "ask-before-start") : false,
   ]);
 }

@@ -286,9 +286,10 @@ pub async fn cancel_record(
         // and the epoch it is about to publish.
         //
         // A cancel arriving during the "transcribing…" phase finds None here — `stop_record`
-        // already took the session and `finish` detached the POST. Disown that work too, so the
-        // audio is not uploaded and neither the .wav nor its verbatim .txt is left on disk after
-        // a UI that says cancelled.
+        // already took the session and `finish` detached the POST. Disown that work too: a POST
+        // not yet sent is skipped, and one already in flight (the usual case by the time
+        // "transcribing…" shows) has its result dropped and its .wav removed with no .txt
+        // written, so nothing is left on disk after a UI that says cancelled.
         //
         // Only a user's Cancel with no live session: a live session taken on ANY path (a Cancel,
         // the closed-handler release) supersedes the earlier detached batch, which is released so

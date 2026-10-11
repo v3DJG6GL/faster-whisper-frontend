@@ -48,6 +48,14 @@ describe("sessionShape", () => {
     }
   });
 
+  it("a padded or blank Profile translation model is the Backend's model as sent", () => {
+    const b = backend({ translationOverrides: { model: "gemma" } } as Partial<Backend>);
+    const base = sessionShape(profile(), b);
+    expect(sessionShape(profile({ translationOverrides: { model: " gemma " } } as Partial<Profile>), b)).toBe(base);
+    expect(sessionShape(profile({ translationOverrides: { model: "  " } } as Partial<Profile>), b)).toBe(base);
+    expect(sessionShape(profile({ translationOverrides: { model: "other" } } as Partial<Profile>), b)).not.toBe(base);
+  });
+
   it("differs when both ask for targets but at different moments (hold at release, hands-free before start)", () => {
     const hold = profile({ id: "ptt", activation: "hold", askTranslationTargets: true });
     const free = profile({ id: "hf", activation: "handsfree", askTranslationTargets: true });

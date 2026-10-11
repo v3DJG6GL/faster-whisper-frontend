@@ -1103,15 +1103,22 @@ export async function discardInjectionSnapshot(): Promise<void> {
 
 /** What `inject_text` did. Mirror of the Rust `InjectOutcome`. */
 export interface InjectOutcome {
-  /** The text landed — typed, pasted, or deliberately left on the clipboard. False means nothing
-   *  reached the target or the clipboard: one of our own windows held focus and the insert was
-   *  skipped (at entry or at the sink), or the clipboard write failed on the clipboard-only or
-   *  divert/recovery path. Do not advance a typed baseline on false: no keystroke was pressed, so
-   *  there is nothing to recover and the phrase must go out again. */
+  /** The text landed — typed, pasted, or deliberately left on the clipboard. False means no key
+   *  or chord went out and the transcript was not delivered: do not advance a typed baseline,
+   *  there is nothing to recover, and the phrase must go out again (a re-send is safe). That
+   *  invariant is the contract; the causes today are one of our own windows holding focus, so the
+   *  insert was skipped (at entry or at a sink — at a Wayland paste chord only when a user cancel
+   *  landed during that probe, otherwise it is a divert), or a clipboard write that was busy or
+   *  failed before any keystroke: on the clipboard-only, divert or recovery path, or at the paste
+   *  sink (on Windows: a stuck clipboard read still held it, or the remote-desktop owner or legacy
+   *  write failed or timed out — a timed-out offer may still reach the clipboard later). */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
-   *  or focus had moved to a different app. The text is safe but did not go where the user was
-   *  looking, so say so rather than stamping a green "typed" confirmation over it. */
+   *  focus had moved to a different app, one of our own windows took focus just before the paste
+   *  chord, the active keyboard layout cannot type the transcript's letters (Wayland portal
+   *  typing), or a failed session's transcript was recovered to the clipboard. The text is safe
+   *  but did not go where the user was looking, so say so rather than stamping a green "typed"
+   *  confirmation over it. */
   diverted: boolean;
 }
 
