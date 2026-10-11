@@ -545,6 +545,23 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.transcribe?.translationModel).toBe("peer-m");
   });
 
+  it("with the Transcribe-picks switch on, a translation-model pick applies only beside its backendId", async () => {
+    // A pre-upgrade blob (or an old peer) carries translationModel alone: a model meant for
+    // another server must not land under this device's backend.
+    const st0 = settings();
+    st0.transcribe = { backendId: "b1", translationModel: "mine" };
+    st0.sync = { ...st0.sync, sub: { ...st0.sync?.sub, transcribePicks: true } } as AppSettings["sync"];
+    useApp.setState({ settings: st0 });
+    const cats = { ...CATS_ALL, backends: false };
+    await applyBlob({ transcription: { translationModel: "peer-m" } as never }, cats);
+    expect(useApp.getState().settings.transcribe?.translationModel).toBe("mine");
+    await applyBlob({ transcription: { translationModel: "" } as never }, cats);
+    expect(useApp.getState().settings.transcribe?.translationModel).toBe("mine");
+    await applyBlob({ transcription: { backendId: "b2", translationModel: "peer-m" } as never }, cats);
+    expect(useApp.getState().settings.transcribe?.backendId).toBe("b2");
+    expect(useApp.getState().settings.transcribe?.translationModel).toBe("peer-m");
+  });
+
   it("a pulled backend pick clears the picks its blob does not carry (the language follows the Backend)", async () => {
     // A peer's backend pick stores language undefined, which JSON drops: merged over, this
     // device's old backend's language would stay pinned under the new backend and push back.
