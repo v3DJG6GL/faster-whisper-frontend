@@ -232,10 +232,11 @@ pub async fn start_record(
 pub async fn stop_record(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
         let state = app.state::<RecordState>();
-        // Claim the detached epoch UNDER the lock. This is its only publication: `finish()` must
-        // not re-publish it after its capture join (see `RecordSession::finish`), and
-        // `RecordSession::claim_detached` explains why a store outside the lock let a concurrent
-        // cancel disown the wrong session.
+        // Claim the detached epoch UNDER the lock. This is the stop's only publication (the
+        // capture thread's device-loss salvage arm in `start_record` publishes its own epoch
+        // before any stop): `finish()` must not re-publish it after its capture join (see
+        // `RecordSession::finish`), and `RecordSession::claim_detached` explains why a store
+        // outside the lock let a concurrent cancel disown the wrong session.
         let sess = {
             let mut guard = state
                 .0

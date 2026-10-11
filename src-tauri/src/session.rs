@@ -1138,11 +1138,13 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     // The `discard` flag alone is read at ONE instant — right here, microseconds
                     // after the disconnect — so a cancel arriving any later (i.e. essentially
                     // every real one, since the dead chip is what makes the user reach for
-                    // cancel) missed it entirely. Publish the epoch like `finish` does, so this
-                    // spawn is nameable and `transcribe_recording`'s three `batch_cancelled` checks
-                    // cover it: without this the salvage was the one detached path a cancel could
-                    // not reach, and it left `DETACHED_BATCH_EPOCH` stale, so a later
-                    // `cancel_detached_batch()` disowned some EARLIER session's live POST instead.
+                    // cancel) missed it entirely. Publish the epoch as `stop_record`'s
+                    // `claim_detached` does for a normal stop (`finish()` itself never publishes),
+                    // so this spawn is nameable and `transcribe_recording`'s three
+                    // `batch_cancelled` checks cover it: without this the salvage was the one
+                    // detached path a cancel could not reach, and it left `DETACHED_BATCH_EPOCH`
+                    // stale, so a later `cancel_detached_batch()` disowned some EARLIER session's
+                    // live POST instead.
                     Ok(())
                         if device_lost.load(Ordering::SeqCst)
                             && !discard.load(Ordering::SeqCst) =>
