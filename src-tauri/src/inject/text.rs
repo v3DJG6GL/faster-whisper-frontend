@@ -26,10 +26,11 @@ const HELD_CHORD_LATCH_TTL: std::time::Duration = std::time::Duration::from_secs
 #[derive(Debug, Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InjectOutcome {
-    /// The text LANDED — typed, pasted, or deliberately left on the clipboard. `false` only when
-    /// one of our own windows held focus and the whole insert was skipped, at entry or at the sink.
-    /// The caller must not advance its typed baseline on `false`; nothing was written anywhere, so
-    /// there is nothing to recover, and the phrase has to go out again.
+    /// The text LANDED — typed, pasted, or deliberately left on the clipboard. `false` means
+    /// nothing reached the target or the clipboard: one of our own windows held focus and the whole
+    /// insert was skipped (at entry or at the sink), or the clipboard write failed on the
+    /// clipboard-only or divert/recovery path. The caller must not advance its typed baseline on
+    /// `false`; no keystroke was pressed, so there is nothing to recover, and a re-send is safe.
     ///
     /// The default for any future early return must be `true`. `false` means "send it again", and a
     /// wrong `false` re-types a phrase the user already has — visibly duplicated text, which is

@@ -3838,8 +3838,9 @@ export interface CancelOpts {
   /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
    *  discarded that has a recording to keep — a live stream session is finished (drained,
    *  recording written), a live batch session is finished too when "Keep recordings" is on
-   *  (transcribed, .wav/.txt written, its events silenced; with recordings off it is discarded and
-   *  nothing is uploaded, a device-loss salvage included), and a drain/transcription still running
+   *  (transcribed, .wav/.txt written, its events silenced; with recordings off it is discarded: the
+   *  live clip is not uploaded, and a device-loss salvage is stopped unless its upload had already
+   *  started, then only its result is dropped), and a drain/transcription still running
    *  after stop is released, keeping its saved recording — the audio may be the only copy of what
    *  was said. */
   keepRecording?: boolean;

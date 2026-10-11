@@ -1001,8 +1001,9 @@ export async function stopRecord(): Promise<void> {
  *  its saved .wav/.txt; a recovery cancel passes false to keep them. With false a LIVE session
  *  is finished, not discarded (`cancelStream`'s rule), when "Keep recordings" is on: its clip is
  *  transcribed and its .wav/.txt written, its UI events epoch-silenced, and a device-loss salvage
- *  already under way keeps its own .wav/.txt. With recordings off it is discarded: nothing is
- *  uploaded, a device-loss salvage included. */
+ *  already under way keeps its own .wav/.txt. With recordings off it is discarded: the live clip
+ *  is not uploaded, and a device-loss salvage is stopped unless its upload had already started
+ *  (then only its result is dropped). */
 export async function cancelRecord(userInitiated = false, discardRecording = true): Promise<void> {
   if (!isTauri) return;
   await invoke("cancel_record", { userInitiated, discardRecording });
@@ -1102,10 +1103,11 @@ export async function discardInjectionSnapshot(): Promise<void> {
 
 /** What `inject_text` did. Mirror of the Rust `InjectOutcome`. */
 export interface InjectOutcome {
-  /** The text landed — typed, pasted, or deliberately left on the clipboard. False ONLY when one
-   *  of our own windows held focus and the insert was skipped, at entry or at the sink. Do not
-   *  advance a typed baseline on false: nothing was written anywhere, so there is nothing to
-   *  recover and the phrase must go out again. */
+  /** The text landed — typed, pasted, or deliberately left on the clipboard. False means nothing
+   *  reached the target or the clipboard: one of our own windows held focus and the insert was
+   *  skipped (at entry or at the sink), or the clipboard write failed on the clipboard-only or
+   *  divert/recovery path. Do not advance a typed baseline on false: no keystroke was pressed, so
+   *  there is nothing to recover and the phrase must go out again. */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
    *  or focus had moved to a different app. The text is safe but did not go where the user was

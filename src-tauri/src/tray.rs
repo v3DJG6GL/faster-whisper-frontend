@@ -320,12 +320,19 @@ mod sni {
     /// transport failure. ksni converts the call error to `fdo::Error`: a standard fdo error name
     /// arrives as `Error::Watcher`, but a non-standard one (a GNOME Shell extension's
     /// `org.gnome.gjs.JSError.*`, say) falls into `fdo::Error::ZBus` and comes back as
-    /// `Error::Dbus(MethodError)`.
+    /// `Error::Dbus(MethodError)`. ksni requests the item's own bus name (RequestName, after an
+    /// AddMatch) BEFORE it contacts the watcher and passes that error through unmapped, so a
+    /// standard-named `MethodError` on `Error::Dbus` is the bus daemon (or a sandbox proxy)
+    /// refusing that name — the fdo mapping of the register call would have turned it into
+    /// `Error::Watcher`.
     pub(super) fn registration_failed(e: &ksni::Error) -> bool {
-        matches!(
-            e,
-            ksni::Error::Watcher(_) | ksni::Error::Dbus(atspi::zbus::Error::MethodError(..))
-        )
+        match e {
+            ksni::Error::Watcher(_) => true,
+            ksni::Error::Dbus(atspi::zbus::Error::MethodError(name, ..)) => {
+                !name.as_str().starts_with("org.freedesktop.DBus.Error.")
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn spawn(app: &App) {
@@ -357,10 +364,11 @@ mod sni {
                     // (`ServiceUnknown`) to `watcher_offline`. A watcher that answered with a
                     // standard fdo error arrives as `Error::Watcher` — a refusal, but also a
                     // timeout or a sandbox proxy's AccessDenied — and one with a non-standard
-                    // error name as `Error::Dbus(MethodError)`; any other `Error::Dbus` is a
-                    // session-bus/connection or transport failure. The log names the failure,
-                    // not who caused it, and never claims there is no tray (`WontShow` cannot
-                    // occur with `assume_sni_available`).
+                    // error name as `Error::Dbus(MethodError)`. A standard-named `MethodError`
+                    // or any other `Error::Dbus` is a session-bus, name-ownership (RequestName,
+                    // which ksni sends before the watcher call) or transport failure. The log
+                    // names the failure, not who caused it, and never claims there is no tray
+                    // (`WontShow` cannot occur with `assume_sni_available`).
                     if registration_failed(&e) {
                         tracing::warn!(
                             "[tray] registering with the StatusNotifierWatcher failed; running without a tray: {e}"
@@ -614,6 +622,14 @@ mod tests {
             .unwrap();
         let refused = atspi::zbus::Error::MethodError(name, Some("x".into()), reply);
         assert!(super::sni::registration_failed(&Error::Dbus(refused)));
+        // A standard name on `Error::Dbus` is the bus refusing the item's name, not the watcher.
+        let denied = OwnedErrorName::try_from("org.freedesktop.DBus.Error.AccessDenied").unwrap();
+        let reply = Message::method_call("/", "RequestName")
+            .unwrap()
+            .build(&())
+            .unwrap();
+        let bus = atspi::zbus::Error::MethodError(denied, Some("x".into()), reply);
+        assert!(!super::sni::registration_failed(&Error::Dbus(bus)));
         let transport = Error::Dbus(atspi::zbus::Error::InvalidReply);
         assert!(!super::sni::registration_failed(&transport));
     }

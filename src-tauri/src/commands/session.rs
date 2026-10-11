@@ -269,8 +269,9 @@ pub async fn stop_record(app: AppHandle) -> Result<(), String> {
 /// inside the capture join) keeps its recording. The keep is final for a salvage published before
 /// the cancel; one that fires inside the join publishes its epoch after the forget, so a later
 /// Cancel with no live session can still disown it. With recordings off there is nothing to keep,
-/// so the live session is discarded: nothing is uploaded, and a device-loss salvage (already
-/// spawned or firing inside the join) is stopped too.
+/// so the live session is discarded: the live clip is not uploaded, a device-loss salvage firing
+/// inside the join is stopped, and one the sleep already spawned is stopped if it has not sent its
+/// POST yet (if the upload is already under way, only its result is dropped).
 #[tauri::command]
 pub async fn cancel_record(
     app: AppHandle,
@@ -325,7 +326,8 @@ pub async fn cancel_record(
         // clip. A recovery cancel with nothing to keep (recordings off) discards too: a POST whose
         // every event is suppressed would only upload the clip, and that holds for a device-loss
         // salvage as well — the flag stops one firing inside the join, and the epoch mark stops
-        // one the sleep already spawned (with no save dir there is no .wav/.txt to delete).
+        // one the sleep already spawned before its POST, or drops its result if the upload is
+        // already under way (with no save dir there is no .wav/.txt to delete).
         match sess {
             Some(s) if !discard_recording && user_initiated && s.keeps_recording() => s.finish(),
             Some(s) => s.discard(),
