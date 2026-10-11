@@ -774,17 +774,17 @@ export default function Transcribe() {
     wideEnough && (layoutPref === "studio" || (layoutPref !== "stacked" && !!result));
 
   const persistOptions = patchTranscribe;
-  // A pick that saves `backendId`. When the saved id is not the shown backend (the saved one was
-  // deleted, so the screen fell back to backends[0] without rewriting the stored picks), the whole
-  // backend-scoped set goes with it as the screen holds it — saving the id alone would revive the
+  // A pick that saves `backendId`. When the saved id is not the shown backend (never saved, or the
+  // saved one was deleted and the screen fell back to backends[0] without rewriting the stored
+  // picks), the other backend-scoped picks are CLEARED with it — saving the id alone would revive a
   // deleted backend's model, language and translation model on the next mount, past the
-  // savedBackend gate. Otherwise only the patch, so an untouched language keeps following the
-  // Backend's.
+  // savedBackend gate, and copying the screen's untouched seeds would pin them. Cleared, an
+  // untouched language keeps following the Backend's; a patch that names a field still wins.
   const persistScoped = (patch: Parameters<typeof patchTranscribe>[0]) =>
     persistOptions(
       useApp.getState().settings.transcribe?.backendId === backendId
         ? { backendId, ...patch }
-        : { backendId, model, language, translationModel, ...patch },
+        : { backendId, model: "", language: undefined, translationModel: "", ...patch },
     );
   /** The site-subtitle panel held the chips since the last re-prune (it may have grown them). */
   const panelHeldChips = useRef(false);
