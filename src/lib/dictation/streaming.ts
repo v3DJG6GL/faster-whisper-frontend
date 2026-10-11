@@ -396,8 +396,9 @@ let sessionMeta: {
 let sessionOutcomeReported = false;
 
 /** The outcome's translation answer. A cancelled (`abandoned`) translating session that
- *  landed nothing reports "aborted", the picker abort's answer; one that already typed or
- *  copied its original text really did keep the original. */
+ *  landed nothing reports "aborted", the picker abort's answer, even when its translation had
+ *  already come back (the stop-timing tail books it before the insert a cancel cuts off); one
+ *  that already typed or copied its text kept what it typed. */
 export function translationOutcome(s: {
   skipped: boolean;
   asked: boolean;
@@ -407,8 +408,8 @@ export function translationOutcome(s: {
 }): "aborted" | "not_asked" | "translated" | "kept_original" {
   if (s.skipped) return "aborted";
   if (!s.asked) return "not_asked";
-  if (s.translated) return "translated";
-  return s.abandoned && !s.landed ? "aborted" : "kept_original";
+  if (s.abandoned && !s.landed) return "aborted";
+  return s.translated ? "translated" : "kept_original";
 }
 
 /** Queue this session's end-of-session facts for `POST /v1/usage/outcome` (lib/usageOutcome.ts).
@@ -3873,7 +3874,7 @@ export interface CancelOpts {
    *  live clip is not uploaded, and a device-loss salvage is stopped unless its upload had already
    *  started, then only its result is dropped), and a drain/transcription still running
    *  after stop is released, keeping its saved recording — the audio may be the only copy of what
-   *  was said. */
+   *  was said. Its usage outcome is not reported as abandoned (the user threw nothing away). */
   keepRecording?: boolean;
 }
 
@@ -4061,8 +4062,9 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); tell it
   // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported". Before the
-  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer.
-  reportSessionOutcome("none", true);
+  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer. Only
+  // the user's cancel is abandoned; a recovery cancel (keepRecording) settles like stream://error.
+  reportSessionOutcome("none", !opts?.keepRecording);
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   committedDoc = "";

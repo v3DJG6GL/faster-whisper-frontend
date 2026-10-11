@@ -725,7 +725,9 @@ describe("a cancelled translating session's usage outcome", () => {
   it("maps the five branches", () => {
     expect(out({ skipped: true, translated: true })).toBe("aborted");
     expect(out({ asked: false, abandoned: true })).toBe("not_asked");
-    expect(out({ translated: true, abandoned: true })).toBe("translated");
+    expect(out({ translated: true, abandoned: true })).toBe("aborted");
+    expect(out({ translated: true, abandoned: true, landed: true })).toBe("translated");
+    expect(out({ translated: true })).toBe("translated");
     expect(out({ abandoned: true })).toBe("aborted");
     expect(out({})).toBe("kept_original");
   });
@@ -734,11 +736,12 @@ describe("a cancelled translating session's usage outcome", () => {
     expect(out({ abandoned: true, landed: true })).toBe("kept_original");
   });
 
-  it("cancelLive reports as abandoned before it resets what landed", () => {
+  it("cancelLive reports a user cancel as abandoned before it resets what landed", () => {
     const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
-    // mask() blanks the "none" literal; the `, true` is the abandoned flag.
-    const report = cancelLive.search(/\breportSessionOutcome\(\s+, true\)/);
-    expect(report, "cancelLive must report the outcome as abandoned").toBeGreaterThanOrEqual(0);
+    // mask() blanks the "none" literal; the second argument is the abandoned flag, false for a
+    // recovery cancel (stuck finalize, wake from sleep).
+    const report = cancelLive.search(/\breportSessionOutcome\(\s+, !opts\?\.keepRecording\)/);
+    expect(report, "cancelLive must report a user cancel as abandoned").toBeGreaterThanOrEqual(0);
     expect(report).toBeLessThan(cancelLive.indexOf("sessionTyped = false"));
     expect(report).toBeLessThan(cancelLive.indexOf("sessionClipboard = false"));
     // reportSessionOutcome feeds the flags into the abandoned branch.
