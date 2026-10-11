@@ -43,8 +43,12 @@ export function contentStates(a: {
       key: "names", label: "Speaker names",
       ...(!a.hasSpeakers ? noSpeakers
         : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
-          // Untimed TXT names each speaker turn's paragraph once, not every line.
-          : toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn" : "the speaker's name before each line")),
+          // Untimed TXT names each speaker turn's paragraph once, not every line. Uncolored VTT
+          // names an original/site line as a voice tag, which players may hide (vttExport).
+          : toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
+            : f === "vtt" && !a.colorize
+              ? "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines"
+              : "the speaker's name before each line")),
     },
     {
       key: "colors", label: "Speaker colors",
@@ -148,7 +152,10 @@ export function exportSummary(a: {
       label: "Speaker names",
       state: names.state === "fixed" ? "on" : names.state,
       why: names.state === "off" ? "off" : names.state === "fixed" ? "with your renames, as data"
-        : a.firstName ? `“${a.firstName}:” ${a.format === "txt" && !a.showTs ? "before each turn" : "before each line"}` : "on",
+        : !a.firstName ? "on"
+          : a.format === "vtt" && item("colors").state === "off"
+            ? `as a voice tag (<v ${a.firstName}>) on original lines, “${a.firstName}:” before translated lines`
+            : `“${a.firstName}:” ${a.format === "txt" && !a.showTs ? "before each turn" : "before each line"}`,
     });
     const colors = item("colors");
     rows.push({
