@@ -227,9 +227,17 @@ describe("trayRoute", () => {
     expect(trayRoute(state({ sessionTargets: null }))).toBe("");
   });
 
-  it("falls back to AUTO for a language of only format characters", () => {
+  it("reads ?? for a language of only format characters, which is still sent", () => {
     const p = { ...profile, language: "\u200b" };
-    expect(trayRoute(state({ profiles: [p], sessionTargets: ["fr", "it"] }))).toBe("AUTO → FR IT");
+    expect(trayRoute(state({ profiles: [p], sessionTargets: ["fr", "it"] }))).toBe("?? → FR IT");
+  });
+
+  it("reads AUTO only for an unset or auto language", () => {
+    for (const language of ["", "auto"]) {
+      const p = { ...profile, language };
+      const backends = [{ id: "b", language }];
+      expect(trayRoute(state({ profiles: [p], backends, sessionTargets: ["fr", "it"] }))).toBe("AUTO → FR IT");
+    }
   });
 
   it("caps a long synced language so the targets stay in the route", () => {

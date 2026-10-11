@@ -568,8 +568,11 @@ export default function Overlay() {
   // prompt, so it lands unattended. It is the one segment of the identity row with no cap of its
   // own, in a `shrink-0` row next to the `min-w-0` cell that holds the live preview: unbounded, it
   // squeezes out the very surface the user reads to supervise what is about to be typed. Same
-  // treatment as its `targetTitle` neighbour.
-  const detail = [safeDisplayText(state.language, 40), state.mode].filter(Boolean).join(" · ");
+  // treatment as its `targetTitle` neighbour. A set language that sanitizes to blank (only format
+  // characters, or a whitespace-only Backend language) is still sent verbatim, so it reads "??"
+  // like the Profiles/Backends/LanguagePicker labels rather than vanishing from the detail.
+  const lang = state.language ? safeDisplayText(state.language, 40).trim() || "??" : "";
+  const detail = [lang, state.mode].filter(Boolean).join(" · ");
   // The translation route, shown BESIDE the tag rather than inside the hover-revealed detail.
   // A route is a promise about what will be typed — that your German comes out as French — so
   // it cannot be a thing you have to hover to discover. Codes, not names: this shares a line

@@ -142,10 +142,12 @@ export function trayRoute(state: ReturnType<typeof useApp.getState>): string {
   const undecided = state.routePending === "undecided";
   if (targets.length === 0 && !undecided) return "";
   const backend = backendForProfile(profile, state.backends);
-  // Sanitized and capped like the chip's LangPick: a synced language of only format characters
-  // falls back to AUTO here (Rust strips them after the fallback is decided), and a long one
-  // can't push the targets past the tray's 64-character route cap.
-  const src = langCode(effectiveLanguage(profile?.language, backend?.language) ?? "", 12).trim() || "AUTO";
+  // Sanitized and capped like the chip's LangPick, so a long synced language can't push the
+  // targets past the tray's 64-character route cap. Only unset / "auto" reads AUTO: a set
+  // language of only format characters (or whitespace) is still sent verbatim — Rust's
+  // wire_language passes any non-empty code through — so it reads "??", not AUTO.
+  const eff = effectiveLanguage(profile?.language, backend?.language) ?? "";
+  const src = !eff || eff === "auto" ? "AUTO" : langCode(eff, 12).trim() || "??";
   if (targets.length === 0) return `${src} → ?`;
   const shown = targets.slice(0, CHIP_ROUTE_TARGETS).map((t) => t.trim().toUpperCase());
   const more = targets.length - shown.length;
