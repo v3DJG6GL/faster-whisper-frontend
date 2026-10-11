@@ -36,7 +36,7 @@ vi.mock("./api", async (importOriginal) => ({
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 const { _resetLedgerForTests, ledgerRows, persistRow, maxAgeMs } = await import("./jobsLedger");
-const { _resetReconcileForTests, initJobReconcile, isPerRowJobError, reconcileJobs, stopOrphan, watchOrphan, NOT_FOUND_ERROR } =
+const { _resetReconcileForTests, initJobReconcile, isPerRowJobError, reconcileJobs, stopOrphan, watchOrphan, NOT_FOUND_ERROR, BACKEND_GONE_ERROR } =
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun, closeRecord, openHistoryRecord, retryFile, startRun } =
   await import("./transcribeRun");
@@ -418,6 +418,39 @@ describe("reconcileJobs", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(ledgerRows()).toEqual([]);
     await vi.advanceTimersByTimeAsync(3_000);
+    expect(getJob).not.toHaveBeenCalled();
+  });
+
+  it("a re-attached run whose backend is deleted settles failed instead of polling for days", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useTranscribeRun.getState().running).toBe(true);
+    // The user deletes the backend while the resumed run is on screen.
+    useApp.setState({ backends: [] });
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(useTranscribeRun.getState().running).toBe(false);
+    expect(useTranscribeRun.getState().queue[0]).toMatchObject({ status: "failed", error: BACKEND_GONE_ERROR });
+    expect(ledgerRows()).toEqual([]);
+    expect(records().map((r) => [r.id, r.status, r.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getJob).not.toHaveBeenCalled();
+  });
+
+  it("a headless watcher whose backend is deleted forgets the row, without a record", async () => {
+    await persistRow(row(JOB_A, Date.now()));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    watchOrphan(JOB_A);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJob).toHaveBeenCalledTimes(1);
+    useApp.setState({ backends: [] });
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ledgerRows()).toEqual([]);
+    expect(records()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(getJob).not.toHaveBeenCalled();
   });
 

@@ -35,7 +35,7 @@ import type { JobStatus } from "./types";
  *  resolve the key by backend id at call time, so the address frozen at post time would send the
  *  current key to a host the backend no longer points at; a backend repointed at another server
  *  then reports the job not found. A deleted backend keeps the stored address (no key resolves for
- *  it, and the reconcile pass forgets its rows). */
+ *  it, and the reconcile pass and a watcher forget its rows). */
 function rowServerUrl(row: LedgerRow): string {
   const st = useApp.getState();
   const b = st.backends.find((x) => x.id === row.backendId);
@@ -48,6 +48,7 @@ export const NOT_FOUND_ERROR =
 export const DISABLED_ERROR = "This server no longer keeps runs.";
 export const NO_RESULT_ERROR = "The server no longer has the result.";
 export const GAVE_UP_ERROR = "Gave up waiting for the server.";
+export const BACKEND_GONE_ERROR = "The backend this run was sent to was removed.";
 
 const RETRY_MS = 30_000;
 const MAX_RETRIES = 20;
@@ -172,6 +173,19 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
       stop();
       if (opts.attached) setReattachStop(null);
       failJob(row, GAVE_UP_ERROR, { attached: opts.attached });
+      await forgetRow(row.jobId);
+      return;
+    }
+    // The backend was deleted mid-watch (here, or by a sync pull): no key resolves for it, so an
+    // auth-gated server answers every poll 401 until maxAge — days of a "running" rail. Forget the
+    // row like the reconcile pass does; the rail's run settles failed and names why.
+    const app = useApp.getState();
+    if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
+      stop();
+      if (opts.attached) {
+        setReattachStop(null);
+        failJob(row, BACKEND_GONE_ERROR, { attached: true });
+      }
       await forgetRow(row.jobId);
       return;
     }

@@ -19,7 +19,7 @@ import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
 import { safeDisplayText } from "./sanitize";
-import { backendLabel } from "./backends";
+import { backendLabelById } from "./backends";
 import {
   currentRecord, patchRecord, setRecordForgetHook, upsertRecord, useTranscriptHistory, type TranscriptRecord,
 } from "./transcript/transcriptHistory";
@@ -1542,9 +1542,9 @@ let railFileSeq = 0;
  *  it. Module-level (not store state): only cancelRun reads it, and it must
  *  survive component unmounts exactly like the pump itself. */
 let activeCancel: {
-  serverUrl: string;
-  /** A re-attached run's: the backend's address at cancel time (an edit mid-run applies). */
-  resolveUrl?: () => string;
+  /** Where a cancel goes, resolved when it is sent — a re-attached run's follows the
+   *  backend's current address (an edit mid-run applies). */
+  serverUrlOf: () => string;
   backendId?: string | null;
   progressId: string;
 } | null = null;
@@ -1568,7 +1568,7 @@ function abandonActiveRun(): void {
   // A plain object: the resolver is a function and never crosses the IPC.
   if (target) {
     void cancelBackendTranscription({
-      serverUrl: target.resolveUrl ? target.resolveUrl() : target.serverUrl,
+      serverUrl: target.serverUrlOf(),
       backendId: target.backendId,
       progressId: target.progressId,
     }).catch(() => {});
@@ -1656,7 +1656,7 @@ export function reattachRun(row: LedgerRow, serverUrlOf: () => string): number {
     stageTimes: { [first]: { start: row.startedAt } },
     running: true,
   });
-  activeCancel = { serverUrl: row.serverUrl, resolveUrl: serverUrlOf, backendId: row.backendId, progressId: row.jobId };
+  activeCancel = { serverUrlOf, backendId: row.backendId, progressId: row.jobId };
   return epoch;
 }
 
@@ -1705,9 +1705,7 @@ export function ingestJobResult(
  *  same-named backends carry their host suffix here as there). undefined once the id is gone —
  *  the doorway then keeps its own "the backend". */
 function configuredBackendLabel(id: string): string | undefined {
-  const all = useApp.getState().backends;
-  const b = all.find((x) => x.id === id);
-  return b ? backendLabel(all, b) : undefined;
+  return backendLabelById(useApp.getState().backends, id) ?? undefined;
 }
 
 /** The re-attached run failed (server error, cancelled, or the server no
@@ -2107,7 +2105,7 @@ async function pump(
       // entry (stage "translating" + last_text live line).
       const pid = ctx.standard ? null : newProgressId();
       activeCancel = pid
-        ? { serverUrl: ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
+        ? { serverUrlOf: () => ctx.serverUrl, backendId: ctx.backendId, progressId: pid }
         : null;
       // Seed the first stage's clock from the request start, so the rail
       // shows elapsed time before the first poll lands (and at all on
