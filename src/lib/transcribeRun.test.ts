@@ -25,6 +25,12 @@ const fetchUrlVideo = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVid
 const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveTranscriptMedia>) => Promise<string | null>>();
 // Unset = the real caps fetch; the translateParsed caps-miss test answers it.
 const refreshCaps = vi.fn<(...a: Parameters<typeof import("./capabilities").refreshCaps>) => Promise<void>>();
+// False = the window is on screen; the hidden-window cadence test flips it.
+let windowHidden = false;
+vi.mock("./windowVisibility", async (importOriginal) => {
+  const orig = await importOriginal<typeof import("./windowVisibility")>();
+  return { ...orig, isWindowHidden: () => windowHidden };
+});
 vi.mock("./capabilities", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./capabilities")>();
   return {
@@ -1307,6 +1313,35 @@ describe("an on-demand video that finishes is pulled once", () => {
     expect(video?.height).toBe(720);
   });
 
+  it("an answer at another height drops the earlier attempt's rung label and codec", async () => {
+    useTranscribeRun.setState({ stageMeta: { downloading: { video: {
+      state: "failed", error: "old", height: 1080, label: "1080p Premium", vcodec: "avc1.640028", container: "mp4",
+    } } } });
+    let answer: (d: typeof dl) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
+    retryRunVideo(url, ctx);
+    answer(dl);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    const video = useTranscribeRun.getState().stageMeta.downloading?.video;
+    expect(video?.height).toBe(720);
+    expect(video?.label ?? null).toBeNull();
+    expect(video?.vcodec ?? null).toBeNull();
+  });
+
+  it("an answer at the same height keeps the rung label and codec the poll saw", async () => {
+    useTranscribeRun.setState({ stageMeta: { downloading: { video: {
+      state: "failed", error: "old", height: 720, label: "720p60", vcodec: "vp09.00.40.08", container: "webm",
+    } } } });
+    let answer: (d: typeof dl) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
+    retryRunVideo(url, ctx);
+    answer(dl);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    const video = useTranscribeRun.getState().stageMeta.downloading?.video;
+    expect(video?.label).toBe("720p60");
+    expect(video?.vcodec).toBe("vp09.00.40.08");
+  });
+
   it("a poll that sees done first pulls it, and the request's answer does not pull it again", async () => {
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "downloading", video: { state: "done", mediaId: "v1" },
@@ -1460,6 +1495,49 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       await run(2);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(8);
     } finally {
+      getTranscribeProgress.mockReset();
+      fetchUrlVideoOnDemand.mockReset();
+      vi.unstubAllGlobals();
+      useTranscribeRun.setState({ stageMeta: {} });
+    }
+  });
+
+  it("a painting link's poll also drops to every fifth tick while the window is hidden", async () => {
+    let tick: (() => void) | null = null;
+    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({
+      stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
+    } as import("./types").BatchProgress));
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
+    const url = "https://youtu.be/cadence-hidden";
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    try {
+      openHistoryRecord({
+        schemaVersion: 1, kind: "url", id: "rec-cadence-hidden", createdAt: "2026-10-05T12:00:00Z",
+        sourcePath: url, sourceName: "Talk", status: "done",
+      });
+      useTranscribeRun.setState({ lastRunPath: url,
+        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+      await run(2);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(2);
+      // Closed to the tray: still the link on screen, but nobody sees it.
+      windowHidden = true;
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(3);
+      await run(4);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(3);
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(4);
+      // Shown again: the next poll resumes the 1 s cadence.
+      windowHidden = false;
+      await run(5);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(5);
+      await run(2);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(7);
+    } finally {
+      windowHidden = false;
       getTranscribeProgress.mockReset();
       fetchUrlVideoOnDemand.mockReset();
       vi.unstubAllGlobals();

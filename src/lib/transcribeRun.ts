@@ -36,6 +36,7 @@ import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
 import { wireCodes } from "./translationTargets";
+import { isWindowHidden } from "./windowVisibility";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./transcript/siteSubtitles";
@@ -990,7 +991,8 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
 
 /** The transcript returned while its video was still downloading: keep
  *  polling the run's progress id (its own poller: every second while this
- *  link is the one on screen, every 5 s otherwise — the run poller is gone)
+ *  link is the one on screen, every 5 s otherwise or while the window is
+ *  hidden — the run poller is gone)
  *  until the `video` sub-object reaches a terminal state, folding it
  *  into the rail only while this run is still the one on screen, then pull
  *  the file. Gives up when the entry vanishes (server restart / stale
@@ -1054,8 +1056,10 @@ function awaitRunUrlVideo(
         const painting = epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath;
         // A poll that paints nothing (headless, epoch -1, or its link no longer
         // on screen) only feeds the terminal check: match the headless watcher's
-        // 5 s cadence. Recomputed each poll, so a link back on screen resumes 1 s.
-        if (!painting) skip = 4;
+        // 5 s cadence — as does one nobody can see (window hidden to the tray).
+        // Recomputed each poll, so a link back on screen resumes 1 s; an on-demand
+        // request's answer still completes the row at once.
+        if (!painting || isWindowHidden()) skip = 4;
         if (p.stage === "unknown" || !p.stage) {
           // Entry gone without a terminal state: the fetch is lost to us
           // (the export panel can still fetch on demand). An on-demand
@@ -1105,8 +1109,12 @@ function awaitRunUrlVideo(
     if (epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath) {
       const prev = get().stageMeta.downloading?.video;
       // The answer's own height/container: a short fetch no poll saw still names its format.
+      // An answer at another height (a Try again at a different pick) is another rung: the
+      // earlier attempt's label and codecs would contradict it.
+      const otherRung = dl.height != null && dl.height !== prev?.height;
       const video: VideoProgress = {
         ...prev,
+        ...(otherRung ? { label: null, vcodec: null, acodec: null, formatId: null } : {}),
         state: "done",
         mediaId: dl.mediaId,
         expiresAt: dl.expiresAt,

@@ -41,7 +41,9 @@ export function VideoBranchRow({
       : 1;
   const busy = v.state === "queued" || v.state === "merging" || v.state === "registering";
   const codec = v.vcodec ? v.vcodec.split(".")[0].replace(/^vp09$/, "vp9").replace(/^av01$/, "av1") : null;
-  const spec = [v.label, codec, v.container].filter(Boolean).map((x) => safeDisplayText(String(x), 20)).join(" · ");
+  // The rung's label, else its height — the link card's rule (urlSource.ts `rungFacts`).
+  const res = v.label ?? (v.height ? `${v.height}p` : null);
+  const spec = [res, codec, v.container].filter(Boolean).map((x) => safeDisplayText(String(x), 20)).join(" · ");
   const tone =
     v.state === "failed" ? "text-warn" : v.state === "done" ? "text-ok" : "text-faint";
   const word =
