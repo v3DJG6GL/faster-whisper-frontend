@@ -1,7 +1,8 @@
 import { memo, useState } from "react";
 import { LangTag } from "@/components/ui";
 import { fmtTimestamp } from "@/lib/format";
-import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { stripControlChars } from "@/lib/sanitize";
+import { langText } from "@/lib/languages";
 import { cn } from "@/lib/cn";
 import { ownProp } from "@/lib/own";
 import type { TranscriptWord } from "@/lib/types";
@@ -252,7 +253,7 @@ export const SegmentRow = memo(function SegmentRow({
         if (!trText) return null;
         // Tagged on the SANITIZED code, falling back like the original line's tag
         // (origLang): a code that strips to blank would draw an empty tag.
-        const tag = safeDisplayText(lang, 16).trim() || "??";
+        const tag = langText(lang, 16).trim() || "??";
         // The quality guard kept the SOURCE text for this target: don't
         // present it as a translation — neutral faint line, flagged inline,
         // no follow-along (its "translation" is the original's words).

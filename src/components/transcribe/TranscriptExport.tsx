@@ -23,7 +23,7 @@ import {
   type ExportOptions, exportFileNames,
 } from "@/lib/transcript/transcriptFormats";
 import {
-  CUE_PRESETS, CUE_RANGES, limitsTitle, sanitizeCueLimits, trackCps, type CueLimits,
+  CUE_PRESETS, CUE_RANGES, limitsTitle, sanitizeCueLimits, timedTrack, trackCps, type CueLimits,
   type CueOptions, type SubtitleLength,
 } from "@/lib/transcript/cueSplit";
 import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/transcript/exportSummary";
@@ -311,9 +311,12 @@ export function TranscriptExport({
     [open, subs, editedResult, effTracks, exportOptions, subGrid],
   );
   const origIncluded = !effTracks.length || effTracks.includes("orig");
+  // Uncolored VTT names a site line like the original's and a translated one with "Name: ".
+  const siteIncluded = effTracks.some((t) => t !== "orig" && !!timedTrack(editedResult, t));
+  const mtIncluded = effTracks.some((t) => t !== "orig" && !timedTrack(editedResult, t));
   const content = contentStates({
     format: exportFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
-    hasWords, origIncluded,
+    hasWords, origIncluded, siteIncluded, mtIncluded,
   });
   const toggleContent: Record<ContentItem["key"], () => void> = {
     ts: () => setShowTs(!showTs),

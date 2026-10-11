@@ -366,11 +366,12 @@ export default function Transcribe() {
   // sync pull or an import replaces it — fills it in. Re-sync the selection whenever the
   // current id isn't in the list (on the very first hydration `backendId` is still "", so this
   // branch also seeds the initial pick), so the Backend dropdown and language don't reference
-  // a backend that's gone. When the stored pick resolves (that hydration — the screen mounted on
-  // the empty boot store, every option seeded from nothing — or a pulled pick) it RE-SEEDS from
-  // the store and persists nothing: the store already holds those picks, and applyBackendPick's
-  // clears would wipe that very backend's model, language, translation model and targets. Only a
-  // fallback to backends[0] (no stored pick, or its backend is gone) is a real switch.
+  // a backend that's gone. It RE-SEEDS every persisted option from the store (that hydration —
+  // the screen mounted on the empty boot store, every option seeded from nothing — or a pulled
+  // pick): applyBackendPick would prune and persist the screen's boot-state targets and clear
+  // the stored backend's model, language and translation model. When the stored pick resolves
+  // it persists nothing; a fallback to backends[0] (no stored pick, or its backend is gone) is a
+  // real switch and persists the cleared picks and the pruned stored targets.
   // Every pick that names something on ONE server: the per-run whisper model,
   // a server override-profile, and the three stage-model ids. They must all
   // fall away together whenever the backend under the screen changes, or the
@@ -384,13 +385,11 @@ export default function Transcribe() {
     setTranslationModel("");
     setRunContextSegments(undefined); // its inherited value is the new server's
   };
-  // ONE path for every backend change — the dropdown and the auto-resync's fallback share it, so
-  // they can't drift: the effect used to skip the run reset, the target prune and the language
-  // persist, so a hydrated list left `settings.transcribe.language` on the OLD backend's
-  // language (which snapped back on the next mount). The persist CLEARS the stored language
-  // rather than copying the new Backend's: the old one can no longer snap back, and an untouched
-  // language keeps following the Backend's own (a later edit to it reaches this screen), as in
-  // persistScoped's new-backend branch.
+  // A user's backend change: run reset, target prune and the clears persisted together (the
+  // auto-resync below makes the same clears on its switch, from the store's values). The persist
+  // CLEARS the stored language rather than copying the new Backend's: the old one can no longer
+  // snap back, and an untouched language keeps following the Backend's own (a later edit to it
+  // reaches this screen), as in persistScoped's new-backend branch.
   const applyBackendPick = (id: string) => {
     resetForInputChange();
     setBackendId(id);
@@ -410,16 +409,18 @@ export default function Transcribe() {
       // effect fires on store changes (applyBlob, conflict resolution) with no such gate.
       const isRunning = queue.some((it) => it.status === "running" || it.status === "queued");
       if (isRunning) return;
+      // Every persisted option re-seeds from the STORE, not from this closure: on the hydration
+      // the screen's state is still the empty boot store's ([] targets, default switches).
       const t = useApp.getState().settings.transcribe;
-      if (!savedBackendOf(t, backends)) {
-        applyBackendPick(backends[0].id);
-        return;
-      }
       const s = seedTranscribe(t, backends);
+      // No stored pick resolves: the screen lands on backends[0], a real switch.
+      const switched = !savedBackendOf(t, backends);
+      const targets = switched ? pruneTargets(s.translateTo, s.language) : s.translateTo;
       resetForInputChange();
       setBackendId(s.backendId);
       setTranslateExclNotice(null);
-      // The run-only picks named the old server; the persisted ones come back from the store.
+      // The run-only picks named the old server; the persisted ones come back from the store
+      // (unsaved, the backend-scoped ones seed as cleared: model "", the new Backend's language).
       setRunOverrideProfile("");
       setSeparationModel("");
       setDiarizationModel("");
@@ -427,7 +428,7 @@ export default function Transcribe() {
       setModel(s.model);
       setLanguage(s.language);
       setTranslationModel(s.translationModel);
-      setTranslateTo(s.translateTo);
+      setTranslateTo(targets);
       setDiarize(s.diarize);
       setSpeakerMode(s.speakerMode);
       setNumSpeakers(s.numSpeakers);
@@ -436,6 +437,10 @@ export default function Transcribe() {
       setTranslate(s.translate);
       setTranslationMode(s.translationMode);
       setSeparateBgm(s.separateBgm);
+      // The switch persists as applyBackendPick's does, pruning the stored targets.
+      if (switched) {
+        persistOptions({ backendId: s.backendId, model: "", translationModel: "", language: undefined, translateTo: targets });
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
   }, [backends, backendId, queue]);

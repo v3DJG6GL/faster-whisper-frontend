@@ -5,7 +5,7 @@ import { Waveform } from "@/components/Waveform";
 import { setChipHitRegion, chipPointerOver, emitOverlayAction, showMainAtScreen, isTauri, subscribe } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
-import { langCode } from "@/lib/languages";
+import { langCode, langText } from "@/lib/languages";
 import { quickLaunchMeta } from "@/lib/screenRegistry";
 import { newSpeakMemo, stepSpeaking } from "@/lib/dictation/speaking";
 import {
@@ -571,7 +571,7 @@ export default function Overlay() {
   // treatment as its `targetTitle` neighbour. A set language that sanitizes to blank (only format
   // characters, or a whitespace-only Backend language) is still sent verbatim, so it reads "??"
   // like the Profiles/Backends/LanguagePicker labels rather than vanishing from the detail.
-  const lang = state.language ? safeDisplayText(state.language, 40).trim() || "??" : "";
+  const lang = state.language ? langText(state.language, 40).trim() || "??" : "";
   const detail = [lang, state.mode].filter(Boolean).join(" · ");
   // The translation route, shown BESIDE the tag rather than inside the hover-revealed detail.
   // A route is a promise about what will be typed — that your German comes out as French — so

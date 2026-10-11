@@ -8,8 +8,7 @@ import { create } from "zustand";
 import {
   audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
 } from "../api";
-import { languageCodeOf } from "../languages";
-import { safeDisplayText } from "../sanitize";
+import { langText, languageCodeOf } from "../languages";
 import { useApp } from "../store";
 import { canonicalActivation, type BatchResult, type TranscribeOptions } from "../types";
 import { joinSegmentTexts } from "./transcriptFormats";
@@ -666,7 +665,7 @@ export function recordTracks(
   // cannot duplicate anything.
   // The code is judged on what History renders (sanitized), as the viewer's row tag does:
   // a format-only or non-string (file-borne) language would draw an empty tag.
-  const shown = typeof rec.language === "string" ? safeDisplayText(rec.language, 16).trim() : "";
+  const shown = typeof rec.language === "string" ? langText(rec.language, 16).trim() : "";
   const head = original
     ? [{ lang: shown && rec.language !== "auto" ? (rec.language as string) : "orig", text: original, orig: true }]
     : [];

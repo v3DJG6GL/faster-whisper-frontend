@@ -65,16 +65,26 @@ describe("exportSummary", () => {
     expect(txt(false)).toEqual(["“Narrator:” before each turn", "the speaker's name before each turn"]);
     expect(txt(true)).toEqual(["“Narrator:” before each line", "the speaker's name before each line"]);
   });
-  it("uncolored vtt names original lines as a voice tag, colored vtt every line", () => {
-    const vtt = (colorize: boolean) => {
-      const content = contentStates({ ...base, format: "vtt", colorize });
+  it("uncolored vtt names original and site lines as a voice tag, translated lines and colored vtt with Name:", () => {
+    const vtt = (colorize: boolean, tracks: { origIncluded?: boolean; siteIncluded?: boolean; mtIncluded?: boolean }) => {
+      const content = contentStates({ ...base, format: "vtt", colorize, ...tracks });
       return [row(sum({ format: "vtt", content }), "Speaker names")?.why, content.find((c) => c.key === "names")?.why];
     };
-    expect(vtt(false)).toEqual([
+    expect(vtt(false, { mtIncluded: true })).toEqual([
       "as a voice tag (<v Narrator>) on original lines, “Narrator:” before translated lines",
       "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines",
     ]);
-    expect(vtt(true)).toEqual(["“Narrator:” before each line", "the speaker's name before each line"]);
+    // Untranslated: every line is a voice span.
+    expect(vtt(false, {})).toEqual([
+      "as a voice tag (<v Narrator>) on each line",
+      "the speaker's name as a voice tag on each line (players may hide it)",
+    ]);
+    expect(vtt(false, { origIncluded: false, siteIncluded: true })[0]).toBe("as a voice tag (<v Narrator>) on each line");
+    // Translations only: every line carries "Name: ".
+    expect(vtt(false, { origIncluded: false, mtIncluded: true })).toEqual([
+      "“Narrator:” before each line", "the speaker's name before each line",
+    ]);
+    expect(vtt(true, { mtIncluded: true })).toEqual(["“Narrator:” before each line", "the speaker's name before each line"]);
   });
   it("as transcribed, own timing, fast subtitles, corrections and media", () => {
     const rows = sum({ cueCount: null, filePerTrack: true, stacked: false, cpsCount: 3, editCount: 2,

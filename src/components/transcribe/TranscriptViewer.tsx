@@ -34,7 +34,7 @@ import { transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { seedTargets } from "@/lib/translationTargets";
-import { translateSourceCode } from "@/lib/languages";
+import { langText, translateSourceCode } from "@/lib/languages";
 import { backendTargetCap, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
 import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
@@ -332,7 +332,7 @@ export function TranscriptViewer({
   // Per-transcript constant: computed once here, not per row in the (up to 5000-row) list.
   // The header gates on the SANITIZED code: a format-only language would
   // otherwise leave a dangling " · ".
-  const langShown = useMemo(() => safeDisplayText(result.language ?? "", 16).trim(), [result.language]);
+  const langShown = useMemo(() => langText(result.language ?? "", 16).trim(), [result.language]);
   // The row tag falls back on the sanitized code too: a blank or format-only
   // language would otherwise draw an empty tag beside every original line.
   const origLang = langShown || "??";

@@ -14,6 +14,9 @@ export interface ContentItem {
   label: string;
   state: ContentState;
   why: string;
+  /** Speaker names in an uncolored VTT: a voice tag on original and site lines (players may hide
+   *  it), "Name: " before machine-translated ones (vttExport) — which the export carries. */
+  vttNames?: "voice" | "prefix" | "mixed";
 }
 
 /** The Content box: Timestamps · Speaker names · Speaker colors · Word timing,
@@ -28,8 +31,16 @@ export function contentStates(a: {
   hasWords: boolean;
   /** The original track is in the export (LRC word tags are original-only). */
   origIncluded: boolean;
+  /** A site (timed) track is in the export. */
+  siteIncluded?: boolean;
+  /** A machine-translated track is in the export. */
+  mtIncluded?: boolean;
 }): ContentItem[] {
   const { format: f } = a;
+  const voice = a.origIncluded || !!a.siteIncluded;
+  const vttNames = f === "vtt" && !a.colorize
+    ? (voice && a.mtIncluded ? "mixed" as const : voice ? "voice" as const : "prefix" as const)
+    : undefined;
   const toggle = (on: boolean, why: string): Pick<ContentItem, "state" | "why"> => ({ state: on ? "on" : "off", why });
   const noSpeakers = { state: "na" as const, why: "no speakers in this transcript" };
   return [
@@ -45,10 +56,12 @@ export function contentStates(a: {
         : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
           // Untimed TXT names each speaker turn's paragraph once, not every line. Uncolored VTT
           // names an original/site line as a voice tag, which players may hide (vttExport).
-          : toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
-            : f === "vtt" && !a.colorize
+          : { ...toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
+            : vttNames === "mixed"
               ? "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines"
-              : "the speaker's name before each line")),
+              : vttNames === "voice"
+                ? "the speaker's name as a voice tag on each line (players may hide it)"
+                : "the speaker's name before each line"), vttNames }),
     },
     {
       key: "colors", label: "Speaker colors",
@@ -153,9 +166,11 @@ export function exportSummary(a: {
       state: names.state === "fixed" ? "on" : names.state,
       why: names.state === "off" ? "off" : names.state === "fixed" ? "with your renames, as data"
         : !a.firstName ? "on"
-          : a.format === "vtt" && item("colors").state === "off"
+          : names.vttNames === "mixed"
             ? `as a voice tag (<v ${a.firstName}>) on original lines, “${a.firstName}:” before translated lines`
-            : `“${a.firstName}:” ${a.format === "txt" && !a.showTs ? "before each turn" : "before each line"}`,
+            : names.vttNames === "voice"
+              ? `as a voice tag (<v ${a.firstName}>) on each line`
+              : `“${a.firstName}:” ${a.format === "txt" && !a.showTs ? "before each turn" : "before each line"}`,
     });
     const colors = item("colors");
     rows.push({
