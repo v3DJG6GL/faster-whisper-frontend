@@ -1615,8 +1615,9 @@ export function setOrphanForget(fn: ((jobId: string) => void) | null): void {
 /** Take over the rail for a run the server is still working on (found in
  *  the in-flight ledger at launch): the queue shows it running, the first
  *  stage's clock starts when the request originally left, and Cancel routes
- *  to the same server id. Returns the epoch the watcher must fold under. */
-export function reattachRun(row: LedgerRow): number {
+ *  to the same server id (at `serverUrl`, the backend's current address). Returns the epoch the
+ *  watcher must fold under. */
+export function reattachRun(row: LedgerRow, serverUrl = row.serverUrl): number {
   abandonActiveRun();
   const isUrl = row.kind === "url";
   const first: RailStage = isUrl
@@ -1645,7 +1646,7 @@ export function reattachRun(row: LedgerRow): number {
     stageTimes: { [first]: { start: row.startedAt } },
     running: true,
   });
-  activeCancel = { serverUrl: row.serverUrl, backendId: row.backendId, progressId: row.jobId };
+  activeCancel = { serverUrl, backendId: row.backendId, progressId: row.jobId };
   return epoch;
 }
 

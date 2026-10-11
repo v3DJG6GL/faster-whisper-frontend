@@ -20,6 +20,7 @@
 // the same record; the row is forgotten only after the record was written.
 
 import { deleteJob, getJob, getJobResult, isTauri } from "./api";
+import { effectiveServerUrl } from "./backends";
 import { configReady } from "./persistence";
 import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
@@ -28,6 +29,18 @@ import {
   setReattachStop, useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
 import type { JobStatus } from "./types";
+
+/** Where a ledgered job is asked about: its backend's CURRENT address (`effectiveServerUrl`, with
+ *  this device's override), as every other surface pairs it with the key. The jobs commands
+ *  resolve the key by backend id at call time, so the address frozen at post time would send the
+ *  current key to a host the backend no longer points at; a backend repointed at another server
+ *  then reports the job not found. A deleted backend keeps the stored address (no key resolves for
+ *  it, and the reconcile pass forgets its rows). */
+function rowServerUrl(row: LedgerRow): string {
+  const st = useApp.getState();
+  const b = st.backends.find((x) => x.id === row.backendId);
+  return b ? effectiveServerUrl(b, st.settings) : row.serverUrl;
+}
 
 /** Copy for the states a returning user sees on a failed record. */
 export const NOT_FOUND_ERROR =
@@ -91,12 +104,13 @@ function failedText(status: JobStatus): string {
 async function ingestDone(
   row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number, stopped: () => boolean = () => false,
 ): Promise<boolean> {
-  const r = await getJobResult({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
+  const serverUrl = rowServerUrl(row);
+  const r = await getJobResult({ serverUrl, backendId: row.backendId, jobId: row.jobId });
   if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
   switch (r.kind) {
     case "ok": {
       // A second network await (the link's site subtitles): the epoch can move during it too.
-      const result = await withSiteTracks(r.value, row.path, row.urlMeta, row.ctx);
+      const result = await withSiteTracks(r.value, row.path, row.urlMeta, { ...row.ctx, serverUrl });
       if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
       ingestJobResult(row, result, tookMsOf(status, row), { attached });
       await forgetRow(row.jobId);
@@ -162,7 +176,8 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     busy = true;
     let delay = base;
     try {
-      const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
+      // Re-read per poll: an address edit mid-watch applies to the next status call.
+      const r = await getJob({ serverUrl: rowServerUrl(row), backendId: row.backendId, jobId: row.jobId });
       if (stopped) return;
       if (r.kind === "error") {
         failures += 1;
@@ -235,7 +250,7 @@ export function stopOrphan(jobId: string): void {
   watching.get(jobId)?.();
   if (!row) return;
   void forgetRow(jobId);
-  void deleteJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId }).catch(() => {});
+  void deleteJob({ serverUrl: rowServerUrl(row), backendId: row.backendId, jobId }).catch(() => {});
 }
 /** The pump's hook (retryFile, startRun): stop every lost request whose file the user is
  *  about to run again — a watched one (found by path in `orphans`: the ledger may have
@@ -298,7 +313,8 @@ export async function reconcileJobs(): Promise<void> {
     for (const row of rows) {
       if (!mine(row)) continue;
       try {
-        if (unreachable.has(row.serverUrl)) {
+        const url = rowServerUrl(row);
+        if (unreachable.has(url)) {
           retry = true;
           continue;
         }
@@ -308,7 +324,7 @@ export async function reconcileJobs(): Promise<void> {
           await forgetRow(row.jobId);
           continue;
         }
-        const r = await getJob({ serverUrl: row.serverUrl, backendId: row.backendId, jobId: row.jobId });
+        const r = await getJob({ serverUrl: url, backendId: row.backendId, jobId: row.jobId });
         // Stopped meanwhile (a retry of its file, a delete of its record).
         if (stopped.has(row.jobId)) continue;
         switch (r.kind) {
@@ -316,7 +332,7 @@ export async function reconcileJobs(): Promise<void> {
             // Only a request that got no answer says the host is down; a per-row failure
             // (one entry's revoked key, one job's 500 or unreadable body) must not hold back
             // the server's other rows every pass until it ages out.
-            if (!isPerRowJobError(r.message)) unreachable.add(row.serverUrl);
+            if (!isPerRowJobError(r.message)) unreachable.add(url);
             retry = true;
             continue;
           case "disabled":
@@ -361,7 +377,7 @@ export async function reconcileJobs(): Promise<void> {
     const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
     for (const row of live) {
       if (row === newest && idle) {
-        const epoch = reattachRun(row);
+        const epoch = reattachRun(row, rowServerUrl(row));
         watchJob(row, { attached: true, epoch });
       } else {
         // Stoppable by the path-keyed orphan stop like watchOrphan's: a History record

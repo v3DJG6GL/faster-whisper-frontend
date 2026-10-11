@@ -204,8 +204,20 @@ describe("reconcileJobs", () => {
     expect(ledgerRows()).toHaveLength(1);
   });
 
+  it("a row is asked at its backend's current address, not the one it was posted to", async () => {
+    // The key resolves by backend id at call time: the posted address would send the current key
+    // to a host the backend no longer points at.
+    await seed({ ...row(JOB_A, T0), serverUrl: "http://old:8000" });
+    getJob.mockResolvedValue({ kind: "not_found" });
+    await reconcileJobs();
+    expect((getJob.mock.calls[0][0] as { serverUrl?: string }).serverUrl).toBe("http://localhost:8000");
+  });
+
   it("one unreachable server costs one status call per pass, not one per row", async () => {
-    const other = { ...row(JOB_C, T0 + 2), serverUrl: "http://other:8000" };
+    // A second backend: a row is asked at its backend's current address.
+    useApp.setState({ backends: [...useApp.getState().backends,
+      { id: "b2", name: "Other", serverUrl: "http://other:8000" } as never] });
+    const other = { ...row(JOB_C, T0 + 2), backendId: "b2", serverUrl: "http://other:8000" };
     await seed(row(JOB_A, T0), row(JOB_B, T0 + 1), other);
     getJob.mockImplementation(({ jobId }) => Promise.resolve(jobId === JOB_C
       ? { kind: "not_found" } : { kind: "error", message: "timed out" }));
