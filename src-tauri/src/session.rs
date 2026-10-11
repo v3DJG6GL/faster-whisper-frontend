@@ -51,8 +51,9 @@ pub fn retire_active_epoch() {
     ACTIVE_EPOCH.fetch_add(1, Ordering::SeqCst);
 }
 
-/// The epoch of the batch transcription most recently DETACHED by `RecordSession::finish`, and
-/// the epoch a cancel has since disowned.
+/// The epoch of the batch transcription most recently DETACHED, published by `stop_record`
+/// (`RecordSession::claim_detached`, under the RecordState lock) or by the capture thread's
+/// device-loss salvage arm, never by `finish()` itself, and the epoch a cancel has since disowned.
 ///
 /// `stop_record` takes the session out of managed state and `finish` spawns the transcribe POST
 /// on its own task — so a cancel arriving during the "transcribing…" phase found `None` and had
@@ -1001,7 +1002,8 @@ impl RecordSession {
     /// its place.
     ///
     /// Publishing early is safe: the capture thread's device-loss salvage arm (in
-    /// `start_record`) stores the same epoch, and the only other accesses are
+    /// `start_record`) stores the same epoch, possibly after this claim if it fires inside
+    /// `finish()`'s capture join, and the only other accesses are
     /// `cancel_detached_batch` (reads it) and `forget_detached_batch` (clears it).
     pub fn claim_detached(&self) {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
