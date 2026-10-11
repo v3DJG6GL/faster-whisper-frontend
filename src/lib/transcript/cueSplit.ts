@@ -617,6 +617,10 @@ export function buildCues(
   const needMine = tracks.includes("orig") || (!ownMt && mtLangs.length > 0);
   const needSplit = needMine || (ownMt && mtLangs.length > 0);
   const cues: Cue[] = [];
+  // Each own-timed language's limits, worked out once rather than per segment
+  // (a Map, so a language code like "constructor" stays an ordinary key).
+  const mtLim = new Map<string, CueLimits>();
+  if (ownMt) for (const l of mtLangs) mtLim.set(l, trackLimits(result, o, l)!);
 
   segs.forEach((seg, si) => {
     const toks = ranges && L ? tokensOf(seg.text, words.slice(ranges[si][0], ranges[si][1])) : null;
@@ -632,7 +636,7 @@ export function buildCues(
       const t = trText(seg, lang);
       if (t === null) continue;
       if (ownMt) {
-        const LL = { ...trackLimits(result, o, lang)!, reserve: reserve(seg) };
+        const LL = { ...mtLim.get(lang)!, reserve: reserve(seg) };
         if (!spans.length) {
           own[lang].push({ seg: si, start: seg.start, end: seg.end, text: t, speaker: seg.speaker, tr: {} });
           continue;

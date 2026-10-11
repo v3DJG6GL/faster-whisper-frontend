@@ -6,7 +6,7 @@
 
 import {
   buildCues, cueResult, edgeChar, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
-  type CueGrid, type CueOptions,
+  type CueGrid, type CueLimits, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { ownProp } from "../own";
@@ -772,6 +772,8 @@ function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
   const order = speakerOrder(result);
   const lineTracks = tracksOf(opts);
   const cues = isSubtitleFormat(opts.format) ? opts.cues : undefined;
+  // Each track's limits, worked out on its first wrapped line rather than per line.
+  const lim = new Map<string, CueLimits | null>();
   return {
     opts,
     order,
@@ -781,7 +783,8 @@ function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
     origIncluded: lineTracks.includes("orig"),
     lineTracks,
     wrap: (text, track, reserve) => {
-      const L = trackLimits(result, cues, track);
+      if (!lim.has(track)) lim.set(track, trackLimits(result, cues, track));
+      const L = lim.get(track);
       if (!L) return text;
       return wrapLines(text, L.cpl, L.lines, reserve).join("\n");
     },

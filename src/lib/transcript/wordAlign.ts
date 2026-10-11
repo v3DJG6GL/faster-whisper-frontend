@@ -236,7 +236,11 @@ export function applyTextEdits(
   const edited = new Set(
     Object.keys(edits)
       .map(Number)
-      .filter((i) => i >= 0 && i < segs.length),
+      // A malformed key ("" or "01" from a damaged record) maps to an index
+      // with no string behind it — drop it rather than align against undefined.
+      .filter(
+        (i) => Number.isInteger(i) && i >= 0 && i < segs.length && typeof edits[i] === "string",
+      ),
   );
   if (!edited.size) return words;
   const ranges = segmentWordRanges(segs, words);

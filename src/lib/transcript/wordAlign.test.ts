@@ -246,4 +246,9 @@ describe("applyTextEdits", () => {
     expect(applyTextEdits(result, undefined)).toBe(result.words);
     expect(applyTextEdits({ text: "" }, { 0: "x" })).toEqual([]);
   });
+
+  it("ignores a malformed edit key instead of aligning against nothing", () => {
+    const bad = { "": "x", "01": "y", "0.5": "z" } as unknown as Record<number, string>;
+    expect(applyTextEdits(result, bad)).toBe(result.words);
+  });
 });

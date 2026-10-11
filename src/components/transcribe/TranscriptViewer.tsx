@@ -48,6 +48,7 @@ import {
 import { applyTextEdits, segmentWordRanges } from "@/lib/transcript/wordAlign";
 import { cn } from "@/lib/cn";
 import { prefersReducedMotion } from "@/lib/theme";
+import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
 import { basename, withTrackSites, type MediaChoice } from "@/lib/transcript/mediaExport";
@@ -650,7 +651,10 @@ export function TranscriptViewer({
     // backend without the shared progress entry) leaves the card in its
     // current state; a NETWORK failure flips it to "reconnecting" — the
     // chunk request itself is still in flight on its own long timeout.
-    const pollTimer = window.setInterval(() => {
+    // Hidden (closed to the tray), it polls only every fifth tick: the chunk loop, not
+    // the poll, ends the run, so nothing is lost; a show polls at once (usage.ts idiom).
+    let skipped = 0;
+    const poll = () => {
       // Stamped before the request: a poll sent before the current chunk began must not
       // scale its (previous-chunk) progress onto the new chunk's frame.
       const sentAt = Date.now();
@@ -674,7 +678,17 @@ export function TranscriptViewer({
           if (trCtls.get(okey) !== ctl) return;
           if (!String(e).startsWith("HTTP")) setTrRun((s) => (s ? foldPollFailure(s) : s));
         });
+    };
+    const pollTimer = window.setInterval(() => {
+      if (isWindowHidden() && ++skipped < 5) return;
+      skipped = 0;
+      poll();
     }, 1000);
+    const offHidden = onWindowHiddenChange((hidden) => {
+      if (hidden || skipped === 0) return;
+      skipped = 0;
+      poll();
+    });
     try {
       await runChunkedTranslate({
         indexes,
@@ -773,6 +787,7 @@ export function TranscriptViewer({
       }
     } finally {
       window.clearInterval(pollTimer);
+      offHidden();
       if (trCtls.get(okey) === ctl) trCtls.delete(okey);
     }
   };

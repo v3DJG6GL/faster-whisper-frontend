@@ -27,9 +27,18 @@ const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveT
 const refreshCaps = vi.fn<(...a: Parameters<typeof import("./capabilities").refreshCaps>) => Promise<void>>();
 // False = the window is on screen; the hidden-window cadence test flips it.
 let windowHidden = false;
+// The show/hide listeners the module under test subscribed; a test fires them by hand.
+const hiddenListeners = new Set<(hidden: boolean) => void>();
 vi.mock("./windowVisibility", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./windowVisibility")>();
-  return { ...orig, isWindowHidden: () => windowHidden };
+  return {
+    ...orig,
+    isWindowHidden: () => windowHidden,
+    onWindowHiddenChange: (fn: (hidden: boolean) => void) => {
+      hiddenListeners.add(fn);
+      return () => void hiddenListeners.delete(fn);
+    },
+  };
 });
 vi.mock("./capabilities", async (importOriginal) => {
   const orig = await importOriginal<typeof import("./capabilities")>();
@@ -1536,6 +1545,59 @@ describe("a pending video's poll slows down once its link is off screen", () => 
       expect(getTranscribeProgress).toHaveBeenCalledTimes(5);
       await run(2);
       expect(getTranscribeProgress).toHaveBeenCalledTimes(7);
+    } finally {
+      windowHidden = false;
+      getTranscribeProgress.mockReset();
+      fetchUrlVideoOnDemand.mockReset();
+      vi.unstubAllGlobals();
+      useTranscribeRun.setState({ stageMeta: {} });
+    }
+  });
+
+  it("showing the window resumes the 1 s poll at once, keeps a failure backoff, and unsubscribes at the end", async () => {
+    let tick: (() => void) | null = null;
+    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
+    let answer: () => Promise<import("./types").BatchProgress> = () => Promise.resolve({
+      stage: "done", progress: 1, video: { state: "downloading", progress: 0.5 },
+    } as import("./types").BatchProgress);
+    getTranscribeProgress.mockImplementation(() => answer());
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
+    const url = "https://youtu.be/cadence-show";
+    const flush = () => new Promise((r) => setTimeout(r, 0));
+    const before = hiddenListeners.size;
+    const show = () => { windowHidden = false; for (const fn of [...hiddenListeners]) fn(false); };
+    try {
+      openHistoryRecord({
+        schemaVersion: 1, kind: "url", id: "rec-cadence-show", createdAt: "2026-10-05T12:00:00Z",
+        sourcePath: url, sourceName: "Talk", status: "done",
+      });
+      useTranscribeRun.setState({ lastRunPath: url,
+        stageMeta: { downloading: { video: { state: "failed", error: "old" } } } });
+      retryRunVideo(url, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+      expect(hiddenListeners.size).toBe(before + 1);
+      const run = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+      // A hidden poll sets the slow cadence; the show clears it: the very next tick polls.
+      windowHidden = true;
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
+      show();
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(2);
+      // A failed poll's backoff (one skipped tick after the first failure) outlives a show.
+      windowHidden = true;
+      answer = () => Promise.reject(new Error("offline"));
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(3);
+      show();
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(3);
+      // A terminal state ends the poll and drops its show listener with the timer.
+      answer = () => Promise.resolve({
+        stage: "done", progress: 1, video: { state: "failed", error: "gone" },
+      } as import("./types").BatchProgress);
+      await run(1);
+      expect(getTranscribeProgress).toHaveBeenCalledTimes(4);
+      expect(hiddenListeners.size).toBe(before);
     } finally {
       windowHidden = false;
       getTranscribeProgress.mockReset();

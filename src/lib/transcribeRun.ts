@@ -36,7 +36,7 @@ import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
 import { wireCodes } from "./translationTargets";
-import { isWindowHidden } from "./windowVisibility";
+import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
 } from "./transcript/siteSubtitles";
@@ -1029,15 +1029,18 @@ function awaitRunUrlVideo(
   // sleep still resumes the fetch.
   let failures = 0;
   let skip = 0;
+  // The current skip is only the hidden window's (a painting poll): a show clears it so the
+  // row resumes 1 s at once. Never a failure backoff's, which must run its course.
+  let hiddenSkip = false;
   const timer = window.setInterval(() => {
     if (inFlight) return;
     // The record was deleted: nothing is left to take the video.
     if (!registeredIds.has(rec.id)) {
-      window.clearInterval(timer);
+      end();
       return;
     }
     if (Date.now() - startedAt > 2 * 60 * 60 * 1000) {
-      window.clearInterval(timer);
+      end();
       return;
     }
     if (skip > 0) {
@@ -1060,12 +1063,13 @@ function awaitRunUrlVideo(
         // Recomputed each poll, so a link back on screen resumes 1 s; an on-demand
         // request's answer still completes the row at once.
         if (!painting || isWindowHidden()) skip = 4;
+        hiddenSkip = painting && isWindowHidden();
         if (p.stage === "unknown" || !p.stage) {
           // Entry gone without a terminal state: the fetch is lost to us
           // (the export panel can still fetch on demand). An on-demand
           // request still open has not claimed it yet, or answers itself.
           if (!p.video && requestSettled) {
-            window.clearInterval(timer);
+            end();
             return;
           }
         }
@@ -1085,22 +1089,33 @@ function awaitRunUrlVideo(
         }
         const st = p.video?.state;
         if (videoTerminal(st)) {
-          window.clearInterval(timer);
+          end();
           if (st === "done" && p.video?.mediaId) pull(p.video.mediaId);
         }
       })
       .catch(() => {
         failures += 1;
         skip = Math.min(2 ** failures, 30) - 1;
+        hiddenSkip = false;
       })
       .finally(() => { inFlight = false; });
   }, 1000);
+  const offHidden = onWindowHiddenChange((hidden) => {
+    if (hidden || !hiddenSkip) return;
+    skip = 0;
+    hiddenSkip = false;
+  });
+  // Every way the poll ends drops the show listener with the timer.
+  function end() {
+    window.clearInterval(timer);
+    offHidden();
+  }
   // A failed request (null) already marked the Video row failed: the poll ends with it
   // (Try again recovers).
   void request?.then((dl) => {
     requestSettled = true;
     if (pulled) return;
-    window.clearInterval(timer);
+    end();
     if (!dl) {
       ended = true;
       return;
