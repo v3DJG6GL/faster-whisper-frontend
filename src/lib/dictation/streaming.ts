@@ -1861,7 +1861,7 @@ function armStuckWatchdog(): void {
       // cancelLive, not awaited; it is a no-op in stop mode (nothing snapshotted), which is the only
       // mode with a pending transcript here.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
-      const cancelled = cancelLive({ keepRecording: true }).catch((e) => console.error("stuck-finalize cancel failed:", e));
+      const cancelled = cancelLive({ keepRecording: true, recovered: !!pending }).catch((e) => console.error("stuck-finalize cancel failed:", e));
       if (pending) {
         void (async () => {
           await cancelled;
@@ -3874,8 +3874,12 @@ export interface CancelOpts {
    *  live clip is not uploaded, and a device-loss salvage is stopped unless its upload had already
    *  started, then only its result is dropped), and a drain/transcription still running
    *  after stop is released, keeping its saved recording — the audio may be the only copy of what
-   *  was said. Its usage outcome is not reported as abandoned (the user threw nothing away). */
+   *  was said. */
   keepRecording?: boolean;
+  /** The stuck-finalize watchdog copies the session's text to the clipboard after this cancel:
+   *  its usage outcome is not reported as abandoned. Every other cancel (the user's, wake from
+   *  sleep, which recovers no text) is. */
+  recovered?: boolean;
 }
 
 /** Chord family, when the in-place upgrade would be a lie: the hands-free Profile needs a
@@ -4062,9 +4066,10 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); tell it
   // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported". Before the
-  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer. Only
-  // the user's cancel is abandoned; a recovery cancel (keepRecording) settles like stream://error.
-  reportSessionOutcome("none", !opts?.keepRecording);
+  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer. A
+  // cancel whose text the watchdog recovers (recovered) settles like stream://error; every other
+  // one is abandoned, wake from sleep included — it keeps the audio, not the text.
+  reportSessionOutcome("none", !opts?.recovered);
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   committedDoc = "";

@@ -360,7 +360,7 @@ describe("work that must wait for the queue or the cancel", () => {
     const body = mask(fns.armStuckWatchdog);
     expect(body).not.toMatch(/void cancelLive\(/);
     // A recovery cancel: the draining stream keeps its recording (the transcript is lost).
-    expect(body).toContain("cancelLive({ keepRecording: true })");
+    expect(body).toContain("cancelLive({ keepRecording: true, recovered: !!pending })");
     const wait = body.indexOf("await cancelled");
     expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
     expect(body.indexOf("recoverUnguarded(")).toBeGreaterThan(wait);
@@ -738,9 +738,9 @@ describe("a cancelled translating session's usage outcome", () => {
 
   it("cancelLive reports a user cancel as abandoned before it resets what landed", () => {
     const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
-    // mask() blanks the "none" literal; the second argument is the abandoned flag, false for a
-    // recovery cancel (stuck finalize, wake from sleep).
-    const report = cancelLive.search(/\breportSessionOutcome\(\s+, !opts\?\.keepRecording\)/);
+    // mask() blanks the "none" literal; the second argument is the abandoned flag, false only
+    // when the watchdog recovers the text (wake from sleep keeps the audio, not the text).
+    const report = cancelLive.search(/\breportSessionOutcome\(\s+, !opts\?\.recovered\)/);
     expect(report, "cancelLive must report a user cancel as abandoned").toBeGreaterThanOrEqual(0);
     expect(report).toBeLessThan(cancelLive.indexOf("sessionTyped = false"));
     expect(report).toBeLessThan(cancelLive.indexOf("sessionClipboard = false"));

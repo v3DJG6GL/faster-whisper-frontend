@@ -2618,7 +2618,8 @@ export default function Transcribe() {
                                       <span className="ml-1.5 text-faint">{safeDisplayText(u.target, 16)}</span>
                                     </>
                                   ) : (
-                                    langText(u.target, 12)
+                                    // A real unit keeps a visible name: a set code that reads blank is "??".
+                                    langText(u.target, 12).trim() || "??"
                                   )}
                                 </span>
                                 <span className="h-[5px] overflow-hidden rounded-pill bg-surface-2">
