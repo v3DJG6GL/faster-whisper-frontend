@@ -16,7 +16,7 @@ import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/
 import { backendDisplayName, profileDisplayName, safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { plural } from "@/lib/format";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
-import { effectiveLanguage } from "@/lib/backends";
+import { backendLabels, effectiveLanguage } from "@/lib/backends";
 import { ownModelName } from "@/lib/backendChipLabels";
 import { shortModelName } from "@/lib/inherit";
 import { effectiveServerKind } from "@/lib/serverKind";
@@ -148,7 +148,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
       <div role="gridcell"><HotkeyChips codes={p.hotkey} /></div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={modelFull ? safeDisplayText(modelFull, 200) : undefined}>{model || "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
-      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${backendDisplayName(backend.name)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${backendLabels(backends).get(backend.id) ?? backendDisplayName(backend.name)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
       <div role="gridcell" className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="sm" title="Edit profile" onClick={() => navigate(`/profiles?edit=${p.id}`)}>
           <Pencil className="size-4" />

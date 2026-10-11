@@ -774,6 +774,18 @@ export default function Transcribe() {
     wideEnough && (layoutPref === "studio" || (layoutPref !== "stacked" && !!result));
 
   const persistOptions = patchTranscribe;
+  // A pick that saves `backendId`. When the saved id is not the shown backend (the saved one was
+  // deleted, so the screen fell back to backends[0] without rewriting the stored picks), the whole
+  // backend-scoped set goes with it as the screen holds it — saving the id alone would revive the
+  // deleted backend's model, language and translation model on the next mount, past the
+  // savedBackend gate. Otherwise only the patch, so an untouched language keeps following the
+  // Backend's.
+  const persistScoped = (patch: Parameters<typeof patchTranscribe>[0]) =>
+    persistOptions(
+      useApp.getState().settings.transcribe?.backendId === backendId
+        ? { backendId, ...patch }
+        : { backendId, model, language, translationModel, ...patch },
+    );
   /** The site-subtitle panel held the chips since the last re-prune (it may have grown them). */
   const panelHeldChips = useRef(false);
   /** translateTo's length when the panel took the chips: the user's own list, which no release cuts. */
@@ -1232,7 +1244,7 @@ export default function Transcribe() {
                       onClick={() => {
                         resetForInputChange();
                         setModel("");
-                        persistOptions({ backendId, model: "" });
+                        persistScoped({ model: "" });
                       }}
                       title={`Default · ${defaultModelName}`}
                       className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text"
@@ -1249,7 +1261,7 @@ export default function Transcribe() {
                 onChange={(v) => {
                   resetForInputChange();
                   setModel(v);
-                  persistOptions({ backendId, model: v });
+                  persistScoped({ model: v });
                 }}
                 models={advertised}
                 defaultLabel={`Default · ${defaultModelName}`}
@@ -1274,7 +1286,7 @@ export default function Transcribe() {
                   // source changes AFTER seeding (a de→de stage is a no-op run).
                   const next = pruneTargets(translateTo, sourceOf(lang));
                   if (next.length !== translateTo.length) setTranslateTo(next);
-                  persistOptions({ backendId, language: lang, translateTo: next });
+                  persistScoped({ language: lang, translateTo: next });
                 }}
               />
             </div>
@@ -1785,7 +1797,7 @@ export default function Transcribe() {
                               setTranslationModel(v);
                               // With the backend it names a model on: the seed keeps the pick
                               // only while that saved backend exists, like the Whisper model.
-                              persistOptions({ backendId, translationModel: v });
+                              persistScoped({ translationModel: v });
                             }}
                             inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
                             caps={caps}

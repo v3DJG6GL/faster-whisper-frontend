@@ -334,7 +334,9 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
   // distinct from the real `"Work"` and neither collides — leaving the real one bare while the
   // impostor alone renders in the form that now MEANS "disambiguated, at good.tld". Suffixing it
   // appends its REAL host, so the forgery reads `Work · good.tld · evil.tld` and gives itself away.
-  const forgesSuffix = (l: string) => l.includes(SEP);
+  // Tested on the joiner-stripped label like `norm`: an interior ZWJ ("Work \u00b7\u200d good.tld")
+  // hides the separator from a raw `includes` while the label draws exactly as the suffixed form.
+  const forgesSuffix = (l: string) => l.replace(/[\u200c\u200d]/g, "").includes(SEP);
   const out = all.map((b, i) => {
     const label = labels[i];
     if (label && (counts.get(norm(label)) ?? 0) < 2 && !forgesSuffix(label)) {
@@ -363,4 +365,17 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
       ? o
       : { value: o.value, label: `${o.label}${SEP}#${o.value.slice(0, 8)}` },
   );
+}
+
+const labelCache = new WeakMap<Backend[], Map<string, string>>();
+/** `backendOptions`' label per backend id — how every surface that names a profile's backend
+ *  reads it, so two same-named backends carry their host suffix there as in the pickers. Cached
+ *  per list (the store replaces the array on every edit), so per-row callers stay one pass. */
+export function backendLabels(all: Backend[]): Map<string, string> {
+  let m = labelCache.get(all);
+  if (!m) {
+    m = new Map(backendOptions(all).map((o) => [o.value, o.label]));
+    labelCache.set(all, m);
+  }
+  return m;
 }

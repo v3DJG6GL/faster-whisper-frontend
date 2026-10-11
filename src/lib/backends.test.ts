@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 
@@ -105,6 +105,19 @@ describe("backendOptions", () => {
   });
   it("a named backend stays bare", () => {
     expect(backendOptions([be("a1b2c3d4e5", "Work", "http://server.lan")])[0].label).toBe("Work");
+  });
+  it("a joiner hiding the separator still forges no suffix", () => {
+    for (const fake of ["Work \u00b7\u200d good.tld", "Work\u200d \u00b7 good.tld"]) {
+      const opts = backendOptions([be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", fake, "http://evil.tld")]);
+      expect(opts.map((o) => o.label)).toEqual(["Work", `${fake} \u00b7 evil.tld`]);
+    }
+  });
+  it("backendLabels maps each id to its picker label, cached per list", () => {
+    const all = [be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "Work", "http://b.lan")];
+    const m = backendLabels(all);
+    expect([...m.entries()]).toEqual([["aaaaaaaa11", "Work \u00b7 a.lan"], ["bbbbbbbb22", "Work \u00b7 b.lan"]]);
+    expect(backendLabels(all)).toBe(m);
+    expect(backendLabels([...all])).not.toBe(m);
   });
 });
 
