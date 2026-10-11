@@ -43,7 +43,8 @@ export function contentStates(a: {
       key: "names", label: "Speaker names",
       ...(!a.hasSpeakers ? noSpeakers
         : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
-          : toggle(a.showNames, "the speaker's name before each line")),
+          // Untimed TXT names each speaker turn's paragraph once, not every line.
+          : toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn" : "the speaker's name before each line")),
     },
     {
       key: "colors", label: "Speaker colors",
@@ -147,7 +148,7 @@ export function exportSummary(a: {
       label: "Speaker names",
       state: names.state === "fixed" ? "on" : names.state,
       why: names.state === "off" ? "off" : names.state === "fixed" ? "with your renames, as data"
-        : a.firstName ? `“${a.firstName}:” before each line` : "on",
+        : a.firstName ? `“${a.firstName}:” ${a.format === "txt" && !a.showTs ? "before each turn" : "before each line"}` : "on",
     });
     const colors = item("colors");
     rows.push({

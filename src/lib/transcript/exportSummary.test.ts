@@ -57,6 +57,14 @@ describe("exportSummary", () => {
     expect(row(rows, "Speaker names")?.why).toBe("“Narrator:” before each line");
     expect(row(rows, "Reading speed")?.state).toBe("on");
   });
+  it("untimed txt names each speaker turn once, timed txt every line", () => {
+    const txt = (showTs: boolean) => {
+      const content = contentStates({ ...base, format: "txt", showTs });
+      return [row(sum({ format: "txt", showTs, content }), "Speaker names")?.why, content.find((c) => c.key === "names")?.why];
+    };
+    expect(txt(false)).toEqual(["“Narrator:” before each turn", "the speaker's name before each turn"]);
+    expect(txt(true)).toEqual(["“Narrator:” before each line", "the speaker's name before each line"]);
+  });
   it("as transcribed, own timing, fast subtitles, corrections and media", () => {
     const rows = sum({ cueCount: null, filePerTrack: true, stacked: false, cpsCount: 3, editCount: 2,
       media: { choice: "video", container: "mkv", subtitleMode: "both", audioExt: null } });

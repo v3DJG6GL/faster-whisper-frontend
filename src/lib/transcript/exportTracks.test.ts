@@ -116,6 +116,11 @@ describe("names, flags and files (D89)", () => {
     expect(plan.map((t) => t.title)).toEqual(["Deutsch (Whisper)", "English"]);
     expect(cleanTrackTitle("x".repeat(80))).toHaveLength(64);
   });
+  it("the 64 cap counts code points, never leaving half an emoji", () => {
+    const r = cleanTrackTitle("a" + "\u{1F600}".repeat(80));
+    expect(Array.from(r)).toHaveLength(64);
+    expect(r).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
   it("a spoken language of only format marks still marks the original track original and first", () => {
     const r = { language: "\u200e" };
     expect(planTracks(r, ["orig", "fr"]).map((t) => t.original)).toEqual([true, false]);
@@ -151,6 +156,8 @@ describe("per-transcript prefs", () => {
       .toEqual({ order: ["orig", "en"], names: { en: "English", y: "z".repeat(64) } });
     expect(readTrackPrefs("nope")).toEqual({});
     expect(readTrackPrefs({ names: ["a"] })).toEqual({});
+    const emoji = readTrackPrefs({ names: { en: "a" + "\u{1F600}".repeat(80) } }).names!.en;
+    expect(emoji).toBe("a" + "\u{1F600}".repeat(63));
   });
 });
 

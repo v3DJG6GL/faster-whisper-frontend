@@ -227,7 +227,14 @@ export const TRACK_TITLE_MAX = 64;
 /** A typed track name as a title: no control characters, bounded; "" = use the default.
  *  Anything but a string (a stored map's junk) reads as no name. */
 export function cleanTrackTitle(s: string | undefined): string {
-  return stripControlChars(typeof s === "string" ? s : "").replace(/\s+/g, " ").trim().slice(0, TRACK_TITLE_MAX).trim();
+  const c = stripControlChars(typeof s === "string" ? s : "").replace(/\s+/g, " ").trim();
+  return capCodePoints(c, TRACK_TITLE_MAX).trim();
+}
+
+/** The first `max` code points of `s` — the server's char cap, and never half a surrogate
+ *  pair (a lone surrogate fails the invoke's JSON parse). */
+function capCodePoints(s: string, max: number): string {
+  return Array.from(s).slice(0, max).join("");
 }
 
 /** The chosen tracks, in order, with their names and flags. `names` = the user's titles by
@@ -294,7 +301,7 @@ export function readTrackPrefs(v: unknown): TrackPrefs {
     ? Object.fromEntries(Object.entries(p.names as Record<string, unknown>)
       .filter((e): e is [string, string] => typeof e[1] === "string")
       .slice(0, 64)
-      .map(([k, n]) => [k, n.slice(0, TRACK_TITLE_MAX)]))
+      .map(([k, n]) => [k, capCodePoints(n, TRACK_TITLE_MAX)]))
     : undefined;
   return { ...(order ? { order } : {}), ...(names ? { names } : {}) };
 }
