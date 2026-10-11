@@ -115,4 +115,12 @@ describe("the session route dies with the session", () => {
   it("the picker promise settles on a transport failure", () => {
     expect(mask(bodyAfter(dictationSrc, "function askTranslationTargets("))).toContain(".catch(");
   });
+
+  it("an aborted picker records no translation attempt in History", () => {
+    // The abort skips the translate; reportSessionOutcome already sends "aborted". The
+    // History record must agree, or it reads "translation to X failed".
+    const body = mask(bodyAfter(streamingSrc, "function captureDictationHistory("));
+    expect(body).toContain("sessionInsertSkipped");
+    expect(body).not.toMatch(/translationAttempted:\s*sessionTranslation/);
+  });
 });

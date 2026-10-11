@@ -988,6 +988,9 @@ function captureDictationHistory(): boolean {
   if (!meta || capturedRecordId || utteranceFinalSeen) return false;
   const text = (bankedDoc + committedDoc).trim();
   if (!text) return false;
+  // An aborted settle picker skipped the translate along with the insert — no attempt
+  // to record, the same "aborted" (not a failure) reportSessionOutcome sends.
+  const tr = sessionInsertSkipped ? null : sessionTranslation;
   try {
     capturedRecordId = recordDictation({
       text,
@@ -997,21 +1000,19 @@ function captureDictationHistory(): boolean {
       insertMethod: endOutcome(),
       recordingPath: sessionRecordingPath ?? undefined,
       translatedText: sessionTranslatedText ?? undefined,
-      translationTarget: sessionTranslation?.targets.join(", "),
+      translationTarget: tr?.targets.join(", "),
       translationInjected: sessionTranslatedText != null,
       // The tracks kept apart, plus the target list as an ARRAY. The joined
       // `translationTarget` above stays for records already on disk, but it
       // is display-only: RouteBadge needs the parts, and a 3+ target list was
       // being truncated mid-code.
       translations: sessionTracks(),
-      translationTargets: sessionTranslation
-        ? [...sessionTranslation.targets]
-        : undefined,
-      includeOriginal: sessionTranslation?.includeOriginal || undefined,
+      translationTargets: tr ? [...tr.targets] : undefined,
+      includeOriginal: tr?.includeOriginal || undefined,
       // Without these, a failed translation is indistinguishable in History from a
       // session that never had translation configured — the record would quietly
       // present the original as the intended output.
-      translationAttempted: sessionTranslation != null,
+      translationAttempted: tr != null,
       translationFailure: sessionTranslateFailure ?? undefined,
     });
     return true;
