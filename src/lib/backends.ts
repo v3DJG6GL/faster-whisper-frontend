@@ -390,6 +390,5 @@ export function backendLabel(all: Backend[], b: Backend): string {
 
 /** backendLabel for a configured id; null when the id is unset or no longer configured. */
 export function backendLabelById(all: Backend[], id: string | null | undefined): string | null {
-  const b = id ? all.find((x) => x.id === id) : undefined;
-  return b ? backendLabel(all, b) : null;
+  return id ? (backendLabels(all).get(id) ?? null) : null;
 }

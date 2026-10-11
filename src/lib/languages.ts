@@ -106,6 +106,12 @@ export function langText(code: string, max = 16): string {
   return safeDisplayText(dropJoiners(code), max);
 }
 
+/** Language codes as a list shows them: each one through langText (cap 12, as every list site
+ *  uses), trimmed, with blanks (format- or joiner-only codes) dropped. */
+export function langTexts(codes: readonly string[], max = 12): string[] {
+  return codes.map((c) => langText(c, max).trim()).filter(Boolean);
+}
+
 /** A dictation route's source as the tray and the target picker write it, sanitized and capped
  *  at 12. Only an unset or "auto" language reads AUTO: a set one of only format characters (or
  *  whitespace) is still sent verbatim — Rust's wire_language passes any non-empty code — so it

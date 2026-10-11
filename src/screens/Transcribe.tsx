@@ -13,7 +13,7 @@ import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTar
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
-import { langText, languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
+import { langText, langTexts, languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
@@ -103,9 +103,7 @@ function recentMeta(rec: TranscriptRecord): string {
   if (lang) parts.push(lang);
   const spk = rec.result ? speakersOf(rec.result).length : 0;
   if (spk > 1) parts.push(`${spk} speakers`);
-  const trLangs = (rec.result?.translation?.targets ?? []).filter((t) =>
-    langText(t, 12).trim(),
-  ).length;
+  const trLangs = langTexts(rec.result?.translation?.targets ?? []).length;
   if (trLangs > 0) parts.push(plural(trLangs, "translation"));
   return parts.join(" · ");
 }

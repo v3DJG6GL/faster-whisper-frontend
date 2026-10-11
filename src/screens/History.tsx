@@ -37,7 +37,7 @@ import {
 import { authoredChipTag } from "@/lib/profileTag";
 import { profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { backendLabelById } from "@/lib/backends";
-import { langText } from "@/lib/languages";
+import { langText, langTexts } from "@/lib/languages";
 import { shortModelName } from "@/lib/inherit";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
@@ -77,14 +77,7 @@ const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
  *  reads empty for the caller's fallback wording. Not repaired on load, so a non-string reads
  *  empty too. */
 const targetsText = (v: unknown, max: number): string =>
-  safeDisplayText(
-    (typeof v === "string" ? v : "")
-      .split(", ")
-      .map((c) => langText(c, 12).trim())
-      .filter(Boolean)
-      .join(", "),
-    max,
-  ).trim();
+  safeDisplayText(langTexts((typeof v === "string" ? v : "").split(", ")).join(", "), max).trim();
 
 type Haystack = { name: string; appId: string; text: string };
 
@@ -875,9 +868,7 @@ export default function History() {
     // Gate the meta parts on their sanitized text, not the raw value: a code of only
     // format characters would otherwise leave a dangling " · " (or an empty "+" join).
     const langShown = langText(rec.language ?? "", 12).trim();
-    const targetsShown = (rec.result?.translation?.targets ?? [])
-      .map((t) => langText(t, 12).trim())
-      .filter(Boolean);
+    const targetsShown = langTexts(rec.result?.translation?.targets ?? []);
     const snippet = ok
       ? stripControlChars(recordText(rec, 200), 160)
       : stripControlChars(rec.error ?? "failed", 160);

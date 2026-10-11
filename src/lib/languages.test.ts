@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   languageCodeOf, routeSourceCode,
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, langText, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, langText, langTexts, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenText, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
 
@@ -12,6 +12,17 @@ describe("langText", () => {
     expect(langText("\u200d")).toBe("");
     expect(langText("d\u200ce")).toBe("de");
     expect(langCode("d\u200ce")).toBe("DE");
+  });
+});
+
+describe("langTexts", () => {
+  it("shows each code through langText, trimmed, and drops the blank ones", () => {
+    expect(langTexts(["de", "\u200d", " pt-br ", "\u200b"])).toEqual(["de", "pt-br"]);
+    expect(langTexts([])).toEqual([]);
+  });
+  it("caps each code at 12 code points, as every list site shows it", () => {
+    expect(langTexts(["abcdefghijklmnopq"])).toEqual(["abcdefghijkl"]);
+    expect(langTexts(["abcdefghijklmnopq"], 4)).toEqual(["abcd"]);
   });
 });
 

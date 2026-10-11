@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { fmtBytes } from "@/lib/format";
 import { type TranslateRunUi } from "@/lib/retroTranslate";
-import { langText } from "@/lib/languages";
+import { langText, langTexts } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import { cn } from "@/lib/cn";
@@ -96,7 +96,7 @@ export function TranslateProgressCard({
     >
       <div className="flex items-start justify-between gap-3">
         <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
-          translate · {run.targets.map((t) => langText(t, 12).trim()).filter(Boolean).join(", ")}
+          translate · {langTexts(run.targets).join(", ")}
         </span>
         {!done && (
           <button

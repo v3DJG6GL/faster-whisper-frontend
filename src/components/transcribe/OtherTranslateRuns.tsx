@@ -3,7 +3,7 @@ import { Button, MicroLabel } from "@/components/ui";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { openHistoryRecord } from "@/lib/transcribeRun";
-import { langText } from "@/lib/languages";
+import { langText, langTexts } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
@@ -31,7 +31,7 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
               {safeDisplayText(run.title ?? rec?.sourceName ?? key, 60)}
             </span>
             <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
-              {run.targets.map((t) => langText(t, 12).trim()).filter(Boolean).join(", ")}
+              {langTexts(run.targets).join(", ")}
               {tgt && run.phase !== "done" ? (
                 <span className="text-[color:var(--c-translate)]"> → {tgt}</span>
               ) : null}
