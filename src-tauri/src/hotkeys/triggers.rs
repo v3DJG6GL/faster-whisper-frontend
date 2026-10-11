@@ -15,7 +15,9 @@ use std::str::FromStr;
 use std::sync::Mutex;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
+use tauri_plugin_global_shortcut::{
+    GlobalShortcutExt, Modifiers, Shortcut, ShortcutEvent, ShortcutState,
+};
 
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -232,14 +234,16 @@ pub struct ShortcutRegistry(Mutex<HashMap<Shortcut, ShortcutTarget>>);
 // key-RELEASE that normally emits "stop" reaches no registration, so a Hold session held across the
 // teardown would wedge "listening". Tracked here so the teardown emits those stops itself. Entries
 // are deduped on insert; dictate("stop") is a no-op when idle, so a later real release-stop (if the
-// chord gets re-registered and released) is harmless.
-static ACTIVE_HOLDS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+// chord gets re-registered and released) is harmless. Each entry carries whether its chord has a
+// shortcut modifier — the teardown arms the chord-lost latch only for one that does (evdev's
+// `has_mod`), since the latch keys on modifiers and a bare key cannot fold into the typed text.
+static ACTIVE_HOLDS: Mutex<Vec<(String, bool)>> = Mutex::new(Vec::new());
 
-fn note_hold(profile_id: &str, active: bool) {
+fn note_hold(profile_id: &str, has_mod: bool, active: bool) {
     if let Ok(mut h) = ACTIVE_HOLDS.lock() {
-        h.retain(|p| p != profile_id);
+        h.retain(|(p, _)| p != profile_id);
         if active {
-            h.push(profile_id.to_string());
+            h.push((profile_id.to_string(), has_mod));
         }
     }
 }
@@ -254,12 +258,25 @@ pub fn any_hold_active() -> bool {
 /// Emit "stop" for every plugin Hold chord still held, then clear the set. Called from the
 /// registration teardowns (unregister_all / register_from_config) so a session held across a
 /// rebind/suspend isn't left wedged "listening". No-op when nothing is held (the common case).
+///
+/// The plugin twin of evdev/windows `manufactured_stop`: a stop manufactured for a chord with a
+/// shortcut modifier arms the chord-lost latch first. The plugin cannot query key state, so an
+/// unreleased Hold press is its only evidence the chord is down — and with the plugin as
+/// registrar `HeldKeys` is never fed, so the latch is the injection gate's only guard against
+/// typing into the still-held Ctrl/Alt. A dud latch costs at most one clipboard divert (the
+/// documented safe direction) and is cleared by the next plugin press after a seen release
+/// (`clear_chord_lost_if_armed_before` — a release recorded before this arm cannot clear it) or,
+/// on the evdev-on branch, by evdev's next `Fire::Start`/`Toggle` `clear_chord_lost`. The stops
+/// below route through `emit_trigger` with action "stop", which never clears the latch.
 fn stop_held_sessions(app: &AppHandle) {
     let stuck = ACTIVE_HOLDS
         .lock()
         .map(|mut h| std::mem::take(&mut *h))
         .unwrap_or_default();
-    for profile_id in stuck {
+    if stuck.iter().any(|(_, has_mod)| *has_mod) {
+        crate::hotkeys::held_keys::arm_chord_lost();
+    }
+    for (profile_id, _) in stuck {
         emit_trigger(app, profile_id, "stop", None);
     }
 }
@@ -298,7 +315,18 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
             };
             // Track a held PTT chord so a registration teardown can emit its "stop" (stop_held_sessions).
             if matches!(activation, ActivationType::Hold) {
-                note_hold(&profile_id, event.state() == ShortcutState::Pressed);
+                let has_mod = shortcut.mods.intersects(
+                    Modifiers::CONTROL
+                        | Modifiers::ALT
+                        | Modifiers::SHIFT
+                        | Modifiers::SUPER
+                        | Modifiers::META,
+                );
+                note_hold(
+                    &profile_id,
+                    has_mod,
+                    event.state() == ShortcutState::Pressed,
+                );
             }
             emit_trigger(app, profile_id, action, released_at);
         }
