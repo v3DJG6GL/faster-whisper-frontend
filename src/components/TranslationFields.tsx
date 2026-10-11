@@ -281,7 +281,7 @@ export function TranslationDefaultsEditor({
         <TranslationTargetChips
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
-          {...translationTargetInfo(caps, v.model || inheritedModel)}
+          {...translationTargetInfo(caps, v.model?.trim() || inheritedModel)}
           max={maxTranslationTargets(caps)}
         />
       </OverrideHeader>

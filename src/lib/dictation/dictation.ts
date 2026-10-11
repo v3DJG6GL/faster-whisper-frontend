@@ -336,14 +336,14 @@ function askTranslationTargets(seed: Record<string, unknown>, stillWanted?: () =
  *  same way). */
 function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "after"): Record<string, unknown> {
   const st = useApp.getState();
-  const model = profile.translationOverrides?.model || backend.translationOverrides?.model;
+  const model = profile.translationOverrides?.model?.trim() || backend.translationOverrides?.model?.trim() || undefined;
   return {
     source: effectiveLanguage(profile.language, backend.language),
     preset: configuredRouteTargets(profile, backend) ?? [],
     recent: st.settings.recentTranslationTargets ?? [],
     // The authored tag unless it renders blank, else the name as the lists show it ("Untitled
     // profile" for a blank synced one) — never an empty picker header.
-    tag: safeIdentityText(profile.tag, 80) || profileDisplayName(profile.name),
+    tag: profile.tag && safeIdentityText(profile.tag, 80) ? profile.tag.trim() : profileDisplayName(profile.name),
     when,
     theme: st.settings.theme,
     accentHue: st.settings.accentHue,

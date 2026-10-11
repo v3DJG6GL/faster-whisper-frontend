@@ -46,7 +46,7 @@ import {
   closeRecord, linkTranslateTo, linkUsesSiteTranscript, openHistoryRecord, retryRunVideo, SITE_TRANSCRIPT_FALLBACK,
 } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
-import { backendOptions, backendPrompt, effectiveOverrideProfile, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
@@ -197,10 +197,13 @@ export default function Transcribe() {
       ? settings.transcribe.backendId
       : undefined;
   const [backendId, setBackendId] = useState(savedBackend ?? backends[0]?.id ?? "");
-  // Coded at ingress: a synced Backend's word language ("english") — or one persisted before
-  // this — would reach the spoken picker and the link's site-subtitle match as a raw word.
+  // Coded at ingress the way dictation codes it (effectiveLanguage: trimmed, a word as its code,
+  // a whitespace-only value kept): a synced Backend's word language ("english") or padded code
+  // (" de ") — or one persisted before this — would reach the spoken picker, the request and the
+  // link's site-subtitle match raw.
   const [language, setLanguage] = useState(() =>
-    languageCodeOf(
+    effectiveLanguage(
+      undefined,
       (savedBackend ? settings.transcribe?.language : undefined) ??
         backends.find((b) => b.id === (savedBackend ?? backends[0]?.id))?.language ??
         "auto",
@@ -370,7 +373,7 @@ export default function Transcribe() {
     setTranslateExclNotice(null); // per-screen notice about a toggle made on the OLD server
     clearBackendScopedPicks(); // model, profile and stage models all name ONE server
     const b = backends.find((x) => x.id === id);
-    const lang = languageCodeOf(b?.language ?? "auto"); // a synced word ("english") as its code
+    const lang = effectiveLanguage(undefined, b?.language ?? "auto"); // a synced word ("english") as its code, trimmed
     setLanguage(lang);
     const nextT = pruneTargets(translateTo, lang);
     if (nextT.length !== translateTo.length) setTranslateTo(nextT);
@@ -894,7 +897,7 @@ export default function Transcribe() {
       model: model || backend.model,
       // A word naming a Whisper language (a synced Backend "english") is sent as its code, as
       // dictation sends it (effectiveLanguage); "auto" and codes stay.
-      language: languageCodeOf(language),
+      language: effectiveLanguage(undefined, language),
       // Tri-state: unset = inherit the server DEFAULT_PROMPT (omit the field), an
       // explicit clear = send "" (suppress it), a value = send it. `|| undefined`
       // collapsed clear onto inherit.

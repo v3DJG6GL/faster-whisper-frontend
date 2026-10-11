@@ -29,7 +29,7 @@ import { conflictsByProfile, findChordConflict, QUICK_ADD_PEER_ID, withQuickAddP
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
-import { deriveChipTag } from "@/lib/profileTag";
+import { chipTagFor } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
@@ -290,7 +290,7 @@ function Editor({
               // A blank (or whitespace-only) tag is stored as absent — the save path trims — or a
               // set-then-clear read as "unsaved" forever (the sibling controls normalise alike).
               onChange={(e) => set({ tag: e.target.value.trim() ? e.target.value : undefined })}
-              placeholder={deriveChipTag(p.name) || "From name"}
+              placeholder={chipTagFor({ name: p.name })}
               maxLength={16}
             />
           </Labeled>
@@ -450,7 +450,7 @@ function Editor({
           {p.endpoint === "stream" && serverKind === "standard" && (
             <Notice className="mt-1">
               A standard Whisper server has no streaming endpoint — this override won’t work on{" "}
-              <span className="font-medium">{safeDisplayText(backend?.name, 80).trim() || "this backend"}</span>.
+              <span className="font-medium">{backend ? backendDisplayName(backend.name) : "this backend"}</span>.
             </Notice>
           )}
         </OverrideHeader>

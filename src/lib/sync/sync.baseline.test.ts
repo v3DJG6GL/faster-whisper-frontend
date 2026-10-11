@@ -994,6 +994,14 @@ describe("applyBlob keep-local (baseline)", () => {
       CATS_ALL,
     ).filter((c) => c.kind === "api-key");
     expect(keyRow.map((c) => c.backend)).toEqual(["http://p:8000"]);
+    // Two blank-named profiles share a label but stay two rows: each carries its own id, which
+    // is part of the review identity (a second one arriving later re-raises the review).
+    const two = securityChanges(
+      { profiles: { list: [profile({ id: "p6", name: "", decodeOverrides: text }), profile({ id: "p7", name: " ", decodeOverrides: text })] } } as never,
+      { profiles: { list: [] } } as never,
+      CATS_ALL,
+    ).filter((c) => c.kind === "typed-text");
+    expect(two.map((c) => [c.id, c.backend])).toEqual([["p6", "Untitled profile"], ["p7", "Untitled profile"]]);
     // …and a visible name is still kept verbatim.
     const named = [{ id: "b1", name: "Home", serverUrl: "http://p:8000" }];
     expect(

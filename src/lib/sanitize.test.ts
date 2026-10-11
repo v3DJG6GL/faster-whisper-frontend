@@ -53,6 +53,9 @@ describe("profileDisplayName / backendDisplayName", () => {
       expect(backendDisplayName(blank)).toBe("Untitled backend");
     }
     expect(profileDisplayName(" Work ")).toBe("Work");
+    // An emoji keeps its presentation selector and keycap (the identity fold would space them).
+    expect(profileDisplayName("☕️Café")).toBe("☕️Café");
+    expect(profileDisplayName("1️⃣ Work")).toBe("1️⃣ Work");
     expect(backendDisplayName("Work" + " ".repeat(100) + "Evil")).toBe("Work Evil");
   });
 });

@@ -25,10 +25,10 @@ export function chipTagFor(profile: { name: string; tag?: string }): string {
   const t = typeof profile.tag === "string" ? profile.tag.trim() : "";
   const authored = t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
   if (safeIdentityText(authored, AUTHORED_TAG_MAX)) return authored;
-  // Derive from the name as the lists show it (`profileDisplayName`'s rule): a synced name that renders
-  // blank (spaces, invisibles, format-only) would otherwise derive "" — the overlay then hides the
-  // tag group and the hover language/mode detail inside it — or a truthy tag that renders empty.
-  // The "Untitled profile" fallback reads "UNTITLED", not its 10-char cut "UNTITLED P".
-  const shown = safeIdentityText(profile.name);
-  return shown ? deriveChipTag(shown) : "UNTITLED";
+  // A synced name that renders blank (spaces, invisibles, format-only — `profileDisplayName`'s
+  // test) would otherwise derive "" — the overlay then hides the tag group and the hover
+  // language/mode detail inside it — or a truthy tag that renders empty. Any other name derives as
+  // before (the identity fold would space an emoji's presentation selector). The "Untitled
+  // profile" fallback reads "UNTITLED", not its 10-char cut "UNTITLED P".
+  return safeIdentityText(profile.name) ? deriveChipTag(profile.name) : "UNTITLED";
 }

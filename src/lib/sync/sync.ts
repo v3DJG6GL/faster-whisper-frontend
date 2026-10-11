@@ -2843,6 +2843,10 @@ export interface SecurityChange {
    *  last "@", so `http://localhost:8000@evil.tld/v1` reads as a loopback address in prose while
    *  connecting to `evil.tld`. The consent surface has to show the host it will actually reach. */
   url?: string;
+  /** The profile or backend the change belongs to. Part of the review identity (`changeKey`):
+   *  two entries with the same shown name — two blank ones both read "Untitled profile" — are
+   *  still two rows, so one added after the review was raised re-raises it. */
+  id?: string;
 }
 
 /** Which category each held-back change lives in, so the apply can suppress exactly that one and
@@ -2946,6 +2950,7 @@ function typedTextChanges(
       if (typeof v !== "string" || v === "" || v === cur[key]) continue;
       out.push({
         kind: "typed-text",
+        id: e.id,
         backend: name,
         category,
         detail: `${DECODE_KEYS[key].env} would type ${JSON.stringify(v)}`,
@@ -3115,13 +3120,14 @@ export function securityChanges(
     // An empty `serverUrl` is `sanitizeBackends` blanking an unsupported scheme: say so rather
     // than render a blank target. `url` stays empty so the repoint footer stays off.
     if (!cur) {
-      out.push({ kind: "new-backend", backend: name, detail: b.serverUrl || "(no address)", url: b.serverUrl });
+      out.push({ kind: "new-backend", id: b.id, backend: name, detail: b.serverUrl || "(no address)", url: b.serverUrl });
     } else if (
       gates?.serverAddresses !== false &&
       normalizeUrl(cur.serverUrl) !== normalizeUrl(b.serverUrl)
     ) {
       out.push({
         kind: "server-url",
+        id: b.id,
         backend: shownName(cur.name) || name,
         detail: `${cur.serverUrl || "(no address)"} → ${b.serverUrl || "(none: the address would be cleared)"}`,
         url: b.serverUrl,
@@ -3142,6 +3148,7 @@ export function securityChanges(
     if (gates?.apiKeys !== false && incomingKey && cur && incomingKey !== localKey) {
       out.push({
         kind: "api-key",
+        id: b.id,
         backend: shownName(cur.name) || name,
         detail: localKey
           ? "the stored key would be replaced"
@@ -3319,7 +3326,7 @@ async function forgetDeadDocument(myGen: number): Promise<boolean> {
 
 /** A change's identity for "was this row on the list the user saw". */
 function changeKey(c: SecurityChange): string {
-  return JSON.stringify([c.kind, c.category ?? null, c.backend, c.detail, c.url ?? null]);
+  return JSON.stringify([c.kind, c.category ?? null, c.id ?? null, c.backend, c.detail, c.url ?? null]);
 }
 
 /** The same review re-raised: same server version and writer, same rows on the list. */

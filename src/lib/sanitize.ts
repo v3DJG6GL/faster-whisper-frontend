@@ -201,8 +201,13 @@ export function safeIdentityText(s: unknown, max = 80): string {
 
 /** The name a profile or backend is shown under. A synced name that is blank, only spaces or only
  *  invisible characters renders as nothing, so it reads as the label a local save would have stored
- *  instead ("Untitled profile" / "Untitled backend") — one rule for every list, notice and chip. */
-export const profileDisplayName = (name: unknown, max = 80): string => safeIdentityText(name, max) || "Untitled profile";
+ *  instead ("Untitled profile" / "Untitled backend") — one rule for every list, notice and chip.
+ *  `safeIdentityText` is the blank TEST (it folds the invisible class `.trim()` keeps); a profile
+ *  name still RENDERS through the display filter, because the identity fold also turns the emoji
+ *  variation selector into a space ("☕️Café" would read "☕ Café"). A backend name renders as an
+ *  identity, as the Backends audit card always has: padding must not push its tail off the cut. */
+export const profileDisplayName = (name: unknown, max = 80): string =>
+  safeIdentityText(name, max) ? safeDisplayText(name, max).trim() : "Untitled profile";
 export const backendDisplayName = (name: unknown, max = 80): string => safeIdentityText(name, max) || "Untitled backend";
 
 /** The comparison key of an app rule — how two `appId`s are judged to name the same app, for
