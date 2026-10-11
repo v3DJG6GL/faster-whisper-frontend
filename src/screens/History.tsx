@@ -36,7 +36,7 @@ import {
 } from "@/lib/transcript/transcriptFormats";
 import { authoredChipTag } from "@/lib/profileTag";
 import { profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
-import { backendLabel } from "@/lib/backends";
+import { backendLabelById } from "@/lib/backends";
 import { langText } from "@/lib/languages";
 import { shortModelName } from "@/lib/inherit";
 import { urlHost } from "@/lib/urlSource";
@@ -71,6 +71,20 @@ function timeOf(iso: string): string {
 }
 
 const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
+
+/** A dictation's `translationTarget` (the session's targets joined ", ") as the row shows it:
+ *  each code by langText, so a joiner-only code drops out of the list and an all-blank list
+ *  reads empty for the caller's fallback wording. Not repaired on load, so a non-string reads
+ *  empty too. */
+const targetsText = (v: unknown, max: number): string =>
+  safeDisplayText(
+    (typeof v === "string" ? v : "")
+      .split(", ")
+      .map((c) => langText(c, 12).trim())
+      .filter(Boolean)
+      .join(", "),
+    max,
+  ).trim();
 
 type Haystack = { name: string; appId: string; text: string };
 
@@ -540,9 +554,10 @@ export default function History() {
 
   const deleteButton = (rec: TranscriptRecord) => (
     <Button
-      variant="ghost"
+      // The armed face by variant, not an appended colour: the ghost face's hover:text-text
+      // out-specifies a plain text-rec, so "Delete?" read grey under the pointer.
+      variant={armedDelete === rec.id ? "danger" : "ghost"}
       size="sm"
-      className={cn(armedDelete === rec.id && "text-rec")}
       title={armedDelete === rec.id ? "Click again to delete from disk" : "Delete"}
       onClick={() => {
         if (armedDelete === rec.id) {
@@ -631,10 +646,7 @@ export default function History() {
     // stay gated on there being one: a record without a (string) profile name, or whose backend is
     // gone, shows no label.
     const profileShown = typeof rec.profileName === "string" ? profileDisplayName(rec.profileName, 40) : "";
-    const recBackend = backends.find((b) => b.id === rec.backendId);
-    const backendShown = recBackend
-      ? backendLabel(backends, recBackend)
-      : "";
+    const backendShown = backendLabelById(backends, rec.backendId) ?? "";
     const failureShown = safeDisplayText(rec.translationFailure ?? "", 24).trim();
     const shownModel = shortModelName(rec.model, 40);
     const tracks = recordTracks(rec);
@@ -729,7 +741,7 @@ export default function History() {
                   from the same value as `translatedText` (streaming.ts), so it carries
                   nothing about whether the text reached the field — a label that could
                   only ever read "injected" is a claim, not a record. */}
-              {safeDisplayText(rec.translationTarget ?? "", 24).trim() || "translated"}
+              {targetsText(rec.translationTarget, 24) || "translated"}
             </span>
             <div className="select-text whitespace-pre-wrap text-[13px] leading-relaxed text-text/90">
               {stripControlChars(rec.translatedText)}
@@ -746,7 +758,7 @@ export default function History() {
                 presents the original as the intended output. */}
             {rec.translationAttempted && (
               <div className="mt-3 font-mono text-[11px] text-warn">
-                translation to {safeDisplayText(rec.translationTarget ?? "", 40).trim() || "the target language"} failed
+                translation to {targetsText(rec.translationTarget, 40) || "the target language"} failed
                 {failureShown ? ` (${failureShown})` : ""}
                 {rec.insertMethod === "typed"
                   ? " — original inserted"
