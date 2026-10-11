@@ -256,23 +256,30 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
         };
       };
       const kept = () => segs.filter(ok).map(fixSeg) as typeof out.result.segments;
+      // Old index → kept index (the identity on a clean list).
+      const moved = new Map<number, number>();
+      segs.forEach((s, i) => {
+        if (ok(s)) moved.set(i, moved.size);
+      });
+      // Only a canonical index key ("1", not "01", "1.0" or "") of a kept segment: no reader
+      // looks the others up, but the edit count, History's edited marker and the re-translate
+      // set would still count them.
+      const keyOk = (k: string) => String(Number(k)) === k && moved.has(Number(k));
+      const remap = <V,>(m: Record<number, V> | undefined): Record<number, V> | undefined =>
+        m && typeof m === "object"
+          ? Object.fromEntries(
+              Object.entries(m).flatMap(([k, v]) => (keyOk(k) ? [[moved.get(Number(k))!, v]] : [])),
+            )
+          : undefined;
       if (segs.every(ok)) {
         if (segs.some(bad)) out = { ...out, result: { ...out.result, segments: kept() } };
+        // A clean map is handed back as the same object (and a clean record as itself).
+        const badKeys = (m: unknown) =>
+          m != null && (typeof m !== "object" || Object.keys(m).some((k) => !keyOk(k)));
+        if (badKeys(out.edits)) out = { ...out, edits: remap(out.edits) };
+        if (badKeys(out.speakerEdits)) out = { ...out, speakerEdits: remap(out.speakerEdits) };
+        if (badKeys(out.translationsStale)) out = { ...out, translationsStale: remap(out.translationsStale) };
       } else {
-        const moved = new Map<number, number>();
-        segs.forEach((s, i) => {
-          if (ok(s)) moved.set(i, moved.size);
-        });
-        const remap = <V,>(m: Record<number, V> | undefined): Record<number, V> | undefined =>
-          m && typeof m === "object"
-            ? Object.fromEntries(
-                Object.entries(m).flatMap(([k, v]) => {
-                  // Only a canonical index key ("1", not "1.0" or ""): no reader looks the others up.
-                  const to = String(Number(k)) === k ? moved.get(Number(k)) : undefined;
-                  return to === undefined ? [] : [[to, v]];
-                }),
-              )
-            : undefined;
         out = {
           ...out,
           result: { ...out.result, segments: kept() },

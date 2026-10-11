@@ -232,6 +232,36 @@ describe("loadHistory", () => {
     expect(recordText(b, 200)).toBe("plain");
   });
 
+  it("drops a non-canonical or out-of-range correction key on a clean segment list too", async () => {
+    const segs = { text: "One. Two.", segments: [{ start: 0, end: 1, text: "One." }, { start: 1, end: 2, text: "Two." }] };
+    const base = {
+      schemaVersion: 1, kind: "file", sourcePath: "/a.wav", sourceName: "a.wav", status: "done", result: segs,
+    } as const;
+    const clean = {
+      ...base, id: "keys-clean", createdAt: "2026-01-02T03:04:07.000Z",
+      edits: { 1: "Zwei." }, speakerEdits: { 0: "Ana" }, translationsStale: { 1: true },
+    };
+    listTranscriptRecords.mockResolvedValue([
+      {
+        ...base, id: "keys-mixed", createdAt: "2026-01-02T03:04:05.000Z",
+        edits: { "01": "x", 5: "y", 1: "ok" }, speakerEdits: { "": "A" }, translationsStale: { x: true, 0: true },
+      },
+      { ...base, id: "keys-only-bad", createdAt: "2026-01-02T03:04:06.000Z", edits: { "01": "x" } },
+      clean,
+    ]);
+    await loadHistory(true);
+    const a = saved("keys-mixed");
+    expect(a.edits).toEqual({ 1: "ok" });
+    expect(a.speakerEdits).toEqual({});
+    expect(a.translationsStale).toEqual({ 0: true });
+    // No real correction left: the server's own result (its text included), not a rebuild.
+    const b = saved("keys-only-bad");
+    expect(b.edits).toEqual({});
+    expect(recordEditedResult(b)).toBe(b.result);
+    // A clean record is handed back as the very object the listing read.
+    expect(saved("keys-clean")).toBe(clean);
+  });
+
   it("drops non-string speaker names so the viewer's speaker-name sanitizer cannot throw", async () => {
     listTranscriptRecords.mockResolvedValue([
       {
