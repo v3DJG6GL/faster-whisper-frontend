@@ -307,7 +307,9 @@ export function SubtitleList({
       rows: [],
       idLane,
       lanes: tracks.map((t, li) => {
-        const list = t === "orig" ? grid.cues : trackCues(grid, t);
+        // A translation or site lane lists what its file writes: a cue that cleans to nothing
+        // (blank, or format characters only) is dropped there, so it is no row here either.
+        const list = t === "orig" ? grid.cues : trackCues(grid, t).filter((c) => stripControlChars(c.text).trim());
         return {
           track: t,
           code: trackChipLabel(result, t),

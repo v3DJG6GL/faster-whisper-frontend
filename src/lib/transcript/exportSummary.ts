@@ -109,7 +109,8 @@ export interface SummaryRow {
 /** The Summary's subtitle count (exportSummary's `written` / `ownOnly`). It describes the file
  *  the shared cues go into: the original's when it is exported, else the one the same-timed
  *  translations share — counted as that file writes them (writtenCues). When every exported
- *  track keeps its own cues (site tracks, own-timed translations) there is no shared file and
+ *  track keeps its own cues (site tracks, own-timed translations), or each track goes to a file
+ *  of its own (`perTrack`: sidecars, a video's subtitle streams) without the original, there is
  *  no one count to show: `ownOnly`, never a sum across files. `tracks` = the exported tracks
  *  (empty = the original only); `grid` = a subtitle cueGrid over at least them. */
 export function summaryCount(
@@ -117,8 +118,11 @@ export function summaryCount(
   grid: CueGrid | null,
   tracks: string[],
   cues: CueOptions | undefined,
+  perTrack = false,
 ): { written: number; ownOnly: boolean } {
-  const shared = !tracks.length || tracks.includes("orig") ? ["orig"]
+  const orig = !tracks.length || tracks.includes("orig");
+  if (perTrack && !orig && tracks.length > 1) return { written: 0, ownOnly: true };
+  const shared = orig ? ["orig"]
     : tracks.filter((t) => !timedTrack(result, t) && cues?.timing !== "own");
   if (!shared.length) return { written: 0, ownOnly: true };
   return { written: grid ? writtenCues(grid, shared).length : 0, ownOnly: false };
@@ -143,7 +147,7 @@ export function exportSummary(a: {
    *  exactly as the file writes them. */
   written: number;
   /** No shared file: every exported track keeps its own cues (site tracks, own-timed
-   *  translations), so there is no one count to show — never a sum across files. */
+   *  translations) or its own file, so there is no one count to show — never a sum across files. */
   ownOnly?: boolean;
   segCount: number;
   showTs: boolean;
@@ -187,7 +191,7 @@ export function exportSummary(a: {
   });
   rows.push(
     !sub ? { label: "Subtitle length", state: "na", why: "not part of this format" }
-      : a.ownOnly ? { label: "Subtitle length", state: a.split ? "on" : "off", why: "each track keeps its own cues" }
+      : a.ownOnly ? { label: "Subtitle length", state: a.split ? "on" : "off", why: "each track's file has its own count" }
         : !a.split ? { label: "Subtitle length", state: "off", why: `as transcribed — ${plural(a.written, "subtitle")}` }
           : { label: "Subtitle length", state: "on", why: `${plural(a.written, "subtitle")} from ${plural(a.segCount, "segment")}` },
   );

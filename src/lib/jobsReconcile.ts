@@ -28,6 +28,7 @@ import {
   failJob, foldProgress, ingestJobResult, reattachRun, setOrphanForget, setOrphanStop, setOrphanWatch,
   setReattachStop, useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
+import { currentRecord } from "./transcript/transcriptHistory";
 import type { JobStatus } from "./types";
 
 /** Where a ledgered job is asked about: its backend's CURRENT address (`effectiveServerUrl`, with
@@ -135,6 +136,12 @@ async function ingestDone(
   }
 }
 
+/** A lost request's failed record still stands (the pump wrote it under the job id when contact
+ *  was lost, this launch or an earlier one): a settle must name the real reason on it. */
+function lostRecord(row: LedgerRow): boolean {
+  return currentRecord(row.jobId)?.status === "failed";
+}
+
 /** Poll one job until it settles. Attached mode paints the rail and stops the moment
  *  the store's epoch moves (the user cancelled or started something else); headless
  *  mode only waits for the terminal state. `lost`: a request this session's pump lost
@@ -179,16 +186,16 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
     }
     // The backend was deleted mid-watch (here, or by a sync pull): no key resolves for it, so an
     // auth-gated server answers every poll 401 until maxAge — days of a "running" rail. Forget the
-    // row; the rail's run settles failed and names why, and a this-session lost request settles
-    // its failed record (and queue row) with the reason. An earlier launch's row is forgotten
-    // without a record, like the reconcile pass.
+    // row; the rail's run settles failed and names why, and a lost request (this session's, or an
+    // earlier launch's that left its failed record) settles that record (and queue row) with the
+    // reason. A row with no record (the app quit mid-request) is forgotten without one.
     const app = useApp.getState();
     if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
       stop();
       if (opts.attached) {
         setReattachStop(null);
         failJob(row, BACKEND_GONE_ERROR, { attached: true });
-      } else if (opts.lost) {
+      } else if (opts.lost || lostRecord(row)) {
         failJob(row, BACKEND_GONE_ERROR, { attached: false });
       }
       await forgetRow(row.jobId);
@@ -340,6 +347,7 @@ export async function reconcileJobs(): Promise<void> {
         // Before the reachability skip: its row keeps the stored address, which another
         // backend on that host may share — a down host must not keep it queued.
         if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
+          if (lostRecord(row)) failJob(row, BACKEND_GONE_ERROR, { attached: false });
           await forgetRow(row.jobId);
           continue;
         }

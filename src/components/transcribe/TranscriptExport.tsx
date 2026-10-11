@@ -794,17 +794,19 @@ export function TranscriptExport({
   const cpsLimits = new Set(
     videoTracks.map((t) => trackCps(editedResult, cueOpts, t)),
   );
+  // A site (timed) track gets its own file beside ONE shared file for the rest, so more than
+  // one text file is "one each" only when the count matches the tracks.
+  const filePerTrack = !!plan.sidecars || (textNames.length > 1 && textNames.length === videoTracks.length);
   const summary = exportSummary({
     format: exportFormat,
     trackCodes: videoTracks.map((t) => trackCode(editedResult, t)),
     stacked: textNames.length === 1,
-    // A site (timed) track gets its own file beside ONE shared file for the rest, so more than
-    // one text file is "one each" only when the count matches the tracks.
-    filePerTrack: !!plan.sidecars || (textNames.length > 1 && textNames.length === videoTracks.length),
+    filePerTrack,
     fileCount: textNames.length,
-    // The shared file's subtitles, as it writes them (the original's file when it is exported).
+    // The shared file's subtitles, as it writes them (the original's file when it is exported);
+    // no count when each track has a file (or a video stream) of its own.
     split: !!cueOpts,
-    ...summaryCount(editedResult, subGrid, effTracks, cueOpts),
+    ...summaryCount(editedResult, subGrid, effTracks, cueOpts, videoPlan || filePerTrack),
     segCount: editedResult.segments?.length ?? 0,
     showTs,
     content,

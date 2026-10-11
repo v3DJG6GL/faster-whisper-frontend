@@ -123,7 +123,7 @@ describe("exportSummary", () => {
     expect(row(sum({ split: false, written: 3 }), "Subtitle length"))
       .toEqual({ label: "Subtitle length", state: "off", why: "as transcribed — 3 subtitles" });
     expect(row(sum({ written: 900 }), "Subtitle length")?.why).toBe("900 subtitles from 1,204 segments");
-    const own = "each track keeps its own cues";
+    const own = "each track's file has its own count";
     expect(row(sum({ ownOnly: true }), "Subtitle length")).toEqual({ label: "Subtitle length", state: "on", why: own });
     expect(row(sum({ ownOnly: true, split: false }), "Subtitle length")).toEqual({ label: "Subtitle length", state: "off", why: own });
   });
@@ -190,5 +190,13 @@ describe("summaryCount", () => {
     expect(summaryCount(r, grid(["de-x-site"]), ["de-x-site"], undefined)).toEqual({ written: 0, ownOnly: true });
     const own = { length: "standard", timing: "own" } as const;
     expect(summaryCount(r, grid(["de", "de-x-site"], "own"), ["de", "de-x-site"], own)).toEqual({ written: 0, ownOnly: true });
+  });
+  it("a file per track (sidecars, a video's streams): no count without the original, one track counts its file", () => {
+    const fr: BatchResult = { ...r, segments: r.segments!.map((s, i) => (i === 3 ? { ...s, translations: { fr: "Fin." } } : s)) };
+    const g = cueGrid(fr, { format: "srt", cues: { length: "standard", timing: "same" } }, ["orig", "de", "fr"]);
+    expect(summaryCount(fr, g, ["de", "fr"], undefined)).toEqual({ written: 2, ownOnly: false });
+    expect(summaryCount(fr, g, ["de", "fr"], undefined, true)).toEqual({ written: 0, ownOnly: true });
+    expect(summaryCount(fr, g, ["de"], undefined, true)).toEqual({ written: 1, ownOnly: false });
+    expect(summaryCount(fr, g, ["orig", "de", "fr"], undefined, true)).toEqual({ written: 4, ownOnly: false });
   });
 });

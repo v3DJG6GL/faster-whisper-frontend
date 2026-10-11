@@ -477,6 +477,35 @@ describe("reconcileJobs", () => {
     expect(getJob).not.toHaveBeenCalled();
   });
 
+  it("an earlier launch's lost request whose backend is deleted settles its failed record with the reason", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscriptHistory.setState({ records: [rec] });
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    useApp.setState({ backends: [] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ledgerRows()).toEqual([]);
+    expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+  });
+
+  it("the reconcile pass settles an earlier launch's lost record whose backend is gone", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscriptHistory.setState({ records: [rec] });
+    useApp.setState({ backends: [] });
+    await reconcileJobs();
+    expect(getJob).not.toHaveBeenCalled();
+    expect(ledgerRows()).toEqual([]);
+    expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+  });
+
   it("a done status whose result is not published yet re-polls, then ingests", async () => {
     await seed(row(JOB_A, T0));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
