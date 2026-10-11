@@ -500,11 +500,13 @@ describe("loadHistory", () => {
         sourcePath: "/e.wav",
         sourceName: "e.wav",
         status: "done",
+        language: "english",
         result: { text: "hi", language: "english" },
       },
     ]);
     await loadHistory(true);
     expect(saved("lang-word").result?.language).toBe("en");
+    expect(saved("lang-word").language).toBe("en");
   });
 
   it("repairs damaged site subtitle tracks so the viewer and the exports cannot throw", async () => {

@@ -171,7 +171,8 @@ function stringMap<K extends string | number>(v: unknown): Record<K, string> | u
  *  child), an `activation` that is neither "hold" nor "handsfree" in the same footer (the
  *  legacy "latch" of older records reads as "handsfree"), a non-number `result.duration` in
  *  the viewer's meta line (`.toFixed`), a non-string `result.language` / `language` in every
- *  track reader's `.trim()` / `.toLowerCase()`, and a damaged `result.timedTracks` list (a non-array,
+ *  track reader's `.trim()` / `.toLowerCase()` (a stored word such as "english" is filed by its
+ *  code at both levels), and a damaged `result.timedTracks` list (a non-array,
  *  a track with no cue list, a cue with non-string text or non-finite times) in the viewer's,
  *  the media export's and the cue splitter's `.map` / `.some` / `.trim()`. Every step composes on `out`. */
 function repairRecord(r: TranscriptRecord): TranscriptRecord {
@@ -200,7 +201,12 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
     // Saved before server results were filed by code: a standard server's "english".
     out = { ...out, result: { ...out.result, language: languageCodeOf(rlang) } };
   }
-  if (out.language != null && typeof (out.language as unknown) !== "string") out = { ...out, language: undefined };
+  if (out.language != null && typeof (out.language as unknown) !== "string") {
+    out = { ...out, language: undefined };
+  } else if (typeof out.language === "string" && languageCodeOf(out.language) !== out.language) {
+    // The record's own language came from that same result: file it by code too.
+    out = { ...out, language: languageCodeOf(out.language) };
+  }
   // Before the segment step, so a remap below moves already-clean maps.
   const edits = stringMap<number>(r.edits);
   if (r.edits != null && edits !== r.edits) out = { ...out, edits };
