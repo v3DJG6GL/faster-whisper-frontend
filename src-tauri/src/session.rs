@@ -1000,9 +1000,9 @@ impl RecordSession {
     /// cancelled, and an earlier still-in-flight POST could be killed and its `.wav` deleted in
     /// its place.
     ///
-    /// Publishing early is safe: the device-loss bail in `finish()` stores the same epoch from
-    /// the salvage arm, and nothing reads the value except
-    /// `cancel_detached_batch` and `batch_cancelled`.
+    /// Publishing early is safe: the capture thread's device-loss salvage arm (in
+    /// `start_record`) stores the same epoch, and the only other accesses are
+    /// `cancel_detached_batch` (reads it) and `forget_detached_batch` (clears it).
     pub fn claim_detached(&self) {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
     }
