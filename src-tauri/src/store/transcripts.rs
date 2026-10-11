@@ -541,7 +541,10 @@ pub async fn delete_transcript_record(
             return res;
         }
         let rec_path = dictations_dir(&app)?.join(&name);
-        // Absent from both stores: there is no entry to keep, so stray copies still go.
+        // Absent from both stores: nothing to delete (not a failure), but stray files/links/video
+        // copies of a record whose first write never landed still go. A dictation never owns
+        // such a copy, so a present one skips the sweep (three listings under a possibly slow or
+        // offline audio base).
         let existed = rec_path.exists();
         // A dictation's audio lives in the recordings folder, not `files/`/`links/`:
         // take the .wav and its .txt sidecar with the record, or "delete from disk"
@@ -563,8 +566,9 @@ pub async fn delete_transcript_record(
                 remove_dictation_audio(&src);
             }
         }
-        if res.is_ok() || !existed {
+        if !existed {
             drop_media();
+            return Ok(());
         }
         res
     })

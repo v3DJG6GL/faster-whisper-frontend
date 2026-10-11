@@ -724,11 +724,14 @@ pub(crate) mod win_seed {
             );
             return None;
         }
-        // And the quick-add window itself must not hold focus. `show`'s 5 s backstop shows it
-        // without bumping the generation, so a prologue that outlasts that cap (the release
-        // gate plus an RDP-stalled `get_text`) passes the check above and would send the copy
-        // chord into our own webview. Scoped to the quick-add label on purpose: a selection in
-        // the MAIN window (a word picked in History) must still seed, so no own-window check.
+        // And the quick-add window itself must not hold focus. Two ways it can, neither of
+        // which bumps the generation, so both pass the check above and would send the copy
+        // chord into our own webview: most commonly a re-summon while the window is already
+        // open and focused from an earlier summon (the rendezvous is Settled, so `summon()`
+        // returns Grab), and less often `show`'s 5 s backstop showing it while a prologue
+        // outlasts that cap (the release gate plus an RDP-stalled `get_text`). Scoped to the
+        // quick-add label on purpose: a selection in the MAIN window (a word picked in History)
+        // must still seed, so no own-window check.
         // Nothing has been injected yet, so there is nothing to restore; `ready` signals on drop.
         if app
             .get_webview_window("quickadd")
@@ -736,7 +739,7 @@ pub(crate) mod win_seed {
             .unwrap_or(false)
         {
             tracing::info!(
-                "[quickadd-seed] the quick-add window took focus before injection (backstop show); not sending the copy chord"
+                "[quickadd-seed] the quick-add window holds focus (already open from an earlier summon, or shown by the 5 s backstop); not sending the copy chord"
             );
             return None;
         }
