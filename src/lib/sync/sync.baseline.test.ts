@@ -116,6 +116,20 @@ describe("composeBlob passthrough (baseline)", () => {
     expect(blob.transcription?.diarize).toBe(true);
   });
 
+  it("transcribe-picks gate off: the translation-model pick travels from the snapshot, like model", async () => {
+    // It names a model on the saved backend's server, so it is a pick, not a portable default:
+    // a live pick here would land under a peer's different backend.
+    const cfg = slice();
+    cfg.settings.transcribe = { backendId: "bX", translationModel: "local-m", translationMode: "faithful" };
+    const snapshot: SyncBlob = { transcription: { backendId: "bS", translationModel: "snap-m" } };
+    const blob = await composeBlob(cfg, CATS_ALL, snapshot, {
+      includeSecrets: false,
+      sub: LEGACY_SUB,
+    });
+    expect(blob.transcription?.translationModel).toBe("snap-m");
+    expect(blob.transcription?.translationMode).toBe("faithful");
+  });
+
   it("profile-shortcuts gate off: known ids ship the snapshot's chord, new ids their live chord", async () => {
     const cfg = slice({
       profiles: [profile(), profile({ id: "p2", name: "New", hotkey: ["F9"] })],
@@ -506,6 +520,29 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(useApp.getState().settings.recording.indicatorPosition).toBe("top"); // sync round: gated
     await applyBlob({ chip: { indicatorPosition: "bottom" } as never }, CATS_ALL, 2, { ignoreGates: true });
     expect(useApp.getState().settings.recording.indicatorPosition).toBe("bottom"); // restore: applied
+  });
+
+  it("a pulled translation-model pick applies only with the Transcribe-picks switch", async () => {
+    // Off on a stock install: a peer's per-server pick must not land under this device's own
+    // backend, and a peer's backend switch ("") must not wipe this device's pick.
+    const st0 = settings();
+    st0.transcribe = { backendId: "b1", translationModel: "mine" };
+    useApp.setState({ settings: st0 });
+    await applyBlob(
+      { transcription: { translationModel: "peer-m", translationMode: "faithful" } as never },
+      { ...CATS_ALL, backends: false },
+    );
+    expect(useApp.getState().settings.transcribe?.translationModel).toBe("mine");
+    expect(useApp.getState().settings.transcribe?.translationMode).toBe("faithful");
+    await applyBlob({ transcription: { translationModel: "" } as never }, { ...CATS_ALL, backends: false });
+    expect(useApp.getState().settings.transcribe?.translationModel).toBe("mine");
+    await applyBlob(
+      { transcription: { translationModel: "peer-m" } as never },
+      { ...CATS_ALL, backends: false },
+      2,
+      { ignoreGates: true },
+    );
+    expect(useApp.getState().settings.transcribe?.translationModel).toBe("peer-m");
   });
 
   it("an explicit restore also brings the folders and Transcribe picks the legacy sub keys gate", async () => {

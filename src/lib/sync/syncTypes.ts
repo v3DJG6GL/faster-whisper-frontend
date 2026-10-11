@@ -133,9 +133,9 @@ export interface SyncAppRules {
  *  dictation clock rides the `recording` category, the file-transcription
  *  clock the `fileTranscriptions` category — so the Sync page can mirror the
  *  Recording & history tab's groups with independent toggles. The last-used
- *  backendId/model/language picks travel only when the "Last-used server, model &
- *  language" switch (manifest id `transcribePicks`) opts in (TRANSCRIPTION_PICK_FIELDS), else pass through
- *  from the snapshot so an opted-out device never erases them.
+ *  backendId/model/language/translationModel picks travel only when the "Last-used server,
+ *  models & language" switch (manifest id `transcribePicks`) opts in (TRANSCRIPTION_PICK_FIELDS), else
+ *  pass through from the snapshot so an opted-out device never erases them.
  *  speakerColorMode is legacy (superseded by the display toggles), local. */
 export const TRANSCRIPTION_FIELDS = [
   "diarize",
@@ -145,7 +145,6 @@ export const TRANSCRIPTION_FIELDS = [
   "maxSpeakers",
   "translate",
   "translateTo",
-  "translationModel",
   "translationMode",
   "separateBgm",
   "exportFormat",
@@ -191,11 +190,14 @@ export type SyncLogging = Partial<
   Pick<import("../types").LoggingSettings, "logLevel" | "keepDays" | "showInSidebar" | "logDir">
 >;
 
-/** The per-machine-by-default Transcribe picks behind the sub-toggle. */
+/** The per-machine-by-default Transcribe picks behind the sub-toggle. The translation-model
+ *  pick names a model on the saved backend's server (Transcribe seeds it only under that
+ *  backend and clears it on a backend change), so it travels with backendId, never alone. */
 export const TRANSCRIPTION_PICK_FIELDS = [
   "backendId",
   "model",
   "language",
+  "translationModel",
 ] as const satisfies readonly (keyof TranscribeSettings)[];
 
 export type SyncTranscription = Partial<

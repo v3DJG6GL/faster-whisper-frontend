@@ -208,12 +208,14 @@ export function bugReportRunFields(
   backendName: (id?: string) => string | null,
 ): Pick<BugReportHeader, "source" | "backend" | "model" | "profile" | "route" | "stages"> {
   if (!last) {
+    const backend = backendName(transcribe?.backendId);
     return {
       source: "settings (no run recorded)",
-      backend: backendName(transcribe?.backendId),
-      // Trimmed like Transcribe's seed: a whitespace-only synced pick is no pick (the run sends
-      // the Backend's model), and a padded one runs trimmed.
-      model: transcribe?.model?.trim() || null,
+      backend,
+      // Gated on the saved backend resolving and trimmed, like Transcribe's seed (savedBackend):
+      // a pick whose backend is absent or deleted is never sent, a whitespace-only synced pick is
+      // no pick (the run sends the Backend's model), and a padded one runs trimmed.
+      model: backend ? transcribe?.model?.trim() || null : null,
       profile: null,
       route: null,
       stages: null,

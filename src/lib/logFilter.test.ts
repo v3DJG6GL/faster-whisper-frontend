@@ -277,6 +277,17 @@ describe("bugReportRunFields", () => {
     const padded = bugReportRunFields(null, { backendId: "b1", model: " tiny " }, backendName);
     expect(padded.model).toBe("tiny");
   });
+
+  it("names no model in the settings fallback when the saved backend does not resolve", () => {
+    // Transcribe seeds the model only under a resolving saved backend, so a deleted or absent
+    // backend's pick is a model the app would never send.
+    const gone = bugReportRunFields(null, { backendId: "gone", model: "large-v3" }, backendName);
+    expect(gone.backend).toBeNull();
+    expect(gone.model).toBeNull();
+    const unset = bugReportRunFields(null, { model: "tiny" }, backendName);
+    expect(unset.backend).toBeNull();
+    expect(unset.model).toBeNull();
+  });
 });
 
 describe("bug report: what actually ran", () => {

@@ -375,7 +375,7 @@ const FILE_TRANSCRIPTION_SET: ReadonlySet<string> = new Set(FILE_TRANSCRIPTION_F
 const TRANSCRIPTION_PICK_SET: ReadonlySet<string> = new Set(TRANSCRIPTION_PICK_FIELDS);
 
 /** The `transcription` category: the classified subset of settings.transcribe.
- *  The last-used backend/model/language picks travel only when the sub-toggle
+ *  The last-used backend/model/language/translation-model picks travel only when the sub-toggle
  *  opts in; otherwise the snapshot's values pass through so an opted-out
  *  device never erases a peer's picks. */
 function extractTranscription(

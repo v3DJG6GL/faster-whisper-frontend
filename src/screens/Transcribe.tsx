@@ -375,7 +375,10 @@ export default function Transcribe() {
   // ONE path for every backend change — the dropdown and the auto-resync above share it, so
   // they can't drift: the effect used to skip the run reset, the target prune and the language
   // persist, so a hydrated list left `settings.transcribe.language` on the OLD backend's
-  // language (which snapped back on the next mount).
+  // language (which snapped back on the next mount). The persist CLEARS the stored language
+  // rather than copying the new Backend's: the old one can no longer snap back, and an untouched
+  // language keeps following the Backend's own (a later edit to it reaches this screen), as in
+  // persistScoped's new-backend branch.
   const applyBackendPick = (id: string) => {
     resetForInputChange();
     setBackendId(id);
@@ -386,7 +389,7 @@ export default function Transcribe() {
     setLanguage(lang);
     const nextT = pruneTargets(translateTo, lang);
     if (nextT.length !== translateTo.length) setTranslateTo(nextT);
-    persistOptions({ backendId: id, model: "", translationModel: "", language: lang, translateTo: nextT });
+    persistOptions({ backendId: id, model: "", translationModel: "", language: undefined, translateTo: nextT });
   };
   useEffect(() => {
     if (backends.length && !backends.some((b) => b.id === backendId)) {

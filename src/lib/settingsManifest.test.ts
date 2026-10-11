@@ -137,6 +137,16 @@ describe("manifest integrity", () => {
     expect(DEFAULT_SETTING_SYNC.quickAddHotkey).toBe(true);
     expect(DEFAULT_SETTING_SYNC.transcribePicks).toBe(false);
   });
+
+  it("the translation-model pick syncs with the per-machine Transcribe picks, not the portable defaults", () => {
+    // It names a model on the saved backend's server and Transcribe seeds/clears it with
+    // backendId, so it must sit behind the same default-off switch.
+    expect(TRANSCRIBE_COVERAGE.translationModel).toBe("transcribePicks");
+    expect(SETTING.transcribePicks.fields.some((f) => f.key === "translationModel")).toBe(true);
+    expect(SETTING.translateTo.fields.some((f) => f.key === "translationModel")).toBe(false);
+    expect((TRANSCRIPTION_PICK_FIELDS as readonly string[]).includes("translationModel")).toBe(true);
+    expect((TRANSCRIPTION_FIELDS as readonly string[]).includes("translationModel")).toBe(false);
+  });
 });
 
 describe("completeGates migration", () => {

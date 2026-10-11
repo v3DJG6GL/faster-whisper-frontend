@@ -379,7 +379,7 @@ export type SyncSubSettings = {
   profileHotkeys: boolean;
   /** Sync the quick-add shortcut chord. OFF = per-machine. */
   quickAddHotkey: boolean;
-  /** Sync the Transcribe screen's last-used backend/model/language picks. */
+  /** Sync the Transcribe screen's last-used backend/model/language/translation-model picks. */
   transcribePicks?: boolean;
 } & Partial<Record<import("./settingsManifest").SettingId, boolean>>;
 
