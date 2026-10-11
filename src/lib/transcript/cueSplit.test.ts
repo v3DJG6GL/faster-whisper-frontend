@@ -598,6 +598,9 @@ describe("trackLang", () => {
     const r: BatchResult = { text: "", timedTracks: [{ id: "x", lang: "\u200b", source: "site", kind: "manual", cues: [] }] };
     expect(trackLang(r, "x")).toBe("und");
     expect(timedTrack(r, "orig")).toBeUndefined();
+    // Joiners too: the viewer tags such an original "??".
+    expect(trackLang({ language: "\u200d" }, "orig")).toBe("und");
+    expect(trackLang({}, "\u200c")).toBe("und");
   });
 });
 

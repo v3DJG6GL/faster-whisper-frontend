@@ -311,12 +311,11 @@ export function TranscriptExport({
     [open, subs, editedResult, effTracks, exportOptions, subGrid],
   );
   const origIncluded = !effTracks.length || effTracks.includes("orig");
-  // Uncolored VTT names a site line like the original's and a translated one with "Name: ".
-  const siteIncluded = effTracks.some((t) => t !== "orig" && !!timedTrack(editedResult, t));
+  // Uncolored VTT names a translated line with "Name: ", an original one with a voice tag.
   const mtIncluded = effTracks.some((t) => t !== "orig" && !timedTrack(editedResult, t));
   const content = contentStates({
     format: exportFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
-    hasWords, origIncluded, siteIncluded, mtIncluded,
+    hasWords, origIncluded, mtIncluded,
   });
   const toggleContent: Record<ContentItem["key"], () => void> = {
     ts: () => setShowTs(!showTs),

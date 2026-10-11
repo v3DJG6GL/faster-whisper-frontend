@@ -14,8 +14,8 @@ export interface ContentItem {
   label: string;
   state: ContentState;
   why: string;
-  /** Speaker names in an uncolored VTT: a voice tag on original and site lines (players may hide
-   *  it), "Name: " before machine-translated ones (vttExport) — which the export carries. */
+  /** Speaker names in an uncolored VTT: a voice tag on original lines (players may hide it),
+   *  "Name: " before machine-translated ones (vttExport) — which the export carries. */
   vttNames?: "voice" | "prefix" | "mixed";
 }
 
@@ -31,13 +31,12 @@ export function contentStates(a: {
   hasWords: boolean;
   /** The original track is in the export (LRC word tags are original-only). */
   origIncluded: boolean;
-  /** A site (timed) track is in the export. */
-  siteIncluded?: boolean;
   /** A machine-translated track is in the export. */
   mtIncluded?: boolean;
 }): ContentItem[] {
   const { format: f } = a;
-  const voice = a.origIncluded || !!a.siteIncluded;
+  // A site track never carries a voice tag: it is filed on its own, cued without speakers.
+  const voice = a.origIncluded;
   const vttNames = f === "vtt" && !a.colorize
     ? (voice && a.mtIncluded ? "mixed" as const : voice ? "voice" as const : "prefix" as const)
     : undefined;
@@ -55,7 +54,7 @@ export function contentStates(a: {
       ...(!a.hasSpeakers ? noSpeakers
         : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
           // Untimed TXT names each speaker turn's paragraph once, not every line. Uncolored VTT
-          // names an original/site line as a voice tag, which players may hide (vttExport).
+          // names an original line as a voice tag, which players may hide (vttExport).
           : { ...toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
             : vttNames === "mixed"
               ? "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines"

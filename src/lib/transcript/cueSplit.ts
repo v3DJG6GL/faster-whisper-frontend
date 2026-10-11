@@ -13,9 +13,8 @@
 // Pure, no Tauri imports.
 
 import { plural } from "../format";
-import { primarySubtag } from "../languages";
+import { langText, primarySubtag } from "../languages";
 import { ownProp } from "../own";
-import { safeDisplayText } from "../sanitize";
 import { segmentWordRanges } from "./wordAlign";
 import type { BatchResult, TimedTrack, TranscriptSegment } from "../types";
 
@@ -698,12 +697,12 @@ export function timedTrack(result: Pick<BatchResult, "timedTracks">, id: string)
 
 /** The language code a track is filed under: the transcript's for the original, a site
  *  track's own, the target code otherwise — "und" when unknown. "Unknown" is judged on the
- *  SANITIZED code (as the viewer's row tag does): a code of only format marks would
- *  otherwise survive here, then draw blank in every chip, summary and track title. */
+ *  SANITIZED code (langText, as the viewer's row tag does): a code of only format marks or
+ *  joiners would otherwise survive here, then draw blank in every chip, summary and track title. */
 export function trackLang(result: Pick<BatchResult, "language" | "timedTracks">, track: string): string {
   const tt = timedTrack(result, track);
   const raw = ((tt ? tt.lang : track === "orig" ? result.language : track) ?? "").trim();
-  return safeDisplayText(raw, 16).trim() ? raw : "und";
+  return langText(raw, 16).trim() ? raw : "und";
 }
 
 /** Cues as a BatchResult, so the existing generators render them unchanged:
