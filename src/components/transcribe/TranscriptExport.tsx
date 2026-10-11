@@ -23,7 +23,7 @@ import {
   type ExportOptions, exportFileNames,
 } from "@/lib/transcript/transcriptFormats";
 import {
-  CUE_PRESETS, CUE_RANGES, limitsTitle, sanitizeCueLimits, timedTrack, trackCps, type CueLimits,
+  CUE_PRESETS, CUE_RANGES, limitsTitle, sanitizeCueLimits, trackCps, type CueLimits,
   type CueOptions, type SubtitleLength,
 } from "@/lib/transcript/cueSplit";
 import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/transcript/exportSummary";
@@ -312,7 +312,7 @@ export function TranscriptExport({
   );
   const origIncluded = !effTracks.length || effTracks.includes("orig");
   // Uncolored VTT names a translated line with "Name: ", an original one with a voice tag.
-  const mtIncluded = effTracks.some((t) => t !== "orig" && !timedTrack(editedResult, t));
+  const mtIncluded = effTracks.some((t) => trackInfo(editedResult, t).source === "mt");
   const content = contentStates({
     format: exportFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
     hasWords, origIncluded, mtIncluded,

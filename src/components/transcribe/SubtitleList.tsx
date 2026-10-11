@@ -247,9 +247,10 @@ export function SubtitleList({
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
-      const prefix = showNames && speaker ? `${displayName(speaker)}: ` : "";
-      const L = limitOf(track);
       const body = stripControlChars(text);
+      // No name on an empty cell: the export writes none there either.
+      const prefix = showNames && speaker && body.trim() ? `${displayName(speaker)}: ` : "";
+      const L = limitOf(track);
       return {
         text: prefix + (L ? wrapLines(body, L.cpl, L.lines, prefix.length).join("\n") : body),
         main,
@@ -278,12 +279,16 @@ export function SubtitleList({
       };
     };
     if (!lanes) {
+      // As the export (cueLines): a cue with no line in any shown track is not written, so
+      // translations alone skip the untranslated cues — an original line, even blank, keeps it.
+      const kept = grid.cues.flatMap((c, i) => {
+        const cols = tracks.map((t): [string, string] => [t, t === "orig" ? c.text : (ownProp(c.tr, t) ?? "")]);
+        return tracks.includes("orig") || cols.some(([, x]) => x.trim()) ? [{ c, i, cols }] : [];
+      });
       return {
         heads: tracks.map((t) => trackChipLabel(result, t)),
-        rows: grid.cues.map((c, i) =>
-          rowOf(`${i}`, i + 1, c, i === 0 || grid.cues[i - 1].seg !== c.seg,
-            tracks.map((t) => [t, t === "orig" ? c.text : (ownProp(c.tr, t) ?? "")])),
-        ),
+        rows: kept.map(({ c, i, cols }, k) =>
+          rowOf(`${i}`, k + 1, c, k === 0 || kept[k - 1].c.seg !== c.seg, cols)),
         lanes: [],
         idLane: 0,
       };

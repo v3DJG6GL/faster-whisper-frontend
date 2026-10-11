@@ -3,6 +3,7 @@ import { Button, MicroLabel } from "@/components/ui";
 import { useTranscribeRun } from "@/lib/transcribeRun";
 import { useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { openHistoryRecord } from "@/lib/transcribeRun";
+import { langText } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
@@ -21,8 +22,8 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
       {entries.map(([key, { run }]) => {
         // Runs key by record id (or, before one exists, by source path).
         const rec = records.find((r) => r.id === key || r.sourcePath === key);
-        // Gated on the SANITIZED target: a code that strips to blank would leave a stray arrow.
-        const tgt = safeDisplayText(run.target ?? "", 12).trim();
+        // Gated on the SANITIZED target (joiners dropped): a code that strips to blank would leave a stray arrow.
+        const tgt = langText(run.target ?? "", 12).trim();
         return (
           <div key={key} className="flex items-center gap-3 py-1">
             <span className="size-1.5 shrink-0 rounded-full bg-[color:var(--c-translate)]" />
@@ -30,7 +31,7 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
               {safeDisplayText(run.title ?? rec?.sourceName ?? key, 60)}
             </span>
             <span className="shrink-0 font-mono text-[11px] uppercase text-dim">
-              {run.targets.map((t) => safeDisplayText(t, 12).trim()).filter(Boolean).join(", ")}
+              {run.targets.map((t) => langText(t, 12).trim()).filter(Boolean).join(", ")}
               {tgt && run.phase !== "done" ? (
                 <span className="text-[color:var(--c-translate)]"> → {tgt}</span>
               ) : null}

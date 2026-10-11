@@ -36,12 +36,15 @@ export function contentStates(a: {
 }): ContentItem[] {
   const { format: f } = a;
   // A site track never carries a voice tag: it is filed on its own, cued without speakers.
+  // So an export of site tracks alone has no names or colors to write (JSON keeps them as data).
+  const siteOnly = f !== "json" && !a.origIncluded && !a.mtIncluded;
   const voice = a.origIncluded;
-  const vttNames = f === "vtt" && !a.colorize
+  const vttNames = f === "vtt" && !a.colorize && !siteOnly
     ? (voice && a.mtIncluded ? "mixed" as const : voice ? "voice" as const : "prefix" as const)
     : undefined;
   const toggle = (on: boolean, why: string): Pick<ContentItem, "state" | "why"> => ({ state: on ? "on" : "off", why });
   const noSpeakers = { state: "na" as const, why: "no speakers in this transcript" };
+  const siteNoSpeakers = { state: "na" as const, why: "the site's own subtitles carry no speakers" };
   return [
     {
       key: "ts", label: "Timestamps",
@@ -52,22 +55,24 @@ export function contentStates(a: {
     {
       key: "names", label: "Speaker names",
       ...(!a.hasSpeakers ? noSpeakers
-        : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
-          // Untimed TXT names each speaker turn's paragraph once, not every line. Uncolored VTT
-          // names an original line as a voice tag, which players may hide (vttExport).
-          : { ...toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
-            : vttNames === "mixed"
-              ? "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines"
-              : vttNames === "voice"
-                ? "the speaker's name as a voice tag on each line (players may hide it)"
-                : "the speaker's name before each line"), vttNames }),
+        : siteOnly ? siteNoSpeakers
+          : f === "json" ? { state: "fixed" as const, why: "always in JSON, with your renames" }
+            // Untimed TXT names each speaker turn's paragraph once, not every line. Uncolored VTT
+            // names an original line as a voice tag, which players may hide (vttExport).
+            : { ...toggle(a.showNames, f === "txt" && !a.showTs ? "the speaker's name before each turn"
+              : vttNames === "mixed"
+                ? "the speaker's name as a voice tag on original lines (players may hide it), “Name:” before translated lines"
+                : vttNames === "voice"
+                  ? "the speaker's name as a voice tag on each line (players may hide it)"
+                  : "the speaker's name before each line"), vttNames }),
     },
     {
       key: "colors", label: "Speaker colors",
       ...(!a.hasSpeakers ? noSpeakers
-        : f === "json" ? { state: "fixed" as const, why: "always in JSON, as data" }
-          : isSubtitleFormat(f) ? toggle(a.colorize, f === "srt" ? "<font> tags — VLC and mpv show them" : "styled cues — browsers show them, some players don't")
-            : { state: "na" as const, why: "plain text has no colors" }),
+        : siteOnly ? siteNoSpeakers
+          : f === "json" ? { state: "fixed" as const, why: "always in JSON, as data" }
+            : isSubtitleFormat(f) ? toggle(a.colorize, f === "srt" ? "<font> tags — VLC and mpv show them" : "styled cues — browsers show them, some players don't")
+              : { state: "na" as const, why: "plain text has no colors" }),
     },
     {
       key: "words", label: "Word timing",
@@ -163,7 +168,8 @@ export function exportSummary(a: {
     rows.push({
       label: "Speaker names",
       state: names.state === "fixed" ? "on" : names.state,
-      why: names.state === "off" ? "off" : names.state === "fixed" ? "with your renames, as data"
+      why: names.state === "off" ? "off" : names.state === "na" ? names.why
+        : names.state === "fixed" ? "with your renames, as data"
         : !a.firstName ? "on"
           : names.vttNames === "mixed"
             ? `as a voice tag (<v ${a.firstName}>) on original lines, “${a.firstName}:” before translated lines`

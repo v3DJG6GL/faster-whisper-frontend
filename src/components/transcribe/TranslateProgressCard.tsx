@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Check } from "lucide-react";
 import { fmtBytes } from "@/lib/format";
 import { type TranslateRunUi } from "@/lib/retroTranslate";
+import { langText } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import { cn } from "@/lib/cn";
@@ -77,8 +78,8 @@ export function TranslateProgressCard({
     if (secs >= 2 && got > 0) dlChips.push(`${fmtBytes(got / secs)}/s`);
   }
   const shownModel = shortModelName(run.model, 40);
-  // Gated on the SANITIZED target: a code that strips to blank would draw an empty pill.
-  const tgt = safeDisplayText(run.target ?? "", 12).trim();
+  // Gated on the SANITIZED target (joiners dropped): a code that strips to blank would draw an empty pill.
+  const tgt = langText(run.target ?? "", 12).trim();
   const chips: string[] = [
     ...(shownModel ? [shownModel] : []),
     ...(run.device ? [safeDisplayText(run.device, 16)] : []),
@@ -95,7 +96,7 @@ export function TranslateProgressCard({
     >
       <div className="flex items-start justify-between gap-3">
         <span className="font-mono text-[10.5px] uppercase tracking-label text-faint">
-          translate · {run.targets.map((t) => safeDisplayText(t, 12).trim()).filter(Boolean).join(", ")}
+          translate · {run.targets.map((t) => langText(t, 12).trim()).filter(Boolean).join(", ")}
         </span>
         {!done && (
           <button

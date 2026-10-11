@@ -34,6 +34,19 @@ describe("contentStates", () => {
     expect(states(contentStates({ ...base, format: "srt", hasSpeakers: false, hasWords: false })))
       .toEqual({ ts: "fixed", names: "na", colors: "na", words: "na" });
   });
+  it("site tracks alone carry no speakers: names and colors are na, JSON keeps them as data", () => {
+    const site = { ...base, origIncluded: false, mtIncluded: false };
+    for (const format of ["srt", "vtt", "txt", "lrc"] as const) {
+      const c = contentStates({ ...site, format, colorize: false });
+      expect([states(c).names, states(c).colors]).toEqual(["na", "na"]);
+      expect(c.find((i) => i.key === "names")?.why).toBe("the site's own subtitles carry no speakers");
+      expect(c.find((i) => i.key === "names")?.vttNames).toBeUndefined();
+    }
+    expect(states(contentStates({ ...site, format: "json" }))).toMatchObject({ names: "fixed", colors: "fixed" });
+    // A site track beside the original: the original's lines still name their speakers.
+    const withOrig = contentStates({ ...base, format: "vtt", colorize: false, mtIncluded: false });
+    expect(withOrig.find((i) => i.key === "names")).toMatchObject({ state: "on", vttNames: "voice" });
+  });
 });
 
 describe("exportSummary", () => {
@@ -84,6 +97,15 @@ describe("exportSummary", () => {
       "“Narrator:” before each line", "the speaker's name before each line",
     ]);
     expect(vtt(true, { mtIncluded: true })).toEqual(["“Narrator:” before each line", "the speaker's name before each line"]);
+  });
+  it("site tracks alone: the speaker rows say the site has none, not “Name:” before each line", () => {
+    for (const format of ["srt", "vtt"] as const) {
+      const content = contentStates({ ...base, format, colorize: false, origIncluded: false, mtIncluded: false });
+      const rows = sum({ format, content });
+      const why = "the site's own subtitles carry no speakers";
+      expect(row(rows, "Speaker names")).toEqual({ label: "Speaker names", state: "na", why });
+      expect(row(rows, "Speaker colors")).toEqual({ label: "Speaker colors", state: "na", why });
+    }
   });
   it("as transcribed, own timing, fast subtitles, corrections and media", () => {
     const rows = sum({ cueCount: null, filePerTrack: true, stacked: false, cpsCount: 3, editCount: 2,
