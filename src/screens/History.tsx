@@ -37,6 +37,7 @@ import {
 import { authoredChipTag } from "@/lib/profileTag";
 import { profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { backendLabel } from "@/lib/backends";
+import { langText } from "@/lib/languages";
 import { shortModelName } from "@/lib/inherit";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
@@ -577,7 +578,7 @@ export default function History() {
       rec.wordCount ? plural(rec.wordCount, "word") : "",
       // A set language that sanitizes to blank is still sent, so it reads "??" as RouteBadge does.
       typeof rec.language === "string" && rec.language && rec.language !== "auto"
-        ? safeDisplayText(rec.language, 12).trim() || "??"
+        ? langText(rec.language, 12).trim() || "??"
         : "",
       rec.insertMethod === "clipboard"
         ? "clipboard only"
@@ -674,9 +675,9 @@ export default function History() {
           <div className="mt-3 grid max-h-56 grid-cols-[minmax(2.5rem,max-content)_minmax(0,1fr)] gap-x-2 overflow-y-auto">
             {tracks.map(({ lang, text, orig }, i) => {
               // A format-only code (file-borne, or a synced translateTo entry) displays as nothing
-              // once safeDisplayText strips it — "??" keeps the tag and the copy tooltip readable.
+              // once langText strips it (joiners too) — "??" keeps the tag and the copy tooltip readable.
               // The raw lang stays the key, the copy target and the "copied" id.
-              const tag = safeDisplayText(lang, 12).trim() || "??";
+              const tag = langText(lang, 12).trim() || "??";
               return (
                 <div
                   // A profile may translate INTO its own source language (nothing excludes it),
@@ -861,9 +862,9 @@ export default function History() {
     const shownModel = shortModelName(rec.model, 40);
     // Gate the meta parts on their sanitized text, not the raw value: a code of only
     // format characters would otherwise leave a dangling " · " (or an empty "+" join).
-    const langShown = safeDisplayText(rec.language ?? "", 12).trim();
+    const langShown = langText(rec.language ?? "", 12).trim();
     const targetsShown = (rec.result?.translation?.targets ?? [])
-      .map((t) => safeDisplayText(t, 12).trim())
+      .map((t) => langText(t, 12).trim())
       .filter(Boolean);
     const snippet = ok
       ? stripControlChars(recordText(rec, 200), 160)

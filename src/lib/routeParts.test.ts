@@ -63,4 +63,11 @@ describe("routeParts", () => {
     for (const t of a.targets) expect([...t].length).toBeLessThanOrEqual(24);
     for (const t of r.targets) expect([...t].length).toBeLessThanOrEqual(24);
   });
+
+  it("reads a joiner-only code as blank: a set source shows ??, a target is dropped and not counted", () => {
+    expect(routeParts("\u200d").source).toBe("??");
+    expect(routeParts("German", ["\u200d", "fr"])).toEqual({ source: "German", targets: ["French"], more: 0 });
+    expect(routeParts("German", ["fr", "\u200c\u200d", "it", "es", "\u200d"]).more).toBe(0);
+    expect(routeParts("d\u200de").source).toBe("German");
+  });
 });

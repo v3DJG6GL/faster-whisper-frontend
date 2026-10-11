@@ -97,7 +97,13 @@ export function translateSourceCode(lang: string | null | undefined): string | n
  *  language code carries one, and a joiner-only code must read empty — not as a blank pill, a
  *  blank "Translated into" row or a blank route source instead of "??". */
 export function langCode(code: string, max = 16): string {
-  return safeDisplayText(code.replace(/[\u200c\u200d]/g, ""), max).toUpperCase();
+  return langText(code, max).toUpperCase();
+}
+
+/** A language code as the display filter renders it, minus the ZWNJ/ZWJ it keeps — so a
+ *  joiner-only code reads empty and a gate on it skips the part. */
+export function langText(code: string, max = 16): string {
+  return safeDisplayText(code.replace(/[\u200c\u200d]/g, ""), max);
 }
 
 /** A dictation route's source as the tray and the target picker write it, sanitized and capped

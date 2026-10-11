@@ -1,11 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
   languageCodeOf, routeSourceCode,
-  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
+  MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, langText, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
   nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
 
 const values = (rows: { value: string }[]) => rows.map((r) => r.value);
+
+describe("langText", () => {
+  it("drops the joiners the display filter keeps, so a joiner-only code reads empty", () => {
+    expect(langText("\u200d")).toBe("");
+    expect(langText("d\u200ce")).toBe("de");
+    expect(langCode("d\u200ce")).toBe("DE");
+  });
+});
 
 describe("languageLabel", () => {
   it("names Whisper codes, fixing the ones the runtime spells differently", () => {
