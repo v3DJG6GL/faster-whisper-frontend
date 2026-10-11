@@ -28,7 +28,7 @@ import {
   failJob, foldProgress, ingestJobResult, reattachRun, setOrphanForget, setOrphanStop, setOrphanWatch,
   setReattachStop, useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
-import { currentRecord } from "./transcript/transcriptHistory";
+import { currentRecord, loadHistory } from "./transcript/transcriptHistory";
 import type { JobStatus } from "./types";
 
 /** Where a ledgered job is asked about: its backend's CURRENT address (`effectiveServerUrl`, with
@@ -137,8 +137,11 @@ async function ingestDone(
 }
 
 /** A lost request's failed record still stands (the pump wrote it under the job id when contact
- *  was lost, this launch or an earlier one): a settle must name the real reason on it. */
-function lostRecord(row: LedgerRow): boolean {
+ *  was lost, this launch or an earlier one): a settle must name the real reason on it. Loads
+ *  History first — nothing else has at launch (the Dashboard never does), and a row forgotten
+ *  on an empty mirror can never settle its record later. */
+async function lostRecord(row: LedgerRow): Promise<boolean> {
+  await loadHistory().catch((e) => console.error("jobs: history load failed:", e));
   return currentRecord(row.jobId)?.status === "failed";
 }
 
@@ -195,7 +198,7 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
       if (opts.attached) {
         setReattachStop(null);
         failJob(row, BACKEND_GONE_ERROR, { attached: true });
-      } else if (opts.lost || lostRecord(row)) {
+      } else if (opts.lost || (await lostRecord(row))) {
         failJob(row, BACKEND_GONE_ERROR, { attached: false });
       }
       await forgetRow(row.jobId);
@@ -347,7 +350,7 @@ export async function reconcileJobs(): Promise<void> {
         // Before the reachability skip: its row keeps the stored address, which another
         // backend on that host may share — a down host must not keep it queued.
         if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
-          if (lostRecord(row)) failJob(row, BACKEND_GONE_ERROR, { attached: false });
+          if (await lostRecord(row)) failJob(row, BACKEND_GONE_ERROR, { attached: false });
           await forgetRow(row.jobId);
           continue;
         }

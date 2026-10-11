@@ -14,6 +14,7 @@ type CancelArgs = { serverUrl: string; backendId?: string | null; progressId: st
 const cancelBackendTranscription = vi.fn((_a: CancelArgs) => Promise.resolve());
 const deleteJob = vi.fn((_args: { jobId: string }) => Promise.resolve({ kind: "ok", value: null }));
 const fetchUrlMedia = vi.fn((_a: { serverUrl: string; mediaId: string }) => Promise.resolve(null));
+const listTranscriptRecords = vi.fn(() => Promise.resolve([] as unknown[]));
 const getTranscribeProgress = vi.fn<(args: { progressId: string }) => Promise<unknown>>(
   () => Promise.resolve({ stage: "unknown" }));
 vi.mock("./api", async (importOriginal) => ({
@@ -28,6 +29,7 @@ vi.mock("./api", async (importOriginal) => ({
   cancelBackendTranscription: (a: CancelArgs) => cancelBackendTranscription(a),
   deleteJob: (a: { jobId: string }) => deleteJob(a),
   getTranscribeProgress: (a: { progressId: string }) => getTranscribeProgress(a),
+  listTranscriptRecords: () => listTranscriptRecords(),
   // Media copies are best-effort side effects; keep them inert here.
   saveTranscriptMedia: () => Promise.resolve(null),
   fetchUrlMedia: (a: { serverUrl: string; mediaId: string }) => fetchUrlMedia(a),
@@ -498,7 +500,9 @@ describe("reconcileJobs", () => {
     await seed(r);
     const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
       sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
-    useTranscriptHistory.setState({ records: [rec] });
+    // At launch nothing has loaded History yet (the app opens on the Dashboard): the record is on disk only.
+    useTranscriptHistory.setState({ records: [], loaded: false });
+    listTranscriptRecords.mockResolvedValueOnce([rec]);
     useApp.setState({ backends: [] });
     await reconcileJobs();
     expect(getJob).not.toHaveBeenCalled();
