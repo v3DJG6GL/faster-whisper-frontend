@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { languageLabel } from "./languages";
-import { pruneTargets, pruneTranslationOverrides, seedTargets, targetsLabel, translationRunOptions, wireCodes } from "./translationTargets";
+import { countTranslationOverrides, pruneTargets, pruneTranslationOverrides, seedTargets, targetsLabel, translationRunOptions, wireCodes } from "./translationTargets";
 
 // `translationOverrides.translateTo` is peer-synced and never element-clamped by the sanitizers;
 // wireCodes is the ONE list the chips render, count and remove from and a run sends, so it is also
@@ -102,6 +102,21 @@ describe("pruneTranslationOverrides — what an editor stores", () => {
     expect(pruneTranslationOverrides({ includeOriginal: false })).toEqual({
       includeOriginal: false,
     });
+  });
+
+  it("drops a blank-after-trim model and stores a padded one trimmed", () => {
+    // A synced model is not trimmed at ingress; the run trims (effectiveTranslationModel), so
+    // "  " inherits and " gemma " runs "gemma" — the next edit stores what the run uses.
+    expect(pruneTranslationOverrides({ model: "  " })).toBeUndefined();
+    expect(pruneTranslationOverrides({ model: " gemma " })).toEqual({ model: "gemma" });
+  });
+});
+
+describe("countTranslationOverrides — the 'n set' summary", () => {
+  it("counts stored keys but not a model that inherits once trimmed", () => {
+    expect(countTranslationOverrides(undefined)).toBe(0);
+    expect(countTranslationOverrides({ model: "  ", translateTo: [] })).toBe(1);
+    expect(countTranslationOverrides({ model: " gemma ", glossary: "" })).toBe(2);
   });
 });
 

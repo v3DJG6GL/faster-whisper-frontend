@@ -51,13 +51,16 @@ export function seedTargets(o: {
  *  `translateTo` and `glossary` are tri-state — only `undefined` is inherit. An empty
  *  list / empty string is the user saying "none, whatever the layer below has", and
  *  pruning it silently re-inherited the value they had just cleared. `model`/`mode`
- *  stay truthiness-pruned: their controls have a real "Inherit" row instead. */
+ *  stay truthiness-pruned: their controls have a real "Inherit" row instead. `model` is
+ *  pruned when blank after a trim and stored trimmed — `effectiveTranslationModel` trims,
+ *  so a synced "  " already inherits and " gemma " already runs "gemma". */
 export function pruneTranslationOverrides(
   next: TranslationOverrides,
 ): TranslationOverrides | undefined {
   const out = { ...next };
   if (out.translateTo === undefined) delete out.translateTo;
-  if (!out.model) delete out.model;
+  if (!out.model?.trim()) delete out.model;
+  else out.model = out.model.trim();
   if (out.contextSegments === undefined) delete out.contextSegments;
   if (out.glossary === undefined) delete out.glossary;
   if (!out.mode) delete out.mode;
@@ -67,6 +70,13 @@ export function pruneTranslationOverrides(
   // sat visibly off.
   if (out.includeOriginal === undefined) delete out.includeOriginal;
   return Object.keys(out).length ? out : undefined;
+}
+
+/** How many Translation overrides a summary counts as set: the stored keys, less a model that
+ *  is blank after a trim (it inherits — `effectiveTranslationModel`), which a peer can sync in
+ *  and which stays stored until the next edit prunes it. */
+export function countTranslationOverrides(t: TranslationOverrides | undefined): number {
+  return Object.keys(t ?? {}).filter((k) => k !== "model" || !!t?.model?.trim()).length;
 }
 
 /** The T2T slice of a run's `TranscribeOptions`, as the wire's tri-state.

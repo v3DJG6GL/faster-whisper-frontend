@@ -14,7 +14,7 @@ import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { TranslationDefaultsEditor } from "@/components/TranslationFields";
-import { targetsLabel, wireCodes } from "@/lib/translationTargets";
+import { countTranslationOverrides, targetsLabel, wireCodes } from "@/lib/translationTargets";
 import {
   inheritLabel, LOCKED_REASON, serverContextSegments, serverInherited, serverLanguageLabel, shortModelName,
 } from "@/lib/inherit";
@@ -704,7 +704,7 @@ function Editor({
           open={showTranslation}
           onToggle={() => setShowTranslation((v) => !v)}
           title="Translation defaults"
-          summary={<SetSummary count={Object.keys(b.translationOverrides ?? {}).length} inherit="inherit server" />}
+          summary={<SetSummary count={countTranslationOverrides(b.translationOverrides)} inherit="inherit server" />}
           hint="T2T defaults for runs and profiles on this backend (a profile can still override). Empty = the server's translation config."
         >
           <TranslationDefaultsEditor

@@ -258,6 +258,9 @@ export function TranslationDefaultsEditor({
   // The header reads the list the chips show (wireCodes): an override whose every entry the
   // wire refuses translates into nothing, so it must say so instead of an overridden blank row.
   const shownTargets = v.translateTo === undefined ? undefined : wireCodes(v.translateTo);
+  // The model row reads the id a run sends (`effectiveTranslationModel` trims; blank inherits):
+  // a synced "  " is not an override, and " gemma " is the listed "gemma", not a custom id.
+  const ownModel = v.model?.trim() ?? "";
 
   return (
     <div>
@@ -289,11 +292,11 @@ export function TranslationDefaultsEditor({
       <OverrideHeader
         title="TRANSLATION_MODEL"
         desc={envDesc("TRANSLATION_MODEL")}
-        overridden={v.model !== undefined}
+        overridden={ownModel !== ""}
       >
         <div className={OVERRIDE_CONTROL_W}>
           <ModelPicker
-            value={v.model ?? ""}
+            value={ownModel}
             onChange={(m) => patch({ model: m || undefined })}
             models={caps?.translation_models ?? []}
             defaultLabel={inheritLabel(inherited.model)}

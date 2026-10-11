@@ -17,7 +17,7 @@ import { LiveDictationFields } from "@/components/LiveDictationFields";
 import { dictationControls, FIELD_LABEL } from "@/components/DictationFields";
 import { hasInsertionOverrides, insertionSetCount } from "@/lib/dictation/insertion";
 import { TranslationDefaultsEditor, type TranslationInherited } from "@/components/TranslationFields";
-import { targetsLabel } from "@/lib/translationTargets";
+import { countTranslationOverrides, targetsLabel } from "@/lib/translationTargets";
 import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited, serverLanguageLabel, shortModelName } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
@@ -382,7 +382,10 @@ function Editor({
               {p.backendId
                 ? "The backend this profile used was deleted."
                 : "No backend picked for this profile."}{" "}
-              Dictation uses “{backendDisplayName(backend.name, 60)}” (your first
+              Dictation uses “
+              {backendOptions(backends).find((o) => o.value === backend.id)?.label ??
+                backendDisplayName(backend.name, 60)}
+              ” (your first
               backend) until you pick one.
             </Notice>
           )}
@@ -669,7 +672,7 @@ function Editor({
           title="Translation overrides"
           summary={
             <SetSummary
-              count={Object.keys(p.translationOverrides ?? {}).length + (p.askTranslationTargets !== undefined ? 1 : 0)}
+              count={countTranslationOverrides(p.translationOverrides) + (p.askTranslationTargets !== undefined ? 1 : 0)}
               inherit="inherit backend"
             />
           }
@@ -889,6 +892,9 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers = withQuickAddPeer(profiles, quickAddHotkey);
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
+  // Each row names its backend as the editor's picker does (`backendOptions`): two backends of
+  // one name carry their host suffix here too, or the list cannot say which server gets the audio.
+  const backendLabels = new Map(backendOptions(backends).map((o) => [o.value, o.label]));
   // A peer that is gone reads "another profile"; one with a blank name reads as its row does.
   const nameOf = (id: string) => {
     if (id === QUICK_ADD_PEER_ID) return "Quick add";
@@ -1016,7 +1022,7 @@ export default function Profiles() {
                   <ProfileRow
                     key={p.id}
                     p={p}
-                    backendName={b ? backendDisplayName(b.name) : "No backend"}
+                    backendName={b ? (backendLabels.get(b.id) ?? backendDisplayName(b.name)) : "No backend"}
                     backendId={b?.id}
                     backendLanguage={b?.language}
                     backendTargets={b?.translationOverrides?.translateTo}
