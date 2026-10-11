@@ -11,6 +11,7 @@ import { Eraser, Lock, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { escapedFieldText, unescapeText } from "@/lib/escapeText";
 import { overrideTextPlaceholder, type InheritWord } from "@/lib/inherit";
+import { capCodePoints } from "@/lib/sanitize";
 import { TextArea, TextInput } from "@/components/ui";
 
 const ACTION =
@@ -191,7 +192,7 @@ export function OverrideText({
   const commit = (raw: string) => {
     if (escape) setDraft(raw);
     const v = escape ? unescapeText(raw) : raw;
-    onChange(maxLength !== undefined ? Array.from(v).slice(0, maxLength).join("") : v);
+    onChange(maxLength !== undefined ? capCodePoints(v, maxLength) : v);
   };
   const common = {
     "aria-label": ariaLabel,

@@ -50,7 +50,7 @@ import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
-import { backendDisplayName, deviceDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
@@ -265,7 +265,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     <Modal onClose={applying ? () => {} : onClose}>
       <div className="text-[15px] font-semibold text-text">Import settings</div>
       <div className="mt-1 text-[12.5px] text-dim">
-        From {deviceDisplayName(result.hostname) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
+        From {peerName(result.hostname) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
         {safeText(result.appVersion, 30) || "?"} · {createdLabel(result.createdAt)}
       </div>
 

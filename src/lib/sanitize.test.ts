@@ -3,6 +3,7 @@ import {
   wellFormedAppRules,
   appRuleKey,
   backendDisplayName,
+  capCodePoints,
   codeSlug,
   deviceDisplayName,
   peerDeviceName,
@@ -30,6 +31,15 @@ describe("stripControlChars with an output bound", () => {
   });
   it("is unchanged when no bound is given", () => {
     expect(stripControlChars("a\u0000b")).toBe("ab");
+  });
+});
+
+describe("capCodePoints", () => {
+  it("keeps whole code points and returns a short string as is", () => {
+    expect(capCodePoints("\u{1F3AC}\u{1F3AC}\u{1F3AC}", 2)).toBe("\u{1F3AC}\u{1F3AC}");
+    expect(capCodePoints("ab\u{1F3AC}", 3)).toBe("ab\u{1F3AC}");
+    expect(capCodePoints("abc", 3)).toBe("abc");
+    expect(capCodePoints("abcd", 2)).toBe("ab");
   });
 });
 
@@ -69,6 +79,19 @@ describe("safeIdentityText", () => {
     expect(safeIdentityText("Work\u200c \u200d Evil")).toBe("Work Evil");
     // A ZWJ emoji sequence (one joiner between two visible characters) is untouched.
     expect(safeIdentityText("\u{1F468}\u200d\u{1F4BB}")).toBe("\u{1F468}\u200d\u{1F4BB}");
+    // A joiner run after a space an earlier run already took still touches whitespace.
+    expect(safeIdentityText("a\u200c \u200c\u200d")).toBe("a");
+  });
+
+  it("folds a long blank run before a joiner in linear time", () => {
+    expect(safeIdentityText(" ".repeat(20000) + "a\u200d")).toBe("a\u200d");
+    expect(safeIdentityText("\u2800".repeat(20000) + "a\u200d")).toBe("a\u200d");
+    const t0 = performance.now();
+    // Interior blanks (and U+2800, which the defang turns into spaces) before a later joiner:
+    // the old `\s*` form restarted at every blank offset and backtracked, seconds on this input.
+    expect(safeIdentityText("a" + " ".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
+    expect(safeIdentityText("a" + "\u2800".repeat(100000) + "b\u200dc")).toBe("a b\u200dc");
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
 

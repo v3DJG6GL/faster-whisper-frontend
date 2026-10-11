@@ -5,7 +5,7 @@
 import { timedTrack, trackLang } from "./cueSplit";
 import { langCode, primarySubtag, trackLanguageName } from "../languages";
 import { ownProp } from "../own";
-import { codeSlug, stripControlChars } from "../sanitize";
+import { capCodePoints, codeSlug, stripControlChars } from "../sanitize";
 import { MT_WORD, WHISPER_WORD, siteWord, type SiteBadge, type SourceWordStyle } from "./siteSubtitles";
 import type { BatchResult } from "../types";
 
@@ -229,12 +229,6 @@ export const TRACK_TITLE_MAX = 64;
 export function cleanTrackTitle(s: string | undefined): string {
   const c = stripControlChars(typeof s === "string" ? s : "").replace(/\s+/g, " ").trim();
   return capCodePoints(c, TRACK_TITLE_MAX).trim();
-}
-
-/** The first `max` code points of `s` — the server's char cap, and never half a surrogate
- *  pair (a lone surrogate fails the invoke's JSON parse). */
-function capCodePoints(s: string, max: number): string {
-  return Array.from(s).slice(0, max).join("");
 }
 
 /** The chosen tracks, in order, with their names and flags. `names` = the user's titles by

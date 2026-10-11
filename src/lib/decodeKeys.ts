@@ -10,6 +10,7 @@
 // Text semantics: absent = inherit, "" = an explicit empty override, null is never stored.
 
 import { hasOwn } from "./own";
+import { capCodePoints } from "./sanitize";
 import type { DecodeOverrides } from "./types";
 
 export type DecodeKey = keyof DecodeOverrides;
@@ -231,12 +232,6 @@ const clamp = (n: number, min = -Infinity, max = Infinity) => Math.min(max, Math
 const CONTROLS = /[\u0000-\u001f\u007f]/g;
 const CONTROLS_BUT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f]/g;
 
-/** At most `n` characters (code points, as the server counts), never splitting a pair. */
-function capChars(s: string, n: number): string {
-  if (s.length <= n) return s;
-  return Array.from(s).slice(0, n).join("");
-}
-
 /** A rung the server's float() reads as a decimal (JS Number also takes hex/binary/octal). */
 const DECIMAL_RUNG = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 /** A rung in the editor's own alphabet (what parseLadderInput lets a user type). */
@@ -307,7 +302,7 @@ export function sanitizeDecodeValue(key: DecodeKey, v: unknown): number | boolea
     case "text": {
       if (typeof v !== "string") return undefined;
       const cleaned = v.replace(spec.multiline ? CONTROLS_BUT_NEWLINE : CONTROLS, "");
-      return capChars(cleaned, spec.maxLen ?? 512);
+      return capCodePoints(cleaned, spec.maxLen ?? 512);
     }
   }
 }

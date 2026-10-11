@@ -3,12 +3,12 @@
 // name (uppercased, whitespace collapsed, capped). The chip also CSS-truncates, so
 // this is about a sensible default rather than a hard width guarantee.
 
-import { profileDisplayName, trimLeadingInvisible } from "./sanitize";
+import { capCodePoints, profileDisplayName, trimLeadingInvisible } from "./sanitize";
 
 export function deriveChipTag(name: string): string {
-  // Slice by code points (spread) not UTF-16 units, so an astral char (emoji) straddling the
-  // cap isn't split into a lone surrogate that renders as the replacement glyph "�".
-  return [...name.trim().replace(/\s+/g, " ").toUpperCase()].slice(0, 10).join("").trimEnd();
+  // Cut by code points, not UTF-16 units, so an astral char (emoji) straddling the cap isn't
+  // split into a lone surrogate that renders as the replacement glyph "�".
+  return capCodePoints(name.trim().replace(/\s+/g, " ").toUpperCase(), 10).trimEnd();
 }
 
 const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
@@ -19,7 +19,7 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
  *  record stores, History's badge and the translation-target picker's header. */
 export function authoredChipTag(tag: unknown): string {
   const t = typeof tag === "string" ? trimLeadingInvisible(tag).trim() : "";
-  return t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
+  return t ? capCodePoints(t, AUTHORED_TAG_MAX).trimEnd() : "";
 }
 
 /** The effective chip tag for a Profile: its authored tag, else derived from name.

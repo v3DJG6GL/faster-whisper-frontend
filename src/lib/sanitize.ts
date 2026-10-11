@@ -204,9 +204,14 @@ export function safeIdentityText(s: unknown, max = 80): string {
       return ch;
     })
     .join("");
-  // No lookbehind: older WebKitGTK builds lack it.
+  // No lookbehind (older WebKitGTK builds lack it), and no `\s*` around the run: that form
+  // restarted at every blank offset and backtracked when no joiner followed, quadratic on a long
+  // blank run. The run's neighbours are read by offset instead, so the pass is linear, and any run
+  // touching whitespace folds — also one right after a space the previous run already took.
   const collapsed = defanged
-    .replace(/\s*[\u200c\u200d]+\s*/g, (m) => (/\s/.test(m) ? " " : m[0]))
+    .replace(/[\u200c\u200d]+/g, (m, off: number, str: string) =>
+      /\s/.test(str[off - 1] ?? "") || /\s/.test(str[off + m.length] ?? "") ? " " : m[0],
+    )
     .replace(/\s+/g, " ");
   // Trim BEFORE the cut, and trim what precedes the marker: a cut at `max + 1` that lands on the
   // collapsed space used to be trimmed away before the length test, so `"a"×80 + " evil"`
@@ -293,6 +298,14 @@ export function appRuleKey(appId: unknown): string {
  *  nothing is left. Lowercase it first where the caller wants it lowercase. */
 export function codeSlug(code: string, max = 12, fallback = ""): string {
   return code.replace(/[^A-Za-z0-9-]/g, "").slice(0, max) || fallback;
+}
+
+/** The first `max` code points of `s` — the server's char cap, and never half a surrogate
+ *  pair (a lone surrogate fails the invoke's JSON parse). */
+export function capCodePoints(s: string, max: number): string {
+  // At most `max` UTF-16 units is at most `max` code points: nothing to cut.
+  if (s.length <= max) return s;
+  return Array.from(s).slice(0, max).join("");
 }
 
 /** `max` bounds the OUTPUT: the result is the unbounded result's first `max` chars, so a

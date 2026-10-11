@@ -73,8 +73,10 @@ function Editor({
   // What "Auto" resolves to for the id as typed: Rust's built-in exe list (the window-class
   // half of the detector needs a live window, so the hint can only speak for the id). Asked
   // per id change; the `live` flag drops an answer that arrives after the next keystroke, so
-  // a slow reply for "mstsc" can't label "mstsc2". `null` = not asked yet / no id.
-  const detectId = normalizeAppId(r.appId);
+  // a slow reply for "mstsc" can't label "mstsc2". `null` = not asked yet / no id. Asked about
+  // the comparison key the rule matches by (appRuleKey: joiners dropped), so "ms\u200dtsc" is
+  // judged as the "mstsc" it matches; a joiner-only id keys to "" and is not asked.
+  const detectId = appRuleKey(r.appId);
   const [autoRemote, setAutoRemote] = useState<boolean | null>(null);
   useEffect(() => {
     // Reset first: a previous id's answer must not label this one while its reply is in flight.
