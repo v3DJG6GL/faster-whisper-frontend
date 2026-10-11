@@ -110,7 +110,7 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
                     tabIndex={i === focusIdx ? 0 : -1}
                     role="gridcell"
                     aria-label={`${fmtDateFull(cellData.day)}: ${cellData.value > 0 ? metricText(metric, cellData.value) : `no ${label.toLowerCase()}`}${cellData.level ? `, ${QUARTER_NAME[cellData.level]}` : ""}`}
-                    className={cn("block aspect-square w-full rounded-[3px] outline-none", CELL_HOVER, cellData.day === today && "ring-[1.5px] ring-inset ring-text", mark && (cellData.day < mark.from || cellData.day > mark.to) && "opacity-30", tip?.i === i && CELL_HOT)}
+                    className={cn("block aspect-square w-full rounded-[3px] outline-none", CELL_HOVER, tip?.i === i ? CELL_HOT : cellData.day === today && "ring-[1.5px] ring-inset ring-text", mark && (cellData.day < mark.from || cellData.day > mark.to) && "opacity-30")}
                     style={{ background: LEVEL_BG[cellData.level] }}
                   />
                 );

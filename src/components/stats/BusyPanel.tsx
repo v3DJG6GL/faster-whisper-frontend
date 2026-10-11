@@ -226,7 +226,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
                         tabIndex={i === focusIdx ? 0 : -1}
                         role="gridcell"
                         aria-label={`${L.cellName(i)}: ${!c.inWindow ? "not in this window" : c.value > 0 ? `${metricText(metric, c.value)} · ${metricText(comp, c.companion)}` : `no ${label.toLowerCase()}`}${c.level ? `, ${QUARTER_NAME[c.level]}` : ""}`}
-                        className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, peak === c && "ring-[1.5px] ring-inset ring-text", tip?.i === i && CELL_HOT)}
+                        className={cn("block w-full rounded-[3px] outline-none", cellClass, CELL_HOVER, tip?.i === i ? CELL_HOT : peak === c && "ring-[1.5px] ring-inset ring-text")}
                         style={{ background: c.inWindow ? LEVEL_BG[c.level] : "repeating-linear-gradient(135deg, var(--c-line-strong) 0 2px, var(--c-surface-2) 2px 5px)" }}
                       />
                     );

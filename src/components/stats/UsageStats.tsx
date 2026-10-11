@@ -518,19 +518,23 @@ export function StatisticsView({
         <StackedChart buckets={buckets} mode={mode} scope={scope} metric={metric} />
         <StagesPanel stats={stats} dense={dense} scope={scope} withS={query.with} rangeWord={word} />
         <DictationPanel stats={stats} scope={scope} />
-        <CalendarPanel
-          dense={yearDense}
-          streaks={(yearStats ?? stats).streak}
-          scope={scope}
-          withS={query.with}
-          from={yearWin.from}
-          to={yearWin.to}
-          mark={win.from <= yearWin.from && win.to >= yearWin.to ? null : { from: win.from, to: win.to, word }}
-          filtered={filtered}
-          metric={metric}
-          stale={!yearFresh}
-          failed={yearFailed}
-        />
+      </div>
+      {/* Outside the page-level dim: the calendar reads its own year document and dims itself
+          (`stale`/`failed`), so a second wrapper would stack to 0.49 or dim a fresh year. */}
+      <CalendarPanel
+        dense={yearDense}
+        streaks={(yearStats ?? stats).streak}
+        scope={scope}
+        withS={query.with}
+        from={yearWin.from}
+        to={yearWin.to}
+        mark={win.from <= yearWin.from && win.to >= yearWin.to ? null : { from: win.from, to: win.to, word }}
+        filtered={filtered}
+        metric={metric}
+        stale={!yearFresh}
+        failed={yearFailed}
+      />
+      <div className={cn(!fresh && "opacity-70")}>
         <BusyPanel stats={stats} dense={dense} scope={scope} title={word} metric={metric} rhythm={rhythm} onRhythm={onRhythm} from={win.from} to={win.to} bounded={win.bounded} />
       </div>
     </>
