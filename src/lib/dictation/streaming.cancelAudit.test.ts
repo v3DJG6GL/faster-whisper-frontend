@@ -360,10 +360,26 @@ describe("work that must wait for the queue or the cancel", () => {
     const body = mask(fns.armStuckWatchdog);
     expect(body).not.toMatch(/void cancelLive\(/);
     // A recovery cancel: the draining stream keeps its recording (the transcript is lost).
-    expect(body).toContain("cancelLive({ keepRecording: true, recovered: !!pending })");
+    expect(body).toContain("cancelLive({ keepRecording: true })");
     const wait = body.indexOf("await cancelled");
     expect(wait, "recovery must await the cancel").toBeGreaterThanOrEqual(0);
     expect(body.indexOf("recoverUnguarded(")).toBeGreaterThan(wait);
+  });
+
+  it("the stuck-finalize recovery books its usage outcome only once the copy answers", () => {
+    // cancelLive's synchronous "nothing landed" report used to win the once-guard before the copy
+    // ran, so Statistics showed Nothing for text the chip said was on the clipboard. The watchdog
+    // claims the outcome before the cancel and settles it with the copy's answer.
+    const body = mask(fns.armStuckWatchdog);
+    const claim = body.indexOf("const settleOutcome = pending ? deferSessionOutcome() : null;");
+    expect(claim, "the watchdog claims the outcome").toBeGreaterThanOrEqual(0);
+    expect(claim, "…before cancelLive reports it").toBeLessThan(body.indexOf("cancelLive("));
+    // mask() blanks the delivery literals; the abandoned flag is the failed copy.
+    const settle = body.search(/\bsettleOutcome\?\.\(onClipboard \?\s+:\s+, !onClipboard\)/);
+    expect(settle, "the copy's answer settles the outcome").toBeGreaterThan(body.indexOf("recoverUnguarded("));
+    // Both branches: before the superseded check returns early.
+    expect(settle).toBeLessThan(body.indexOf("if (superseded)"));
+    expect(mask(streamingSrc)).not.toMatch(/\brecovered:/);
   });
 
   it("the stream-error handler flashes the error before awaiting the recovery copy", () => {
@@ -738,13 +754,14 @@ describe("a cancelled translating session's usage outcome", () => {
 
   it("cancelLive reports a user cancel as abandoned before it resets what landed", () => {
     const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
-    // mask() blanks the "none" literal; the second argument is the abandoned flag, false only
-    // when the watchdog recovers the text (wake from sleep keeps the audio, not the text).
-    const report = cancelLive.search(/\breportSessionOutcome\(\s+, !opts\?\.recovered\)/);
+    // mask() blanks the "none" literal; every cancel is abandoned (wake from sleep keeps the
+    // audio, not the text; the stuck-finalize watchdog claims its outcome before cancelling).
+    const report = cancelLive.search(/\breportSessionOutcome\(\s+, true\)/);
     expect(report, "cancelLive must report a user cancel as abandoned").toBeGreaterThanOrEqual(0);
     expect(report).toBeLessThan(cancelLive.indexOf("sessionTyped = false"));
     expect(report).toBeLessThan(cancelLive.indexOf("sessionClipboard = false"));
-    // reportSessionOutcome feeds the flags into the abandoned branch.
-    expect(mask(topLevelFunctions(streamingSrc).reportSessionOutcome)).toContain("landed: sessionTyped || sessionClipboard");
+    // deferSessionOutcome (behind reportSessionOutcome) feeds the flags into the abandoned branch.
+    expect(mask(topLevelFunctions(streamingSrc).reportSessionOutcome)).toContain("deferSessionOutcome()?.(delivery, abandoned)");
+    expect(mask(topLevelFunctions(streamingSrc).deferSessionOutcome)).toContain("landed: sessionTyped || sessionClipboard");
   });
 });

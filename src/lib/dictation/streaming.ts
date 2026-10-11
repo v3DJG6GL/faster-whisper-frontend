@@ -416,31 +416,44 @@ export function translationOutcome(s: {
  *  Once per session: settleIdle reports the truthful delivery, cancelLive reports "none" with
  *  `abandoned` — before it resets sessionTyped/sessionClipboard, which still say whether
  *  anything landed, so a cancelled translating session with nothing landed reports "aborted".
+ *  The stuck-finalize watchdog books its own through deferSessionOutcome, once its clipboard
+ *  copy answers. */
+function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
+  deferSessionOutcome()?.(delivery, abandoned);
+}
+
+/** Claim this session's once-only outcome now and post it when the returned function is called —
+ *  for a delivery only known after the session's state is gone (the stuck-finalize watchdog's
+ *  recovery copy answers after cancelLive cleared it). Snapshots the session facts the answer
+ *  needs; null when there is nothing to report (no session, a batch session, or already claimed).
  *  The app id goes only with "Report the app I dictate into" on and never for a target an
  *  App rule blocked (the same promise the history capture keeps). Words and audio seconds
  *  are the server's own — it counted the utterances. */
-function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
+function deferSessionOutcome(): ((delivery: "typed" | "clipboard" | "none", abandoned: boolean) => void) | null {
   const meta = sessionMeta;
-  if (!meta || !meta.clientJob || sessionOutcomeReported) return;
+  const jobId = meta?.clientJob;
+  if (!meta || !jobId || sessionOutcomeReported) return null;
   sessionOutcomeReported = true;
-  const translation = translationOutcome({
+  const snap = {
     skipped: sessionInsertSkipped,
     asked: sessionTranslation != null,
     translated: sessionTranslatedText != null,
-    abandoned,
     landed: sessionTyped || sessionClipboard,
-  });
-  const reportApp = useApp.getState().settings.recording.reportTargetApp !== false;
-  // stripControlChars bounds the UTF-16 length WITHOUT splitting a surrogate pair: a lone
-  // surrogate makes serde_json reject the whole outcome batch and the persisted queue.
-  const appId = reportApp && !meta.blocked && meta.appId ? stripControlChars(meta.appId.trim(), 64) : undefined;
-  enqueueOutcome(meta.backendId, meta.serverUrl, {
-    job_id: meta.clientJob,
-    activation: meta.activation ?? "hold",
-    delivery,
-    translation,
-    ...(appId ? { app_id: appId } : {}),
-  });
+  };
+  return (delivery, abandoned) => {
+    const translation = translationOutcome({ ...snap, abandoned, landed: snap.landed || delivery !== "none" });
+    const reportApp = useApp.getState().settings.recording.reportTargetApp !== false;
+    // stripControlChars bounds the UTF-16 length WITHOUT splitting a surrogate pair: a lone
+    // surrogate makes serde_json reject the whole outcome batch and the persisted queue.
+    const appId = reportApp && !meta.blocked && meta.appId ? stripControlChars(meta.appId.trim(), 64) : undefined;
+    enqueueOutcome(meta.backendId, meta.serverUrl, {
+      job_id: jobId,
+      activation: meta.activation ?? "hold",
+      delivery,
+      translation,
+      ...(appId ? { app_id: appId } : {}),
+    });
+  };
 }
 /** Rust `stream://recording`: a saved .wav. `utterance` names the utterance of a
  *  per-utterance clip (null = the whole session); `durationMs` is null when unmeasured. */
@@ -1861,11 +1874,17 @@ function armStuckWatchdog(): void {
       // cancelLive, not awaited; it is a no-op in stop mode (nothing snapshotted), which is the only
       // mode with a pending transcript here.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
-      const cancelled = cancelLive({ keepRecording: true, recovered: !!pending }).catch((e) => console.error("stuck-finalize cancel failed:", e));
+      // With text to recover, the usage outcome waits for the copy's answer: claiming it here makes
+      // cancelLive's own "nothing landed" report a no-op, and the snapshot keeps the old session's
+      // facts, so a new session started in the await window books its own.
+      const settleOutcome = pending ? deferSessionOutcome() : null;
+      const cancelled = cancelLive({ keepRecording: true }).catch((e) => console.error("stuck-finalize cancel failed:", e));
       if (pending) {
         void (async () => {
           await cancelled;
           const onClipboard = await recoverUnguarded(pending, "stuck-finalize");
+          // On the clipboard → it landed; a failed copy lost the text, like a cancel.
+          settleOutcome?.(onClipboard ? "clipboard" : "none", !onClipboard);
           // Notify in BOTH branches. Unlike the stream://error / stopLive-reject siblings, which
           // flash the error BEFORE the copy and so can return silently when it fails, this watchdog
           // path has not flashed yet: on a double failure (link died AND the clipboard copy threw)
@@ -3876,10 +3895,6 @@ export interface CancelOpts {
    *  after stop is released, keeping its saved recording — the audio may be the only copy of what
    *  was said. */
   keepRecording?: boolean;
-  /** The stuck-finalize watchdog copies the session's text to the clipboard after this cancel:
-   *  its usage outcome is not reported as abandoned. Every other cancel (the user's, wake from
-   *  sleep, which recovers no text) is. */
-  recovered?: boolean;
 }
 
 /** Chord family, when the in-place upgrade would be a lie: the hands-free Profile needs a
@@ -4066,10 +4081,11 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   abandonSessionWork();
   // A cancelled session still happened on the server (its utterances are counted); tell it
   // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported". Before the
-  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer. A
-  // cancel whose text the watchdog recovers (recovered) settles like stream://error; every other
-  // one is abandoned, wake from sleep included — it keeps the audio, not the text.
-  reportSessionOutcome("none", !opts?.recovered);
+  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer. Every
+  // cancel is abandoned, wake from sleep included — it keeps the audio, not the text. The
+  // stuck-finalize watchdog claimed the outcome before calling (deferSessionOutcome) and books its
+  // recovered copy itself, so this report is a no-op for it.
+  reportSessionOutcome("none", true);
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   committedDoc = "";
