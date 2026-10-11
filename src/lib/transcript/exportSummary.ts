@@ -3,7 +3,9 @@
 // the panel maps these onto its controls.
 
 import { plural } from "../format";
-import { isSubtitleFormat, type ExportFormat } from "./transcriptFormats";
+import { isSubtitleFormat, writtenCues, type ExportFormat } from "./transcriptFormats";
+import { timedTrack, type CueGrid, type CueOptions } from "./cueSplit";
+import type { BatchResult } from "../types";
 
 /** on/off = a toggle; fixed = always in this format; na = the format can't
  *  carry it (or the transcript has nothing to carry). `why` is the tooltip. */
@@ -104,6 +106,24 @@ export interface SummaryRow {
   why: string;
 }
 
+/** The Summary's subtitle count (exportSummary's `written` / `ownOnly`). It describes the file
+ *  the shared cues go into: the original's when it is exported, else the one the same-timed
+ *  translations share — counted as that file writes them (writtenCues). When every exported
+ *  track keeps its own cues (site tracks, own-timed translations) there is no shared file and
+ *  no one count to show: `ownOnly`, never a sum across files. `tracks` = the exported tracks
+ *  (empty = the original only); `grid` = a subtitle cueGrid over at least them. */
+export function summaryCount(
+  result: Pick<BatchResult, "timedTracks">,
+  grid: CueGrid | null,
+  tracks: string[],
+  cues: CueOptions | undefined,
+): { written: number; ownOnly: boolean } {
+  const shared = !tracks.length || tracks.includes("orig") ? ["orig"]
+    : tracks.filter((t) => !timedTrack(result, t) && cues?.timing !== "own");
+  if (!shared.length) return { written: 0, ownOnly: true };
+  return { written: grid ? writtenCues(grid, shared).length : 0, ownOnly: false };
+}
+
 /** The Summary box: what one Save writes, row by row. */
 export function exportSummary(a: {
   format: ExportFormat;
@@ -116,8 +136,15 @@ export function exportSummary(a: {
   /** Text files the export writes: a site track with its own timing gets one of its own
    *  while the rest share one, so two files can hold three tracks. */
   fileCount?: number;
-  /** Subtitles the original track gets; null = as transcribed. */
-  cueCount: number | null;
+  /** Subtitles are split to a length (false = as transcribed, one per segment). */
+  split: boolean;
+  /** Subtitles the shared file writes (the original's file when it is exported; else the file
+   *  the same-timed translations share) — writtenCues, so blank and untranslated cues count
+   *  exactly as the file writes them. */
+  written: number;
+  /** No shared file: every exported track keeps its own cues (site tracks, own-timed
+   *  translations), so there is no one count to show — never a sum across files. */
+  ownOnly?: boolean;
   segCount: number;
   showTs: boolean;
   content: ContentItem[];
@@ -160,8 +187,9 @@ export function exportSummary(a: {
   });
   rows.push(
     !sub ? { label: "Subtitle length", state: "na", why: "not part of this format" }
-      : a.cueCount === null ? { label: "Subtitle length", state: "off", why: `as transcribed — ${plural(a.segCount, "subtitle")}` }
-        : { label: "Subtitle length", state: "on", why: `${plural(a.cueCount, "subtitle")} from ${plural(a.segCount, "segment")}` },
+      : a.ownOnly ? { label: "Subtitle length", state: a.split ? "on" : "off", why: "each track keeps its own cues" }
+        : !a.split ? { label: "Subtitle length", state: "off", why: `as transcribed — ${plural(a.written, "subtitle")}` }
+          : { label: "Subtitle length", state: "on", why: `${plural(a.written, "subtitle")} from ${plural(a.segCount, "segment")}` },
   );
   if (a.hasSpeakers) {
     const names = item("names");

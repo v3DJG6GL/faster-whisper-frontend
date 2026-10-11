@@ -23,6 +23,7 @@ import {
   type CueGrid, type CueLimits, type CueOptions,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
+import { writesCue } from "@/lib/transcript/transcriptFormats";
 import type { BatchResult } from "@/lib/types";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 
@@ -279,11 +280,13 @@ export function SubtitleList({
       };
     };
     if (!lanes) {
-      // As the export (cueLines): a cue with no line in any shown track is not written, so
-      // translations alone skip the untranslated cues — an original line, even blank, keeps it.
+      // The cues the export writes (writesCue): translations alone skip a cue no picked
+      // translation cleans to a line (untranslated, or format characters only) — an original
+      // line, even blank, keeps it.
       const kept = grid.cues.flatMap((c, i) => {
+        if (!writesCue(c, tracks)) return [];
         const cols = tracks.map((t): [string, string] => [t, t === "orig" ? c.text : (ownProp(c.tr, t) ?? "")]);
-        return tracks.includes("orig") || cols.some(([, x]) => x.trim()) ? [{ c, i, cols }] : [];
+        return [{ c, i, cols }];
       });
       return {
         heads: tracks.map((t) => trackChipLabel(result, t)),

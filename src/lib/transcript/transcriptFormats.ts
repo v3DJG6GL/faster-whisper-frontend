@@ -6,7 +6,7 @@
 
 import {
   buildCues, cueResult, edgeChar, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
-  type CueGrid, type CueLimits, type CueOptions,
+  type Cue, type CueGrid, type CueLimits, type CueOptions,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { ownProp } from "../own";
@@ -296,6 +296,27 @@ function cueLines(
     const t = trOf(seg, lang);
     return t === null ? [] : [mt(t, seg, lang)];
   });
+}
+
+/** Does one SRT/VTT file carrying `tracks` write this shared cue? Exactly cueLines' rule: with
+ *  the original among them every cue is written, even a blank one (its line is kept, or dropped
+ *  for a translation's); without it, only a cue where a picked translation cleans to a line. */
+export function writesCue(c: Cue, tracks: string[]): boolean {
+  return tracks.includes("orig") || tracks.some((t) => t !== "orig" && clean(ownProp(c.tr, t) ?? "") !== "");
+}
+
+/** The cues one SRT/VTT file carrying `tracks` writes, as srtExport/vttExport (cueLines) write
+ *  them: a single own-timed track (a site track, or a translation under own timing) its own
+ *  cues that clean to a line (cueResult feeds them through trOf, which drops a blank one);
+ *  otherwise the shared cues — every one while the original rides, even blank, else only those
+ *  where a picked translation cleans to a line. The count the preview, the Subtitles table and
+ *  the Summary show, so none of them disagrees with the file. */
+export function writtenCues(
+  grid: CueGrid, tracks: string[],
+): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
+  const own = tracks.length === 1 ? ownProp(grid.own, tracks[0]) : undefined;
+  if (own) return own.filter((c) => clean(c.text) !== "");
+  return grid.cues.filter((c) => writesCue(c, tracks));
 }
 
 /** A speaker's display name: the user's rename, else the prettified label — the
@@ -869,9 +890,12 @@ export function previewExport(
   const tracks = tracksOf(opts);
   const segs = result.segments ?? [];
   grid ??= cueGrid(result, opts, tracks);
-  const list = tracks.length === 1
-    ? trackCues(grid, tracks[0])
-    : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : ownProp(c.tr, t))));
+  // A subtitle file counts the cues it writes (writtenCues); TXT/LRC/JSON follow their own rules.
+  const list = isSubtitleFormat(opts.format)
+    ? writtenCues(grid, tracks)
+    : tracks.length === 1
+      ? trackCues(grid, tracks[0])
+      : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : ownProp(c.tr, t))));
   const last = list[Math.min(n, list.length) - 1];
   // The segments behind the first n cues — or, for a track with its own
   // timing, everything before the n-th cue ends.

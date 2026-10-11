@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   cpsWarnings, cueGrid, previewExport, DEFAULT_SPEAKER_COLORS, exportFileNames, exportOptionsFor, exportStemSuffix, generateExport, isSubtitleFormat, speakerName, tracksOf,
-  generateExports, joinSegmentTexts,
+  generateExports, joinSegmentTexts, writesCue, writtenCues,
   prettySpeaker, speakerColorIndex, speakerHex, speakerOrder,
   type ExportOptions,
 } from "./transcriptFormats";
@@ -1013,6 +1013,63 @@ describe("subtitle cues", () => {
     expect(cpsWarnings(fast, { tracks: ["orig", "en"], cues: STANDARD })).toEqual([{ lang: "orig", index: 0, cps: 18 }]);
     expect(cpsWarnings(fast, { tracks: ["orig", "en"] })).toEqual([]);
     expect(cpsWarnings(CUED, { tracks: ["orig", "de", "fr"], cues: STANDARD })).toEqual([]);
+  });
+});
+
+/** A blank middle segment, an untranslated one and a translation of only a zero-width space. */
+const GAPPY: BatchResult = {
+  text: "Hello there. General greeting. Last one.",
+  language: "en",
+  segments: [
+    { start: 0, end: 1, text: " Hello there.", translations: { de: "Hallo." } },
+    { start: 1, end: 2, text: " " },
+    { start: 2, end: 3, text: " General greeting.", translations: { de: "\u200B" } },
+    { start: 3, end: 4, text: " Last one." },
+  ],
+};
+const cueBlocks = (out: string) => out.split("\n").filter((l) => l.includes(" --> ")).length;
+
+describe("writesCue / writtenCues (what one subtitle file writes)", () => {
+  it("the original rides: every cue, even a blank one; translations alone: only a real line", () => {
+    const grid = cueGrid(GAPPY, { format: "srt" }, ["orig", "de"]);
+    expect(grid.cues.map((c) => writesCue(c, ["orig"]))).toEqual([true, true, true, true]);
+    expect(grid.cues.map((c) => writesCue(c, ["orig", "de"]))).toEqual([true, true, true, true]);
+    // Untranslated, and a format-character-only translation the writer cleans away.
+    expect(grid.cues.map((c) => writesCue(c, ["de"]))).toEqual([true, false, false, false]);
+  });
+
+  it("preview totals match the cue blocks the file writes", () => {
+    for (const format of ["srt", "vtt"] as const) {
+      for (const cues of [undefined, STANDARD]) {
+        for (const tracks of [["orig"], ["orig", "de"], ["de"]]) {
+          const opts: ExportOptions = { format, tracks, cues };
+          const written = cueBlocks(generateExport(GAPPY, opts));
+          expect(previewExport(GAPPY, opts, 12).total).toBe(written);
+          expect(writtenCues(cueGrid(GAPPY, opts, tracks), tracks)).toHaveLength(written);
+        }
+      }
+    }
+    expect(previewExport(GAPPY, { format: "srt", tracks: ["orig"] }, 12).total).toBe(4);
+    expect(previewExport(GAPPY, { format: "srt", tracks: ["de"] }, 12).total).toBe(1);
+  });
+
+  it("a single own-timed track counts its own cues that clean to a line", () => {
+    const site: BatchResult = {
+      ...GAPPY,
+      timedTracks: [{
+        id: "de-x-site", lang: "de", source: "site", kind: "manual",
+        cues: [{ start: 0, end: 1, text: "Hallo." }, { start: 1, end: 2, text: "\u200E" }],
+      }],
+    };
+    const siteOpts: ExportOptions = { format: "srt", tracks: ["de-x-site"] };
+    expect(writtenCues(cueGrid(site, siteOpts, ["de-x-site"]), ["de-x-site"]).map((c) => c.text)).toEqual(["Hallo."]);
+    expect(cueBlocks(generateExport(site, siteOpts))).toBe(1);
+    expect(previewExport(site, siteOpts, 12).total).toBe(1);
+    // A translation under own timing: the zero-width-only cue is dropped as well.
+    const own: ExportOptions = { format: "srt", tracks: ["de"], cues: { ...STANDARD, timing: "own" } };
+    expect(writtenCues(cueGrid(GAPPY, own, ["de"]), ["de"])).toHaveLength(1);
+    expect(cueBlocks(generateExport(GAPPY, own))).toBe(1);
+    expect(previewExport(GAPPY, own, 12).total).toBe(1);
   });
 });
 

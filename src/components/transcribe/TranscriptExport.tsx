@@ -26,7 +26,9 @@ import {
   CUE_PRESETS, CUE_RANGES, limitsTitle, sanitizeCueLimits, trackCps, type CueLimits,
   type CueOptions, type SubtitleLength,
 } from "@/lib/transcript/cueSplit";
-import { contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, type ContentItem } from "@/lib/transcript/exportSummary";
+import {
+  contentStates, exportSummary, lengthNeedsWords, NO_WORDS_SPLIT_WHY, summaryCount, type ContentItem,
+} from "@/lib/transcript/exportSummary";
 import { cn } from "@/lib/cn";
 import { isSourceUrl } from "@/lib/urlSource";
 import { isTextSourcePath } from "@/lib/transcript/subtitleImport";
@@ -288,7 +290,7 @@ export function TranscriptExport({
   const subs = isSubtitleFormat(exportFormat);
   /** The tracks the one subtitle grid below covers: every exported track, and
    *  ALWAYS the original — buildCues skips the original's split when it is
-   *  absent under own timing, and the summary counts the original's cues. */
+   *  absent under own timing, and the summary counts the shared file's cues on its split. */
   const gridTracks = useMemo(() => ["orig", ...effTracks.filter((t) => t !== "orig")], [effTracks]);
   // Only what the cue split reads (cues, renames, speaker names): colours, timestamps, word
   // timing and SRT↔VTT toggles must not re-split the whole transcript for identical cues.
@@ -800,8 +802,9 @@ export function TranscriptExport({
     // one text file is "one each" only when the count matches the tracks.
     filePerTrack: !!plan.sidecars || (textNames.length > 1 && textNames.length === videoTracks.length),
     fileCount: textNames.length,
-    // Null without split subtitles.
-    cueCount: cueOpts && subGrid ? subGrid.cues.length : null,
+    // The shared file's subtitles, as it writes them (the original's file when it is exported).
+    split: !!cueOpts,
+    ...summaryCount(editedResult, subGrid, effTracks, cueOpts),
     segCount: editedResult.segments?.length ?? 0,
     showTs,
     content,

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { contentStates, exportSummary, lengthNeedsWords, type ContentItem } from "./exportSummary";
+import { contentStates, exportSummary, lengthNeedsWords, summaryCount, type ContentItem } from "./exportSummary";
+import { cueGrid } from "./transcriptFormats";
+import type { BatchResult } from "../types";
 
 describe("lengthNeedsWords", () => {
   it("marks a split that has no word timing to work with", () => {
@@ -53,7 +55,7 @@ describe("exportSummary", () => {
   const sum = (over: Partial<Parameters<typeof exportSummary>[0]> = {}) => {
     const format = over.format ?? "srt";
     return exportSummary({
-      format, trackCodes: ["EN", "DE"], stacked: true, filePerTrack: false, cueCount: 1300, segCount: 1204,
+      format, trackCodes: ["EN", "DE"], stacked: true, filePerTrack: false, split: true, written: 1300, segCount: 1204,
       showTs: false, content: contentStates({ ...base, format }), hasSpeakers: true, firstName: "Narrator",
       cpsCount: 0, cpsLimit: "17 chars/s", editCount: 0, media: null, ...over,
     });
@@ -108,13 +110,22 @@ describe("exportSummary", () => {
     }
   });
   it("as transcribed, own timing, fast subtitles, corrections and media", () => {
-    const rows = sum({ cueCount: null, filePerTrack: true, stacked: false, cpsCount: 3, editCount: 2,
+    const rows = sum({ split: false, written: 1204, filePerTrack: true, stacked: false, cpsCount: 3, editCount: 2,
       media: { choice: "video", container: "mkv", subtitleMode: "both", audioExt: null } });
     expect(row(rows, "Subtitle length")).toMatchObject({ state: "off", why: "as transcribed — 1,204 subtitles" });
     expect(row(rows, "Tracks")?.why).toBe("EN · DE — one file each");
     expect(row(rows, "Reading speed")).toMatchObject({ state: "warn", why: "3 subtitles faster than 17 chars/s" });
     expect(row(rows, "Corrections")?.why).toBe("2 included");
     expect(row(rows, "Media")?.why).toBe("video in MKV, subtitles embedded and as files");
+  });
+  it("subtitle length counts what the shared file writes; own cues alone show no count", () => {
+    // Translations only: the untranslated cues are not written, so fewer than the segments.
+    expect(row(sum({ split: false, written: 3 }), "Subtitle length"))
+      .toEqual({ label: "Subtitle length", state: "off", why: "as transcribed — 3 subtitles" });
+    expect(row(sum({ written: 900 }), "Subtitle length")?.why).toBe("900 subtitles from 1,204 segments");
+    const own = "each track keeps its own cues";
+    expect(row(sum({ ownOnly: true }), "Subtitle length")).toEqual({ label: "Subtitle length", state: "on", why: own });
+    expect(row(sum({ ownOnly: true, split: false }), "Subtitle length")).toEqual({ label: "Subtitle length", state: "off", why: own });
   });
   it("a site track on its own beside a shared file: not \"one file each\"", () => {
     const rows = sum({ trackCodes: ["EN", "DE", "YouTube EN"], fileCount: 2, filePerTrack: false, stacked: false });
@@ -147,5 +158,37 @@ describe("exportSummary", () => {
   it("txt with two tracks: interleaved, never \"inside each subtitle\"", () => {
     const rows = sum({ format: "txt", content: contentStates({ ...base, format: "txt" }) });
     expect(row(rows, "Tracks")?.why).toBe("EN · DE — in that order, interleaved");
+  });
+});
+
+describe("summaryCount", () => {
+  /** A blank segment, an untranslated one, a zero-width-only translation, and a site track. */
+  const r: BatchResult = {
+    text: "a b c",
+    language: "en",
+    segments: [
+      { start: 0, end: 1, text: "Hello.", translations: { de: "Hallo." } },
+      { start: 1, end: 2, text: " " },
+      { start: 2, end: 3, text: "Again.", translations: { de: "\u200B" } },
+      { start: 3, end: 4, text: "Last." },
+    ],
+    timedTracks: [{ id: "de-x-site", lang: "de", source: "site", kind: "manual", cues: [{ start: 0, end: 1, text: "Hallo." }] }],
+  };
+  const grid = (tracks: string[], timing: "same" | "own" = "same") =>
+    cueGrid(r, { format: "srt", cues: { length: "standard", timing } }, ["orig", ...tracks.filter((t) => t !== "orig")]);
+
+  it("the original exported: every one of its cues, the blank one included", () => {
+    expect(summaryCount(r, grid([]), [], undefined)).toEqual({ written: 4, ownOnly: false });
+    expect(summaryCount(r, grid(["orig", "de"]), ["orig", "de"], undefined)).toEqual({ written: 4, ownOnly: false });
+  });
+  it("translations only: the shared file's cues, not the original's", () => {
+    expect(summaryCount(r, grid(["de"]), ["de"], undefined)).toEqual({ written: 1, ownOnly: false });
+    // A site track beside it has a file of its own; the count stays the shared file's.
+    expect(summaryCount(r, grid(["de", "de-x-site"]), ["de", "de-x-site"], undefined)).toEqual({ written: 1, ownOnly: false });
+  });
+  it("every track on its own cues: no count, never a sum across files", () => {
+    expect(summaryCount(r, grid(["de-x-site"]), ["de-x-site"], undefined)).toEqual({ written: 0, ownOnly: true });
+    const own = { length: "standard", timing: "own" } as const;
+    expect(summaryCount(r, grid(["de", "de-x-site"], "own"), ["de", "de-x-site"], own)).toEqual({ written: 0, ownOnly: true });
   });
 });
