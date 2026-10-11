@@ -28,7 +28,6 @@ import { useApp } from "@/lib/store";
 import { Card, SectionLabel } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import {
-  fmtFull,
   fmtCompact,
   fmtDuration,
   localTodayDay,
@@ -177,7 +176,7 @@ function StagesPanel({ stats, dense, scope, withS, rangeWord }: { stats: UsageSt
                       {t.code} {t.pct} %
                     </span>
                   ))}
-                  {kept > 0 && <span>· {fmtFull(kept)} kept original (timeout)</span>}
+                  {kept > 0 && <span>· {plural(Math.round(kept), "segment")} kept the original (translation guard)</span>}
                 </div>
               )}
             </div>

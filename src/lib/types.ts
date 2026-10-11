@@ -917,6 +917,8 @@ export interface UsageStage {
   secs: number;
   speakers_avg?: number | null;
   retained_avg?: number | null;
+  /** Segments whose translation guard fell back to the source text in at least one target (not
+   *  sessions; the session outcome is UsageDictation.translation.kept_original). */
   kept_original?: number | null;
   targets: { code: string; runs: number }[];
 }
