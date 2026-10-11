@@ -4,7 +4,9 @@
 import { describe, expect, it } from "vitest";
 import {
   describeTransportError,
+  doorwayBackendLabel,
   errorText,
+  handedOffDoorway,
   shortCause,
   transportErrorDoorway,
   translateFailureDoorway,
@@ -54,6 +56,25 @@ describe("describeTransportError", () => {
     const d = describeTransportError("transcribe", "HTTP 500", "\u202E" + "A".repeat(300));
     expect(d.title).not.toContain("\u202E");
     expect(d.title.length).toBeLessThan(200);
+  });
+
+  it("names a blank or invisible-only backend the way the lists do, and drops an invisible head", () => {
+    expect(describeTransportError("transcribe", "Could not connect", "\u2800  ").title).toBe(
+      "Could not reach Untitled backend — nothing was started.",
+    );
+    expect(handedOffDoorway("transcribe", "   ").msg.startsWith("Lost contact with Untitled backend")).toBe(true);
+    for (const blank of ["\u2800", "\u200d"]) {
+      expect(handedOffDoorway("transcribe", blank).msg.startsWith("Lost contact with Untitled backend ")).toBe(true);
+      expect(transportErrorDoorway("transcribe", "HTTP 500: boom", blank).msg).toBe(
+        "Transcription failed on Untitled backend (HTTP 500).",
+      );
+    }
+    expect(describeTransportError("transcribe", "HTTP 500", "\u200dWork").title).toBe("Transcription failed on Work (HTTP 500).");
+    expect(handedOffDoorway("transcribe", "\u2800My server").msg.startsWith("Lost contact with My server ")).toBe(true);
+    // A missing name, and the callers' own literal, keep the sentence's wording.
+    expect(doorwayBackendLabel(undefined)).toBe("the backend");
+    expect(doorwayBackendLabel("")).toBe("the backend");
+    expect(doorwayBackendLabel("the backend")).toBe("the backend");
   });
 
   it("HTTP 401 elsewhere points at the API key", () => {

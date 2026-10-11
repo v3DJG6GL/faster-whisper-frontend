@@ -13,7 +13,7 @@ import {
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText, type UrlMediaDownload,
 } from "./api";
 import {
-  errorText, handedOffDoorway, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText,
+  doorwayBackendLabel, errorText, handedOffDoorway, shortCause, transportErrorDoorway, uploadTooLarge, uploadTooLargeText,
 } from "./errors";
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
@@ -1710,7 +1710,7 @@ export function failJob(row: LedgerRow, error: string, opts: { attached: boolean
     // Not a transport failure (the server lost, refused or cancelled the job, or we
     // gave up): name the reason itself — nothing was logged, so no Logs button.
     const backendName = useApp.getState().backends.find((b) => b.id === row.backendId)?.name;
-    const label = safeDisplayText(backendName, 80) || "the backend";
+    const label = doorwayBackendLabel(backendName);
     useApp.getState().setLogsDoorway({
       msg: `The run on ${label} did not finish: ${safeDisplayText(error, 200)}`,
       showLogs: false,

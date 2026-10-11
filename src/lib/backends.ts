@@ -311,7 +311,9 @@ const SEP = " \u00b7 ";
  *  called from three unmemoized render bodies over a list `MAX_SYNCED_ENTRIES` bounds at 500 —
  *  measured at 233ms per render pass. One pass builds the collision counts, then labels. */
 export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
-  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
+  // Joiners (ZWNJ/ZWJ) are dropped from the KEY only: the identity fold keeps interior ones, so
+  // `"Wo\u200drk"` would count apart from `"Work"` while drawing exactly like it.
+  const norm = (s: string) => s.replace(/[\u200c\u200d]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
   // `safeIdentityText`, not `safeDisplayText`: G4 moved the three identity renders beside a trust
   // decision onto it and this fourth site was missed. `safeDisplayText` passes the invisible class
   // `isInvisibleKeyChar` enumerates — U+2800, U+034F, the variation selectors, the tags block —

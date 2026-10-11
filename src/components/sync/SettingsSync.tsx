@@ -538,16 +538,25 @@ const MAX_REVIEW_ROWS = 50;
 /** Alias for `safeDisplayText` — every string in this dialog came from the untrusted blob. */
 const safeText = safeDisplayText;
 
-/** The label for the "adopt the other device's value" arm of a conflict choice. The name is
- *  server-supplied, so it must never be able to read as the arm beside it: a device calling
- *  itself "This device" would produce two identical buttons on the control that decides whose
- *  settings win. Fall back to the neutral wording on a collision (compared case- and
- *  whitespace-insensitively, since the buttons are read, not parsed). */
-function remoteArmLabel(device: string | null): string {
+/** A peer device's name as this screen shows it, or "" when it would read as this device's own
+ *  arm label (the caller then renders its neutral fallback). The name is server-supplied, so it
+ *  must never be able to read as the arm beside it: a device calling itself "This device" would
+ *  produce two identical buttons on the control that decides whose settings win, and the conflict
+ *  sentence and review header would credit this device with the peer's changes. Compared as the
+ *  name renders — case-insensitively, with whitespace, the invisible class (U+2800, variation
+ *  selectors, …) and ZWNJ/ZWJ all folded away, since `"This\u2800device"`, `"This device\uFE0F"`
+ *  and `"This \u200Ddevice"` all draw as "This device". */
+function peerName(device: string | null): string {
   const name = deviceDisplayName(device);
-  const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
-  return name && norm(name) !== norm(LOCAL_ARM_LABEL) ? name : "Other device";
+  const norm = (s: string) =>
+    safeIdentityText(s, 200).replace(/[\u200c\u200d]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return name && norm(name) !== norm(LOCAL_ARM_LABEL) ? name : "";
 }
+
+/** The label for the "adopt the other device's value" arm of a conflict choice: the peer's name
+ *  (`peerName` — never one that collides with "This device", invisible and joiner characters
+ *  included), else the neutral wording. */
+const remoteArmLabel = (device: string | null): string => peerName(device) || "Other device";
 
 const LOCAL_ARM_LABEL = "This device";
 
@@ -722,7 +731,7 @@ function SecurityReviewDialog() {
     <Modal onClose={busy ? () => {} : rejectPendingReview}>
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        {deviceDisplayName(pending.device) || "Another device"} sent changes that affect where your
+        {peerName(pending.device) || "Another device"} sent changes that affect where your
         dictation is sent, which key is used, what it types, or what is kept on this device.{" "}
         {/* The raise's held-back apply is refused while dictating: then nothing landed. */}
         {pending.restApplied
@@ -859,7 +868,7 @@ function ConflictDialogBody({
     <Modal onClose={busy ? () => {} : dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        These settings changed both here and on {deviceDisplayName(pending.remoteDevice) || "another device"}. Pick which
+        These settings changed both here and on {peerName(pending.remoteDevice) || "another device"}. Pick which
         version to keep — the rest of this update is applied together with your picks.
       </div>
       <div className="mt-4">

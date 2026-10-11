@@ -97,6 +97,12 @@ describe("backendOptions", () => {
     const opts = backendOptions([be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "\u200dWork", "http://b.lan")]);
     expect(opts.map((o) => o.label)).toEqual(["Work \u00b7 a.lan", "Work \u00b7 b.lan"]);
   });
+  it("a trailing or interior joiner look-alike collides with the real name too", () => {
+    for (const twin of ["Work\u200d", "Wo\u200drk", "Wo\u200crk"]) {
+      const opts = backendOptions([be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", twin, "http://b.lan")]);
+      expect(opts.map((o) => o.label)).toEqual(["Work \u00b7 a.lan", `${twin} \u00b7 b.lan`]);
+    }
+  });
   it("a named backend stays bare", () => {
     expect(backendOptions([be("a1b2c3d4e5", "Work", "http://server.lan")])[0].label).toBe("Work");
   });

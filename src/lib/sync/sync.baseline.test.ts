@@ -977,8 +977,8 @@ describe("applyBlob keep-local (baseline)", () => {
 
   it("a consent row for a name that renders blank says 'Untitled' or the address, never blank or an id", () => {
     const text = { output_prefix: ">" };
-    // Profiles: a blank and a spaces-only name read as the label the lists show.
-    for (const name of ["", "   ", "\u2800\u2800"]) {
+    // Profiles: a blank, a spaces-only and a joiner-only name read as the label the lists show.
+    for (const name of ["", "   ", "\u2800\u2800", "\u200d", "\u200c "]) {
       const rows = securityChanges(
         { profiles: { list: [profile({ id: "p6", name, decodeOverrides: text })] } } as never,
         { profiles: { list: [] } } as never,
@@ -994,6 +994,14 @@ describe("applyBlob keep-local (baseline)", () => {
       CATS_ALL,
     ).filter((c) => c.kind === "api-key");
     expect(keyRow.map((c) => c.backend)).toEqual(["http://p:8000"]);
+    // …and one named only by a joiner on the server-url row (a leading joiner joins nothing).
+    const joiner = (serverUrl: string) => [{ id: "b1", name: "\u200d", serverUrl }];
+    const urlRow = securityChanges(
+      { backends: { list: joiner("http://q:8000"), secrets: {} } } as never,
+      { backends: { list: joiner("http://p:8000"), secrets: {} } } as never,
+      CATS_ALL,
+    ).filter((c) => c.kind === "server-url");
+    expect(urlRow.map((c) => c.backend)).toEqual(["http://p:8000"]);
     // Two blank-named profiles share a label but stay two rows: each carries its own id, which
     // is part of the review identity (a second one arriving later re-raises the review).
     const two = securityChanges(

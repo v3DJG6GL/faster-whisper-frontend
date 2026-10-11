@@ -1,4 +1,4 @@
-import { safeDisplayText } from "./sanitize";
+import { backendDisplayName } from "./sanitize";
 import { fmtBytes } from "./format";
 // Truthful error toasts ("Job Signals"): one template mapping the Rust
 // transport's classified error strings (friendly_err's "Could not connect…" /
@@ -64,6 +64,14 @@ export function uploadTooLargeText(e: unknown): string | null {
   return t ? `The file is ${fmtBytes(t.size)}, over the server's upload limit of ${fmtBytes(t.limit)} — nothing was uploaded.` : null;
 }
 
+/** A backend as the doorway names it: the same rendering every list and picker uses
+ *  (`backendDisplayName` — invisible head dropped, identity-folded, capped), so a blank or
+ *  invisible-only synced name reads "Untitled backend" here too, never an empty gap. Only a
+ *  missing/empty label keeps the sentence's own "the backend" (a caller passing that literal gets
+ *  it back verbatim). */
+export const doorwayBackendLabel = (name: unknown): string =>
+  typeof name === "string" && name !== "" ? backendDisplayName(name, 80) : "the backend";
+
 /** Classify a transport-layer failure into the app-global error template. */
 export function describeTransportError(
   kind: TransportErrorKind,
@@ -72,7 +80,7 @@ export function describeTransportError(
 ): TransportErrorInfo {
   // Defang once at the template boundary: the label is a peer-authored backend name that
   // otherwise reached the fixed doorway banner — the one surface above every screen — uncapped.
-  const label = safeDisplayText(backendLabel, 80) || "the backend";
+  const label = doorwayBackendLabel(backendLabel);
 
   const msg = String(e ?? "");
   const big = uploadTooLarge(e);
@@ -154,7 +162,7 @@ export function handedOffDoorway(
   kind: TransportErrorKind,
   backendLabel: string,
 ): { msg: string; showLogs: boolean } {
-  const label = safeDisplayText(backendLabel, 80) || "the backend";
+  const label = doorwayBackendLabel(backendLabel);
   return {
     msg: `Lost contact with ${label} while ${GERUND[kind]}. The server may still finish it — the transcript then appears in History on its own.`,
     showLogs: true,

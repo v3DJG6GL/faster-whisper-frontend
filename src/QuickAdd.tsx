@@ -22,7 +22,7 @@ import {
   type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, envPinnedOf, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
-import { safeDisplayText, wellFormedAppRules } from "@/lib/sanitize";
+import { safeDisplayText, trimLeadingInvisible, wellFormedAppRules } from "@/lib/sanitize";
 import {
   loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri,
@@ -231,8 +231,12 @@ export default function QuickAdd() {
         return;
       }
       // Third render of the server-authored rule label; the Dictionary and Onboarding renders of
-      // the same field both defang it, this window did not.
-      setLabel(safeDisplayText(rule.label, 80) || "Word mappings");
+      // the same field both defang it, this window did not. Its invisible head is dropped and the
+      // rest trimmed first, so a spaces- or blank-glyph-only label falls back instead of an empty title.
+      setLabel(
+        safeDisplayText(typeof rule.label === "string" ? trimLeadingInvisible(rule.label) : "", 80).trim() ||
+          "Word mappings",
+      );
       setColor(rule.color);
       setRows(mapRowsFromRule(rule));
       setSaveState("idle");

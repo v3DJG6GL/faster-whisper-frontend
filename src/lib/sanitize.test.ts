@@ -53,6 +53,12 @@ describe("safeIdentityText", () => {
     expect(safeIdentityText("a".repeat(79) + " evil")).toBe("a".repeat(79) + "…");
     expect(safeIdentityText("  short  ")).toBe("short");
   });
+
+  it("drops an invisible joiner head but keeps interior joiners", () => {
+    expect(safeIdentityText("\u200d")).toBe("");
+    expect(safeIdentityText("\u200c".repeat(100) + "Work")).toBe("Work");
+    expect(safeIdentityText("a\u200db")).toBe("a\u200db");
+  });
 });
 
 describe("profileDisplayName / backendDisplayName", () => {

@@ -2919,7 +2919,8 @@ function gatedSecurityCheck(
 }
 
 /** A consent row's label: the raw name only when it renders as something (the dialog shows it
- *  through `safeIdentityText`, which folds a spaces-, invisible- or format-only name to nothing),
+ *  through `safeIdentityText`, which drops the invisible head — joiners included — and folds a
+ *  spaces-, invisible- or format-only name to nothing, so a joiner-only name counts as blank),
  *  else "" so the caller falls back to the "Untitled …" label the lists use or the address. */
 const shownName = (n: unknown): string => (typeof n === "string" && safeIdentityText(n, 80) ? n : "");
 

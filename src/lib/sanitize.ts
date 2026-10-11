@@ -183,7 +183,11 @@ export function safeIdentityText(s: unknown, max = 80): string {
   // before the collapse: left in place they split the run — `" \u200b"` × 100 is a hundred
   // one-space runs that collapse to nothing, then lose their separators to the display filter, and
   // the padded name renders as exactly `konsole` again.
-  const raw = typeof s === "string" ? s : "";
+  //
+  // The invisible HEAD goes first (`trimLeadingInvisible`, hoisted below): a leading ZWNJ/ZWJ joins
+  // nothing and renders as nothing, yet the fold keeps joiners (interior ones shape scripts and
+  // emoji), so a joiner-only name read as content and a joiner run padded the name past the cut.
+  const raw = typeof s === "string" ? trimLeadingInvisible(s) : "";
   const defanged = [...raw]
     .map((ch) => {
       const code = ch.codePointAt(0) ?? 0;
