@@ -26,7 +26,7 @@ import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
 import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
-import { backendPrompt, effectiveLanguage, effectiveServerUrl } from "../backends";
+import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl } from "../backends";
 import { effectiveServerKind } from "../serverKind";
 import { refreshCaps, sendableTargets, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
@@ -75,7 +75,7 @@ import { isActiveDictation } from "./dictationVisual";
 import { appRuleKey, stripControlChars } from "../sanitize";
 import { baselineDivergence, commonPrefixLen, joinCarry, untypedRemainder, withCarry } from "./typedBaseline";
 import { newProgressId } from "../ids";
-import { translateSourceCode } from "../languages";
+import { languageCodeOf, translateSourceCode } from "../languages";
 
 let wired = false;
 
@@ -3443,7 +3443,12 @@ async function startLiveInner(
   autoStopMs = activation !== "hold" && rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
   // Effective values: a set per-Profile override wins; else inherit the Backend.
   const model = pov?.model?.trim() ? pov.model.trim() : backend.model;
-  const language = effectiveLanguage(pov?.language, backend.language);
+  // A word naming a Whisper language (a synced "english") is sent as its code: the server's
+  // handshake takes only codes and would decode a word in its default language. "auto", blank
+  // and anything else stay as given. Every sink below (stream/record, translate source,
+  // sessionMeta) reads this one value; sessionShape mirrors it.
+  const resolvedLanguage = effectiveLanguage(pov?.language, backend.language);
+  const language = resolvedLanguage ? languageCodeOf(resolvedLanguage) : resolvedLanguage;
   // prompt is a 3-state sentinel sent to the backend: undefined → omit (inherit the
   // server DEFAULT_PROMPT); "" → explicit clear (no initial_prompt); value → use it.
   // A profile that set its prompt (incl. an explicit "" clear) wins; else the backend's
@@ -3451,9 +3456,8 @@ async function startLiveInner(
   // only an un-set one is omitted (a bare `backend.prompt !== ""` collapsed both).
   const prompt = pov?.prompt !== undefined ? pov.prompt : backendPrompt(backend);
   const decodeOverrides = mergeDecodeOverrides(backend.decodeOverrides, pov?.decodeOverrides);
-  // A set per-Profile override-profile name wins; else inherit the Backend's.
-  // Both sides trimmed (a blank inherited name → undefined), so what is sent matches the label.
-  const overrideProfile = pov?.overrideProfile?.trim() || backend.overrideProfile?.trim() || undefined;
+  // A set per-Profile override-profile name wins; else inherit the Backend's (shared with sessionShape).
+  const overrideProfile = effectiveOverrideProfile(pov?.overrideProfile, backend.overrideProfile);
   // A set per-Profile endpoint wins; else inherit the Backend's (stream vs batch transport).
   const endpoint = pov?.endpoint ?? backend.endpoint;
   // T2T dictation translation: per-field merge (Profile wins over Backend);
@@ -3466,8 +3470,9 @@ async function startLiveInner(
     const trTargets = sendableTargets(trOv.translateTo, backend.id);
     sessionTranslationBase = {
       // The resolved source language, so the per-phrase request does not leave the server
-      // to auto-detect a few words (every other T2T caller passes it). The shared code-only rule
-      // maps "auto", blank and anything that is not a language code (a synced "english") to null.
+      // to auto-detect a few words (every other T2T caller passes it). A word naming a Whisper
+      // language is already mapped to its code above; the shared code-only rule maps "auto",
+      // blank and any other non-code to null.
       source: translateSourceCode(language),
       includeOriginal: trOv.includeOriginal,
       model: trOv.model,

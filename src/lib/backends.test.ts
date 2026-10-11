@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
-import type { AppSettings, Backend } from "./types";
+import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
@@ -46,6 +46,24 @@ describe("effectiveLanguage", () => {
   });
   it("no backend language either → undefined", () => {
     expect(effectiveLanguage(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("effectiveOverrideProfile", () => {
+  it("a set own pick wins, trimmed", () => {
+    expect(effectiveOverrideProfile(" fast ", "slow")).toBe("fast");
+  });
+  it("a blank own pick inherits the backend's, trimmed", () => {
+    expect(effectiveOverrideProfile("   ", " slow ")).toBe("slow");
+    expect(effectiveOverrideProfile(undefined, "slow")).toBe("slow");
+  });
+  it("a blank backend name is undefined (omit the field)", () => {
+    expect(effectiveOverrideProfile("", "   ")).toBeUndefined();
+    expect(effectiveOverrideProfile(undefined, undefined)).toBeUndefined();
+  });
+  it("NO_OVERRIDE_PROFILE passes through verbatim", () => {
+    expect(effectiveOverrideProfile(NO_OVERRIDE_PROFILE, "slow")).toBe(NO_OVERRIDE_PROFILE);
+    expect(effectiveOverrideProfile(undefined, NO_OVERRIDE_PROFILE)).toBe(NO_OVERRIDE_PROFILE);
   });
 });
 

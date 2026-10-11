@@ -25,6 +25,14 @@ describe("sessionShape", () => {
     expect(sessionShape(profile({ language: "de" }), b)).toBe(sessionShape(profile(), b));
   });
 
+  it("a language named as a word is the same session as its code (the code is what is sent)", () => {
+    const b = backend();
+    expect(sessionShape(profile({ language: "english" }), b)).toBe(sessionShape(profile({ language: "en" }), b));
+    expect(sessionShape(profile(), backend({ language: "English" }))).toBe(sessionShape(profile({ language: "en" }), b));
+    // "auto" is not renamed: it stays apart from any code
+    expect(sessionShape(profile({ language: "auto" }), b)).not.toBe(sessionShape(profile({ language: "en" }), b));
+  });
+
   it("differs on endpoint, prompt, decode and translation overrides, and the target picker", () => {
     const base = sessionShape(profile(), backend());
     for (const over of [

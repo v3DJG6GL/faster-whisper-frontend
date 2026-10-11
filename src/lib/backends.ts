@@ -200,6 +200,20 @@ export function effectiveLanguage<B extends string | undefined>(
   return profileLang?.trim() || backendLang;
 }
 
+/**
+ * Effective server override-profile name: a set own pick (a Profile's, or a Transcribe run's)
+ * wins; else the Backend's. Both sides trimmed and a blank inherits, so a blank inherited name is
+ * `undefined` (omit the field); NO_OVERRIDE_PROFILE passes through verbatim (it forces "no
+ * profile" server-side). startLiveInner, sessionShape, Profiles and Transcribe share it so the
+ * profile a label shows is the one a run sends — hand-copied, the copies drifted apart.
+ */
+export function effectiveOverrideProfile(
+  own: string | undefined,
+  backendProfile: string | undefined,
+): string | undefined {
+  return own?.trim() || backendProfile?.trim() || undefined;
+}
+
 /** Write `backendPrompt`'s tri-state back onto a Backend — spread the result into
  *  the draft (both keys always, so a reset drops a stale flag). */
 export function backendPromptFields(

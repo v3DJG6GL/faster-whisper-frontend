@@ -46,7 +46,7 @@ import {
   closeRecord, linkTranslateTo, linkUsesSiteTranscript, openHistoryRecord, retryRunVideo, SITE_TRANSCRIPT_FALLBACK,
 } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
-import { backendOptions, backendPrompt, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveOverrideProfile, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
@@ -400,7 +400,7 @@ export default function Transcribe() {
     serverUrl,
     backendId: backend?.id,
     model: model || backend?.model,
-    profileName: runOverrideProfile.trim() || backend?.overrideProfile?.trim() || undefined,
+    profileName: effectiveOverrideProfile(runOverrideProfile, backend?.overrideProfile),
     serverKind,
   });
   // What a blank per-run field inherits: the server's values, the Backend's stored decode
@@ -895,7 +895,7 @@ export default function Transcribe() {
       decodeOverrides: Object.keys(merged).length ? merged : undefined,
       // Per-run pick wins ("" = inherit); NO_OVERRIDE_PROFILE passes through
       // verbatim (it forces "no profile" server-side).
-      overrideProfile: runOverrideProfile.trim() || backend.overrideProfile?.trim() || undefined,
+      overrideProfile: effectiveOverrideProfile(runOverrideProfile, backend.overrideProfile),
       standard:
         effectiveServerKind(backend, ownProp(useApp.getState().connections, backend.id)) === "standard",
       urlVideoEnabled: urlAvailable && caps?.url_video_enabled === true,
@@ -1872,12 +1872,12 @@ export default function Transcribe() {
               canRequest={caps?.can_request_override_profile}
               value={runOverrideProfile}
               inheritLabel={
-                // Gate on the raw value (it is what the run sends), show the sanitized name:
-                // a set name made only of control/format characters reads "??", never a
-                // bare "Backend default" that would claim no profile is sent.
+                // Gate on the trimmed value (it is what the run sends, buildCtx), show the
+                // sanitized name: a set name made only of control/format characters reads "??",
+                // never a bare "Backend default" that would claim no profile is sent.
                 !backend?.overrideProfile?.trim()
                   ? "Backend default"
-                  : backend.overrideProfile === NO_OVERRIDE_PROFILE
+                  : backend.overrideProfile.trim() === NO_OVERRIDE_PROFILE
                     ? "Backend default · none"
                     : `Backend default · ${safeDisplayText(backend.overrideProfile, 40).trim() || "??"}`
               }
