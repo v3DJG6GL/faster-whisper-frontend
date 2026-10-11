@@ -25,7 +25,7 @@ import type { TranslateFailure } from "./dictation/dictationTranslate";
 import { newSpeakMemo, stepSpeaking } from "./dictation/speaking";
 import { swap } from "./arr";
 import { hasOwn } from "./own";
-import { appRuleKey, safeIdentityText, wellFormedAppRules } from "./sanitize";
+import { appRuleKey, trimLeadingInvisible, wellFormedAppRules } from "./sanitize";
 import { applyTheme } from "./theme";
 
 // Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
@@ -793,7 +793,7 @@ export const useApp = create<AppState>((set) => ({
       // so it can't be carried to the new id — mark it absent so the editor prompts
       // for a fresh one. A name that renders blank (a synced one) copies as the label the lists
       // show for it, never as a bare "copy".
-      const name = `${safeIdentityText(src.name) ? src.name : "Untitled backend"} copy`;
+      const name = `${typeof src.name === "string" && trimLeadingInvisible(src.name) ? src.name : "Untitled backend"} copy`;
       const copy: Backend = { ...src, id: crypto.randomUUID(), name, hasApiKey: false };
       const backends = [...s.backends];
       backends.splice(i + 1, 0, copy);
@@ -824,7 +824,7 @@ export const useApp = create<AppState>((set) => ({
       const src = s.profiles[i];
       // Clear the chord on the copy — a duplicate must never inherit the same one. A name that
       // renders blank copies as "Untitled profile copy", as for backends above.
-      const name = `${safeIdentityText(src.name) ? src.name : "Untitled profile"} copy`;
+      const name = `${typeof src.name === "string" && trimLeadingInvisible(src.name) ? src.name : "Untitled profile"} copy`;
       const copy: Profile = { ...src, id: crypto.randomUUID(), name, hotkey: [] };
       const profiles = [...s.profiles];
       profiles.splice(i + 1, 0, copy);

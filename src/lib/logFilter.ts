@@ -2,7 +2,7 @@
 // bug-report bundle. No store or Tauri imports so it unit-tests under node.
 
 import type { LogLine } from "./api";
-import { stripControlChars } from "./sanitize";
+import { profileDisplayName, stripControlChars } from "./sanitize";
 import { plural } from "./format";
 
 /** Threshold semantics: "info" = Info and above, "all" includes trace/debug. */
@@ -226,7 +226,9 @@ export function bugReportRunFields(
     source: last.kind ?? "file",
     backend: backendName(last.backendId),
     model: last.model ?? null,
-    profile: last.profileName ?? null,
+    // A blank or invisible-only profile name reads "Untitled profile", as everywhere else; a run
+    // with no profile still omits the line.
+    profile: typeof last.profileName === "string" ? profileDisplayName(last.profileName, 80) : null,
     route: targets.length ? `${last.language || "auto"} → ${targets.join(",")}` : null,
     stages:
       [

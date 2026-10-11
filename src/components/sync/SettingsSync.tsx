@@ -50,7 +50,7 @@ import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
-import { backendDisplayName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, deviceDisplayName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
@@ -265,7 +265,7 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
     <Modal onClose={applying ? () => {} : onClose}>
       <div className="text-[15px] font-semibold text-text">Import settings</div>
       <div className="mt-1 text-[12.5px] text-dim">
-        From {safeText(result.hostname, 60) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
+        From {deviceDisplayName(result.hostname) || "unknown device"} · {safeText(result.platform, 40) || "?"} · v
         {safeText(result.appVersion, 30) || "?"} · {createdLabel(result.createdAt)}
       </div>
 
@@ -473,11 +473,12 @@ export function RestoreFromServer({
     }
   };
 
+  const from = deviceDisplayName(state.device);
   return (
     <Modal onClose={applying ? () => {} : onCancel}>
       <div className="text-[15px] font-semibold text-text">Restore from server</div>
       <div className="mt-1 text-[12.5px] text-dim">
-        Last synced{state.device ? ` from ${safeText(state.device, 60)}` : ""}
+        Last synced{from ? ` from ${from}` : ""}
         {state.updated_ts ? ` · ${relTime(state.updated_ts * 1000)}` : ""}
       </div>
 
@@ -543,7 +544,7 @@ const safeText = safeDisplayText;
  *  settings win. Fall back to the neutral wording on a collision (compared case- and
  *  whitespace-insensitively, since the buttons are read, not parsed). */
 function remoteArmLabel(device: string | null): string {
-  const name = safeText(device, 60);
+  const name = deviceDisplayName(device);
   const norm = (s: string) => s.replace(/\s+/g, " ").trim().toLowerCase();
   return name && norm(name) !== norm(LOCAL_ARM_LABEL) ? name : "Other device";
 }
@@ -721,7 +722,7 @@ function SecurityReviewDialog() {
     <Modal onClose={busy ? () => {} : rejectPendingReview}>
       <div className="text-[15px] font-semibold text-text">Review this update</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        {safeText(pending.device, 60).trim() || "Another device"} sent changes that affect where your
+        {deviceDisplayName(pending.device) || "Another device"} sent changes that affect where your
         dictation is sent, which key is used, what it types, or what is kept on this device.{" "}
         {/* The raise's held-back apply is refused while dictating: then nothing landed. */}
         {pending.restApplied
@@ -858,7 +859,7 @@ function ConflictDialogBody({
     <Modal onClose={busy ? () => {} : dismissSyncConflict}>
       <div className="text-[15px] font-semibold text-text">Sync conflict</div>
       <div className="mt-1 text-[12.5px] leading-snug text-dim">
-        These settings changed both here and on {safeText(pending.remoteDevice, 60).trim() || "another device"}. Pick which
+        These settings changed both here and on {deviceDisplayName(pending.remoteDevice) || "another device"}. Pick which
         version to keep — the rest of this update is applied together with your picks.
       </div>
       <div className="mt-4">
@@ -918,6 +919,7 @@ export function SyncTab() {
   const syncUnsupported = useApp((st) => st.syncUnsupported);
   const lastSyncedAt = useApp((st) => st.lastSyncedAt);
   const lastSyncDevice = useApp((st) => st.lastSyncDevice);
+  const lastSyncFrom = deviceDisplayName(lastSyncDevice);
 
   const [includeSecrets, setIncludeSecrets] = useState(false);
   const [exportState, setExportState] = useState<"idle" | "busy" | "done" | "nokeys" | "error">("idle");
@@ -1091,7 +1093,7 @@ export function SyncTab() {
             {busy
               ? "Syncing…"
               : lastSyncedAt
-                ? `Last synced ${relTime(lastSyncedAt)}${lastSyncDevice ? ` · from ${safeText(lastSyncDevice, 60)}` : ""}`
+                ? `Last synced ${relTime(lastSyncedAt)}${lastSyncFrom ? ` · from ${lastSyncFrom}` : ""}`
                 : sync.enabled
                   ? "Not synced yet."
                   : "Sync is off."}

@@ -28,7 +28,7 @@ import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { IS_WINDOWS } from "@/lib/platform";
-import { safeDisplayText } from "@/lib/sanitize";
+import { deviceDisplayName, safeDisplayText } from "@/lib/sanitize";
 import {
   ChordFixNotices, ImportPreview, IncomingAddresses, SyncedCategoryChips, predictChordFix,
 } from "@/components/sync/SettingsSync";
@@ -250,6 +250,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // applyBlob would keep (empty, or only malformed ones) promises nothing. (The starters
   // fallback still checks the store after the apply.)
   const pulledBlob = pull?.state?.blob;
+  const pulledFrom = deviceDisplayName(pull?.state?.device);
   const carriesProfiles =
     !!pulledBlob &&
     restorableCategories(pulledBlob).includes("profiles") &&
@@ -377,7 +378,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             <div className="mt-4 w-full max-w-[480px] rounded-card border border-accent/40 bg-accent-soft p-4 text-left">
               <div className="text-[13.5px] font-semibold">This account has synced settings</div>
               <div className="mt-1 font-mono text-[11px] text-dim">
-                last synced{pull.state.device ? ` from ${safeDisplayText(pull.state.device, 60)}` : ""}
+                last synced{pulledFrom ? ` from ${pulledFrom}` : ""}
                 {pull.state.updated_ts ? ` · ${relTime(pull.state.updated_ts * 1000)}` : ""}
               </div>
               <SyncedCategoryChips blob={pull.state.blob} />

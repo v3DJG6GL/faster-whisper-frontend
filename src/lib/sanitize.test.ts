@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { appRuleKey, backendDisplayName, codeSlug, profileDisplayName, safeIdentityText, stripControlChars } from "./sanitize";
+import {
+  appRuleKey,
+  backendDisplayName,
+  codeSlug,
+  deviceDisplayName,
+  profileDisplayName,
+  safeIdentityText,
+  stripControlChars,
+  trimLeadingInvisible,
+} from "./sanitize";
 
 describe("stripControlChars with an output bound", () => {
   it("normalises a lone CR and a CRLF without touching the text past the bound", () => {
@@ -48,7 +57,7 @@ describe("safeIdentityText", () => {
 
 describe("profileDisplayName / backendDisplayName", () => {
   it("names a blank or invisible-only name like a local save would", () => {
-    for (const blank of ["", "   ", "\u2800\u2800", "\u200b", undefined]) {
+    for (const blank of ["", "   ", "\u2800\u2800", "\u200b", "\u200d", "\u200c\u200d", "\u200d\u2800", undefined]) {
       expect(profileDisplayName(blank)).toBe("Untitled profile");
       expect(backendDisplayName(blank)).toBe("Untitled backend");
     }
@@ -62,6 +71,26 @@ describe("profileDisplayName / backendDisplayName", () => {
       expect(profileDisplayName(pad.repeat(60) + "Work", 60)).toBe("Work");
     }
     expect(backendDisplayName("Work" + " ".repeat(100) + "Evil")).toBe("Work Evil");
+    // A leading joiner joins nothing and goes; an interior one (an emoji sequence) stays.
+    expect(profileDisplayName("\u{1F469}\u200d\u{1F4BB} Dev")).toBe("\u{1F469}\u200d\u{1F4BB} Dev");
+    expect(profileDisplayName("\u200dWork")).toBe("Work");
+    expect(backendDisplayName("\u200d Work")).toBe("Work");
+  });
+});
+
+describe("trimLeadingInvisible", () => {
+  it("drops only the invisible head, astral characters included", () => {
+    expect(trimLeadingInvisible("\u{E0001}\u200b \u2800a\u200b b ")).toBe("a\u200b b ");
+    expect(trimLeadingInvisible("\u{1F600}\uFE0F")).toBe("\u{1F600}\uFE0F");
+    expect(trimLeadingInvisible("\u2800\u200d")).toBe("");
+  });
+});
+
+describe("deviceDisplayName", () => {
+  it("reads a blank or invisible-only device name as empty and trims a padded one", () => {
+    expect(deviceDisplayName("  \u200b ")).toBe("");
+    expect(deviceDisplayName(" box ")).toBe("box");
+    expect(deviceDisplayName(undefined)).toBe("");
   });
 });
 

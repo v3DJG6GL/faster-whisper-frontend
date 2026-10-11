@@ -2,7 +2,7 @@
 
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
-import { safeIdentityText } from "./sanitize";
+import { backendDisplayName, safeIdentityText } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
@@ -341,7 +341,10 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
     // `isStorableServerUrl` refused) has no host, so fall back to an id fragment.
     const host = authorityOf(b.serverUrl)?.host;
     const suffix = host || `#${b.id.slice(0, 8)}`;
-    return { value: b.id, label: label ? `${label}${SEP}${suffix}` : suffix };
+    // A blank name reads "Untitled backend" as backendDisplayName shows it on the Backends list,
+    // not a bare host; the raw `label` above still decides the branch, so a blank name always
+    // takes the suffix and the final #id pass still separates two blank ones on one host.
+    return { value: b.id, label: `${label || backendDisplayName("")}${SEP}${suffix}` };
   });
   // A final pass for labels that are STILL identical — same name AND same host, or two names that
   // both forged their way into the suffix branch. The id fragment is the only term left that a

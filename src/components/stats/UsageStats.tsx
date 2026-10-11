@@ -65,7 +65,7 @@ import {
 } from "@/lib/usageDerive";
 import { homeTargetProfile } from "@/lib/dictation/dictation";
 import { ownProp } from "@/lib/own";
-import { safeDisplayText } from "@/lib/sanitize";
+import { safeIdentityText } from "@/lib/sanitize";
 import { BackendChips } from "@/components/stats/BackendChips";
 import type { UsageKind, UsageKinds, UsageSeriesPoint, UsageStageKey, UsageStats } from "@/lib/types";
 import { BusyPanel } from "@/components/stats/BusyPanel";
@@ -236,7 +236,9 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
   const apps = (stats.apps ?? [])
     .filter((a) => a && typeof a.app_id === "string")
     .slice(0, 4)
-    .map((a) => ({ label: safeDisplayText(a.app_id) || "unknown", value: a.sessions }));
+    // Identity fold, default cap: a blank or invisible-only id reads "unknown", and 80 leaves Rust's
+    // 64-char cap + ellipsis uncut.
+    .map((a) => ({ label: safeIdentityText(a.app_id) || "unknown", value: a.sessions }));
   return (
     <Panel
       title="Dictation"

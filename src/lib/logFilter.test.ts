@@ -251,6 +251,13 @@ describe("bugReportRunFields", () => {
     expect(f.stages).toBe("translate · insert:typed");
   });
 
+  it("names a blank synced profile like every other surface, and still omits a missing one", () => {
+    const blank = bugReportRunFields({ kind: "dictation", profileName: "  \u200b " }, undefined, backendName);
+    expect(blank.profile).toBe("Untitled profile");
+    const none = bugReportRunFields({ kind: "file", backendId: "b1" }, undefined, backendName);
+    expect(none.profile).toBeNull();
+  });
+
   it("labels the settings fallback when nothing ran", () => {
     const f = bugReportRunFields(null, { backendId: "b1", model: "tiny" }, backendName);
     expect(f.source).toBe("settings (no run recorded)");

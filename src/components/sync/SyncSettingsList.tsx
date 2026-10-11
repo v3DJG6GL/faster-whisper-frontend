@@ -1,9 +1,9 @@
 // "What this device syncs" — the granular per-setting sync switches, rendered
 // entirely from the settings manifest (one switch per Settings row, identical
 // label, nesting mirrored). Boxed group cards with tri-state masters: a
-// collapsed card shows only its header + summary counts; the "Show changed
-// & off only" filter answers "what is NOT following my account?" (rows whose
-// value changed from default OR whose sync switch is off) without expanding —
+// collapsed card shows only its header + summary counts; the "Changed &
+// default-off" view answers "what is NOT following my account?" (rows whose
+// sync switch differs from its default OR is off) without expanding —
 // group headers always stay visible so the per-group masters remain reachable.
 //
 // Reset tiers, one direct control each (no menus): a permanent ↺ on a row

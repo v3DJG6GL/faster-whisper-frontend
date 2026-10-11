@@ -132,8 +132,10 @@ export function wellFormedAppRules(v: unknown): AppRule[] {
  *  `safeDisplayText` and all render empty.
  *
  *  The union of this list and `isDeceptiveFormatChar`'s is `Default_Ignorable_Code_Point` minus the
- *  Arabic/Syriac format characters that one deliberately excludes — state that when extending
- *  either, so the next omission is visible.
+ *  Arabic/Syriac format characters that one deliberately excludes and minus ZWNJ/ZWJ (U+200C/D),
+ *  which shape scripts and emoji sequences, so they stay in keys and interior text and are dropped
+ *  only from a display head (`trimLeadingInvisible`) — state that when extending either, so the
+ *  next omission is visible.
  *
  *  Deliberately NOT added to `isDeceptiveFormatChar`: that list is the declared mirror of Rust's
  *  `sanitize_injected`, and deleting U+FE0F there would strip emoji-presentation selectors out of
@@ -200,18 +202,22 @@ export function safeIdentityText(s: unknown, max = 80): string {
 }
 
 /** `s` without the leading characters that render as nothing — whitespace, the invisible class
- *  `.trim()` keeps (U+2800, variation selectors, …) and the characters the display filter deletes —
+ *  `.trim()` keeps (U+2800, variation selectors, …), ZWNJ/ZWJ and the characters the display filter
+ *  deletes —
  *  so a display cut that follows starts at the first visible one. Only the head: a trailing
  *  variation selector belongs to the emoji before it. */
 export function trimLeadingInvisible(s: string): string {
-  const chars = [...s];
-  let i = 0;
-  while (i < chars.length) {
-    const code = chars[i].codePointAt(0) ?? 0;
-    if (!(/\s/.test(chars[i]) || isInvisibleKeyChar(code) || isCc(code) || isDeceptiveFormatChar(code))) break;
-    i++;
+  // Walk the head only and cut by UTF-16 offset: spreading the whole name copied an unbounded
+  // synced string twice per render before the display cap applied.
+  let off = 0;
+  for (const ch of s) {
+    const code = ch.codePointAt(0) ?? 0;
+    // A leading ZWNJ/ZWJ joins nothing, so it is dropped here; interior ones (emoji sequences) stay.
+    const joiner = code === 0x200c || code === 0x200d;
+    if (!(/\s/.test(ch) || isInvisibleKeyChar(code) || isCc(code) || isDeceptiveFormatChar(code) || joiner)) break;
+    off += ch.length;
   }
-  return chars.slice(i).join("");
+  return s.slice(off);
 }
 
 /** The name a profile or backend is shown under. A synced name that is blank, only spaces or only
@@ -223,7 +229,11 @@ export function trimLeadingInvisible(s: string): string {
  *  backend name renders as an identity, as the Backends audit card always has. */
 export const profileDisplayName = (name: unknown, max = 80): string =>
   (typeof name === "string" && safeDisplayText(trimLeadingInvisible(name), max).trim()) || "Untitled profile";
-export const backendDisplayName = (name: unknown, max = 80): string => safeIdentityText(name, max) || "Untitled backend";
+export const backendDisplayName = (name: unknown, max = 80): string =>
+  (typeof name === "string" && safeIdentityText(trimLeadingInvisible(name), max)) || "Untitled backend";
+/** A server-supplied device name as shown ("… from <device>"): display-filtered and trimmed. A
+ *  blank result (spaces, invisible characters only) means "render the fallback or omit it". */
+export const deviceDisplayName = (name: unknown, max = 60): string => safeDisplayText(name, max).trim();
 
 /** The comparison key of an app rule — how two `appId`s are judged to name the same app, for
  *  both the dedupe on save/merge and the injection-target matcher. One function so they cannot

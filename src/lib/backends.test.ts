@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
+import { spokenLabel, spokenValue } from "./languages";
 
 describe("newBackendDraft", () => {
   it("a new backend starts on the server's language (W6)", () => {
@@ -66,6 +67,33 @@ describe("effectiveLanguage", () => {
     expect(effectiveLanguage(undefined, " de ")).toBe("de");
     expect(effectiveLanguage(undefined, " english ")).toBe("en");
     expect(effectiveLanguage(undefined, "   ")).toBe("   ");
+  });
+  it("the Backends editor and list badge label the coded value, not the stored word", () => {
+    // Backends.tsx feeds spokenField / spokenValue with effectiveLanguage(undefined, b.language).
+    expect(spokenLabel(spokenValue(effectiveLanguage(undefined, "english"), undefined, undefined))).toBe("English");
+    expect(spokenLabel(spokenValue(effectiveLanguage(undefined, " de "), undefined, undefined))).toBe("German");
+    expect(spokenLabel(spokenValue(effectiveLanguage(undefined, " auto "), true, undefined))).toBe("Multiple languages");
+  });
+});
+
+describe("backendOptions", () => {
+  const be = (id: string, name: string, serverUrl: string): Backend =>
+    ({ ...newBackendDraft(), id, name, serverUrl });
+  it("a blank or invisible-only name reads 'Untitled backend' with its host, never a bare host", () => {
+    const [o] = backendOptions([be("a1b2c3d4e5", "\u2800\u2800", "http://server.lan")]);
+    expect(o.label).toBe("Untitled backend \u00b7 server.lan");
+    expect(backendOptions([be("a1b2c3d4e5", "", "")])[0].label).toBe("Untitled backend \u00b7 #a1b2c3d4");
+  });
+  it("two blank backends on one host still get distinct labels", () => {
+    const opts = backendOptions([be("aaaaaaaa11", "", "http://server.lan"), be("bbbbbbbb22", "  ", "http://server.lan")]);
+    expect(opts[0].label).not.toBe(opts[1].label);
+    expect(opts.map((o) => o.label)).toEqual([
+      "Untitled backend \u00b7 server.lan \u00b7 #aaaaaaaa",
+      "Untitled backend \u00b7 server.lan \u00b7 #bbbbbbbb",
+    ]);
+  });
+  it("a named backend stays bare", () => {
+    expect(backendOptions([be("a1b2c3d4e5", "Work", "http://server.lan")])[0].label).toBe("Work");
   });
 });
 

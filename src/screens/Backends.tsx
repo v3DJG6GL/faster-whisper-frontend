@@ -28,8 +28,8 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
-import { backendDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { authorityOf, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { backendDisplayName, deviceDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { credentialGeneration, forgetCaps, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
@@ -219,7 +219,11 @@ function Editor({
     // may be English-only.
     model: decodeDefaults?.model || debouncedModel,
   });
-  const spoken = spokenField(b.language, b.decodeOverrides, server.values.multilingual, multiOffered);
+  // The coded value a request sends (a synced "english" / " de " reads English / German, " auto "
+  // folds to Multiple languages like the picker); the stored value changes only on a pick —
+  // spoken.pick uses the picked value, never this one.
+  const sentLanguage = effectiveLanguage(undefined, b.language);
+  const spoken = spokenField(sentLanguage, b.decodeOverrides, server.values.multilingual, multiOffered);
   // What a request on the language "Default" row inherits: that pick drops the backend's own
   // `multilingual`, so the server's (a locked one included) decides whether auto-detect runs as
   // Multiple languages — folded the way spokenField folds the picker's own rows.
@@ -664,7 +668,7 @@ function Editor({
             sources={server.sources}
             locked={server.locked}
             known={server.known}
-            languagePinned={namedLanguage(b.language || String(decodeDefaults?.language?.value ?? ""))}
+            languagePinned={namedLanguage(sentLanguage || String(decodeDefaults?.language?.value ?? ""))}
             serverKind={kind}
             canCustomize={caps?.can_request_decode_overrides}
           />
@@ -927,6 +931,9 @@ function RestoreOffer({
   onDone: () => void;
 }) {
   const [restoring, setRestoring] = useState(false);
+  // Filtered and trimmed before the truthiness test: a device named only spaces or invisible
+  // characters would otherwise print a dangling "last synced from ".
+  const device = deviceDisplayName(remote.device);
 
   // After the blob applied: make sure a backend for this server exists (the
   // restore may or may not have brought one — the backends category can be
@@ -996,7 +1003,7 @@ function RestoreOffer({
       <div className="mt-4 max-w-[520px] rounded-card border border-accent/40 bg-accent-soft p-4">
         <div className="text-[13.5px] font-semibold text-text">This account has synced settings</div>
         <div className="mt-1 font-mono text-[11px] text-dim">
-          last synced{remote.device ? ` from ${safeDisplayText(remote.device, 60)}` : ""}
+          last synced{device ? ` from ${device}` : ""}
           {remote.updated_ts ? ` · ${relTime(remote.updated_ts * 1000)}` : ""}
         </div>
         <SyncedCategoryChips blob={remote.blob} />
@@ -1220,6 +1227,8 @@ export default function Backends() {
                         <Badge tone="accent">{b.endpoint}</Badge>
                         {/* "" = the backend leaves the language to the server. A set language that
                             sanitizes to blank is still sent verbatim, so it reads "??", not "server lang".
+                            It labels the coded value that is sent (effectiveLanguage), so a synced
+                            "english" / " de " reads English / German as the picker does.
                             Multiple languages is "auto" + the multilingual flag: the badge folds the
                             backend's OWN flag back (else it reads "Auto-detect"). Unlike the editor's
                             Defaults summary it has no server caps, so it neither drops a flag the
@@ -1229,7 +1238,7 @@ export default function Backends() {
                             ? safeDisplayText(
                                 spokenLabel(
                                   spokenValue(
-                                    b.language,
+                                    effectiveLanguage(undefined, b.language),
                                     typeof b.decodeOverrides?.multilingual === "boolean" ? b.decodeOverrides.multilingual : undefined,
                                     undefined,
                                   ),

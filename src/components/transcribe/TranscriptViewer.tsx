@@ -40,7 +40,7 @@ import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
 } from "@/lib/transcribeRun";
-import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { backendDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, joinSegmentTexts, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
@@ -2027,7 +2027,7 @@ export function TranscriptViewer({
                   Translate now
                 </Button>
                 <span className="text-[11.5px] text-faint">
-                  runs on {safeDisplayText(trBackend?.name ?? "the backend", 40)} — the original
+                  runs on {trBackend ? backendDisplayName(trBackend.name, 40) : "the backend"} — the original
                   is kept; translated lines appear as they finish
                 </span>
               </div>
