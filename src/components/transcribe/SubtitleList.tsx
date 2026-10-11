@@ -19,7 +19,8 @@ import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
 import {
-  timedTrack, trackCps, trackCues, trackLimits, wrapLines, type CueGrid, type CueOptions,
+  TRANSCRIBED_CPS, timedTrack, trackCues, trackLimits, wrapLines,
+  type CueGrid, type CueLimits, type CueOptions,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
 import type { BatchResult } from "@/lib/types";
@@ -237,7 +238,12 @@ export function SubtitleList({
 }) {
   const lanes = tracks.some((t) => hasOwn(grid.own, t));
   const layout = useMemo(() => {
-    const limitOf = (track: string) => trackLimits(result, cues, track);
+    // Per track, once per layout: every cue column asks for the same limits.
+    const limCache = new Map<string, CueLimits | null>();
+    const limitOf = (track: string) => {
+      if (!limCache.has(track)) limCache.set(track, trackLimits(result, cues, track));
+      return limCache.get(track)!;
+    };
     const maxDur = limitOf("orig")?.maxDur ?? 7;
     /** One track's text of a cue: name prefix, wrapped to its limits. */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
@@ -256,7 +262,7 @@ export function SubtitleList({
     ): Row => {
       const d = Math.max(0.001, c.end - c.start);
       // The column reading fastest against its own language's limit.
-      const rates = cols.map(([t, text]) => ({ t, rate: text.length / d, limit: trackCps(result, cues, t) }));
+      const rates = cols.map(([t, text]) => ({ t, rate: text.length / d, limit: limitOf(t)?.cps ?? TRANSCRIBED_CPS }));
       const worst = rates.reduce((a, b) => (b.rate - b.limit > a.rate - a.limit ? b : a));
       // Synthesized clocks (a clock-less text source) are placeholders, not
       // timing — no reading speed to judge, as the export panel says too.

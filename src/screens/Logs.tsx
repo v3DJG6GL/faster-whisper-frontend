@@ -128,14 +128,14 @@ function LogRow({ r, wrap, open, onToggle }: {
                 type="button"
                 onClick={onToggle}
                 aria-expanded={open}
-                title={`Repeated ${r.count}× over ${spanText(l.ts - r.firstTs)} — ${open ? "hide" : "show"} each one`}
+                title={`Repeated ${fmtFull(r.count)}× over ${spanText(l.ts - r.firstTs)} — ${open ? "hide" : "show"} each one`}
                 className="ring-signal flex shrink-0 select-none items-center gap-0.5 self-start rounded-pill bg-accent-soft py-px pl-0.5 pr-1.5 font-semibold tabular-nums text-accent transition-colors hover:bg-accent/25"
               >
                 <ChevronRight
                   className={cn("size-3 transition-transform", open && "rotate-90")}
                   aria-hidden
                 />
-                ×{r.count}
+                ×{fmtFull(r.count)}
               </button>
             ) : undefined
           }
@@ -149,7 +149,7 @@ function LogRow({ r, wrap, open, onToggle }: {
             </div>
           ))}
           <div className="px-2 pb-1 pl-[98px] font-mono text-[10.5px] text-faint">
-            {r.count} in {spanText(l.ts - r.firstTs)} · first {rowTime(r.firstTs)}
+            {fmtFull(r.count)} in {spanText(l.ts - r.firstTs)} · first {rowTime(r.firstTs)}
             {dropped > 0 && ` · ${fmtFull(dropped)} more not kept — turn off Merge repeats to see every line`}
           </div>
         </div>
