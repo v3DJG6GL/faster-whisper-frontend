@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chipTagFor, deriveChipTag } from "./profileTag";
+import { authoredChipTag, chipTagFor, deriveChipTag } from "./profileTag";
 
 describe("chipTagFor", () => {
   it("derives a normal name as before, emoji presentation included", () => {
@@ -18,5 +18,19 @@ describe("chipTagFor", () => {
     expect(chipTagFor({ name: "Work", tag: " de-ch " })).toBe("de-ch");
     expect(chipTagFor({ name: "Work", tag: "⠀".repeat(20) + "DE" })).toBe("DE");
     expect(chipTagFor({ name: "Work", tag: "⠀⠀" })).toBe("WORK");
+  });
+});
+
+describe("authoredChipTag", () => {
+  it("reads a blank-rendering or non-string tag as unset", () => {
+    for (const tag of [undefined, 42, "", "   ", "⠀⠀", "​⠀ "]) {
+      expect(authoredChipTag(tag)).toBe("");
+    }
+  });
+
+  it("keeps a padded tag's visible part and caps it at 16 code points", () => {
+    expect(authoredChipTag("⠀".repeat(40) + "WORK")).toBe("WORK");
+    expect(authoredChipTag("x".repeat(30))).toBe("x".repeat(16));
+    expect(authoredChipTag(" de-ch ")).toBe("de-ch");
   });
 });

@@ -13,6 +13,15 @@ export function deriveChipTag(name: string): string {
 
 const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
 
+/** An authored tag as the chip shows it: its invisible head dropped first, so a tag that renders
+ *  blank reads "" (= unset) and a padded one keeps its visible part inside the cap. The one rule
+ *  for every reader of an authored tag — the chip, the Profiles row badge, the tag a dictation
+ *  record stores and History's badge. */
+export function authoredChipTag(tag: unknown): string {
+  const t = typeof tag === "string" ? trimLeadingInvisible(tag).trim() : "";
+  return t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
+}
+
 /** The effective chip tag for a Profile: its authored tag, else derived from name.
  *
  *  The AUTHORED branch is capped at the Profiles editor's own limit (AUTHORED_TAG_MAX), so a tag
@@ -22,10 +31,7 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
  *  unbounded tag was re-broadcast cross-window and re-laid-out several times a second. Display
  *  only; the stored tag is untouched. An authored tag that renders blank counts as unset. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
-  // Its invisible head dropped first, so a tag that renders blank counts as unset and a padded one
-  // keeps its visible part inside the cap.
-  const t = typeof profile.tag === "string" ? trimLeadingInvisible(profile.tag).trim() : "";
-  const authored = t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
+  const authored = authoredChipTag(profile.tag);
   if (authored) return authored;
   // Derived from the name as the lists show it (`profileDisplayName`): a synced name that renders
   // blank, or starts with ten invisible characters, would otherwise derive "" — the overlay then

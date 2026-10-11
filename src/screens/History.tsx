@@ -34,7 +34,8 @@ import {
   EXPORT_EXTENSIONS, exportOptionsFor, generateExports, speakerOrder,
   type ExportFormat,
 } from "@/lib/transcript/transcriptFormats";
-import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { authoredChipTag } from "@/lib/profileTag";
+import { backendDisplayName, profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
@@ -586,11 +587,13 @@ export default function History() {
     return parts.join(" · ");
   };
 
-  // The profile-tag pill, gated on what it would SHOW: `profileTag` is stored after a plain
-  // trim, which keeps the format-only characters safeDisplayText deletes, so a raw-truthy tag
-  // of only those rendered an empty coloured pill.
+  // The profile-tag pill, gated on what it would SHOW and read as the chip reads an authored tag
+  // (`authoredChipTag`: invisible head dropped, capped at 16): `profileTag` is stored after a
+  // plain trim, which keeps the format-only characters safeDisplayText deletes and a U+2800
+  // padding, so a raw-truthy tag of only those rendered an empty coloured pill and a padded one
+  // lost its visible part to the cut.
   const tagBadge = (rec: TranscriptRecord) => {
-    const tag = safeDisplayText(rec.profileTag ?? "", 20).trim();
+    const tag = safeDisplayText(authoredChipTag(rec.profileTag), 16).trim();
     return tag ? <Badge tone="accent">{tag}</Badge> : null;
   };
 
@@ -620,10 +623,13 @@ export default function History() {
   };
 
   const dictationExpanded = (rec: TranscriptRecord) => {
-    // Gated on what each label would SHOW (as tagBadge): a name of only format characters, or a
-    // corrupted non-string one, is raw-truthy but sanitizes to "", leaving a bare "profile" label.
-    const profileShown = safeDisplayText(rec.profileName ?? "", 40).trim();
-    const backendShown = safeDisplayText(backends.find((b) => b.id === rec.backendId)?.name ?? "", 40).trim();
+    // Each name by the shared display-name rule the other screens use (invisible head dropped; a
+    // recorded-but-blank one reads "Untitled profile"/"Untitled backend"; the backend as an
+    // identity, like the Backends card). The labels stay gated on there being one: a record
+    // without a (string) profile name, or whose backend is gone, shows no label.
+    const profileShown = typeof rec.profileName === "string" ? profileDisplayName(rec.profileName, 40) : "";
+    const recBackend = backends.find((b) => b.id === rec.backendId);
+    const backendShown = recBackend ? backendDisplayName(recBackend.name, 40) : "";
     const failureShown = safeDisplayText(rec.translationFailure ?? "", 24).trim();
     const shownModel = shortModelName(rec.model, 40);
     const tracks = recordTracks(rec);

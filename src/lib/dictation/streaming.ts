@@ -27,6 +27,7 @@ import { attachRecordingPath, patchRecord, recordDictation } from "../transcript
 import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
+import { authoredChipTag } from "../profileTag";
 import { effectiveServerKind } from "../serverKind";
 import { refreshCaps, sendableTargets, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
@@ -3618,7 +3619,7 @@ async function startLiveInner(
       model,
       language,
       profileName: prof?.name,
-      profileTag: prof?.tag?.trim() || undefined,
+      profileTag: authoredChipTag(prof?.tag) || undefined,
       activation,
       appId: targetApp?.isSelf ? undefined : targetApp?.appId,
       appTitle: targetApp?.isSelf ? undefined : targetApp?.title?.trim() || undefined,
@@ -3921,7 +3922,7 @@ function applyReclassify(profile: Profile): void {
   if (sessionMeta) {
     sessionMeta.activation = "handsfree";
     sessionMeta.profileName = profile.name;
-    sessionMeta.profileTag = profile.tag?.trim() || undefined;
+    sessionMeta.profileTag = authoredChipTag(profile.tag) || undefined;
   }
 }
 

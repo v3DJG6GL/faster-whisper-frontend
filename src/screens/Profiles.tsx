@@ -29,7 +29,7 @@ import { conflictsByProfile, findChordConflict, QUICK_ADD_PEER_ID, withQuickAddP
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
-import { chipTagFor } from "@/lib/profileTag";
+import { authoredChipTag, chipTagFor } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
@@ -40,7 +40,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { NO_OVERRIDE_PROFILE, type Profile, type TranslationOverrides } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import { backendDisplayName, profileDisplayName, safeDisplayText } from "@/lib/sanitize";
+import { backendDisplayName, profileDisplayName, safeDisplayText, trimLeadingInvisible } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 
 const ACTIVATION = {
@@ -235,8 +235,9 @@ function Editor({
       {
       ...p,
       name: p.name.trim() || "Untitled profile",
-      // Empty = derive the chip tag from the name → store as undefined (omitted).
-      tag: p.tag?.trim() ? p.tag.trim() : undefined,
+      // Empty = derive the chip tag from the name → store as undefined (omitted). Blank by the
+      // chip's rule: a tag of only invisible characters (U+2800 survives `trim`) is empty too.
+      tag: trimLeadingInvisible(p.tag ?? "").trim() || undefined,
       // Empty override = inherit from the Backend → store as undefined (omitted).
       model: p.model?.trim() ? p.model.trim() : undefined,
       language: p.language?.trim() ? p.language : undefined,
@@ -287,9 +288,10 @@ function Editor({
           <Labeled label="Chip tag">
             <TextInput
               value={p.tag ?? ""}
-              // A blank (or whitespace-only) tag is stored as absent — the save path trims — or a
-              // set-then-clear read as "unsaved" forever (the sibling controls normalise alike).
-              onChange={(e) => set({ tag: e.target.value.trim() ? e.target.value : undefined })}
+              // A blank (whitespace- or invisible-only) tag is stored as absent — the save path
+              // trims — or a set-then-clear read as "unsaved" forever (the sibling controls
+              // normalise alike).
+              onChange={(e) => set({ tag: trimLeadingInvisible(e.target.value).trim() ? e.target.value : undefined })}
               placeholder={chipTagFor({ name: p.name })}
               maxLength={16}
             />
@@ -770,7 +772,9 @@ function ProfileRow({
   // The DISPLAYED name, not the raw string: a synced model of only whitespace or format
   // characters renders nothing, so it gets no (empty) badge.
   const shortModel = shortModelName(p.model, 40);
-  const tag = safeDisplayText(p.tag ?? "", 40).trim();
+  // The tag as the chip shows it (`authoredChipTag`: invisible head dropped, capped at 16), so
+  // the badge appears exactly when the chip shows an authored tag, with the same text.
+  const tag = safeDisplayText(authoredChipTag(p.tag), 16).trim();
   // As the editor's save stores a blank name: a synced whitespace- or format-only name
   // would otherwise leave a nameless row and an "Enable " switch.
   const name = profileDisplayName(p.name);

@@ -1215,8 +1215,11 @@ export default function Overlay() {
   if (showProfile) {
     idGroups.push(
       <div key="tag" className="flex items-center">
-        {/* `chipTagFor` caps an authored tag at 16 code points (a derived one at 10) and only swaps a blank-rendering one for the name's, but strips nothing, and `sanitizeProfiles`
-            checks id/name/hotkey, not `tag` — so this is the second unstripped leaf in the row. */}
+        {/* `chipTagFor` caps an authored tag at 16 code points (a derived one at 10). It drops only an
+            authored tag's invisible head and swaps a blank-rendering one for a tag derived from the
+            display-filtered name (`profileDisplayName`), so the body of an authored tag still reaches
+            here unfiltered, and `sanitizeProfiles` checks id/name/hotkey, not `tag`. That makes it
+            the second unstripped leaf in the row. */}
         <span className="max-w-[140px] truncate uppercase text-dim">
           {safeDisplayText(state.profileTag, 40)}
         </span>
