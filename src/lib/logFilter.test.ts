@@ -265,6 +265,18 @@ describe("bugReportRunFields", () => {
     expect(f.profile).toBeNull();
     expect(f.route).toBeNull();
   });
+
+  it("trims the settings fallback's model the way Transcribe seeds it", () => {
+    const blank = bugReportRunFields(null, { backendId: "b1", model: "  " }, backendName);
+    expect(blank.model).toBeNull();
+    const report = buildBugReport(
+      { appVersion: "1", platform: "linux", ...blank, profile: null },
+      [line()],
+    );
+    expect(report).not.toContain("model:");
+    const padded = bugReportRunFields(null, { backendId: "b1", model: " tiny " }, backendName);
+    expect(padded.model).toBe("tiny");
+  });
 });
 
 describe("bug report: what actually ran", () => {

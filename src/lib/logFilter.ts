@@ -211,7 +211,9 @@ export function bugReportRunFields(
     return {
       source: "settings (no run recorded)",
       backend: backendName(transcribe?.backendId),
-      model: transcribe?.model ?? null,
+      // Trimmed like Transcribe's seed: a whitespace-only synced pick is no pick (the run sends
+      // the Backend's model), and a padded one runs trimmed.
+      model: transcribe?.model?.trim() || null,
       profile: null,
       route: null,
       stages: null,

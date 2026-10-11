@@ -54,6 +54,7 @@ import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import { prefersReducedMotion } from "@/lib/theme";
+import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 import {
   NO_OVERRIDE_PROFILE,
   type BatchProgress, type DecodeOverrides, type TranscribeOptions,
@@ -190,7 +191,8 @@ export default function Transcribe() {
 
   // Backend/model/language picks persist in settings.transcribe (they were
   // component state before, so leaving the screen reset them). The saved pick
-  // only applies while that backend still exists; model/language ride on it.
+  // only applies while that backend still exists; model/language (and the translation model
+  // below) ride on it.
   const savedBackend =
     settings.transcribe?.backendId &&
     backends.some((b) => b.id === settings.transcribe?.backendId)
@@ -255,8 +257,13 @@ export default function Transcribe() {
   const [translateTo, setTranslateTo] = useState<string[]>(
     () => wireCodes(settings.transcribe?.translateTo),
   );
-  const [translationModel, setTranslationModel] = useState(
-    () => settings.transcribe?.translationModel ?? "",
+  // The translation-model pick names a model on the saved backend's server, so it rides on
+  // savedBackend like model/language (a deleted or unresolved backend must not hand its model to
+  // backends[0]). Trimmed at the seed for the same reason as the Whisper model: the stored value
+  // is synced, and a whitespace-only pick is no pick, so the picker's custom note and reset agree
+  // with effectiveTranslationModel, which sends the inherited model.
+  const [translationModel, setTranslationModel] = useState(() =>
+    savedBackend ? (settings.transcribe?.translationModel?.trim() ?? "") : "",
   );
   const [translationMode, setTranslationMode] = useState<"fluent" | "faithful">(
     () => settings.transcribe?.translationMode ?? "fluent",
@@ -720,12 +727,22 @@ export default function Transcribe() {
   };
 
   // 1 s heartbeat while a run is active, so the rail's elapsed times count
-  // even when no server poll lands (standard servers, waiting stages).
+  // even when no server poll lands (standard servers, waiting stages). It only forces a redraw
+  // (elapsed times derive from timestamps at render), so a hidden window skips it and catches up
+  // on show.
   const [, tick] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     if (!busy) return;
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
+    const id = window.setInterval(() => {
+      if (!isWindowHidden()) tick();
+    }, 1000);
+    const off = onWindowHiddenChange((hidden) => {
+      if (!hidden) tick();
+    });
+    return () => {
+      window.clearInterval(id);
+      off();
+    };
   }, [busy]);
 
   // Pixel width of the timeline strip — the axis-label row assignment (top
@@ -1766,7 +1783,9 @@ export default function Transcribe() {
                             model={translationModel}
                             onModelChange={(v) => {
                               setTranslationModel(v);
-                              persistOptions({ translationModel: v });
+                              // With the backend it names a model on: the seed keeps the pick
+                              // only while that saved backend exists, like the Whisper model.
+                              persistOptions({ backendId, translationModel: v });
                             }}
                             inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
                             caps={caps}
