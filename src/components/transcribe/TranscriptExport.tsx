@@ -992,7 +992,8 @@ export function TranscriptExport({
               disabled={effSubtitleMode === "sidecar"}
               title={effSubtitleMode === "sidecar" ? "Names go into the video's own tracks — choose embedded or both" : undefined}
               onChange={(e) => setName(t.id, e.target.value)}
-              className={cn("h-8 text-[12.5px]", renamed(t) && "shadow-[inset_0_0_0_1px_var(--c-accent)]")}
+              compact
+              className={cn(renamed(t) && "shadow-[inset_0_0_0_1px_var(--c-accent)]")}
             />
             {renamed(t) ? (
               <button type="button" onClick={() => setName(t.id, null)} title={`Back to ${t.defaultTitle}`}

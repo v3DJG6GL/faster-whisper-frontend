@@ -587,7 +587,7 @@ export default function QuickAdd() {
                     spellCheck={false}
                     autoComplete="off"
                     placeholder=","
-                    className="font-mono text-[13px]"
+                    className="font-mono"
                     onChange={(e) => setInsert(e.target.value)}
                     onKeyDown={(e) => {
                       // The IME's Enter commits a candidate, not the mapping.

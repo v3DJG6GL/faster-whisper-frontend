@@ -136,8 +136,6 @@ function FieldLabel({ children }: { children: ReactNode }) {
   return <label className="mb-1.5 block text-[11.5px] font-medium text-dim">{children}</label>;
 }
 
-const monoInput = "font-mono text-[12.5px]";
-
 // Render ceilings on the pipeline-rules payload. Every list below is 100% server-authored, and
 // QuickAdd already caps its copies of the same two (`MAX_SHOWN_ROWS` / `MAX_RECENT_WORDS`) — this
 // screen renders the SAME data and had no ceiling at all. The cb:map bound was worse than absent:
@@ -379,13 +377,13 @@ function RuleCard({
                         <div className="flex items-center gap-3">
                           <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">find</span>
                           <TextInput value={row.pattern} disabled={inputsDisabled} spellCheck={false}
-                            placeholder="regex pattern (required)" className={cn(monoInput, "min-w-0 flex-1")}
+                            placeholder="regex pattern (required)" mono className="min-w-0 flex-1"
                             onChange={(ev) => setRow({ pattern: ev.target.value })} />
                         </div>
                         <div className="flex items-center gap-3">
                           <span className="w-12 shrink-0 text-right font-mono text-[11px] text-faint">→ repl</span>
                           <TextInput value={row.replacement} disabled={inputsDisabled} spellCheck={false}
-                            placeholder="(empty = delete match)" className={cn(monoInput, "min-w-0 flex-1")}
+                            placeholder="(empty = delete match)" mono className="min-w-0 flex-1"
                             onChange={(ev) => setRow({ replacement: ev.target.value })} />
                         </div>
                       </Stack>
@@ -482,7 +480,7 @@ function RuleCard({
                     />
                     <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
                     <TextInput ref={(el) => { if (el) valueRefs.current.set(row.id, el); else valueRefs.current.delete(row.id); }}
-                      value={row.v} disabled={inputsDisabled} spellCheck={false} placeholder="," className={cn(monoInput, "min-w-0 flex-1")}
+                      value={row.v} disabled={inputsDisabled} spellCheck={false} placeholder="," mono className="min-w-0 flex-1"
                       onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
                     <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
                       title={ts ? absWhen(ts) : undefined}>
@@ -524,7 +522,7 @@ function RuleCard({
                   value={edit.pattern ?? ""}
                   disabled={inputsDisabled}
                   spellCheck={false}
-                  className={monoInput}
+                  mono
                   onChange={(ev) => onPatch((e) => ({ ...e, pattern: ev.target.value }))}
                 />
               </div>
@@ -552,7 +550,7 @@ function RuleCard({
                 value={edit.pattern ?? ""}
                 disabled={inputsDisabled}
                 spellCheck={false}
-                className={monoInput}
+                mono
                 onChange={(ev) => onPatch((e) => ({ ...e, pattern: ev.target.value }))}
               />
             </div>
@@ -616,9 +614,6 @@ function wordCount(words?: string): number {
 /* ── screen ────────────────────────────────────────────────────────────── */
 export default function Dictionary() {
   const backends = useApp((s) => s.backends);
-  // This chip row SELECTS which server's mapping list is edited, so it is a decision surface like
-  // the three pickers, not a readout: two backends whose defanged names collide must not draw
-  // identically here either — every backend name on this screen goes through `backendLabel`.
   const connections = useApp((s) => s.connections);
   const quickAddList = useApp((s) => s.settings.quickAddList);
   const updateSettings = useApp((s) => s.updateSettings);
@@ -973,6 +968,10 @@ export default function Dictionary() {
                       : "border-line bg-surface-2 text-dim hover:text-text",
                   )}
                 >
+                  {/* This chip row SELECTS which server's mapping list is edited, so it is a decision
+                      surface like the three pickers, not a readout: two backends whose defanged names
+                      collide must not draw identically here either — every backend name on this
+                      screen goes through `backendLabel`. */}
                   <span className="block max-w-[16rem] truncate">{backendLabel(backends, b)}</span>
                 </button>
               );

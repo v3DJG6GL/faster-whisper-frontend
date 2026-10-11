@@ -232,14 +232,20 @@ export function RangeField({
  *  className border: cn is clsx (no merge) and the built CSS emits border-line after
  *  border-accent/55, so an appended one would lose. */
 type SetProp = { set?: boolean };
+/** A text input's size, a choice for the same reason as `set`: the built CSS emits h-8 before
+ *  h-10 and text-[12px]/text-[12.5px] before text-[13px], so an appended size class would lose.
+ *  `compact` is the 32px row at 12px (Button sm parity); `mono` sets monospace at 12.5px. */
+type SizeProps = { compact?: boolean; mono?: boolean };
 
-export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & SetProp>(
-  function TextInput({ className, set, ...props }, ref) {
+export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & SetProp & SizeProps>(
+  function TextInput({ className, set, compact, mono, ...props }, ref) {
     return (
       <input
         ref={ref}
         className={cn(
-          "ring-signal h-10 w-full rounded-xl border bg-surface-2 px-3.5 text-[13px] text-text",
+          "ring-signal w-full rounded-xl border bg-surface-2 px-3.5 text-text",
+          compact ? "h-8" : "h-10",
+          mono ? "font-mono text-[12.5px]" : compact ? "text-[12px]" : "text-[13px]",
           "placeholder:text-faint",
           set ? "border-accent/55" : "border-line",
           className,

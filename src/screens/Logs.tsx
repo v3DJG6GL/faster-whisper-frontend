@@ -383,7 +383,8 @@ export default function Logs() {
           onChange={(e) => setText(e.target.value)}
           placeholder="Filter lines…"
           aria-label="Filter lines"
-          className="h-8 w-auto min-w-[140px] flex-1 text-[12px]"
+          compact
+          className="min-w-[140px] flex-1"
         />
         <label
           className="flex items-center gap-2 text-[12px] text-dim"

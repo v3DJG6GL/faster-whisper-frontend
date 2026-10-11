@@ -1358,7 +1358,7 @@ export default function Transcribe() {
               spellCheck={false}
               placeholder="YouTube, podcast episode, or a direct audio/video link — https://…"
               aria-label="Media link"
-              className="font-mono text-[12.5px]"
+              mono
             />
             <Button
               variant="accent"
