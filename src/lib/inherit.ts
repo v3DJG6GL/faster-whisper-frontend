@@ -9,7 +9,7 @@
 // nobody can name (the server is unreachable) leaves the bare word.
 
 import type { DecodeDefault, DecodeDefaults, InheritedValues, ServerModel } from "./types";
-import { spokenLabel, spokenValue } from "./languages";
+import { spokenText, spokenValue } from "./languages";
 import { safeDisplayText } from "./sanitize";
 import { escapeText } from "./escapeText";
 import { BOOL_KEYS, isDecodeKey, keySpec, NULL_TEXT, type DecodeKey } from "./decodeKeys";
@@ -114,10 +114,9 @@ export function serverName(d: Pick<DecodeDefault, "value"> | null | undefined): 
 export function serverLanguageLabel(dd: DecodeDefaults | null | undefined, multiInherited?: boolean): string | undefined {
   const v = dd?.language?.value;
   if (typeof v !== "string") return undefined;
-  // Tested as displayed: a code of only format characters names no language, but the server does
-  // send one — "??", like a backend's own such language, not a blank "Default · ".
-  const l = safeDisplayText(spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited)), 40).trim();
-  return l || "??";
+  // Tested as displayed: a code of only format characters or joiners names no language, but the
+  // server does send one — "??", like a backend's own such language, not a blank "Default · ".
+  return spokenText(spokenValue(v.trim() || "auto", undefined, multiInherited), 40);
 }
 
 /** A picker's model list with the server's default model in it: a default bound to the caller's

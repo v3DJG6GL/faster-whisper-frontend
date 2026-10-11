@@ -78,6 +78,9 @@ describe("server default names (W6–W8)", () => {
   it("a server language of only format characters reads \"??\", not blank", () => {
     expect(serverLanguageLabel(dd({ language: e("\u200f") }))).toBe("??");
     expect(serverLanguageLabel(dd({ language: e("\u200b\u2066") }))).toBe("??");
+    // A joiner-only code: the display filter keeps ZWNJ/ZWJ, so the label was an invisible "\u200d".
+    expect(serverLanguageLabel(dd({ language: e("\u200d") }))).toBe("??");
+    expect(serverLanguageLabel(dd({ language: e("\u200c\u200d") }))).toBe("??");
     expect(serverLanguageLabel(dd({ language: e("de") }))).toBe("German");
   });
   it("adds an identity-only default model to the picker's list once", () => {

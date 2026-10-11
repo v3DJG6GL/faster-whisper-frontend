@@ -34,7 +34,7 @@ import {
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
-import { backendLabel } from "@/lib/backends";
+import { backendLabelById } from "@/lib/backends";
 import { fmtFull, plural } from "@/lib/format";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
@@ -329,10 +329,7 @@ export default function Logs() {
     // A found backend reads as the pickers name it (a blank synced name is "Untitled backend", not a
     // dropped line that looks like a deleted backend; two same-named ones carry their host suffix);
     // a deleted one still gives null.
-    const backendOf = (id?: string) => {
-      const b = s.backends.find((x) => x.id === id);
-      return b ? backendLabel(s.backends, b) : null;
-    };
+    const backendOf = (id?: string) => backendLabelById(s.backends, id);
     const report = buildBugReport(
       {
         appVersion: ver,

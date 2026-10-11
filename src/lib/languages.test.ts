@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   languageCodeOf, routeSourceCode,
   MULTI_LANGUAGE, WHISPER_LANGUAGES, applyMultilingual, isEnglishOnlyModel, langCode, langText, languageCodeFromName, languageLabel, matchesLanguage, namedLanguage, primarySubtag, trackLanguageName,
-  nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
+  nativeName, offersMultilingual, spokenField, spokenLabel, spokenLanguage, spokenText, spokenSections, spokenValue, targetSections, toggleCode, translateSourceCode,
 } from "./languages";
 
 const values = (rows: { value: string }[]) => rows.map((r) => r.value);
@@ -12,6 +12,15 @@ describe("langText", () => {
     expect(langText("\u200d")).toBe("");
     expect(langText("d\u200ce")).toBe("de");
     expect(langCode("d\u200ce")).toBe("DE");
+  });
+});
+
+describe("spokenText", () => {
+  it("reads ?? for a joiner- or format-only value, the label otherwise", () => {
+    expect(spokenText("\u200d", 40)).toBe("??");
+    expect(spokenText("\u200b", 40)).toBe("??");
+    expect(spokenText("de", 40)).toBe("German");
+    expect(spokenText(MULTI_LANGUAGE, 40)).toBe("Multiple languages");
   });
 });
 

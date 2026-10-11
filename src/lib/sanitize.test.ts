@@ -4,6 +4,7 @@ import {
   appRuleKey,
   backendDisplayName,
   capCodePoints,
+  dropJoiners,
   codeSlug,
   deviceDisplayName,
   peerDeviceName,
@@ -172,5 +173,12 @@ describe("appRuleKey", () => {
     // Its stored id keeps the joiner, but a rule keyed "" would match every invisible-named app.
     const rule = { id: "r", appId: "\u200d", insertMethod: "direct" };
     expect(wellFormedAppRules([rule, { id: "k", appId: "konsole" }]).map((r) => r.id)).toEqual(["k"]);
+  });
+});
+
+describe("dropJoiners", () => {
+  it("drops ZWNJ/ZWJ only", () => {
+    expect(dropJoiners("a\u200cb\u200d c\u200b")).toBe("ab c\u200b");
+    expect(dropJoiners("\u200d\u200c")).toBe("");
   });
 });

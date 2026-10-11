@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendLabel, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 
@@ -125,6 +125,13 @@ describe("backendOptions", () => {
     expect(backendLabel(all, all[1])).toBe("Work \u00b7 b.lan");
     expect(backendLabel(all, be("cccccccc33", "  Gone\u200b ", "http://c.lan"))).toBe("Gone");
     expect(backendLabel([], be("cccccccc33", "", "http://c.lan"))).toBe("Untitled backend");
+  });
+  it("backendLabelById labels a configured id, null for an unset or gone one", () => {
+    const all = [be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "Work", "http://b.lan")];
+    expect(backendLabelById(all, "bbbbbbbb22")).toBe("Work \u00b7 b.lan");
+    expect(backendLabelById(all, "cccccccc33")).toBeNull();
+    expect(backendLabelById(all, "")).toBeNull();
+    expect(backendLabelById(all, undefined)).toBeNull();
   });
 });
 

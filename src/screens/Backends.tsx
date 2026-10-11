@@ -22,7 +22,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
+import { namedLanguage, offersMultilingual, spokenField, spokenText, spokenValue } from "@/lib/languages";
 import { testConnection, setBackendKey, deleteBackendKey, syncPull } from "@/lib/api";
 import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
@@ -571,7 +571,7 @@ function Editor({
             <span className="text-faint">
               · {shortModelName(ownModel) ?? serverModel ?? "server model"} ·{" "}
               {spoken.value
-                ? safeDisplayText(spokenLabel(spoken.value), 30).trim() || "??"
+                ? spokenText(spoken.value, 30)
                 : safeDisplayText(serverLanguageLabel(decodeDefaults, multiInherited) ?? "server language", 30)}{" "}
               · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
@@ -1227,7 +1227,7 @@ export default function Backends() {
                         </span>
                         <Badge tone="accent">{b.endpoint}</Badge>
                         {/* "" = the backend leaves the language to the server. A set language that
-                            sanitizes to blank is still sent verbatim, so it reads "??", not "server lang".
+                            sanitizes to blank (or to joiners only) is still sent verbatim, so it reads "??", not "server lang".
                             It labels the coded value that is sent (effectiveLanguage), so a synced
                             "english" / " de " reads English / German as the picker does.
                             Multiple languages is "auto" + the multilingual flag: the badge folds the
@@ -1236,16 +1236,14 @@ export default function Backends() {
                             model cannot honour nor shows an inherited server default. */}
                         <Badge>
                           {b.language
-                            ? safeDisplayText(
-                                spokenLabel(
-                                  spokenValue(
-                                    effectiveLanguage(undefined, b.language),
-                                    typeof b.decodeOverrides?.multilingual === "boolean" ? b.decodeOverrides.multilingual : undefined,
-                                    undefined,
-                                  ),
+                            ? spokenText(
+                                spokenValue(
+                                  effectiveLanguage(undefined, b.language),
+                                  typeof b.decodeOverrides?.multilingual === "boolean" ? b.decodeOverrides.multilingual : undefined,
+                                  undefined,
                                 ),
                                 40,
-                              ).trim() || "??"
+                              )
                             : "server lang"}
                         </Badge>
                         {b.hasApiKey && <Badge>key</Badge>}

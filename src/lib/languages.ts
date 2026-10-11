@@ -3,7 +3,7 @@
 // decode overrides — lives here as a plain function, so it is tested without a DOM.
 
 import { ownProp } from "./own";
-import { safeDisplayText } from "./sanitize";
+import { dropJoiners, safeDisplayText } from "./sanitize";
 import type { DecodeOverrides } from "./types";
 
 /** Every language Whisper decodes — faster-whisper's tokenizer list (incl. yue), in its order. */
@@ -103,7 +103,7 @@ export function langCode(code: string, max = 16): string {
 /** A language code as the display filter renders it, minus the ZWNJ/ZWJ it keeps — so a
  *  joiner-only code reads empty and a gate on it skips the part. */
 export function langText(code: string, max = 16): string {
-  return safeDisplayText(code.replace(/[\u200c\u200d]/g, ""), max);
+  return safeDisplayText(dropJoiners(code), max);
 }
 
 /** A dictation route's source as the tray and the target picker write it, sanitized and capped
@@ -371,6 +371,14 @@ export function namedLanguage(value: string | null | undefined): value is string
 /** Display text for a spoken-picker value. */
 export function spokenLabel(value: string): string {
   return value === MULTI_LANGUAGE ? "Multiple languages" : languageLabel(value);
+}
+
+/** A spoken-picker value's label, sanitized and capped; "??" when the joiner-free text is blank
+ *  (a set value of only format characters or joiners), as langText gates a code. A real label
+ *  renders whole, joiners kept. */
+export function spokenText(value: string, max: number): string {
+  const s = safeDisplayText(spokenLabel(value), max).trim();
+  return langText(s, max).trim() ? s : "??";
 }
 
 /** Whether a picker may offer "Multiple languages": the caller may send decode overrides (unknown

@@ -2,7 +2,7 @@
 
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
-import { backendDisplayName, safeIdentityText } from "./sanitize";
+import { backendDisplayName, dropJoiners, safeIdentityText } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
@@ -313,7 +313,7 @@ const SEP = " \u00b7 ";
 export function backendOptions(all: Backend[], max = 80): { value: string; label: string }[] {
   // Joiners (ZWNJ/ZWJ) are dropped from the KEY only: the identity fold keeps interior ones, so
   // `"Wo\u200drk"` would count apart from `"Work"` while drawing exactly like it.
-  const norm = (s: string) => s.replace(/[\u200c\u200d]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  const norm = (s: string) => dropJoiners(s).replace(/\s+/g, " ").trim().toLowerCase();
   // `safeIdentityText`, not `safeDisplayText`: G4 moved the three identity renders beside a trust
   // decision onto it and this fourth site was missed. `safeDisplayText` passes the invisible class
   // `isInvisibleKeyChar` enumerates — U+2800, U+034F, the variation selectors, the tags block —
@@ -338,7 +338,7 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
   // hides the separator from a raw `includes` while the label draws exactly as the suffixed form.
   // (`safeIdentityText` now folds a joiner touching whitespace itself; the strip stays as the
   // backstop for any joiner the fold keeps.)
-  const forgesSuffix = (l: string) => l.replace(/[\u200c\u200d]/g, "").includes(SEP);
+  const forgesSuffix = (l: string) => dropJoiners(l).includes(SEP);
   const out = all.map((b, i) => {
     const label = labels[i];
     if (label && (counts.get(norm(label)) ?? 0) < 2 && !forgesSuffix(label)) {
@@ -386,4 +386,10 @@ export function backendLabels(all: Backend[]): Map<string, string> {
  *  own display name. */
 export function backendLabel(all: Backend[], b: Backend): string {
   return backendLabels(all).get(b.id) ?? backendDisplayName(b.name);
+}
+
+/** backendLabel for a configured id; null when the id is unset or no longer configured. */
+export function backendLabelById(all: Backend[], id: string | null | undefined): string | null {
+  const b = id ? all.find((x) => x.id === id) : undefined;
+  return b ? backendLabel(all, b) : null;
 }

@@ -123,6 +123,10 @@ export function wellFormedAppRules(v: unknown): AppRule[] {
     .filter((r) => appRuleKey(r.appId).length > 0);
 }
 
+/** ZWNJ/ZWJ out of a string. They stay in stored names and interior text (scripts need them),
+ *  but leave every comparison key and a language code's display text. */
+export const dropJoiners = (s: string): string => s.replace(/[\u200c\u200d]/g, "");
+
 /** Characters that render as NOTHING but are neither in the deceptive-format denylist above nor
  *  `WhiteSpace` (so `trim()` misses them too).
  *
@@ -270,7 +274,7 @@ export const deviceDisplayName = (name: unknown, max = 60): string =>
 export function peerDeviceName(device: unknown, localLabel = "This device"): string {
   const name = deviceDisplayName(device);
   const norm = (s: string) =>
-    safeIdentityText(s, 200).replace(/[\u200c\u200d]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    dropJoiners(safeIdentityText(s, 200)).replace(/\s+/g, " ").trim().toLowerCase();
   return name && norm(name) !== norm(localLabel) ? name : "";
 }
 
@@ -290,7 +294,7 @@ export function appRuleKey(appId: unknown): string {
   // ZWNJ/ZWJ leave the COMPARISON key only (the stored key keeps them, see isInvisibleKeyChar):
   // `"kon\u200dsole"` renders as exactly `konsole` in the audit row yet never equalled the live id.
   // Trimmed again: `"\u200d konsole"` leaves a leading space once the joiner goes.
-  return normalizeAppId(appId).replace(/[\u200c\u200d]/g, "").trim().toLowerCase();
+  return dropJoiners(normalizeAppId(appId)).trim().toLowerCase();
 }
 
 /** A user/server-authored code (a language, an extractor key) cut to what is safe in a file

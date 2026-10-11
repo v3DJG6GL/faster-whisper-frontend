@@ -45,7 +45,7 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendOptions, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
+import { authorityOf, backendLabel, backendOptions, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
@@ -1061,7 +1061,7 @@ export function SyncTab() {
         {sync.enabled && syncBackend && !syncBackend.hasApiKey && (
           <div className="pb-3">
             <Notice tone="warn">
-              “{backendDisplayName(syncBackend.name, 80)}” has no API key. On an open-mode server every keyless device shares one
+              “{backendLabel(backends, syncBackend)}” has no API key. On an open-mode server every keyless device shares one
               settings set; on a locked-down server sync won't work at all. Add a key to give this account
               its own set.
             </Notice>

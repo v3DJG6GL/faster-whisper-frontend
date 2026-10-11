@@ -2,15 +2,14 @@
 // and the Dashboard readout show them: language labels, each part bounded, the list capped.
 
 import { languageLabel } from "./languages";
-import { safeDisplayText } from "./sanitize";
+import { dropJoiners, safeDisplayText } from "./sanitize";
 
 // How many targets are spelled out before the rest become "+N". Three is what fits
 // beside a profile's name, model and endpoint badges without wrapping the row.
 export const ROUTE_TARGETS_SHOWN = 3;
 
-// ZWNJ/ZWJ render as nothing yet survive both trim and the display filter, so they go before the
-// trim — as langCode drops them — or a joiner-only code would show as a blank slot.
-const noJoin = (s: string): string => s.replace(/[\u200c\u200d]/g, "");
+// ZWNJ/ZWJ render as nothing yet survive both trim and the display filter, so dropJoiners takes
+// them before the trim — as langCode drops them — or a joiner-only code would show as a blank slot.
 
 /** The pieces of a `source → targets` route, bounded for display.
  *
@@ -24,7 +23,7 @@ export function routeParts(
 ): { source: string; targets: string[]; more: number } {
   // Array.isArray, not `?? []`: a record read back from disk can carry a string here.
   const labels = (Array.isArray(targets) ? targets : [])
-    .map((t) => (typeof t === "string" ? noJoin(t).trim() : ""))
+    .map((t) => (typeof t === "string" ? dropJoiners(t).trim() : ""))
     .filter(Boolean)
     // Filtered again after the sanitize: a code made only of invisible format characters
     // trims to something, then sanitizes to nothing, and would show as a blank slot.
@@ -36,7 +35,7 @@ export function routeParts(
   // `|| "auto"` fallback; "auto" itself labels as "Auto-detect", and a padded " de" still finds
   // its label.
   const raw = typeof source === "string" ? source : "";
-  const src = noJoin(raw).trim();
+  const src = dropJoiners(raw).trim();
   const label = src ? safeDisplayText(languageLabel(src), 24).trim() : "";
   return {
     source: label || (raw && raw !== "auto" ? "??" : ""),
