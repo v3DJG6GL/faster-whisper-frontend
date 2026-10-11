@@ -101,6 +101,15 @@ pub fn forget_detached_batch() {
     DETACHED_BATCH_EPOCH.store(0, Ordering::SeqCst);
 }
 
+/// Publish a device-loss salvage's epoch (the salvage arm in `start_record`). A salvage firing
+/// inside `finish()`'s capture join runs after `stop_record`'s claim and outside the lock, so a
+/// session N+1 may already have claimed the slot; epochs only grow, so `fetch_max` never moves the
+/// slot backwards (see `RecordSession::finish`), and after a forget (0) it still publishes the
+/// salvage.
+fn publish_salvaged_batch(epoch: u64) {
+    DETACHED_BATCH_EPOCH.fetch_max(epoch, Ordering::SeqCst);
+}
+
 /// The detached-batch half of `cancel_record`, decided under the `RecordState` lock — the batch
 /// twin of [`settle_detached_on_cancel`]. Taking a LIVE session (any Cancel, the closed-handler
 /// release) supersedes the earlier detached batch as the Cancel target, so a later Cancel cannot
@@ -1002,8 +1011,9 @@ impl RecordSession {
     /// its place.
     ///
     /// Publishing early is safe: the capture thread's device-loss salvage arm (in
-    /// `start_record`) stores the same epoch, possibly after this claim if it fires inside
-    /// `finish()`'s capture join, and the only other accesses are
+    /// `start_record`) publishes with `fetch_max` ([`publish_salvaged_batch`]), so a late salvage
+    /// firing inside `finish()`'s capture join never moves the slot back below a newer claim, and
+    /// the only other accesses are
     /// `cancel_detached_batch` (reads it) and `forget_detached_batch` (clears it).
     pub fn claim_detached(&self) {
         DETACHED_BATCH_EPOCH.store(self.epoch, Ordering::SeqCst);
@@ -1131,9 +1141,10 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     // recordings") what was captured — exactly as the streaming drain does on the same
                     // loss — instead of discarding it. transcribe_recording emits the final + the
                     // trailing "closed" that unsticks the chip and writes the .wav/.txt sidecar. A
-                    // racing finish()/cancel_record joins this thread first, then takes an
-                    // already-emptied buffer → empty pcm → transcribe_recording early-returns, so there
-                    // is no double-transcribe. finish() (the user stop) never sets `device_lost`.
+                    // racing finish() (a stop, or a recovery cancel that keeps the clip) joins this
+                    // thread first and then bails on `device_lost` (see RecordSession::finish), and
+                    // cancel_record's discard() never transcribes, so there is no double-transcribe.
+                    // finish() (the user stop) never sets `device_lost`.
                     // ...unless the user CANCELLED. A cancel means "discard this clip", and that has
                     // to beat the salvage: otherwise a cancel that races a mic disconnect still sends
                     // the audio to the server and leaves the .wav + plaintext transcript on disk.
@@ -1155,7 +1166,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                             .lock()
                             .map(|mut b| std::mem::take(&mut *b))
                             .unwrap_or_default();
-                        DETACHED_BATCH_EPOCH.store(epoch, Ordering::SeqCst);
+                        publish_salvaged_batch(epoch);
                         tauri::async_runtime::spawn(transcribe_recording(
                             app.clone(),
                             epoch,
@@ -1978,7 +1989,7 @@ Sink Input #12\n\
         // parallel, and a second fn would race the global.
         use super::{
             batch_cancelled, cancel_detached_batch, forget_detached_batch, mark_batch_cancelled,
-            settle_detached_batch_on_cancel, DETACHED_BATCH_EPOCH,
+            publish_salvaged_batch, settle_detached_batch_on_cancel, DETACHED_BATCH_EPOCH,
         };
         use std::sync::atomic::Ordering;
         // Epochs far above anything a real session claims in a test run.
@@ -2029,6 +2040,20 @@ Sink Input #12\n\
             batch_cancelled(g),
             "a user's Cancel with no live session disowns the batch"
         );
+
+        // A salvage firing inside finish()'s capture join, after session N+1 claimed, never moves
+        // the slot back to N; after a forget it still publishes.
+        let (s, h) = (u64::MAX - 9, u64::MAX - 8);
+        DETACHED_BATCH_EPOCH.store(h, Ordering::SeqCst);
+        publish_salvaged_batch(s);
+        assert_eq!(
+            DETACHED_BATCH_EPOCH.load(Ordering::SeqCst),
+            h,
+            "a late salvage keeps the newer claim"
+        );
+        DETACHED_BATCH_EPOCH.store(0, Ordering::SeqCst);
+        publish_salvaged_batch(s);
+        assert_eq!(DETACHED_BATCH_EPOCH.load(Ordering::SeqCst), s);
         DETACHED_BATCH_EPOCH.store(0, Ordering::SeqCst);
     }
 }
