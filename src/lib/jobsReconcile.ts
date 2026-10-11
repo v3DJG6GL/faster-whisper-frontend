@@ -137,8 +137,9 @@ async function ingestDone(
 
 /** Poll one job until it settles. Attached mode paints the rail and stops the moment
  *  the store's epoch moves (the user cancelled or started something else); headless
- *  mode only waits for the terminal state. */
-function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): void {
+ *  mode only waits for the terminal state. `lost`: a request this session's pump lost
+ *  contact with (watchOrphan), whose failed record and queue row already exist. */
+function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; lost?: boolean }): void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let busy = false;
@@ -178,13 +179,17 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number }): 
     }
     // The backend was deleted mid-watch (here, or by a sync pull): no key resolves for it, so an
     // auth-gated server answers every poll 401 until maxAge — days of a "running" rail. Forget the
-    // row like the reconcile pass does; the rail's run settles failed and names why.
+    // row; the rail's run settles failed and names why, and a this-session lost request settles
+    // its failed record (and queue row) with the reason. An earlier launch's row is forgotten
+    // without a record, like the reconcile pass.
     const app = useApp.getState();
     if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
       stop();
       if (opts.attached) {
         setReattachStop(null);
         failJob(row, BACKEND_GONE_ERROR, { attached: true });
+      } else if (opts.lost) {
+        failJob(row, BACKEND_GONE_ERROR, { attached: false });
       }
       await forgetRow(row.jobId);
       return;
@@ -248,7 +253,7 @@ export function watchOrphan(jobId: string): void {
   const row = ledgerRows().find((r) => r.jobId === jobId);
   if (!row) return;
   orphans.set(jobId, row.path);
-  watchJob(row, { attached: false });
+  watchJob(row, { attached: false, lost: true });
 }
 setOrphanWatch(watchOrphan);
 

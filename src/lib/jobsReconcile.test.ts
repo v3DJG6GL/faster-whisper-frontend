@@ -439,8 +439,11 @@ describe("reconcileJobs", () => {
     expect(getJob).not.toHaveBeenCalled();
   });
 
-  it("a headless watcher whose backend is deleted forgets the row, without a record", async () => {
-    await persistRow(row(JOB_A, Date.now()));
+  it("a lost request whose backend is deleted settles its failed record and queue row with the reason", async () => {
+    const r = row(JOB_A, Date.now());
+    await persistRow(r);
+    // The pump's lost-contact catch already left a failed queue row naming the orphan job.
+    useTranscribeRun.setState({ queue: [{ path: r.path, status: "failed", error: "timed out", orphanJobId: JOB_A }] });
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
     watchOrphan(JOB_A);
     await vi.advanceTimersByTimeAsync(0);
@@ -449,7 +452,27 @@ describe("reconcileJobs", () => {
     getJob.mockClear();
     await vi.advanceTimersByTimeAsync(5_000);
     expect(ledgerRows()).toEqual([]);
+    expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+    const it0 = useTranscribeRun.getState().queue[0];
+    expect([it0.status, it0.error, it0.orphanJobId]).toEqual(["failed", BACKEND_GONE_ERROR, undefined]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getJob).not.toHaveBeenCalled();
+  });
+
+  it("an earlier launch's headless row whose backend is deleted is forgotten, without a record", async () => {
+    await seed(row(JOB_A, T0));
+    // A non-idle workbench: the reconcile pass watches the running row headless.
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useTranscribeRun.getState().running).toBe(false);
+    useApp.setState({ backends: [] });
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ledgerRows()).toEqual([]);
     expect(records()).toEqual([]);
+    expect(useTranscribeRun.getState().queue).toEqual([]);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(getJob).not.toHaveBeenCalled();
   });
