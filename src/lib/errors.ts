@@ -68,9 +68,11 @@ export function uploadTooLargeText(e: unknown): string | null {
  *  (`backendDisplayName` — invisible head dropped, identity-folded, capped), so a blank or
  *  invisible-only synced name reads "Untitled backend" here too, never an empty gap. Only a
  *  missing/empty label keeps the sentence's own "the backend" (a caller passing that literal gets
- *  it back verbatim). */
+ *  it back verbatim). Callers pass the picker's label (`backendLabels`), whose collision suffix
+ *  (` · host`, ` · #id`) can carry an 80-codepoint name past 80: the cap is the name's plus room
+ *  for that suffix, so the re-fold (idempotent on an already-folded label) never cuts it off. */
 export const doorwayBackendLabel = (name: unknown): string =>
-  typeof name === "string" && name !== "" ? backendDisplayName(name, 80) : "the backend";
+  typeof name === "string" && name !== "" ? backendDisplayName(name, 160) : "the backend";
 
 /** Classify a transport-layer failure into the app-global error template. */
 export function describeTransportError(
@@ -114,8 +116,11 @@ export function describeTransportError(
       };
     }
     if (code === 401 || code === 403) {
+      // The one template that OPENS with the label: the fallback is capitalized here, a backend's
+      // own name keeps the casing its author gave it.
+      const subject = label === "the backend" ? "The backend" : label;
       return {
-        title: `${label} rejected the request (HTTP ${code}).`,
+        title: `${subject} rejected the request (HTTP ${code}).`,
         hint:
           kind === "translate"
             ? "Check the backend's API key — a key without translate access is refused the same way."

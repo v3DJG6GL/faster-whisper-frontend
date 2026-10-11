@@ -13,6 +13,7 @@ import {
   uploadTooLarge,
   uploadTooLargeText,
 } from "./errors";
+import { backendLabels, newBackendDraft } from "./backends";
 
 describe("describeTransportError", () => {
   it("connect refusal: names the backend, promises nothing started, no log detour", () => {
@@ -81,6 +82,32 @@ describe("describeTransportError", () => {
     const d = describeTransportError("transcribe", "HTTP 401: unauthorized", "GPU box");
     expect(d.title).toContain("rejected the request (HTTP 401)");
     expect(d.hint).toMatch(/API key/);
+  });
+
+  it("a refusal from a missing backend opens its sentence capitalized; a real name keeps its casing", () => {
+    expect(describeTransportError("transcribe", "HTTP 401: unauthorized", "").title).toBe(
+      "The backend rejected the request (HTTP 401).",
+    );
+    expect(describeTransportError("transcribe", "HTTP 403: forbidden", "the backend").title).toBe(
+      "The backend rejected the request (HTTP 403).",
+    );
+    expect(describeTransportError("transcribe", "HTTP 401: unauthorized", "gpu box").title).toBe(
+      "gpu box rejected the request (HTTP 401).",
+    );
+  });
+
+  it("keeps the picker's collision suffix, even on a full-length name", () => {
+    expect(doorwayBackendLabel("Local \u00b7 10.0.0.5:8000")).toBe("Local \u00b7 10.0.0.5:8000");
+    // Two same-named backends at the 80-codepoint name cap: the doorway must still tell them apart.
+    const name = "W".repeat(80);
+    const all = ["http://10.0.0.5:8000", "http://10.0.0.6:8000"].map((serverUrl, i) => ({
+      ...newBackendDraft(), id: `id${i}`, name, serverUrl,
+    }));
+    const [a, b] = all.map((x) => backendLabels(all).get(x.id));
+    expect(doorwayBackendLabel(a)).toBe(`${name} \u00b7 10.0.0.5:8000`);
+    expect(transportErrorDoorway("transcribe", "HTTP 500", a ?? "").msg).not.toBe(
+      transportErrorDoorway("transcribe", "HTTP 500", b ?? "").msg,
+    );
   });
 
   it("other HTTP codes and unknown errors fall back honestly", () => {

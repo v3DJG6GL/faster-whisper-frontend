@@ -36,6 +36,7 @@ import {
 } from "@/lib/transcript/transcriptFormats";
 import { authoredChipTag } from "@/lib/profileTag";
 import { backendDisplayName, profileDisplayName, stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { backendLabels } from "@/lib/backends";
 import { shortModelName } from "@/lib/inherit";
 import { urlHost } from "@/lib/urlSource";
 import { derivePickedStem, exportStem, isVideoSourcePath, linkServerAudioLive, revealAfterSaveOn, withTrackSites } from "@/lib/transcript/mediaExport";
@@ -624,12 +625,15 @@ export default function History() {
 
   const dictationExpanded = (rec: TranscriptRecord) => {
     // Each name by the shared display-name rule the other screens use (invisible head dropped; a
-    // recorded-but-blank one reads "Untitled profile"/"Untitled backend"; the backend as an
-    // identity, like the Backends card). The labels stay gated on there being one: a record
-    // without a (string) profile name, or whose backend is gone, shows no label.
+    // recorded-but-blank one reads "Untitled profile"/"Untitled backend"; the backend as the
+    // pickers name it, with its host suffix when two configured backends share a name). The labels
+    // stay gated on there being one: a record without a (string) profile name, or whose backend is
+    // gone, shows no label.
     const profileShown = typeof rec.profileName === "string" ? profileDisplayName(rec.profileName, 40) : "";
     const recBackend = backends.find((b) => b.id === rec.backendId);
-    const backendShown = recBackend ? backendDisplayName(recBackend.name, 40) : "";
+    const backendShown = recBackend
+      ? (backendLabels(backends).get(recBackend.id) ?? backendDisplayName(recBackend.name, 40))
+      : "";
     const failureShown = safeDisplayText(rec.translationFailure ?? "", 24).trim();
     const shownModel = shortModelName(rec.model, 40);
     const tracks = recordTracks(rec);
@@ -761,9 +765,11 @@ export default function History() {
               profile <span className="text-dim">{profileShown}{rec.activation ? ` · ${rec.activation}` : ""}</span>
             </span>
           )}
+          {/* The picker's label can run past a 40-codepoint name (name + host suffix): bounded
+              here, whole on hover. */}
           {backendShown && (
             <span className="font-mono text-[11px] text-faint">
-              backend <span className="text-dim">{backendShown}</span>
+              backend <span className="inline-block max-w-[20rem] truncate align-bottom text-dim" title={backendShown}>{backendShown}</span>
             </span>
           )}
           {shownModel && (

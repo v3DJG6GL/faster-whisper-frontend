@@ -16,7 +16,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { hasOwn, ownProp } from "@/lib/own";
-import { effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
+import { backendLabels, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, ChipToggle, Segmented } from "@/components/ui";
@@ -2027,7 +2027,7 @@ export function TranscriptViewer({
                   Translate now
                 </Button>
                 <span className="text-[11.5px] text-faint">
-                  runs on {trBackend ? backendDisplayName(trBackend.name, 40) : "the backend"} — the original
+                  runs on {trBackend ? (backendLabels(backends).get(trBackend.id) ?? backendDisplayName(trBackend.name, 40)) : "the backend"} — the original
                   is kept; translated lines appear as they finish
                 </span>
               </div>

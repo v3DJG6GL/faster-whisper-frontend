@@ -310,7 +310,7 @@ function useUsageView() {
     () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], TREND_DAYS, localTodayDay()) : []),
     [stats],
   );
-  return { statsBackends, viewBackend, setView, stats, dense };
+  return { backends, statsBackends, viewBackend, setView, stats, dense };
 }
 
 /* ── Home strip ──────────────────────────────────────────────────────────── */
@@ -351,7 +351,7 @@ const HOME_TILES = new Set(["words", "audio_s", "sessions", "errors"]);
  *  backend selector + "View statistics" link on the header row. Hidden entirely (no empty
  *  box) until some backend has usage stats. */
 export function HomeUsageStrip() {
-  const { statsBackends, viewBackend, setView, stats, dense } = useUsageView();
+  const { backends, statsBackends, viewBackend, setView, stats, dense } = useUsageView();
   const hatchId = useId();
   if (!viewBackend || !stats) return null;
   // Home keeps the four headline figures; the Statistics page shows every measure.
@@ -365,7 +365,7 @@ export function HomeUsageStrip() {
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <SectionLabel className="!m-0">Usage</SectionLabel>
         <div className="flex flex-wrap items-center gap-2.5">
-          <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
+          <BackendChips backends={statsBackends} labelsFrom={backends} selectedId={viewBackend.id} onSelect={setView} />
           <Link
             to="/statistics"
             className="ring-signal flex items-center gap-1.5 rounded-pill border border-line px-3 py-1 font-mono text-[11px] text-dim transition-colors hover:border-line-strong hover:bg-surface hover:text-text"
@@ -425,7 +425,7 @@ export function StatisticsView({
   rhythm: Rhythm;
   onRhythm: (r: Rhythm) => void;
 }) {
-  const { statsBackends, viewBackend, setView, stats: base } = useUsageView();
+  const { backends, statsBackends, viewBackend, setView, stats: base } = useUsageView();
   const view = useApp((s) => s.usageView);
   const settings = useApp((s) => s.settings);
   const today = localTodayDay();
@@ -494,7 +494,7 @@ export function StatisticsView({
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <BackendChips backends={statsBackends} selectedId={viewBackend.id} onSelect={setView} />
+        <BackendChips backends={statsBackends} labelsFrom={backends} selectedId={viewBackend.id} onSelect={setView} />
         {failed ? <Pill>couldn’t load this range · showing older data</Pill> : !fresh && <Pill>updating…</Pill>}
       </div>
       <FilterBar

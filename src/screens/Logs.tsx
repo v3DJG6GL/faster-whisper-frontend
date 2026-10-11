@@ -34,6 +34,7 @@ import {
   type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { backendDisplayName, safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { backendLabels } from "@/lib/backends";
 import { fmtFull, plural } from "@/lib/format";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { Button, Segmented, StatusDot, TextInput, Toggle } from "@/components/ui";
@@ -325,11 +326,12 @@ export default function Logs() {
     // never ran, and a reader had no way to tell. A history record is the
     // only durable account of what actually executed.
     const last = useTranscriptHistory.getState().records[0] ?? null;
-    // A found backend reads as the lists show it (a blank synced name is "Untitled backend", not a
-    // dropped line that looks like a deleted backend); a deleted one still gives null.
+    // A found backend reads as the pickers name it (a blank synced name is "Untitled backend", not a
+    // dropped line that looks like a deleted backend; two same-named ones carry their host suffix);
+    // a deleted one still gives null.
     const backendOf = (id?: string) => {
       const b = s.backends.find((x) => x.id === id);
-      return b ? backendDisplayName(b.name, 80) : null;
+      return b ? (backendLabels(s.backends).get(b.id) ?? backendDisplayName(b.name, 80)) : null;
     };
     const report = buildBugReport(
       {

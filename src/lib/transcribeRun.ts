@@ -18,7 +18,8 @@ import {
 import { displayLabel, isSourceUrl, normalizeMediaUrl } from "./urlSource";
 import { isTextSourcePath, parseImportedText, type ImportedText } from "./transcript/subtitleImport";
 import { useApp } from "./store";
-import { safeDisplayText } from "./sanitize";
+import { backendDisplayName, safeDisplayText } from "./sanitize";
+import { backendLabels } from "./backends";
 import {
   currentRecord, patchRecord, setRecordForgetHook, upsertRecord, useTranscriptHistory, type TranscriptRecord,
 } from "./transcript/transcriptHistory";
@@ -1689,6 +1690,15 @@ export function ingestJobResult(
   return rec;
 }
 
+/** A configured backend as the doorway names it: the picker's label (`backendLabels`, so two
+ *  same-named backends carry their host suffix here as there). undefined once the id is gone —
+ *  the doorway then keeps its own "the backend". */
+function configuredBackendLabel(id: string): string | undefined {
+  const all = useApp.getState().backends;
+  const b = all.find((x) => x.id === id);
+  return b ? (backendLabels(all).get(b.id) ?? backendDisplayName(b.name, 80)) : undefined;
+}
+
 /** The re-attached run failed (server error, cancelled, or the server no
  *  longer knows it): a failed record, and — when it owns the rail — the
  *  queue row settles with the reason, the doorway banner names it. */
@@ -1709,8 +1719,7 @@ export function failJob(row: LedgerRow, error: string, opts: { attached: boolean
   if (opts.attached) {
     // Not a transport failure (the server lost, refused or cancelled the job, or we
     // gave up): name the reason itself — nothing was logged, so no Logs button.
-    const backendName = useApp.getState().backends.find((b) => b.id === row.backendId)?.name;
-    const label = doorwayBackendLabel(backendName);
+    const label = doorwayBackendLabel(configuredBackendLabel(row.backendId));
     useApp.getState().setLogsDoorway({
       msg: `The run on ${label} did not finish: ${safeDisplayText(error, 200)}`,
       showLogs: false,
@@ -2264,11 +2273,10 @@ async function pump(
         // translate stage, so it toasts as a translation failure. A run handed
         // to its headless watcher gets no "try again": a retry stops that
         // watcher and deletes the server job that would land in History.
-        const backendName =
-          useApp.getState().backends.find((b) => b.id === ctx.backendId)?.name ?? "the backend";
+        const backendLabel = configuredBackendLabel(ctx.backendId) ?? "the backend";
         const kind = isText ? "translate" : "transcribe";
         useApp.getState().setLogsDoorway(
-          handedOff ? handedOffDoorway(kind, backendName) : transportErrorDoorway(kind, e, backendName),
+          handedOff ? handedOffDoorway(kind, backendLabel) : transportErrorDoorway(kind, e, backendLabel),
         );
       } finally {
         pollingDone = true;
