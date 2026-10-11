@@ -199,6 +199,12 @@ export function safeIdentityText(s: unknown, max = 80): string {
   return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
 }
 
+/** The name a profile or backend is shown under. A synced name that is blank, only spaces or only
+ *  invisible characters renders as nothing, so it reads as the label a local save would have stored
+ *  instead ("Untitled profile" / "Untitled backend") — one rule for every list, notice and chip. */
+export const profileDisplayName = (name: unknown, max = 80): string => safeIdentityText(name, max) || "Untitled profile";
+export const backendDisplayName = (name: unknown, max = 80): string => safeIdentityText(name, max) || "Untitled backend";
+
 /** The comparison key of an app rule — how two `appId`s are judged to name the same app, for
  *  both the dedupe on save/merge and the injection-target matcher. One function so they cannot
  *  drift: a dedupe looser or stricter than the matcher saves two rules where one silently

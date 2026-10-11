@@ -13,7 +13,7 @@ import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/stats/UsageStats";
 import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/dictation/streaming";
-import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
+import { backendDisplayName, profileDisplayName, safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { plural } from "@/lib/format";
 import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
 import { effectiveLanguage } from "@/lib/backends";
@@ -22,7 +22,7 @@ import { shortModelName } from "@/lib/inherit";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { ownProp } from "@/lib/own";
 import { configuredRouteTargets } from "@/lib/dictation/chipController";
-import { langCode } from "@/lib/languages";
+import { langCode, routeSourceCode } from "@/lib/languages";
 import { pinnedName } from "@/lib/micOptions";
 import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 import type { Backend, Profile } from "@/lib/types";
@@ -66,13 +66,15 @@ function profileRoute(p: Profile | undefined, backend: Backend | undefined): str
 }
 
 /** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
- *  the row's narrow column; the full names ride on the cell's tooltip. */
+ *  the row's narrow column; the full names ride on the cell's tooltip. The source follows
+ *  routeSourceCode, the tray's rule, except that auto-detect reads lower-case "auto" as in the
+ *  long-form route tooltip. */
 function profileRouteShort(p: Profile | undefined, backend: Backend | undefined): string {
   // Sanitized BEFORE the empty check: a synced code of format characters only (U+200F) passes a
   // raw trim, then shows as a blank slot or a dangling comma.
   const code = (v: string) => langCode(v.trim(), 12).trim();
   const lang = effectiveLanguage(p?.language, backend?.language) ?? "";
-  const source = !lang || lang === "auto" ? "auto" : code(lang) || "??";
+  const source = !lang || lang === "auto" ? "auto" : routeSourceCode(lang);
   const targets = (configuredRouteTargets(p, backend) ?? [])
     .filter((t): t is string => typeof t === "string")
     .map(code)
@@ -103,7 +105,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   useApp((s) => (backend ? ownProp(s.caps, backend.id) : undefined));
   const Glyph = GLYPH[p.activation];
   // As the Profiles editor saves a blank name (and the Profiles list shows it).
-  const name = safeDisplayText(p.name, 80).trim() || "Untitled profile";
+  const name = profileDisplayName(p.name);
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
   // loads the server's DEFAULT_MODEL, so it is no name of its own (as on Profiles/Backends).
   const kind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
@@ -146,7 +148,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
       <div role="gridcell"><HotkeyChips codes={p.hotkey} /></div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={modelFull ? safeDisplayText(modelFull, 200) : undefined}>{model || "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
-      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${safeDisplayText(backend.name, 80)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
+      <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${backendDisplayName(backend.name)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
       <div role="gridcell" className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
         <Button variant="ghost" size="sm" title="Edit profile" onClick={() => navigate(`/profiles?edit=${p.id}`)}>
           <Pencil className="size-4" />
@@ -420,7 +422,7 @@ export default function Dashboard() {
               {vis.label}
             </div>
             <div className="mt-1 text-[16px] font-semibold text-text">
-              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : !enabled.length ? "Enable a profile to begin" : target ? `Press to dictate with ${safeDisplayText(target.name, 80).trim() || "Untitled profile"}` : "Press to dictate"}
+              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : !enabled.length ? "Enable a profile to begin" : target ? `Press to dictate with ${profileDisplayName(target.name)}` : "Press to dictate"}
             </div>
             <div className="mt-0.5 text-[12.5px] text-faint">
               {busy || enabled.length ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is." : "The button and the hotkeys stay off until a profile is enabled."}

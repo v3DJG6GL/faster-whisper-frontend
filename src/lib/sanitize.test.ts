@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appRuleKey, codeSlug, safeIdentityText, stripControlChars } from "./sanitize";
+import { appRuleKey, backendDisplayName, codeSlug, profileDisplayName, safeIdentityText, stripControlChars } from "./sanitize";
 
 describe("stripControlChars with an output bound", () => {
   it("normalises a lone CR and a CRLF without touching the text past the bound", () => {
@@ -43,6 +43,17 @@ describe("safeIdentityText", () => {
     expect(safeIdentityText("a".repeat(80) + " evil").endsWith("…")).toBe(true);
     expect(safeIdentityText("a".repeat(79) + " evil")).toBe("a".repeat(79) + "…");
     expect(safeIdentityText("  short  ")).toBe("short");
+  });
+});
+
+describe("profileDisplayName / backendDisplayName", () => {
+  it("names a blank or invisible-only name like a local save would", () => {
+    for (const blank of ["", "   ", "\u2800\u2800", "\u200b", undefined]) {
+      expect(profileDisplayName(blank)).toBe("Untitled profile");
+      expect(backendDisplayName(blank)).toBe("Untitled backend");
+    }
+    expect(profileDisplayName(" Work ")).toBe("Work");
+    expect(backendDisplayName("Work" + " ".repeat(100) + "Evil")).toBe("Work Evil");
   });
 });
 

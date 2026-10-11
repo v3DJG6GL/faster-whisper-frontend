@@ -40,7 +40,7 @@ import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { NO_OVERRIDE_PROFILE, type Profile, type TranslationOverrides } from "@/lib/types";
 import { cn } from "@/lib/cn";
-import { safeDisplayText } from "@/lib/sanitize";
+import { backendDisplayName, profileDisplayName, safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
 
 const ACTIVATION = {
@@ -159,6 +159,10 @@ function Editor({
   // The profile's OWN language as dictation resolves it (effectiveLanguage): a synced
   // whitespace-only value is no override, so it inherits rather than reading "??".
   const ownLang = p.language?.trim() ? p.language : "";
+  // Likewise the model and server override profile: dictation and save() read a
+  // whitespace-only value as unset, so the editor shows it inherited, not overridden.
+  const ownModel = p.model?.trim() ? p.model : "";
+  const ownOverrideProfile = p.overrideProfile?.trim() ? p.overrideProfile : "";
   const spoken = spokenField(ownLang, p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
   // own prompt, else the server's default prompt. Read through the backend's TRI-state —
@@ -252,7 +256,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={safeDisplayText(p.name, 80).trim() || "Untitled profile"}
+        title={profileDisplayName(p.name)}
         subtitle={
           <span className="inline-flex items-center gap-1.5">
             <Glyph className="size-3 text-accent" />
@@ -313,12 +317,12 @@ function Editor({
           {/* A duplicate clashes before any nesting exemption, so no activation change clears it. */}
           {liveClash.kind === "duplicate" ? (
             <>
-              Same shortcut as “{safeDisplayText(liveClash.name, 60).trim() || "another profile"}” — saving would pause
+              Same shortcut as “{profileDisplayName(liveClash.name, 60)}” — saving would pause
               all settings saves. Change the shortcut.
             </>
           ) : (
             <>
-              Overlaps the shortcut of “{safeDisplayText(liveClash.name, 60).trim() || "another profile"}” as{" "}
+              Overlaps the shortcut of “{profileDisplayName(liveClash.name, 60)}” as{" "}
               {ACTIVATION[p.activation].label} — saving would pause all settings saves.{" "}
               {flipClears ? "Change the shortcut or the activation." : "Change the shortcut."}
             </>
@@ -376,7 +380,7 @@ function Editor({
               {p.backendId
                 ? "The backend this profile used was deleted."
                 : "No backend picked for this profile."}{" "}
-              Dictation uses “{safeDisplayText(backend.name, 60).trim() || "your first backend"}” (your first
+              Dictation uses “{backendDisplayName(backend.name, 60)}” (your first
               backend) until you pick one.
             </Notice>
           )}
@@ -406,23 +410,28 @@ function Editor({
                               "??"
                           : undefined;
                       })()
-                    : // A format-only synced language reads "??", as on the Backends screen.
-                      safeDisplayText(spokenLabel(spokenValue(backend.language || "auto", undefined, multiInherited)), 40).trim() ||
+                    : // Named as dictation sends it (effectiveLanguage: a synced word like
+                      // "english" is "en"); a format-only synced language reads "??", as on the
+                      // Backends screen.
+                      safeDisplayText(
+                        spokenLabel(spokenValue(effectiveLanguage(undefined, backend.language) || "auto", undefined, multiInherited)),
+                        40,
+                      ).trim() ||
                       "??",
               )}
             />
           </div>
         </OverrideHeader>
-        <OverrideHeader title="DEFAULT_MODEL" desc={envDesc("DEFAULT_MODEL")} overridden={!!p.model}>
+        <OverrideHeader title="DEFAULT_MODEL" desc={envDesc("DEFAULT_MODEL")} overridden={!!ownModel}>
           <div className={OVERRIDE_CONTROL_W}>
             <ModelPicker
               ariaLabel="Model"
-              value={p.model ?? ""}
+              value={ownModel}
               onChange={(v) => set({ model: v || undefined })}
               models={models}
               defaultLabel={inheritLabel(
                 backendOwnModel ||
-                  (p.model ? undefined : safeDisplayText(decodeDefaults?.model ?? "", 60).trim()) ||
+                  (ownModel ? undefined : safeDisplayText(decodeDefaults?.model ?? "", 60).trim()) ||
                   (backend ? "server model" : undefined),
               )}
             />
@@ -481,14 +490,14 @@ function Editor({
             (backendId cleared), a stored overrideProfile still applies to the fallback backend at
             dictation time, so the user must be able to SEE and clear it. With no resolvable
             backend the picker degrades to its free-text path (serverKind "unknown"). */}
-        <OverrideHeader title="Server override profile" env={false} overridden={!!p.overrideProfile} last>
+        <OverrideHeader title="Server override profile" env={false} overridden={!!ownOverrideProfile} last>
           <div className={OVERRIDE_CONTROL_W}>
             <OverrideProfilePicker
               serverUrl={serverUrl}
               backendId={backend?.id ?? ""}
               serverKind={serverKind}
               canRequest={caps?.can_request_override_profile}
-              value={p.overrideProfile ?? ""}
+              value={ownOverrideProfile}
               inheritLabel={
                 backend?.overrideProfile?.trim() === NO_OVERRIDE_PROFILE
                   ? "Inherit · none"
@@ -773,7 +782,7 @@ function ProfileRow({
   const tag = safeDisplayText(p.tag ?? "", 40).trim();
   // As the editor's save stores a blank name: a synced whitespace- or format-only name
   // would otherwise leave a nameless row and an "Enable " switch.
-  const name = safeDisplayText(p.name, 80).trim() || "Untitled profile";
+  const name = profileDisplayName(p.name);
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
       <div className="flex items-center gap-4">
@@ -885,11 +894,12 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers = withQuickAddPeer(profiles, quickAddHotkey);
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
-  // `||` not `??`: safeDisplayText returns "" for a non-string, so the fallback still applies.
-  const nameOf = (id: string) =>
-    id === QUICK_ADD_PEER_ID
-      ? "Quick add"
-      : safeDisplayText(profiles.find((p) => p.id === id)?.name, 60).trim() || "another profile";
+  // A peer that is gone reads "another profile"; one with a blank name reads as its row does.
+  const nameOf = (id: string) => {
+    if (id === QUICK_ADD_PEER_ID) return "Quick add";
+    const other = profiles.find((p) => p.id === id);
+    return other ? profileDisplayName(other.name, 60) : "another profile";
+  };
   const conflictText = (id: string): string | null => {
     const list = conflicts.get(id);
     if (!list || list.length === 0) return null;
@@ -1011,7 +1021,7 @@ export default function Profiles() {
                   <ProfileRow
                     key={p.id}
                     p={p}
-                    backendName={b ? safeDisplayText(b.name, 80).trim() || "Untitled backend" : "No backend"}
+                    backendName={b ? backendDisplayName(b.name) : "No backend"}
                     backendId={b?.id}
                     backendLanguage={b?.language}
                     backendTargets={b?.translationOverrides?.translateTo}

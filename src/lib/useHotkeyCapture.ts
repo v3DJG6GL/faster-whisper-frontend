@@ -15,7 +15,7 @@
 // check against for conflicts (e.g. the Profiles), passed as Profile[].
 
 import { useEffect, useRef, useState } from "react";
-import { safeDisplayText } from "@/lib/sanitize";
+import { profileDisplayName } from "@/lib/sanitize";
 import { validateCodes, suspendShortcuts, reregisterShortcuts } from "./api";
 import {
   MODIFIER_CODES,
@@ -270,7 +270,7 @@ export function useHotkeyCapture(opts: {
       codes,
       clear: false,
       otherId: live.id,
-      otherName: safeDisplayText(live.name, 60).trim() || "another profile",
+      otherName: profileDisplayName(live.name, 60),
       kind: live.kind,
     };
   };

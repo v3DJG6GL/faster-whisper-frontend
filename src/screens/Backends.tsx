@@ -29,7 +29,7 @@ import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
 import { authorityOf, backendPrompt, backendPromptFields, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
-import { safeDisplayText, safeIdentityText } from "@/lib/sanitize";
+import { backendDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { credentialGeneration, forgetCaps, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
@@ -382,7 +382,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={safeIdentityText(b.name, 80) || "Untitled backend"}
+        title={backendDisplayName(b.name)}
         subtitle={
           chips.length ? (
             <span className="inline-flex items-center gap-1.5">
@@ -414,7 +414,7 @@ function Editor({
         <div className="flex flex-wrap items-center gap-3 py-3">
           <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-text">{safeIdentityText(b.name, 80) || "Untitled backend"}</div>
+            <div className="truncate text-[14px] font-medium text-text">{backendDisplayName(b.name)}</div>
             <div className="truncate font-mono text-[11.5px] text-faint">{safeIdentityText(effUrl, 120) || "no address yet"}</div>
           </div>
           <span className="rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim" title={conn?.error}>
@@ -1206,11 +1206,12 @@ export default function Backends() {
                               rename raises no security change, so a name arrives on this card from
                               an unattended pull with no prompt — and bidi marks in it can make one
                               server read as another on the screen used to check where audio goes. */}
-                          {/* `safeIdentityText`, like the address line below: the display filter
-                              truncates with no marker and leaves whitespace runs to CSS, so
+                          {/* `safeIdentityText` (via backendDisplayName), like the address line
+                              below: the display filter truncates with no marker and leaves
+                              whitespace runs to CSS, so
                               `"Work" + 100 spaces + "Evil"` renders as exactly `Work` on the very
                               card this comment calls the audit surface. */}
-                          {safeIdentityText(b.name, 80) || "Untitled backend"}
+                          {backendDisplayName(b.name)}
                         </span>
                         <Badge tone="accent">{b.endpoint}</Badge>
                         {/* "" = the backend leaves the language to the server. A set language that

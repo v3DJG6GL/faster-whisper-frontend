@@ -426,7 +426,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             intro={startersIntro}
             onConfirm={(drafts) => {
               const s = st.getState();
-              for (const p of drafts) s.upsertProfile(p);
+              // Stored as the Profiles editor's save() stores it: a cleared name is "Untitled profile".
+              for (const p of drafts) s.upsertProfile({ ...p, name: p.name.trim() || "Untitled profile" });
               // After a restore that pinned a quick-add list, finish: the step would re-ask (and
               // could overwrite) what just arrived. Read from the store, not the blob's
               // categories: the apply lands a pin only when its backend came along.
