@@ -512,7 +512,7 @@ export function Stepper({
   // shows `min` (often 0) only as a placeholder, not as a value the user set to "off".
   const showZero = !focused && zeroLabel != null && value === 0 && !showInheritedText;
   const btn =
-    "ring-signal grid h-full w-9 shrink-0 place-items-center text-dim transition-colors hover:bg-line/40 hover:text-text disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
+    "ring-signal grid h-full shrink-0 place-items-center text-dim transition-colors hover:bg-line/40 hover:text-text disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
 
   return (
     <div
@@ -538,7 +538,7 @@ export function Stepper({
             stepBy(-step);
           }
         }}
-        className={btn}
+        className={cn(btn, "w-9")}
       >
         <Minus className="size-4" />
       </button>
@@ -605,7 +605,7 @@ export function Stepper({
             stepBy(step);
           }
         }}
-        className={btn}
+        className={cn(btn, "w-9")}
       >
         <Plus className="size-4" />
       </button>
