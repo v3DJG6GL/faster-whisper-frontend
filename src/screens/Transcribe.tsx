@@ -13,7 +13,7 @@ import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTar
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
-import { languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
+import { langText, languageCodeOf, namedLanguage, offersMultilingual, spokenField } from "@/lib/languages";
 import { ModelPicker } from "@/components/ModelPicker";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { pruneTargets, seedTargets, translationRunOptions, wireCodes } from "@/lib/translationTargets";
@@ -57,7 +57,7 @@ import { prefersReducedMotion } from "@/lib/theme";
 import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 import {
   NO_OVERRIDE_PROFILE,
-  type BatchProgress, type DecodeOverrides, type TranscribeOptions,
+  type Backend, type BatchProgress, type DecodeOverrides, type TranscribeOptions, type TranscribeSettings,
 } from "@/lib/types";
 import { OtherTranslateRuns } from "@/components/transcribe/OtherTranslateRuns";
 import { RungPicker } from "@/components/transcribe/RungPicker";
@@ -97,14 +97,14 @@ function recentMeta(rec: TranscriptRecord): string {
     parts.push(`${day} ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`);
   }
   if (rec.result?.duration) parts.push(fmtDurationExact(rec.result.duration));
-  // Gate on the sanitized text, as History does: a format-only code would
-  // otherwise leave a dangling " · " (or a count History hides).
-  const lang = safeDisplayText(rec.language ?? "", 12).trim();
+  // Gate on the sanitized text, as History does: a format-only (or joiner-only)
+  // code would otherwise leave a dangling " · " (or a count History hides).
+  const lang = langText(rec.language ?? "", 12).trim();
   if (lang) parts.push(lang);
   const spk = rec.result ? speakersOf(rec.result).length : 0;
   if (spk > 1) parts.push(`${spk} speakers`);
   const trLangs = (rec.result?.translation?.targets ?? []).filter((t) =>
-    safeDisplayText(t, 12).trim(),
+    langText(t, 12).trim(),
   ).length;
   if (trLangs > 0) parts.push(plural(trLangs, "translation"));
   return parts.join(" · ");
@@ -162,7 +162,41 @@ function axisTextWidth(text: string): number {
   return axisMeasureCtx.measureText(text).width + text.length * 0.32;
 }
 
+/** The stored backend pick, only while that backend still exists — model, language and the
+ *  translation model ride on it. */
+function savedBackendOf(t: TranscribeSettings | undefined, backends: readonly Backend[]): string | undefined {
+  const id = t?.backendId;
+  return id && backends.some((b) => b.id === id) ? id : undefined;
+}
 
+/** The screen's persisted options as it seeds them from `settings.transcribe` — ONE set of rules
+ *  for the mount's useState initializers and the re-sync effect's re-seed, so the two cannot
+ *  drift (each rule is explained at its useState). */
+function seedTranscribe(t: TranscribeSettings | undefined, backends: readonly Backend[]) {
+  const saved = savedBackendOf(t, backends);
+  const backendId = saved ?? backends[0]?.id ?? "";
+  const speakerMode: NonNullable<TranscribeSettings["speakerMode"]> =
+    t?.speakerMode || ((t?.numSpeakers ?? 0) > 0 ? "count" : "auto");
+  const translationMode: NonNullable<TranscribeSettings["translationMode"]> = t?.translationMode ?? "fluent";
+  return {
+    backendId,
+    language: effectiveLanguage(
+      undefined,
+      (saved ? t?.language : undefined) ?? backends.find((b) => b.id === backendId)?.language ?? "auto",
+    ),
+    model: saved ? (t?.model?.trim() ?? "") : "",
+    diarize: t?.diarize,
+    speakerMode,
+    numSpeakers: Math.min(32, Math.max(1, t?.numSpeakers || 2)),
+    minSpeakers: Math.min(32, Math.max(1, t?.minSpeakers || 2)),
+    maxSpeakers: Math.min(32, Math.max(1, t?.maxSpeakers || 4)),
+    translate: t?.translate ?? false,
+    translateTo: wireCodes(t?.translateTo),
+    translationModel: saved ? (t?.translationModel?.trim() ?? "") : "",
+    translationMode,
+    separateBgm: t?.separateBgm,
+  };
+}
 
 export default function Transcribe() {
   // History's "Save audio…/Save video…" open the workbench straight onto the
@@ -192,30 +226,20 @@ export default function Transcribe() {
   // Backend/model/language picks persist in settings.transcribe (they were
   // component state before, so leaving the screen reset them). The saved pick
   // only applies while that backend still exists; model/language (and the translation model
-  // below) ride on it.
-  const savedBackend =
-    settings.transcribe?.backendId &&
-    backends.some((b) => b.id === settings.transcribe?.backendId)
-      ? settings.transcribe.backendId
-      : undefined;
-  const [backendId, setBackendId] = useState(savedBackend ?? backends[0]?.id ?? "");
+  // below) ride on it (savedBackendOf). Every persisted option below is seeded once through
+  // seedTranscribe — the re-sync effect re-seeds through it too.
+  const [seed] = useState(() => seedTranscribe(settings.transcribe, backends));
+  const [backendId, setBackendId] = useState(seed.backendId);
   // Coded at ingress the way dictation codes it (effectiveLanguage: trimmed, a word as its code,
   // a whitespace-only value kept): a synced Backend's word language ("english") or padded code
   // (" de ") — or one persisted before this — would reach the spoken picker, the request and the
   // link's site-subtitle match raw.
-  const [language, setLanguage] = useState(() =>
-    effectiveLanguage(
-      undefined,
-      (savedBackend ? settings.transcribe?.language : undefined) ??
-        backends.find((b) => b.id === (savedBackend ?? backends[0]?.id))?.language ??
-        "auto",
-    ),
-  );
+  const [language, setLanguage] = useState(seed.language);
   // "" = use the Backend's configured model; anything else is a per-run pick
   // from the models the server advertised on the last connection test. Trimmed at the seed (the
   // persisted pick may be synced): a whitespace-only one is no pick, so the overridden dot, the
   // reset and the default-model label agree with the run, which sends the Backend's model.
-  const [model, setModel] = useState(savedBackend ? (settings.transcribe?.model?.trim() ?? "") : "");
+  const [model, setModel] = useState(seed.model);
   // Run state lives in the transcribeRun store so it (and the pump driving
   // it) survives this screen unmounting on a tab switch.
   const files = useTranscribeRun((s) => s.files);
@@ -231,43 +255,27 @@ export default function Transcribe() {
   const [vadNoticeDismissed, setVadNoticeDismissed] = useState<string | null>(null);
   // Per-run stage options, seeded from the persisted screen defaults.
   // undefined = the server's default (request-default-settings `diarize`), shown as "Default · …".
-  const [diarize, setDiarize] = useState<boolean | undefined>(() => settings.transcribe?.diarize);
+  const [diarize, setDiarize] = useState<boolean | undefined>(seed.diarize);
   // Speaker count as an explicit MODE (auto / count / range) instead of a
   // stepper whose 0 doubles as "auto" — one accidental "−" click used to flip
   // the mode silently and persist. Legacy blobs have no speakerMode: a pinned
   // numSpeakers means "count" there.
-  const [speakerMode, setSpeakerMode] = useState<"auto" | "count" | "range">(() => {
-    const t = settings.transcribe;
-    if (t?.speakerMode) return t.speakerMode;
-    return (t?.numSpeakers ?? 0) > 0 ? "count" : "auto";
-  });
-  const [numSpeakers, setNumSpeakers] = useState(() =>
-    Math.min(32, Math.max(1, settings.transcribe?.numSpeakers || 2)),
-  );
-  const [minSpeakers, setMinSpeakers] = useState(() =>
-    Math.min(32, Math.max(1, settings.transcribe?.minSpeakers || 2)),
-  );
-  const [maxSpeakers, setMaxSpeakers] = useState(() =>
-    Math.min(32, Math.max(1, settings.transcribe?.maxSpeakers || 4)),
-  );
-  const [translate, setTranslate] = useState(() => settings.transcribe?.translate ?? false);
+  const [speakerMode, setSpeakerMode] = useState<"auto" | "count" | "range">(seed.speakerMode);
+  const [numSpeakers, setNumSpeakers] = useState(seed.numSpeakers);
+  const [minSpeakers, setMinSpeakers] = useState(seed.minSpeakers);
+  const [maxSpeakers, setMaxSpeakers] = useState(seed.maxSpeakers);
+  const [translate, setTranslate] = useState(seed.translate);
   // T2T targets ([] = off) + sticky model and mode picks (all persisted via
   // persistOptions; the server default for mode is "fluent"). Seeded through wireCodes: the
   // stored list is synced, and the chips, the site panel's parts and the run read this one list.
-  const [translateTo, setTranslateTo] = useState<string[]>(
-    () => wireCodes(settings.transcribe?.translateTo),
-  );
+  const [translateTo, setTranslateTo] = useState<string[]>(seed.translateTo);
   // The translation-model pick names a model on the saved backend's server, so it rides on
   // savedBackend like model/language (a deleted or unresolved backend must not hand its model to
   // backends[0]). Trimmed at the seed for the same reason as the Whisper model: the stored value
   // is synced, and a whitespace-only pick is no pick, so the picker's custom note and reset agree
   // with effectiveTranslationModel, which sends the inherited model.
-  const [translationModel, setTranslationModel] = useState(() =>
-    savedBackend ? (settings.transcribe?.translationModel?.trim() ?? "") : "",
-  );
-  const [translationMode, setTranslationMode] = useState<"fluent" | "faithful">(
-    () => settings.transcribe?.translationMode ?? "fluent",
-  );
+  const [translationModel, setTranslationModel] = useState(seed.translationModel);
+  const [translationMode, setTranslationMode] = useState<"fluent" | "faithful">(seed.translationMode);
   // Per-run stage-model overrides ("" = server default) — runOverrides-style,
   // deliberately not persisted.
   const [diarizationModel, setDiarizationModel] = useState("");
@@ -276,7 +284,7 @@ export default function Transcribe() {
   // two translation mechanisms are mutually exclusive). Cleared on interaction.
   const [translateExclNotice, setTranslateExclNotice] = useState<"whisper" | "t2t" | null>(null);
   // undefined = the server's default (request-default-settings `separate_bgm`).
-  const [separateBgm, setSeparateBgm] = useState<boolean | undefined>(() => settings.transcribe?.separateBgm);
+  const [separateBgm, setSeparateBgm] = useState<boolean | undefined>(seed.separateBgm);
   // Each stage's folded settings: the gear beside its switch and the panel share one state.
   const bgmOptions = useStageOptions();
   const diarizeOptions = useStageOptions();
@@ -358,7 +366,11 @@ export default function Transcribe() {
   // sync pull or an import replaces it — fills it in. Re-sync the selection whenever the
   // current id isn't in the list (on the very first hydration `backendId` is still "", so this
   // branch also seeds the initial pick), so the Backend dropdown and language don't reference
-  // a backend that's gone.
+  // a backend that's gone. When the stored pick resolves (that hydration — the screen mounted on
+  // the empty boot store, every option seeded from nothing — or a pulled pick) it RE-SEEDS from
+  // the store and persists nothing: the store already holds those picks, and applyBackendPick's
+  // clears would wipe that very backend's model, language, translation model and targets. Only a
+  // fallback to backends[0] (no stored pick, or its backend is gone) is a real switch.
   // Every pick that names something on ONE server: the per-run whisper model,
   // a server override-profile, and the three stage-model ids. They must all
   // fall away together whenever the backend under the screen changes, or the
@@ -372,7 +384,7 @@ export default function Transcribe() {
     setTranslationModel("");
     setRunContextSegments(undefined); // its inherited value is the new server's
   };
-  // ONE path for every backend change — the dropdown and the auto-resync above share it, so
+  // ONE path for every backend change — the dropdown and the auto-resync's fallback share it, so
   // they can't drift: the effect used to skip the run reset, the target prune and the language
   // persist, so a hydrated list left `settings.transcribe.language` on the OLD backend's
   // language (which snapped back on the next mount). The persist CLEARS the stored language
@@ -398,7 +410,32 @@ export default function Transcribe() {
       // effect fires on store changes (applyBlob, conflict resolution) with no such gate.
       const isRunning = queue.some((it) => it.status === "running" || it.status === "queued");
       if (isRunning) return;
-      applyBackendPick(savedBackend ?? backends[0].id);
+      const t = useApp.getState().settings.transcribe;
+      if (!savedBackendOf(t, backends)) {
+        applyBackendPick(backends[0].id);
+        return;
+      }
+      const s = seedTranscribe(t, backends);
+      resetForInputChange();
+      setBackendId(s.backendId);
+      setTranslateExclNotice(null);
+      // The run-only picks named the old server; the persisted ones come back from the store.
+      setRunOverrideProfile("");
+      setSeparationModel("");
+      setDiarizationModel("");
+      setRunContextSegments(undefined);
+      setModel(s.model);
+      setLanguage(s.language);
+      setTranslationModel(s.translationModel);
+      setTranslateTo(s.translateTo);
+      setDiarize(s.diarize);
+      setSpeakerMode(s.speakerMode);
+      setNumSpeakers(s.numSpeakers);
+      setMinSpeakers(s.minSpeakers);
+      setMaxSpeakers(s.maxSpeakers);
+      setTranslate(s.translate);
+      setTranslationMode(s.translationMode);
+      setSeparateBgm(s.separateBgm);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- the resets are stable setters
   }, [backends, backendId, queue]);
@@ -2941,7 +2978,7 @@ export default function Transcribe() {
                         // would otherwise open on a stray " · ".
                         const parts: string[] = [];
                         if (it.result.duration) parts.push(fmtDurationExact(it.result.duration));
-                        const lang = safeDisplayText(it.result.language ?? "", 12).trim();
+                        const lang = langText(it.result.language ?? "", 12).trim();
                         if (lang) parts.push(lang);
                         const spk = speakersOf(it.result).length;
                         if (spk) parts.push(plural(spk, "speaker"));

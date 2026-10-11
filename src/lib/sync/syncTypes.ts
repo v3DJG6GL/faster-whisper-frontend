@@ -192,7 +192,8 @@ export type SyncLogging = Partial<
 
 /** The per-machine-by-default Transcribe picks behind the sub-toggle. The translation-model
  *  pick names a model on the saved backend's server (Transcribe seeds it only under that
- *  backend and clears it on a backend change), so it travels with backendId, never alone. */
+ *  backend and clears it on a backend change), so it travels with backendId, never alone.
+ *  sanitizeTranscription and applyBlob's clear-on-backend-pick iterate this list. */
 export const TRANSCRIPTION_PICK_FIELDS = [
   "backendId",
   "model",

@@ -1097,7 +1097,7 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
   }
   // The sub-toggle-gated picks: free strings, bounded. backendId is only a
   // reference — the Transcribe screen ignores ids that don't resolve.
-  for (const k of ["backendId", "model", "language", "translationModel"]) {
+  for (const k of TRANSCRIPTION_PICK_FIELDS) {
     const str = ownProp(v, k);
     if (typeof str === "string" && str.length <= 256) out[k] = str;
   }
@@ -1645,8 +1645,8 @@ export async function applyBlob(
       // Omission is read on the RAW picks: a carried-but-malformed value keeps local, as the
       // sanitizer promises.
       if (typeof pulled.backendId === "string") {
-        for (const k of ["model", "language", "translationModel"] as const) {
-          if (!hasOwn(picks, k)) delete transcribe[k];
+        for (const k of TRANSCRIPTION_PICK_FIELDS) {
+          if (k !== "backendId" && !hasOwn(picks, k)) delete transcribe[k];
         }
       }
       nextSettings = { ...nextSettings, transcribe };

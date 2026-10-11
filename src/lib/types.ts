@@ -408,10 +408,10 @@ export interface SyncSettings {
 
 /** Persisted defaults for the Transcribe screen's per-run options. */
 export interface TranscribeSettings {
-  /** Last-used backend/model/language picks, restored when the screen mounts
-   *  (they were plain component state before — reset on every tab switch).
-   *  `model` "" = the Backend's configured model; both only apply while
-   *  `backendId` still exists. */
+  /** Last-used backend/model/language/translation-model picks, restored when
+   *  the screen mounts (they were plain component state before — reset on
+   *  every tab switch). `model` "" = the Backend's configured model; model,
+   *  language and translationModel only apply while `backendId` still exists. */
   backendId?: string;
   model?: string;
   language?: string;
@@ -432,7 +432,9 @@ export interface TranscribeSettings {
   /** T2T target language codes (the translating stage). Mutually exclusive
    *  with `translate` — when both survive a sync race, translateTo wins. */
   translateTo?: string[];
-  /** Sticky T2T model pick; "" = the server's default translation model. */
+  /** Last-used T2T model pick on the saved backend (`backendId`): cleared on a
+   *  backend pick and synced with the other picks (TRANSCRIPTION_PICK_FIELDS);
+   *  "" = the server's default translation model. */
   translationModel?: string;
   /** Sticky T2T mode pick; absent = "fluent" (the server's default). */
   translationMode?: "fluent" | "faithful";
