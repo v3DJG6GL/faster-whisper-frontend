@@ -561,6 +561,10 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(tr?.backendId).toBe("bY");
     expect(tr?.model).toBe("");
     expect(tr && "language" in tr).toBe(false);
+    // Carried but malformed: dropped by the sanitizer, the local pick stands.
+    useApp.setState({ settings: { ...settings(), transcribe: { backendId: "bX", language: "de" } } });
+    await applyBlob({ transcription: { backendId: "bY", language: 7 } as never }, CATS_ALL, 2, { ignoreGates: true });
+    expect(useApp.getState().settings.transcribe?.language).toBe("de");
     // No backendId in the blob: nothing to clear against, the local picks stand.
     useApp.setState({ settings: { ...settings(), transcribe: { backendId: "bX", language: "de" } } });
     await applyBlob({ transcription: { model: "x" } as never }, CATS_ALL, 2, { ignoreGates: true });

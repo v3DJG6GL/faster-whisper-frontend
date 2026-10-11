@@ -1642,9 +1642,11 @@ export async function applyBlob(
       // (an untouched one follows the Backend's) and JSON drops the undefined key, so a pick the
       // blob does not carry beside a carried backendId is cleared here too — merged over, this
       // device's old backend's language would stay pinned under the new backend and push back.
+      // Omission is read on the RAW picks: a carried-but-malformed value keeps local, as the
+      // sanitizer promises.
       if (typeof pulled.backendId === "string") {
         for (const k of ["model", "language", "translationModel"] as const) {
-          if (!hasOwn(pulled, k)) delete transcribe[k];
+          if (!hasOwn(picks, k)) delete transcribe[k];
         }
       }
       nextSettings = { ...nextSettings, transcribe };
