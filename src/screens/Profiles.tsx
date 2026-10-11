@@ -23,7 +23,7 @@ import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
+import { namedLanguage, offersMultilingual, spokenField, spokenText, spokenValue } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { conflictsByProfile, findChordConflict, QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
@@ -160,8 +160,10 @@ function Editor({
   // whitespace-only value is no override, so it inherits rather than reading "??".
   const ownLang = p.language?.trim() ? p.language : "";
   // Likewise the model and server override profile: dictation and save() read a
-  // whitespace-only value as unset, so the editor shows it inherited, not overridden.
-  const ownModel = p.model?.trim() ? p.model : "";
+  // whitespace-only value as unset, so the editor shows it inherited, not overridden. The model
+  // shows trimmed, as dictation sends it: a synced " small " is the listed model, not a custom
+  // one the picker's blur would rewrite.
+  const ownModel = p.model?.trim() ?? "";
   const ownOverrideProfile = p.overrideProfile?.trim() ? p.overrideProfile : "";
   const spoken = spokenField(ownLang, p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
@@ -407,13 +409,9 @@ function Editor({
                       // folding the inherited multilingual flag like the branch below.
                       serverLanguageLabel(decodeDefaults, multiInherited)
                     : // Named as dictation sends it (effectiveLanguage: a synced word like
-                      // "english" is "en"); a format-only synced language reads "??", as on the
-                      // Backends screen.
-                      safeDisplayText(
-                        spokenLabel(spokenValue(effectiveLanguage(undefined, backend.language) || "auto", undefined, multiInherited)),
-                        40,
-                      ).trim() ||
-                      "??",
+                      // "english" is "en"); a format- or joiner-only synced language reads "??",
+                      // as on the Backends screen and the route badge.
+                      spokenText(spokenValue(effectiveLanguage(undefined, backend.language) || "auto", undefined, multiInherited), 40),
               )}
             />
           </div>
@@ -781,7 +779,7 @@ function ProfileRow({
   // would otherwise leave a nameless row and an "Enable " switch.
   const name = profileDisplayName(p.name);
   return (
-    <Card className={cn("p-5", conflictText && "border-warn/40")}>
+    <Card edge={conflictText ? "warn" : undefined} className="p-5">
       <div className="flex items-center gap-4">
         <ReorderControls canUp={canUp} canDown={canDown} onUp={onMoveUp} onDown={onMoveDown} />
         <div
@@ -891,8 +889,6 @@ export default function Profiles() {
   // surfaces now agree.
   const conflictPeers = withQuickAddPeer(profiles, quickAddHotkey);
   const conflicts = conflictsByProfile(conflictPeers, !lowLevelActive);
-  // Each row names its backend as the editor's picker does (`backendLabel`): two backends of
-  // one name carry their host suffix here too, or the list cannot say which server gets the audio.
   // A peer that is gone reads "another profile"; one with a blank name reads as its row does.
   const nameOf = (id: string) => {
     if (id === QUICK_ADD_PEER_ID) return "Quick add";
@@ -979,7 +975,7 @@ export default function Profiles() {
             backends.length > 0 && !startersDismissed ? (
               // Checklist path: suggest the starter pair as amber-edged drafts on the
               // screen the user will manage them on forever. Created only on Keep.
-              <Card className="border-accent/40 p-5">
+              <Card edge="accent" className="p-5">
                 <div className="text-[13.5px] font-semibold text-text">Suggested starters</div>
                 <div className="mt-0.5 text-[12.5px] text-dim">
                   Push-to-talk (hold <HotkeyChips codes={["ControlLeft", "ShiftLeft"]} />) and Hands-free
@@ -1014,7 +1010,9 @@ export default function Profiles() {
             <div className="flex flex-col gap-3">
               {profiles.map((p, i) => {
                 // Resolved once: a bound/fallback backend whose name sanitizes to blank is still
-                // the one dictation uses — "No backend" only when there is none.
+                // the one dictation uses — "No backend" only when there is none. Each row names its
+                // backend as the editor's picker does (`backendLabel`): two backends of one name
+                // carry their host suffix here too, or the list cannot say which server gets the audio.
                 const b = backendForProfile(p, backends);
                 return (
                   <ProfileRow

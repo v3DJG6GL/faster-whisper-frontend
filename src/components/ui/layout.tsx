@@ -7,11 +7,32 @@ import { Button } from "@/components/ui/buttons";
 import { Segmented, Select, Toggle } from "@/components/ui/form";
 
 /* ── Card ─────────────────────────────────────────────────────────────── */
-export function Card({ className, children }: { className?: string; children: ReactNode }) {
+export function Card({
+  className,
+  edge,
+  faint,
+  children,
+}: {
+  className?: string;
+  /** The border colour. A choice, not a className override: cn is clsx (no merge) and the built
+   *  CSS emits border-line after most border colours, so an appended one would lose. */
+  edge?: "accent" | "warn" | "strong";
+  /** A faded backdrop (bg-surface/40) instead of the solid one — same reason. */
+  faint?: boolean;
+  children: ReactNode;
+}) {
   return (
     <div
       className={cn(
-        "relative rounded-card border border-line bg-surface/80 backdrop-blur-sm",
+        "relative rounded-card border backdrop-blur-sm",
+        edge === "accent"
+          ? "border-accent/40"
+          : edge === "warn"
+            ? "border-warn/40"
+            : edge === "strong"
+              ? "border-line-strong"
+              : "border-line",
+        faint ? "bg-surface/40" : "bg-surface/80",
         className,
       )}
     >

@@ -47,9 +47,12 @@ import { QuickLaunchEditor } from "@/components/settings/QuickLaunchEditor";
 /** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
 function fmtBytes(n: number): string {
   if (n <= 0) return "0 KB"; // the floor below is for a sub-512-byte FILE, never for nothing
-  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
-  if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
-  return `${Math.max(1, Math.round(n / 1024))} KB`;
+  // The unit follows the ROUNDED value: 1023.6 MiB reads "1.0 GB", never "1024 MB".
+  const mb = Math.round(n / 1024 ** 2);
+  if (n >= 1024 ** 3 || mb >= 1024) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${mb} MB`;
+  const kb = Math.max(1, Math.round(n / 1024));
+  return kb >= 1024 ? "1 MB" : `${kb} KB`;
 }
 
 /** Link-download video height caps. A synced value outside this list (sync accepts any

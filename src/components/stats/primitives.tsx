@@ -38,10 +38,12 @@ export function Pill({ children }: { children: ReactNode }) {
   );
 }
 
-/** A panel card with the mockup's header row: eyebrow · spacer · right slot. */
+/** A panel card with the mockup's header row: eyebrow · spacer · right slot. `className` replaces
+ *  the default spacing (mt-3.5 px-4 pb-3 pt-3.5), so pass the full set: cn is clsx (no merge) and
+ *  the built CSS can emit the default after the override. */
 export function Panel({ title, right, children, className }: { title: ReactNode; right?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <Card className={cn("mt-3.5 px-4 pb-3 pt-3.5", className)}>
+    <Card className={className ?? "mt-3.5 px-4 pb-3 pt-3.5"}>
       <div className="mb-2 flex flex-wrap items-center gap-2.5">
         <Eyebrow>{title}</Eyebrow>
         <span className="flex-1" />

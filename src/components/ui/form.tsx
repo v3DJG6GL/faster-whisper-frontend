@@ -228,14 +228,20 @@ export function RangeField({
 }
 
 /* ── Inputs ───────────────────────────────────────────────────────────── */
-export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
-  function TextInput({ className, ...props }, ref) {
+/** `set` draws the accent edge of a field that holds its own value (an override). A choice, not a
+ *  className border: cn is clsx (no merge) and the built CSS emits border-line after
+ *  border-accent/55, so an appended one would lose. */
+type SetProp = { set?: boolean };
+
+export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement> & SetProp>(
+  function TextInput({ className, set, ...props }, ref) {
     return (
       <input
         ref={ref}
         className={cn(
-          "ring-signal h-10 w-full rounded-xl border border-line bg-surface-2 px-3.5 text-[13px] text-text",
+          "ring-signal h-10 w-full rounded-xl border bg-surface-2 px-3.5 text-[13px] text-text",
           "placeholder:text-faint",
+          set ? "border-accent/55" : "border-line",
           className,
         )}
         {...props}
@@ -244,14 +250,15 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
   },
 );
 
-export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(
-  function TextArea({ className, ...props }, ref) {
+export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement> & SetProp>(
+  function TextArea({ className, set, ...props }, ref) {
     return (
       <textarea
         ref={ref}
         className={cn(
-          "ring-signal w-full resize-none rounded-xl border border-line bg-surface-2 px-3.5 py-2.5 text-[13px] text-text",
+          "ring-signal w-full resize-none rounded-xl border bg-surface-2 px-3.5 py-2.5 text-[13px] text-text",
           "placeholder:text-faint",
+          set ? "border-accent/55" : "border-line",
           className,
         )}
         {...props}

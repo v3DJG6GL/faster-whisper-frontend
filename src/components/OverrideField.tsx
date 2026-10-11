@@ -201,7 +201,8 @@ export function OverrideText({
     disabled: disabled || !!fixedLabel,
     placeholder,
     spellCheck: false,
-    className: cn(value !== undefined && !fixedLabel && "border-accent/55", className),
+    set: value !== undefined && !fixedLabel,
+    className,
   };
   return rows && rows > 1 ? (
     <TextArea

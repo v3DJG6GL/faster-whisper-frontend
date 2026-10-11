@@ -174,7 +174,7 @@ export function DecodeFields({
           spellCheck={false}
           value={fixedLabel || cur === undefined ? "" : String(cur)}
           placeholder={fixedLabel ?? inheritLabel(inh, inheritWord)}
-          className={cur !== undefined && !fixedLabel ? "border-accent/55" : undefined}
+          set={cur !== undefined && !fixedLabel}
           onChange={(e) => {
             // A ladder stored before (e.g. synced from a full backend) can still be edited down on
             // a standard server, never grown: parseLadderInput lets `prev` only shrink.

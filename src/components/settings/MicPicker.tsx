@@ -179,6 +179,7 @@ export function MicPicker({
         ref={triggerRef}
         aria-haspopup="listbox"
         aria-expanded={open}
+        open={open}
         aria-controls={open ? `${uid}-list` : undefined}
         aria-label={`Microphone: ${view.triggerLabel}`}
         disabled={disabled}

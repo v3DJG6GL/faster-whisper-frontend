@@ -11,7 +11,7 @@ import { KeyHint, ListPicker, type TriggerProps } from "@/components/ListPicker"
 import { FieldTrigger } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import {
-  WHISPER_LANGUAGES, languageCodeOf, languageLabel, namedLanguage, nativeName, spokenLabel, spokenSections, targetSections,
+  WHISPER_LANGUAGES, languageCodeOf, languageLabel, namedLanguage, nativeName, spokenSections, spokenText, targetSections,
   toggleCode, untestedTitle, type LangRow,
 } from "@/lib/languages";
 import { cleanRecent, rememberRecent } from "@/lib/recent";
@@ -107,9 +107,9 @@ export function SpokenLanguagePicker({
   const { recent, use, flush } = useRecent("recentSpokenLanguages");
   // Bounded: `value` and `inheritLabel` can be synced or server-sent, and an unknown code is
   // shown as-is (`languageLabel`) — strip bidi/format marks and cap it like the Backends readout.
-  // A set value that sanitizes to blank is still sent, so it reads "??" (as the Backends badge).
-  const labelOf = (v: string) =>
-    v === "" ? safeDisplayText(inheritLabel ?? "Inherit", 40) : safeDisplayText(spokenLabel(v), 40).trim() || "??";
+  // A set value that sanitizes to blank (joiners too) is still sent, so it reads "??" (as the
+  // Backends badge and the route badge).
+  const labelOf = (v: string) => (v === "" ? safeDisplayText(inheritLabel ?? "Inherit", 40) : spokenText(v, 40));
   // A synced word ("english") reads and ticks as its code's row, as it is sent
   // (effectiveLanguage); the stored value only changes on a pick. A whitespace-only value stays
   // as given (it is still sent, so it reads "??", not the inherit row).
@@ -229,9 +229,11 @@ export function TargetLanguagePicker({
               disabled={disabled}
               aria-disabled={p.disabled || undefined}
               aria-label={full && !anyFree ? `Add a target language — ${fullTitle}` : "Add a target language"}
+              // One border/text set, chosen: cn is clsx (no merge) and the built CSS emits
+              // border-line-strong after border-accent/55, so an appended open state would lose.
               className={cn(
-                "ring-signal h-7 rounded-pill border border-dashed border-line-strong px-2.5 text-[11.5px] text-dim hover:text-text",
-                p["aria-expanded"] && "border-accent/55 text-text",
+                "ring-signal h-7 rounded-pill border border-dashed px-2.5 text-[11.5px] hover:text-text",
+                p["aria-expanded"] ? "border-accent/55 text-text" : "border-line-strong text-dim",
                 p.disabled && "cursor-not-allowed opacity-50",
               )}
             >

@@ -296,7 +296,7 @@ function RuleRow({ r, onEdit, onRemove }: { r: AppRule; onEdit: () => void; onRe
         .filter(Boolean)
         .join(" · ");
   return (
-    <Card className={cn("p-5", r.block && "border-warn/40")}>
+    <Card edge={r.block ? "warn" : undefined} className="p-5">
       <div className="flex items-center gap-4">
         <div
           className={cn(

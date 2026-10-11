@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
-import { backendLabel, effectiveServerUrl } from "@/lib/backends";
+import { backendLabel, backendLabelById, effectiveServerUrl } from "@/lib/backends";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
   ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair, Info,
@@ -242,7 +242,7 @@ function RuleCard({
       : mapPairs.slice(0, MAX_SHOWN_MAP_ROWS);
 
   return (
-    <Card className={cn("overflow-hidden transition-colors", dirty && "border-line-strong")}>
+    <Card edge={dirty ? "strong" : undefined} className="overflow-hidden transition-colors">
       {/* header row */}
       <div className="flex items-center gap-3 px-4 py-3">
         <button
@@ -671,8 +671,7 @@ export default function Dictionary() {
   // the slug identifies it well enough (it IS the stored value).
   const pinnedLabel = useMemo(() => {
     if (!quickAddList) return null;
-    const b = backends.find((x) => x.id === quickAddList.backendId);
-    const backendName = b ? backendLabel(backends, b) : null;
+    const backendName = backendLabelById(backends, quickAddList.backendId);
     const rule =
       quickAddList.backendId === selectedId
         ? rules.find((r) => r.name === quickAddList.slug)
