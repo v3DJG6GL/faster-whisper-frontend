@@ -84,6 +84,15 @@ fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
     // This registrar has no chord in hand (a CLI arg or a DE-level shortcut), so it keeps the
     // original behaviour: every shortcut modifier currently down.
     snapshot_trigger_mods(app, &crate::hotkeys::held_keys::SHORTCUT_MOD_CODES);
+    // A plugin press or a CLI/DE-shortcut invocation is a fresh rising edge — the twin of the
+    // evdev/windows `Fire::Start`/`Toggle` clears — so a chord-lost latch armed by an earlier
+    // manufactured stop (e.g. switching the evdev backend off mid-hold) must not divert this
+    // session's first phrase. Deliberately NOT on "stop": `stop_held_sessions`' teardown stops
+    // route through here and must not wipe a true positive. (`handle_cli_args` only lets
+    // start/stop/toggle through, so an unrecognised `--action` never reaches this.)
+    if matches!(action, "start" | "toggle") {
+        crate::hotkeys::held_keys::clear_chord_lost();
+    }
     let _ = app.emit(
         "trigger",
         TriggerPayload {

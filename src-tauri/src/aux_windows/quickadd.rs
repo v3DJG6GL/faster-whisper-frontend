@@ -724,6 +724,22 @@ pub(crate) mod win_seed {
             );
             return None;
         }
+        // And the quick-add window itself must not hold focus. `show`'s 5 s backstop shows it
+        // without bumping the generation, so a prologue that outlasts that cap (the release
+        // gate plus an RDP-stalled `get_text`) passes the check above and would send the copy
+        // chord into our own webview. Scoped to the quick-add label on purpose: a selection in
+        // the MAIN window (a word picked in History) must still seed, so no own-window check.
+        // Nothing has been injected yet, so there is nothing to restore; `ready` signals on drop.
+        if app
+            .get_webview_window("quickadd")
+            .and_then(|w| w.is_focused().ok())
+            .unwrap_or(false)
+        {
+            tracing::info!(
+                "[quickadd-seed] the quick-add window took focus before injection (backstop show); not sending the copy chord"
+            );
+            return None;
+        }
         #[cfg(windows)]
         if !send_copy_chord() {
             tracing::warn!(

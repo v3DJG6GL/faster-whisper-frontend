@@ -31,11 +31,11 @@ pub struct InjectOutcome {
     /// typed baseline, there is nothing to recover, and a re-send is safe. That invariant is the
     /// contract; the causes today are one of our own windows holding focus, so the insert was
     /// skipped (at entry or at a sink — at a Wayland paste chord only when a user cancel landed
-    /// during that chord-time probe, otherwise it is a divert), or a clipboard write that was busy
-    /// or failed before any keystroke: on the clipboard-only, divert or recovery path, or at the
-    /// paste sink (on Windows: a stuck clipboard read still held it, or the remote-desktop owner
-    /// or legacy write failed or timed out — a timed-out offer may still reach the clipboard
-    /// later).
+    /// during one of its own-window probes (the chord-time probe or the portal job's pre-job
+    /// probe), otherwise it is a divert), or a clipboard write that was busy or failed before any
+    /// keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on
+    /// Windows: a stuck clipboard read still held it, or the remote-desktop owner or legacy write
+    /// failed or timed out — a timed-out offer may still reach the clipboard later).
     ///
     /// The default for any future early return must be `true`. `false` means "send it again", and a
     /// wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
@@ -45,7 +45,10 @@ pub struct InjectOutcome {
     /// and got neither, because the trigger chord was still held, focus had moved to a different
     /// app, one of our own windows took focus just before the paste chord, the active keyboard
     /// layout cannot type the transcript's letters (Wayland portal typing), or a failed session's
-    /// transcript was recovered to the clipboard. The text is safe, but it did not go where the
+    /// transcript was recovered to the clipboard after the sink wrote nothing
+    /// (`Landed::NothingWritten`). A recovery after a cancel bail or a partly typed phrase still
+    /// reports `landed: true, diverted: false`: `Landed` cannot say whether a key went out (see the
+    /// note at the recovery block in `inject_text`). The text is safe, but it did not go where the
     /// user was looking, and until this field existed nothing said so: the caller stamped its
     /// green "typed" confirmation either way.
     ///

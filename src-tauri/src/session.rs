@@ -1139,7 +1139,7 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
                     // after the disconnect — so a cancel arriving any later (i.e. essentially
                     // every real one, since the dead chip is what makes the user reach for
                     // cancel) missed it entirely. Publish the epoch like `finish` does, so this
-                    // spawn is nameable and `transcribe_recording`'s two `batch_cancelled` checks
+                    // spawn is nameable and `transcribe_recording`'s three `batch_cancelled` checks
                     // cover it: without this the salvage was the one detached path a cancel could
                     // not reach, and it left `DETACHED_BATCH_EPOCH` stale, so a later
                     // `cancel_detached_batch()` disowned some EARLIER session's live POST instead.
@@ -1208,6 +1208,18 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         // decides whether it's worth transcribing (its CAPTURES_RECORDING_MIN_DURATION_S etc.) —
         // keeping batch and streaming identical.
         emit_if_active(&app, epoch, "stream://status", "closed");
+        return;
+    }
+    // Cancelled while the clip was being saved (trim + write + fsync can take a while on a long
+    // recording): keeps `cancel_record`'s "a POST not yet sent is skipped" true. Removes only the
+    // file this function just wrote, as the in-flight arm below does.
+    if batch_cancelled(epoch) {
+        tracing::info!(
+            "[record] session {epoch} cancelled while saving — discarding before upload"
+        );
+        if let Some(p) = &saved_path {
+            let _ = std::fs::remove_file(p);
+        }
         return;
     }
     // Wrapped in place (the buffer grows by the header), so the clip is never held twice across

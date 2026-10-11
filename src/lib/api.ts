@@ -1108,17 +1108,20 @@ export interface InjectOutcome {
    *  there is nothing to recover, and the phrase must go out again (a re-send is safe). That
    *  invariant is the contract; the causes today are one of our own windows holding focus, so the
    *  insert was skipped (at entry or at a sink — at a Wayland paste chord only when a user cancel
-   *  landed during that probe, otherwise it is a divert), or a clipboard write that was busy or
-   *  failed before any keystroke: on the clipboard-only, divert or recovery path, or at the paste
-   *  sink (on Windows: a stuck clipboard read still held it, or the remote-desktop owner or legacy
-   *  write failed or timed out — a timed-out offer may still reach the clipboard later). */
+   *  landed during one of its own-window probes (the chord-time probe or the portal job's pre-job
+   *  probe), otherwise it is a divert), or a clipboard write that was busy or failed before any
+   *  keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on Windows:
+   *  a stuck clipboard read still held it, or the remote-desktop owner or legacy write failed or
+   *  timed out — a timed-out offer may still reach the clipboard later). */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
    *  focus had moved to a different app, one of our own windows took focus just before the paste
    *  chord, the active keyboard layout cannot type the transcript's letters (Wayland portal
-   *  typing), or a failed session's transcript was recovered to the clipboard. The text is safe
-   *  but did not go where the user was looking, so say so rather than stamping a green "typed"
-   *  confirmation over it. */
+   *  typing), or a failed session's transcript was recovered to the clipboard after the sink
+   *  wrote nothing. A recovery after a cancel bail or a partly typed phrase still reports
+   *  `landed: true, diverted: false` — Rust cannot tell whether a key already went out. The text
+   *  is safe but did not go where the user was looking, so say so rather than stamping a green
+   *  "typed" confirmation over it. */
   diverted: boolean;
 }
 
