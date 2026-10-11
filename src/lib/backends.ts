@@ -223,6 +223,20 @@ export function effectiveOverrideProfile(
   return own?.trim() || backendProfile?.trim() || undefined;
 }
 
+/**
+ * Effective translation model id: a set own pick (a Profile's, or a Transcribe / retro-translate
+ * run's) wins; else the Backend's. Both sides trimmed and a blank inherits — the stored values are
+ * synced, so stray spaces must not reach the wire or name a different model than the preload plan
+ * warms; a blank inherited id is `undefined` (the server's default). The one rule for live
+ * dictation, its session shape, the target picker, Transcribe and retro translate.
+ */
+export function effectiveTranslationModel(
+  own: string | undefined,
+  backendModel: string | undefined,
+): string | undefined {
+  return own?.trim() || backendModel?.trim() || undefined;
+}
+
 /** Write `backendPrompt`'s tri-state back onto a Backend — spread the result into
  *  the draft (both keys always, so a reset drops a stale flag). */
 export function backendPromptFields(

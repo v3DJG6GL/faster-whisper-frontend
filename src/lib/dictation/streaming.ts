@@ -26,7 +26,7 @@ import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
 import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
-import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl } from "../backends";
+import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
 import { effectiveServerKind } from "../serverKind";
 import { refreshCaps, sendableTargets, translationWarm } from "../capabilities";
 import { acquireWarm, preloadPlanFor, type WarmLease } from "../preload";
@@ -3442,8 +3442,9 @@ async function startLiveInner(
   autoStopMemo = newSpeakMemo();
   lastSpokeAt = performance.now();
   autoStopMs = activation !== "hold" && rec.handsFreeAutoStopMin > 0 ? rec.handsFreeAutoStopMin * 60_000 : 0;
-  // Effective values: a set per-Profile override wins; else inherit the Backend.
-  const model = pov?.model?.trim() ? pov.model.trim() : backend.model;
+  // Effective values: a set per-Profile override wins; else inherit the Backend. The model is
+  // trimmed on both sides (a synced Backend model may be padded; preloadPlanFor warms it trimmed).
+  const model = pov?.model?.trim() || backend.model.trim();
   // A word naming a Whisper language (a synced "english") comes back as its code, so every sink
   // below (stream/record, translate source, sessionMeta) sends what sessionShape compares.
   const language = effectiveLanguage(pov?.language, backend.language);
@@ -3473,10 +3474,10 @@ async function startLiveInner(
       // blank and any other non-code to null.
       source: translateSourceCode(language),
       includeOriginal: trOv.includeOriginal,
-      // Trimmed, and a blank Profile value inherits the Backend's — the Whisper model's rule
-      // above. The stored value is synced, so stray spaces must not reach the wire or name a
-      // different model than the preload plan and warm check below.
-      model: pov?.translationOverrides?.model?.trim() || backend.translationOverrides?.model?.trim() || undefined,
+      // Trimmed, and a blank Profile value inherits the Backend's (effectiveTranslationModel,
+      // shared with sessionShape and the target picker): stray synced spaces must not reach the
+      // wire or name a different model than the preload plan and warm check below.
+      model: effectiveTranslationModel(pov?.translationOverrides?.model, backend.translationOverrides?.model),
       glossary: trOv.glossary,
       mode: trOv.mode,
       contextSegments: trOv.contextSegments,

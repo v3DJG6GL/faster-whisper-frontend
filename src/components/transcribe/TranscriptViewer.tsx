@@ -16,7 +16,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useApp } from "@/lib/store";
 import { hasOwn, ownProp } from "@/lib/own";
-import { effectiveServerUrl } from "@/lib/backends";
+import { effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { Button, ChipToggle, Segmented } from "@/components/ui";
@@ -543,7 +543,8 @@ export function TranscriptViewer({
   const [trMode, setTrMode] = useState<"fluent" | "faithful">(
     () => trBackend?.translationOverrides?.mode ?? "fluent",
   );
-  const [trModel, setTrModel] = useState(() => trBackend?.translationOverrides?.model ?? "");
+  // Trimmed: the stored value is synced (the send below resolves it by effectiveTranslationModel).
+  const [trModel, setTrModel] = useState(() => trBackend?.translationOverrides?.model?.trim() ?? "");
   // Prefill: Backend Translation defaults → the caller's server-side default
   // → English; never the known source (a source→source track is a no-op), within the cap.
   const seededTargets = useMemo(
@@ -566,7 +567,8 @@ export function TranscriptViewer({
     if (!showTranslate || !trBackend || !retroTranslateAvailable) return;
     const plan = preloadPlanFor({
       stages: ["translating"],
-      translationModel: trModel || trBackend.translationOverrides?.model,
+      // The send's rule, so the warm id is the one the run asks for.
+      translationModel: effectiveTranslationModel(trModel, trBackend.translationOverrides?.model),
     });
     if (!plan.length) return;
     const lease = acquireWarm("viewer-translate", {
@@ -713,7 +715,8 @@ export function TranscriptViewer({
               targets: group,
               // A word-named language from an imported file would 422 every chunk.
               source: translateSourceCode(result.language),
-              model: (opts?.model ?? trOv?.model) || null,
+              // Trimmed, and a blank pick inherits the backend's (the rule dictation and Transcribe send).
+              model: effectiveTranslationModel(opts?.model, trOv?.model) ?? null,
               mode: mode ?? null,
               glossary: trOv?.glossary ?? null,
               contextSegments: trOv?.contextSegments ?? null,
@@ -1023,7 +1026,7 @@ export function TranscriptViewer({
     setShowTranslate(false);
     setTrTargets(null);
     setTrMode(trBackend?.translationOverrides?.mode ?? "fluent");
-    setTrModel(trBackend?.translationOverrides?.model ?? "");
+    setTrModel(trBackend?.translationOverrides?.model?.trim() ?? "");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-seed on record/backend switch only
   }, [path, okey, trBackend?.id]);
 
@@ -2002,7 +2005,7 @@ export function TranscriptViewer({
                 mode={trMode}
                 onModeChange={setTrMode}
                 model={trModel}
-                inheritedModel={trBackend?.translationOverrides?.model}
+                inheritedModel={effectiveTranslationModel(undefined, trBackend?.translationOverrides?.model)}
                 onModelChange={setTrModel}
                 caps={trCaps}
                 exclude={result.language ?? undefined}

@@ -17,6 +17,7 @@ import type { Capabilities, TranslationOverrides } from "../lib/types";
 import { ModelPicker } from "./ModelPicker";
 import { CodeChip, MicroLabel, Segmented, Stepper } from "./ui";
 import { inheritLabel, onOff, shortModelName } from "../lib/inherit";
+import { effectiveTranslationModel } from "../lib/backends";
 
 export function TranslationTargetChips({
   value,
@@ -156,7 +157,7 @@ export function TranslationOptionsFields({
         <TranslationTargetChips
           value={targets}
           onChange={onTargetsChange}
-          {...translationTargetInfo(caps, model || inheritedModel)}
+          {...translationTargetInfo(caps, effectiveTranslationModel(model, inheritedModel))}
           max={maxTranslationTargets(caps)}
           used={usedTargets}
           free={freeTargets}
@@ -281,7 +282,7 @@ export function TranslationDefaultsEditor({
         <TranslationTargetChips
           value={v.translateTo ?? []}
           onChange={(next) => patch({ translateTo: next })}
-          {...translationTargetInfo(caps, v.model?.trim() || inheritedModel)}
+          {...translationTargetInfo(caps, effectiveTranslationModel(v.model, inheritedModel))}
           max={maxTranslationTargets(caps)}
         />
       </OverrideHeader>

@@ -13,7 +13,7 @@ import type { TargetPick } from "./streaming";
 import { abortLangPick, getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
 import { ownProp } from "../own";
 import { profileDisplayName, trimLeadingInvisible } from "../sanitize";
-import { effectiveLanguage } from "../backends";
+import { effectiveLanguage, effectiveTranslationModel } from "../backends";
 import { sessionShape } from "./sessionShape";
 import { isActiveDictation, isGracefulStop, isProcessing } from "./dictationVisual";
 import { configuredRouteTargets } from "./chipController";
@@ -332,11 +332,11 @@ function askTranslationTargets(seed: Record<string, unknown>, stillWanted?: () =
 /** What the picker opens with for a Profile's session (`when`: before it starts, or at the
  *  push-to-talk settle): the spoken language, the configured targets, the recent picks, the
  *  Profile's tag and the theme — and its grouping by the session's translation model (the
- *  Profile's, else the Backend's, else the server default; streaming.ts trOv resolves it the
- *  same way). */
+ *  Profile's, else the Backend's, else the server default — effectiveTranslationModel, the rule
+ *  startLiveInner sends). */
 function targetPickerSeed(profile: Profile, backend: Backend, when: "before" | "after"): Record<string, unknown> {
   const st = useApp.getState();
-  const model = profile.translationOverrides?.model?.trim() || backend.translationOverrides?.model?.trim() || undefined;
+  const model = effectiveTranslationModel(profile.translationOverrides?.model, backend.translationOverrides?.model);
   return {
     source: effectiveLanguage(profile.language, backend.language),
     preset: configuredRouteTargets(profile, backend) ?? [],

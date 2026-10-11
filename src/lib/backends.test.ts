@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 
 describe("newBackendDraft", () => {
@@ -32,6 +32,15 @@ describe("insecureUrlWarning", () => {
   });
   it("warns for a slashless http scheme to a public address", () => {
     expect(insecureUrlWarning("http:example.com")).not.toBeNull();
+  });
+});
+
+describe("effectiveTranslationModel", () => {
+  it("trims both sides; a blank own pick inherits, a blank inherited id is the server default", () => {
+    expect(effectiveTranslationModel(" gemma ", "x")).toBe("gemma");
+    expect(effectiveTranslationModel("  ", " hy-mt ")).toBe("hy-mt");
+    expect(effectiveTranslationModel(undefined, "  ")).toBeUndefined();
+    expect(effectiveTranslationModel(undefined, undefined)).toBeUndefined();
   });
 });
 

@@ -31,7 +31,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { chipTagFor } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { backendForProfile } from "@/lib/dictation/dictation";
 import { liveAllowed } from "@/lib/dictation/streaming";
@@ -708,7 +708,7 @@ function Editor({
               method: p.insertionOverrides?.insertMethod ?? globalInsertMethod,
             })}
             inherited={translationInherited(backend, serverContextSegments(decodeDefaults))}
-            inheritedModel={backend?.translationOverrides?.model}
+            inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
             inheritedFrom={backend?.translationOverrides?.contextSegments !== undefined ? "backend" : "server"}
           />
         </DisclosureCard>

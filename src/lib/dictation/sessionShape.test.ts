@@ -56,6 +56,12 @@ describe("sessionShape", () => {
     expect(sessionShape(profile({ translationOverrides: { model: "other" } } as Partial<Profile>), b)).not.toBe(base);
   });
 
+  it("a padded synced Backend Whisper model is the trimmed model as sent", () => {
+    expect(sessionShape(profile(), backend({ model: " large-v3 " }))).toBe(sessionShape(profile(), backend({ model: "large-v3" })));
+    expect(sessionShape(profile(), backend({ model: "  " }))).toBe(sessionShape(profile(), backend({ model: "" })));
+    expect(sessionShape(profile({ model: "large-v3" }), backend())).toBe(sessionShape(profile(), backend({ model: " large-v3 " })));
+  });
+
   it("differs when both ask for targets but at different moments (hold at release, hands-free before start)", () => {
     const hold = profile({ id: "ptt", activation: "hold", askTranslationTargets: true });
     const free = profile({ id: "hf", activation: "handsfree", askTranslationTargets: true });

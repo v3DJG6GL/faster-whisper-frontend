@@ -121,6 +121,13 @@ describe("translationRunOptions — what a batch run puts on the wire", () => {
     expect(translationRunOptions({ ...base, available: false, targets: [] })).toEqual({});
   });
 
+  it("sends the model trimmed and omits a blank one (the server default)", () => {
+    expect(translationRunOptions({ ...base, targets: ["de"], model: " gemma " }).translationModel).toBe("gemma");
+    expect(translationRunOptions({ ...base, targets: ["de"], model: "gemma" }).translationModel).toBe("gemma");
+    expect(translationRunOptions({ ...base, targets: ["de"], model: "  " })).not.toHaveProperty("translationModel");
+    expect(translationRunOptions({ ...base, targets: ["de"] })).not.toHaveProperty("translationModel");
+  });
+
   it("forwards the context depth (0 included) and omits an unset one", () => {
     expect(translationRunOptions({ ...base, targets: ["de"], contextSegments: 0 }).translationContextSegments).toBe(0);
     expect(translationRunOptions({ ...base, targets: ["de"], contextSegments: 5 }).translationContextSegments).toBe(5);

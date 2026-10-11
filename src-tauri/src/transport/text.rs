@@ -122,7 +122,9 @@ pub struct TextTranslationResult {
 ///
 /// `translation_model` / `translation_mode` keep their truthiness prune: their controls
 /// offer a real "Inherit" row, so `""` there is the absence of a choice, not a choice.
-/// The two ids are screened, not tri-state — an empty id names nothing.
+/// The two ids are screened, not tri-state — they are trimmed, and an id that is blank
+/// after trimming names nothing, so it is omitted (a stray space in a synced id would
+/// otherwise warm one model and request a differently spelled one).
 #[allow(clippy::too_many_arguments)]
 fn build_request_body<'a>(
     texts: &'a [String],
@@ -144,8 +146,8 @@ fn build_request_body<'a>(
             .collect(),
         targets,
         source,
-        translation_model: model.filter(|s| !s.is_empty()),
-        translation_mode: mode.filter(|s| !s.is_empty()),
+        translation_model: model.map(str::trim).filter(|s| !s.is_empty()),
+        translation_mode: mode.map(str::trim).filter(|s| !s.is_empty()),
         translation_glossary: glossary,
         context_segments,
         progress_id: progress_id.filter(|s| !s.is_empty()),
@@ -329,5 +331,43 @@ mod request_body_tests {
         ] {
             assert!(v.get(key).is_none(), "{key} should be omitted");
         }
+    }
+
+    #[test]
+    fn model_and_mode_are_trimmed_and_blank_after_trim_is_omitted() {
+        // A synced " gemma " must name the same model the preload warmed, and an
+        // all-blank id is no choice at all (unlike the glossary, which stays verbatim).
+        let texts = vec!["hallo".to_string()];
+        let targets = vec!["en".to_string()];
+        let padded = serde_json::to_value(build_request_body(
+            &texts,
+            &targets,
+            None,
+            Some(" gemma "),
+            Some(" fast\t"),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert_eq!(padded["translation_model"], "gemma");
+        assert_eq!(padded["translation_mode"], "fast");
+        let blank = serde_json::to_value(build_request_body(
+            &texts,
+            &targets,
+            None,
+            Some("  "),
+            Some("  "),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ))
+        .unwrap();
+        assert!(blank.get("translation_model").is_none());
+        assert!(blank.get("translation_mode").is_none());
     }
 }

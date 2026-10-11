@@ -46,7 +46,7 @@ import {
   closeRecord, linkTranslateTo, linkUsesSiteTranscript, openHistoryRecord, retryRunVideo, SITE_TRANSCRIPT_FALLBACK,
 } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
-import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, stripUrlNoise } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, stripUrlNoise } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
@@ -602,7 +602,8 @@ export default function Transcribe() {
       whisperModel: model || backend.model,
       separationModel,
       diarizationModel,
-      translationModel: translationModel || backend.translationOverrides?.model,
+      // The run's rule (effectiveTranslationModel), so the warm id is the one the run sends.
+      translationModel: effectiveTranslationModel(translationModel, backend.translationOverrides?.model),
     });
     if (!plan.length) return;
     const lease = acquireWarm("transcribe", {
@@ -939,7 +940,7 @@ export default function Transcribe() {
       available: translationAvailable,
       targets: effTargets,
       mode: translationMode,
-      model: translationModel || backend.translationOverrides?.model,
+      model: effectiveTranslationModel(translationModel, backend.translationOverrides?.model),
       glossary: backend.translationOverrides?.glossary,
       // Transcribe has no profile: the per-run pick, else the backend default (else the server's).
       contextSegments: runContextSegments ?? backend.translationOverrides?.contextSegments,
@@ -1426,7 +1427,7 @@ export default function Transcribe() {
                       onChange={applySite}
                       detecting={linkLang.check.state === "running"}
                       mt={translationAvailable}
-                      {...translationTargetInfo(caps, translationModel || backend?.translationOverrides?.model)}
+                      {...translationTargetInfo(caps, effectiveTranslationModel(translationModel, backend?.translationOverrides?.model))}
                       maxTargets={maxTranslationTargets(caps)}
                       disabled={busy}
                     />
@@ -1764,7 +1765,7 @@ export default function Transcribe() {
                               setTranslationModel(v);
                               persistOptions({ translationModel: v });
                             }}
-                            inheritedModel={backend?.translationOverrides?.model}
+                            inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
                             caps={caps}
                             exclude={knownSource}
                           >

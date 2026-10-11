@@ -4,7 +4,7 @@
 // activation, typing mode, insertion overrides and label — but NOT what the session was opened
 // with. Two Profiles whose shapes differ can't share a session: dictation.ts restarts instead.
 
-import { backendPrompt, effectiveLanguage, effectiveOverrideProfile } from "../backends";
+import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveTranslationModel } from "../backends";
 import { stableStringify } from "../stable";
 import type { Backend, Profile } from "../types";
 
@@ -19,7 +19,8 @@ export function sessionShape(profile: Profile, backend: Backend | undefined): st
   // Object keys sorted, so two override maps set in a different order compare equal.
   return stableStringify([
     backend.id,
-    profile.model?.trim() || backend.model,
+    // As startLiveInner sends it: both sides trimmed (a synced Backend model may be padded).
+    profile.model?.trim() || backend.model.trim(),
     // As startLiveInner sends it: a word naming a Whisper language ("english") is its code, so an
     // "english" and an "en" Profile are one session.
     effectiveLanguage(profile.language, backend.language),
@@ -30,8 +31,8 @@ export function sessionShape(profile: Profile, backend: Backend | undefined): st
     {
       ...backend.translationOverrides,
       ...profile.translationOverrides,
-      // As startLiveInner sends it: trimmed, a blank Profile model inherits the Backend's.
-      model: profile.translationOverrides?.model?.trim() || backend.translationOverrides?.model?.trim() || undefined,
+      // As startLiveInner sends it (the shared effectiveTranslationModel rule).
+      model: effectiveTranslationModel(profile.translationOverrides?.model, backend.translationOverrides?.model),
     },
     profile.askTranslationTargets ? (profile.activation === "hold" ? "ask-at-release" : "ask-before-start") : false,
   ]);

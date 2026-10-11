@@ -90,7 +90,7 @@ export function translationRunOptions(args: {
   /** The run's target codes — an empty list is an explicit "translate into nothing". */
   targets: string[];
   mode: "fluent" | "faithful";
-  /** Resolved per-run model; empty/undefined = the server's default. */
+  /** Resolved per-run model, trimmed here; empty/blank/undefined = the server's default. */
   model?: string;
   /** Tri-state: undefined = inherit, "" = explicit clear, value = use it. */
   glossary?: string;
@@ -101,10 +101,12 @@ export function translationRunOptions(args: {
   "translateTo" | "translationMode" | "translationModel" | "translationGlossary" | "translationContextSegments"
 > {
   if (!args.available) return {};
+  // Trimmed: a padded synced id must not reach the wire, and a blank one is the server default.
+  const model = args.model?.trim();
   return {
     translateTo: args.targets,
     translationMode: args.mode,
-    ...(args.model ? { translationModel: args.model } : {}),
+    ...(model ? { translationModel: model } : {}),
     ...(args.glossary !== undefined ? { translationGlossary: args.glossary } : {}),
     ...(args.contextSegments !== undefined ? { translationContextSegments: args.contextSegments } : {}),
   };

@@ -1233,11 +1233,20 @@ async fn post(
     if let Some(csv) = translate_to {
         form = form.text("translate_to", csv);
         if has_targets {
-            if let Some(m) = opts.translation_model.as_deref().filter(|m| !m.is_empty()) {
-                form = form.text("translation_model", m.to_string());
+            // The two ids are trimmed at this last ingress: a synced " hy-mt " would
+            // otherwise warm one model and request a differently spelled one, and a
+            // blank-after-trim id names nothing, so it is absent (inherit), not a choice.
+            let id = |v: &Option<String>| -> Option<String> {
+                v.as_deref()
+                    .map(str::trim)
+                    .filter(|m| !m.is_empty())
+                    .map(str::to_string)
+            };
+            if let Some(m) = id(&opts.translation_model) {
+                form = form.text("translation_model", m);
             }
-            if let Some(m) = opts.translation_mode.as_deref().filter(|m| !m.is_empty()) {
-                form = form.text("translation_mode", m.to_string());
+            if let Some(m) = id(&opts.translation_mode) {
+                form = form.text("translation_mode", m);
             }
             // Same sentinel as `prompt`: None → omit (inherit the server's
             // TRANSLATION_GLOSSARY); Some (incl. "") → send it, where "" CLEARS it.
