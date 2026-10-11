@@ -2923,6 +2923,15 @@ function gatedSecurityCheck(
  *  else "" so the caller falls back to the "Untitled …" label the lists use or the address. */
 const shownName = (n: unknown): string => (typeof n === "string" && safeIdentityText(n, 80) ? n : "");
 
+/** A consent row's profile/backend label, from the entry's LOCAL copy when this device holds one
+ *  (`local ?? incoming` at the call sites): every row of one entry then reads the same in one
+ *  dialog — a peer's rename labelled the typed-text row with the new name while the server-url
+ *  and api-key rows kept the local one — and a known entry with a blank name is labelled by its
+ *  own address, not by a name or address the other device chose. */
+const entryLabel = (e: { name?: unknown; serverUrl?: unknown }, category: "profiles" | "backends"): string =>
+  shownName(e.name) ||
+  (category === "profiles" ? "Untitled profile" : (typeof e.serverUrl === "string" && e.serverUrl) || "Untitled backend");
+
 /**
  * The decode keys whose text the app TYPES into the focused window (the live hard-break
  * separator, the output prefix/suffix) — the same class as the `autoEnter` refusal: a peer that
@@ -2941,10 +2950,9 @@ function typedTextChanges(
   for (const e of incomingList) {
     if (!isPlainObject(e) || typeof e.id !== "string") continue;
     const next = clampDecodeOverrides(e.decodeOverrides) ?? {};
-    const cur = here.get(e.id)?.decodeOverrides ?? {};
-    const name =
-      shownName(e.name) ||
-      (category === "profiles" ? "Untitled profile" : (typeof e.serverUrl === "string" && e.serverUrl) || "Untitled backend");
+    const local = here.get(e.id);
+    const cur = local?.decodeOverrides ?? {};
+    const name = entryLabel(local ?? e, category);
     for (const key of TYPED_TEXT_KEYS) {
       const v = next[key];
       if (typeof v !== "string" || v === "" || v === cur[key]) continue;
@@ -3111,7 +3119,7 @@ export function securityChanges(
   // the apply stores exactly this list and `reconcileBackendSecrets` writes keys only for its ids.
   for (const b of inBackends) {
     const cur = here.get(b.id);
-    const name = shownName(b.name) || b.serverUrl || "Untitled backend";
+    const name = entryLabel(cur ?? b, "backends");
     // A backend new to this device keeps its inbound address even with "Server addresses" off
     // (there is nothing local to re-pin), so `new-backend` is raised regardless of the gates.
     // A KNOWN backend's address change, or an incoming key with "API keys" off, can never land —
@@ -3128,7 +3136,7 @@ export function securityChanges(
       out.push({
         kind: "server-url",
         id: b.id,
-        backend: shownName(cur.name) || name,
+        backend: name,
         detail: `${cur.serverUrl || "(no address)"} → ${b.serverUrl || "(none: the address would be cleared)"}`,
         url: b.serverUrl,
       });
@@ -3149,7 +3157,7 @@ export function securityChanges(
       out.push({
         kind: "api-key",
         id: b.id,
-        backend: shownName(cur.name) || name,
+        backend: name,
         detail: localKey
           ? "the stored key would be replaced"
           : "a key would be stored for this server",

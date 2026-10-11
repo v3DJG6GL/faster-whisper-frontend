@@ -1013,6 +1013,41 @@ describe("applyBlob keep-local (baseline)", () => {
     ).toEqual(["Home"]);
   });
 
+  it("a known entry's consent rows are all labelled from this device's copy, not the peer's", () => {
+    const text = { output_prefix: ">" };
+    // (1) A peer renames a known backend and also sets typed text and a new key: one backend,
+    // one label, on every row of the dialog.
+    const renamed = securityChanges(
+      {
+        backends: {
+          list: [{ id: "b1", name: "Peer name", serverUrl: "http://p:8000", decodeOverrides: text }],
+          secrets: { b1: "sk-new" },
+        },
+      } as never,
+      { backends: { list: [{ id: "b1", name: "Home", serverUrl: "http://p:8000" }], secrets: { b1: "sk-old" } } } as never,
+      CATS_ALL,
+    );
+    expect(renamed.map((c) => [c.kind, c.backend])).toEqual([
+      ["typed-text", "Home"],
+      ["api-key", "Home"],
+    ]);
+    // (2) A known backend with a blank local name, repointed under a peer name: its own address,
+    // not the peer's name and not the address it would move to.
+    const repointed = securityChanges(
+      { backends: { list: [{ id: "b1", name: "Home", serverUrl: "http://evil:8000" }], secrets: {} } } as never,
+      { backends: { list: [{ id: "b1", name: "  ", serverUrl: "http://p:8000" }], secrets: {} } } as never,
+      CATS_ALL,
+    );
+    expect(repointed.map((c) => [c.kind, c.backend])).toEqual([["server-url", "http://p:8000"]]);
+    // (3) A known named profile the peer blanks while setting an output prefix keeps its name.
+    const blanked = securityChanges(
+      { profiles: { list: [profile({ id: "p6", name: "", decodeOverrides: text })] } } as never,
+      { profiles: { list: [profile({ id: "p6", name: "Work" })] } } as never,
+      CATS_ALL,
+    ).filter((c) => c.kind === "typed-text");
+    expect(blanked.map((c) => c.backend)).toEqual(["Work"]);
+  });
+
   it("server rows judge the backends the apply installs, not the raw list", () => {
     const changes = (list: unknown[], localList: unknown[], secrets: unknown = {}) =>
       securityChanges(
