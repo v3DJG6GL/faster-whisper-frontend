@@ -199,15 +199,30 @@ export function safeIdentityText(s: unknown, max = 80): string {
   return chars.length > max ? chars.slice(0, max).join("").trimEnd() + "…" : t;
 }
 
+/** `s` without the leading characters that render as nothing — whitespace, the invisible class
+ *  `.trim()` keeps (U+2800, variation selectors, …) and the characters the display filter deletes —
+ *  so a display cut that follows starts at the first visible one. Only the head: a trailing
+ *  variation selector belongs to the emoji before it. */
+export function trimLeadingInvisible(s: string): string {
+  const chars = [...s];
+  let i = 0;
+  while (i < chars.length) {
+    const code = chars[i].codePointAt(0) ?? 0;
+    if (!(/\s/.test(chars[i]) || isInvisibleKeyChar(code) || isCc(code) || isDeceptiveFormatChar(code))) break;
+    i++;
+  }
+  return chars.slice(i).join("");
+}
+
 /** The name a profile or backend is shown under. A synced name that is blank, only spaces or only
  *  invisible characters renders as nothing, so it reads as the label a local save would have stored
  *  instead ("Untitled profile" / "Untitled backend") — one rule for every list, notice and chip.
- *  `safeIdentityText` is the blank TEST (it folds the invisible class `.trim()` keeps); a profile
- *  name still RENDERS through the display filter, because the identity fold also turns the emoji
- *  variation selector into a space ("☕️Café" would read "☕ Café"). A backend name renders as an
- *  identity, as the Backends audit card always has: padding must not push its tail off the cut. */
+ *  A profile name RENDERS through the display filter, because the identity fold turns the emoji
+ *  variation selector into a space ("☕️Café" would read "☕ Café"); its invisible head is dropped
+ *  first, so leading padding can neither push the name past the cut nor leave a blank render. A
+ *  backend name renders as an identity, as the Backends audit card always has. */
 export const profileDisplayName = (name: unknown, max = 80): string =>
-  safeIdentityText(name, max) ? safeDisplayText(name, max).trim() : "Untitled profile";
+  (typeof name === "string" && safeDisplayText(trimLeadingInvisible(name), max).trim()) || "Untitled profile";
 export const backendDisplayName = (name: unknown, max = 80): string => safeIdentityText(name, max) || "Untitled backend";
 
 /** The comparison key of an app rule — how two `appId`s are judged to name the same app, for

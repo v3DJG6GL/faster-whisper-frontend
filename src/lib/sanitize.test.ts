@@ -56,6 +56,11 @@ describe("profileDisplayName / backendDisplayName", () => {
     // An emoji keeps its presentation selector and keycap (the identity fold would space them).
     expect(profileDisplayName("☕️Café")).toBe("☕️Café");
     expect(profileDisplayName("1️⃣ Work")).toBe("1️⃣ Work");
+    // Leading padding longer than the cut neither blanks the name nor shows as empty cells.
+    for (const pad of [" ", "\u2800", "\u200b"]) {
+      expect(profileDisplayName(pad.repeat(80) + "Work")).toBe("Work");
+      expect(profileDisplayName(pad.repeat(60) + "Work", 60)).toBe("Work");
+    }
     expect(backendDisplayName("Work" + " ".repeat(100) + "Evil")).toBe("Work Evil");
   });
 });

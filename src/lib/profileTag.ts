@@ -3,7 +3,7 @@
 // name (uppercased, whitespace collapsed, capped). The chip also CSS-truncates, so
 // this is about a sensible default rather than a hard width guarantee.
 
-import { safeIdentityText } from "./sanitize";
+import { profileDisplayName, trimLeadingInvisible } from "./sanitize";
 
 export function deriveChipTag(name: string): string {
   // Slice by code points (spread) not UTF-16 units, so an astral char (emoji) straddling the
@@ -22,13 +22,15 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
  *  unbounded tag was re-broadcast cross-window and re-laid-out several times a second. Display
  *  only; the stored tag is untouched. An authored tag that renders blank counts as unset. */
 export function chipTagFor(profile: { name: string; tag?: string }): string {
-  const t = typeof profile.tag === "string" ? profile.tag.trim() : "";
+  // Its invisible head dropped first, so a tag that renders blank counts as unset and a padded one
+  // keeps its visible part inside the cap.
+  const t = typeof profile.tag === "string" ? trimLeadingInvisible(profile.tag).trim() : "";
   const authored = t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
-  if (safeIdentityText(authored, AUTHORED_TAG_MAX)) return authored;
-  // A synced name that renders blank (spaces, invisibles, format-only — `profileDisplayName`'s
-  // test) would otherwise derive "" — the overlay then hides the tag group and the hover
-  // language/mode detail inside it — or a truthy tag that renders empty. Any other name derives as
-  // before (the identity fold would space an emoji's presentation selector). The "Untitled
-  // profile" fallback reads "UNTITLED", not its 10-char cut "UNTITLED P".
-  return safeIdentityText(profile.name) ? deriveChipTag(profile.name) : "UNTITLED";
+  if (authored) return authored;
+  // Derived from the name as the lists show it (`profileDisplayName`): a synced name that renders
+  // blank, or starts with ten invisible characters, would otherwise derive "" — the overlay then
+  // hides the tag group and the hover language/mode detail inside it — or a truthy tag that
+  // renders empty. A blank one reads "UNTITLED P", the tag of the "Untitled profile" a local save
+  // stores for it.
+  return deriveChipTag(profileDisplayName(profile.name));
 }
