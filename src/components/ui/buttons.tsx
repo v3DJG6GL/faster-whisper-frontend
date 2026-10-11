@@ -308,14 +308,15 @@ export function CodeChip({
       onClick={onRemove}
       title={`Remove ${languageLabel(code)}`}
       className={cn(
-        "ring-signal group inline-flex items-center gap-1.5 rounded-pill border px-2.5 font-mono",
+        "ring-signal group inline-flex items-center gap-1.5 px-2.5 font-mono",
         size === "sm" ? "h-7 text-[11.5px]" : "py-1 text-[12px]",
         // Selection chrome takes the accent; teal is reserved for the translating STAGE.
         "border-accent/50 text-accent transition-colors",
         // A click removes the chip, so hover/press previews that in the danger tone.
         "enabled:hover:border-rec/45 enabled:hover:bg-rec/10 enabled:hover:text-rec enabled:active:bg-rec/20",
         disabled && "opacity-50",
-        head && "rounded-none border-0",
+        // A compound chip's head is a square, borderless segment (cn doesn't merge: choose, never override).
+        head ? "rounded-none border-0" : "rounded-pill border",
       )}
     >
       {langCode(code, 12)}
@@ -343,11 +344,12 @@ export function FieldTrigger({
       type="button"
       {...rest}
       className={cn(
-        "ring-signal flex w-full items-center justify-between gap-2 border border-line bg-surface-2 text-left",
+        "ring-signal flex w-full items-center justify-between gap-2 border bg-surface-2 text-left",
         size === "md"
           ? `h-10 rounded-xl pl-3.5 pr-3 text-[13px] ${muted ? "text-dim" : "text-text"}`
           : "h-8 rounded-lg px-2.5 text-[12.5px] text-dim",
-        open && "border-accent/55",
+        // cn doesn't merge, and border-line would beat the accent: choose, never override.
+        open ? "border-accent/55" : "border-line",
         rest.disabled && "cursor-not-allowed opacity-40",
         className,
       )}
@@ -394,10 +396,11 @@ export function IconButton({
       title={label}
       onClick={onClick}
       className={cn(
-        "ring-signal grid place-items-center rounded-lg border border-line-strong bg-surface-2 text-dim",
+        "ring-signal grid place-items-center rounded-lg border bg-surface-2",
         size === "sm" ? "size-7" : "size-8",
         danger ? "enabled:hover:border-rec/45 enabled:hover:text-rec" : "enabled:hover:border-accent/45 enabled:hover:text-accent",
-        expanded && "border-accent/45 text-accent",
+        // cn doesn't merge, and the neutral tones would beat the accent: choose, never override.
+        expanded ? "border-accent/45 text-accent" : "border-line-strong text-dim",
         className,
       )}
     >
