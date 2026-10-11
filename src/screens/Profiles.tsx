@@ -794,9 +794,10 @@ function ProfileRow({
             {/* The dictation ROUTE, not just the input language: a translating profile's
                 row would otherwise say "German" about output that lands in French. The
                 effective language mirrors chipPayload's resolution exactly (profile
-                override, else the bound backend), so the row can't disagree with the chip. */}
+                override, else the bound backend), so the row can't disagree with the chip. A set
+                language that sanitizes to blank is still sent, so it reads "??" as the tray does. */}
             <RouteBadge
-              source={effLang}
+              source={safeDisplayText(effLang, 40).trim() ? effLang : effLangCode && effLangCode !== "auto" ? "??" : ""}
               targets={configuredRouteTargets(p, { id: backendId, translationOverrides: { translateTo: backendTargets } })}
             />
             {shortModel && <Badge>{shortModel}</Badge>}
