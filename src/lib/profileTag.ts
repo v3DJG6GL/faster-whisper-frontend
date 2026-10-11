@@ -16,7 +16,7 @@ const AUTHORED_TAG_MAX = 16; // matches the Profiles editor's maxLength
 /** An authored tag as the chip shows it: its invisible head dropped first, so a tag that renders
  *  blank reads "" (= unset) and a padded one keeps its visible part inside the cap. The one rule
  *  for every reader of an authored tag — the chip, the Profiles row badge, the tag a dictation
- *  record stores and History's badge. */
+ *  record stores, History's badge and the translation-target picker's header. */
 export function authoredChipTag(tag: unknown): string {
   const t = typeof tag === "string" ? trimLeadingInvisible(tag).trim() : "";
   return t ? [...t].slice(0, AUTHORED_TAG_MAX).join("").trimEnd() : "";
