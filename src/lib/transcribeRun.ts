@@ -1543,6 +1543,8 @@ let railFileSeq = 0;
  *  survive component unmounts exactly like the pump itself. */
 let activeCancel: {
   serverUrl: string;
+  /** A re-attached run's: the backend's address at cancel time (an edit mid-run applies). */
+  resolveUrl?: () => string;
   backendId?: string | null;
   progressId: string;
 } | null = null;
@@ -1563,7 +1565,14 @@ function abandonActiveRun(): void {
   if (stop) stop();
   const target = activeCancel;
   activeCancel = null;
-  if (target) void cancelBackendTranscription(target).catch(() => {});
+  // A plain object: the resolver is a function and never crosses the IPC.
+  if (target) {
+    void cancelBackendTranscription({
+      serverUrl: target.resolveUrl ? target.resolveUrl() : target.serverUrl,
+      backendId: target.backendId,
+      progressId: target.progressId,
+    }).catch(() => {});
+  }
 }
 
 /** The re-attached run's stop hook: clears its watcher, marks the store not
@@ -1615,9 +1624,10 @@ export function setOrphanForget(fn: ((jobId: string) => void) | null): void {
 /** Take over the rail for a run the server is still working on (found in
  *  the in-flight ledger at launch): the queue shows it running, the first
  *  stage's clock starts when the request originally left, and Cancel routes
- *  to the same server id (at `serverUrl`, the backend's current address). Returns the epoch the
- *  watcher must fold under. */
-export function reattachRun(row: LedgerRow, serverUrl = row.serverUrl): number {
+ *  to the same server id at `serverUrlOf()` — the backend's address when Cancel is pressed, so
+ *  an edit mid-run applies as it does to the watcher's polls. Returns the epoch the watcher
+ *  must fold under. */
+export function reattachRun(row: LedgerRow, serverUrlOf: () => string): number {
   abandonActiveRun();
   const isUrl = row.kind === "url";
   const first: RailStage = isUrl
@@ -1646,7 +1656,7 @@ export function reattachRun(row: LedgerRow, serverUrl = row.serverUrl): number {
     stageTimes: { [first]: { start: row.startedAt } },
     running: true,
   });
-  activeCancel = { serverUrl, backendId: row.backendId, progressId: row.jobId };
+  activeCancel = { serverUrl: row.serverUrl, resolveUrl: serverUrlOf, backendId: row.backendId, progressId: row.jobId };
   return epoch;
 }
 

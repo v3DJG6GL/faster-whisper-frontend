@@ -1078,7 +1078,7 @@ describe("reattachRun: a run found in the ledger takes the rail back", () => {
       kind: "url", title: "Talk", options: { separateBgm: true },
       ctx: { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false },
       urlMeta: { title: "Talk", extractor: "Youtube" }, startedAt: 123_000,
-    });
+    }, () => "http://x");
     const s = useTranscribeRun.getState();
     expect(epoch).toBe(before + 1);
     expect(s.epoch).toBe(epoch);
@@ -1102,7 +1102,7 @@ describe("reattachRun: a run found in the ledger takes the rail back", () => {
       kind: "url", title: "Talk", options: {},
       ctx: { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false },
       urlMeta: { title: "Talk", siteSubs: { fetch: ["en"], transcriptTrackId: "en", mtTargets: [] } }, startedAt: 1,
-    });
+    }, () => "http://x");
     expect(useTranscribeRun.getState().queue[0].siteFallback).toBe(true);
     cancelRun();
     useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });

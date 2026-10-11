@@ -105,14 +105,17 @@ async function ingestDone(
   row: LedgerRow, status: JobStatus, attached: boolean, epoch?: number, stopped: () => boolean = () => false,
 ): Promise<boolean> {
   const serverUrl = rowServerUrl(row);
+  // The ingest's own fetches (a link's audio/video copy, the pending-video poll) read the
+  // address off ctx: the current one, like the result's, not the one frozen at post time.
+  const ctx = { ...row.ctx, serverUrl };
   const r = await getJobResult({ serverUrl, backendId: row.backendId, jobId: row.jobId });
   if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
   switch (r.kind) {
     case "ok": {
       // A second network await (the link's site subtitles): the epoch can move during it too.
-      const result = await withSiteTracks(r.value, row.path, row.urlMeta, { ...row.ctx, serverUrl });
+      const result = await withSiteTracks(r.value, row.path, row.urlMeta, ctx);
       if (stopped() || (attached && useTranscribeRun.getState().epoch !== epoch)) return true;
-      ingestJobResult(row, result, tookMsOf(status, row), { attached });
+      ingestJobResult({ ...row, ctx }, result, tookMsOf(status, row), { attached });
       await forgetRow(row.jobId);
       return true;
     }
@@ -313,15 +316,17 @@ export async function reconcileJobs(): Promise<void> {
     for (const row of rows) {
       if (!mine(row)) continue;
       try {
+        // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
+        // server still holds the run for its TTL, but the app has no way to reach it.
+        // Before the reachability skip: its row keeps the stored address, which another
+        // backend on that host may share — a down host must not keep it queued.
+        if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
+          await forgetRow(row.jobId);
+          continue;
+        }
         const url = rowServerUrl(row);
         if (unreachable.has(url)) {
           retry = true;
-          continue;
-        }
-        // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
-        // server still holds the run for its TTL, but the app has no way to reach it.
-        if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
-          await forgetRow(row.jobId);
           continue;
         }
         const r = await getJob({ serverUrl: url, backendId: row.backendId, jobId: row.jobId });
@@ -377,7 +382,7 @@ export async function reconcileJobs(): Promise<void> {
     const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
     for (const row of live) {
       if (row === newest && idle) {
-        const epoch = reattachRun(row, rowServerUrl(row));
+        const epoch = reattachRun(row, () => rowServerUrl(row));
         watchJob(row, { attached: true, epoch });
       } else {
         // Stoppable by the path-keyed orphan stop like watchOrphan's: a History record

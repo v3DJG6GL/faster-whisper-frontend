@@ -13,6 +13,7 @@ const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: bool
 type CancelArgs = { serverUrl: string; backendId?: string | null; progressId: string };
 const cancelBackendTranscription = vi.fn((_a: CancelArgs) => Promise.resolve());
 const deleteJob = vi.fn((_args: { jobId: string }) => Promise.resolve({ kind: "ok", value: null }));
+const fetchUrlMedia = vi.fn((_a: { serverUrl: string; mediaId: string }) => Promise.resolve(null));
 const getTranscribeProgress = vi.fn<(args: { progressId: string }) => Promise<unknown>>(
   () => Promise.resolve({ stage: "unknown" }));
 vi.mock("./api", async (importOriginal) => ({
@@ -29,7 +30,7 @@ vi.mock("./api", async (importOriginal) => ({
   getTranscribeProgress: (a: { progressId: string }) => getTranscribeProgress(a),
   // Media copies are best-effort side effects; keep them inert here.
   saveTranscriptMedia: () => Promise.resolve(null),
-  fetchUrlMedia: () => Promise.resolve(null),
+  fetchUrlMedia: (a: { serverUrl: string; mediaId: string }) => fetchUrlMedia(a),
   fetchUrlVideo: () => Promise.resolve(null),
 }));
 vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
@@ -90,6 +91,7 @@ beforeEach(() => {
   // An earlier test's cancel or stop must not satisfy this one's assertion.
   cancelBackendTranscription.mockClear();
   deleteJob.mockClear();
+  fetchUrlMedia.mockClear();
   saveTranscriptRecord.mockClear();
   saveJobsLedger.mockClear();
   loadJobsLedger.mockImplementation(() => Promise.resolve(null));
@@ -213,6 +215,29 @@ describe("reconcileJobs", () => {
     expect((getJob.mock.calls[0][0] as { serverUrl?: string }).serverUrl).toBe("http://localhost:8000");
   });
 
+  it("a done link run copies its media from the backend's current address too", async () => {
+    // The ingest's own fetches read the address off the row's ctx: the posted one would send the
+    // current key to the old host and the record would land without playback.
+    const old = row(JOB_A, T0, "url");
+    await seed({ ...old, serverUrl: "http://old:8000", ctx: { ...old.ctx, serverUrl: "http://old:8000" } });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok({ ...RESULT, sourceMediaId: "m1" }));
+    await reconcileJobs();
+    expect(records().map((r) => r.id)).toEqual([JOB_A]);
+    expect(fetchUrlMedia).toHaveBeenCalledTimes(1);
+    expect(fetchUrlMedia.mock.calls[0][0]).toMatchObject({ serverUrl: "http://localhost:8000", mediaId: "m1" });
+  });
+
+  it("a deleted backend's row is forgotten even when its host is down for another backend", async () => {
+    // The deleted backend's row keeps its stored address, which b1 shares; b1's row failing to
+    // connect first must not leave it queued for a retry it can never get.
+    await seed(row(JOB_A, T0), { ...row(JOB_B, T0 + 1), backendId: "gone" });
+    getJob.mockResolvedValue({ kind: "error", message: "timed out" });
+    await reconcileJobs();
+    expect(getJob.mock.calls.map(([a]) => a.jobId)).toEqual([JOB_A]);
+    expect(ledgerRows().map((r) => r.jobId)).toEqual([JOB_A]);
+  });
+
   it("one unreachable server costs one status call per pass, not one per row", async () => {
     // A second backend: a row is asked at its backend's current address.
     useApp.setState({ backends: [...useApp.getState().backends,
@@ -317,6 +342,21 @@ describe("reconcileJobs", () => {
     expect(after.stageTimes.transcribing?.end).toBeDefined();
     expect(records()).toHaveLength(1);
     expect(ledgerRows()).toEqual([]);
+  });
+
+  it("Cancel on a re-attached run goes to the backend's address at cancel time", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    expect(useTranscribeRun.getState().running).toBe(true);
+    // The user edits the backend's address while the resumed run is on screen.
+    useApp.setState({ backends: [{ id: "b1", name: "Local", serverUrl: "http://new:8000" } as never] });
+    cancelRun();
+    expect(cancelBackendTranscription).toHaveBeenCalledTimes(1);
+    // A plain object over the IPC: the resolver never crosses it.
+    expect(cancelBackendTranscription.mock.calls[0][0]).toEqual({
+      serverUrl: "http://new:8000", backendId: "b1", progressId: JOB_A,
+    });
   });
 
   it("two running rows: the newest owns the rail, the older is watched headless", async () => {
