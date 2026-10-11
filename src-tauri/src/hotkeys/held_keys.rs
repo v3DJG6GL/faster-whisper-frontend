@@ -87,6 +87,19 @@ pub fn clear_chord_lost() {
     }
 }
 
+/// [`clear_chord_lost`] for a producer that cannot see physical key edges itself (the
+/// global-shortcut plugin): clear only a latch armed at or before `released_at`, the last key
+/// release that producer observed. A chord held continuously across a re-registration (evdev
+/// switched off mid-hold) reaches the new X11 grab as an autorepeat press with no release in
+/// between — that is not a fresh edge, and it must not wipe the true positive.
+pub fn clear_chord_lost_if_armed_before(released_at: Option<Instant>) {
+    if let Ok(mut g) = MODS_LOST_AT.lock() {
+        if g.is_some_and(|at| released_at.is_some_and(|r| at <= r)) {
+            *g = None;
+        }
+    }
+}
+
 /// Consume the latch if it was armed within `ttl`. Returns whether the caller should treat the
 /// chord as still held.
 ///
@@ -264,6 +277,17 @@ mod tests {
         // next session must not inherit a dud latch from a teardown that produced no injection.
         arm_chord_lost();
         clear_chord_lost();
+        assert!(!take_lost_if_fresh(Duration::from_secs(60)));
+
+        // A plugin press clears only a latch armed at or before its last observed release: none
+        // seen, or one before the arm (the chord held across a re-registration), keeps it.
+        arm_chord_lost();
+        clear_chord_lost_if_armed_before(None);
+        let before_arm = Instant::now() - Duration::from_secs(1);
+        clear_chord_lost_if_armed_before(Some(before_arm));
+        assert!(take_lost_if_fresh(Duration::from_secs(60)));
+        arm_chord_lost();
+        clear_chord_lost_if_armed_before(Some(Instant::now()));
         assert!(!take_lost_if_fresh(Duration::from_secs(60)));
 
         // A WIPE does not arm. The loss is recorded at the manufactured stop, never at the wipe —

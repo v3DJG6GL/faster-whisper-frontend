@@ -13,6 +13,7 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::sync::Mutex;
+use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutEvent, ShortcutState};
 
@@ -70,8 +71,14 @@ pub fn snapshot_trigger_mods(app: &AppHandle, chord_mods: &[u16]) {
     }
 }
 
-/// Emit a trigger event for an explicit Profile id.
-fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
+/// When the global-shortcut plugin last reported a dictation chord RELEASED — the plugin's only
+/// evidence that a later press is a fresh physical edge (see `emit_trigger`).
+static PLUGIN_RELEASED_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// Emit a trigger event for an explicit Profile id. `released_at` is the producer's evidence of a
+/// fresh edge for the chord-lost latch: a CLI/DE-shortcut invocation passes `Some(now)`, a plugin
+/// press its last observed release, a teardown stop `None`.
+fn emit_trigger(app: &AppHandle, profile_id: String, action: &str, released_at: Option<Instant>) {
     // Defanged before it reaches the log, the same way `session.rs`'s stream-error line and every
     // transport log line already are, and for the reason that line states: this file is what users
     // are asked to send for support, so an embedded newline forges records. `profile_id` is
@@ -84,14 +91,16 @@ fn emit_trigger(app: &AppHandle, profile_id: String, action: &str) {
     // This registrar has no chord in hand (a CLI arg or a DE-level shortcut), so it keeps the
     // original behaviour: every shortcut modifier currently down.
     snapshot_trigger_mods(app, &crate::hotkeys::held_keys::SHORTCUT_MOD_CODES);
-    // A plugin press or a CLI/DE-shortcut invocation is a fresh rising edge — the twin of the
-    // evdev/windows `Fire::Start`/`Toggle` clears — so a chord-lost latch armed by an earlier
-    // manufactured stop (e.g. switching the evdev backend off mid-hold) must not divert this
-    // session's first phrase. Deliberately NOT on "stop": `stop_held_sessions`' teardown stops
-    // route through here and must not wipe a true positive. (`handle_cli_args` only lets
+    // A CLI/DE-shortcut invocation, or a plugin press after a release the plugin saw, is a fresh
+    // rising edge — the twin of the evdev/windows `Fire::Start`/`Toggle` clears — so a chord-lost
+    // latch armed by an earlier manufactured stop (e.g. switching the evdev backend off mid-hold)
+    // must not divert this session's first phrase. A plugin press with no release since the latch
+    // was armed is the chord held across the re-registration (an autorepeat reaching the new X11
+    // grab), which must not wipe the true positive. Deliberately NOT on "stop":
+    // `stop_held_sessions`' teardown stops route through here. (`handle_cli_args` only lets
     // start/stop/toggle through, so an unrecognised `--action` never reaches this.)
     if matches!(action, "start" | "toggle") {
-        crate::hotkeys::held_keys::clear_chord_lost();
+        crate::hotkeys::held_keys::clear_chord_lost_if_armed_before(released_at);
     }
     let _ = app.emit(
         "trigger",
@@ -117,7 +126,7 @@ fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
         .iter()
         .find(|p| p.enabled && p.activation == want)
     {
-        Some(p) => emit_trigger(app, p.id.clone(), action),
+        Some(p) => emit_trigger(app, p.id.clone(), action, Some(Instant::now())),
         None => tracing::info!("[trigger] legacy flag: no enabled {want:?} profile"),
     }
 }
@@ -184,7 +193,7 @@ pub fn handle_cli_args(app: &AppHandle, argv: &[String]) {
     }
     if let (Some(p), Some(a)) = (profile, action) {
         if matches!(a.as_str(), "start" | "stop" | "toggle") {
-            emit_trigger(app, p, &a);
+            emit_trigger(app, p, &a, Some(Instant::now()));
         } else {
             let a_log = crate::transport::bounded_server_text(&a, 120);
             tracing::warn!("[trigger] cli ignored unknown action '{a_log}'");
@@ -251,7 +260,7 @@ fn stop_held_sessions(app: &AppHandle) {
         .map(|mut h| std::mem::take(&mut *h))
         .unwrap_or_default();
     for profile_id in stuck {
-        emit_trigger(app, profile_id, "stop");
+        emit_trigger(app, profile_id, "stop", None);
     }
 }
 
@@ -272,6 +281,15 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
             profile_id,
             activation,
         } => {
+            let released_at = match PLUGIN_RELEASED_AT.lock() {
+                Ok(mut g) => {
+                    if event.state() == ShortcutState::Released {
+                        *g = Some(Instant::now());
+                    }
+                    *g
+                }
+                Err(_) => None,
+            };
             let action = match (activation, event.state()) {
                 (ActivationType::Hold, ShortcutState::Pressed) => "start",
                 (ActivationType::Hold, ShortcutState::Released) => "stop",
@@ -282,7 +300,7 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
             if matches!(activation, ActivationType::Hold) {
                 note_hold(&profile_id, event.state() == ShortcutState::Pressed);
             }
-            emit_trigger(app, profile_id, action);
+            emit_trigger(app, profile_id, action, released_at);
         }
         ShortcutTarget::OpenQuickAdd => {
             if event.state() == ShortcutState::Pressed {

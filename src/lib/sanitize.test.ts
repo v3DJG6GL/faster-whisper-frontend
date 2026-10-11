@@ -91,6 +91,10 @@ describe("deviceDisplayName", () => {
     expect(deviceDisplayName("  \u200b ")).toBe("");
     expect(deviceDisplayName(" box ")).toBe("box");
     expect(deviceDisplayName(undefined)).toBe("");
+    // U+2800 / a joiner survive trim; a padded head must not fill the cap with blanks.
+    expect(deviceDisplayName("\u2800\u2800")).toBe("");
+    expect(deviceDisplayName("\u200d")).toBe("");
+    expect(deviceDisplayName("\u2800".repeat(60) + "box")).toBe("box");
   });
 });
 

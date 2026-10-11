@@ -2,7 +2,7 @@
 
 import type { AppSettings, Backend, ConnectionInfo } from "./types";
 import { classifyConnection } from "./serverKind";
-import { backendDisplayName, safeIdentityText } from "./sanitize";
+import { backendDisplayName, safeIdentityText, trimLeadingInvisible } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
@@ -321,7 +321,9 @@ export function backendOptions(all: Backend[], max = 80): { value: string; label
   // SecurityChange, so it arrives on the unattended pull. The pickers this feeds choose which
   // server receives a profile's audio and bearer key, which receives an uploaded file, and which
   // receives the whole synced blob — and none of them shows an address.
-  const labels = all.map((b) => safeIdentityText(b.name, max));
+  // Invisible head dropped first, as backendDisplayName does: a joiner-only name then takes the
+  // blank branch, and a leading-joiner "Work" collides with "Work" and gets its host suffix.
+  const labels = all.map((b) => (typeof b.name === "string" ? safeIdentityText(trimLeadingInvisible(b.name), max) : ""));
   const counts = new Map<string, number>();
   for (const l of labels) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
   // A name that already CONTAINS the separator is forced into the suffix branch whatever the

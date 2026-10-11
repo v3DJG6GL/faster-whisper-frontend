@@ -92,6 +92,11 @@ describe("backendOptions", () => {
       "Untitled backend \u00b7 server.lan \u00b7 #bbbbbbbb",
     ]);
   });
+  it("a joiner-only name is blank and a leading-joiner look-alike collides with the real name", () => {
+    expect(backendOptions([be("a1b2c3d4e5", "\u200d", "http://server.lan")])[0].label).toBe("Untitled backend \u00b7 server.lan");
+    const opts = backendOptions([be("aaaaaaaa11", "Work", "http://a.lan"), be("bbbbbbbb22", "\u200dWork", "http://b.lan")]);
+    expect(opts.map((o) => o.label)).toEqual(["Work \u00b7 a.lan", "Work \u00b7 b.lan"]);
+  });
   it("a named backend stays bare", () => {
     expect(backendOptions([be("a1b2c3d4e5", "Work", "http://server.lan")])[0].label).toBe("Work");
   });

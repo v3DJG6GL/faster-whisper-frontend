@@ -406,7 +406,7 @@ export default function Transcribe() {
   const decodeDefaults = useDecodeDefaults({
     serverUrl,
     backendId: backend?.id,
-    model: model || backend?.model,
+    model: model.trim() || backend?.model?.trim(),
     profileName: effectiveOverrideProfile(runOverrideProfile, backend?.overrideProfile),
     serverKind,
   });
@@ -460,7 +460,7 @@ export default function Transcribe() {
     canOverride: caps?.can_request_decode_overrides,
     locked: server.locked.has("multilingual"),
     standard: isStandard,
-    model: decodeDefaults?.model || model || backend?.model,
+    model: decodeDefaults?.model || model.trim() || backend?.model?.trim(),
   });
   const spoken = spokenField(language, runOverrides, inheritedBaseline.multilingual, multiOffered);
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE, with the
@@ -506,7 +506,7 @@ export default function Transcribe() {
     // and the check would download the whole audio up front for nothing.
     enabled: caps?.url_language_check_enabled === true && caps?.url_subtitles_enabled === true
       && !!urlPreviewData?.subtitle_tracks?.length,
-    model: model || backend?.model,
+    model: model.trim() || backend?.model?.trim(),
     screen: spoken.value,
   });
   /** The previewed link's site ("YouTube"): the source words of its subtitles and the spoken pill. */
@@ -599,7 +599,7 @@ export default function Transcribe() {
     );
     const plan = preloadPlanFor({
       stages,
-      whisperModel: model || backend.model,
+      whisperModel: model.trim() || backend.model.trim(),
       separationModel,
       diarizationModel,
       // The run's rule (effectiveTranslationModel), so the warm id is the one the run sends.
@@ -895,7 +895,8 @@ export default function Transcribe() {
     return {
       backendId: backend.id,
       serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
-      model: model || backend.model,
+      // Trimmed on both sides, as live dictation sends it (a synced Backend model may be padded).
+      model: model.trim() || backend.model.trim(),
       // A word naming a Whisper language (a synced Backend "english") is sent as its code, as
       // dictation sends it (effectiveLanguage); "auto" and codes stay.
       language: effectiveLanguage(undefined, language),

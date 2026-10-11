@@ -231,9 +231,11 @@ export const profileDisplayName = (name: unknown, max = 80): string =>
   (typeof name === "string" && safeDisplayText(trimLeadingInvisible(name), max).trim()) || "Untitled profile";
 export const backendDisplayName = (name: unknown, max = 80): string =>
   (typeof name === "string" && safeIdentityText(trimLeadingInvisible(name), max)) || "Untitled backend";
-/** A server-supplied device name as shown ("… from <device>"): display-filtered and trimmed. A
- *  blank result (spaces, invisible characters only) means "render the fallback or omit it". */
-export const deviceDisplayName = (name: unknown, max = 60): string => safeDisplayText(name, max).trim();
+/** A server-supplied device name as shown ("… from <device>"): its invisible head dropped (as a
+ *  profile name's), display-filtered and trimmed. A blank result (spaces, invisible characters
+ *  only) means "render the fallback or omit it". */
+export const deviceDisplayName = (name: unknown, max = 60): string =>
+  typeof name === "string" ? safeDisplayText(trimLeadingInvisible(name), max).trim() : "";
 
 /** The comparison key of an app rule — how two `appId`s are judged to name the same app, for
  *  both the dedupe on save/merge and the injection-target matcher. One function so they cannot
