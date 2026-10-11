@@ -195,6 +195,8 @@ function seedTranscribe(t: TranscribeSettings | undefined, backends: readonly Ba
     translationModel: saved ? (t?.translationModel?.trim() ?? "") : "",
     translationMode,
     separateBgm: t?.separateBgm,
+    // No stored pick resolves: the screen lands on backends[0], a real switch.
+    switched: !saved,
   };
 }
 
@@ -413,18 +415,14 @@ export default function Transcribe() {
       // the screen's state is still the empty boot store's ([] targets, default switches).
       const t = useApp.getState().settings.transcribe;
       const s = seedTranscribe(t, backends);
-      // No stored pick resolves: the screen lands on backends[0], a real switch.
-      const switched = !savedBackendOf(t, backends);
+      const switched = s.switched;
       const targets = switched ? pruneTargets(s.translateTo, s.language) : s.translateTo;
       resetForInputChange();
       setBackendId(s.backendId);
       setTranslateExclNotice(null);
       // The run-only picks named the old server; the persisted ones come back from the store
       // (unsaved, the backend-scoped ones seed as cleared: model "", the new Backend's language).
-      setRunOverrideProfile("");
-      setSeparationModel("");
-      setDiarizationModel("");
-      setRunContextSegments(undefined);
+      clearBackendScopedPicks();
       setModel(s.model);
       setLanguage(s.language);
       setTranslationModel(s.translationModel);
@@ -1191,9 +1189,9 @@ export default function Transcribe() {
             {files.length ? (
               <div
                 className={cn(
-                  "grid h-full w-full place-items-center content-center rounded-card border border-dashed border-line-strong bg-surface/60 px-6 py-8",
+                  "grid h-full w-full place-items-center content-center rounded-card border border-dashed px-6 py-8",
                   // Drops still add files in this state — say so, like the empty dropzone does.
-                  dragOver && !busy && "border-accent bg-accent-soft/30",
+                  dragOver && !busy ? "border-accent bg-accent-soft/30" : "border-line-strong bg-surface/60",
                 )}
               >
                 <div className="flex max-w-full flex-wrap items-center justify-center gap-3">
@@ -1241,8 +1239,8 @@ export default function Transcribe() {
               // listener drives dragOver); just the icon + title open the picker.
               <div
                 className={cn(
-                  "grid h-full w-full place-items-center content-center rounded-card border border-dashed border-line-strong bg-surface/60 px-6 py-10 text-center transition-colors @[40rem]:py-6",
-                  dragOver && "border-accent bg-accent-soft/30",
+                  "grid h-full w-full place-items-center content-center rounded-card border border-dashed px-6 py-10 text-center transition-colors @[40rem]:py-6",
+                  dragOver ? "border-accent bg-accent-soft/30" : "border-line-strong bg-surface/60",
                 )}
               >
                 <button
@@ -2620,7 +2618,7 @@ export default function Transcribe() {
                                       <span className="ml-1.5 text-faint">{safeDisplayText(u.target, 16)}</span>
                                     </>
                                   ) : (
-                                    safeDisplayText(u.target, 12)
+                                    langText(u.target, 12)
                                   )}
                                 </span>
                                 <span className="h-[5px] overflow-hidden rounded-pill bg-surface-2">
@@ -2729,7 +2727,7 @@ export default function Transcribe() {
                             {/* Per-language receipts: what each target took,
                                 kept after the run like every other chip. */}
                             {state === "done" && hasUnits && planStage?.units?.map((u) => {
-                              const tgt = safeDisplayText(u.target, st === "diarizing" ? 16 : 12).trim();
+                              const tgt = (st === "diarizing" ? safeDisplayText(u.target, 16) : langText(u.target, 12)).trim();
                               if (!tgt) return null;
                               return (
                                 <span
@@ -2818,8 +2816,8 @@ export default function Transcribe() {
                         <div className="mt-2 flex items-center gap-2.5 rounded-lg bg-surface-2/60 px-3 py-1.5">
                           <span className="size-[7px] shrink-0 rounded-full bg-live" />
                           {(() => {
-                            // Gate on the SANITIZED target: a format-only code would draw an empty pill.
-                            const tgt = st === "translating" ? safeDisplayText(progress.target ?? "", 12).trim() : "";
+                            // Gate on the SANITIZED target: a format- or joiner-only code would draw an empty pill.
+                            const tgt = st === "translating" ? langText(progress.target ?? "", 12).trim() : "";
                             return tgt ? (
                               <span className="shrink-0 rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
                                 {tgt}
@@ -3234,7 +3232,7 @@ export default function Transcribe() {
         {!studio && recentStrip}
         {viewer ??
           (studio ? (
-            <Card className="grid flex-1 place-items-center border-dashed bg-surface/40">
+            <Card faint className="grid flex-1 place-items-center border-dashed">
               <div className="px-8 text-center">
                 <div className="text-[14px] text-text">The transcript opens here</div>
                 <div className="mt-1 text-[12.5px] text-dim">
