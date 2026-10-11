@@ -573,7 +573,10 @@ export default function History() {
       timeOf(rec.createdAt),
       rec.result?.duration ? fmtDuration(rec.result.duration) : "",
       rec.wordCount ? plural(rec.wordCount, "word") : "",
-      rec.language !== "auto" ? safeDisplayText(rec.language ?? "", 12).trim() : "",
+      // A set language that sanitizes to blank is still sent, so it reads "??" as RouteBadge does.
+      typeof rec.language === "string" && rec.language && rec.language !== "auto"
+        ? safeDisplayText(rec.language, 12).trim() || "??"
+        : "",
       rec.insertMethod === "clipboard"
         ? "clipboard only"
         : rec.insertMethod === "none"

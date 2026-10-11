@@ -35,10 +35,14 @@ describe("routeParts", () => {
     expect(routeParts("German", ["fr", "\u200f", "it", "es"]).more).toBe(0);
   });
 
-  it("blanks a blank or format-only source so the readers fall back to auto, and labels a padded one", () => {
-    expect(routeParts("  ").source).toBe("");
-    expect(routeParts("\u200f").source).toBe("");
+  it("reads a set source that sanitizes blank as ??, blanks only an empty one, and labels a padded one", () => {
+    // A whitespace- or format-only language is still sent, so it reads "??" as routeSourceCode does.
+    expect(routeParts("  ").source).toBe("??");
+    expect(routeParts("\u200f").source).toBe("??");
+    // Only an empty source comes back "" so the readers' `|| "auto"` fallback applies.
+    expect(routeParts("").source).toBe("");
     expect(routeParts(" de").source).toBe("German");
+    expect(routeParts("auto").source).toBe("Auto-detect");
   });
 
   it("caps the list at three and counts the rest", () => {

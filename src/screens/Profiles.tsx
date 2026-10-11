@@ -18,12 +18,12 @@ import { dictationControls, FIELD_LABEL } from "@/components/DictationFields";
 import { hasInsertionOverrides, insertionSetCount } from "@/lib/dictation/insertion";
 import { TranslationDefaultsEditor, type TranslationInherited } from "@/components/TranslationFields";
 import { targetsLabel } from "@/lib/translationTargets";
-import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited, shortModelName } from "@/lib/inherit";
+import { inheritLabel, LOCKED_REASON, onOff, serverContextSegments, serverInherited, serverLanguageLabel, shortModelName } from "@/lib/inherit";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
 import { ModelPicker } from "@/components/ModelPicker";
 import { OverrideProfilePicker } from "@/components/OverrideProfilePicker";
 import { ReorderControls } from "@/components/ReorderControls";
-import { languageLabel, namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
+import { namedLanguage, offersMultilingual, spokenField, spokenLabel, spokenValue } from "@/lib/languages";
 import { useBackendModels } from "@/lib/useBackendModels";
 import { conflictsByProfile, findChordConflict, QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
@@ -401,15 +401,7 @@ function Editor({
                   : backend.language === ""
                     ? // The backend leaves it to the server: name the server's language,
                       // folding the inherited multilingual flag like the branch below.
-                      (() => {
-                        const v = decodeDefaults?.language?.value;
-                        // Tested as displayed: a format-only value the server still sends reads "??",
-                        // as serverLanguageLabel does.
-                        return typeof v === "string"
-                          ? safeDisplayText(spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited)), 40).trim() ||
-                              "??"
-                          : undefined;
-                      })()
+                      serverLanguageLabel(decodeDefaults, multiInherited)
                     : // Named as dictation sends it (effectiveLanguage: a synced word like
                       // "english" is "en"); a format-only synced language reads "??", as on the
                       // Backends screen.
@@ -775,7 +767,6 @@ function ProfileRow({
   const meta = ACTIVATION[p.activation];
   const Glyph = meta.icon;
   const effLangCode = effectiveLanguage(p.language, backendLanguage);
-  const effLang = effLangCode ? languageLabel(effLangCode) : "";
   // The DISPLAYED name, not the raw string: a synced model of only whitespace or format
   // characters renders nothing, so it gets no (empty) badge.
   const shortModel = shortModelName(p.model, 40);
@@ -803,10 +794,10 @@ function ProfileRow({
             {/* The dictation ROUTE, not just the input language: a translating profile's
                 row would otherwise say "German" about output that lands in French. The
                 effective language mirrors chipPayload's resolution exactly (profile
-                override, else the bound backend), so the row can't disagree with the chip. A set
-                language that sanitizes to blank is still sent, so it reads "??" as the tray does. */}
+                override, else the bound backend), so the row can't disagree with the chip. RouteBadge
+                labels the code, and reads a set language that sanitizes to blank as "??", as the tray does. */}
             <RouteBadge
-              source={safeDisplayText(effLang, 40).trim() ? effLang : effLangCode && effLangCode !== "auto" ? "??" : ""}
+              source={effLangCode ?? ""}
               targets={configuredRouteTargets(p, { id: backendId, translationOverrides: { translateTo: backendTargets } })}
             />
             {shortModel && <Badge>{shortModel}</Badge>}

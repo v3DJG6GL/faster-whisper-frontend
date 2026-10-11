@@ -220,6 +220,10 @@ function Editor({
     model: decodeDefaults?.model || debouncedModel,
   });
   const spoken = spokenField(b.language, b.decodeOverrides, server.values.multilingual, multiOffered);
+  // What a request on the language "Default" row inherits: that pick drops the backend's own
+  // `multilingual`, so the server's (a locked one included) decides whether auto-detect runs as
+  // Multiple languages — folded the way spokenField folds the picker's own rows.
+  const multiInherited = server.values.multilingual === true;
   const promptLocked = server.prompt?.locked === true;
 
   // The Server URL / API-key fields stay editable during an in-flight test (only the Test button
@@ -564,7 +568,7 @@ function Editor({
               · {shortModelName(ownModel) ?? serverModel ?? "server model"} ·{" "}
               {spoken.value
                 ? safeDisplayText(spokenLabel(spoken.value), 30).trim() || "??"
-                : safeDisplayText(serverLanguageLabel(decodeDefaults) ?? "server language", 30)}{" "}
+                : safeDisplayText(serverLanguageLabel(decodeDefaults, multiInherited) ?? "server language", 30)}{" "}
               · {b.endpoint === "batch" ? "Batch" : "Streaming"}
             </span>
           }
@@ -588,7 +592,7 @@ function Editor({
                 value={spoken.value}
                 multi={multiOffered}
                 // "" = send no language: the server's DEFAULT_LANGUAGE (new backends start here).
-                inheritLabel={inheritLabel(serverLanguageLabel(decodeDefaults), "Default")}
+                inheritLabel={inheritLabel(serverLanguageLabel(decodeDefaults, multiInherited), "Default")}
                 onChange={(v) => {
                   const { language, overrides } = spoken.pick(v);
                   set({ language, decodeOverrides: overrides && Object.keys(overrides).length ? overrides : undefined });

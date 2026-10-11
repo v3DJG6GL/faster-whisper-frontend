@@ -418,8 +418,6 @@ export default function Transcribe() {
   const backendOwnModel = safeDisplayText(ownModelName(backend?.model, serverKind), 60).trim();
   const defaultModelName =
     backendOwnModel || (model ? undefined : safeDisplayText(decodeDefaults?.model ?? "", 60).trim()) || "server model";
-  // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE.
-  const serverLang = serverLanguageLabel(decodeDefaults);
   // The context segments a blank pick runs with: the backend's own, else the server's (unknown
   // until decode defaults load — the stepper then says "Inherit", not a greyed 0).
   const inheritedContext = backend?.translationOverrides?.contextSegments ?? serverContextSegments(decodeDefaults);
@@ -462,6 +460,9 @@ export default function Transcribe() {
     model: decodeDefaults?.model || model || backend?.model,
   });
   const spoken = spokenField(language, runOverrides, inheritedBaseline.multilingual, multiOffered);
+  // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE, with the
+  // inherited `multilingual` (that pick drops the run's own) folded in as spokenField folds it.
+  const serverLang = serverLanguageLabel(decodeDefaults, inheritedBaseline.multilingual === true);
 
   // Pre-flight availability of the optional pipeline stages (additive
   // capability fields). Only an explicit false disables the toggle — absent

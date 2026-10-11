@@ -68,6 +68,13 @@ describe("server default names (W6–W8)", () => {
     expect(serverLanguageLabel(dd({ language: e("") }))).toBe(serverLanguageLabel(dd({ language: e("auto") })));
     expect(serverLanguageLabel(dd())).toBeUndefined();
   });
+  it("the inherit row folds the inherited multilingual flag into auto-detect", () => {
+    expect(serverLanguageLabel(dd({ language: e("") }), true)).toBe("Multiple languages");
+    expect(serverLanguageLabel(dd({ language: e("auto") }), true)).toBe("Multiple languages");
+    expect(serverLanguageLabel(dd({ language: e("") }), false)).toBe("Auto-detect");
+    expect(serverLanguageLabel(dd({ language: e("") }))).toBe("Auto-detect");
+    expect(serverLanguageLabel(dd({ language: e("de") }), true)).toBe("German");
+  });
   it("a server language of only format characters reads \"??\", not blank", () => {
     expect(serverLanguageLabel(dd({ language: e("\u200f") }))).toBe("??");
     expect(serverLanguageLabel(dd({ language: e("\u200b\u2066") }))).toBe("??");

@@ -26,11 +26,16 @@ export function routeParts(
     // trims to something, then sanitizes to nothing, and would show as a blank slot.
     .map((t) => safeDisplayText(languageLabel(t), 24).trim())
     .filter(Boolean);
-  // The source gets the same trim-then-recheck: a blank or format-only one must come back as
-  // "" so the readers' `|| "auto"` fallback applies, and a padded " de" must still find its label.
-  const src = typeof source === "string" ? source.trim() : "";
+  // The source gets the same trim-then-recheck, but a SET one that sanitizes blank (whitespace
+  // or format characters only) is still sent — Rust's wire_language passes any non-empty code —
+  // so it reads "??", as routeSourceCode does. Only an empty one comes back "" for the readers'
+  // `|| "auto"` fallback; "auto" itself labels as "Auto-detect", and a padded " de" still finds
+  // its label.
+  const raw = typeof source === "string" ? source : "";
+  const src = raw.trim();
+  const label = src ? safeDisplayText(languageLabel(src), 24).trim() : "";
   return {
-    source: src ? safeDisplayText(languageLabel(src), 24).trim() : "",
+    source: label || (raw && raw !== "auto" ? "??" : ""),
     targets: labels.slice(0, ROUTE_TARGETS_SHOWN),
     more: Math.max(0, labels.length - ROUTE_TARGETS_SHOWN),
   };

@@ -9,7 +9,7 @@
 // nobody can name (the server is unreachable) leaves the bare word.
 
 import type { DecodeDefault, DecodeDefaults, InheritedValues, ServerModel } from "./types";
-import { languageLabel } from "./languages";
+import { spokenLabel, spokenValue } from "./languages";
 import { safeDisplayText } from "./sanitize";
 import { escapeText } from "./escapeText";
 import { BOOL_KEYS, isDecodeKey, keySpec, NULL_TEXT, type DecodeKey } from "./decodeKeys";
@@ -108,13 +108,15 @@ export function serverName(d: Pick<DecodeDefault, "value"> | null | undefined): 
 }
 
 /** The server's DEFAULT_LANGUAGE for these requests as the language pickers' inherit row names it
- *  ("German", "Auto-detect" for ""), or undefined when the server doesn't say. */
-export function serverLanguageLabel(dd: DecodeDefaults | null | undefined): string | undefined {
+ *  ("German", "Auto-detect" for ""), or undefined when the server doesn't say. `multiInherited` is
+ *  the `multilingual` flag a request on that row inherits (picking it drops the layer's own): with
+ *  it on, auto-detect runs as — and reads — "Multiple languages", as the picker's own rows fold it. */
+export function serverLanguageLabel(dd: DecodeDefaults | null | undefined, multiInherited?: boolean): string | undefined {
   const v = dd?.language?.value;
   if (typeof v !== "string") return undefined;
   // Tested as displayed: a code of only format characters names no language, but the server does
   // send one — "??", like a backend's own such language, not a blank "Default · ".
-  const l = safeDisplayText(languageLabel(v.trim() || "auto"), 40).trim();
+  const l = safeDisplayText(spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited)), 40).trim();
   return l || "??";
 }
 

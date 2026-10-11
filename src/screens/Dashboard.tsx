@@ -61,8 +61,8 @@ const TRANSCRIPT_LINGER_MS = 10000;
 function profileRoute(p: Profile | undefined, backend: Backend | undefined): string {
   const lang = effectiveLanguage(p?.language, backend?.language) ?? "auto";
   const route = routeParts(lang, configuredRouteTargets(p, backend));
-  // A set language that sanitizes to blank is still sent (not auto-detect): "??", as the tray reads it.
-  return (route.source || (lang && lang !== "auto" ? "??" : "auto")) + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
+  // routeParts reads a set language that sanitizes to blank as "??", as the tray does.
+  return (route.source || "auto") + (route.targets.length ? ` → ${route.targets.join(", ")}${route.more ? ` +${route.more}` : ""}` : "");
 }
 
 /** The same route as codes — "DE → EN, FR" — the way the chip and the tray write it, for
