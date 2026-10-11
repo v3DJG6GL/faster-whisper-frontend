@@ -101,7 +101,8 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
   // server's target cap from the store.
   useApp((s) => (backend ? ownProp(s.caps, backend.id) : undefined));
   const Glyph = GLYPH[p.activation];
-  const name = safeDisplayText(p.name, 80);
+  // As the Profiles editor saves a blank name (and the Profiles list shows it).
+  const name = safeDisplayText(p.name, 80).trim() || "Untitled profile";
   // The backend's own model, if it names one: on a non-standard server the `whisper-1` alias
   // loads the server's DEFAULT_MODEL, so it is no name of its own (as on Profiles/Backends).
   const kind = backend ? effectiveServerKind(backend, ownProp(connections, backend.id)) : "unknown";
@@ -418,7 +419,7 @@ export default function Dashboard() {
               {vis.label}
             </div>
             <div className="mt-1 text-[16px] font-semibold text-text">
-              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : !enabled.length ? "Enable a profile to begin" : target ? `Press to dictate with ${safeDisplayText(target.name, 80)}` : "Press to dictate"}
+              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : !enabled.length ? "Enable a profile to begin" : target ? `Press to dictate with ${safeDisplayText(target.name, 80).trim() || "Untitled profile"}` : "Press to dictate"}
             </div>
             <div className="mt-0.5 text-[12.5px] text-faint">
               {busy || enabled.length ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is." : "The button and the hotkeys stay off until a profile is enabled."}

@@ -31,7 +31,7 @@ import { evdevStatus, type EvdevStatus } from "@/lib/api";
 import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { deriveChipTag } from "@/lib/profileTag";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { backendOptions, backendPrompt, effectiveLanguage, effectiveServerUrl } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { backendForProfile } from "@/lib/dictation/dictation";
 import { liveAllowed } from "@/lib/dictation/streaming";
@@ -125,7 +125,7 @@ function Editor({
     : "unknown";
   // The effective override-profile (Profile over Backend) and the caller's
   // capabilities, so the decode editor gates on what this connection allows.
-  const effectiveProfile = p.overrideProfile?.trim() || backend?.overrideProfile?.trim() || undefined;
+  const effectiveProfile = effectiveOverrideProfile(p.overrideProfile, backend?.overrideProfile);
   // Per-device address override wins for the actual requests (display
   // contexts elsewhere keep showing the canonical serverUrl).
   const serverUrl = backend ? effectiveServerUrl(backend, useApp.getState().settings) : "";
@@ -156,7 +156,10 @@ function Editor({
   // Tested as displayed: a synced name of only format characters falls through to the next layer.
   const backendOwnModel = safeDisplayText(ownModelName(backend?.model, serverKind), 60).trim();
   const multiInherited = typeof server.values.multilingual === "boolean" ? server.values.multilingual : undefined;
-  const spoken = spokenField(p.language ?? "", p.decodeOverrides, multiInherited, multiOffered);
+  // The profile's OWN language as dictation resolves it (effectiveLanguage): a synced
+  // whitespace-only value is no override, so it inherits rather than reading "??".
+  const ownLang = p.language?.trim() ? p.language : "";
+  const spoken = spokenField(ownLang, p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
   // own prompt, else the server's default prompt. Read through the backend's TRI-state —
   // a backend whose prompt is explicitly CLEARED inherits nothing, so ghosting the server's
@@ -249,7 +252,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={safeDisplayText(p.name, 80).trim() || "New profile"}
+        title={safeDisplayText(p.name, 80).trim() || "Untitled profile"}
         subtitle={
           <span className="inline-flex items-center gap-1.5">
             <Glyph className="size-3 text-accent" />
@@ -378,7 +381,7 @@ function Editor({
             </Notice>
           )}
         </OverrideHeader>
-        <OverrideHeader title="DEFAULT_LANGUAGE" desc={envDesc("DEFAULT_LANGUAGE")} overridden={!!p.language}>
+        <OverrideHeader title="DEFAULT_LANGUAGE" desc={envDesc("DEFAULT_LANGUAGE")} overridden={!!ownLang}>
           <div className={OVERRIDE_CONTROL_W}>
             <SpokenLanguagePicker
               ariaLabel="Language"
@@ -396,10 +399,11 @@ function Editor({
                       // folding the inherited multilingual flag like the branch below.
                       (() => {
                         const v = decodeDefaults?.language?.value;
-                        // Tested as displayed: a format-only value falls back to the bare "Inherit".
+                        // Tested as displayed: a format-only value the server still sends reads "??",
+                        // as serverLanguageLabel does.
                         return typeof v === "string"
                           ? safeDisplayText(spokenLabel(spokenValue(v.trim() || "auto", undefined, multiInherited)), 40).trim() ||
-                              undefined
+                              "??"
                           : undefined;
                       })()
                     : // A format-only synced language reads "??", as on the Backends screen.
@@ -517,7 +521,7 @@ function Editor({
             pinned={server.pinned}
             ignored={server.ignored}
             known={server.known}
-            languagePinned={namedLanguage(p.language || backend?.language || String(decodeDefaults?.language?.value ?? ""))}
+            languagePinned={namedLanguage(ownLang || backend?.language || String(decodeDefaults?.language?.value ?? ""))}
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />
@@ -767,6 +771,9 @@ function ProfileRow({
   // characters renders nothing, so it gets no (empty) badge.
   const shortModel = shortModelName(p.model, 40);
   const tag = safeDisplayText(p.tag ?? "", 40).trim();
+  // As the editor's save stores a blank name: a synced whitespace- or format-only name
+  // would otherwise leave a nameless row and an "Enable " switch.
+  const name = safeDisplayText(p.name, 80).trim() || "Untitled profile";
   return (
     <Card className={cn("p-5", conflictText && "border-warn/40")}>
       <div className="flex items-center gap-4">
@@ -781,7 +788,7 @@ function ProfileRow({
         </div>
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="truncate text-[14px] font-semibold text-text">{safeDisplayText(p.name, 80)}</span>
+            <span className="truncate text-[14px] font-semibold text-text">{name}</span>
             {tag && <Badge tone="accent">{tag}</Badge>}
             <Badge>{meta.label}</Badge>
             {/* The dictation ROUTE, not just the input language: a translating profile's
@@ -803,7 +810,7 @@ function ProfileRow({
             </span>
           </div>
         </div>
-        <Toggle ariaLabel={`Enable ${safeDisplayText(p.name, 80)}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
+        <Toggle ariaLabel={`Enable ${name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />
         <div className="flex items-center gap-1">
           <Button variant="ghost" size="sm" title="Edit" onClick={onEdit}>
             <Pencil className="size-4" />
@@ -1003,7 +1010,7 @@ export default function Profiles() {
                   <ProfileRow
                     key={p.id}
                     p={p}
-                    backendName={b ? safeDisplayText(b.name, 80).trim() || "Unnamed backend" : "No backend"}
+                    backendName={b ? safeDisplayText(b.name, 80).trim() || "Untitled backend" : "No backend"}
                     backendId={b?.id}
                     backendLanguage={b?.language}
                     backendTargets={b?.translationOverrides?.translateTo}

@@ -382,7 +382,7 @@ function Editor({
     <Card className="p-6">
       <EditorHeader
         onBack={() => guard.guardExit(onCancel)}
-        title={safeIdentityText(b.name, 80) || "New backend"}
+        title={safeIdentityText(b.name, 80) || "Untitled backend"}
         subtitle={
           chips.length ? (
             <span className="inline-flex items-center gap-1.5">
@@ -414,7 +414,7 @@ function Editor({
         <div className="flex flex-wrap items-center gap-3 py-3">
           <StatusDot tone={conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] font-medium text-text">{safeIdentityText(b.name, 80) || "New backend"}</div>
+            <div className="truncate text-[14px] font-medium text-text">{safeIdentityText(b.name, 80) || "Untitled backend"}</div>
             <div className="truncate font-mono text-[11.5px] text-faint">{safeIdentityText(effUrl, 120) || "no address yet"}</div>
           </div>
           <span className="rounded-pill border border-line-strong px-2.5 py-0.5 text-[12px] text-dim" title={conn?.error}>

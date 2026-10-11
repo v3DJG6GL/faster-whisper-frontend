@@ -271,7 +271,11 @@ export default function Settings() {
   // visit so a permission granted outside the app shows up.
   useEffect(() => {
     if (tab !== "Permissions") return;
-    void evdevStatus().then(setEvdev).catch(() => {}); // match the file's other chains; ignore an IPC reject
+    // A rejected probe offers "Set up", as the row did before the probe moved here (it must not
+    // stay on "Checking…"); an earlier answer from this session is kept.
+    void evdevStatus()
+      .then(setEvdev)
+      .catch(() => setEvdev((cur) => cur ?? { available: true, permitted: false, enabled: false }));
   }, [tab]);
 
 
@@ -1209,9 +1213,13 @@ export default function Settings() {
                   desc="Reliable hold-to-talk + left/right modifiers + AltGr on Wayland by reading /dev/input. Reads all keyboard input — strictly opt-in, and needs the 'input' group."
                   last
                 >
-                  {evdev && !evdev.available ? (
+                  {evdev === null ? (
+                    // Not probed yet: a live "Set up" here would offer the admin prompt to a user
+                    // who is already set up.
+                    <span className="text-[12px] text-faint">Checking…</span>
+                  ) : !evdev.available ? (
                     <span className="text-[12.5px] text-faint">Unavailable</span>
-                  ) : evdev && evdev.permitted ? (
+                  ) : evdev.permitted ? (
                     <div className="flex items-center gap-2">
                       <span className="text-[12px] text-dim">{s.general.evdevEnabled ? "On" : "Off"}</span>
                       <Toggle
