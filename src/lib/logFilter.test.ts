@@ -266,6 +266,16 @@ describe("bugReportRunFields", () => {
     expect(f.route).toBeNull();
   });
 
+  it("says the history is unavailable rather than that nothing ran when the listing failed", () => {
+    const f = bugReportRunFields(null, { backendId: "b1", model: "tiny" }, backendName, true);
+    expect(f.source).toBe("settings (history unavailable)");
+    expect(f.backend).toBe("home-server");
+    expect(f.model).toBe("tiny");
+    expect(bugReportRunFields(null, { backendId: "b1", model: "tiny" }, backendName, false).source).toBe(
+      "settings (no run recorded)",
+    );
+  });
+
   it("trims the settings fallback's model the way Transcribe seeds it", () => {
     const blank = bugReportRunFields(null, { backendId: "b1", model: "  " }, backendName);
     expect(blank.model).toBeNull();

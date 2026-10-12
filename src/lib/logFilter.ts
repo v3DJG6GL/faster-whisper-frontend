@@ -206,11 +206,13 @@ export function bugReportRunFields(
   last: BugReportRun | null,
   transcribe: { backendId?: string; model?: string } | undefined,
   backendName: (id?: string) => string | null,
+  // The history listing failed: no run is KNOWN, which is not the same as none recorded.
+  historyUnavailable?: boolean,
 ): Pick<BugReportHeader, "source" | "backend" | "model" | "profile" | "route" | "stages"> {
   if (!last) {
     const backend = backendName(transcribe?.backendId);
     return {
-      source: "settings (no run recorded)",
+      source: historyUnavailable ? "settings (history unavailable)" : "settings (no run recorded)",
       backend,
       // Gated on the saved backend resolving and trimmed, like Transcribe's seed (savedBackend):
       // a pick whose backend is absent or deleted is never sent, a whitespace-only synced pick is

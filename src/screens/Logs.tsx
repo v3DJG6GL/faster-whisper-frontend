@@ -323,7 +323,12 @@ export default function Logs() {
     // model even for a dictation bug — so it confidently named a model that
     // never ran, and a reader had no way to tell. A history record is the
     // only durable account of what actually executed.
-    const last = useTranscriptHistory.getState().records[0] ?? null;
+    // The listing the mount started may not have landed yet (or failed): wait for it, or retry it,
+    // so a run on disk is not reported as "no run recorded". loadHistory joins an in-flight listing
+    // and resolves at once when already loaded.
+    await loadHistory().catch(() => {});
+    const h = useTranscriptHistory.getState();
+    const last = h.records[0] ?? null;
     // A found backend reads as the pickers name it (a blank synced name is "Untitled backend", not a
     // dropped line that looks like a deleted backend; two same-named ones carry their host suffix);
     // a deleted one still gives null.
@@ -333,7 +338,7 @@ export default function Logs() {
         appVersion: ver,
         platform,
         // One block, one source: the run's own fields, or the settings labelled as such.
-        ...bugReportRunFields(last, t, backendOf),
+        ...bugReportRunFields(last, t, backendOf, h.loadFailed),
         filters: filterSummary,
       },
       // Exactly what the view shows: copying a filtered log must not silently

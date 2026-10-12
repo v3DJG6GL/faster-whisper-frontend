@@ -126,6 +126,13 @@ const viewMemory: {
   scrollTop: number;
 } = { query: "", segment: "all", appFilter: null, scrollTop: 0 };
 
+/** The last label each "dictated into" chip was shown with: the pinned chip falls back to it once
+ *  no record carries its key any more (its last dictation deleted or swept), instead of the raw
+ *  key — which cannot be relabelled from the key alone (an appLabel key may be a dotted title).
+ *  Module-level like viewMemory.appFilter, so the name also survives leaving and reopening the
+ *  page; bounded by the distinct app keys seen. */
+const chipLabelMemory = new Map<string, string>();
+
 /** Inline player for a dictation's saved .wav. Loads via readMediaFile → blob
  *  URL (the asset protocol can't feed WebKitGTK's media stack; blob: is in the
  *  CSP). A missing/expired file degrades to a one-line note, not an error. */
@@ -387,10 +394,6 @@ export default function History() {
   const textMatches = useMemo(() => searched.filter((r) => r.kind === "text"), [searched]);
   const dictMatches = useMemo(() => searched.filter(isDictation), [searched]);
 
-  // The last label each chip was shown with: the pinned chip falls back to it once no record
-  // carries its key any more (its last dictation deleted or swept), instead of the raw key —
-  // which cannot be relabelled from the key alone (an appLabel key may be a dotted title).
-  const chipLabels = useRef(new Map<string, string>());
   // "dictated into" chips: top apps across the (searched) dictations.
   const apps = useMemo(() => {
     const counts = new Map<string, { label: string; n: number }>();
@@ -400,7 +403,7 @@ export default function History() {
       if (cur) cur.n++;
       else counts.set(key, { label: appChipLabel(r), n: 1 });
     }
-    for (const [id, v] of counts) chipLabels.current.set(id, v.label);
+    for (const [id, v] of counts) chipLabelMemory.set(id, v.label);
     const top = [...counts.entries()]
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => b.n - a.n)
@@ -409,10 +412,10 @@ export default function History() {
     // with no match at all), so the page never says "for this app" without naming it.
     if (appFilter && !top.some((a) => a.id === appFilter)) {
       const src = records.find((r) => isDictation(r) && appKey(r) === appFilter);
-      if (src) chipLabels.current.set(appFilter, appChipLabel(src));
+      if (src) chipLabelMemory.set(appFilter, appChipLabel(src));
       const pinned = {
         id: appFilter,
-        label: src ? appChipLabel(src) : (chipLabels.current.get(appFilter) ?? appFilter),
+        label: src ? appChipLabel(src) : (chipLabelMemory.get(appFilter) ?? appFilter),
         n: counts.get(appFilter)?.n ?? 0,
       };
       if (top.length >= 6) top[top.length - 1] = pinned;
