@@ -2927,8 +2927,9 @@ export default function Transcribe() {
                     "relative flex items-center gap-3 px-5 py-3",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
                     i < queue.length - 1 && "border-b border-line",
-                    viewable && "cursor-pointer hover:bg-text/[0.03]",
-                    isSel && "bg-accent/[0.06] hover:bg-accent/[0.08]",
+                    // One class set per state: cn is clsx (no merge), so a second hover:bg-* would
+                    // be decided by the built CSS order, not by this list.
+                    viewable && (isSel ? "cursor-pointer bg-accent/[0.06] hover:bg-accent/[0.08]" : "cursor-pointer hover:bg-text/[0.03]"),
                   )}
                 >
                   {isSel && (
@@ -3161,10 +3162,14 @@ export default function Transcribe() {
                 }}
                 className={cn(
                   "flex items-center gap-3 px-5 py-2.5",
-                  busy ? "cursor-not-allowed opacity-50" : "cursor-pointer hover:bg-text/[0.03]",
+                  // One class set per state (cn is clsx): the open row keeps its wash on hover.
+                  busy
+                    ? cn("cursor-not-allowed opacity-50", isOpen && "bg-accent-soft/40")
+                    : isOpen
+                      ? "cursor-pointer bg-accent-soft/40 hover:bg-accent-soft/60"
+                      : "cursor-pointer hover:bg-text/[0.03]",
                   "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60",
                   i < recentRecords.length - 1 && "border-b border-line",
-                  isOpen && "bg-accent-soft/40",
                 )}
               >
                 <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ok/15 text-ok">
