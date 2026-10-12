@@ -455,9 +455,24 @@ describe("wrapLines", () => {
   it("a German closing quote stays on its word before a glued CJK run", () => {
     expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
   });
-  it("an over-long word left alone on the last line wraps per character", () => {
+  it("an over-long word of spaced text wraps per character, sharing a line with its neighbour", () => {
     const w = "x".repeat(50);
-    expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a", "x".repeat(25), "x".repeat(25)]);
+    expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a " + "x".repeat(24), "x".repeat(26)]);
+  });
+  it("a URL or compound longer than a line in spaced Latin text keeps the cue on two lines", () => {
+    for (const t of [
+      "Visit https://example.com/a/very/long/path/to/some/resource/index.html today please",
+      "Der Donaudampfschiffahrtsgesellschaftskapitänsmützenhalter kam heute",
+    ]) {
+      const lines = wrapLines(t, 42, 2);
+      expect(lines).toHaveLength(2);
+      for (const l of lines) expect(l.length).toBeLessThanOrEqual(42);
+      expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+    }
+    for (let cpl = 12; cpl <= 15; cpl++) {
+      const lines = wrapLines("ok Donaudampfschifffahrts.gesellschaftskapitän!!!", cpl, 2);
+      expect(lines.some((l) => /^[.!]/.test(l))).toBe(false);
+    }
   });
   it("a long CJK run before a Latin word wraps per character too, not only a trailing one", () => {
     const t = "我们今天要讨论的是如何使用大型语言模型来处理数据和文本 AI 工具";
@@ -526,6 +541,15 @@ describe("wrapLines", () => {
     expect(wrapLines("ＡＢ\u0301ＣＤＥＦ", 2, 2).some((l) => /^\p{M}/u.test(l))).toBe(false);
     fits("ﾃｷｽﾄ".repeat(4), 6, 3);
     fits("〜".repeat(12), 6, 2);
+    // A halfwidth voicing mark rides with its kana, before a following ｰ.
+    for (const [t, cpls] of [["ﾃﾞｰﾀを見る", [2, 3, 4]], ["ｹﾞｰﾑをする", [2, 3]], ["ｽﾋﾟｰﾄﾞ", [2]], ["新しいﾃﾞｰﾀﾍﾞｰｽを作りました", [9]]] as const) {
+      for (const cpl of cpls) {
+        const lines = wrapLines(t, cpl, 2);
+        expect(lines.some((l) => /^[ｰﾞﾟ]/.test(l))).toBe(false);
+        expect(lines.join("")).toBe(t);
+      }
+    }
+    expect(wrapLines("ｶﾞ。", 4, 2, 3)).toEqual(["ｶﾞ。"]);
     // A quote that ends the token closes it; an opener rides with what it opens.
     expect(wrapLines("„Hallo“", 4, 2)).toEqual(["„Ha", "llo“"]);
     expect(wrapLines("東京で「Microsoft(Teams)」を使いました。", 10, 2).some((l) => /^[)」“]|[(「„]$/.test(l))).toBe(false);
@@ -790,6 +814,9 @@ describe("cutByShare", () => {
     expect(cutByShare("ＣＰＵ，ＧＰＵ，ＲＡＭ", [1, 1, 1])).toEqual(["ＣＰＵ，", "ＧＰＵ，", "ＲＡＭ"]);
     expect(cutByShare("ＵＲＬ：ｈｔｔｐ", [1, 1]).every(Boolean)).toBe(true);
     expect(cutByShare("開始は１２：３０です", [1, 1, 1]).some((p) => /^[：３０]/.test(p))).toBe(false);
+    // A word mixing fullwidth and ASCII letters or digits is one word.
+    expect(cutByShare("ＰＳ5を買った", [1, 1, 1])[0]).toBe("ＰＳ5");
+    expect(cutByShare("ＮＨＫnewsを見た", [1, 1])[0]).toBe("ＮＨＫnews");
   });
   it("cuts after a German closing quote glued to CJK, not inside its word", () => {
     expect(cutByShare("„Hallo“東京", [1, 1])).toEqual(["„Hallo“", "東京"]);
@@ -797,6 +824,9 @@ describe("cutByShare", () => {
   });
   it("leaves no one-character part where a longer one is near the target", () => {
     expect(cutByShare("Hello there. また行きたいです!", [1, 1, 1, 1, 1])).toEqual(["Hello there.", "また", "行き", "たい", "です!"]);
+    // A supplementary-plane character (a surrogate pair) is one character, too.
+    expect(cutByShare("𠮷野家に行った𠮷", [1, 1, 1])).toEqual(["𠮷野", "家に行っ", "た𠮷"]);
+    expect(cutByShare("𠮷野家に行った𠮷", [1, 4, 1])).toEqual(["𠮷野", "家に行っ", "た𠮷"]);
   });
 });
 

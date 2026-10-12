@@ -262,8 +262,9 @@ const STACKERS = "\\u1039\\u17d2";
 const LEAD_OR_STACKER = new RegExp(`[${LEADS}${STACKERS}]`);
 const TRAIL = new RegExp(`[${TRAILS}]`);
 /** What rides after a base character: combining marks, emoji skin tones, Thai/Lao following
- *  vowels, ZWJ + next, a stacking virama + the consonant it stacks. */
-const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S)*`;
+ *  vowels, a halfwidth voicing mark (ﾞ ﾟ — a letter, not a mark, so it rides before a
+ *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks. */
+const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S)*`;
 /** Scripts written without spaces between words that are no CJK (unspacedChar keeps
  *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
  *  between its syllables, like a CJK run — a space-joined multi-sentence Thai translation
@@ -284,12 +285,14 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  digits (with ，．： only between two digits) is one word, as its halfwidth spelling is:
  *  "２０２６", "１２３，４５６" and "１２：３０" never break in the middle, while the ， of
  *  "ＣＰＵ，ＧＰＵ" or the ： of "ＵＲＬ：" stays a clause seam; a run longer than a line still wraps per
- *  character through `tokenUnits`. */
+ *  character through `tokenUnits`. Glued to ASCII letters or digits ("ＰＳ5", "ＮＨＫnews")
+ *  it stays one word too (mixedTokens joins them): the seam between the two widths is no
+ *  word break. */
 const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
 const MIXED_TOKEN = new RegExp(
   `[${OPEN_PUNCT}]*[${FW_ALNUM}]${UNIT_TAIL}(?:[${FW_ALNUM}]${UNIT_TAIL}|(?<=[０-９])[，．：](?=[０-９]))*[${CLOSE_PUNCT}]*`
-    + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}\\uff9e\\uff9f]*`
+    + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`
     + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
@@ -539,6 +542,14 @@ export function cutByShare(text: string, shares: number[]): string[] {
   const nCuts = Math.min(shares.length - 1, cand.length);
   let done = 0;
   let prev = 0;
+  /** text[a..b) trimmed holds fewer than two code points — counted in place: slicing and
+   *  spreading the part per candidate made a long text with many shares quadratic per cut. */
+  const oneCp = (a: number, b: number): boolean => {
+    while (a < b && /\s/.test(text[a])) a++;
+    while (b > a && /\s/.test(text[b - 1])) b--;
+    const n = b - a;
+    return n < 2 || (n === 2 && text.codePointAt(a)! > 0xffff);
+  };
   for (let k = 0; k < nCuts; k++) {
     done += shares[k];
     const target = (text.length * done) / tot;
@@ -567,7 +578,7 @@ export function cutByShare(text: string, shares: number[]): string[] {
           : 0) -
         (NOBREAK.has(prevWord) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
-        ([...text.slice(prev, i).trim()].length < 2 || (k === nCuts - 1 && [...text.slice(i).trim()].length < 2) ? 9 : 0);
+        (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {
         best = s;
         bi = i;
@@ -610,19 +621,23 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   // Unspaced text wraps by the same tokens, so a Latin word or number glued into it
   // ("明日はMicrosoftの", "333メートル") stays whole and ASCII punctuation stays on its
   // character; no gaps, so every seam is a plain character seam. A token longer than
-  // cpl (a Latin word, URL or e-mail in a Japanese line, a lone compound) wraps per unit
-  // (tokenUnits): kept whole it took a line of its own, or ran over the cap.
+  // cpl (a Latin word, URL or e-mail in a Japanese line, a lone compound, or one in plain
+  // spaced Latin text) wraps per unit (tokenUnits): kept whole it took a line of its own,
+  // or ran over the cap — a URL in an English line left three or four lines.
   const toks: string[] = [];
-  let gaps: boolean[] | null = [];
+  const gaps: boolean[] = [];
   if (spaced && !BREAKS_ANYWHERE.test(t)) {
-    toks.push(...t.split(/\s+/));
-    gaps = null;
+    t.split(/\s+/).forEach((w, k) => {
+      const parts = w.length > cpl ? tokenUnits(w) : [w];
+      toks.push(...parts);
+      parts.forEach((_, j) => gaps.push(j === 0 && k > 0));
+    });
   } else {
     const m = mixedTokens(t);
     m.toks.forEach((w, k) => {
       const parts = w.length > cpl ? tokenUnits(w) : [w];
       toks.push(...parts);
-      if (spaced) parts.forEach((_, j) => gaps!.push(j === 0 && m.gaps[k]));
+      if (spaced) parts.forEach((_, j) => gaps.push(j === 0 && m.gaps[k]));
     });
   }
   if (toks.length < 2) {
@@ -633,7 +648,7 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
       ? [t]
       : wrapTokens(u, [], cpl, len, firstReserve);
   }
-  return wrapTokens(toks, gaps ?? toks.map((_, i) => i > 0), cpl, len, firstReserve);
+  return wrapTokens(toks, gaps, cpl, len, firstReserve);
 }
 
 /** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens and
@@ -659,7 +674,13 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
       toks[k] = toks[k].slice(0, open.index);
       w = open[0] + w;
     }
-    if (k >= 0 && !gap && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(w) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]))) toks[k] += w;
+    // A word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews") is one word.
+    if (
+      k >= 0 && !gap
+      && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(w) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k])
+        || (/[０-９Ａ-Ｚａ-ｚ]$/u.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
+        || (/[A-Za-z0-9]$/.test(toks[k]) && /^[０-９Ａ-Ｚａ-ｚ]/u.test(w)))
+    ) toks[k] += w;
     else {
       toks.push(w);
       gaps.push(gap && k >= 0);
