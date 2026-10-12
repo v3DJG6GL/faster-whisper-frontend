@@ -154,11 +154,17 @@ where
         let mut v = MsgVisitor::default();
         event.record(&mut v);
         let (tag, msg) = split_tag(&v.msg);
+        // `log`-crate records (tauri/tao/wry) arrive through LogTracer on a shared callsite
+        // whose raw target is "log"; the fmt layers print the normalized one, so the ring
+        // must too or the replayed session-file head disagrees with the live tail.
+        use tracing_log::NormalizeEvent;
+        let norm = event.normalized_metadata();
+        let meta = norm.as_ref().unwrap_or_else(|| event.metadata());
         self.ring.push(LogLine {
             seq: 0, // assigned under the ring lock
             ts: now_ms(),
-            level: level_str(event.metadata().level()),
-            target: event.metadata().target().to_string(),
+            level: level_str(meta.level()),
+            target: meta.target().to_string(),
             tag,
             msg: msg.to_string(),
         });
@@ -692,6 +698,32 @@ mod tests {
         // since_seq filter
         let recent = ring.tail(t.seq - 3);
         assert_eq!(recent.lines.len(), 3);
+    }
+
+    #[test]
+    fn ring_records_the_real_target_of_log_crate_lines() {
+        use tracing_log::log;
+        use tracing_subscriber::layer::SubscriberExt;
+        let ring = LogRing::default();
+        let sub = tracing_subscriber::registry().with(RingLayer { ring: ring.clone() });
+        tracing::subscriber::with_default(sub, || {
+            // What LogTracer does with a tauri/tao/wry `log::warn!`.
+            tracing_log::format_trace(
+                &log::Record::builder()
+                    .target("tauri::manager")
+                    .level(log::Level::Warn)
+                    .args(format_args!("[webview] gone"))
+                    .build(),
+            )
+            .unwrap();
+        });
+        let t = ring.tail(0);
+        assert_eq!(t.lines.len(), 1);
+        let l = &t.lines[0];
+        assert_eq!(l.target, "tauri::manager");
+        assert_eq!(l.level, "warn");
+        assert_eq!(l.tag.as_deref(), Some("webview"));
+        assert_eq!(l.msg, "gone");
     }
 
     #[test]

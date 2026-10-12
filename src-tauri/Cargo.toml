@@ -71,6 +71,9 @@ anyhow = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# Already in the tree via tracing-subscriber (LogTracer); direct for `NormalizeEvent`, so the
+# log ring records the real target of `log`-crate lines (tauri/tao/wry) instead of "log".
+tracing-log = "0.2"
 
 # Config + identifiers + concurrency
 uuid = { version = "1", features = ["v4", "serde"] }
