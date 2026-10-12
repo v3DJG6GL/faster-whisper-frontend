@@ -195,6 +195,9 @@ struct SwapInner {
     file: Option<std::fs::File>,
     /// Directory of the open file, for folder-change detection.
     dir: Option<PathBuf>,
+    /// The open file itself, which the prune must skip: it is matched by mtime alone, and a
+    /// quiet session (Warnings level, idle in the tray) can leave it older than `keep_days`.
+    path: Option<PathBuf>,
 }
 
 pub struct SwapGuard(Arc<Mutex<SwapInner>>);
@@ -390,20 +393,21 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
         }
         inner.file = Some(file);
         inner.dir = Some(dir.to_path_buf());
+        inner.path = Some(path);
     }
 }
 
 /// Delete `fwf-*.log` files older than `keep_days` (by mtime; 0 = keep
-/// forever). Also removes the superseded single-file scheme's
-/// `fwf.log`/`fwf.prev.log` pair.
-pub fn prune_log_files(dir: &Path, keep_days: u32) {
+/// forever), except `except` — the session's live file. Also removes the superseded
+/// single-file scheme's `fwf.log`/`fwf.prev.log` pair.
+pub fn prune_log_files(dir: &Path, keep_days: u32, except: Option<&Path>) {
     prune_legacy_dir(dir);
     // The shared sweep clamps the window (see `audio::MAX_RETENTION_DAYS` for the Windows
     // overflow panic that prevents, inside setup(), with the value already persisted).
     let _ = crate::audio::prune_older_than(dir, keep_days, |e| {
         let n = e.file_name();
         let n = n.to_string_lossy();
-        n.starts_with("fwf-") && n.ends_with(".log")
+        n.starts_with("fwf-") && n.ends_with(".log") && Some(e.path().as_path()) != except
     });
 }
 
@@ -438,12 +442,15 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
     let current = writer.0.lock().ok().and_then(|i| i.dir.clone());
     if current.as_deref() != Some(dir.as_path()) {
         open_session_file(&writer, &ring, &dir);
-        if let Some(old) = current.as_deref().filter(|_| prune) {
-            prune_log_files(old, config.settings.logging.keep_days);
-        }
     }
+    // Read after any reopen: a failed reopen leaves the old folder's file live, and that one
+    // must survive the old folder's prune too.
+    let live = writer.0.lock().ok().and_then(|i| i.path.clone());
     if prune {
-        prune_log_files(&dir, config.settings.logging.keep_days);
+        if let Some(old) = current.as_deref().filter(|old| *old != dir.as_path()) {
+            prune_log_files(old, config.settings.logging.keep_days, live.as_deref());
+        }
+        prune_log_files(&dir, config.settings.logging.keep_days, live.as_deref());
     }
     // The pre-viewer builds wrote `%LOCALAPPDATA%\faster-whisper-frontend\logs`; the
     // legacy pair there was never reached by the prune above.
@@ -777,7 +784,7 @@ mod tests {
         f.set_modified(past).unwrap();
         drop(f);
 
-        prune_log_files(&dir, 7);
+        prune_log_files(&dir, 7, None);
         assert!(!old.exists(), "old session file pruned");
         assert!(fresh.exists(), "fresh session file kept");
         assert!(other.exists(), "unrelated files untouched");
@@ -792,8 +799,34 @@ mod tests {
             .unwrap()
             .set_modified(past)
             .unwrap();
-        prune_log_files(&dir, 0);
+        prune_log_files(&dir, 0, None);
         assert!(old.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The session's open file is matched by mtime like any other, and a quiet session can leave
+    /// it past `keep_days`: the prune must still skip it.
+    #[test]
+    fn prune_skips_the_live_session_file() {
+        let dir = std::env::temp_dir().join(format!("fwf-prune-live-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let live = dir.join("fwf-2020-01-01_00-00-00.log");
+        let stale = dir.join("fwf-2020-01-02_00-00-00.log");
+        let past = std::time::SystemTime::now() - std::time::Duration::from_secs(10 * 24 * 3600);
+        for p in [&live, &stale] {
+            std::fs::write(p, "x").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(p)
+                .unwrap()
+                .set_modified(past)
+                .unwrap();
+        }
+
+        prune_log_files(&dir, 7, Some(&live));
+        assert!(live.exists(), "live session file kept");
+        assert!(!stale.exists(), "other aged session file pruned");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
