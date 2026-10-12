@@ -885,7 +885,10 @@ export default function Dictionary() {
       // On success, re-sync to server truth (fresh fingerprints; conflicted edits
       // are replaced by the server's version) BEFORE showing the banner — load()
       // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
-      if (res.ok) await load(backend);
+      // A 2xx whose reply couldn't be read (ok:false) still LANDED: reload too, or the stale
+      // fingerprints turn the obvious re-save into bogus conflicts. The banner shows its detail.
+      const landed = res.ok || (res.status >= 200 && res.status < 300);
+      if (landed) await load(backend);
       // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
       // during that reload makes load() bail on its own guard (leaving result null), so setting the old
       // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.

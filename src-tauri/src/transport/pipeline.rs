@@ -56,9 +56,11 @@ pub struct PipelineFetch {
     pub error: Option<String>,
 }
 
-/// PATCH outcome. `ok` ⇒ HTTP 2xx (then inspect `conflicts` / `requires_restart`).
-/// `errors` carries the 422 validation list; `detail` a 400/403/500 message or a
-/// transport error (status 0).
+/// PATCH outcome. `ok` ⇒ HTTP 2xx with a readable reply (then inspect `conflicts` /
+/// `requires_restart`). A 2xx `status` with `ok: false` means the change LANDED but the
+/// reply couldn't be read or parsed, so the caller must reload rather than treat it as
+/// unsaved. `errors` carries the 422 validation list; `detail` a 400/403/500 message or a
+/// transport error before any status arrived (status 0).
 #[derive(Debug, Serialize, Default)]
 pub struct PipelineSave {
     pub ok: bool,
@@ -105,7 +107,9 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
             let code = resp.status().as_u16();
             if resp.status().is_success() {
                 // Read the body apart from parsing it, as `discovery::test_connection` does: a
-                // timeout or oversized body is a transport failure, not "Unexpected response".
+                // timeout or oversized body is a transport failure, not "Unexpected response",
+                // so it reports as status 0 like a send failure (the card offers Retry instead
+                // of titling it "Server error (HTTP 200)").
                 let text = match body_capped_to(resp, MAX_META_BODY).await {
                     Ok(t) => t,
                     Err(reason) => {
@@ -114,7 +118,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                         );
                         return PipelineFetch {
                             ok: false,
-                            status: code,
+                            status: 0,
                             state: None,
                             error: Some(reason),
                         };
@@ -188,7 +192,8 @@ pub async fn save_pipeline_rules(
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                // Same split as the GET above: a transport failure keeps its own wording.
+                // Same split as the GET above, but the 2xx `status` is kept on both failure arms:
+                // it is the only signal that the save landed, so the client reloads.
                 let text = match body_capped_to(resp, MAX_META_BODY).await {
                     Ok(t) => t,
                     Err(reason) => {
@@ -199,7 +204,9 @@ pub async fn save_pipeline_rules(
                             ok: false,
                             status: code,
                             conflicts: serde_json::json!([]),
-                            detail: Some(reason),
+                            detail: Some(format!(
+                                "The server accepted the save, but its reply couldn't be read ({reason}). Reloaded from the server."
+                            )),
                             ..Default::default()
                         };
                     }
@@ -246,7 +253,9 @@ pub async fn save_pipeline_rules(
                             ok: false,
                             status: code,
                             conflicts: serde_json::json!([]),
-                            detail: Some(format!("Unexpected response: {e}")),
+                            detail: Some(format!(
+                                "The server accepted the save, but its reply was unexpected ({e}). Reloaded from the server."
+                            )),
                             ..Default::default()
                         }
                     }
@@ -359,5 +368,67 @@ pub async fn get_recent_words(server_url: &str, api_key: Option<&str>) -> Recent
             tracing::debug!("[pipeline] recent-words: {}", friendly_err(&e));
             RecentWords::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{get_pipeline_rules, save_pipeline_rules};
+    use std::io::{Read, Write};
+
+    /// A one-shot local server: answers the first request with `head` + `body`, then closes.
+    fn serve_once(head: &'static str, body: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let _ = s.write_all(head.as_bytes());
+            let _ = s.write_all(body.as_bytes());
+        });
+        format!("http://{addr}")
+    }
+
+    /// A 2xx whose body can't be read is a transport failure (status 0, so the card offers
+    /// Retry), never "Server error (HTTP 200)".
+    #[tokio::test]
+    async fn rules_get_reports_an_unreadable_2xx_body_as_status_0() {
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n",
+            "",
+        );
+        let out = get_pipeline_rules(&url, None).await;
+        assert!(!out.ok);
+        assert_eq!(out.status, 0);
+    }
+
+    /// A 2xx PATCH landed even when its reply can't be read or parsed: the status stays 2xx
+    /// (the client reloads on it) and the detail says the save was accepted.
+    #[tokio::test]
+    async fn rules_patch_keeps_the_2xx_when_its_reply_is_unreadable_or_unparsable() {
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Length: 999999999\r\nConnection: close\r\n\r\n",
+            "",
+        );
+        let out = save_pipeline_rules(&url, None, serde_json::json!({})).await;
+        assert!(!out.ok);
+        assert_eq!(out.status, 200);
+        assert!(out
+            .detail
+            .unwrap()
+            .starts_with("The server accepted the save"));
+
+        let url = serve_once(
+            "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+            "not json",
+        );
+        let out = save_pipeline_rules(&url, None, serde_json::json!({})).await;
+        assert!(!out.ok);
+        assert_eq!(out.status, 200);
+        assert!(out
+            .detail
+            .unwrap()
+            .starts_with("The server accepted the save"));
     }
 }

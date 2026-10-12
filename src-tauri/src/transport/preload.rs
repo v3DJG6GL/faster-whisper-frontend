@@ -5,7 +5,7 @@
 //! model / disabled stage answers 202 with `state: "deferred"` — both must be
 //! indistinguishable from success to the user, so nothing here is surfaced.
 
-use super::{base_url, client, json_capped_to, with_auth};
+use super::{base_url, client, with_auth};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -77,8 +77,8 @@ pub async fn preload_models(
     match resp {
         Ok(r) if r.status().is_success() => {
             // Drained (capped) rather than dropped so the connection returns to
-            // the pool. A body we can't parse still means the hint landed.
-            let _ = json_capped_to::<serde::de::IgnoredAny>(r, super::MAX_META_BODY).await;
+            // the pool. The hint landed whatever the body says, so it isn't parsed.
+            let _ = super::body_capped_to(r, super::MAX_META_BODY).await;
             true
         }
         _ => false,
