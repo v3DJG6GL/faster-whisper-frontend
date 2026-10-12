@@ -474,6 +474,10 @@ pub async fn inject_text(
     // remote-desktop clipboard handling on/off for that app, `None` = auto-detect (exe/app id +
     // window class). See the resolution at the sink in `inject::text`.
     remote_desktop: Option<bool>,
+    // The clipboard form of `text` (`clipboardText` over IPC): what every divert, recovery and
+    // clipboard-only write puts on the clipboard in its place — a translated live block without
+    // the field's phrase gap. Omitted = `text`. Sanitized exactly like `text`, in `inject::text`.
+    clipboard_text: Option<String>,
 ) -> Result<InjectOutcome, String> {
     crate::inject::text::inject_text(
         app,
@@ -487,6 +491,7 @@ pub async fn inject_text(
         paste_shortcut,
         expect_app_id,
         remote_desktop,
+        clipboard_text,
     )
     .await
 }

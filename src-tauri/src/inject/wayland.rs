@@ -21,6 +21,10 @@ use tokio::sync::{mpsc, oneshot, Mutex};
 #[cfg_attr(windows, allow(dead_code))] // the consuming typer task is Linux-only (RemoteDesktop portal)
 pub struct Job {
     text: String, // characters to type (empty for a paste chord)
+    /// What the layout divert below puts on the clipboard instead of typing `text`: its clipboard
+    /// form (`inject_text`'s `clipboard_text`, already resolved — `text` itself when the caller
+    /// sent none). Empty for a paste chord.
+    clip_text: String,
     /// Injection generation this job belongs to; the typing loop abandons the rest of `text` once
     /// `crate::inject::injection_cancelled` reports it superseded. Without it a long transcript
     /// kept typing into whatever held focus long after the user cancelled.
@@ -612,6 +616,8 @@ mod imp {
         app: &AppHandle,
         typer: &WaylandTyper,
         text: &str,
+        // The clipboard form of `text` — see `Job::clip_text`.
+        clip_text: &str,
         auto_enter: bool,
         epoch: u64,
     ) -> Result<crate::inject::Landed, String> {
@@ -619,6 +625,7 @@ mod imp {
             app,
             typer,
             text.to_string(),
+            clip_text.to_string(),
             false,
             Vec::new(),
             auto_enter,
@@ -640,6 +647,7 @@ mod imp {
         submit(
             app,
             typer,
+            String::new(),
             String::new(),
             true,
             chord_codes,
@@ -773,10 +781,12 @@ mod imp {
 
     /// Queue a job for the persistent typer, starting the task (one consent dialog)
     /// on first use, and await its completion.
+    #[allow(clippy::too_many_arguments)]
     async fn submit(
         app: &AppHandle,
         typer: &WaylandTyper,
         text: String,
+        clip_text: String,
         paste: bool,
         chord_codes: Vec<String>,
         auto_enter: bool,
@@ -803,6 +813,7 @@ mod imp {
         // cancel still cannot leak into the NEXT injection.
         tx.send(Job {
             text,
+            clip_text,
             paste,
             chord_codes,
             auto_enter,
@@ -986,8 +997,9 @@ mod imp {
                             return Ok(crate::inject::Landed::Yes);
                         }
                         // No key was synthesized: a failed clipboard write is "nothing written"
-                        // (the caller's re-send is safe), as in the sibling diverts.
-                        if let Err(e) = crate::inject::text::persist_off_runtime(job.text.clone()).await {
+                        // (the caller's re-send is safe), as in the sibling diverts. The clipboard
+                        // form, not the typed text: the user pastes this (see `Job::clip_text`).
+                        if let Err(e) = crate::inject::text::persist_off_runtime(job.clip_text.clone()).await {
                             tracing::warn!("[wayland-inject] clipboard divert failed: {e}");
                             return Ok(crate::inject::Landed::NothingWritten);
                         }
@@ -1594,6 +1606,7 @@ pub async fn type_text(
     _app: &tauri::AppHandle,
     _typer: &WaylandTyper,
     _text: &str,
+    _clip_text: &str,
     _auto_enter: bool,
     _epoch: u64,
 ) -> Result<crate::inject::Landed, String> {

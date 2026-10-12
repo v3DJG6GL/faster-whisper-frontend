@@ -583,6 +583,15 @@ describe("wrapLines", () => {
     expect(q28.some((l) => l.endsWith("n“,"))).toBe(true);
     expect(wrapLines("Go to „Rechtsschutzversicherungsgesellschaften“,, then click.", 14, 2, 6)
       .some((l) => /^[\p{P}]+$/u.test(l))).toBe(false);
+    // Even after three stops on the last letter, which cap what else rides along.
+    for (const stops of ["...", "!?!"]) {
+      const s = `Please look at „Rechtsschutzversicherungsgesellschaften${stops}“, before the meeting starts`;
+      for (const cpl of [13, 14, 28, 30, 31, 42]) {
+        const lines = wrapLines(s, cpl, 2);
+        expect(lines.some((l) => l.startsWith("“")), `${stops} @${cpl}: ${lines.join(" | ")}`).toBe(false);
+        expect(lines.join(" ").replace(/ /g, "")).toBe(s.replace(/ /g, ""));
+      }
+    }
     expect(wrapLines("東京で「Microsoft(Teams)」を使いました。", 10, 2).some((l) => /^[)」“]|[(「„]$/.test(l))).toBe(false);
   });
 });

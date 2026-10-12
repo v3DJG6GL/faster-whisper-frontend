@@ -751,6 +751,11 @@ pub type OwnWindowFocused<'a> = &'a (dyn Fn() -> bool + Sync);
 #[allow(clippy::too_many_arguments)]
 pub fn inject(
     text: &str,
+    // The clipboard form of `text` (`inject_text`'s `clipboard_text`, already resolved: equal to
+    // `text` when the caller sent none). The paste writes `text` — it goes INTO the field — but a
+    // transcript left on the clipboard for the user (the chord-time divert, a failed paste) is
+    // this one.
+    clip_text: &str,
     method: &str,
     auto_enter: bool,
     restore_clipboard: bool,
@@ -833,6 +838,7 @@ pub fn inject(
                 match paste(
                     &mut enigo,
                     text,
+                    clip_text,
                     restore_clipboard,
                     paste_shortcut,
                     remote_target,
@@ -1155,9 +1161,12 @@ fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn paste(
     enigo: &mut Enigo,
     text: &str,
+    // See `inject`: what a divert or a failed paste leaves on the clipboard.
+    clip_text: &str,
     restore_clipboard: bool,
     chord: &[String],
     remote_target: bool,
@@ -1360,12 +1369,22 @@ fn paste(
         // because no chord was pressed on this arm — the caller re-sends, and re-sending cannot
         // duplicate text that was never typed. (The `set_text` above went through a local
         // `Clipboard` that is dropped on return, so it is not a fallback.)
-        if !persisted {
-            if let Err(e) = persist_transcript(text) {
+        //
+        // A clipboard form that differs from the pasted text (a translated block's field gap) is
+        // written over it even after a persisted paste write: this is a divert now, and the user
+        // pastes it. The second write is unavoidable — the paste write went out before the divert
+        // was known. If only IT fails, the gapped text still sits on a live owner: still a divert.
+        if !persisted || clip_text != text {
+            if let Err(e) = persist_transcript(clip_text) {
+                if !persisted {
+                    tracing::warn!(
+                        "[clip] paste: clipboard divert failed, reporting nothing written: {e}"
+                    );
+                    return Ok(Landed::NothingWritten);
+                }
                 tracing::warn!(
-                    "[clip] paste: clipboard divert failed, reporting nothing written: {e}"
+                    "[clip] paste: the clipboard form could not replace the pasted text: {e}"
                 );
-                return Ok(Landed::NothingWritten);
             }
         }
         return Ok(Landed::OnClipboard);
@@ -1417,8 +1436,9 @@ fn paste(
     } else if !persisted {
         // The local arboard Clipboard is dropped when this function returns — on X11/Wayland
         // without a clipboard manager that destroys the selection. Hand it to the persistent
-        // owner so "it's on the clipboard to paste manually" stays true.
-        let _ = persist_transcript(text);
+        // owner so "it's on the clipboard to paste manually" stays true — in its clipboard form,
+        // since the user now pastes it.
+        let _ = persist_transcript(clip_text);
     }
     res.map(|()| Landed::Yes)
 }

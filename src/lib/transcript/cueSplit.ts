@@ -322,8 +322,11 @@ function tokenUnits(w: string): string[] {
   while (tail > 0 && /^[\p{Pe}\p{Pf}\p{Po}\p{Pi}]+$/u.test(u[tail - 1])) tail--;
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
-    if (prev !== undefined && !open && !/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev)
-      && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) || (k >= tail && /^\p{Pi}+$/u.test(x)))) out[out.length - 1] += x;
+    // The closing quote rides even past the three-closer cap („…...“,): left behind, it would
+    // open the next unit and a line could start with “.
+    if (prev !== undefined && !open
+      && ((k >= tail && /^\p{Pi}+$/u.test(x))
+        || (!/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev) && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(x)))) out[out.length - 1] += x;
     else if (/^[\p{Ps}\p{Pi}]+$/u.test(x) && k < u.length - 1) open += x;
     else {
       out.push(open + x);

@@ -1145,6 +1145,11 @@ export async function injectText(args: {
    *  optional field is the one a new call site forgets, and forgetting it here would
    *  silently ignore the user's rule. Pass null where no target was resolved. */
   remoteDesktop: boolean | null;
+  /** The CLIPBOARD form of `text`, when it differs from what goes into the field (a translated
+   *  live block typed behind the field's phrase gap). Every Rust arm that leaves the transcript on
+   *  the clipboard for the user — the clipboard-only write, a divert, an error-abort recovery —
+   *  writes this in place of `text`; the field still gets `text`. Omit for "the same as `text`". */
+  clipboardText?: string;
 }): Promise<InjectOutcome> {
   if (!isTauri) return { landed: true, diverted: false };
   return await invoke<InjectOutcome>("inject_text", {
@@ -1155,6 +1160,7 @@ export async function injectText(args: {
     pasteShortcut: args.pasteShortcut,
     expectAppId: args.expectAppId ?? null,
     remoteDesktop: args.remoteDesktop ?? null,
+    clipboardText: args.clipboardText ?? null,
   });
 }
 

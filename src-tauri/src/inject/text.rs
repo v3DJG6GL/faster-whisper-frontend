@@ -94,12 +94,22 @@ pub(crate) async fn inject_text(
     // remote-desktop clipboard handling on/off for that app, `None` = auto-detect (exe/app id +
     // window class). See the resolution at the sink below.
     remote_desktop: Option<bool>,
+    // The CLIPBOARD form of `text`, when it differs from what goes into the field: a translated
+    // live session types each block behind a phrase gap ("\n\n\n") the field owes, but the
+    // clipboard is replaced, not appended to, so a copy that opened with that gap would paste
+    // three blank lines (three empty submits in a chat box). Every arm that leaves the transcript
+    // on the clipboard for the user — the clipboard-only write, the diverts and the error-abort
+    // recoveries — writes this instead of `text`; what is typed or pasted INTO the field stays
+    // `text`. `None` = the same as `text`. See `clipboard_form`.
+    clipboard_text: Option<String>,
 ) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
     // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
     // — so a malicious/garbled server can't smuggle terminal-escape sequences onto the clipboard or
     // into a paste. (The Wayland direct-typing paths already drop controls; this matches them.)
     let text = crate::inject::sanitize_injected(&text);
+    // Same sanitising, same posture: this string reaches the clipboard too.
+    let clip_text = clipboard_form(&text, clipboard_text);
     // Captured HERE — before any await — not where the job is finally queued. Everything below
     // (the held-modifier wait, two focus IPCs, a bounded clipboard read, the settle, and on the
     // Wayland fallback a failed virtual-keyboard attempt) can take a second or more, and a cancel
@@ -148,7 +158,7 @@ pub(crate) async fn inject_text(
             // and it is the arm that runs for every phrase when the insert method IS the
             // clipboard. Reporting false is safe here because no keystroke is ever synthesized on
             // this path, so the caller's re-send cannot duplicate anything.
-            if let Err(e) = persist_off_runtime(text.clone()).await {
+            if let Err(e) = persist_off_runtime(clip_text.clone()).await {
                 tracing::warn!("[inject] clipboard-only insert failed: {e}");
                 return Ok(InjectOutcome {
                     landed: false,
@@ -354,7 +364,7 @@ pub(crate) async fn inject_text(
             // The divert the ledger's D1 named as the data-loss path: on `landed: true` the
             // caller advances its baseline and the phrase leaves the re-send stream for good.
             // Nothing has been typed on this arm either, so `false` is both truthful and safe.
-            if let Err(e) = persist_off_runtime(text.clone()).await {
+            if let Err(e) = persist_off_runtime(clip_text.clone()).await {
                 tracing::warn!("[inject] divert to clipboard failed: {e}");
                 return Ok(InjectOutcome {
                     landed: false,
@@ -420,8 +430,10 @@ pub(crate) async fn inject_text(
     // sinks still bail with nothing written, and a skipped phrase must not overwrite the target
     // of the paste before it.
 
-    // Kept for the error-abort recovery below: the X11 branch moves `text` into spawn_blocking.
-    let recovery_text = text.clone();
+    // Kept for the error-abort recovery below: the X11 branch moves `clip_text` into
+    // spawn_blocking. The clipboard form, like every recovery write (see `clipboard_text`); it is
+    // empty exactly when `text` is, which the bare-Enter checks below rely on.
+    let recovery_text = clip_text.clone();
     // The probe the two typing backends re-ask focus with. Built once here so `virtual_keyboard`
     // (served by a bare `std::thread`, no `AppHandle`) and `inject` (served by the blocking pool)
     // take the same predicate the entry guard above uses.
@@ -443,7 +455,7 @@ pub(crate) async fn inject_text(
             // branch below: VK type_text("", true) cleanly types Return — and on KWin, where VK is
             // unavailable, it falls back to this same portal path — so the per-phrase Enter takes the
             // SAME silent VK route the phrase's words did instead of forcing a portal consent prompt.)
-            crate::inject::wayland::type_text(&app, typer.inner(), "", true, epoch).await
+            crate::inject::wayland::type_text(&app, typer.inner(), "", "", true, epoch).await
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
@@ -483,8 +495,15 @@ pub(crate) async fn inject_text(
                         "[inject] virtual keyboard unavailable ({}); using portal",
                         e.message
                     );
-                    crate::inject::wayland::type_text(&app, typer.inner(), &text, auto_enter, epoch)
-                        .await
+                    crate::inject::wayland::type_text(
+                        &app,
+                        typer.inner(),
+                        &text,
+                        &clip_text,
+                        auto_enter,
+                        epoch,
+                    )
+                    .await
                 }
                 Err(e) => {
                     tracing::error!("[inject] virtual keyboard failed mid-typing ({}); not re-typing via portal (would duplicate the landed prefix)", e.message);
@@ -714,15 +733,26 @@ pub(crate) async fn inject_text(
                 // chord guard. If the persistent re-set fails, the plain `set_clipboard` above is
                 // exactly the write that does not stick, so promising a divert would be a false
                 // confirmation. No chord was pressed, so the caller's re-send is safe.
-                if !persisted {
-                    if let Err(e) = persist_off_runtime(text.clone()).await {
+                //
+                // A clipboard form that differs from the pasted text (a translated block's field
+                // gap) is written over it even when the paste write already persisted: this is
+                // now a divert, and the user pastes it. That second write is unavoidable here —
+                // the paste write went out before the divert was known. If only IT fails, the
+                // gapped text is still on a live owner, so the divert stands.
+                if !persisted || clip_text != text {
+                    if let Err(e) = persist_off_runtime(clip_text.clone()).await {
+                        if !persisted {
+                            tracing::warn!(
+                                "[inject] divert before the paste chord failed (our own window took focus): {e}"
+                            );
+                            return Ok(InjectOutcome {
+                                landed: false,
+                                diverted: false,
+                            });
+                        }
                         tracing::warn!(
-                            "[inject] divert before the paste chord failed (our own window took focus): {e}"
+                            "[inject] divert before the paste chord: the clipboard form could not replace the pasted text: {e}"
                         );
-                        return Ok(InjectOutcome {
-                            landed: false,
-                            diverted: false,
-                        });
                     }
                 }
                 // Delivered — and after this paste's `note_paste_target` above, which cleared the
@@ -751,8 +781,9 @@ pub(crate) async fn inject_text(
             } else if r.is_err() && !persisted {
                 // The transcript stays on the clipboard to paste manually — but the write above
                 // was the plain `set_clipboard`, which does not stick on Wayland once its setter
-                // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does.
-                if let Err(e) = persist_off_runtime(text.clone()).await {
+                // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does
+                // — in its clipboard form, since it is now there to paste manually.
+                if let Err(e) = persist_off_runtime(clip_text.clone()).await {
                     tracing::warn!(
                         "[inject] paste failed and the clipboard hand-off failed too: {e}"
                     );
@@ -774,6 +805,7 @@ pub(crate) async fn inject_text(
         let x11_res = tokio::task::spawn_blocking(move || {
             crate::inject::inject(
                 &text,
+                &clip_text,
                 &method,
                 auto_enter,
                 restore_clipboard,
@@ -875,4 +907,53 @@ pub(crate) fn settle_outcome(
         crate::inject::note_delivered_unless_user_cancelled(epoch);
     }
     outcome
+}
+
+/// The clipboard form of a sanitized transcript `text` (see `inject_text`'s `clipboard_text`):
+/// the caller's string, sanitized exactly as `text` is, or `text` itself when there is none. Also
+/// `text` when either side is empty — an empty form would make a divert write nothing while
+/// reporting the transcript on the clipboard, and a bare auto-Enter (empty `text`) has no
+/// transcript to put there at all, so its recovery checks must keep reading empty.
+fn clipboard_form(text: &str, clipboard_text: Option<String>) -> String {
+    match clipboard_text.map(|c| crate::inject::sanitize_injected(&c)) {
+        Some(c) if !c.is_empty() && !text.is_empty() => c,
+        _ => text.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clipboard_form;
+
+    /// A translated live block types behind the field's phrase gap, but every clipboard write of
+    /// it — divert, recovery, clipboard-only — gets the bare block the caller handed over.
+    #[test]
+    fn the_clipboard_form_is_what_the_caller_handed_over() {
+        let typed = "\n\n\nHallo Welt";
+        assert_eq!(
+            clipboard_form(typed, Some("Hallo Welt".into())),
+            "Hallo Welt"
+        );
+        // Omitted (every other caller): the clipboard gets exactly what is typed.
+        assert_eq!(clipboard_form(typed, None), typed);
+    }
+
+    /// Sanitized like `text`: a server-authored string cannot reach the clipboard with controls or
+    /// a bidi override just because it went through the second argument.
+    #[test]
+    fn the_clipboard_form_is_sanitized_like_the_text() {
+        assert_eq!(
+            clipboard_form("a b", Some("a\u{1b}[2J\u{202e}b\r\n".into())),
+            "a[2Jb\n"
+        );
+    }
+
+    /// An empty form falls back to the text, and a bare auto-Enter (empty text) never gains one —
+    /// the recovery and divert arms key "is there a transcript" off emptiness.
+    #[test]
+    fn an_empty_side_falls_back_to_the_text() {
+        assert_eq!(clipboard_form("abc", Some("\u{1}".into())), "abc");
+        assert_eq!(clipboard_form("abc", Some(String::new())), "abc");
+        assert_eq!(clipboard_form("", Some("abc".into())), "");
+    }
 }

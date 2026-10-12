@@ -2419,7 +2419,17 @@ async function ensureListeners(): Promise<void> {
             let landed = true;
             let diverted = false;
             try {
-              ({ landed, diverted } = await injectText({ text: typeOut, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
+              // The field gets `typeOut`, gap included; the clipboard gets the bare block. Every
+              // Rust arm that leaves the phrase on the clipboard for the user — a divert (chord
+              // still held, focus moved, our own window at the chord, an untypeable layout) and
+              // the error-abort recoveries — writes `clipboardText` in place of `text`, in that
+              // ONE write. A gap owed to the FIELD would otherwise open the pasted text with three
+              // blank lines (three empty submits in a chat box). It has to be Rust's write: a
+              // recovery's outcome arrives after the teardown nulled insertCfg, so a JS re-copy
+              // after the await never ran for it, and one that did ran a second, gapped clipboard
+              // write into the user's clipboard history.
+              const clipboardText = sessionTranslation && typeOut !== block ? block : undefined;
+              ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
             } catch (e) {
               // A live phrase insert failed: surface it, then tear the session down (mirrors
               // stream://error) so the mic + system-mute don't leak — once status is "error" no
@@ -2441,7 +2451,8 @@ async function ensureListeners(): Promise<void> {
               // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
               // A translated block is copied WITHOUT the field's phrase gap: like the clipboard-only
               // branch, the clipboard is replaced, not appended to, so copied text needs no gap.
-              // (The divert below re-copies its block for the same reason.)
+              // (Rust's own divert and recovery writes take the bare block for the same reason —
+              // the `clipboardText` passed above.)
               const recoverable = await recoverToClipboard(
                 sessionTranslation ? block : typeOut,
                 t,
@@ -2490,7 +2501,8 @@ async function ensureListeners(): Promise<void> {
               // what the user must now paste — we owe no restore over it. Mirrors the clipboard-only
               // phrase path above exactly; without this the end-of-phrase restore would put the
               // user's old clipboard back over the text we just told them to paste. (Like that
-              // path, the copy carries no phrase gap — a translated block is re-copied bare below.)
+              // path, the copy carries no phrase gap: Rust wrote the `clipboardText` it was handed
+              // — the bare block — not the gapped `typeOut`.)
               clipDirty = false;
               clipHoldsOurs = true;
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
@@ -2549,16 +2561,6 @@ async function ensureListeners(): Promise<void> {
               // every earlier phrase whose own insert was skipped.
               bookOwedUtterances(diverted ? "clipboard" : "typed", { kind: "body" });
               bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);
-              // A diverted translated block carries no gap either. Rust put `typeOut` on the
-              // clipboard verbatim — every divert / recovery arm writes the text it was handed, and
-              // it knows nothing of the gap — so a gap owed to the FIELD would open the pasted text
-              // with three blank lines (three empty submits in a chat box). Re-copy the bare block
-              // over it, last, so a cancel during this await cannot skip the bookkeeping above.
-              // Guard-free (recoverUnguarded) like the stop-mode recovery: a divert caused by our
-              // own window taking focus must still land. No restore races it — the divert arm
-              // already cleared clipDirty, and the queue is serial, so the next phrase waits. A
-              // failure only logs: the gapped text is still there to paste.
-              if (diverted && sessionTranslation && typeOut !== block) await recoverUnguarded(block, "a diverted translated block");
             } else {
               // Skipped (our own window, or the sink refused with nothing written): the baseline
               // and the carry stay un-advanced, so the next delivered insert re-sends this phrase.

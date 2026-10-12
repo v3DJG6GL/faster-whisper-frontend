@@ -582,20 +582,28 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(copyArgs).toContain("sessionTranslation ? block : typeOut");
   });
 
-  it("a diverted translated block is re-copied without the field's phrase gap", () => {
-    // Rust's divert / recovery arms put the text they were handed — the gapped typeOut — on the
-    // clipboard verbatim; pasted, it opened with three blank lines. The FIELD keeps its gap.
+  it("a diverted or recovered translated block reaches the clipboard bare, in Rust's one write", () => {
+    // Rust's divert / recovery arms used to put the text they were handed — the gapped typeOut —
+    // on the clipboard; pasted, it opened with three blank lines. The FIELD keeps its gap, so the
+    // live insert hands Rust the bare block as its clipboard form (`clipboardText`) and every
+    // divert / recovery arm writes that instead.
     const finalBody = bodyAfter(streamingSrc, '"stream://final"');
     const final = mask(finalBody);
     expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const typeOut = sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
-    // Unmasked: the booking's literals are part of what pins the order.
+    // The live phrase insert: typeOut into the field, the bare block for the clipboard — only
+    // when the two differ (omitted = Rust's old behaviour, the clipboard gets `text`).
+    const call = final.search(/injectText\(\{ text: typeOut, clipboardText,/);
+    expect(call, "the live insert must pass the bare block as its clipboard form").toBeGreaterThanOrEqual(0);
+    expect(final.slice(0, call)).toMatch(/const clipboardText = sessionTranslation && typeOut !== block \? block : undefined;\s*\(\{ landed, diverted \} = await $/);
+    // …and nothing after it copies the phrase a second time. A JS re-copy after the await never
+    // ran for an error-abort recovery (the teardown nulls insertCfg first) and, for a divert,
+    // left a gapped duplicate in the clipboard history. The failed-insert catch's recovery copy
+    // is the one clipboard write left, and it already copies the bare block.
+    const after = final.slice(call);
+    expect(after).not.toMatch(/recoverUnguarded\(|recoverTextToClipboard\(|copyForTarget\(/);
+    expect(after.match(/recoverToClipboard\(/g) ?? []).toHaveLength(1);
     const delivered = bodyAfter(finalBody, "if (delivered) ");
-    const recopy = /if \(diverted && sessionTranslation && typeOut !== block\) await recoverUnguarded\(block,/;
-    expect(delivered, "the divert must re-copy the bare block").toMatch(recopy);
-    // Last, after the bookkeeping: a cancel during the extra await must not skip the booking.
-    const booked = delivered.indexOf('bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);');
-    expect(booked).toBeGreaterThanOrEqual(0);
-    expect(delivered.search(recopy)).toBeGreaterThan(booked);
+    expect(delivered).not.toMatch(/await /);
   });
 
   it("a live phrase skipped in our own window is booked by the insert that later carries it", () => {

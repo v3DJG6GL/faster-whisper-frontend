@@ -66,6 +66,9 @@ function fmtBytes(n: number): string {
   return `${(n / 1e9).toFixed(1)} GB`;
 }
 
+/** The audio-folder Open failure's lead, so the next click can clear just that message. */
+const OPEN_DIR_FAILED = "Couldn't open the audio folder: ";
+
 /** Link-download video height caps. A synced value outside this list (sync accepts any
  *  144–4320) is appended by `withCurrentHeight` so the Select shows the real cap instead
  *  of falling back to "Best available". */
@@ -361,19 +364,20 @@ export default function Settings() {
   }, [basePref]);
   // A failed open (the folder on an unplugged drive or dead share) says so in the tab's
   // message line; a second click while one is out is refused, or a stalled mount queues
-  // opens that all pop up a window when it answers.
+  // opens that all pop up a window when it answers. A click clears only an earlier open
+  // failure: the same line may explain a partial move, the very thing Open is clicked to see.
   const [openingDir, setOpeningDir] = useState(false);
   const openRecDir = () => {
     if (openingDir) return;
     setOpeningDir(true);
-    setStoreMsg(null);
+    setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
     void openAudioDir(basePref)
       .catch((e: unknown) => {
         console.error("open audio dir:", e);
         // Path-free: the log is pasted into bug reports.
         logLine("warn", "files", "could not open the audio folder");
         if (tabRef.current === "Recording & history") {
-          setStoreMsg({ text: `Couldn't open the audio folder: ${safeDisplayText(errorText(e), 200)}`, error: true });
+          setStoreMsg({ text: `${OPEN_DIR_FAILED}${safeDisplayText(errorText(e), 200)}`, error: true });
         }
       })
       .finally(() => setOpeningDir(false));

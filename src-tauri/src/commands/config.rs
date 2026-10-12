@@ -124,20 +124,37 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // Session-file move / prune (written saves only; the level went with the live switches
     // above) — so Settings changes apply live, not at the next restart. Off the main thread too:
     // a custom log folder can sit on a stalled mount (network share, sleeping disk), and every
-    // autosave would otherwise freeze the app on its create_dir/read_dir. Its own mutex, so a
-    // slow audio sweep does not hold up the log move; the same generation check as the sweeps,
-    // so the newest save applies last (a skipped older one is harmless: the newest compares
-    // its folder against the live file again).
-    static LOG_GEN: AtomicU64 = AtomicU64::new(0);
-    let log_gen = LOG_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-    std::thread::spawn(move || {
-        static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        let _g = LOG.lock().unwrap_or_else(|e| e.into_inner());
-        if LOG_GEN.load(Ordering::SeqCst) != log_gen {
-            return;
-        }
-        crate::logging::apply_log_settings(&app, &config, reset);
-    });
+    // autosave would otherwise freeze the app on its create_dir/read_dir. One worker at a time
+    // drains a single newest-wins slot: saves made while it is stuck on a dead share replace the
+    // pending one instead of parking a thread each, and the newest is applied as soon as the
+    // stuck call returns (a skipped older one is harmless: the newest compares its folder
+    // against the live file again). Its own worker, so a slow audio sweep does not hold up the
+    // log move.
+    static LOG_NEXT: std::sync::Mutex<(Option<(Config, bool)>, bool)> =
+        std::sync::Mutex::new((None, false));
+    let spawn = {
+        let mut slot = LOG_NEXT.lock().unwrap_or_else(|e| e.into_inner());
+        slot.0 = Some((config, reset));
+        !std::mem::replace(&mut slot.1, true)
+    };
+    if spawn {
+        std::thread::spawn(move || loop {
+            let (config, held) = {
+                let mut slot = LOG_NEXT.lock().unwrap_or_else(|e| e.into_inner());
+                match slot.0.take() {
+                    Some(next) => next,
+                    None => {
+                        slot.1 = false;
+                        return;
+                    }
+                }
+            };
+            // A panic must not leave the slot marked as drained by a worker that is gone.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::logging::apply_log_settings(&app, &config, held)
+            }));
+        });
+    }
     Ok(())
 }
 
