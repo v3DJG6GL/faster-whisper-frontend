@@ -42,6 +42,8 @@ const api = vi.hoisted(() => ({
   keyWrites: [] as [string, string][],
   /** Every keyring delete, in order (the real one is a no-op outside Tauri). */
   keyDeletes: [] as string[],
+  /** When set, a keyring delete waits on it (after being recorded in `keyDeletes`). */
+  deletePark: null as null | Promise<void>,
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -59,6 +61,7 @@ vi.mock("../api", async (importOriginal) => {
     },
     deleteBackendKey: async (id: string) => {
       api.keyDeletes.push(id);
+      if (api.deletePark) await api.deletePark;
     },
     syncPush: async (args: { blob: unknown; baseVersion: number }) => {
       api.pushes++;
@@ -1598,6 +1601,83 @@ describe("an automatic push with nothing to send", () => {
       api.park = null;
       api.keys = null;
       await resetSyncState(); // drop the follow-up push scheduled for the corrected address
+    }
+  });
+
+  // A server switch clears syncError but leaves the old server's "error": a message-less error is
+  // nothing to restore — it would show a warn dot with no notice, carried over from the old server.
+  it("ends on Synced, not a message-less error, when the address moved mid-compose", async () => {
+    let release: (v: Record<string, string>) => void = () => {};
+    try {
+      await seedBase();
+      useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: null });
+      const pushesBefore = api.pushes;
+      api.park = new Promise((r) => (release = r));
+      api.readCalled = false;
+      const pushing = pushNow(true);
+      await vi.waitFor(() => expect(api.readCalled).toBe(true));
+      useApp.setState({ backends: useApp.getState().backends.map((b) => ({ ...b, serverUrl: "http://moved:9" })) });
+      release({ b1: "sk-secret" });
+      await pushing;
+      expect(api.pushes).toBe(pushesBefore);
+      expect(useApp.getState().syncStatus).toBe("ok");
+      expect(useApp.getState().syncError).toBeNull();
+    } finally {
+      api.park = null;
+      api.keys = null;
+      await resetSyncState();
+    }
+  });
+});
+
+// A pull's first contact with a newly picked sync backend parks in ensureStateFor's keyring delete;
+// if that backend's address moves meanwhile, the pull contacts no server and restores the status
+// it found — but only a real failure (with its message), never the old server's bare "error".
+describe("a pull whose address moved during first contact", () => {
+  async function pullWithMovedAddress(prior: { syncStatus: "error"; syncError: string | null }): Promise<void> {
+    await seedBase(); // the sync state now belongs to b1
+    const s = useApp.getState();
+    useApp.setState({
+      settings: { ...s.settings, sync: { ...s.settings.sync!, backendId: "b2" } },
+      backends: [...s.backends, backend({ id: "b2", serverUrl: "http://10.0.0.3:8000" })],
+    });
+    useApp.getState().setSyncRuntime(prior);
+    let release: () => void = () => {};
+    api.deletePark = new Promise((r) => (release = r));
+    api.pullCalled = false;
+    const deletesBefore = api.keyDeletes.length;
+    const pulling = pullNow(true);
+    await vi.waitFor(() => expect(api.keyDeletes.length).toBeGreaterThan(deletesBefore));
+    useApp.setState({
+      backends: useApp.getState().backends.map((b) => (b.id === "b2" ? { ...b, serverUrl: "http://moved:9" } : b)),
+    });
+    release();
+    await pulling;
+  }
+
+  it("keeps an earlier sync error", async () => {
+    try {
+      await pullWithMovedAddress({ syncStatus: "error", syncError: "Sync failed." });
+      expect(api.pullCalled).toBe(false);
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toBe("Sync failed.");
+    } finally {
+      api.deletePark = null;
+      api.keys = null;
+      await resetSyncState();
+    }
+  });
+
+  it("ends on Synced, not a message-less error", async () => {
+    try {
+      await pullWithMovedAddress({ syncStatus: "error", syncError: null });
+      expect(api.pullCalled).toBe(false);
+      expect(useApp.getState().syncStatus).toBe("ok");
+      expect(useApp.getState().syncError).toBeNull();
+    } finally {
+      api.deletePark = null;
+      api.keys = null;
+      await resetSyncState();
     }
   });
 });

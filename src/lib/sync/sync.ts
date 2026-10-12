@@ -2480,10 +2480,14 @@ export async function pullNow(manual = false): Promise<void> {
   if (!backend || !canSync() || inFlight) return;
   inFlight = true;
   const myGen = gen;
-  // The failure a pull that contacts no server restores (pushNow's twin).
+  // The failure a pull that contacts no server restores (pushNow's twin). Only one with a message:
+  // a server switch clears syncError but leaves the old server's "error", and restoring that
+  // would show a warn dot with no notice, carried over from the old server.
   const prior = useApp.getState();
   const priorError =
-    prior.syncStatus === "error" && !pendingConflict && !pendingReview ? prior.syncError : undefined;
+    prior.syncStatus === "error" && prior.syncError && !pendingConflict && !pendingReview
+      ? prior.syncError
+      : undefined;
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
@@ -2569,7 +2573,9 @@ export async function pushNow(manual = false): Promise<void> {
   // Reject / Later meanwhile may have dismissed.
   const prior = useApp.getState();
   const priorError =
-    prior.syncStatus === "error" && !pendingConflict && !pendingReview ? prior.syncError : undefined;
+    prior.syncStatus === "error" && prior.syncError && !pendingConflict && !pendingReview
+      ? prior.syncError
+      : undefined;
   /** End a push that contacted no server: a status another writer set meanwhile (a Reject /
    *  Later, an approve) stands, an earlier failure is restored, else the idle status. */
   const endWithoutServer = () => {
