@@ -119,7 +119,9 @@ async fn resolve_key_async(explicit: Option<String>, backend_id: Option<String>)
 /// get_text (and the PRIMARY read) are blocking Wayland round-trips that can hang indefinitely on a
 /// dead/slow owner — e.g. right after the previous clipboard owner exited — so every such read goes
 /// through here: one place owns the off-thread + 400ms-cap contract. Returns None on timeout, join
-/// error, or an empty read; callers log / handle None per-site.
+/// error, or while another read is still running (single-flight, below); otherwise it passes the
+/// closure's value through unchanged — an empty string included, so judging "" (a stalled delayed
+/// render, not the user's clipboard) is the caller's job. Callers log / handle None per-site.
 ///
 /// Single-flight (CLIP_READ_BUSY): a read that outlives its 400ms cap keeps its blocking thread,
 /// so on a wedged owner every per-phrase call used to strand one more thread. While a read is still

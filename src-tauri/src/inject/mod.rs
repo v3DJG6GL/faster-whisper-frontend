@@ -431,6 +431,95 @@ pub fn wait_clip_read_idle(max: Duration) -> bool {
 /// How long a writer waits for a stuck read (see `wait_clip_read_idle`).
 const CLIP_IDLE_WAIT: Duration = Duration::from_secs(1);
 
+/// One clipboard JOB at a time between the two jobs that write the clipboard and then press a
+/// chord whose effect depends on what is on it: `paste` (write the transcript, Ctrl+V) and the
+/// Windows quick-add seed grab (Ctrl+Insert, wait for the copy, read it, put the user's text back).
+/// Both wait out the same chord-modifier release gate, so a phrase held back by the quick-add chord
+/// is released in the same tick as the grab: the paste's write then bumps the sequence number the
+/// grab reads as "the copy landed", the grab puts the user's old clipboard back during the paste's
+/// settle, and the Ctrl+V pastes that instead of the phrase. Only ever taken with `try_clip_job`
+/// (never a blocking `lock`), and neither holder calls the other, so it cannot deadlock. The
+/// 400 ms restore timer is NOT covered: the restore slot has its own take protocol.
+static CLIP_JOB: Mutex<()> = Mutex::new(());
+
+/// Take the clipboard-job lock if it is free (see `CLIP_JOB`). A poisoned lock is recovered: it
+/// guards no data, so a panicked holder leaves nothing inconsistent behind.
+pub(crate) fn try_clip_job() -> Option<std::sync::MutexGuard<'static, ()>> {
+    match CLIP_JOB.try_lock() {
+        Ok(g) => Some(g),
+        Err(std::sync::TryLockError::Poisoned(p)) => Some(p.into_inner()),
+        Err(std::sync::TryLockError::WouldBlock) => None,
+    }
+}
+
+/// `try_clip_job`, polled every 15 ms for up to `max`. None = still held after `max`.
+fn wait_clip_job(max: Duration) -> Option<std::sync::MutexGuard<'static, ()>> {
+    let t0 = std::time::Instant::now();
+    loop {
+        if let Some(g) = try_clip_job() {
+            return Some(g);
+        }
+        if t0.elapsed() >= max {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(15));
+    }
+}
+
+/// Read the clipboard's text before a paste overwrites it, for the restore. arboard gives up
+/// opening the clipboard after ~25 ms when another process holds it (`ClipboardOccupied`, Windows):
+/// clipboard listeners (rdpclip, clipboard history) do exactly that right after any write. Folding
+/// that into "nothing to restore" made the paste overwrite the user's text with no restore
+/// scheduled, so retry it briefly (≤ 50 ms), like the quick-add grab's snapshot does. Any other
+/// error is "nothing to restore", as before.
+pub(crate) fn read_prior_text(cb: &mut arboard::Clipboard) -> Option<String> {
+    read_prior_text_with(|| cb.get_text(), Duration::from_millis(25))
+}
+
+fn read_prior_text_with(
+    mut get_text: impl FnMut() -> Result<String, arboard::Error>,
+    retry_after: Duration,
+) -> Option<String> {
+    let mut tries = 0;
+    loop {
+        tries += 1;
+        match get_text() {
+            Ok(t) => return Some(t),
+            Err(arboard::Error::ClipboardOccupied) if tries < 3 => {
+                std::thread::sleep(retry_after);
+            }
+            Err(arboard::Error::ClipboardOccupied) => {
+                tracing::info!(
+                    "[clip] prior clipboard read: clipboard busy (held by another process) — no restore"
+                );
+                return None;
+            }
+            Err(_) => return None,
+        }
+    }
+}
+
+/// Is a prior clipboard read worth restoring after the paste? Not OUR OWN last transcript: it
+/// lingers there after a failed/skipped restore, and restoring it would resurrect stale dictation
+/// after every future paste (the mstsc wrong-text bug). Not an empty read either: a stalled delayed
+/// render (a copy made inside an RDP session) reads back "", and writing "" back 400 ms later would
+/// erase the user's remote copy — and would supersede a real restore still pending from the
+/// previous paste (`merge_pending_restore` adopts that one only when this read yields nothing). A
+/// clipboard that really is empty loses nothing. Shared by both paste paths (`paste`, Wayland).
+pub(crate) fn worth_restoring(prior: &str) -> bool {
+    if prior.is_empty() {
+        tracing::info!(
+            "[clip] paste: prior clipboard text read back empty (stalled delayed render?) — skipping restore"
+        );
+        return false;
+    }
+    if is_own_injected(prior) {
+        tracing::info!("[clip] paste: prior clipboard is our own transcript — skipping restore");
+        return false;
+    }
+    true
+}
+
 /// The restore scheduled by `restore_clipboard_later`, generation-stamped so a NEWER clipboard
 /// write can supersede it. Without this, a restore scheduled after phrase N fired 400ms later no
 /// matter what — including on top of phrase N+1's transcript when N+1 was pasted inside that
@@ -1053,6 +1142,17 @@ fn paste(
     own_window_focused: OwnWindowFocused<'_>,
 ) -> Result<Landed, String> {
     use arboard::Clipboard;
+    // The clipboard-job lock (see `CLIP_JOB`), held until this function returns — across the
+    // write, the settle and the chord. A Windows quick-add copy grab in flight would otherwise put
+    // the user's old clipboard back between our write and our Ctrl+V. Bounded: the grab can run for
+    // seconds over remote desktop, so after `CLIP_IDLE_WAIT` this bails. Nothing has been read or
+    // written yet, so `NothingWritten` is truthful and the caller's re-send cannot duplicate text.
+    let Some(_clip_job) = wait_clip_job(CLIP_IDLE_WAIT) else {
+        tracing::info!(
+            "[clip] paste: a quick-add copy grab is in flight — nothing written, the caller re-sends"
+        );
+        return Ok(Landed::NothingWritten);
+    };
     // A restore the PREVIOUS paste scheduled and that is still waiting out its 400ms. Taken first,
     // so it cannot fire in the middle of this paste (between our write and our chord it would
     // make the target paste the user's old clipboard). If this paste bails before it writes — on
@@ -1073,27 +1173,9 @@ fn paste(
             );
             None
         } else {
-            // Refuse to adopt OUR OWN last transcript as "the user's previous clipboard": it
-            // lingers there after a failed/skipped restore, and restoring it here would resurrect
-            // stale dictation after every future paste (the mstsc wrong-text bug).
-            // An empty read is nothing to restore either: a stalled delayed render (a copy made
-            // inside an RDP session) reads back "", and writing "" back 400 ms later would erase
-            // the user's remote copy; a clipboard that really is empty loses nothing.
-            clipboard.get_text().ok().filter(|p| {
-                if p.is_empty() {
-                    tracing::info!(
-                        "[clip] paste: prior clipboard text read back empty (stalled delayed render?) — skipping restore"
-                    );
-                    return false;
-                }
-                let own = is_own_injected(p);
-                if own {
-                    tracing::info!(
-                        "[clip] paste: prior clipboard is our own transcript — skipping restore"
-                    );
-                }
-                !own
-            })
+            // Neither our own last transcript nor an empty read is the user's clipboard — see
+            // `worth_restoring`.
+            read_prior_text(&mut clipboard).filter(|p| worth_restoring(p))
         }
     } else {
         None
@@ -1468,6 +1550,82 @@ mod tests {
             sanitize_injected("Grüße, 日本語\tund\nZeile 2"),
             "Grüße, 日本語\tund\nZeile 2"
         );
+    }
+
+    /// An empty prior read is a stalled delayed render, not the user's clipboard: restoring ""
+    /// would erase their remote copy (and, on Wayland, supersede a real pending restore).
+    #[test]
+    fn empty_prior_read_is_not_worth_restoring() {
+        assert!(!super::worth_restoring(""));
+        assert!(super::worth_restoring("the user's copy 7c1f"));
+    }
+
+    /// A clipboard briefly held by another process (rdpclip, clipboard history) is retried, not
+    /// read as "nothing to restore"; it gives up after three tries, and other errors at once.
+    #[test]
+    fn prior_read_retries_a_busy_clipboard() {
+        use std::time::Duration;
+        let mut calls = 0;
+        let got = super::read_prior_text_with(
+            || {
+                calls += 1;
+                if calls < 3 {
+                    Err(arboard::Error::ClipboardOccupied)
+                } else {
+                    Ok("user text".to_string())
+                }
+            },
+            Duration::ZERO,
+        );
+        assert_eq!(got.as_deref(), Some("user text"));
+        assert_eq!(calls, 3);
+
+        let mut calls = 0;
+        let got = super::read_prior_text_with(
+            || {
+                calls += 1;
+                Err(arboard::Error::ClipboardOccupied)
+            },
+            Duration::ZERO,
+        );
+        assert_eq!(got, None);
+        assert_eq!(calls, 3);
+
+        let mut calls = 0;
+        let got = super::read_prior_text_with(
+            || {
+                calls += 1;
+                Err(arboard::Error::ContentNotAvailable)
+            },
+            Duration::ZERO,
+        );
+        assert_eq!(got, None);
+        assert_eq!(calls, 1);
+    }
+
+    /// The clipboard-job lock: a second taker is refused (bounded wait included), it is free
+    /// again once the guard drops, and a panicked holder does not lock it for good. Only this test
+    /// touches CLIP_JOB (keep it that way — tests run in parallel within one process).
+    #[test]
+    fn clip_job_lock_is_exclusive_bounded_and_survives_poisoning() {
+        use std::time::{Duration, Instant};
+        let held = super::try_clip_job().expect("free at start");
+        assert!(super::try_clip_job().is_none());
+        let t0 = Instant::now();
+        assert!(super::wait_clip_job(Duration::from_millis(40)).is_none());
+        assert!(t0.elapsed() >= Duration::from_millis(40));
+        drop(held);
+        assert!(super::wait_clip_job(Duration::from_millis(40)).is_some());
+
+        let _ = std::thread::spawn(|| {
+            let _g = super::try_clip_job().expect("free");
+            panic!("poison the clip-job lock");
+        })
+        .join();
+        let g = super::try_clip_job();
+        assert!(g.is_some(), "a poisoned lock must still be taken");
+        drop(g);
+        assert!(super::try_clip_job().is_some());
     }
 
     #[test]

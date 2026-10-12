@@ -517,7 +517,7 @@ pub(crate) async fn inject_text(
                 match read_selection_bounded(|| {
                     arboard::Clipboard::new()
                         .ok()
-                        .and_then(|mut c| c.get_text().ok())
+                        .and_then(|mut c| crate::inject::read_prior_text(&mut c))
                 })
                 .await
                 {
@@ -529,11 +529,11 @@ pub(crate) async fn inject_text(
                     }
                     // Never adopt OUR OWN last transcript as "the user's previous clipboard" —
                     // it lingers after a failed/skipped restore, and restoring it would resurrect
-                    // stale dictation on every future paste (mirrors the Windows/X11 paste guard).
-                    Some(t) if crate::inject::is_own_injected(&t) => {
-                        tracing::info!("[clip] paste: prior clipboard is our own transcript — skipping restore");
-                        None
-                    }
+                    // stale dictation on every future paste. Nor an EMPTY read: that is a stalled
+                    // delayed render (a copy made inside an RDP session), and restoring "" would
+                    // erase the user's remote copy — and drop a real restore still pending from
+                    // the previous paste. Same filter as the Windows/X11 paste (`worth_restoring`).
+                    Some(t) if !crate::inject::worth_restoring(&t) => None,
                     some => some,
                 }
             } else {
