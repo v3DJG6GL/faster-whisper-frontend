@@ -521,22 +521,55 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   // One word of a spaced script ("Okay.", "감사합니다.") pushed over only by the prefix
   // stays whole, as in wrapTokens; a word longer than cpl by itself still wraps per character.
   if (!spaced && t.length <= cpl && !BREAKS_ANYWHERE.test(t)) return [t];
-  const toks = spaced ? t.split(/\s+/) : units(t);
+  // Spaced text holding a CJK/Thai-like run (one Latin word in a Japanese line) wraps
+  // between that run's characters too: as one token the run used to take whole lines of
+  // its own, a three-line cue under a two-line cap that fits() had judged to fit.
+  const { toks, gaps } = !spaced
+    ? { toks: units(t), gaps: [] }
+    : BREAKS_ANYWHERE.test(t)
+      ? mixedTokens(t)
+      : { toks: t.split(/\s+/), gaps: null };
   if (toks.length < 2) return [t];
-  return wrapTokens(toks, spaced, cpl, len, firstReserve);
+  return wrapTokens(toks, gaps ?? toks.map((_, i) => i > 0), cpl, len, firstReserve);
+}
+
+/** Tokens of spaced text with a CJK/Thai-like run (MIXED_TOKEN, as spreadTokens), and per
+ *  token whether whitespace stood before it. Punctuation glued to its neighbour (an ASCII
+ *  "." or ")" after a CJK character, a "(" before one) joins it, so no line starts with a
+ *  stop or ends on an opener. */
+function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
+  const toks: string[] = [];
+  const gaps: boolean[] = [];
+  let end = 0;
+  for (const m of t.matchAll(MIXED_TOKEN)) {
+    const w = m[0];
+    const gap = m.index! > end;
+    end = m.index! + w.length;
+    const k = toks.length - 1;
+    if (k >= 0 && !gap && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(w) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]))) toks[k] += w;
+    else {
+      toks.push(w);
+      gaps.push(gap && k >= 0);
+    }
+  }
+  return { toks, gaps };
 }
 
 /** wrapLines past its early returns: `len` (> cpl) is the text's length incl.
- *  `reserve`, toks.length >= 2. Line widths come from prefix sums, so a long
- *  unsplit paragraph costs one pass per line, not one rejoin per candidate. */
-function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, reserve: number): string[] {
-  const sep = spaced ? 1 : 0;
+ *  `reserve`, toks.length >= 2; `gaps[i]` = a space stands before toks[i] (only
+ *  there does a seam score as a word break). Line widths come from prefix sums, so
+ *  a long unsplit paragraph costs one pass per line, not one rejoin per candidate. */
+function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, reserve: number): string[] {
   const cum = [0];
-  for (const w of toks) cum.push(cum[cum.length - 1] + w.length);
+  toks.forEach((w, i) => cum.push(cum[i] + (gaps[i] ? 1 : 0) + w.length));
   const T = toks.length;
   /** Joined length of toks[a..b), b > a. */
-  const width = (a: number, b: number) => cum[b] - cum[a] + (b - a - 1) * sep;
-  const join = (a: number, b: number) => toks.slice(a, b).join(spaced ? " " : "");
+  const width = (a: number, b: number) => cum[b] - cum[a] - (gaps[a] ? 1 : 0);
+  const join = (a: number, b: number) => {
+    let s = toks[a];
+    for (let k = a + 1; k < b; k++) s += (gaps[k] ? " " : "") + toks[k];
+    return s;
+  };
   const out: string[] = [];
   let lo = 0;
   for (;;) {
@@ -560,7 +593,10 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
       let s = 0;
       if (a > cpl) s -= 1000;
       if (b > cpl * (n - 1)) s -= 1000;
-      if (spaced) s += breakScore(toks[i - 1], toks[i]) * 0.3;
+      if (gaps[i]) s += breakScore(toks[i - 1], toks[i]) * 0.3;
+      // Between two syllables of a spaced Thai/Lao/Khmer/Burmese run: a fallback seam, so
+      // the line still breaks at a phrase space first (splitTokens' -40, scaled by 0.3).
+      else if (gaps.length && BRK_SYL.test(edgeChar(toks[i - 1], true)) && BRK_SYL.test(edgeChar(toks[i], false))) s -= 12;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy
       if (s > best) {
@@ -570,14 +606,14 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
     }
     if (
       bi === lo + 1 &&
-      (UNSPACED.test(toks[lo]) ? width(lo, bi) + reserve : width(lo, bi)) > cpl &&
+      (UNSPACED.test(toks[lo]) || BRK_SYL.test(toks[lo]) ? width(lo, bi) + reserve : width(lo, bi)) > cpl &&
       units(toks[lo]).length >= 2
     ) {
       // One over-long token on its own line (a CJK run before a Latin word): it
       // wraps per character too, not just a trailing one. A spaced-script word
       // pushed over only by the name prefix stays whole; an unspaced run has no
-      // word to protect, so it still wraps to fit the prefixed line.
-      out.push(...wrapTokens(units(toks[lo]), false, cpl, toks[lo].length + reserve, reserve));
+      // word to protect (CJK or Thai-like), so it still wraps to fit the prefixed line.
+      out.push(...wrapTokens(units(toks[lo]), [], cpl, toks[lo].length + reserve, reserve));
     } else out.push(join(lo, bi));
     lo = bi;
     reserve = 0;
@@ -586,7 +622,7 @@ function wrapTokens(toks: string[], spaced: boolean, cpl: number, len: number, r
     if (T - lo < 2) {
       // One over-long word left: it wraps per character (brackets kept with theirs).
       const chars = units(toks[lo]);
-      return chars.length < 2 ? [...out, toks[lo]] : [...out, ...wrapTokens(chars, false, cpl, len, 0)];
+      return chars.length < 2 ? [...out, toks[lo]] : [...out, ...wrapTokens(chars, [], cpl, len, 0)];
     }
   }
 }

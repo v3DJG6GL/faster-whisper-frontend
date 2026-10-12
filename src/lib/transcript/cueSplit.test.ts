@@ -397,6 +397,26 @@ describe("wrapLines", () => {
     for (const l of lines) expect(l.length).toBeLessThanOrEqual(16);
     expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
   });
+  it("a CJK run beside a spaced Latin word wraps inside the run, not onto lines of its own", () => {
+    for (const t of ["今日はとても良い天気ですね私たち AI", "AI 今日はとても良い天気ですね私たち"]) {
+      const lines = wrapLines(t, 13, 2);
+      expect(lines).toHaveLength(2);
+      for (const l of lines) expect(l.length).toBeLessThanOrEqual(13);
+      // Rejoined at the original seams: the only space is the one before/after "AI".
+      expect(lines.join(t.indexOf(" ") === lines[0].length ? " " : "")).toBe(t);
+    }
+    const kana = "AI " + "あ".repeat(45);
+    const lines = wrapLines(kana, 42, 2);
+    expect(lines).toHaveLength(2);
+    expect(lines.join("")).toBe(kana);
+    // ASCII punctuation glued to a CJK character stays with it (slid across every cut).
+    for (let n = 0; n < 20; n++) {
+      const t = "AI " + "あ".repeat(n) + "(東京)." + "い".repeat(20 - n);
+      const lines = wrapLines(t, 13, 2);
+      expect(lines.join("")).toBe(t);
+      expect(lines.some((l) => /^[.)]|\($/.test(l))).toBe(false);
+    }
+  });
 });
 
 /** Unspaced Thai with tone marks and vowel signs (combining marks, \p{M}). */
@@ -473,6 +493,19 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     const r = seg1(en, 0, 9, { segments: [{ start: 0, end: 9, text: " " + en, translations: { th: phrases.join(" ") } }] });
     const grid = buildCues(r, { length: "short", timing: "own" }, ["orig", "th"]);
     expect(trackCues(grid, "th").map((c) => c.text)).toEqual(phrases);
+  });
+  it("wrapLines keeps a spaced Thai first line within the cap under a name prefix", () => {
+    const thai38 = "ขอบคุณมากครับสำหรับทุกอย่างที่ทำให้เรา";
+    expect(thai38).toHaveLength(38);
+    const t = thai38 + " ครับผม";
+    const lines = wrapLines(t, 42, 2, 6);
+    expect(lines[0].length + 6).toBeLessThanOrEqual(42);
+    expect(lines.join("")).toBe(t);
+  });
+  it("wrapLines breaks a spaced Thai line at its phrase space before a syllable seam", () => {
+    // The space lies 10 chars off the balanced cut: still preferred to a syllable seam.
+    const t = "ขอบคุณมากครับ วันนี้อากาศดีมากเลยนะครับเพื่อน AI";
+    expect(wrapLines(t, 42, 2)).toEqual(["ขอบคุณมากครับ", "วันนี้อากาศดีมากเลยนะครับเพื่อน AI"]);
   });
   it("wrapLines never ends a line on a leading vowel", () => {
     for (let cpl = 28; cpl <= 60; cpl++) {
