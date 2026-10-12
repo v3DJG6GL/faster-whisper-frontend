@@ -268,8 +268,9 @@ async function startWithPickedTargets(
 /** Start a hands-free session from a surface that is not the Profile's own hotkey — the
  *  Home button and the chip's toggle. Honours the Profile's "Ask for target languages" the
  *  way `dictate()` does (the toggle's own help text promises a prompt before the mic opens),
- *  and begins with the settle picker disarmed like every other start path. `profile` may be
- *  undefined when only a Backend is targeted. */
+ *  and begins with the settle picker disarmed like every other start path. Both callers
+ *  require an enabled `profile` (no profile → the button and the chip stay off, as the hotkeys
+ *  do); the type stays optional. */
 export function startHandsFree(backend: Backend, micId: string | null, profile: Profile | undefined): void {
   if (pickerOpen) return;
   setSettleTargetPicker(null);
@@ -423,7 +424,9 @@ export function runOverlayAction(kind: string): void {
     if (requestStopIfStarting()) return;
     const target = homeTargetProfile(s.profiles, s.settings.homeProfileId);
     const backend = backendForProfile(target, s.backends);
-    if (!backend) return;
+    // No enabled profile → no start, as on the Home button: backendForProfile falls back to
+    // the first Backend even without a profile.
+    if (!target || !backend) return;
     startHandsFree(backend, s.settings.microphoneId, target);
     return;
   }

@@ -352,10 +352,13 @@ export default function Dashboard() {
     // (dictate) and chip (runOverlayAction) toggles do.
     if (requestStopIfStarting()) return;
     // idle or error → start fresh (startLive clears any prior error).
-    if (!headerBackend) return;
+    // No enabled profile → no start: the button stays off until a profile is enabled, matching
+    // the hotkeys (dictate refuses a disabled profile) and the hero copy below. backendForProfile
+    // falls back to the first Backend even for no profile, so the backend check alone let a
+    // profile-less session through.
+    if (!headerBackend || !target) return;
     // Stamps the active Profile for the chip, honours "Ask for target languages", and
-    // resolves effective language / prompt / decode (target over backend); target may be
-    // undefined → the backend's own defaults are used.
+    // resolves effective language / prompt / decode (target over backend).
     startHandsFree(headerBackend, micId, target);
   };
 
@@ -411,7 +414,9 @@ export default function Dashboard() {
                 ? "Stop dictation"
                 : busy
                   ? "Cancel (force stop)"
-                  : "Start a live dictation"
+                  : target
+                    ? "Start a live dictation"
+                    : "Enable a profile to begin"
             }
           >
             {busy ? <Square className="size-6" /> : <Mic className="size-7" />}
