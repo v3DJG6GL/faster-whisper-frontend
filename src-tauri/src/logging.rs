@@ -193,10 +193,9 @@ pub struct SwapWriter(Arc<Mutex<SwapInner>>);
 #[derive(Default)]
 struct SwapInner {
     file: Option<std::fs::File>,
-    /// Directory of the open file, for folder-change detection.
-    dir: Option<PathBuf>,
-    /// The open file itself, which the prune must skip: it is matched by mtime alone, and a
-    /// quiet session (Warnings level, idle in the tray) can leave it older than `keep_days`.
+    /// The open file itself. Its parent is the folder, for folder-change detection; the prune
+    /// must skip it: it is matched by mtime alone, and a quiet session (Warnings level, idle in
+    /// the tray) can leave it older than `keep_days`.
     path: Option<PathBuf>,
 }
 
@@ -392,7 +391,6 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
             let _ = file.write_all(format_line(&line).as_bytes());
         }
         inner.file = Some(file);
-        inner.dir = Some(dir.to_path_buf());
         inner.path = Some(path);
     }
 }
@@ -439,7 +437,12 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
     }
     let writer = app.state::<SwapWriter>();
     let ring = app.state::<LogRing>();
-    let current = writer.0.lock().ok().and_then(|i| i.dir.clone());
+    let current = writer.0.lock().ok().and_then(|i| {
+        i.path
+            .as_deref()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+    });
     if current.as_deref() != Some(dir.as_path()) {
         open_session_file(&writer, &ring, &dir);
     }

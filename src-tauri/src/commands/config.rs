@@ -122,8 +122,22 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
         });
     }
     // Session-file move / prune (written saves only; the level went with the live switches
-    // above) — so Settings changes apply live, not at the next restart.
-    crate::logging::apply_log_settings(&app, &config, reset);
+    // above) — so Settings changes apply live, not at the next restart. Off the main thread too:
+    // a custom log folder can sit on a stalled mount (network share, sleeping disk), and every
+    // autosave would otherwise freeze the app on its create_dir/read_dir. Its own mutex, so a
+    // slow audio sweep does not hold up the log move; the same generation check as the sweeps,
+    // so the newest save applies last (a skipped older one is harmless: the newest compares
+    // its folder against the live file again).
+    static LOG_GEN: AtomicU64 = AtomicU64::new(0);
+    let log_gen = LOG_GEN.fetch_add(1, Ordering::SeqCst) + 1;
+    std::thread::spawn(move || {
+        static LOG: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _g = LOG.lock().unwrap_or_else(|e| e.into_inner());
+        if LOG_GEN.load(Ordering::SeqCst) != log_gen {
+            return;
+        }
+        crate::logging::apply_log_settings(&app, &config, reset);
+    });
     Ok(())
 }
 
