@@ -104,7 +104,25 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match json_capped_to::<PipelineRulesState>(resp, MAX_META_BODY).await {
+                // Read the body apart from parsing it, as `discovery::test_connection` does: a
+                // timeout or oversized body is a transport failure, not "Unexpected response".
+                let text = match body_capped_to(resp, MAX_META_BODY).await {
+                    Ok(t) => t,
+                    Err(reason) => {
+                        tracing::warn!(
+                            "[pipeline] rules GET: HTTP {code} body read failed: {reason}"
+                        );
+                        return PipelineFetch {
+                            ok: false,
+                            status: code,
+                            state: None,
+                            error: Some(reason),
+                        };
+                    }
+                };
+                match serde_json::from_str::<PipelineRulesState>(&text)
+                    .map_err(|e| super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))
+                {
                     Ok(mut state) => {
                         // `role` is the user's own privilege readout ("Editing as <role>"),
                         // rendered inline in a wrapping row with no truncation — the sibling of
@@ -170,7 +188,25 @@ pub async fn save_pipeline_rules(
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {
-                match json_capped_to::<SaveBody>(resp, MAX_META_BODY).await {
+                // Same split as the GET above: a transport failure keeps its own wording.
+                let text = match body_capped_to(resp, MAX_META_BODY).await {
+                    Ok(t) => t,
+                    Err(reason) => {
+                        tracing::warn!(
+                            "[pipeline] rules PATCH: HTTP {code} body read failed: {reason}"
+                        );
+                        return PipelineSave {
+                            ok: false,
+                            status: code,
+                            conflicts: serde_json::json!([]),
+                            detail: Some(reason),
+                            ..Default::default()
+                        };
+                    }
+                };
+                match serde_json::from_str::<SaveBody>(&text)
+                    .map_err(|e| super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT))
+                {
                     Ok(mut b) => PipelineSave {
                         ok: true,
                         status: code,

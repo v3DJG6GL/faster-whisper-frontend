@@ -70,6 +70,20 @@ fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
 }
 
+/// The one shape every failed `test_connection` probe returns: no models, no server identity,
+/// just the whoami readout and why the probe failed.
+fn failed_probe(open_mode: bool, username: Option<String>, error: String) -> ConnectionInfo {
+    ConnectionInfo {
+        ok: false,
+        open_mode,
+        username,
+        models: vec![],
+        boot_id: None,
+        server_version: None,
+        error: Some(error),
+    }
+}
+
 pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> ConnectionInfo {
     let base = base_url(server_url);
 
@@ -92,28 +106,18 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
         Ok(resp) => {
             let status = resp.status();
             if status == reqwest::StatusCode::UNAUTHORIZED {
-                return ConnectionInfo {
-                    ok: false,
+                return failed_probe(
                     open_mode,
                     username,
-                    models: vec![],
-                    boot_id: None,
-                    server_version: None,
-                    error: Some(
-                        "Unauthorized — an API key is required or the key is invalid.".into(),
-                    ),
-                };
+                    "Unauthorized — an API key is required or the key is invalid.".into(),
+                );
             }
             if !status.is_success() {
-                return ConnectionInfo {
-                    ok: false,
+                return failed_probe(
                     open_mode,
                     username,
-                    models: vec![],
-                    boot_id: None,
-                    server_version: None,
-                    error: Some(format!("Server returned HTTP {}.", status.as_u16())),
-                };
+                    format!("Server returned HTTP {}.", status.as_u16()),
+                );
             }
             // Read the body apart from parsing it, as `sync::pull_at` does: a timeout or
             // oversized body is a transport failure, not a malformed reply, and must not
@@ -121,17 +125,7 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
             // `body_capped_to` returns is a bounded constant or `friendly_err`.
             let text = match super::body_capped_to(resp, super::MAX_META_BODY).await {
                 Ok(t) => t,
-                Err(reason) => {
-                    return ConnectionInfo {
-                        ok: false,
-                        open_mode,
-                        username,
-                        models: vec![],
-                        boot_id: None,
-                        server_version: None,
-                        error: Some(reason),
-                    }
-                }
+                Err(reason) => return failed_probe(open_mode, username, reason),
             };
             match serde_json::from_str::<ModelsResp>(&text) {
                 Ok(parsed) => ConnectionInfo {
@@ -156,33 +150,21 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     server_version: parsed.server_version.map(|s| bounded_name(&s)),
                     error: None,
                 },
-                Err(e) => ConnectionInfo {
-                    ok: false,
+                // serde's error can include the server body (its `invalid_type`
+                // Display echoes the offending value untruncated). Every
+                // sibling field is already `bounded_name`d and both static error arms plus
+                // `friendly_err` are bounded to `MAX_ERR`. Bound this one to match.
+                Err(e) => failed_probe(
                     open_mode,
                     username,
-                    models: vec![],
-                    boot_id: None,
-                    server_version: None,
-                    // serde's error can include the server body (its `invalid_type`
-                    // Display echoes the offending value untruncated). Every
-                    // sibling field is already `bounded_name`d and both static error arms plus
-                    // `friendly_err` are bounded to `MAX_ERR`. Bound this one to match.
-                    error: Some(super::bounded_server_text(
+                    super::bounded_server_text(
                         &format!("Unexpected /v1/models response: {e}"),
                         super::MAX_ERR,
-                    )),
-                },
+                    ),
+                ),
             }
         }
-        Err(e) => ConnectionInfo {
-            ok: false,
-            open_mode,
-            username,
-            models: vec![],
-            boot_id: None,
-            server_version: None,
-            error: Some(friendly_err(&e)),
-        },
+        Err(e) => failed_probe(open_mode, username, friendly_err(&e)),
     }
 }
 
@@ -791,13 +773,16 @@ mod tests {
             settings.insert(format!("k{i:03}"), serde_json::json!({"value": i}));
         }
         settings.insert("Bad-Key".into(), serde_json::json!({"value": 1}));
-        settings.insert("x".repeat(49), serde_json::json!({"value": 1}));
+        // "a…" keys sort ahead of every k###, so the length rule (not `take(64)`) decides them.
+        settings.insert("a".repeat(48), serde_json::json!({"value": 1}));
+        settings.insert("a".repeat(49), serde_json::json!({"value": 1}));
         let mut d: DecodeDefaults =
             serde_json::from_value(serde_json::json!({"settings": settings})).unwrap();
         bound_decode_defaults(&mut d);
         assert_eq!(d.settings.len(), 64);
         assert!(!d.settings.contains_key("Bad-Key"));
-        assert!(!d.settings.contains_key(&"x".repeat(49)));
+        assert!(d.settings.contains_key(&"a".repeat(48)));
+        assert!(!d.settings.contains_key(&"a".repeat(49)));
         let mut sep: DecodeDefaults = serde_json::from_value(serde_json::json!({"settings": {
             "streaming_hard_break_separator": {"value": "\n\u{202e}\r\t¶", "label": "a\nb"}}}))
         .unwrap();
