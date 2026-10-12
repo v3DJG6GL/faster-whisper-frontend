@@ -101,6 +101,11 @@ function Editor({
   const [testingTarget, setTestingTarget] = useState<{ url: string; key: string } | null>(null);
   const testing = !!testingTarget && testingTarget.url === effUrl && testingTarget.key === key;
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
+  // Bumped by each successful test that still matches the typed target: the hooks below key their
+  // fetches on the target and on a rise to "full", so a Test of an unchanged, already-full server
+  // (after changing its default model or decode defaults) refreshed the info panel but left the
+  // inherited labels, model chip and Multiple-languages offer on the old values until a reopen.
+  const [testGen, setTestGen] = useState(0);
   // Drop a connection-test result once the tested target changes (URL or key edited): the in-flight
   // liveTarget guard only stops a result that RESOLVES after the edit — one that already committed
   // would keep showing the OLD server's classification / models / "Connected" under the new URL.
@@ -171,6 +176,10 @@ function Editor({
   const hookKindRef = useRef(kind);
   if (debouncedUrl === effUrl && debouncedKey === key) hookKindRef.current = kind;
   const hookKind = hookKindRef.current;
+  // Held the same way: a paste + Test inside the debounce window must not refetch the OLD target.
+  const hookTestGenRef = useRef(testGen);
+  if (debouncedUrl === effUrl && debouncedKey === key) hookTestGenRef.current = testGen;
+  const hookTestGen = hookTestGenRef.current;
   // A blank key field probes with the STORED key: a sync pull that replaces it bumps the
   // generation, and the hooks below then re-ask as the new caller (as resultLive does) — they
   // and the override-profile picker apply that stored-key generation rule themselves.
@@ -180,6 +189,7 @@ function Editor({
     backendId: b.id,
     apiKey: debouncedKey || null,
     serverKind: hookKind,
+    refresh: hookTestGen,
   });
   // The hook reads a blank address as "the saved one" (right for its other callers), but here a
   // cleared field is "no address yet": don't keep the old server's limits and privacy panel.
@@ -195,6 +205,7 @@ function Editor({
     model: debouncedModel,
     profileName: b.overrideProfile,
     serverKind: hookKind,
+    refresh: hookTestGen,
   });
   const server = serverInherited(decodeDefaults);
   // The backend's own model, if it names one: on a full server the `whisper-1` alias (a new
@@ -264,6 +275,8 @@ function Editor({
       if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
         resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult(info);
+        // An unknown → full test bumps the hooks' rise counter in the same render: one refetch.
+        if (info.ok) setTestGen((n) => n + 1);
         // The one case the store may take it now: the tested target is exactly the persisted
         // one (stored keyring key, same effective address, backend already saved), so the
         // verdict describes what the list card routes to — a Test-then-Cancel on an unedited

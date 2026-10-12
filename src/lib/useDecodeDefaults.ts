@@ -10,10 +10,12 @@ import { useDebounced } from "@/lib/useDebounced";
  * model and override profile — feed it to serverInherited() for the editor's "Inherit · X".
  *
  * Fetched when an editor opens and again whenever the backend, typed address/key, model or
- * profile changes; never polled. Values are withheld at render time for any request other than
- * the one they were fetched for, so a switch never ghosts the previous server's values — not even
- * in the render that commits the switch, before any effect has run. Skipped on a standard server
- * or without a backend; any failure leaves undefined (the editor shows the bare word).
+ * profile changes, or `refresh` is bumped (by a fresh successful connection test of the same
+ * target — the server's defaults may have changed under an unchanged request); never polled.
+ * Values are withheld at render time for any request other than the one they were fetched for,
+ * so a switch never ghosts the previous server's values — not even in the render that commits
+ * the switch, before any effect has run. Skipped on a standard server or without a backend; any
+ * failure leaves undefined (the editor shows the bare word).
  */
 export function useDecodeDefaults(args: {
   serverUrl: string;
@@ -24,8 +26,10 @@ export function useDecodeDefaults(args: {
   /** The override profile the request will name (NO_OVERRIDE_PROFILE included). */
   profileName?: string | null;
   serverKind: ServerKind;
+  /** Bumped by a fresh successful connection test of the same target: refetch. */
+  refresh?: number;
 }): DecodeDefaults | undefined {
-  const { serverUrl, backendId, apiKey, serverKind } = args;
+  const { serverUrl, backendId, apiKey, serverKind, refresh } = args;
   // Bumped when the backend's stored key is replaced elsewhere (a sync pull): values fetched as
   // the old caller are withheld and refetched. Read on every render: the eviction that bumps it
   // (forgetBackendCaches) also replaces the store's `connections`, which re-renders every screen
@@ -48,8 +52,8 @@ export function useDecodeDefaults(args: {
   // remount. Only the rise — the kind also drops to unknown on every address keystroke.
   const standard = serverKind === "standard";
   const full = useRisesToFull(serverKind);
-  // The request the values belong to. `full` stays out: a reconnect refetch for the same request
-  // may keep showing that same server's values meanwhile.
+  // The request the values belong to. `full` and `refresh` stay out: a reconnect / re-test
+  // refetch for the same request may keep showing that same server's values meanwhile.
   const key = JSON.stringify([serverUrl, backendId ?? null, apiKey ?? null, model, profileName, standard, credentialGen]);
   useEffect(() => {
     if (standard || !backendId) return;
@@ -62,7 +66,7 @@ export function useDecodeDefaults(args: {
     return () => {
       cancelled = true;
     };
-  }, [key, serverUrl, backendId, apiKey, model, profileName, standard, full, credentialGen]);
+  }, [key, serverUrl, backendId, apiKey, model, profileName, standard, full, credentialGen, refresh]);
 
   return st?.key === key ? st.dd : undefined;
 }

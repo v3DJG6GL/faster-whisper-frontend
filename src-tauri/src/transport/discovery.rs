@@ -115,7 +115,25 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     error: Some(format!("Server returned HTTP {}.", status.as_u16())),
                 };
             }
-            match super::json_capped_to::<ModelsResp>(resp, super::MAX_META_BODY).await {
+            // Read the body apart from parsing it, as `sync::pull_at` does: a timeout or
+            // oversized body is a transport failure, not a malformed reply, and must not
+            // surface as "Unexpected /v1/models response: Timed out…". Every reason
+            // `body_capped_to` returns is a bounded constant or `friendly_err`.
+            let text = match super::body_capped_to(resp, super::MAX_META_BODY).await {
+                Ok(t) => t,
+                Err(reason) => {
+                    return ConnectionInfo {
+                        ok: false,
+                        open_mode,
+                        username,
+                        models: vec![],
+                        boot_id: None,
+                        server_version: None,
+                        error: Some(reason),
+                    }
+                }
+            };
+            match serde_json::from_str::<ModelsResp>(&text) {
                 Ok(parsed) => ConnectionInfo {
                     ok: true,
                     open_mode,
@@ -145,8 +163,8 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                     models: vec![],
                     boot_id: None,
                     server_version: None,
-                    // `json_capped_to`'s error can include the server body (serde's
-                    // `invalid_type` Display echoes the offending value untruncated). Every
+                    // serde's error can include the server body (its `invalid_type`
+                    // Display echoes the offending value untruncated). Every
                     // sibling field is already `bounded_name`d and both static error arms plus
                     // `friendly_err` are bounded to `MAX_ERR`. Bound this one to match.
                     error: Some(super::bounded_server_text(
@@ -1035,5 +1053,44 @@ mod tests {
         };
         assert_eq!(q.to_query(), "all=1");
         assert_eq!(UsageQuery::default().to_query(), "");
+    }
+
+    #[tokio::test]
+    async fn an_oversized_models_body_is_a_transport_error_not_an_unexpected_response() {
+        // A 2xx /v1/models whose declared length is past the ceiling: the body read fails before
+        // any parse, so the reason must come through bare, without the malformed-reply prefix.
+        // The app installs the TLS provider at startup (lib.rs); the shared client needs it.
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            // Two probes: /auth/whoami (answered 404 → defaults) and /v1/models.
+            for _ in 0..2 {
+                let Ok((mut sock, _)) = listener.accept() else {
+                    return;
+                };
+                let mut req = [0u8; 4096];
+                let n = sock.read(&mut req).unwrap_or(0);
+                let head = if String::from_utf8_lossy(&req[..n]).contains("/v1/models") {
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n",
+                        crate::transport::MAX_META_BODY + 1
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"
+                        .to_string()
+                };
+                let _ = sock.write_all(head.as_bytes());
+            }
+        });
+        let out = super::test_connection(&format!("http://{addr}"), None).await;
+        assert!(!out.ok);
+        let error = out.error.expect("an error reason");
+        assert!(
+            !error.starts_with("Unexpected /v1/models response"),
+            "transport failure mislabelled: {error}"
+        );
+        assert_eq!(error, crate::transport::TOO_LARGE);
     }
 }

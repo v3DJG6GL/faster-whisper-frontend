@@ -16,16 +16,21 @@ import { effectiveServerKind, type ServerKind } from "@/lib/serverKind";
  * Best-effort throughout (mirrors OverrideProfilePicker's name fetch): a standard
  * server / missing endpoint / unreachable backend yields null caps — which the UI
  * treats as "unknown ⇒ permitted". Skipped entirely on a known-standard server.
+ *
+ * `refresh` is bumped by a fresh successful connection test of the same target: the caps are
+ * re-probed (a typed target) or re-read through the store cache (the saved one).
  */
 export function useOverrideContext(args: {
   serverUrl: string;
   backendId?: string | null;
   apiKey?: string | null;
   serverKind: ServerKind;
+  /** Bumped by a fresh successful connection test of the same target: re-probe. */
+  refresh?: number;
 }): {
   caps: Capabilities | null;
 } {
-  const { serverUrl, backendId, apiKey, serverKind } = args;
+  const { serverUrl, backendId, apiKey, serverKind, refresh } = args;
   // Bumped when the backend's stored key is replaced elsewhere (a sync pull): a live probe ran as
   // the old caller and a cached entry was evicted, so the effect below must re-run. Derived here
   // for every caller (as useDecodeDefaults does) — an opt-in argument only the Backends editor
@@ -100,7 +105,7 @@ export function useOverrideContext(args: {
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, apiKey, backendId, standard, full, credentialGen]);
+  }, [serverUrl, apiKey, backendId, standard, full, credentialGen, refresh]);
 
   // A known-standard target has no /v1/me: the store entry belongs to whatever the SAVED
   // backend last pointed at (the Backends editor may have retyped it to a plain server), so it
