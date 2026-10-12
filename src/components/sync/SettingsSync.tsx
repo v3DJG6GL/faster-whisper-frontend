@@ -50,7 +50,7 @@ import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
-import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
+import { everyWhileVisible } from "@/lib/windowVisibility";
 import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
@@ -926,16 +926,7 @@ export function SyncTab() {
   const [, setTick] = useState(0);
   useEffect(() => {
     if (!lastSyncedAt) return;
-    const t = window.setInterval(() => {
-      if (!isWindowHidden()) setTick((n) => n + 1);
-    }, 30_000);
-    const off = onWindowHiddenChange((hidden) => {
-      if (!hidden) setTick((n) => n + 1);
-    });
-    return () => {
-      window.clearInterval(t);
-      off();
-    };
+    return everyWhileVisible(30_000, () => setTick((n) => n + 1));
   }, [lastSyncedAt]);
 
   const [includeSecrets, setIncludeSecrets] = useState(false);

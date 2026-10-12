@@ -43,6 +43,22 @@ export function onWindowHiddenChange(fn: (hidden: boolean) => void): () => void 
   return () => void hiddenListeners.delete(fn);
 }
 
+/** Call `fn` every `ms` while the window can be seen: hidden ⇒ skip, catch up at once on show.
+ *  For redraws and refreshes nobody misses while hidden. Returns the cleanup (interval and
+ *  subscription both). */
+export function everyWhileVisible(ms: number, fn: () => void): () => void {
+  const t = setInterval(() => {
+    if (!isWindowHidden()) fn();
+  }, ms);
+  const off = onWindowHiddenChange((hidden) => {
+    if (!hidden) fn();
+  });
+  return () => {
+    clearInterval(t);
+    off();
+  };
+}
+
 function setHidden(reason: Reason, hidden: boolean): void {
   const before = isWindowHidden();
   if (hidden) hiddenBy.add(reason);

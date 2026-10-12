@@ -12,7 +12,7 @@ import { MicPicker } from "@/components/settings/MicPicker";
 import { buildMicView, isAlsaPin, isLegacyPin, labelForPick } from "@/lib/micOptions";
 import { retryLegacyMicPin } from "@/lib/micMigration";
 import { safeDisplayText } from "@/lib/sanitize";
-import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
+import { everyWhileVisible } from "@/lib/windowVisibility";
 
 // Smoothed level above the digital-silence floor ⇒ the mic is actually capturing (a
 // cold/Bluetooth mic can be open but silent for ~1–2s first). A live mic has a faint
@@ -85,15 +85,9 @@ export function AudioTab() {
   // (the document signal); gone with the tab.
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => {
-      if (!isWindowHidden()) void refresh();
-    }, 3000);
-    const off = onWindowHiddenChange((hidden) => {
-      if (!hidden) void refresh();
-    });
+    const stop = everyWhileVisible(3000, () => void refresh());
     return () => {
-      clearInterval(timer);
-      off();
+      stop();
       invSeq.current++;
     };
   }, [refresh]);

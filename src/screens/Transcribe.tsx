@@ -54,7 +54,7 @@ import { acquireWarm, preloadPlanFor } from "@/lib/preload";
 import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { cn } from "@/lib/cn";
 import { prefersReducedMotion } from "@/lib/theme";
-import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
+import { everyWhileVisible } from "@/lib/windowVisibility";
 import {
   NO_OVERRIDE_PROFILE,
   type Backend, type BatchProgress, type DecodeOverrides, type TranscribeOptions, type TranscribeSettings,
@@ -783,16 +783,7 @@ export default function Transcribe() {
   const [, tick] = useReducer((x: number) => x + 1, 0);
   useEffect(() => {
     if (!busy) return;
-    const id = window.setInterval(() => {
-      if (!isWindowHidden()) tick();
-    }, 1000);
-    const off = onWindowHiddenChange((hidden) => {
-      if (!hidden) tick();
-    });
-    return () => {
-      window.clearInterval(id);
-      off();
-    };
+    return everyWhileVisible(1000, tick);
   }, [busy]);
 
   // Pixel width of the timeline strip — the axis-label row assignment (top

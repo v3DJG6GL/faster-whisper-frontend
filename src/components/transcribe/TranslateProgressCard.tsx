@@ -6,7 +6,7 @@ import { langText, langTexts } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import { cn } from "@/lib/cn";
-import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
+import { everyWhileVisible } from "@/lib/windowVisibility";
 
 /** m:ss (h:mm:ss beyond an hour) for the progress card's running clock. */
 function fmtRunClock(ms: number): string {
@@ -42,16 +42,7 @@ export function TranslateProgressCard({
     // Done: the receipt reads the run's own endedAt — stop ticking.
     if (done) return;
     // Hidden (closed to the tray): skip the redraw, and catch the clock up at once on show.
-    const t = window.setInterval(() => {
-      if (!isWindowHidden()) setNow(Date.now());
-    }, 1000);
-    const off = onWindowHiddenChange((hidden) => {
-      if (!hidden) setNow(Date.now());
-    });
-    return () => {
-      window.clearInterval(t);
-      off();
-    };
+    return everyWhileVisible(1000, () => setNow(Date.now()));
   }, [done]);
   const reconnecting = run.phase === "reconnecting";
   const lane = run.modelPhaseSeen ? MODEL_LANE : 0;

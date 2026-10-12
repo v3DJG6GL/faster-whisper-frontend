@@ -10,6 +10,7 @@ vi.mock("./theme", () => ({
 
 import {
   _resetWindowVisibilityForTests,
+  everyWhileVisible,
   isWindowHidden,
   onWindowHiddenChange,
   watchWindowVisibility,
@@ -108,5 +109,36 @@ describe("watchWindowVisibility", () => {
     watchWindowVisibility("langpick", { doc: fakeDoc("visible"), tauri });
     await flush();
     expect(paused.get("window")).toBe(false);
+  });
+});
+
+describe("everyWhileVisible", () => {
+  beforeEach(() => {
+    paused.clear();
+    _resetWindowVisibilityForTests();
+  });
+
+  it("runs each tick while visible, skips while hidden, catches up once on show, stops on cleanup", () => {
+    vi.useFakeTimers();
+    try {
+      const doc = fakeDoc("visible");
+      watchWindowVisibility("main", { doc });
+      const fn = vi.fn();
+      const stop = everyWhileVisible(1000, fn);
+      vi.advanceTimersByTime(2000);
+      expect(fn).toHaveBeenCalledTimes(2);
+      doc.set("hidden");
+      vi.advanceTimersByTime(3000);
+      expect(fn).toHaveBeenCalledTimes(2);
+      doc.set("visible"); // the catch-up, not a tick
+      expect(fn).toHaveBeenCalledTimes(3);
+      stop();
+      vi.advanceTimersByTime(3000);
+      doc.set("hidden");
+      doc.set("visible");
+      expect(fn).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
