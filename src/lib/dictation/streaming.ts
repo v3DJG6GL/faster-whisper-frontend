@@ -452,7 +452,8 @@ function deferSessionOutcome(): ((delivery: "typed" | "clipboard" | "none", aban
   sessionOutcomeReported = true;
   const snap = {
     skipped: sessionInsertSkipped,
-    asked: sessionTranslation != null,
+    // A session with no text had nothing to translate: not_asked, like its empty History capture.
+    asked: sessionTranslation != null && (bankedDoc + committedDoc).trim() !== "",
     translated: sessionTranslatedText != null,
     landed: sessionTyped || sessionClipboard,
   };

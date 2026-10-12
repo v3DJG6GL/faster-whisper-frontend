@@ -807,4 +807,13 @@ describe("a cancelled translating session's usage outcome", () => {
     expect(mask(topLevelFunctions(streamingSrc).reportSessionOutcome)).toContain("deferSessionOutcome()?.(delivery, abandoned)");
     expect(mask(topLevelFunctions(streamingSrc).deferSessionOutcome)).toContain("landed: sessionTyped || sessionClipboard");
   });
+
+  it("a translating session with no text books not_asked, not kept_original", () => {
+    // A silent tap, an empty stop or a cancel before any final attempted no translate.
+    const body = mask(topLevelFunctions(streamingSrc).deferSessionOutcome);
+    const asked = body.split("\n").find((l) => /\basked:/.test(l));
+    expect(asked, "deferSessionOutcome must snapshot asked").toBeDefined();
+    expect(asked).toContain("sessionTranslation != null");
+    expect(asked).toContain("(bankedDoc + committedDoc).trim()");
+  });
 });
