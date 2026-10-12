@@ -342,13 +342,19 @@ pub fn handle_shortcut(app: &AppHandle, shortcut: &Shortcut, event: ShortcutEven
 /// capturing a new binding, so pressing a key only rebinds and doesn't also fire
 /// dictation (which previously could start a stuck push-to-talk session).
 pub fn unregister_all(app: &AppHandle) {
-    // A PTT chord held across this teardown would never receive its "stop" (the registration is
-    // gone before the release) — emit it now so the session isn't left wedged "listening".
-    stop_held_sessions(app);
     let gs = app.global_shortcut();
     for sc in take_registrations(app).keys() {
         let _ = gs.unregister(*sc);
     }
+    // A PTT chord held across this teardown would never receive its "stop" (the registration is
+    // gone before the release) — emit it now so the session isn't left wedged "listening". The
+    // drain runs AFTER the registry is emptied and every `gs.unregister` has returned: the X11
+    // global-hotkey thread runs `handle_shortcut` and serves the unregister one after the other,
+    // so a press dispatched before the unregister has already recorded its hold, and a later
+    // press sees the empty registry. Draining first left a window where a press landed between
+    // the drain and the ungrab and its release never arrived. The plugin twin of evdev's
+    // drain-after-abort.
+    stop_held_sessions(app);
 }
 
 /// Empty the registry and hand back what it held, with the lock already released.
@@ -357,7 +363,8 @@ pub fn unregister_all(app: &AppHandle) {
 /// block on the global-hotkey event thread, and that same thread delivers key events into
 /// `handle_shortcut`, which takes this lock. A chord pressed or released mid-re-register would
 /// otherwise deadlock the two and freeze the app. Meanwhile `handle_shortcut` sees an empty map and
-/// ignores the event (held stops are already flushed by `stop_held_sessions`).
+/// ignores the event (held stops are flushed right after, by `stop_held_sessions` in
+/// `unregister_all`).
 fn take_registrations(app: &AppHandle) -> HashMap<Shortcut, ShortcutTarget> {
     app.state::<ShortcutRegistry>()
         .0
@@ -370,8 +377,9 @@ fn take_registrations(app: &AppHandle) -> HashMap<Shortcut, ShortcutTarget> {
 /// (modifier-only / Wayland) are skipped with a log — the CLI path covers them.
 #[cfg_attr(windows, allow(dead_code))] // see module header: on Windows the plugin is never the registrar
 pub fn register_from_config(app: &AppHandle, profiles: &[Profile], quick_add_hotkey: &[String]) {
-    // Flush any held PTT chord's "stop" before tearing down the old registrations (a rebind mid-hold
-    // would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's stop_held_sessions.
+    // Flush any held PTT chord's "stop" as part of tearing down the old registrations (a rebind
+    // mid-hold would otherwise lose the release-stop and wedge "listening"). Mirrors evdev's
+    // stop_held_sessions.
     unregister_all(app);
     let gs = app.global_shortcut();
 
