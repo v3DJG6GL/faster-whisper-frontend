@@ -84,21 +84,31 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // the same-id ("hold"/"handsfree") ones. A retried Restore everything finishes from there, or
   // "Finish without sync" keeps what landed.
   const [landed, setLanded] = useState(false);
-  // The restored backend whose keyring write threw after the apply landed (the key the user
-  // proved at the gate is then stored only under the gate's own entry).
+  // Set when the CURRENT Restore everything attempt threw at its keyring write, after the apply
+  // landed: only for its error line (the key the user proved stays under the gate's own entry).
   const keyFailed = useRef<string | null>(null);
-  // The exit after a half-landed restore: keep what landed, sync off. A copy that brought no
-  // profiles still gets the starters, so setup never ends without a profile and a hotkey. When
-  // the key write failed and the restore dropped the gate's entry, its keyring copy would be
-  // orphaned: deleted best-effort (the error line already said where to enter the key).
+  // Set by finishLanded when the backend the starters bind to has no key here: the quick-add
+  // step would load its lists keyless and fail, so setup finishes after the starters instead.
+  const startersKeyless = useRef(false);
+  // The exit after a half-landed restore: keep what landed, sync off. Read from the store, not
+  // from what the last attempt did (a retry may have stopped before its key write): the backend
+  // at the gate's address is the one the restore kept. A copy that brought no profiles still gets
+  // the starters, bound to that backend, so setup never ends without a profile and a hotkey.
+  // When the restore replaced the gate's entry, the gate's keyring copy is referenced by nothing
+  // any more and is deleted best-effort; a keyless kept backend gets its key under Backends, as
+  // the error line said.
   const finishLanded = () => {
+    const s = st.getState();
     const gate = gateBackend.current;
-    if (keyFailed.current && gate && !st.getState().backends.some((b) => b.id === gate.id)) {
+    const gateUrl = typedServerUrl(url);
+    const kept = s.backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
+    if (gate && kept && kept.id !== gate.id && !s.backends.some((b) => b.id === gate.id)) {
       void deleteBackendKey(gate.id).catch(() => {});
     }
-    if (st.getState().profiles.length === 0) {
+    if (s.profiles.length === 0) {
       restored.current = true;
-      if (keyFailed.current) setBackendId(keyFailed.current);
+      if (kept) setBackendId(kept.id);
+      startersKeyless.current = !!kept && kept.id !== gate?.id && !kept.hasApiKey;
       setStartersIntro("none");
       setStep("starters");
       return;
@@ -513,7 +523,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
               // categories: the apply lands a pin only when its backend came along.
               if (restored.current && s.settings.quickAddList) finish();
               // Quick add needs a full faster-whisper-backend (pipeline rules).
-              else if (info?.bootId) setStep("quickadd");
+              // Not for a backend left keyless by a half-landed restore (its lists would not load).
+              else if (info?.bootId && !startersKeyless.current) setStep("quickadd");
               else finish();
             }}
           />
