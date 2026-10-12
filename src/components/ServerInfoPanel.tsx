@@ -83,7 +83,7 @@ export function ServerInfoButton({
       disabled={!info}
       expanded={!!info && open}
       controls={controls}
-      className="relative disabled:opacity-40"
+      className="relative"
     >
       <Info className="size-4" />
       {info && capturesOn(info) && (

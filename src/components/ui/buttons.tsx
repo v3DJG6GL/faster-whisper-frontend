@@ -396,7 +396,7 @@ export function IconButton({
       title={label}
       onClick={onClick}
       className={cn(
-        "ring-signal grid place-items-center rounded-lg border bg-surface-2",
+        "ring-signal grid place-items-center rounded-lg border bg-surface-2 disabled:opacity-40",
         size === "sm" ? "size-7" : "size-8",
         danger ? "enabled:hover:border-rec/45 enabled:hover:text-rec" : "enabled:hover:border-accent/45 enabled:hover:text-accent",
         // cn doesn't merge, and the neutral tones would beat the accent: choose, never override.
