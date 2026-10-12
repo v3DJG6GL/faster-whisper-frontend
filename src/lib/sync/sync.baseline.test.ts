@@ -32,12 +32,15 @@ import { backend } from "./syncTestFixtures";
  *  answers an unparked read (what this device's keyring holds). `store`, when set, is a live
  *  keyring that reads, writes and deletes go through — refusing a value over wincred's 1280
  *  UTF-16 units and any write to an account in `failWrites`, and folding a lone surrogate to
- *  U+FFFD as the IPC hop does. */
+ *  U+FFFD as the IPC hop does. `writes` records every account a write was issued for, and a write
+ *  to an account in `parkWrites` waits on that promise before it lands. */
 const keyring = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   keys: null as null | Record<string, string>,
   store: null as null | Map<string, string>,
   failWrites: new Set<string>(),
+  writes: [] as string[],
+  parkWrites: new Map<string, Promise<void>>(),
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -52,6 +55,9 @@ vi.mock("../api", async (importOriginal) => {
           : orig.readBackendKeys(ids)),
     setBackendKey: async (id: string, key: string) => {
       if (!keyring.store) return orig.setBackendKey(id, key);
+      keyring.writes.push(id);
+      const parked = keyring.parkWrites.get(id);
+      if (parked) await parked;
       if (key.length > 1280 || keyring.failWrites.has(id)) throw new Error("TooLong");
       keyring.store.set(id, key.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD"));
     },
@@ -1356,10 +1362,14 @@ describe("the snapshot key stash spans keyring accounts", () => {
   beforeEach(() => {
     keyring.store = new Map();
     keyring.failWrites = new Set();
+    keyring.writes = [];
+    keyring.parkWrites = new Map();
   });
   afterEach(async () => {
     keyring.store = null;
     keyring.failWrites = new Set();
+    keyring.writes = [];
+    keyring.parkWrites = new Map();
     await restoreSnapshotSecretsForTests([]); // clears the latch and the seeded state
   });
 
@@ -1384,10 +1394,40 @@ describe("the snapshot key stash spans keyring accounts", () => {
 
   it("a failed chunk write latches the refusal instead of restoring the older stash", async () => {
     await persistSnapshotSecretsForTests(keys(2, "old"));
-    keyring.failWrites.add("__sync_snapshot_secrets__#1");
+    keyring.failWrites.add("__sync_snapshot_secrets_1__");
     const { ids, chunks } = await persistSnapshotSecretsForTests(keys(20, "new"));
     expect(keyring.store!.size).toBe(0);
     expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
+  });
+
+  // A backend id is its keyring account verbatim, and the sanitizers drop only `__…__` ids: a chunk
+  // account outside that namespace let a peer's backend alias a slice of every key.
+  it("every chunk account sits in the reserved namespace no synced backend id can take", async () => {
+    const { chunks } = await persistSnapshotSecretsForTests(keys(20, "sk"));
+    expect(chunks).toBeGreaterThan(1);
+    for (const account of keyring.store!.keys()) {
+      expect(account.startsWith("__") && account.endsWith("__")).toBe(true);
+    }
+    expect(sanitizeBackends([...keyring.store!.keys()].map((id) => backend({ id })))).toEqual([]);
+    expect(
+      sanitizeBackends([backend({ id: "__sync_snapshot_secrets_1__" }), backend({ id: "__sync_snapshot_secrets_2__" })]),
+    ).toEqual([]);
+  });
+
+  // Rust runs keyring writes one at a time in arrival order: a chunk write issued only after the
+  // previous one landed queued BEHIND a reset's delete issued meanwhile, and landed with nothing
+  // left to remove it.
+  it("issues every chunk write at once, before the first one lands", async () => {
+    let release!: () => void;
+    keyring.parkWrites.set("__sync_snapshot_secrets__", new Promise<void>((r) => (release = r)));
+    const pending = persistSnapshotSecretsForTests(keys(20, "sk"));
+    await Promise.resolve();
+    const issued = [...keyring.writes];
+    release();
+    const { chunks } = await pending;
+    expect(chunks).toBeGreaterThan(1);
+    expect(issued).toHaveLength(chunks!);
+    expect(keyring.store!.size).toBe(chunks);
   });
 
   it("never cuts a surrogate pair between two accounts", async () => {

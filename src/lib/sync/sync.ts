@@ -2180,9 +2180,13 @@ const SNAPSHOT_CHUNK_UNITS = 1000;
 const MAX_SNAPSHOT_CHUNKS = 8192;
 
 /** The keyring account of stash chunk `i`. Chunk 0 is the legacy single account, so a one-chunk
- *  stash is byte-identical to the format before sharding and an old stash reads unchanged. */
+ *  stash is byte-identical to the format before sharding and an old stash reads unchanged. Every
+ *  chunk account stays inside the reserved `__…__` namespace that `isReservedBackendId` (and the
+ *  store's `isReservedId`) reject: a backend id is its keyring account verbatim, so a peer's or an
+ *  imported backend named after a chunk would otherwise read that slice of every key out through
+ *  `readBackendKeys`, or overwrite and delete it. */
 function snapshotChunkAccount(i: number): string {
-  return i === 0 ? SNAPSHOT_SECRETS_ACCOUNT : `${SNAPSHOT_SECRETS_ACCOUNT}#${i}`;
+  return i === 0 ? SNAPSHOT_SECRETS_ACCOUNT : `__sync_snapshot_secrets_${i}__`;
 }
 
 /** The recorded chunk count, as a usable number (absent or damaged → 1, the legacy stash). */
@@ -2217,26 +2221,33 @@ async function dropSnapshotChunks(from: number, to: number): Promise<void> {
   await Promise.all(drops);
 }
 
-/** Write the stash `chunks` over a previous stash of `prevChunks` accounts. A failed (or timed
- *  out) write deletes every chunk either stash may hold: a half-written stash, or the OLDER
- *  complete one left paired with the new ids, would otherwise be read back on the next launch —
- *  the first as garbage, the second as stale keys restored into the merge base. With nothing
- *  there, the next launch reads the stash as missing and latches `snapshotSecretsUnavailable`. */
+/** Write the stash `chunks` over a previous stash of `prevChunks` accounts. Every write is issued
+ *  in the same tick, like `dropSnapshotChunks`: Rust runs keyring writes one at a time in arrival
+ *  order, so they all queue ahead of a `clearSnapshotSecrets` delete a reset issues afterwards.
+ *  Awaiting each before issuing the next let that delete overtake the later chunks, which then
+ *  landed after it with no recorded count left to ever remove them. A failed (or timed out) write
+ *  deletes every chunk either stash may hold — the drop is issued after all the writes, so it
+ *  queues behind them: a half-written stash, or the OLDER complete one left paired with the new
+ *  ids, would otherwise be read back on the next launch — the first as garbage, the second as
+ *  stale keys restored into the merge base. With nothing there, the next launch reads the stash
+ *  as missing and latches `snapshotSecretsUnavailable`. */
 async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promise<boolean> {
-  let ok = true;
-  for (let i = 0; i < chunks.length && ok; i++) {
-    ok = await withTimeout(
-      setBackendKey(snapshotChunkAccount(i), chunks[i]).then(
-        () => true,
-        (e) => {
-          console.error("snapshot keyring write failed", e);
-          return false;
-        },
+  const results = await Promise.all(
+    chunks.map((c, i) =>
+      withTimeout(
+        setBackendKey(snapshotChunkAccount(i), c).then(
+          () => true,
+          (e) => {
+            console.error("snapshot keyring write failed", e);
+            return false;
+          },
+        ),
+        10_000,
+        false,
       ),
-      10_000,
-      false,
-    );
-  }
+    ),
+  );
+  const ok = results.every(Boolean);
   // Success: only the tail an earlier, larger stash left behind. Failure: everything.
   await dropSnapshotChunks(ok ? chunks.length : 0, Math.max(chunks.length, prevChunks));
   return ok;
