@@ -27,6 +27,7 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
   mark: { from: number; to: number; word: string } | null;
   filtered: boolean;
   metric: ChartMetric;
+  /** The year document is not fresh: shows "loading…" (the caller dims the whole card). */
   stale: boolean;
   /** The year's fetch failed: says so instead of "loading…" (the filter bar's wording). */
   failed: boolean;
@@ -59,7 +60,7 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
         </>
       }
     >
-      <div ref={ref} className={cn("relative overflow-x-auto pb-1", stale && "opacity-70")} onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
+      <div ref={ref} className="relative overflow-x-auto pb-1" onMouseMove={onMove} onMouseLeave={onLeave} onFocus={onFocus} onBlur={onBlur} onKeyDown={onKeyDown}>
         <CellTip tip={tip} boundsRef={ref}>
           {hovered && <KindTip title={fmtDateFull(hovered.day)} kinds={hovered.kinds} metric={metric} scope={scope} total={hovered.value} quarter={hovered.level ? QUARTER_NAME[hovered.level] : undefined} />}
         </CellTip>
