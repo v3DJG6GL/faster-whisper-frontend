@@ -530,6 +530,11 @@ export interface RunContext {
    *  time): false = a link card's frozen spoken pick never touches `multilingual`; unset =
    *  unknown, treated as offered (ledger rows written before this key replay as before). */
   multilingualOffered?: boolean;
+  /** The server's default is multilingual as the screen sees it at run/retry time (its live
+   *  inherited baseline): an Auto-detect link card then sends multilingual=false even when its
+   *  add-time value (spokenMultiInherited) was frozen false; unset = that card value alone
+   *  decides. */
+  multilingualInherited?: boolean;
 }
 
 export interface TranscribeRunState {
@@ -2009,7 +2014,14 @@ async function runLink(
           decodeOverrides:
             ctx.multilingualOffered === false
               ? common.decodeOverrides
-              : applyMultilingual(common.decodeOverrides ?? undefined, spoken, meta?.spokenMultiInherited),
+              : // Either view of the server's default: an explicit false is redundant, never
+                // wrong, once the flag is offered (the add-time value may predate a model switch
+                // or the server values loading).
+                applyMultilingual(
+                  common.decodeOverrides ?? undefined,
+                  spoken,
+                  ctx.multilingualInherited === true || meta?.spokenMultiInherited === true,
+                ),
         }
       : {}),
   };

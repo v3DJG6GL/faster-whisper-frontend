@@ -1142,7 +1142,11 @@ describe("a link card's spoken pick and an unoffered Multiple languages", () => 
   // The card freezes its pick at Add link; the model/profile/caps may stop offering the flag by
   // Run or Retry, and then the pick must not touch `multilingual` (as spokenField drops it).
   const url = "https://youtu.be/multi";
-  const posted = async (meta: Record<string, unknown>, offered: boolean | undefined) => {
+  const posted = async (
+    meta: Record<string, unknown>,
+    offered: boolean | undefined,
+    extra: Record<string, unknown> = {},
+  ) => {
     let sent: Parameters<typeof import("./api").transcribeUrl>[0] | undefined;
     transcribeUrl.mockImplementation(async (a) => {
       sent = a;
@@ -1158,6 +1162,7 @@ describe("a link card's spoken pick and an unoffered Multiple languages", () => 
         backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false,
         decodeOverrides: { vad_filter: false },
         ...(offered === undefined ? {} : { multilingualOffered: offered }),
+        ...extra,
       });
       await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
       return sent;
@@ -1184,6 +1189,23 @@ describe("a link card's spoken pick and an unoffered Multiple languages", () => 
 
   it("an inherited-on Auto-detect sends no explicit false once the flag is unoffered", async () => {
     const sent = await posted({ spokenLanguage: "auto", spokenMultiInherited: true }, false);
+    expect(sent?.language).toBe("auto");
+    expect(sent?.decodeOverrides).toEqual({ vad_filter: false });
+  });
+
+  it("an Auto-detect added under a non-multilingual default sends false once the server's default is", async () => {
+    // The card froze false (an English-only model, or the server values not loaded yet at Add).
+    const sent = await posted(
+      { spokenLanguage: "auto", spokenMultiInherited: false },
+      true,
+      { multilingualInherited: true },
+    );
+    expect(sent?.language).toBe("auto");
+    expect(sent?.decodeOverrides).toEqual({ vad_filter: false, multilingual: false });
+  });
+
+  it("a live inherited-on default still sends no flag while it is unoffered", async () => {
+    const sent = await posted({ spokenLanguage: "auto" }, false, { multilingualInherited: true });
     expect(sent?.language).toBe("auto");
     expect(sent?.decodeOverrides).toEqual({ vad_filter: false });
   });

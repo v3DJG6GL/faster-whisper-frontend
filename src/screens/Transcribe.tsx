@@ -520,11 +520,12 @@ export default function Transcribe() {
     multiOffered || !("multilingual" in o) ? o : (({ multilingual: _m, ...rest }) => rest)(o);
   const sentOverrides = offeredOverrides(runOverrides);
   // Retries replay lastOverrides, but `multilingual` is the other half of the spoken pick and
-  // the language half comes from the screen (buildCtx): it is taken from the screen too, then
-  // through the same strip (the run may predate the switch).
+  // the language half comes from the screen (buildCtx): a retry sends the multilingual value a
+  // fresh run would send now (sentOverrides, already through the offered strip; the run may
+  // predate the switch).
   const retryOverrides = (o: DecodeOverrides): DecodeOverrides => {
     const { multilingual: _m, ...rest } = o;
-    return offeredOverrides("multilingual" in runOverrides ? { ...rest, multilingual: runOverrides.multilingual } : rest);
+    return "multilingual" in sentOverrides ? { ...rest, multilingual: sentOverrides.multilingual } : rest;
   };
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE, with the
   // inherited `multilingual` (that pick drops the run's own) folded in as spokenField folds it.
@@ -999,6 +1000,9 @@ export default function Transcribe() {
       jobsTtlS: clampJobsTtl(caps?.jobs?.ttl_s),
       // A link card's frozen spoken pick sends `multilingual` only while the screen offers it.
       multilingualOffered: multiOffered,
+      // The server's default as it stands now: a card's add-time value may predate a model
+      // switch or the server values loading.
+      multilingualInherited: inheritedBaseline.multilingual === true,
     };
   };
 
@@ -1075,8 +1079,10 @@ export default function Transcribe() {
    *  the file with the otherwise-unchanged run settings. */
   const retryWithoutVad = (path: string) => {
     if (busy || !vadRetryable) return;
-    // The run's own settings (the store's), like retry() — the screen's runOverrides is
-    // unpersisted state that a remount resets and later panel edits change.
+    // The run's own settings (the store's), like retry() — except the spoken-language mode
+    // (`multilingual`), which retryOverrides takes from the screen as buildCtx takes the
+    // language half; the rest of runOverrides is unpersisted state that a remount resets and
+    // later panel edits change.
     const next = retryOverrides({ ...useTranscribeRun.getState().lastOverrides, vad_filter: false });
     // The panel keeps the user's later edits and only flips the switch; the retry itself
     // replays the run's own settings.
@@ -2110,8 +2116,9 @@ export default function Transcribe() {
             : null;
         // Effective VAD for this run — labels the "analyzing" phase honestly
         // (per-run override, else the inherited default, else the server's
-        // shipped default of on).
-        const vadOn = lastOverrides.vad_filter ?? vadInherited ?? true;
+        // shipped default of on). A locked vad_filter is the server's value
+        // whatever the run sent.
+        const vadOn = (vadLocked ? undefined : lastOverrides.vad_filter) ?? vadInherited ?? true;
         // Timeline strip: segment widths proportional to each stage's share
         // of wall time (measured when finished, estimated ahead), with one
         // axis label anchored below each segment. Skipped stages are absent.
