@@ -322,20 +322,24 @@ function tokenUnits(w: string): string[] {
   // Where the token's trailing run of punctuation units begins: a quote or bracket from there on closes.
   let tail = u.length;
   while (tail > 0 && /^[\p{Pe}\p{Pf}\p{Po}\p{Pi}]+$/u.test(u[tail - 1])) tail--;
+  // An ASCII quote opens only a word that follows it: a run of bare quotes opens nothing.
+  const firstWord = u.findIndex((x) => /[\p{L}\p{N}]/u.test(x));
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
     const last = prev === undefined ? "" : edgeChar(prev, true);
     // A closing quote or bracket in the trailing run rides even past the three-closer cap
     // („…...“, / “…...” / (…...)): left behind, it would start a line (a “ would even open
     // the next unit). A “ or « glued to a letter or digit closes too, mid-token as well
-    // („…“-Verband) — after a CJK character it opens (“你好”). Stops keep the cap (え？？？？).
+    // („…“-Verband) — after a CJK character it opens (“你好”). Stops keep the cap (え？？？？),
+    // and so do quotes and brackets among themselves: a hallucinated run of ")" or "」" still wraps.
     if (prev !== undefined && !open
-      && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x))
+      && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x)
+          && !/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u.test(prev))
         || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
         || (!/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev) && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(x)))) out[out.length - 1] += x;
     // An ASCII quote that starts the token (or follows its openers) opens it: as a closer of
     // nothing it ended a line on a bare ". One inside a word (don't, 5'10") rides above.
-    else if ((/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && /^["']$/.test(x))) && k < u.length - 1) open += x;
+    else if ((/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && k < firstWord && /^["']$/.test(x))) && k < u.length - 1) open += x;
     else {
       out.push(open + x);
       open = "";

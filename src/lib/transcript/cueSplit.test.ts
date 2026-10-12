@@ -613,6 +613,14 @@ describe("wrapLines", () => {
     for (const q of ["\"", "'"]) {
       expect(wrapLines(`He said ${q}Supercalifragilisticexpialidocious${q} and left`, 10, 2)[0]).toBe("He said");
     }
+    // A hallucinated run of quotes or closers still wraps three to a piece, as before.
+    for (const [t, cpl, n] of [[`He said ${'"'.repeat(40)} ok`, 28, 2], [`He said ${")".repeat(40)} ok`, 28, 2], [`東京${"」".repeat(30)}`, 13, 3], [`他说${"”".repeat(30)}`, 13, 3]] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.length, lines.join(" | ")).toBe(n);
+      expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
+    }
+    expect(wrapLines(`東京${"」".repeat(30)}`, 13, 2)[0].startsWith("東京")).toBe(true);
+    expect(wrapLines(`他说${"”".repeat(30)}`, 13, 2)[0].startsWith("他说")).toBe(true);
     // In CJK text “ after a character still opens (他说“再见”).
     expect(wrapLines("他说：“你好？”“我很好。”他说“再见”", 6, 3)).toEqual(["他说：“你", "好？”“我", "很好。”他", "说“再见”"]);
   });

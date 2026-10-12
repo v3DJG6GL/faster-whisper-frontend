@@ -149,9 +149,11 @@ export function applyMap(text: string, rows: MapRow[]): string {
   const map = new Map<string, string>();
   for (const r of rows) if (r.k.trim() && !map.has(r.k)) map.set(r.k, r.v); // newest-shown row wins on a dup
   if (map.size === 0) return text;
-  // The backend's derived ss variants: added only when no key (any case) already spells it.
+  // The backend's derived ss variants: added only when no key (any case) already spells it, in
+  // the saved map's key order (mapBodyFromRows sorts it), so two ß keys differing only in case
+  // give their shared variant the same value as on the server.
   const present = new Set([...map.keys()].map((k) => k.toLowerCase()));
-  for (const [k, v] of [...map]) {
+  for (const [k, v] of Object.entries(mapBodyFromRows(rows).map)) {
     const derived = k.replace(/ß/g, "ss").replace(/ẞ/g, "SS");
     if (derived !== k && !present.has(derived.toLowerCase())) {
       map.set(derived, v);

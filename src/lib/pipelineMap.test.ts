@@ -113,6 +113,13 @@ describe("applyMap", () => {
     expect(applyMap("grösser als", [sz, ss])).toBe("ss");
     expect(applyMap("größer als", [sz, ss])).toBe("sz");
   });
+
+  it("gives two ß keys differing only in case the server's value for their shared ss spelling", () => {
+    // The saved map is code-point sorted, so the server derives "STRASSE" from "STRAẞE" first.
+    const rows = [{ id: 1, k: "Straße", v: "A" }, { id: 2, k: "STRAẞE", v: "B" }];
+    expect(applyMap("Strasse", rows)).toBe("B");
+    expect(applyMap("Straße", rows)).toBe("A");
+  });
 });
 
 describe("envPinnedOf", () => {

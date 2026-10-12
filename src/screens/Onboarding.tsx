@@ -81,7 +81,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   const restored = useRef(false);
   // Set once a restore's apply landed, even when a later step of it (the keyring write) threw:
   // the store then holds the peer's profiles, and "Start fresh" would upsert the starters over
-  // the same-id ("hold"/"handsfree") ones. Only a retried Restore everything finishes from there.
+  // the same-id ("hold"/"handsfree") ones. A retried Restore everything finishes from there, or
+  // "Finish without sync" keeps what landed.
   const [landed, setLanded] = useState(false);
 
   const testAndContinue = async () => {
@@ -427,17 +428,30 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 <Button variant="accent" onClick={() => void restoreEverything()} disabled={busy}>
                   {busy ? "Restoring…" : "Restore everything"}
                 </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    setStartersIntro("fresh");
-                    setStep("starters");
-                  }}
-                  disabled={busy || landed}
-                  title={landed ? "Settings were already restored — use Restore everything to finish" : undefined}
-                >
-                  Start fresh instead
-                </Button>
+                {/* After a half-landed restore the starters would overwrite the restored profiles,
+                    and a keyring write that keeps failing must not trap setup: the exit then
+                    keeps what landed and leaves sync off (the Home checklist covers the rest). */}
+                {landed ? (
+                  <Button
+                    variant="ghost"
+                    onClick={finish}
+                    disabled={busy}
+                    title="Keep the settings that were restored, without turning sync on"
+                  >
+                    Finish without sync
+                  </Button>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setStartersIntro("fresh");
+                      setStep("starters");
+                    }}
+                    disabled={busy}
+                  >
+                    Start fresh instead
+                  </Button>
+                )}
               </div>
             </div>
             <p className="mt-4 max-w-[46ch] text-[12px] text-dim">
