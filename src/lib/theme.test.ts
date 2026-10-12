@@ -213,6 +213,10 @@ describe("the custom-speed slider", () => {
     expect(fmtPer(8280)).toBe("one turn every 2.3 h");
     expect(fmtPer(86_400)).toBe("one turn every 1 d");
     expect(fmtPer(604_800)).toBe("one turn every 7 d");
+    // A unit is chosen on the rounded value, never "60 min" or "24 h".
+    expect(fmtPer(3590)).toBe("one turn every 59.8 min");
+    expect(fmtPer(3599)).toBe("one turn every 1 h");
+    expect(fmtPer(86_399)).toBe("one turn every 1 d");
   });
 });
 

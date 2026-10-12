@@ -249,8 +249,11 @@ export function secToSlider(s: number): number {
 /** "one turn every 2.3 h" — the Settings readout and the "Right now" note. */
 export function fmtPer(s: number): string {
   if (s < 60) return `one turn every ${s} s`;
-  if (s < 3600) return `one turn every ${Math.round((s / 60) * 10) / 10} min`;
-  if (s < 86400) return `one turn every ${Math.round((s / 3600) * 10) / 10} h`;
+  // Each unit is picked on the ROUNDED value: 3599 s rounds to 60 min, which reads as "1 h".
+  const min = Math.round((s / 60) * 10) / 10;
+  if (min < 60) return `one turn every ${min} min`;
+  const h = Math.round((s / 3600) * 10) / 10;
+  if (h < 24) return `one turn every ${h} h`;
   return `one turn every ${Math.round((s / 86400) * 10) / 10} d`;
 }
 

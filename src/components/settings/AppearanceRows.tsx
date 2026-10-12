@@ -383,6 +383,8 @@ function MotionRows({
           <SettingRow
             title="Custom speed"
             desc="One full turn of the wheel takes this long."
+            disabled={reduced}
+            disabledReason={REDUCED_MOTION_REASON}
             expand={<CostNotice cost={cost} />}
           >
             <div className="flex items-center gap-3">
@@ -393,8 +395,9 @@ function MotionRows({
                 step={1}
                 value={slider}
                 aria-label="Seconds per turn (log scale)"
+                disabled={reduced}
                 onChange={(e) => dragSpeed(Number(e.target.value))}
-                className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill bg-surface-2"
+                className="ring-signal h-2 w-full min-w-[160px] cursor-pointer appearance-none rounded-pill bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
               {/* Fixed width (the longest readout, "…59.9 min · 30 s … 7 d"), so the
                   slider keeps its size and place while the number changes under a drag. */}

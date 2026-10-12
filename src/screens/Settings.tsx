@@ -25,6 +25,7 @@ import {
   moveAudioBase,
   pickRecordingsDir,
   type EvdevStatus,
+  subscribe,
 } from "@/lib/api";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
@@ -175,6 +176,27 @@ export default function Settings() {
     if (tab === "Recording & history" && ((!dirBusy && !storeBusy) || !haveStatsRef.current))
       refreshStoreStats();
   }, [tab, refreshStoreStats, dirBusy, storeBusy]);
+  // A retention sweep (a config save that turns saved dictations off or shortens their clock)
+  // prunes records on a background thread while the tab stays mounted; nothing above re-runs
+  // for it, so the dictation count and the "Delete N dictations" confirm went stale. The event
+  // goes out before the media sweeps, so the audio counts may still lag one sweep.
+  useEffect(() => {
+    if (tab !== "Recording & history") return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    subscribe<unknown>("transcripts://swept", () => {
+      if (!busy.dir && !busy.store) refreshStoreStats();
+    })
+      .then((un) => {
+        if (cancelled) un();
+        else unlisten = un;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [tab, refreshStoreStats]);
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
   const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "video" | "clear">(null);
