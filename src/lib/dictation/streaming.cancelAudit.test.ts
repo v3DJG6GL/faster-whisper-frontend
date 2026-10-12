@@ -374,8 +374,8 @@ describe("work that must wait for the queue or the cancel", () => {
     const claim = body.indexOf("const settleOutcome = pending ? deferSessionOutcome() : null;");
     expect(claim, "the watchdog claims the outcome").toBeGreaterThanOrEqual(0);
     expect(claim, "…before cancelLive reports it").toBeLessThan(body.indexOf("cancelLive("));
-    // mask() blanks the delivery literals; the abandoned flag is the failed copy.
-    const settle = body.search(/\bsettleOutcome\?\.\(onClipboard \?\s+:\s+, !onClipboard\)/);
+    // mask() blanks the delivery literals; bookFailedEnd makes a failed copy abandoned.
+    const settle = body.search(/\bbookFailedEnd\(settleOutcome, onClipboard \?\s+:\s+\)/);
     expect(settle, "the copy's answer settles the outcome").toBeGreaterThan(body.indexOf("recoverUnguarded("));
     // Both branches: before the superseded check returns early.
     expect(settle).toBeLessThan(body.indexOf("if (superseded)"));
@@ -397,14 +397,13 @@ describe("work that must wait for the queue or the cancel", () => {
       expect(claim).toBeLessThan(body.indexOf("flashError("));
       const copy = body.indexOf("recoverUnguarded(");
       expect(claim).toBeLessThan(copy);
-      // Nothing to recover → what landed (live phrases), settled right away.
-      const landed = body.indexOf("const landedAs = endOutcome();", claim);
-      expect(landed, "the no-text branch settles with endOutcome()").toBeGreaterThan(claim);
-      const sync = body.slice(landed).search(/\bsettleOutcome\?\.\(landedAs, landedAs ===\s+\)/);
-      expect(sync, "…synchronously").toBeGreaterThanOrEqual(0);
-      expect(landed + sync).toBeLessThan(body.indexOf("flashError("));
+      // Nothing to recover → what landed (live phrases, bookFailedEnd's default), settled right away.
+      const sync = body.indexOf("if (!pending) bookFailedEnd(settleOutcome);", claim);
+      expect(sync, "the no-text branch settles with what landed, synchronously").toBeGreaterThan(claim);
+      expect(sync).toBeLessThan(body.indexOf("insertCfg = null"));
+      expect(sync).toBeLessThan(body.indexOf("flashError("));
       // Text to recover → the copy's answer, in both branches (before the failed copy returns).
-      const settle = body.search(/\bsettleOutcome\?\.\(onClipboard \?\s+:\s+, !onClipboard\)/);
+      const settle = body.search(/\bbookFailedEnd\(settleOutcome, onClipboard \?\s+:\s+\)/);
       expect(settle, "the copy's answer settles the outcome").toBeGreaterThan(copy);
       expect(settle).toBeLessThan(body.indexOf("if (!onClipboard) return"));
     });
@@ -412,11 +411,17 @@ describe("work that must wait for the queue or the cancel", () => {
 
   it("teardownAfterFatalInject books what landed before the failed phrase", () => {
     const body = mask(fns.teardownAfterFatalInject);
-    const landed = body.indexOf("const landedAs = endOutcome();");
-    expect(landed, "teardownAfterFatalInject reads what landed").toBeGreaterThanOrEqual(0);
-    const report = body.search(/\breportSessionOutcome\(landedAs, landedAs ===\s+\)/);
-    expect(report, "teardownAfterFatalInject books the outcome").toBeGreaterThan(landed);
+    const report = body.indexOf("bookFailedEnd(deferSessionOutcome());");
+    expect(report, "teardownAfterFatalInject books the outcome").toBeGreaterThanOrEqual(0);
     expect(report).toBeLessThan(body.indexOf("insertCfg = null"));
+  });
+
+  it("every failure end books abandoned exactly when nothing landed", () => {
+    // The rule lives in one helper so the failure paths cannot drift apart again: a kept-error
+    // settle (the stop-mode failed insert or sink skip, whose recovery copy failed) used to book
+    // its lost text as a delivered translation while every sibling booked it "aborted".
+    expect(mask(fns.bookFailedEnd)).toContain("settle?.(delivery, delivery ===");
+    expect(mask(fns.settleIdle)).toContain("if (keepError) bookFailedEnd(deferSessionOutcome())");
   });
 
   it("the stream-error handler flashes the error before awaiting the recovery copy", () => {

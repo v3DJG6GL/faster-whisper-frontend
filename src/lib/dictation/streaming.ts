@@ -392,7 +392,9 @@ let sessionMeta: {
   appTitle?: string;
   blocked: boolean;
 } | null = null;
-/** Set once the session's outcome has been queued (settle OR cancel — never both). */
+/** Set once this session's outcome has been claimed (deferSessionOutcome). Whichever terminal path
+ *  runs first books it: settle, cancel, fatal inject, stream error, stop reject or the
+ *  stuck-finalize watchdog. The next start resets it. */
 let sessionOutcomeReported = false;
 
 /** The outcome's translation answer. A cancelled (`abandoned`) translating session that
@@ -416,12 +418,21 @@ export function translationOutcome(s: {
  *  Once per session, through the guard in deferSessionOutcome — every terminal path books, and
  *  whichever runs first wins: settleIdle reports the truthful delivery; cancelLive reports what
  *  already landed (live phrases typed or copied, else "none") with `abandoned` — before it resets
- *  sessionTyped/sessionClipboard; teardownAfterFatalInject reports what landed before the failed
- *  phrase. The stuck-finalize watchdog, the stream://error handler and the stopLive reject claim
- *  through deferSessionOutcome before their teardown and book the recovery copy's answer (or, with
- *  no stop-mode text to recover, what landed) themselves. */
+ *  sessionTyped/sessionClipboard. The failure paths book through bookFailedEnd instead:
+ *  teardownAfterFatalInject and a kept-error settle book what landed before the failure; the
+ *  stuck-finalize watchdog, the stream://error handler and the stopLive reject claim through
+ *  deferSessionOutcome before their teardown and book the recovery copy's answer (or, with no
+ *  stop-mode text to recover, what landed) themselves. */
 function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
   deferSessionOutcome()?.(delivery, abandoned);
+}
+
+type OutcomeSettle = ReturnType<typeof deferSessionOutcome>;
+
+/** A failure path's booking: the delivery that landed (default: what landed this session),
+ *  abandoned exactly when nothing landed. The text was lost, like a cancel. */
+function bookFailedEnd(settle: OutcomeSettle, delivery: "typed" | "clipboard" | "none" = endOutcome()): void {
+  settle?.(delivery, delivery === "none");
 }
 
 /** Claim this session's once-only outcome now and post it when the returned function is called —
@@ -1641,7 +1652,10 @@ function settleIdle(keepError = false): void {
   const saved = captureDictationHistory();
   // The outcome post reads the same session docs (translation state, insert-skipped)
   // and the delivery flags — all intact until the next start — so it rides right after.
-  reportSessionOutcome(endOutcome());
+  // A kept-error settle is the stop-mode failed insert or sink skip: its recovery copy set
+  // sessionClipboard, so "none" means the text was lost.
+  if (keepError) bookFailedEnd(deferSessionOutcome());
+  else reportSessionOutcome(endOutcome());
   // `dictationPhase` is cleared in the SAME call as the status move — a phase
   // published for a status that no longer exists would keep a cold-translate
   // card on screen over an idle chip.
@@ -1889,7 +1903,7 @@ function armStuckWatchdog(): void {
           await cancelled;
           const onClipboard = await recoverUnguarded(pending, "stuck-finalize");
           // On the clipboard → it landed; a failed copy lost the text, like a cancel.
-          settleOutcome?.(onClipboard ? "clipboard" : "none", !onClipboard);
+          bookFailedEnd(settleOutcome, onClipboard ? "clipboard" : "none");
           // Notify in BOTH branches. Unlike the stream://error / stopLive-reject siblings, which
           // flash the error BEFORE the copy and so can return silently when it fails, this watchdog
           // path has not flashed yet: on a double failure (link died AND the clipboard copy threw)
@@ -3160,10 +3174,7 @@ async function ensureListeners(): Promise<void> {
     // a cancel during the error linger would otherwise book first. With stop-mode text to recover the
     // copy's answer settles it; otherwise what landed already (live phrases) does, right away.
     const settleOutcome = deferSessionOutcome();
-    if (!pending) {
-      const landedAs = endOutcome();
-      settleOutcome?.(landedAs, landedAs === "none");
-    }
+    if (!pending) bookFailedEnd(settleOutcome);
     // Null insertCfg (AFTER reading it for `pending`) so a live phrase still queued behind the error
     // can't type/paste into the now-refocused window after the session errored — mirrors cancelLive /
     // teardownAfterFatalInject. endInjection is chained on `owed` above, so any snapshot still restores.
@@ -3178,7 +3189,7 @@ async function ensureListeners(): Promise<void> {
       void (async () => {
         const onClipboard = await recoverUnguarded(pending, "stream error");
         // On the clipboard → it landed; a failed copy lost the text, like a cancel.
-        settleOutcome?.(onClipboard ? "clipboard" : "none", !onClipboard);
+        bookFailedEnd(settleOutcome, onClipboard ? "clipboard" : "none");
         if (!onClipboard) return;
         // Upgrade the message only while this errored session still owns the chip.
         const app = useApp.getState();
@@ -3300,8 +3311,7 @@ function teardownAfterFatalInject(): void {
   // No `closed` settles this session (it bails on status "error"), so book its usage outcome here:
   // the phrases that landed before the failed one (and a failed phrase its caller recovered to the
   // clipboard, which set sessionClipboard first), else nothing.
-  const landedAs = endOutcome();
-  reportSessionOutcome(landedAs, landedAs === "none");
+  bookFailedEnd(deferSessionOutcome());
   // The failed phrase (or one queued behind it) may still have a translate in
   // flight; nothing will consume it now, so this stops the server's work too.
   abandonSessionWork();
@@ -4049,10 +4059,7 @@ export async function stopLive(): Promise<void> {
     // No `closed` settles this session either: claim its usage outcome before the teardown (as the
     // stream://error handler does) and book the copy's answer, or what already landed.
     const settleOutcome = deferSessionOutcome();
-    if (!pending) {
-      const landedAs = endOutcome();
-      settleOutcome?.(landedAs, landedAs === "none");
-    }
+    if (!pending) bookFailedEnd(settleOutcome);
     // Null insertCfg (AFTER reading it for `pending`) so a LIVE phrase still queued behind the rejected
     // stop can't type/paste into the now-refocused window and pulse a green/amber "inserted" onto the
     // red error chip — the 4th sibling of stream://error / teardownAfterFatalInject / cancelLive, which
@@ -4068,7 +4075,7 @@ export async function stopLive(): Promise<void> {
     if (pending) {
       void (async () => {
         const onClipboard = await recoverUnguarded(pending, "stop reject");
-        settleOutcome?.(onClipboard ? "clipboard" : "none", !onClipboard);
+        bookFailedEnd(settleOutcome, onClipboard ? "clipboard" : "none");
         if (!onClipboard) return;
         // Upgrade the message only while this errored session still owns the chip.
         const app = useApp.getState();
