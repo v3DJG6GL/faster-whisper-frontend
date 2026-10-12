@@ -522,6 +522,8 @@ describe("wrapLines", () => {
     expect(wrapLines("今年は２０２６年です", 6, 2)).toEqual(["今年は", "２０２６", "年です"]); // as "2026" wraps
     expect(wrapLines("今年の売上は１２３，４５６円でした", 13, 2).join("|")).not.toMatch(/[０-９，]\|[０-９，]/);
     expect(wrapLines("新しいｺﾝﾋﾟｭｰﾀｰを買いました", 9, 2).some((l) => l.startsWith("ｰ"))).toBe(false);
+    expect(wrapLines("我们需要ＣＰＵ，ＧＰＵ，ＲＡＭ和ＳＳＤ", 6, 2).join("|")).not.toMatch(/[Ａ-Ｚ]\|[Ａ-Ｚ]/);
+    expect(wrapLines("ＡＢ\u0301ＣＤＥＦ", 2, 2).some((l) => /^\p{M}/u.test(l))).toBe(false);
     fits("ﾃｷｽﾄ".repeat(4), 6, 3);
     fits("〜".repeat(12), 6, 2);
     // A quote that ends the token closes it; an opener rides with what it opens.
@@ -784,6 +786,10 @@ describe("cutByShare", () => {
     expect(cutByShare("東京ＡＢＣ", [1, 1, 1])).toEqual(["東", "京", "ＡＢＣ"]);
     expect(cutByShare("売上は１２３，４５６円", [1, 1, 1]).some((p) => /^[，４５６]/.test(p))).toBe(false);
     expect(cutByShare("ｺﾝﾋﾟｭｰﾀｰ", [1, 1, 1]).some((p) => p.startsWith("ｰ"))).toBe(false);
+    // ，/： join digits only: between fullwidth words they are clause seams.
+    expect(cutByShare("ＣＰＵ，ＧＰＵ，ＲＡＭ", [1, 1, 1])).toEqual(["ＣＰＵ，", "ＧＰＵ，", "ＲＡＭ"]);
+    expect(cutByShare("ＵＲＬ：ｈｔｔｐ", [1, 1]).every(Boolean)).toBe(true);
+    expect(cutByShare("開始は１２：３０です", [1, 1, 1]).some((p) => /^[：３０]/.test(p))).toBe(false);
   });
   it("cuts after a German closing quote glued to CJK, not inside its word", () => {
     expect(cutByShare("„Hallo“東京", [1, 1])).toEqual(["„Hallo“", "東京"]);

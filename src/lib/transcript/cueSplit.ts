@@ -281,13 +281,14 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  A fullwidth letter or digit, a halfwidth kana (with its voicing mark), a 〜 and the
  *  ideographic space are such characters too, as CJK_UNIT has them: swallowed into the
  *  token before them, "〜〜〜…" could neither wrap nor cut. A run of fullwidth letters and
- *  digits (with ，．： between two of them) is one word, as its halfwidth spelling is: "２０２６"
- *  and "１２３，４５６" never break in the middle; a run longer than a line still wraps per
+ *  digits (with ，．： only between two digits) is one word, as its halfwidth spelling is:
+ *  "２０２６", "１２３，４５６" and "１２：３０" never break in the middle, while the ， of
+ *  "ＣＰＵ，ＧＰＵ" or the ： of "ＵＲＬ：" stays a clause seam; a run longer than a line still wraps per
  *  character through `tokenUnits`. */
 const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[${FW_ALNUM}](?:[，．：]?[${FW_ALNUM}])*[${CLOSE_PUNCT}]*`
+  `[${OPEN_PUNCT}]*[${FW_ALNUM}]${UNIT_TAIL}(?:[${FW_ALNUM}]${UNIT_TAIL}|(?<=[０-９])[，．：](?=[０-９]))*[${CLOSE_PUNCT}]*`
     + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}\\uff9e\\uff9f]*`
     + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]+`
     + `|[${OPEN_PUNCT}]+`,

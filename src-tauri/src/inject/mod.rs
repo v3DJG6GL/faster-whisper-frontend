@@ -454,8 +454,11 @@ pub(crate) fn try_clip_job() -> Option<std::sync::MutexGuard<'static, ()>> {
 
 /// How long `paste` waits for a quick-add copy grab to finish. The grab is bounded (after the
 /// modifier gate: the clipboard prologue, then the copy poll and the read, both inside one
-/// `COPY_DEADLINE_RDP_MS` = 6 s deadline), so a phrase waits it out instead of being skipped: a
-/// skipped live phrase is only re-sent with a NEXT insert, and a session's last phrase has none.
+/// `COPY_DEADLINE_RDP_MS` = 6 s deadline), so a paste waits it out instead of bailing mid-grab: a
+/// stop-mode insert that bailed turned into a clipboard recovery the grab then put the user's old
+/// text over. Waiting does not deliver a LIVE phrase into the source app: the grab shows and
+/// focuses the quick-add window, so the own-window check below skips the phrase (as it does for
+/// any focus moved into our windows), and it is re-sent with the next insert.
 const CLIP_JOB_WAIT: Duration = Duration::from_secs(8);
 
 /// `try_clip_job`, polled every 15 ms for up to `max`, or until `give_up` says so. None = still
