@@ -31,6 +31,10 @@ const SETTING_NAME_MAX: usize = 64;
 /// across several lists, so one large but valid dictionary passes 1 MiB in compact JSON. The
 /// PATCH reply carries no rule bodies and stays at [`MAX_META_BODY`].
 const RULES_MAX_BODY: usize = 16 * 1024 * 1024;
+/// Per-request bound on the GET, which covers reading the body: sized for the [`RULES_MAX_BODY`]
+/// read the way [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`], and still well under the
+/// shared client's 120 s ceiling so a black-holed host fails in bounded time.
+const RULES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
@@ -104,7 +108,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
     let base = base_url(server_url);
     let url = format!("{base}/v1/pipeline-rules");
     match with_auth(client().get(url), api_key)
-        .timeout(super::META_TIMEOUT)
+        .timeout(RULES_TIMEOUT)
         .send()
         .await
     {
@@ -411,6 +415,28 @@ mod tests {
         let out = get_pipeline_rules(&url, None).await;
         assert!(!out.ok);
         assert_eq!(out.status, 0);
+    }
+
+    /// A valid dictionary past the 1 MiB metadata cap still loads: the GET reads up to
+    /// `RULES_MAX_BODY`, not `MAX_META_BODY`.
+    #[tokio::test]
+    async fn rules_get_accepts_a_valid_body_over_the_meta_cap() {
+        let body = format!(
+            r#"{{"rules":{{"x":"{}"}},"role":"admin","editable_fields":{{}}}}"#,
+            "a".repeat(2 * 1024 * 1024)
+        );
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        let url = serve_once(
+            Box::leak(head.into_boxed_str()),
+            Box::leak(body.into_boxed_str()),
+        );
+        let out = get_pipeline_rules(&url, None).await;
+        assert!(out.ok, "{:?}", out.error);
+        assert_eq!(out.status, 200);
+        assert_eq!(out.state.unwrap().role, "admin");
     }
 
     /// A 2xx PATCH landed even when its reply can't be read or parsed: the status stays 2xx
