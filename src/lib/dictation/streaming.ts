@@ -2712,7 +2712,7 @@ async function ensureListeners(): Promise<void> {
     // phrase is submitted/newlined as you speak. This is what makes "Press Enter after" work
     // in hands-free/ongoing dictation, which never reaches the stop-time tail. A "\n" is always a
     // real Enter (a pasted newline gets swallowed by some apps); clipboard-only types nothing
-    // (the full transcript is already on the clipboard via bankedDoc).
+    // (its last quiet window is already on the clipboard; bankedDoc feeds only the stop-timing insert).
     // The phrase ended (hard break). The per-phrase Enter is normally driven by the quiet
     // timer (~PHRASE_END_QUIET_MS after you stop, well before this ~20s hard break), so it's
     // already been pressed. Cancel the pending timer; only Enter here as a backstop if it
