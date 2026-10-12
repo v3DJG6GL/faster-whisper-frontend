@@ -142,47 +142,70 @@ fn rewrite_record_keep_mtime(path: &Path, out: &str, mtime: Option<std::time::Sy
     true
 }
 
-/// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
-/// (old absolute path → new absolute path), after a migration or base move.
-/// Best-effort per record; a record that fails to parse is left untouched. Returns false when
-/// a record that may point at a moved file could not be read or rewritten (locked, unreadable,
-/// disk full): the caller must then leave the heal to re-point it by basename, or it stays
-/// broken for good.
-pub(crate) fn rewrite_media_paths(
-    app: &AppHandle,
-    lookup: &std::collections::HashMap<&str, &str>,
-) -> bool {
-    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
-        .into_iter()
-        .flatten()
-        .collect();
-    rewrite_media_paths_in(&dirs, lookup)
+/// What a media-path fix-up walk (`fix_records_in`) got through.
+struct FixTally {
+    /// Records re-pointed and written back.
+    fixed: usize,
+    /// Records that may need a fix but could not be stat'ed, read or written back.
+    failed: usize,
+    /// Folders or listing entries that could not be read: each may hide any number of records.
+    unlisted: usize,
 }
 
-fn rewrite_media_paths_in(
+impl FixTally {
+    /// Every record the walk should have reached was reached.
+    fn complete(&self) -> bool {
+        self.failed == 0 && self.unlisted == 0
+    }
+}
+
+/// Walk every `.json` record in `dirs` for a media-path fix-up (`what`: "rewrite" or "heal"),
+/// let `fix` change the parsed record, and write back the ones it changed, keeping their mtime.
+/// The move rewrite and the heal share it so both count a miss alike: a missing folder, a
+/// record a sweep removed first, a non-UTF-8 file and an unparsable one are nothing the History
+/// listing could load either and are skipped; anything else unread may hide a moved path and is
+/// counted (`FixTally`). `size_cap` skips records the listing skips as oversized.
+fn fix_records_in(
     dirs: &[PathBuf],
-    lookup: &std::collections::HashMap<&str, &str>,
-) -> bool {
-    let (mut rewritten, mut failed) = (0, 0);
+    what: &str,
+    size_cap: Option<u64>,
+    mut fix: impl FnMut(&mut serde_json::Value) -> bool,
+) -> FixTally {
+    let mut tally = FixTally {
+        fixed: 0,
+        failed: 0,
+        unlisted: 0,
+    };
     for dir in dirs {
         // No folder = no record to re-point; one that exists but cannot be listed may hide one.
-        let entries = match std::fs::read_dir(dir) {
-            Ok(e) => e,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(_) => {
-                failed += 1;
+        let entries = match list_dir(dir, "history") {
+            Ok(Some(e)) => e,
+            Ok(None) => continue,
+            Err(e) => {
+                tracing::warn!("[transcripts] {e} for the media-path {what}");
+                tally.unlisted += 1;
                 continue;
             }
         };
         for entry in entries {
             // A mid-listing error may hide a matching record too.
             let Ok(entry) = entry else {
-                failed += 1;
+                tally.unlisted += 1;
                 continue;
             };
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
+            }
+            if let Some(cap) = size_cap {
+                match entry.metadata() {
+                    Ok(m) if m.len() > cap => continue,
+                    Ok(_) => {}
+                    Err(_) => {
+                        tally.failed += 1;
+                        continue;
+                    }
+                }
             }
             // Held to the end of this record (read, parse, stat, rewrite) — see `RECORD_IO`.
             // A record a sweep removed first is unreadable here and skipped, not resurrected;
@@ -200,49 +223,88 @@ fn rewrite_media_paths_in(
                     continue
                 }
                 Err(_) => {
-                    failed += 1;
+                    tally.failed += 1;
                     continue;
                 }
             };
             let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
             };
-            // Dictation records keep their audio under `sourcePath`; file/url
-            // records under `mediaPath` — a moved file must be re-pointed in
-            // whichever field carries it.
-            let mut changed = false;
-            for key in ["mediaPath", "videoPath", "sourcePath"] {
-                let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
-                    continue;
-                };
-                if let Some(new) = lookup.get(old) {
-                    v[key] = serde_json::Value::String((*new).to_owned());
-                    changed = true;
-                }
-            }
-            if !changed {
+            if !fix(&mut v) {
                 continue;
             }
             let Ok(out) = serde_json::to_string(&v) else {
-                failed += 1;
+                tally.failed += 1;
                 continue;
             };
             // Re-stat under the lock: the DirEntry's metadata may predate a save.
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             if rewrite_record_keep_mtime(&path, &out, mtime) {
-                rewritten += 1;
+                tally.fixed += 1;
             } else {
-                failed += 1;
+                tally.failed += 1;
             }
         }
     }
-    if rewritten > 0 {
-        tracing::info!("[transcripts] rewrote media paths in {rewritten} record(s) after move");
+    if tally.unlisted > 0 {
+        tracing::warn!(
+            "[transcripts] media-path {what} skipped {} unlistable folder(s)/entr(y/ies)",
+            tally.unlisted
+        );
     }
-    if failed > 0 {
-        tracing::warn!("[transcripts] could not rewrite media paths in {failed} record(s)");
+    tally
+}
+
+/// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
+/// (old absolute path → new absolute path), after a migration or base move.
+/// Best-effort per record; a record that fails to parse is left untouched. Returns false when
+/// a record that may point at a moved file could not be read or rewritten (locked, unreadable,
+/// disk full) or a history folder could not be listed: the caller must then leave the heal to
+/// re-point it by basename, or it stays broken for good.
+pub(crate) fn rewrite_media_paths(
+    app: &AppHandle,
+    lookup: &std::collections::HashMap<&str, &str>,
+) -> bool {
+    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
+        .into_iter()
+        .flatten()
+        .collect();
+    rewrite_media_paths_in(&dirs, lookup)
+}
+
+fn rewrite_media_paths_in(
+    dirs: &[PathBuf],
+    lookup: &std::collections::HashMap<&str, &str>,
+) -> bool {
+    let tally = fix_records_in(dirs, "rewrite", None, |v| {
+        // Dictation records keep their audio under `sourcePath`; file/url
+        // records under `mediaPath` — a moved file must be re-pointed in
+        // whichever field carries it.
+        let mut changed = false;
+        for key in ["mediaPath", "videoPath", "sourcePath"] {
+            let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
+                continue;
+            };
+            if let Some(new) = lookup.get(old) {
+                v[key] = serde_json::Value::String((*new).to_owned());
+                changed = true;
+            }
+        }
+        changed
+    });
+    if tally.fixed > 0 {
+        tracing::info!(
+            "[transcripts] rewrote media paths in {} record(s) after move",
+            tally.fixed
+        );
     }
-    failed == 0
+    if tally.failed > 0 {
+        tracing::warn!(
+            "[transcripts] could not rewrite media paths in {} record(s)",
+            tally.failed
+        );
+    }
+    tally.complete()
 }
 
 /// The subfolders `heal_media_paths` may find `key`'s file in, most likely first.
@@ -273,75 +335,59 @@ fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a 
 /// layout migration moved the files into `<base>/dictations`. Idempotent, but
 /// NOT cheap — it reads and parses every record — so the caller runs it after a
 /// migration that moved something and once per install, not every launch.
-pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) {
+/// Returns false when a record could not be read or rewritten or a history folder could
+/// not be listed: the caller must then keep the heal armed, or that record stays broken.
+pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) -> bool {
+    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
+        .into_iter()
+        .flatten()
+        .collect();
+    heal_media_paths_in(&dirs, base)
+}
+
+fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> bool {
     let subs = crate::commands::AUDIO_SUBDIRS;
-    let dirs = [transcripts_dir(app), dictations_dir(app)];
-    let mut healed = 0;
-    for dir in dirs.into_iter().flatten() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+    // Same size guard as `read_records_into`: an oversized record is skipped
+    // there too, so parsing it here would be work for a record nobody loads.
+    let tally = fix_records_in(dirs, "heal", Some(MAX_RECORD_BYTES), |v| {
+        let mut changed = false;
+        for key in ["mediaPath", "videoPath", "sourcePath"] {
+            let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
+                continue;
+            };
+            let old_path = std::path::Path::new(old);
+            // Only local absolute paths that are actually gone (a URL in
+            // `sourcePath` or a still-valid path is not ours to touch).
+            if !old_path.is_absolute() || old_path.exists() {
                 continue;
             }
-            // Same size guard as `read_records_into`: an oversized record is skipped
-            // there too, so parsing it here would be work for a record nobody loads.
-            if entry
-                .metadata()
-                .map(|m| m.len() > MAX_RECORD_BYTES)
-                .unwrap_or(true)
+            let Some(name) = old_path.file_name() else {
+                continue;
+            };
+            if let Some(found) = heal_candidates(key, old_path, &subs)
+                .into_iter()
+                .map(|s| base.join(s).join(name))
+                .find(|c| c.exists())
             {
-                continue;
-            }
-            // Held to the end of this record, as in `rewrite_media_paths`.
-            let _io = record_io_lock();
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
-                continue;
-            };
-            let mut changed = false;
-            for key in ["mediaPath", "videoPath", "sourcePath"] {
-                let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
-                    continue;
-                };
-                let old_path = std::path::Path::new(old);
-                // Only local absolute paths that are actually gone (a URL in
-                // `sourcePath` or a still-valid path is not ours to touch).
-                if !old_path.is_absolute() || old_path.exists() {
-                    continue;
-                }
-                let Some(name) = old_path.file_name() else {
-                    continue;
-                };
-                if let Some(found) = heal_candidates(key, old_path, &subs)
-                    .into_iter()
-                    .map(|s| base.join(s).join(name))
-                    .find(|c| c.exists())
-                {
-                    v[key] = serde_json::Value::String(found.to_string_lossy().into_owned());
-                    changed = true;
-                }
-            }
-            if !changed {
-                continue;
-            }
-            let Ok(out) = serde_json::to_string(&v) else {
-                continue;
-            };
-            // Re-stat under the lock: the DirEntry's metadata may predate a save.
-            let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
-            if rewrite_record_keep_mtime(&path, &out, mtime) {
-                healed += 1;
+                v[key] = serde_json::Value::String(found.to_string_lossy().into_owned());
+                changed = true;
             }
         }
+        changed
+    });
+    if tally.fixed > 0 {
+        tracing::info!(
+            "[transcripts] healed stale media paths in {} record(s)",
+            tally.fixed
+        );
     }
-    if healed > 0 {
-        tracing::info!("[transcripts] healed stale media paths in {healed} record(s)");
+    if tally.failed > 0 {
+        tracing::warn!(
+            "[transcripts] could not heal media paths in {} record(s); retried on the next launch",
+            tally.failed
+        );
     }
+    tally.complete()
 }
 
 /// Copy cap — beyond this the copy is silently skipped (the record keeps
@@ -991,9 +1037,10 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
     sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
 }
 
-/// List `dir` for a wipe or the History listing: a missing folder is nothing to read (`None`),
-/// but one that exists and cannot be listed is an error — never a silent "removed 0" (or an empty
-/// History) while every file stays on disk.
+/// List `dir` for a wipe, the History listing or a media-path rewrite/heal (`fix_records_in`):
+/// a missing folder is nothing to read (`None`), but one that exists and cannot be listed is an
+/// error — never a silent "removed 0" (an empty History, a heal marked done) while every file
+/// stays on disk.
 fn list_dir(dir: &Path, what: &str) -> Result<Option<std::fs::ReadDir>, String> {
     match std::fs::read_dir(dir) {
         Ok(entries) => Ok(Some(entries)),
@@ -1322,5 +1369,57 @@ mod tests {
         }
         let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_reports_an_unreadable_record() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("fwf-heal-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (dir, base) = (root.join("history"), root.join("base"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(base.join("files")).unwrap();
+        std::fs::write(base.join("files").join("a.wav"), b"").unwrap();
+        let gone = "/fwf-heal-gone/files/a.wav";
+        std::fs::write(dir.join("ok.json"), format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
+        // Not UTF-8 = no record the listing could load either: skipped, not a failure.
+        std::fs::write(dir.join("bin.json"), [0xff, 0xfe, 0x00]).unwrap();
+        // A missing folder has no record to heal.
+        let dirs = [dir.clone(), dir.join("missing")];
+        assert!(heal_media_paths_in(&dirs, &base));
+        let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
+        assert!(ok.contains(&*base.join("files").join("a.wav").to_string_lossy()));
+        // A locked record may still point at the gone path: the caller must not stamp the heal.
+        let locked = dir.join("locked.json");
+        std::fs::write(&locked, format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads through 0o000, so there is nothing to assert there.
+        if std::fs::read_to_string(&locked).is_err() {
+            assert!(!heal_media_paths_in(&dirs, &base));
+        }
+        let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn heal_reports_an_unlistable_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("fwf-heal-unlisted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (dir, base) = (root.join("history"), root.join("base"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root lists through 0o000, so there is nothing to assert there.
+        if std::fs::read_dir(&dir).is_err() {
+            // A folder that exists but cannot be listed may hide any number of records.
+            assert!(!heal_media_paths_in(std::slice::from_ref(&dir), &base));
+            let lookup = std::collections::HashMap::new();
+            assert!(!rewrite_media_paths_in(std::slice::from_ref(&dir), &lookup));
+        }
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

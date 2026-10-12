@@ -215,12 +215,20 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     // This runs synchronously inside setup(), before the event loop, so a fresh install with
     // no records skips the scan entirely and only stamps; the expensive read+parse is reserved
     // for a base that actually has history to heal.
+    // The stamp is written only once the heal reached every record (and dropped when it did
+    // not, even if a past heal left one), so a record a sync client or antivirus held, or an
+    // unlistable history folder, is retried on the next launch; a permanently unreadable
+    // record re-runs the scan each launch while it exists — the same read+parse the History
+    // listing does, accepted.
     let stamp = base.join(HEAL_STAMP);
     if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
         let _ = std::fs::write(&stamp, b"");
     } else if !map.is_empty() || !stamp.exists() {
-        crate::store::transcripts::heal_media_paths(app, &base);
-        let _ = std::fs::write(&stamp, b"");
+        if crate::store::transcripts::heal_media_paths(app, &base) {
+            let _ = std::fs::write(&stamp, b"");
+        } else {
+            let _ = std::fs::remove_file(&stamp);
+        }
     }
 }
 
@@ -258,12 +266,15 @@ pub async fn move_audio_base(
         // Move the heal stamp so the new base is stamped and the old one is clean.
         // Without this the old base keeps a stray stamp (blocking the remove_dir
         // below) and the new one re-runs the full heal scan on the next launch.
+        // A missing old stamp means a heal is still pending (a failed rewrite or
+        // identifier migration dropped it): that must travel to the new base too, so
+        // a stray stamp already there is cleared instead of masking it.
         // Rename first: it is a no-op when both paths name the same folder (case-only
         // difference, symlink). Across drives it fails (EXDEV); the stamp is an empty
         // marker, so write + remove is the move then.
         let (old_stamp, new_stamp) = (from.join(HEAL_STAMP), to.join(HEAL_STAMP));
         if !old_stamp.exists() {
-            let _ = std::fs::write(&new_stamp, b"");
+            let _ = std::fs::remove_file(&new_stamp);
         } else if std::fs::rename(&old_stamp, &new_stamp).is_err() {
             let _ = std::fs::write(&new_stamp, b"");
             let _ = std::fs::remove_file(&old_stamp);
