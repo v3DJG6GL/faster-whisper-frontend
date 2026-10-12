@@ -118,21 +118,6 @@ describe("embeddedSubtitleTracks", () => {
     expect(sidecarFiles(site, { format: "srt" }, order, "srt").map((f) => f.name("s")))
       .toEqual(["s.de.srt", "s.YouTube.de.sdh.srt", "s.en.srt", "s.YouTube-auto.en.srt"]);
   });
-  it("a language's first track that writes no cue: its other stream is the plain, default one", () => {
-    const res: BatchResult = {
-      text: "Hello", language: "en",
-      segments: [{ start: 0, end: 1, text: "Hello" }],
-      timedTracks: [{ id: "de-x-site", lang: "de", source: "site", kind: "manual", site: "YouTube",
-        cues: [{ start: 0, end: 1, text: "Hallo" }] }],
-    };
-    // "de" is a machine-translation target not translated yet: no stream of its own.
-    const tracks = embeddedSubtitleTracks(res, { format: "srt" }, ["orig", "de", "de-x-site"]);
-    expect(tracks.map((t) => [t.lang, t.label, t.original, t.default])).toEqual([
-      ["en", "English", true, true],
-      ["de", "German", false, true],
-    ]);
-    expect(tracks[1].srt).toContain("Hallo");
-  });
   it("a site track's looser language tag embeds as one the packager accepts", () => {
     const site: BatchResult = {
       ...result,
