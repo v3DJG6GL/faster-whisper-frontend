@@ -28,7 +28,7 @@ import { backendForProfile, homeTargetProfile } from "./dictation/dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
 import { hasOwn, ownProp } from "./own";
-import { toUsageQuery, type UsagePageQuery } from "./usageDerive";
+import { toUsageQuery, type UsagePageQuery, viewSigSource } from "./usageDerive";
 import type { Backend } from "./types";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 
@@ -50,8 +50,8 @@ let pageMissed = false; // a hidden pass ran with a Statistics page open, skippi
 // reference: setUsageView/Year keep the old reference when a success re-answers identical data.
 let viewGen = 0;
 let yearGen = 0;
-// The view signature a fetch confirmed during this visit (null after a reopen or a hidden pass):
-// only a confirmed 365-day view may stand in for the calendar's year.
+// The view signature a fetch confirmed during this visit and no later fetch missed (null after a
+// reopen, a hidden pass or a miss): only a confirmed 365-day view may stand in for the calendar's year.
 let viewFreshSig: string | null = null;
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
@@ -111,8 +111,8 @@ export function viewStatsBackend(s = useApp.getState()): Backend | undefined {
   return withUsage.find((b) => b.id === s.usageViewBackendId) ?? withUsage.find((b) => b.id === defaultId) ?? withUsage[0];
 }
 
-/** The signature a view document answers: backend + target + the exact wire query. store.ts's
- *  viewSource reads the first two back out, so keep them leading. */
+/** The signature a view document answers: backend + target + the exact wire query.
+ *  usageDerive's viewSigParts / viewSigSource / viewSigBackend read it back, so keep that order. */
 export function viewSignature(backend: Backend, target: string, q: UsagePageQuery, tz: string | undefined): string {
   return JSON.stringify([backend.id, target, toUsageQuery(q, tz)]);
 }
@@ -120,17 +120,8 @@ export function viewSignature(backend: Backend, target: string, q: UsagePageQuer
 /** Whether two view signatures name the same backend + target (whatever their queries): only
  *  such a document may stand in for another while it loads. False for any malformed signature. */
 export function sameViewSource(a: string | null | undefined, b: string | null | undefined): boolean {
-  const src = (sig: string | null | undefined) => {
-    if (!sig) return null;
-    try {
-      const v: unknown = JSON.parse(sig);
-      return Array.isArray(v) && v.length >= 2 ? JSON.stringify(v.slice(0, 2)) : null;
-    } catch {
-      return null;
-    }
-  };
-  const x = src(a);
-  return x !== null && x === src(b);
+  const x = viewSigSource(a);
+  return x !== null && x === viewSigSource(b);
 }
 
 /** The calendar's query for a page query: the last 365 days under the same stage filter.
@@ -199,6 +190,9 @@ async function refreshView(reopened = false): Promise<void> {
   const cur = viewStatsBackend(now);
   if (!cur || cur.id !== backend.id) return;
   if (viewSignature(cur, effectiveServerUrl(cur, now.settings), now.usageViewQuery, tz) !== sig) return;
+  // A miss revokes this query's confirmation (the kept document may now be hours old), unless a
+  // success landed while this fetch was out; the next success confirms it again.
+  if (stats === null && sig === viewFreshSig && viewGen === gen) viewFreshSig = null;
   // Keep the last-known on a transient miss — and on a stale-marking one too when a success
   // landed while this fetch was out (that document is current, not the kept one).
   if (stats === null && now.usageView?.sig === sig && (!reopened || viewGen !== gen)) return;

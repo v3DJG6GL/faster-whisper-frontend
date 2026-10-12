@@ -23,6 +23,8 @@ import {
   pageQueryParams,
   parsePageQuery,
   quantileBreaks,
+  viewSigBackend,
+  viewSigSource,
   resolveWindow,
   spanPresets,
   stageAppliesToScope,
@@ -548,5 +550,18 @@ describe("usageDerive", () => {
     ]);
     expect(rows.map((r) => r.pct)).toEqual([100, 21, 0]);
     expect(facetRows([{ label: "a", value: 0 }], true)).toEqual([]);
+  });
+});
+
+describe("view signature parts", () => {
+  it("reads the backend and the backend + target back, null for a malformed signature", () => {
+    const sig = JSON.stringify(["a", "http://a", { days: 30 }]);
+    expect(viewSigBackend(sig)).toBe("a");
+    expect(viewSigSource(sig)).toBe(JSON.stringify(["a", "http://a"]));
+    for (const bad of [null, undefined, "", "{", JSON.stringify({ 0: "a" }), JSON.stringify([7, "x"])]) {
+      expect(viewSigBackend(bad)).toBeNull();
+    }
+    expect(viewSigSource(JSON.stringify(["a"]))).toBeNull();
+    expect(viewSigSource("not json")).toBeNull();
   });
 });

@@ -295,6 +295,30 @@ export function isFiltered(scope: UsageScope, q: UsagePageQuery): boolean {
   return scope !== "all" || q.with.length > 0;
 }
 
+/* ── view signatures ────────────────────────────────────────────────────── */
+
+/** The parts of a usage-view signature (lib/usage.ts viewSignature's `[backendId, target,
+ *  query]`), or null for a missing or malformed one. The one parser store.ts and usage.ts share. */
+export function viewSigParts(sig: string | null | undefined): unknown[] | null {
+  if (!sig) return null;
+  try {
+    const v: unknown = JSON.parse(sig);
+    return Array.isArray(v) ? v : null;
+  } catch {
+    return null;
+  }
+}
+/** The backend + target part of a view signature (comparable as a string), or null. */
+export function viewSigSource(sig: string | null | undefined): string | null {
+  const parts = viewSigParts(sig);
+  return parts && parts.length >= 2 ? JSON.stringify(parts.slice(0, 2)) : null;
+}
+/** The backend id a view signature names, or null. */
+export function viewSigBackend(sig: string | null | undefined): string | null {
+  const id = viewSigParts(sig)?.[0];
+  return typeof id === "string" ? id : null;
+}
+
 /* ── days ───────────────────────────────────────────────────────────────── */
 
 const DAY_MS = 86_400_000;

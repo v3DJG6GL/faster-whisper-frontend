@@ -2,7 +2,8 @@
 // the last good year from the same backend + target stays up, marked failed, never another's.
 
 import { describe, expect, it } from "vitest";
-import { useApp } from "./store";
+import { CONFIG_VERSION, useApp } from "./store";
+import type { Backend } from "./types";
 
 const sig = (backendId: string, target: string, w: string) => JSON.stringify([backendId, target, { range: "365", with: w }]);
 
@@ -47,6 +48,43 @@ describe("forgetting a backend's caches", () => {
     useApp.setState({ usageView: viewB, usageYear: yearA });
     useApp.getState().forgetBackendCaches("b");
     expect(useApp.getState().usageView).toBeNull();
+    expect(useApp.getState().usageYear).toBe(yearA);
+  });
+});
+
+describe("hydrate replacing the backend list", () => {
+  const good = { today: {}, total: {}, series: [] } as never;
+  const backend = (id: string, hasApiKey: boolean) =>
+    ({ id, name: id, serverUrl: `http://${id}`, hasApiKey, model: "large-v3", endpoint: "batch", language: "auto", prompt: "" }) as unknown as Backend;
+  const hydrate = (backends: Backend[]) =>
+    useApp.getState().hydrate({ settings: useApp.getState().settings, backends, profiles: [], appRules: [], version: CONFIG_VERSION });
+
+  it("drops the Statistics documents of a backend whose key changed and keeps another's", () => {
+    const viewA = { sig: sig("a", "http://a", "all"), stats: good };
+    const yearA = { sig: sig("a", "http://a", "dictate"), stats: good };
+    useApp.setState({ backends: [backend("a", false), backend("b", false)], usage: { a: good, b: good }, usageView: viewA, usageYear: yearA });
+    hydrate([backend("a", true), backend("b", false)]); // a key added on another device, pulled
+    expect(useApp.getState().usageView).toBeNull();
+    expect(useApp.getState().usageYear).toBeNull();
+    const viewB = { sig: sig("b", "http://b", "all"), stats: good };
+    useApp.setState({ usageView: viewB });
+    hydrate([backend("a", false), backend("b", false)]);
+    expect(useApp.getState().usageView).toBe(viewB);
+  });
+
+  it("drops a document naming a removed backend even with no cache entry for it", () => {
+    const viewA = { sig: sig("a", "http://a", "all"), stats: good };
+    useApp.setState({ backends: [backend("a", false)], connections: {}, usage: {}, caps: {}, usageView: viewA, usageYear: null });
+    hydrate([]);
+    expect(useApp.getState().usageView).toBeNull();
+  });
+
+  it("keeps the documents by reference when the backends are unchanged", () => {
+    const viewA = { sig: sig("a", "http://a", "all"), stats: good };
+    const yearA = { sig: sig("a", "http://a", "dictate"), stats: good };
+    useApp.setState({ backends: [backend("a", false)], usage: { a: good }, usageView: viewA, usageYear: yearA });
+    hydrate([backend("a", false)]);
+    expect(useApp.getState().usageView).toBe(viewA);
     expect(useApp.getState().usageYear).toBe(yearA);
   });
 });

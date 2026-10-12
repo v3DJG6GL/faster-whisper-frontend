@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { canonicalActivation } from "./types";
-import { DEFAULT_PAGE_QUERY, type UsagePageQuery } from "./usageDerive";
+import { DEFAULT_PAGE_QUERY, type UsagePageQuery, viewSigBackend, viewSigSource } from "./usageDerive";
 import type {
   AppRule,
   AppSettings,
@@ -619,25 +619,9 @@ function upsertById<T extends { id: string }>(arr: T[], item: T): T[] {
   return next;
 }
 
-/** The backend + target part of a usage-view signature (lib/usage.ts viewSignature's
- *  `[backendId, target, query]`), or null for a signature not in that shape. */
-function viewSource(sig: string): string | null {
-  try {
-    const a: unknown = JSON.parse(sig);
-    return Array.isArray(a) && a.length >= 2 ? JSON.stringify(a.slice(0, 2)) : null;
-  } catch {
-    return null;
-  }
-}
-
 /** Whether a usage-view signature (lib/usage.ts viewSignature) names backend `id`. */
 function sigNames(sig: string, id: string): boolean {
-  try {
-    const a: unknown = JSON.parse(sig);
-    return Array.isArray(a) && a[0] === id;
-  } catch {
-    return false;
-  }
+  return viewSigBackend(sig) === id;
 }
 
 // The signature carries no caller identity, so a key rotation would otherwise let the old
@@ -892,8 +876,8 @@ export const useApp = create<AppState>((set) => ({
         // would read as this one's); otherwise null, and the page falls back to the backend's own
         // poll document.
         const prev = s.usageView;
-        const src = viewSource(sig);
-        const carry = prev && src !== null && viewSource(prev.sig) === src ? prev.stats : null;
+        const src = viewSigSource(sig);
+        const carry = prev && src !== null && viewSigSource(prev.sig) === src ? prev.stats : null;
         return { usageView: { sig, stats: carry, failed: true } };
       }
       // Same stability rule as setUsage: the 30 s poll re-answers the same query with an
@@ -907,8 +891,8 @@ export const useApp = create<AppState>((set) => ({
         if (s.usageYear?.sig === sig && s.usageYear.failed) return {};
         // Same carry rule as setUsageView: only a year from the same backend + target stands in.
         const prev = s.usageYear;
-        const src = viewSource(sig);
-        const carry = prev && src !== null && viewSource(prev.sig) === src ? prev.stats : null;
+        const src = viewSigSource(sig);
+        const carry = prev && src !== null && viewSigSource(prev.sig) === src ? prev.stats : null;
         return { usageYear: { sig, stats: carry, failed: true } };
       }
       if (s.usageYear && s.usageYear.sig === sig && !s.usageYear.failed && JSON.stringify(s.usageYear.stats) === JSON.stringify(stats)) return {};
@@ -963,14 +947,20 @@ export const useApp = create<AppState>((set) => ({
       // server's `{ok: true}` verdict — the green "connected" on the card whose own comment
       // calls it the audit surface — bound to the new host, permanently, since every re-test is
       // a user gesture. On the startup path nothing has been tested yet, so this drops nothing.
+      // Like `evictBackendCaches` it also drops the Statistics documents naming such a backend:
+      // a pull that adds this server's key elsewhere never reaches `forgetBackendCaches`, and
+      // the signature carries no caller identity. Unmatched ones keep their reference.
       const prev = new Map(s.backends.map((b) => [b.id, b]));
       const connections = { ...s.connections };
       const usage = { ...s.usage };
       const caps = { ...s.caps };
+      let usageView = s.usageView;
+      let usageYear = s.usageYear;
       for (const id of new Set([
         ...Object.keys(connections),
         ...Object.keys(usage),
         ...Object.keys(caps),
+        ...[viewSigBackend(s.usageView?.sig), viewSigBackend(s.usageYear?.sig)].filter((x): x is string => x !== null),
       ])) {
         const before = prev.get(id);
         const after = c.backends.find((b) => b.id === id);
@@ -978,6 +968,8 @@ export const useApp = create<AppState>((set) => ({
           delete connections[id];
           delete usage[id];
           delete caps[id];
+          if (usageView && sigNames(usageView.sig, id)) usageView = null;
+          if (usageYear && sigNames(usageYear.sig, id)) usageYear = null;
         } else if (before.kind !== after.kind) {
           // A pulled Server type change on the same target: same caps-only drop as
           // `upsertBackend`, so the Backends list re-probes under the new kind.
@@ -992,6 +984,8 @@ export const useApp = create<AppState>((set) => ({
         connections,
         usage,
         caps,
+        usageView,
+        usageYear,
       };
     }),
 }));

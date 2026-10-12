@@ -384,6 +384,31 @@ describe("usage poll gates", () => {
       useApp.setState({ usageViewQuery: { range: "90", with: [] } });
     }
   });
+
+  it("a 1 year view whose last poll missed is no stand-in for the year: coming back fetches it", async () => {
+    const ok = getUsageStats.getMockImplementation()!;
+    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
+    const close = openStatisticsPage();
+    try {
+      await settle();
+      useApp.setState({ usageViewQuery: { range: "365", with: [] } });
+      await settle();
+      await vi.advanceTimersByTimeAsync(30_000); // a poll on 1 year confirms the view
+      await settle();
+      getUsageStats.mockImplementation(async (a) => (page(a) ? (null as never) : ok(a)));
+      await vi.advanceTimersByTimeAsync(30_000); // the next poll misses: the view may now be old
+      await settle();
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      await settle();
+      expect(calls().page).toBe(2); // the view AND the year: the missed 1 year view was not seeded
+      expect(useApp.getState().usageYear?.failed).toBe(true);
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+    }
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {
