@@ -1000,6 +1000,49 @@ describe("subtitle cues", () => {
     }
   });
 
+  it("a multi-translation TXT preview never counts a segment whose translations clean to nothing", () => {
+    const r: BatchResult = {
+      text: " Line 0 Line 1 Line 2",
+      segments: [0, 1, 2].map((i) => ({
+        start: i, end: i + 1, text: ` Line ${i}`,
+        translations: (i === 1 ? { de: "\u200b" } : { de: `Zeile ${i}`, fr: `Ligne ${i}` }) as Record<string, string>,
+      })),
+    };
+    for (const timestamps of [true, false]) {
+      const opts: ExportOptions = { format: "txt", tracks: ["de", "fr"], timestamps };
+      const p = previewExport(r, opts, 2);
+      expect([p.count, p.total]).toEqual([2, 2]); // the format-mark segment writes no line
+      expect(p.text).toBe(generateExport(r, opts));
+    }
+  });
+
+  it("an original-carrying LRC / timestamped TXT preview counts a blank segment's bare stamp", () => {
+    const r: BatchResult = {
+      text: " A B",
+      segments: ["A", "B", ""].map((text, i) => ({ start: i, end: i + 1, text })),
+    };
+    for (const opts of [{ format: "lrc" }, { format: "txt", timestamps: true }] as ExportOptions[]) {
+      const two = previewExport(r, opts, 2);
+      expect([two.count, two.total]).toEqual([2, 3]); // so it says "start of the file"
+      const all = previewExport(r, opts, 12);
+      expect(all.total).toBe(3);
+      expect(all.text).toBe(generateExport(r, opts));
+      expect(all.text.trimEnd().split("\n")).toHaveLength(3);
+    }
+  });
+
+  it("a JSON preview counts every segment whatever the track pick", () => {
+    const r: BatchResult = {
+      text: " Line 0 Line 1 Line 2",
+      segments: [0, 1, 2].map((i) => ({
+        start: i, end: i + 1, text: ` Line ${i}`, ...(i === 0 ? { translations: { de: "Zeile 0" } } : {}),
+      })),
+    };
+    const p = previewExport(r, { format: "json", tracks: ["de"] }, 1);
+    expect([p.count, p.total]).toEqual([1, 3]);
+    expect(previewExport(r, { format: "json", tracks: ["de"] }, 12).total).toBe(3);
+  });
+
   it("preview and cps reuse a grid the caller already built", () => {
     const opts: ExportOptions = { format: "srt", tracks: ["orig"], cues: STANDARD };
     const grid = cueGrid(CUED, opts, ["orig"]);

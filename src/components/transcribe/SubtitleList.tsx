@@ -162,8 +162,9 @@ function VirtualCues({
     const box = scrollRef.current;
     if (box) setMargin(Math.round(el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop));
   });
-  // Keyed on the rows: a new layout (options, tracks, edits) re-runs the
-  // positions with fresh estimates for the rows not measured yet.
+  // Keyed on the rows, and a row's key carries its text: a new layout (options, tracks, edits)
+  // re-estimates only the rows whose content changed — the same index never reuses another
+  // row's measured height, and an unchanged row keeps its own.
   const getItemKey = useCallback((i: number) => rows[i].key, [rows]);
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -276,10 +277,15 @@ export function SubtitleList({
       // timing — no reading speed to judge, as the export panel says too.
       const synth = !!result.timingSynthesized;
       const fast = !synth && worst.rate > worst.limit;
+      const lines = cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig"));
+      const cps = synth ? "no timing" : span <= 0 ? "0.0 s · no duration" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`;
       return {
-        key, n, seg: c.seg, start: c.start, end: c.end, first,
-        lines: cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig")),
-        cps: synth ? "no timing" : span <= 0 ? "0.0 s · no duration" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
+        // The key carries what sets the row's height (its lines, the bar, the rate line), so a
+        // measured height is reused only while it still describes this content.
+        key: `${key}|${synth ? 1 : 0}|${cps}|${lines.map((l) => l.text).join("\u241E")}`,
+        n, seg: c.seg, start: c.start, end: c.end, first,
+        lines,
+        cps,
         fast,
         bar: synth ? 0 : Math.min(100, (d / maxDur) * 100),
         synth,

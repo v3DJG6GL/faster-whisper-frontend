@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
+  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -54,7 +54,7 @@ import { ownProp } from "@/lib/own";
 /** Why a video Save stops for one subtitle track over the packager's embed cap. */
 const tooLargeToEmbed = (t: EmbeddedTrack) =>
   `The "${safeDisplayText(t.label || t.lang, 60)}" subtitle track is too large to put ` +
-  "inside a video (over 2 MB) — leave it out or save the subtitles as files.";
+  `inside a video (over ${fmtBytes(MAX_EMBED_SRT_BYTES)}) — leave it out or save the subtitles as files.`;
 
 /** The five export formats as always-visible cards (5 options is below every
  *  buttons-vs-dropdown threshold — NN/g, Fluent, Apple HIG). The one-liner
