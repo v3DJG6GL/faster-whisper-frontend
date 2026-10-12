@@ -186,6 +186,23 @@ let shownPos: "top" | "bottom" | undefined;
 // the webview zoom (the window itself never resizes or moves for it).
 let shownScale: number | undefined;
 
+/** The last `n` UTF-16 units of `s`, minus a lone low surrogate the unit cut may leave at the
+ *  front (one code point fewer, so the result is still well-formed UTF-16 — and >= n/2 - 1
+ *  code points). The cut lands in the `dictation://update` payload, which Tauri carries as
+ *  JSON through serde_json: a lone surrogate there fails the whole emit, not one character. */
+export function tailUnits(s: string, n: number): string {
+  const t = s.slice(-n);
+  return /^[\uDC00-\uDFFF]/.test(t) ? t.slice(1) : t;
+}
+
+/** Why the chip's start buttons are off, in the Home button's words: no Profile at all, none
+ *  enabled, or (a Profile but no Backend to send it to) no Backend. */
+function startHint(anyProfile: boolean, anyEnabled: boolean): string {
+  if (!anyProfile) return "Add a profile to begin";
+  if (!anyEnabled) return "Enable a profile to begin";
+  return "Add a backend to begin";
+}
+
 /** Assemble the full `dictation://update` payload from a store snapshot. Everything the
  *  chip renders is resolved HERE (main window) because the overlay webview can't read
  *  this store — it only ever sees these payloads. */
@@ -219,10 +236,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     };
   }
   // The translation ROUTE has its own switch: it is a promise about what will be typed,
-  // so it must not disappear with the tag — nor with the Profile: a session started with no
-  // Profile (Home / the chip with none enabled) still translates from the Backend's targets,
-  // and the tray showed that route while the chip did not. See chipRouteTargets for the
-  // resolution order and why both inputs need bounding.
+  // so it must not disappear with the tag — nor with the Profile: a session whose Profile is
+  // deleted or disabled mid-session still translates with the targets it started with
+  // (sessionTargets), and the tray showed that route while the chip did not. See
+  // chipRouteTargets for the resolution order and why both inputs need bounding.
   if (rec.showRouteOnOverlay) {
     const configured = configuredRouteTargets(chipProfile, chipBackend);
     // What stands in for the route while there is none to promise (see chipRoutePending).
@@ -249,6 +266,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the
   // setting and sent only while a session is active so the standby dock shows no stale target.
   const tgt = rec.showTargetOnOverlay && isActiveDictation(state.status) ? state.targetApp : null;
+  // Whether the chip's dictate / cycle-profile quick-launch can start anything: the same
+  // predicate runOverlayAction refuses on, so an idle chip can say why instead of a dead click.
+  const homeTarget = homeTargetProfile(state.profiles, state.settings.homeProfileId);
+  const canStart = !!homeTarget && !!backendForProfile(homeTarget, state.backends);
   return {
     status: state.status,
     warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
@@ -260,9 +281,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // mode the words are still sent but the chip only surfaces them while hovered.
     // Tail only: `state.partial` is the whole document since the last hard break and this
     // payload crosses IPC on every ~30 Hz level tick, while the chip shows just the last 400
-    // code points. 800 UTF-16 units is the Overlay's own first cut (>=400 code points; its
-    // code-point slice drops a lone leading low surrogate this unit cut may leave).
-    partial: rec.realtimePreview ? state.partial.slice(-800) : "",
+    // code points. 800 UTF-16 units is the Overlay's own first cut (>=400 code points). The
+    // cut must be well-formed HERE: `emit` JSON-encodes the payload and serde_json rejects a
+    // lone surrogate on the IPC hop, which drops the whole chip update — see tailUnits.
+    partial: rec.realtimePreview ? tailUnits(state.partial, 800) : "",
     previewOnHover: rec.realtimePreview && rec.realtimePreviewOnHover,
     dictationError: state.dictationError ?? "",
     // The current stage, when the machine has more to say than the one-word status
@@ -294,6 +316,9 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     configLoaded: state.configLoaded,
     // The shared default array is only serialized here, never mutated.
     quickLaunch: rec.quickLaunch ?? REC_DEFAULTS.quickLaunch,
+    // …and why its dictate / cycle-profile buttons are off while idle, worded like Home's.
+    canStart,
+    startHint: canStart ? "" : startHint(state.profiles.length > 0, !!homeTarget),
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",

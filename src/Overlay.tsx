@@ -116,6 +116,11 @@ interface ChipState {
   // "Dot size" — factor for the status dot while it is tucked at the screen edge (see dotK).
   dotScale: number;
   quickLaunch: OverlayQuickAction[];
+  // False when the main window's dictate / cycle-profile actions have nothing to start (no
+  // enabled Profile, or no Backend); `startHint` then says why, in the Home button's words.
+  // Absent from an older core = treat as startable.
+  canStart: boolean;
+  startHint?: string;
   // False while the payload is built from the store's defaults (the saved config has not
   // landed yet); absent from an older core = treat as loaded.
   configLoaded?: boolean;
@@ -231,6 +236,7 @@ export default function Overlay() {
     chipScale: REC.chipScale,
     dotScale: REC.dotScale,
     quickLaunch: REC.quickLaunch,
+    canStart: true,
   });
 
   // Track the last-applied accent/theme so the ~30 Hz level stream does not
@@ -297,6 +303,8 @@ export default function Overlay() {
             chipScale: e.payload.chipScale ?? REC.chipScale,
             dotScale: e.payload.dotScale ?? REC.dotScale,
             quickLaunch: e.payload.quickLaunch ?? REC.quickLaunch,
+            canStart: e.payload.canStart ?? true,
+            startHint: e.payload.startHint ?? "",
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
             targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
@@ -380,6 +388,7 @@ export default function Overlay() {
           { id: "d2", kind: "screen", target: "backends" },
           { id: "d3", kind: "action", target: "toggle-dictation" },
         ],
+        canStart: true,
       });
       raf.current = requestAnimationFrame(tick);
     };
@@ -1441,15 +1450,29 @@ export default function Overlay() {
                     <div className="flex items-center gap-2">
                       {state.quickLaunch.map((e) => {
                         const { label, icon: Icon, known } = quickLaunchMeta(e);
+                        // Nothing to start (the main window refuses these two while idle):
+                        // say why, like Home. Not `disabled` — its pointer-events-none would
+                        // swallow the very tooltip that explains it; the click stays a no-op.
+                        // Idle only: a running session's toggle must still stop / cancel.
+                        const off =
+                          !state.canStart &&
+                          state.status === "idle" &&
+                          e.kind === "action" &&
+                          (e.target === "toggle-dictation" || e.target === "cycle-active-profile");
+                        const tip = off ? state.startHint || "Enable a profile to begin" : label;
                         return (
                           <button
                             key={e.id}
                             type="button"
-                            title={label}
-                            aria-label={label}
+                            title={tip}
+                            aria-label={tip}
+                            aria-disabled={off || undefined}
                             disabled={!known}
                             onClick={() => runQuickLaunch(e)}
-                            className="ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none disabled:opacity-40"
+                            className={cn(
+                              "ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none disabled:opacity-40",
+                              off && "opacity-40",
+                            )}
                           >
                             <Icon className="size-4" />
                           </button>
@@ -1533,10 +1556,11 @@ export default function Overlay() {
                                     that renders as U+FFFD. Spread → slice → join iterates
                                     code points, matching safeDisplayText's contract.
                                     `chipPayload` already caps `state.partial` to its last 800
-                                    UTF-16 units; the same cut here is belt-and-braces so this
-                                    ~30 Hz render never spreads an unbounded string (>=400 code
-                                    points; a lone leading low surrogate from the unit cut is
-                                    dropped by the code-point slice). */}
+                                    UTF-16 units, cut on a code-point boundary (tailUnits); the
+                                    same cut here is belt-and-braces so this ~30 Hz render never
+                                    spreads an unbounded string (>=400 code points; a lone
+                                    leading low surrogate from this unit cut is dropped by the
+                                    code-point slice). */}
                                 {stripControlChars([...state.partial.slice(-800)].slice(-400).join(""))}
                               </span>
                             </div>

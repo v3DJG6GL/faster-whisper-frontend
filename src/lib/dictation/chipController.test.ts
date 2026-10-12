@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useApp } from "../store";
 import { hideOverlay } from "../api";
+import type { Backend, Profile } from "../types";
 import {
   initOverlayController,
   chipRoute,
@@ -12,6 +13,7 @@ import {
   chipStatsLine,
   chipRouteTargets,
   configuredRouteTargets,
+  tailUnits,
   trayRoute,
   trayStatus,
 } from "./chipController";
@@ -274,6 +276,53 @@ describe("initOverlayController — configLoaded reaches the chip", () => {
     useApp.getState().setConfigLoaded();
     expect(updates().length).toBe(before + 1);
     expect(last()?.configLoaded).toBe(true);
+  });
+});
+
+describe("initOverlayController — canStart tells the chip whether its start buttons can start", () => {
+  it("is false with every profile off, says why, and re-emits true once one is enabled", async () => {
+    const s = useApp.getState();
+    const profile = { id: "p1", name: "p1", activation: "handsfree", enabled: false, hotkey: [], backendId: "b1" } as unknown as Profile;
+    const backend = { id: "b1", name: "b1" } as unknown as Backend;
+    try {
+      useApp.setState({
+        status: "idle",
+        profiles: [],
+        backends: [backend],
+        settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
+      });
+      await initOverlayController();
+      const last = () => {
+        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
+        return u[u.length - 1]?.[1] as { canStart?: boolean; startHint?: string };
+      };
+      expect(last()).toMatchObject({ canStart: false, startHint: "Add a profile to begin" });
+      useApp.setState({ profiles: [profile] });
+      expect(last()).toMatchObject({ canStart: false, startHint: "Enable a profile to begin" });
+      useApp.setState({ profiles: [{ ...profile, enabled: true }] });
+      expect(last()).toMatchObject({ canStart: true, startHint: "" });
+    } finally {
+      useApp.setState({ profiles: s.profiles, backends: s.backends });
+    }
+  });
+});
+
+describe("tailUnits", () => {
+  it("never starts the cut on a lone low surrogate", () => {
+    // 1000 units of emoji + "x": unit -800 is the low half of a pair. A lone surrogate in the
+    // emitted JSON makes serde_json reject the whole dictation://update on the IPC hop.
+    const t = tailUnits("\u{1F600}".repeat(500) + "x", 800);
+    expect(t.charCodeAt(0) >= 0xdc00 && t.charCodeAt(0) <= 0xdfff).toBe(false);
+    expect(t.endsWith("x")).toBe(true);
+    expect(t.length).toBe(799);
+  });
+  it("keeps exactly the last n units of a BMP string", () => {
+    const s = "abcdefghij".repeat(100);
+    expect(tailUnits(s, 800)).toBe(s.slice(-800));
+    expect(tailUnits(s, 800).length).toBe(800);
+  });
+  it("leaves a shorter string unchanged", () => {
+    expect(tailUnits("short \u{1F600}", 800)).toBe("short \u{1F600}");
   });
 });
 

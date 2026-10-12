@@ -268,15 +268,14 @@ async function startWithPickedTargets(
 /** Start a hands-free session from a surface that is not the Profile's own hotkey — the
  *  Home button and the chip's toggle. Honours the Profile's "Ask for target languages" the
  *  way `dictate()` does (the toggle's own help text promises a prompt before the mic opens),
- *  and begins with the settle picker disarmed like every other start path. Both callers
- *  require an enabled `profile` (no profile → the button and the chip stay off, as the hotkeys
- *  do); the type stays optional. */
-export function startHandsFree(backend: Backend, micId: string | null, profile: Profile | undefined): void {
+ *  and begins with the settle picker disarmed like every other start path. Requires an
+ *  enabled Profile: both callers refuse to start without one, as the hotkeys do. */
+export function startHandsFree(backend: Backend, micId: string | null, profile: Profile): void {
   if (pickerOpen) return;
   setSettleTargetPicker(null);
   setRouteHint(null);
-  useApp.getState().setDictation({ activeProfile: profile?.id ?? null });
-  if (profile?.askTranslationTargets) {
+  useApp.getState().setDictation({ activeProfile: profile.id });
+  if (profile.askTranslationTargets) {
     void startWithPickedTargets(profile, backend, micId, "handsfree");
     return;
   }
