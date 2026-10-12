@@ -301,10 +301,17 @@ fn parse_pin(pin: &str) -> Option<DeviceId> {
 /// Find the device a saved pin names; fall back to the default input (and say so) when it is not
 /// connected. `None` / "" / "default" = System default.
 pub fn resolve_input(pin: Option<&str>) -> Result<Resolved, String> {
-    let pin = pin.filter(|p| !p.is_empty() && *p != "default");
+    let mut pin = pin.filter(|p| !p.is_empty() && *p != "default");
+    let mut id = pin.and_then(parse_pin);
+    if let (Some(name), None) = (pin, &id) {
+        match resolve_legacy(name, false) {
+            // A sound-server route ("PipeWire Sound Server"): recorded from the default input.
+            Some((legacy, _)) if legacy == "default" => pin = None,
+            Some((legacy, _)) => id = parse_pin(&legacy),
+            None => {}
+        }
+    }
     if let Some(pin) = pin {
-        let id = parse_pin(pin)
-            .or_else(|| resolve_legacy(pin, false).and_then(|(id, _)| parse_pin(&id)));
         if let Some(device) = id.as_ref().and_then(host::input_by_id) {
             let watch_source = id
                 .as_ref()
@@ -407,8 +414,10 @@ pub fn capture_config(
 }
 
 /// Map a pre-ids pin (a device's display name) to today's `(id, label)`. On Linux the old names
-/// were ALSA descriptions "<card>, <pcm>"; the sound server reports the same two as source
-/// properties, so the match is exact. Elsewhere the old name is the device's own name.
+/// were ALSA descriptions: "<card>, <pcm>" for a card (the sound server reports the same two as
+/// source properties, so the match is exact), or a sound-server plugin entry ("PipeWire Sound
+/// Server", "Default ALSA Output (currently …)"), which answers `("default", "System default")`
+/// on the record path. Elsewhere the old name is the device's own name.
 /// `persist` = the answer is saved as the new pin (the one-time migration), not just recorded from.
 pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
     if parse_pin(name).is_some() {
@@ -427,6 +436,13 @@ pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
             }
             // Asked only by the migration (the record path still wants the card's ALSA path).
             served = persist && host::on_sound_server();
+        }
+        // The old picker listed ALSA's sound-server routes too, and recording through one is
+        // recording from the default input: no "not connected" notice, held server or not (the
+        // hint list is read from ALSA's config, never from the server). The migration turns the
+        // "default" answer into the picker's System default row (micMigration.ts).
+        if legacy_server_route(name, &server_route_labels()) {
+            return Some(("default".into(), "System default".into()));
         }
         if !legacy_alsa_fallback(persist, served, super::pulse::held()) {
             return None;
@@ -460,6 +476,43 @@ pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
 #[cfg(target_os = "linux")]
 fn legacy_alsa_fallback(persist: bool, server_serves_inputs: bool, server_held: bool) -> bool {
     !server_held && !(persist && server_serves_inputs)
+}
+
+/// The ALSA ids of the sound-server routes: the default PCM and the PipeWire / PulseAudio plugins.
+#[cfg(target_os = "linux")]
+fn is_server_route(pcm_id: &str) -> bool {
+    matches!(pcm_id, "default" | "pipewire" | "pulse")
+}
+
+/// The labels of the sound-server routes ALSA lists right now (see [`is_server_route`]).
+#[cfg(target_os = "linux")]
+fn server_route_labels() -> Vec<String> {
+    host::native_inputs()
+        .iter()
+        .filter(|d| d.id().is_ok_and(|id| is_server_route(id.id())))
+        .filter_map(host::device_label)
+        .collect()
+}
+
+/// Does a legacy name pin one of the sound-server routes? Their plugin descriptions are fixed
+/// ("PipeWire Sound Server", "PulseAudio Sound Server"), and the default PCM names whichever
+/// server it pointed at when the pin was saved ("Default ALSA Output (currently PipeWire Media
+/// Server)"), so that suffix is ignored on both sides; `routes` covers a distro's own wording.
+#[cfg(target_os = "linux")]
+fn legacy_server_route(name: &str, routes: &[String]) -> bool {
+    fn base(label: &str) -> &str {
+        label
+            .split_once(" (currently ")
+            .map_or(label, |(head, _)| head)
+            .trim()
+    }
+    const KNOWN: [&str; 3] = [
+        "PipeWire Sound Server",
+        "PulseAudio Sound Server",
+        "Default ALSA Output",
+    ];
+    let name = base(name);
+    !name.is_empty() && (KNOWN.contains(&name) || routes.iter().any(|r| base(r) == name))
 }
 
 #[cfg(target_os = "linux")]
@@ -564,6 +617,48 @@ mod tests {
         // Held after a timeout: neither (the record path's held branch takes over).
         assert!(!legacy_alsa_fallback(true, false, true));
         assert!(!legacy_alsa_fallback(false, false, true));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_the_default_and_sound_server_plugins_are_server_routes() {
+        for id in ["default", "pipewire", "pulse"] {
+            assert!(is_server_route(id), "{id}");
+        }
+        for id in [
+            "sysdefault:CARD=USB",
+            "plughw:CARD=USB,DEV=0",
+            "hw:CARD=USB,DEV=0",
+            "dsnoop:CARD=USB,DEV=0",
+            "null",
+            "",
+        ] {
+            assert!(!is_server_route(id), "{id}");
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn legacy_sound_server_names_route_to_the_default_input() {
+        let none: [String; 0] = [];
+        assert!(legacy_server_route("PipeWire Sound Server", &none));
+        assert!(legacy_server_route("PulseAudio Sound Server", &none));
+        // The default PCM named the server it pointed at then; today it may point elsewhere.
+        assert!(legacy_server_route(
+            "Default ALSA Output (currently PulseAudio Sound Server)",
+            &["Default ALSA Output (currently PipeWire Media Server)".to_string()]
+        ));
+        assert!(legacy_server_route(
+            "Default ALSA Output (currently PipeWire Media Server)",
+            &none
+        ));
+        // A distro's own wording, listed by ALSA today.
+        let routes = ["Custom PipeWire Route".to_string()];
+        assert!(legacy_server_route("Custom PipeWire Route", &routes));
+        // Card names stay with the card lookup.
+        assert!(!legacy_server_route("RØDE PodMic USB, USB Audio", &routes));
+        assert!(!legacy_server_route("PipeWire", &routes));
+        assert!(!legacy_server_route("", &[String::new()]));
     }
 
     #[cfg(target_os = "linux")]

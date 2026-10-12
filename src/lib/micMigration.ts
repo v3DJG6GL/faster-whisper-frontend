@@ -40,7 +40,13 @@ export async function retryLegacyMicPin(): Promise<void> {
         const hit = await resolveLegacyMic(old);
         // Only if the user didn't pick another mic meanwhile.
         if (hit && useApp.getState().settings.microphoneId === old) {
-          useApp.getState().updateSettings({ microphoneId: hit.id, microphoneLabel: hit.label });
+          // An old sound-server route ("PipeWire Sound Server", …) recorded from the default
+          // input: it becomes the picker's System default row, not a pin named "default".
+          useApp.getState().updateSettings(
+            hit.id === "default"
+              ? { microphoneId: null, microphoneLabel: null }
+              : { microphoneId: hit.id, microphoneLabel: hit.label },
+          );
         }
       } catch (e) {
         console.error("microphone pin migration failed:", e);
