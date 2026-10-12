@@ -948,7 +948,8 @@ export function TranscriptViewer({
   useEffect(() => {
     if (!playing) return;
     // Parked while the window is hidden (closed to the tray), as Waveform's meters are: WebView2
-    // on a hidden HWND keeps firing rAF, and the audio plays on. A show catches the highlight up.
+    // on a hidden HWND keeps firing rAF, and the audio plays on. A show catches the highlight up;
+    // a pause or end while hidden is caught by the <audio> handlers below.
     let id = 0;
     const step = () => {
       if (isWindowHidden()) {
@@ -1848,8 +1849,16 @@ export function TranscriptViewer({
               if (!playing) syncPlayhead(e.currentTarget.currentTime);
             }}
             onPlay={() => setPlaying(true)}
-            onPause={() => setPlaying(false)}
-            onEnded={() => setPlaying(false)}
+            // A stop lands where the media really is: the frame loop is parked while the window
+            // is hidden, and a stop there tears down its show catch-up with the [playing] effect.
+            onPause={(e) => {
+              syncPlayhead(e.currentTarget.currentTime, true);
+              setPlaying(false);
+            }}
+            onEnded={(e) => {
+              syncPlayhead(e.currentTarget.currentTime, true);
+              setPlaying(false);
+            }}
             onError={(e) => {
               const me = e.currentTarget.error;
               onAudioError(
