@@ -1532,11 +1532,11 @@ export default function Overlay() {
                                     can split a surrogate pair, producing a lone low surrogate
                                     that renders as U+FFFD. Spread → slice → join iterates
                                     code points, matching safeDisplayText's contract.
-                                    `state.partial` is the whole unbounded document and this
-                                    runs on every ~30 Hz update, so the string is cut to 800
-                                    UTF-16 units first (>=400 code points; a lone leading low
-                                    surrogate from the unit cut is dropped by the code-point
-                                    slice). */}
+                                    `chipPayload` already caps `state.partial` to its last 800
+                                    UTF-16 units; the same cut here is belt-and-braces so this
+                                    ~30 Hz render never spreads an unbounded string (>=400 code
+                                    points; a lone leading low surrogate from the unit cut is
+                                    dropped by the code-point slice). */}
                                 {stripControlChars([...state.partial.slice(-800)].slice(-400).join(""))}
                               </span>
                             </div>

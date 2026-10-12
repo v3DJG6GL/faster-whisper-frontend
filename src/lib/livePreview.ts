@@ -65,14 +65,21 @@ export function secText(seconds: number): string {
   return `${String(Math.round(seconds * 10) / 10)} s`;
 }
 
+/** A threshold as the legend writes it: to the hundredth, because serverTimings' outer − 50 ms
+ *  rounds back to the outer pause in tenths ("from 1.2 s preview refreshes" over "from 1.2 s
+ *  period" hid which comes first). Values on 100 ms steps read as secText does. */
+function thrText(ms: number): string {
+  return `${String(Math.round(ms / 10) / 100)} s`;
+}
+
 /** The legend line: what each range of pause does, with the current values. */
 export function previewRule(t: LiveTimings): Record<PauseKind, string> {
-  const inner = secText(t.innerMs / 1000);
+  const inner = thrText(t.innerMs);
   return {
     go: `under ${inner} nothing`,
     ref: `from ${inner} preview refreshes`,
-    end: `from ${secText(t.outerMs / 1000)} period`,
-    par: t.hardMs > 0 ? `from ${secText(t.hardMs / 1000)} new paragraph` : "no paragraph breaks",
+    end: `from ${thrText(t.outerMs)} period`,
+    par: t.hardMs > 0 ? `from ${thrText(t.hardMs)} new paragraph` : "no paragraph breaks",
   };
 }
 

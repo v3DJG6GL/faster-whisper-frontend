@@ -359,6 +359,11 @@ let insertCfg: InsertCfg | null = null;
 // bumps on every landed phrase so the chip re-triggers its calm green "inserted" pulse.
 let sessionTyped = false;
 let sessionClipboard = false;
+/** The server announced an utterance this session (a partial, final or utterance frame got
+ *  through the session guard): it holds a job with usage behind it, so the outcome is owed even
+ *  when nothing landed. A chord-family restart's hold session without one left the server
+ *  nothing to book (see cancelLive). */
+let sessionUtteranceSeen = false;
 let insertSeq = 0;
 function signalInsert(kind: "typed" | "clipboard"): void {
   useApp.getState().setDictation({ lastInsert: { kind, seq: ++insertSeq } });
@@ -1085,6 +1090,12 @@ let phraseDirty = false;
 // phrase task that diverts has run, so only this in-queue flag can stop them — the queued Enter
 // would otherwise submit the partial message or press Return in the new window.
 let lastPhraseDiverted = false;
+// Translated live sessions type BLOCKS separated by PHRASE_GAP. The target field's tail is a typed
+// phrase that no Return has followed yet, so the next block owes the gap. Set when a phrase is
+// typed into the field (not diverted), cleared by a Return that landed (the quiet-timer Enter, a
+// hard break's Enter or newline separator). A plain separator leaves it owed; a clipboard copy
+// never sets it (the field did not change). Session-scoped via clearPhraseEnd.
+let gapOwed = false;
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
@@ -1191,7 +1202,10 @@ function enqueueAutoEnter(): void {
     // The target decides: an app rule can turn Enter off for this window even when the
     // profile/global has it on (a chat client submits, an editor must not).
     if (!t.autoEnter) return;
-    await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+    const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+    // The Return ended the phrase in the field: the next translated block opens on a fresh line,
+    // not three more Returns. The session token, like every task's post-await write.
+    if (insertCfg === cfg && landed && !diverted) gapOwed = false;
   });
 }
 
@@ -1282,6 +1296,7 @@ function clearPhraseEnd(): void {
   clearPhraseEndTimer();
   phraseDirty = false;
   lastPhraseDiverted = false;
+  gapOwed = false;
   clipDirty = false;
   clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
@@ -2074,6 +2089,7 @@ async function ensureListeners(): Promise<void> {
     // post-stop drain (transcribing/injecting) still passes and updates the preview. Mirrors the
     // inSession() guard the final/boundary/overrides-ignored handlers already carry.
     if (!inSession()) return;
+    sessionUtteranceSeen = true;
     // Capture state, not status: during a per-phrase translate (status "translating", mic
     // open) a status gate stopped bumping the phrase-end timer, so it expired mid-speech —
     // firing the auto-Enter and resetting the clipboard baseline while the user was talking.
@@ -2133,6 +2149,7 @@ async function ensureListeners(): Promise<void> {
     // injecting and the trailing `closed` then idles, so real finals pass; only post-cancel
     // (idle) and post-error (error) late emits are dropped.
     if (!inSession()) return;
+    sessionUtteranceSeen = true;
     // A final is the terminal frame of whatever utterance the server had announced — any final
     // that CARRIES an ordinal: the socket is ordered, and such a final comes from the finalize of
     // the utterance in flight, so matching ordinals would buy nothing. The one exception is the
@@ -2356,15 +2373,13 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             // A translated session types BLOCKS, so normalise the seam here
             // rather than inheriting whichever whitespace each path happened to
-            // carry. `injectedText` is the already-typed original document, so
-            // a non-empty one means a previous phrase really landed — a phrase
-            // the own-window guard skipped leaves it untouched and so does not
-            // buy a leading gap for text that was never typed.
-            // A carried block opens with the rest of an EARLIER document, so it needs the gap
-            // whenever anything was typed before it this session, even though the break just
-            // emptied `injectedText`.
+            // carry. The gap follows the field's last TYPED phrase (gapOwed), across
+            // a hard break too, carry included — the break empties `injectedText`
+            // but not the field. A phrase the own-window guard skipped or a
+            // clipboard copy put nothing in the field and buys no gap; a Return
+            // that already ended the phrase is not followed by three more.
             const typeOut = sessionTranslation
-              ? (injectedText.length > 0 || (carried && sessionTyped) ? PHRASE_GAP : "") + phrase.text.trim()
+              ? (gapOwed ? PHRASE_GAP : "") + phrase.text.trim()
               : phrase.text;
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
@@ -2514,6 +2529,7 @@ async function ensureListeners(): Promise<void> {
               } else {
                 sessionTyped = true;
                 lastPhraseDiverted = false;
+                gapOwed = true;
                 signalInsert("typed");
               }
               // Everything past the baseline went out with this insert, carry included — so did
@@ -2583,6 +2599,7 @@ async function ensureListeners(): Promise<void> {
     // end of a phrase and its `final` — and the server, not a silence heuristic, is the source.
     const state = e.payload?.state;
     if (typeof state !== "string") return;
+    if (inSession()) sessionUtteranceSeen = true;
     const ordinal = typeof e.payload.utterance === "number" ? e.payload.utterance : null;
     // Per-utterance History: when the utterance began is its record's time (the first `open`).
     if (sessionPerUtterance && ordinal !== null && inSession()) {
@@ -2749,13 +2766,16 @@ async function ensureListeners(): Promise<void> {
           // synchronous fork had, just evaluated against the window actually being typed into.
           if (t.autoEnter) {
             if (dirtyAtBreak) {
-              await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+              const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+              // A landed Return ended the phrase in the field (see enqueueAutoEnter).
+              if (insertCfg === cfg && landed && !diverted) gapOwed = false;
             }
             return;
           }
           if (!sep) return;
           if (sep.includes("\n")) {
-            await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+            const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
+            if (insertCfg === cfg && landed && !diverted) gapOwed = false;
           } else {
             const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
@@ -3492,7 +3512,7 @@ export async function startLive(
     const upgraded = pendingReclassify as Profile | null;
     pendingReclassify = null;
     if (restart) {
-      if (capturing) void cancelLive({ keepShortcuts: true }).then(restart);
+      if (capturing) void cancelLive({ keepShortcuts: true, restart: true }).then(restart);
       else restart();
     } else if (upgraded) reclassifyLive(upgraded);
   }
@@ -3719,6 +3739,7 @@ async function startLiveInner(
   beganInjection = false;
   sessionTyped = false;
   sessionClipboard = false;
+  sessionUtteranceSeen = false;
   sessionInsertSkipped = false;
   sessionIncomplete = null;
   clearPhraseEnd();
@@ -3917,6 +3938,9 @@ export interface CancelOpts {
   /** Skip the shortcut re-registration — for the chord-family restart, which cancels while
    *  the user is still holding the chord (re-enumerating keyboards then would lose its keys). */
   keepShortcuts?: boolean;
+  /** The chord-family restart's discard of a hold session, not a session the user ended: one the
+   *  server never announced an utterance for books no outcome (see cancelLive). */
+  restart?: boolean;
   /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
    *  discarded that has a recording to keep — a live stream session is finished (drained,
    *  recording written), a live batch session is finished too when "Keep recordings" is on
@@ -3944,7 +3968,7 @@ export function restartLiveAs(start: () => void): void {
   // finalizing dictation away unsaved. Leave it to finish.
   if (!capturing) return;
   // The chord is still physically held here — keep the hotkey backend's held-set as it is.
-  void cancelLive({ keepShortcuts: true }).then(start);
+  void cancelLive({ keepShortcuts: true, restart: true }).then(start);
 }
 
 function applyReclassify(profile: Profile): void {
@@ -4122,7 +4146,11 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   // answer. Every cancel is abandoned, wake from sleep included — it keeps the audio, not the text.
   // The stuck-finalize watchdog claimed the outcome before calling (deferSessionOutcome) and books its
   // recovered copy itself, and an errored session already booked its own, so this is a no-op there.
-  reportSessionOutcome(endOutcome(), true);
+  // A chord-family restart's hold session that no utterance reached left the server no job to
+  // book: posting would only mint a stub "Nothing" session in Statistics. Claim the slot without
+  // posting, so no late terminal path books it either.
+  if (opts?.restart && !sessionUtteranceSeen && endOutcome() === "none") deferSessionOutcome();
+  else reportSessionOutcome(endOutcome(), true);
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   committedDoc = "";
@@ -4156,6 +4184,7 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   // CANCELLED session. Reset here so endOutcome() returns "none" and the late re-stamp is a no-op.
   sessionTyped = false;
   sessionClipboard = false;
+  sessionUtteranceSeen = false;
   sessionInsertSkipped = false;
   sessionIncomplete = null;
   resetServerWork();

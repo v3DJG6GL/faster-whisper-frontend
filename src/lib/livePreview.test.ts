@@ -94,4 +94,9 @@ describe("serverTimings", () => {
   it("pulls an inner pause at or over the outer one to outer − 50 ms", () => {
     expect(serverTimings({ ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200 }).innerMs).toBe(1150);
   });
+  it("keeps the pulled-down inner pause apart from the outer one in the legend", () => {
+    const rule = previewRule(serverTimings({ ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200 }));
+    expect(rule.ref).toBe("from 1.15 s preview refreshes");
+    expect(rule.end).toBe("from 1.2 s period");
+  });
 });

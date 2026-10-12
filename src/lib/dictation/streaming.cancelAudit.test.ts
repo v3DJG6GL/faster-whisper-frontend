@@ -295,6 +295,30 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(mask(fns.clearPhraseEnd)).toContain("lastPhraseDiverted = false;");
   });
 
+  it("a translated block's gap follows the field's last typed phrase, not the typed baseline", () => {
+    // `injectedText` is emptied by a hard break (the next block glued onto the last line) and
+    // survives a landed Return (the next block opened with three more Returns).
+    const final = mask(finalBody);
+    expect(final).toMatch(/\(gapOwed \? PHRASE_GAP :/);
+    expect(final).not.toMatch(/injectedText\.length > 0[^;]*PHRASE_GAP/);
+    // Owed by a phrase typed into the field — not by one diverted to the clipboard.
+    const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
+    const typed = delivered.indexOf("sessionTyped = true;");
+    expect(typed, "the typed branch of the delivered block").toBeGreaterThanOrEqual(0);
+    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwed = true;/);
+    expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwed");
+    // Paid by a Return that landed: the quiet-timer Enter, and the hard break's Enter or newline
+    // separator — each after its own injectText, under the session token.
+    const settled = /if \(insertCfg === cfg && landed && !diverted\) gapOwed = false;/;
+    const enter = mask(fns.enqueueAutoEnter);
+    expect(enter).toMatch(settled);
+    expect(enter.search(settled)).toBeGreaterThan(enter.indexOf("injectText("));
+    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    expect(boundary.match(new RegExp(settled.source, "g")) ?? []).toHaveLength(2);
+    // Never before a session's first phrase: every start and abandon resets it.
+    expect(mask(fns.clearPhraseEnd)).toContain("gapOwed = false;");
+  });
+
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
     const block = bodyAfter(finalBody, "if (!t.isSelf && landed)");
     expect(block).toContain("commonPrefixLen(injectedText, target) >= clipFrom");
@@ -806,6 +830,26 @@ describe("a cancelled translating session's usage outcome", () => {
     // deferSessionOutcome (behind reportSessionOutcome) feeds the flags into the abandoned branch.
     expect(mask(topLevelFunctions(streamingSrc).reportSessionOutcome)).toContain("deferSessionOutcome()?.(delivery, abandoned)");
     expect(mask(topLevelFunctions(streamingSrc).deferSessionOutcome)).toContain("landed: sessionTyped || sessionClipboard");
+  });
+
+  it("a chord-family restart of a hold session no utterance reached books no stub outcome", () => {
+    // The server holds no job for it; record_outcome would INSERT a stub "Nothing" session (and
+    // an "aborted" translation) for every restart between differing Profiles.
+    const fns = topLevelFunctions(streamingSrc);
+    expect(mask(fns.restartLiveAs)).toContain("cancelLive({ keepShortcuts: true, restart: true })");
+    expect(mask(fns.startLive)).toContain("cancelLive({ keepShortcuts: true, restart: true }).then(restart)");
+    // `mask` blanks the "none" literal, so pin it on the unmasked body.
+    expect(fns.cancelLive).toContain('if (opts?.restart && !sessionUtteranceSeen && endOutcome() === "none") deferSessionOutcome();');
+    const cancelLive = mask(fns.cancelLive);
+    const gate = cancelLive.search(/if \(opts\?\.restart && !sessionUtteranceSeen && endOutcome\(\) ===\s+\) deferSessionOutcome\(\);\s+else reportSessionOutcome\(endOutcome\(\), true\);/);
+    expect(gate, "cancelLive skips posting only for an unheard restart, and still claims the slot").toBeGreaterThanOrEqual(0);
+    // Read before cancelLive resets it; every start and cancel resets it.
+    expect(gate).toBeLessThan(cancelLive.indexOf("sessionUtteranceSeen = false"));
+    expect(fns.startLiveInner).toContain("sessionUtteranceSeen = false;");
+    // Any frame of an utterance the server announced to this session means it holds a job.
+    for (const ev of ['"stream://partial"', '"stream://final"', '"stream://utterance"']) {
+      expect(mask(bodyAfter(streamingSrc, ev)), ev).toMatch(/sessionUtteranceSeen = true;/);
+    }
   });
 
   it("a translating session with no text books not_asked, not kept_original", () => {

@@ -258,7 +258,11 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     level: state.level,
     // "Live transcript in overlay" off → show the status label, not words. In "on hover"
     // mode the words are still sent but the chip only surfaces them while hovered.
-    partial: rec.realtimePreview ? state.partial : "",
+    // Tail only: `state.partial` is the whole document since the last hard break and this
+    // payload crosses IPC on every ~30 Hz level tick, while the chip shows just the last 400
+    // code points. 800 UTF-16 units is the Overlay's own first cut (>=400 code points; its
+    // code-point slice drops a lone leading low surrogate this unit cut may leave).
+    partial: rec.realtimePreview ? state.partial.slice(-800) : "",
     previewOnHover: rec.realtimePreview && rec.realtimePreviewOnHover,
     dictationError: state.dictationError ?? "",
     // The current stage, when the machine has more to say than the one-word status
