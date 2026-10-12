@@ -503,6 +503,27 @@ describe("wrapLines", () => {
       expect(lines.some((l) => /^[.)]|\($/.test(l))).toBe(false);
     }
   });
+  it("wraps a token longer than a line (a Latin word, URL, e-mail, compound) per unit", () => {
+    const fits = (t: string, cpl: number, n: number, lines = wrapLines(t, cpl, 2)) => {
+      expect(lines).toHaveLength(n);
+      expect(lines.every((l) => l.length > 0 && l.length <= cpl)).toBe(true);
+      expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+    };
+    // Kept whole, the word took lines of its own: four lines under a two-line cap.
+    expect(wrapLines("明日はMicrosoftTeamsAccountで会議をします", 16, 2)).toEqual(["明日はMicrosoftTea", "msAccountで会議をします"]);
+    fits("请发邮件到someone.name@example.com联系我们", 16, 3);
+    // A lone word or run with nothing to break at came back as one line over the cap.
+    fits("Donaudampfschifffahrtsgesellschaftskapitän", 28, 2);
+    fits("あ" + "・".repeat(28), 13, 3);
+    fits("え" + "？".repeat(18), 13, 2);
+    // Fullwidth letters, halfwidth kana and 〜 are characters of their own, as CJK_UNIT has them.
+    fits("ＩＢＭ".repeat(4), 6, 2);
+    fits("ﾃｷｽﾄ".repeat(4), 6, 3);
+    fits("〜".repeat(12), 6, 2);
+    // A quote that ends the token closes it; an opener rides with what it opens.
+    expect(wrapLines("„Hallo“", 4, 2)).toEqual(["„Ha", "llo“"]);
+    expect(wrapLines("東京で「Microsoft(Teams)」を使いました。", 10, 2).some((l) => /^[)」“]|[(「„]$/.test(l))).toBe(false);
+  });
 });
 
 /** Unspaced Thai with tone marks and vowel signs (combining marks, \p{M}). */
@@ -754,6 +775,16 @@ describe("cutByShare", () => {
     expect(cutByShare("  今日はiPhoneです  ", [1, 1, 8]).every(Boolean)).toBe(true);
     // Fewer seams than cuts: every seam is used, only the trailing parts stay empty.
     expect(cutByShare("これはiPhoneProMax", [1, 1, 1, 1, 1])).toEqual(["こ", "れ", "は", "iPhoneProMax", ""]);
+    // Fullwidth and halfwidth forms are characters of their own, not one glued word.
+    expect(cutByShare("ﾃｷｽﾄ", [1, 1, 1]).every(Boolean)).toBe(true);
+    expect(cutByShare("ＡＢＣ", [1, 1, 1])).toEqual(["Ａ", "Ｂ", "Ｃ"]);
+  });
+  it("cuts after a German closing quote glued to CJK, not inside its word", () => {
+    expect(cutByShare("„Hallo“東京", [1, 1])).toEqual(["„Hallo“", "東京"]);
+    expect(cutByShare("„Hallo“東京", [1, 1, 1])).toEqual(["„Hallo“", "東", "京"]);
+  });
+  it("leaves no one-character part where a longer one is near the target", () => {
+    expect(cutByShare("Hello there. また行きたいです!", [1, 1, 1, 1, 1])).toEqual(["Hello there.", "また", "行き", "たい", "です!"]);
   });
 });
 

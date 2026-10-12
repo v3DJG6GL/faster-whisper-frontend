@@ -277,10 +277,14 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  never right after a 「 or （ (a Latin word or number before 「 used to swallow it). A
  *  bracket with nothing after it is its own token, so no character falls out of the spans.
  *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
- *  variation selector) — they are Script=Inherited and would otherwise split off. */
+ *  variation selector) — they are Script=Inherited and would otherwise split off.
+ *  A fullwidth letter or digit, a halfwidth kana (with its voicing mark), a 〜 and the
+ *  ideographic space are such characters too, as CJK_UNIT has them: swallowed into the
+ *  token before them, "ＩＢＭＩＢＭ…" or "〜〜〜…" could neither wrap nor cut. */
+const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[${LEADS}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]${UNIT_TAIL}${CHOON}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
-    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]+`
+  `[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}\\uff9e\\uff9f]*`
+    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
 );
@@ -291,16 +295,34 @@ const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
  *  skin tones and ZWJ sequences ride with their base (a Thai tone mark never opens a line),
  *  a flag's two regional indicators stay one unit, a Thai/Lao leading vowel rides with the
  *  consonant after it and a following vowel with the one before, and a Burmese/Khmer
- *  stacked consonant stays with the virama above it. */
-const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`, "gu");
+ *  stacked consonant stays with the virama above it. At most three closers ride along,
+ *  as one ー does: a hallucinated "え？？？？…" glued into one unit could not wrap. */
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]{0,3}`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
+/** The units a token longer than a line wraps by (a URL, an e-mail address, a German
+ *  compound, a run of ・): units() with ASCII punctuation kept on its character, as
+ *  mixedTokens keeps it — a closer or stop joins the unit before it (up to three of them),
+ *  an opener the unit after it, and a quote that ends the token closes it („Hallo“), so
+ *  no line starts with “ or ends on „. */
+function tokenUnits(w: string): string[] {
+  const out: string[] = [];
+  let open = "";
+  const u = units(w);
+  u.forEach((x, k) => {
+    const prev = out[out.length - 1];
+    if (prev !== undefined && !open && !/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev)
+      && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) || (k === u.length - 1 && /^\p{Pi}+$/u.test(x)))) out[out.length - 1] += x;
+    else if (/^[\p{Ps}\p{Pi}]+$/u.test(x) && k < u.length - 1) open += x;
+    else {
+      out.push(open + x);
+      open = "";
+    }
+  });
+  if (open) out.push(open);
+  return out;
+}
 /** A regional indicator (half of a flag emoji). */
 const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
-/** A letter or digit of a spaced-script word ("iPhone", "333") — not of a script that
- *  breaks anywhere, and not ー (Lm, Script=Common), so a ー run still cuts. Unspaced
- *  text never cuts between two of them, as mixedTokens keeps such a word whole. */
-const WORDCH =
-  /(?![\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}ー])[\p{L}\p{N}]/u;
 /** Length of the whitespace-free run around index `i` of `t`, counted only up to 7 — a
  *  long run is all cutByShare needs to know, and it must not cost a scan per candidate. */
 function runAt(t: string, i: number): number {
@@ -471,13 +493,6 @@ export function cutByShare(text: string, shares: number[]): string[] {
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
     // Nor before the first ー after a character (the second ー of a run is a seam again).
     if (text[i] === "ー" && text[i - 1] !== "ー") continue;
-    // In unspaced text, nor inside a glued Latin word or number ("iPhone", "333"), right
-    // after an ASCII opener or before a stop or closer — the tokens wrapLines keeps whole.
-    if (
-      !spaced
-      && (/[\p{Ps}\p{Pi}]/u.test(text[i - 1]) || /[\p{Pe}\p{Pf}\p{Po}]/u.test(text[i])
-        || (WORDCH.test(text[i - 1]) && WORDCH.test(text[i])))
-    ) continue;
     // Never between a base and its combining mark (tested on the code point: an
     // astral mark such as the variation selector U+E0100 is a surrogate pair), nor
     // inside a ZWJ sequence, nor before a skin tone, nor between a flag's two
@@ -544,7 +559,9 @@ export function cutByShare(text: string, shares: number[]): string[] {
           && (/^[\p{Pe}\p{Pf}\p{Po}]+(?:\s|$)/u.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) ? 12 : 0);
+        (NOBREAK.has(prevWord) ? 12 : 0) -
+        // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
+        ([...text.slice(prev, i).trim()].length < 2 || (k === nCuts - 1 && [...text.slice(i).trim()].length < 2) ? 9 : 0);
       if (s > best) {
         best = s;
         bi = i;
@@ -587,13 +604,29 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   // Unspaced text wraps by the same tokens, so a Latin word or number glued into it
   // ("明日はMicrosoftの", "333メートル") stays whole and ASCII punctuation stays on its
   // character; no gaps, so every seam is a plain character seam. A token longer than
-  // cpl still wraps per unit below.
-  const { toks, gaps } = !spaced
-    ? { toks: mixedTokens(t).toks, gaps: [] }
-    : BREAKS_ANYWHERE.test(t)
-      ? mixedTokens(t)
-      : { toks: t.split(/\s+/), gaps: null };
-  if (toks.length < 2) return [t];
+  // cpl (a Latin word, URL or e-mail in a Japanese line, a lone compound) wraps per unit
+  // (tokenUnits): kept whole it took a line of its own, or ran over the cap.
+  const toks: string[] = [];
+  let gaps: boolean[] | null = [];
+  if (spaced && !BREAKS_ANYWHERE.test(t)) {
+    toks.push(...t.split(/\s+/));
+    gaps = null;
+  } else {
+    const m = mixedTokens(t);
+    m.toks.forEach((w, k) => {
+      const parts = w.length > cpl ? tokenUnits(w) : [w];
+      toks.push(...parts);
+      if (spaced) parts.forEach((_, j) => gaps!.push(j === 0 && m.gaps[k]));
+    });
+  }
+  if (toks.length < 2) {
+    // One token: a spaced-script word pushed over only by the prefix stays whole, as in
+    // wrapTokens; an unspaced run wraps per unit.
+    const u = tokenUnits(t);
+    return u.length < 2 || (t.length <= cpl && !UNSPACED.test(t) && !BRK_SYL.test(t))
+      ? [t]
+      : wrapTokens(u, [], cpl, len, firstReserve);
+  }
   return wrapTokens(toks, gaps ?? toks.map((_, i) => i > 0), cpl, len, firstReserve);
 }
 
