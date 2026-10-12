@@ -124,19 +124,21 @@ export function audioPackageLang(result: Pick<BatchResult, "language">): { lang:
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for
- *  byte. `names` = the user's track titles by track id. */
+ *  byte. A track that writes no cue is left out BEFORE the tracks are planned, so a
+ *  language's default stream and its "Lang [Source]" titles count only the streams the
+ *  video carries. `names` = the user's track titles by track id. */
 export function embeddedSubtitleTracks(
   result: BatchResult,
   opts: ExportOptions,
   tracks: string[],
   names?: Record<string, string>,
 ): EmbeddedTrack[] {
-  return planTracks(result, tracks, names).flatMap((t) => {
-    const srt = trackSubtitle(result, opts, t.id, "srt");
-    return hasCue(srt)
-      ? [{ lang: packageLang(t.lang), label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
-      : [];
-  });
+  const srts = new Map(tracks.map((id) => [id, trackSubtitle(result, opts, id, "srt")]));
+  const kept = tracks.filter((id) => hasCue(srts.get(id)!));
+  return planTracks(result, kept, names).map((t) => ({
+    lang: packageLang(t.lang), label: t.title, srt: srts.get(t.id)!, original: t.original, default: t.plain,
+    hearingImpaired: t.hoh,
+  }));
 }
 
 /** The largest embedded SRT the packager takes, in UTF-8 bytes: mirrors src-tauri
