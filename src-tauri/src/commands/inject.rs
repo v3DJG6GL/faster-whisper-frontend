@@ -20,8 +20,19 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
     // freezes the whole app. On timeout/empty we KEEP the prior snapshot: that path means we still hold
     // the clipboard ourselves (the user copied nothing new), so the existing snapshot already has it.
     // `read_prior_text` retries a clipboard briefly held by another process (≤ 50 ms, inside the
-    // 400 ms cap) instead of reading that as "nothing copied".
+    // 400 ms cap) instead of reading that as "nothing copied". A Windows quick-add copy grab in
+    // flight is the other "keep prior snapshot" cause: it leaves the user's SELECTION on the
+    // clipboard until it puts their text back, so the read takes the clipboard-job lock
+    // (`inject::CLIP_JOB`) try-only — never waiting, so the dictation chain is not held up — and
+    // skips when the grab holds it. The guard lives inside the closure: taken and dropped on the
+    // blocking thread that does the read.
     match read_selection_bounded(|| {
+        let Some(_clip_job) = crate::inject::try_clip_job() else {
+            tracing::info!(
+                "[clip] begin_injection: a quick-add copy grab holds the clipboard — keeping prior snapshot"
+            );
+            return None;
+        };
         arboard::Clipboard::new()
             .ok()
             .and_then(|mut c| crate::inject::read_prior_text(&mut c))

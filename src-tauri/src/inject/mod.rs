@@ -431,15 +431,22 @@ pub fn wait_clip_read_idle(max: Duration) -> bool {
 /// How long a writer waits for a stuck read (see `wait_clip_read_idle`).
 const CLIP_IDLE_WAIT: Duration = Duration::from_secs(1);
 
-/// One clipboard JOB at a time between the two jobs that write the clipboard and then press a
-/// chord whose effect depends on what is on it: `paste` (write the transcript, Ctrl+V) and the
-/// Windows quick-add seed grab (Ctrl+Insert, wait for the copy, read it, put the user's text back).
-/// Both wait out the same chord-modifier release gate, so a phrase held back by the quick-add chord
-/// is released in the same tick as the grab: the paste's write then bumps the sequence number the
-/// grab reads as "the copy landed", the grab puts the user's old clipboard back during the paste's
-/// settle, and the Ctrl+V pastes that instead of the phrase. Only ever taken with `try_clip_job`
-/// (never a blocking `lock`), and neither holder calls the other, so it cannot deadlock. The
-/// 400 ms restore timer is NOT covered: the restore slot has its own take protocol.
+/// One clipboard JOB at a time between the jobs that write the clipboard and then press a chord
+/// whose effect depends on what is on it: `paste` (write the transcript, Ctrl+V) and the Windows
+/// quick-add copy grab (`win_seed::grab`: Ctrl+Insert, wait for the copy, read it, put the user's
+/// text back), which runs on summon and again as the correct-on-close re-grab. Both wait out the
+/// same chord-modifier release gate, so a phrase held back by the quick-add chord is released in
+/// the same tick as the grab: the paste's write then bumps the sequence number the grab reads as
+/// "the copy landed", the grab puts the user's old clipboard back during the paste's settle, and
+/// the Ctrl+V pastes that instead of the phrase. A third, try-only taker is `begin_injection`'s
+/// session-snapshot read: mid-grab the clipboard holds the user's SELECTION, which that read would
+/// otherwise store and the end-of-session restore write over their real clipboard. It holds the
+/// lock only across one capped read (a read stuck past its 400 ms cap keeps it, so a paste then
+/// waits up to `CLIP_JOB_WAIT` and answers `NothingWritten` — the same answer a stuck read already
+/// gives via `wait_clip_read_idle`, only later). Only `paste` waits for it (`wait_clip_job`); the
+/// others take it with `try_clip_job` and never a blocking `lock`, and no holder calls another, so
+/// it cannot deadlock. The 400 ms restore timer is NOT covered: the restore slot has its own take
+/// protocol.
 static CLIP_JOB: Mutex<()> = Mutex::new(());
 
 /// Take the clipboard-job lock if it is free (see `CLIP_JOB`). A poisoned lock is recovered: it
@@ -452,13 +459,20 @@ pub(crate) fn try_clip_job() -> Option<std::sync::MutexGuard<'static, ()>> {
     }
 }
 
-/// How long `paste` waits for a quick-add copy grab to finish. The grab is bounded (after the
-/// modifier gate: the clipboard prologue, then the copy poll and the read, both inside one
-/// `COPY_DEADLINE_RDP_MS` = 6 s deadline), so a paste waits it out instead of bailing mid-grab: a
+/// How long `paste` waits for a quick-add copy grab to finish, instead of bailing mid-grab: a
 /// stop-mode insert that bailed turned into a clipboard recovery the grab then put the user's old
-/// text over. Waiting does not deliver a LIVE phrase into the source app: the grab shows and
-/// focuses the quick-add window, so the own-window check below skips the phrase (as it does for
-/// any focus moved into our windows), and it is re-sent with the next insert.
+/// text over. The grab's `COPY_DEADLINE_RDP_MS` (6 s) starts at the copy chord and bounds the copy
+/// poll and the read retries; the clipboard prologue before it and each single read are un-timed
+/// and can stall over RDP. 8 s covers the usual grab; a stalled one still ends the wait mid-grab
+/// (`NothingWritten`, or for an error abort its recovery as before). Only a USER cancel ends the
+/// wait early: an error abort waits too, so its clipboard recovery (`inject_text`) cannot land
+/// mid-grab, where the grab would read it as the copy or put the user's old text over it. Where a
+/// phrase that waited lands: the summon grab shows and focuses the quick-add window, so the
+/// own-window check below skips the phrase (as it does for any focus moved into our windows) and it
+/// is re-sent with the next insert; the correct-on-close re-grab runs with quick-add hidden and the
+/// source app focused, so the phrase IS pasted there once the grab ends, ahead of the correction.
+/// Accepted: the lock only orders the two, and the alternative is a paste in the middle of the
+/// grab.
 const CLIP_JOB_WAIT: Duration = Duration::from_secs(8);
 
 /// `try_clip_job`, polled every 15 ms for up to `max`, or until `give_up` says so. None = still
@@ -503,7 +517,7 @@ fn read_prior_text_with(
             }
             Err(arboard::Error::ClipboardOccupied) => {
                 tracing::info!(
-                    "[clip] prior clipboard read: clipboard busy (held by another process) — no restore"
+                    "[clip] prior clipboard read: clipboard busy (held by another process) after 3 tries"
                 );
                 return None;
             }
@@ -1158,10 +1172,14 @@ fn paste(
     // The clipboard-job lock (see `CLIP_JOB`), held until this function returns — across the
     // write, the settle and the chord. A Windows quick-add copy grab in flight would otherwise put
     // the user's old clipboard back between our write and our Ctrl+V. Waited out for the grab's
-    // whole bound (`CLIP_JOB_WAIT`), or until this job is cancelled; only a grab stuck past that
-    // bails. Nothing has been read or written yet, so `NothingWritten` is truthful and the caller's
-    // re-send cannot duplicate text.
-    let Some(_clip_job) = wait_clip_job(CLIP_JOB_WAIT, || injection_cancelled(epoch)) else {
+    // whole bound (`CLIP_JOB_WAIT`), or until the user cancels this job; an error abort waits, so
+    // its clipboard recovery cannot land mid-grab (it then hits the cancel check below, writes
+    // nothing, and the lock is free again before `inject_text` recovers). Only a grab stuck past
+    // that bails. Nothing has been read or written yet, so `NothingWritten` is truthful and the
+    // caller's re-send cannot duplicate text.
+    let Some(_clip_job) = wait_clip_job(CLIP_JOB_WAIT, || {
+        injection_cancelled(epoch) && !cancel_wants_recovery(epoch)
+    }) else {
         if injection_cancelled(epoch) {
             // Answered as the cancel check below answers (see there).
             tracing::info!("[clip] paste: cancelled while waiting for a quick-add grab — skipping");

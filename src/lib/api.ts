@@ -1112,8 +1112,9 @@ export interface InjectOutcome {
    *  landed during one of its own-window probes (the chord-time probe or the portal job's pre-job
    *  probe), otherwise it is a divert), or a clipboard write that was busy or failed before any
    *  keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on Windows:
-   *  a stuck clipboard read still held it, or the remote-desktop owner or legacy write failed or
-   *  timed out — a timed-out offer may still reach the clipboard later). */
+   *  a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read still held
+   *  it, or the remote-desktop owner or legacy write failed or timed out — a timed-out offer may
+   *  still reach the clipboard later). */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
    *  focus had moved to a different app, one of our own windows took focus just before the paste
