@@ -21,17 +21,23 @@ pub fn audio_dir_path(app: AppHandle, custom: Option<String>) -> Option<String> 
 
 /// Open the active audio base folder in the system file manager. Creates it
 /// (with its subfolders) first so the button works before the first run.
+/// async + spawn_blocking: a sync command runs on the main thread, and the base can sit on a
+/// slow or stalled mount (network share, sleeping disk).
 #[tauri::command]
-pub fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
-    let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
-    crate::audio::create_dir_private(&dir)
-        .map_err(|e| format!("could not create the folder: {e}"))?;
-    for sub in AUDIO_SUBDIRS {
-        let _ = crate::audio::create_dir_private(&dir.join(sub));
-    }
-    // Not the bare plugin call: the file manager it may cold-start must not inherit the
-    // env vars this process injected for itself (see `crate::open_external`).
-    crate::open_external(&app, &dir.to_string_lossy())
+pub async fn open_audio_dir(app: AppHandle, custom: Option<String>) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let dir = resolve_audio_base(&app, custom).ok_or("could not resolve the audio folder")?;
+        crate::audio::create_dir_private(&dir)
+            .map_err(|e| format!("could not create the folder: {e}"))?;
+        for sub in AUDIO_SUBDIRS {
+            let _ = crate::audio::create_dir_private(&dir.join(sub));
+        }
+        // Not the bare plugin call: the file manager it may cold-start must not inherit the
+        // env vars this process injected for itself (see `crate::open_external`).
+        crate::open_external(&app, &dir.to_string_lossy())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// Move one file across a possible filesystem boundary: rename, else
