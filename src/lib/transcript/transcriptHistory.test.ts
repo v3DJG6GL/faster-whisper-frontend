@@ -611,6 +611,22 @@ describe("loadHistory", () => {
     await loadHistory(true);
     expect(useTranscriptHistory.getState().loaded).toBe(true);
   });
+
+  it("a rejected listing is retried by the next non-forced load, not left empty for the session", async () => {
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    await loadHistory();
+    // No screen waits forever on a failed listing.
+    expect(useTranscriptHistory.getState().loaded).toBe(true);
+    listTranscriptRecords.mockResolvedValueOnce([{
+      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
+    }]);
+    await loadHistory(); // History's mount load after a failed launch-time listing
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["A"]);
+    // Once a listing succeeded, a non-forced call is a no-op again.
+    await loadHistory();
+    expect(listTranscriptRecords).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("per-language tracks", () => {

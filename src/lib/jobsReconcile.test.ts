@@ -510,6 +510,69 @@ describe("reconcileJobs", () => {
     expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
   });
 
+  it("a failed History listing keeps a gone backend's row; a later pass settles its record", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscriptHistory.setState({ records: [], loaded: false });
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    useApp.setState({ backends: [] });
+    await reconcileJobs();
+    // Unknown whether a record stands: forgetting the row now would lose its settle for good.
+    expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A]);
+    expect(records()).toEqual([]);
+    listTranscriptRecords.mockResolvedValueOnce([rec]);
+    await vi.advanceTimersByTimeAsync(30_000); // the retry pass lists again
+    expect(ledgerRows()).toEqual([]);
+    expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+  });
+
+  it("a gone backend's headless row is kept when the History listing fails, and settled by a later pass", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    useTranscriptHistory.setState({ records: [], loaded: false });
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    useApp.setState({ backends: [] });
+    getJob.mockClear();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A]);
+    expect(records()).toEqual([]);
+    // The watcher ended all the same: nothing polls a backend that is gone.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getJob).not.toHaveBeenCalled();
+    listTranscriptRecords.mockResolvedValueOnce([rec]);
+    await reconcileJobs();
+    expect(ledgerRows()).toEqual([]);
+    expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+  });
+
+  it("a gone backend's row stopped during the History listing settles nothing", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r);
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscriptHistory.setState({ records: [], loaded: false });
+    let resolveListing: (v: unknown[]) => void = () => {};
+    listTranscriptRecords.mockReturnValueOnce(new Promise<unknown[]>((res) => { resolveListing = res; }));
+    useApp.setState({ backends: [] });
+    const pass = reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    // The user re-runs the file (or deletes the record) while the launch's listing is pending.
+    stopOrphan(JOB_A);
+    resolveListing([rec]);
+    await pass;
+    expect(ledgerRows()).toEqual([]);
+    // The old job does not re-point the file: its record keeps the error it had.
+    expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", "timed out"]]);
+  });
+
   it("a done status whose result is not published yet re-polls, then ingests", async () => {
     await seed(row(JOB_A, T0));
     getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));

@@ -366,8 +366,17 @@ let loading: Promise<void> | null = null;
 /** Mirror changes (upsert → record, delete → null) made while a listing is in flight;
  *  replayed over the snapshot when it lands, since the snapshot predates them. */
 let touchedSinceListing: Map<string, TranscriptRecord | null> | null = null;
+/** The last listing failed: `loaded` still turns true (no screen waits forever), but the
+ *  mirror may lack what is on disk, so the next non-forced call lists again. */
+let lastLoadFailed = false;
 
-/** Load the history from disk (once; later calls are no-ops unless forced). A FORCED call
+/** Did the last History listing fail? The mirror then says nothing about records on disk. */
+export function historyLoadFailed(): boolean {
+  return lastLoadFailed;
+}
+
+/** Load the history from disk (once; later calls are no-ops unless forced, or until a listing
+ *  succeeds — a failed one is retried by the next call). A FORCED call
  *  chains onto an in-flight listing instead of adopting it: every forced caller just changed
  *  the files on disk, and the listing already running was taken before that change.
  *  Mirror changes made while a listing is in flight are replayed over the snapshot — the
@@ -377,7 +386,7 @@ export function loadHistory(force = false): Promise<void> {
     if (!force) return loading;
     return loading.then(() => loadHistory(true));
   }
-  if (!force && useTranscriptHistory.getState().loaded) return Promise.resolve();
+  if (!force && useTranscriptHistory.getState().loaded && !lastLoadFailed) return Promise.resolve();
   // Issue any parked coalesced write before listing. The write is not awaited (nothing
   // orders the two IPC calls), but without this a just-edited record trailed the listing by
   // the whole debounce window and reverted to its older on-disk text in the UI.
@@ -393,6 +402,7 @@ export function loadHistory(force = false): Promise<void> {
         if (rec) byId.set(id, rec);
         else byId.delete(id);
       }
+      lastLoadFailed = false;
       useTranscriptHistory.setState({
         records: newestFirst([...byId.values()]),
         loaded: true,
@@ -400,6 +410,7 @@ export function loadHistory(force = false): Promise<void> {
     })
     .catch((e) => {
       console.error("history load failed:", e);
+      lastLoadFailed = true;
       useTranscriptHistory.setState({ loaded: true });
     })
     .finally(() => {

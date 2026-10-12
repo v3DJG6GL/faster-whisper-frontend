@@ -28,7 +28,7 @@ import {
   failJob, foldProgress, ingestJobResult, reattachRun, setOrphanForget, setOrphanStop, setOrphanWatch,
   setReattachStop, useTranscribeRun, withSiteTracks,
 } from "./transcribeRun";
-import { currentRecord, loadHistory } from "./transcript/transcriptHistory";
+import { currentRecord, historyLoadFailed, loadHistory } from "./transcript/transcriptHistory";
 import type { JobStatus } from "./types";
 
 /** Where a ledgered job is asked about: its backend's CURRENT address (`effectiveServerUrl`, with
@@ -139,10 +139,13 @@ async function ingestDone(
 /** A lost request's failed record still stands (the pump wrote it under the job id when contact
  *  was lost, this launch or an earlier one): a settle must name the real reason on it. Loads
  *  History first — nothing else has at launch (the Dashboard never does), and a row forgotten
- *  on an empty mirror can never settle its record later. */
-async function lostRecord(row: LedgerRow): Promise<boolean> {
-  await loadHistory().catch((e) => console.error("jobs: history load failed:", e));
-  return currentRecord(row.jobId)?.status === "failed";
+ *  on an empty mirror can never settle its record later. "unknown": the listing failed and the
+ *  mirror has no failed record for the job — keep the row for a later pass or launch (the next
+ *  loadHistory lists again). */
+async function lostRecord(row: LedgerRow): Promise<"failed" | "none" | "unknown"> {
+  await loadHistory();
+  if (currentRecord(row.jobId)?.status === "failed") return "failed";
+  return historyLoadFailed() ? "unknown" : "none";
 }
 
 /** Poll one job until it settles. Attached mode paints the rail and stops the moment
@@ -191,15 +194,25 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
     // auth-gated server answers every poll 401 until maxAge — days of a "running" rail. Forget the
     // row; the rail's run settles failed and names why, and a lost request (this session's, or an
     // earlier launch's that left its failed record) settles that record (and queue row) with the
-    // reason. A row with no record (the app quit mid-request) is forgotten without one.
+    // reason. A row with no record (the app quit mid-request) is forgotten without one; a failed
+    // History listing cannot tell the two apart, so it keeps the row.
     const app = useApp.getState();
     if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
       stop();
       if (opts.attached) {
         setReattachStop(null);
         failJob(row, BACKEND_GONE_ERROR, { attached: true });
-      } else if (opts.lost || (await lostRecord(row))) {
+      } else if (opts.lost) {
         failJob(row, BACKEND_GONE_ERROR, { attached: false });
+      } else {
+        const lost = await lostRecord(row);
+        // Stopped during the listing (a retry of its file, a delete of its record): stopOrphan
+        // already forgot the row, and a settle now would re-point the file at the old job.
+        if (stoppedIds.has(row.jobId)) return;
+        // The listing failed: keep the row (no longer watched, an earlier launch's) for a
+        // later reconcile pass or the next launch, which can still settle its record.
+        if (lost === "unknown") return;
+        if (lost === "failed") failJob(row, BACKEND_GONE_ERROR, { attached: false });
       }
       await forgetRow(row.jobId);
       return;
@@ -270,7 +283,7 @@ setOrphanWatch(watchOrphan);
 /** Jobs the user stopped this session (stopOrphan). A reconcile pass checks this, not ledger
  *  membership: the ledger also evicts rows on its own (age, the newest-20 cap on every new
  *  request), and a finished result must still land then. */
-const stopped = new Set<string>();
+const stoppedIds = new Set<string>();
 
 /** The user retried a file whose lost request was handed to watchOrphan: stop that
  *  watcher and forget its row, so the old job can't land a second record (and re-point
@@ -278,7 +291,7 @@ const stopped = new Set<string>();
 export function stopOrphan(jobId: string): void {
   // Before the watcher's stop, which drops its captured row (an evicted one is only there).
   const row = ledgerRows().find((r) => r.jobId === jobId) ?? watchedRows.get(jobId) ?? passRows.get(jobId);
-  stopped.add(jobId);
+  stoppedIds.add(jobId);
   watching.get(jobId)?.();
   if (!row) return;
   void forgetRow(jobId);
@@ -350,7 +363,15 @@ export async function reconcileJobs(): Promise<void> {
         // Before the reachability skip: its row keeps the stored address, which another
         // backend on that host may share — a down host must not keep it queued.
         if (app.configLoaded && !app.configLoadFailed && !app.backends.some((b) => b.id === row.backendId)) {
-          if (await lostRecord(row)) failJob(row, BACKEND_GONE_ERROR, { attached: false });
+          const lost = await lostRecord(row);
+          // Stopped during the listing: stopOrphan already forgot the row.
+          if (stoppedIds.has(row.jobId)) continue;
+          // The listing failed: the row stays, and the next pass lists again.
+          if (lost === "unknown") {
+            retry = true;
+            continue;
+          }
+          if (lost === "failed") failJob(row, BACKEND_GONE_ERROR, { attached: false });
           await forgetRow(row.jobId);
           continue;
         }
@@ -361,7 +382,7 @@ export async function reconcileJobs(): Promise<void> {
         }
         const r = await getJob({ serverUrl: url, backendId: row.backendId, jobId: row.jobId });
         // Stopped meanwhile (a retry of its file, a delete of its record).
-        if (stopped.has(row.jobId)) continue;
+        if (stoppedIds.has(row.jobId)) continue;
         switch (r.kind) {
           case "error":
             // Only a request that got no answer says the host is down; a per-row failure
@@ -391,7 +412,7 @@ export async function reconcileJobs(): Promise<void> {
         } else if (status.state === "done") {
           // Not watched, so stopOrphan (a retry of its file, a delete of its record) cannot
           // reach this ingest: re-check after each of its awaits instead.
-          if (!(await ingestDone(row, status, false, undefined, () => stopped.has(row.jobId)))) retry = true;
+          if (!(await ingestDone(row, status, false, undefined, () => stoppedIds.has(row.jobId)))) retry = true;
         } else {
           failJob(row, failedText(status), { attached: false });
           await forgetRow(row.jobId);
@@ -406,7 +427,7 @@ export async function reconcileJobs(): Promise<void> {
     // after launch, and reattachRun replaces all of them); every other running row,
     // or the newest one then, is watched headless and still lands in History.
     // A row stopped during a later row's await (forgotten) is neither reattached nor watched.
-    const live = running.filter((row) => !stopped.has(row.jobId));
+    const live = running.filter((row) => !stoppedIds.has(row.jobId));
     const newest = live[live.length - 1];
     const s = useTranscribeRun.getState();
     const idle = !s.running && s.files.length === 0 && s.queue.length === 0 && s.openRecordId === null;
@@ -456,7 +477,7 @@ export function _resetReconcileForTests(): void {
   watchedRows.clear();
   passRows.clear();
   orphans.clear();
-  stopped.clear();
+  stoppedIds.clear();
   attachedId = null;
   launchedAt = Infinity;
 }
