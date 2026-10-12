@@ -478,6 +478,10 @@ pub async fn inject_text(
     // clipboard-only write puts on the clipboard in its place — a translated live block without
     // the field's phrase gap. Omitted = `text`. Sanitized exactly like `text`, in `inject::text`.
     clipboard_text: Option<String>,
+    // `withholdOnDivert` over IPC: a mid-function divert (the trigger chord still held, or focus
+    // moved) writes NOTHING and reports `landed: false` instead of leaving `text` on the clipboard.
+    // For an insert with nothing worth recovering — the hard-break separator. Omitted = false.
+    withhold_on_divert: Option<bool>,
 ) -> Result<InjectOutcome, String> {
     crate::inject::text::inject_text(
         app,
@@ -492,6 +496,7 @@ pub async fn inject_text(
         expect_app_id,
         remote_desktop,
         clipboard_text,
+        withhold_on_divert.unwrap_or(false),
     )
     .await
 }

@@ -1433,12 +1433,19 @@ fn paste(
     // skip-restore-on-failure contract. No-op when restore is off (`previous` is None).
     if res.is_ok() {
         restore_clipboard_later(previous);
-    } else if !persisted {
+    } else if !persisted || clip_text != text {
         // The local arboard Clipboard is dropped when this function returns — on X11/Wayland
         // without a clipboard manager that destroys the selection. Hand it to the persistent
         // owner so "it's on the clipboard to paste manually" stays true — in its clipboard form,
-        // since the user now pastes it.
-        let _ = persist_transcript(clip_text);
+        // since the user now pastes it. After a persisted paste write the clipboard form (a
+        // translated block without its field gap) is written over the pasted text, as the
+        // chord-time divert arm above does; if only that write fails, the pasted text still sits
+        // on a live owner.
+        if let Err(e) = persist_transcript(clip_text) {
+            tracing::warn!(
+                "[clip] paste failed: the clipboard form could not replace the pasted text: {e}"
+            );
+        }
     }
     res.map(|()| Landed::Yes)
 }

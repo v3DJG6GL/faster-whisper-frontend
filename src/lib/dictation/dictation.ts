@@ -281,11 +281,14 @@ export function startHandsFree(backend: Backend, micId: string | null, profile: 
   if (pickerOpen) return;
   setSettleTargetPicker(null);
   setRouteHint(null);
-  useApp.getState().setDictation({ activeProfile: profile.id });
   if (profile.askTranslationTargets) {
+    // The picker stamps activeProfile itself, together with "choosing" (and the error clear), in
+    // one write: stamping it here first published an in-between state — the plain Profile, maybe
+    // beside a stale error — to the chip for one update. Same split as `dictate()`.
     void startWithPickedTargets(profile, backend, micId, "handsfree");
     return;
   }
+  useApp.getState().setDictation({ activeProfile: profile.id });
   void startLive(backend, micId, "handsfree", profile);
 }
 

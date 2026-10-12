@@ -1150,6 +1150,11 @@ export async function injectText(args: {
    *  the clipboard for the user — the clipboard-only write, a divert, an error-abort recovery —
    *  writes this in place of `text`; the field still gets `text`. Omit for "the same as `text`". */
   clipboardText?: string;
+  /** Nothing here is worth recovering from the clipboard (the hard-break separator): when Rust
+   *  diverts mid-function (trigger chord still held, focus moved), it writes NOTHING and reports
+   *  `landed: false, diverted: false` instead of making `text` the clipboard's owner. Omit for the
+   *  normal divert. */
+  withholdOnDivert?: boolean;
 }): Promise<InjectOutcome> {
   if (!isTauri) return { landed: true, diverted: false };
   return await invoke<InjectOutcome>("inject_text", {
@@ -1161,6 +1166,7 @@ export async function injectText(args: {
     expectAppId: args.expectAppId ?? null,
     remoteDesktop: args.remoteDesktop ?? null,
     clipboardText: args.clipboardText ?? null,
+    withholdOnDivert: args.withholdOnDivert ?? false,
   });
 }
 

@@ -579,7 +579,8 @@ describe("work that must wait for the queue or the cancel", () => {
     // the clipboard, so it must not open with three blank lines (the clipboard branch's rule).
     const copyArgs = streamingSrc.slice(copy + "recoverToClipboard(".length, reason).trim();
     expect(copyArgs.startsWith("typeOut"), "a translated recovery copy must drop the phrase gap").toBe(false);
-    expect(copyArgs).toContain("sessionTranslation ? block : typeOut");
+    // The same clipboard form Rust's writes get (see the next test): one rule, not two spellings.
+    expect(copyArgs).toContain("clipboardText ?? typeOut");
   });
 
   it("a diverted or recovered translated block reaches the clipboard bare, in Rust's one write", () => {
@@ -594,7 +595,8 @@ describe("work that must wait for the queue or the cancel", () => {
     // when the two differ (omitted = Rust's old behaviour, the clipboard gets `text`).
     const call = final.search(/injectText\(\{ text: typeOut, clipboardText,/);
     expect(call, "the live insert must pass the bare block as its clipboard form").toBeGreaterThanOrEqual(0);
-    expect(final.slice(0, call)).toMatch(/const clipboardText = sessionTranslation && typeOut !== block \? block : undefined;\s*\(\{ landed, diverted \} = await $/);
+    // Hoisted above the try, so the catch's recovery copy reads the same form.
+    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : typeOut;\s*const clipboardText = clipForm !== typeOut \? clipForm : undefined;\s*try \{\s*\(\{ landed, diverted \} = await $/);
     // …and nothing after it copies the phrase a second time. A JS re-copy after the await never
     // ran for an error-abort recovery (the teardown nulls insertCfg first) and, for a divert,
     // left a gapped duplicate in the clipboard history. The failed-insert catch's recovery copy
@@ -730,6 +732,18 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(at, "the separator's restore branch moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const branch = task.slice(at, task.indexOf("} else {", at));
     expect(branch).toContain("giveClipboardBack(");
+  });
+
+  it("the separator withholds itself instead of diverting to the clipboard", () => {
+    // A Rust divert (chord still held, focus moved) used to make a lone " " the clipboard's
+    // persistent owner over the user's copy; a separator has nothing to recover, so it opts out.
+    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
+    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const call = task.indexOf("injectText({ text: sep,");
+    expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(task.slice(call, task.indexOf("});", call))).toContain("withholdOnDivert: true");
+    // Only the separator: the auto-Enter calls (empty text) and every phrase insert keep the divert.
+    expect(mask(streamingSrc).match(/withholdOnDivert/g) ?? []).toHaveLength(1);
   });
 
   it("every clipboard restore goes through giveClipboardBack", () => {

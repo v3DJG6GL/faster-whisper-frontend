@@ -102,6 +102,10 @@ pub(crate) async fn inject_text(
     // recoveries — writes this instead of `text`; what is typed or pasted INTO the field stays
     // `text`. `None` = the same as `text`. See `clipboard_form`.
     clipboard_text: Option<String>,
+    // The caller has nothing worth recovering from the clipboard (the hard-break separator, a
+    // lone " "): a mid-function divert writes nothing and reports `landed: false` rather than
+    // making that text the clipboard's persistent owner over what the user copied.
+    withhold_on_divert: bool,
 ) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
     // text before it reaches ANY injection path — clipboard-only, Wayland paste, or X11 paste/direct
@@ -357,6 +361,17 @@ pub(crate) async fn inject_text(
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
             return Ok(InjectOutcome {
                 landed: true,
+                diverted: false,
+            });
+        }
+        // A divert the caller opted out of: nothing written, so nothing for the session-end restore
+        // to step around, and `landed: false` tells the caller the text never went out. Keyed on
+        // the caller's flag, not on the text's content — a word-less dictated phrase ("?") is
+        // still a transcript and keeps its divert. The empty bare Enter keeps its own arm.
+        if withhold_on_divert && !text.is_empty() {
+            tracing::info!("[inject] diverted separator withheld");
+            return Ok(InjectOutcome {
+                landed: false,
                 diverted: false,
             });
         }
@@ -778,11 +793,14 @@ pub(crate) async fn inject_text(
                     && crate::inject::cancel_wants_recovery(epoch))
             {
                 crate::inject::restore_clipboard_later(prev);
-            } else if r.is_err() && !persisted {
+            } else if r.is_err() && (!persisted || clip_text != text) {
                 // The transcript stays on the clipboard to paste manually — but the write above
                 // was the plain `set_clipboard`, which does not stick on Wayland once its setter
                 // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does
-                // — in its clipboard form, since it is now there to paste manually.
+                // — in its clipboard form, since it is now there to paste manually. After a
+                // persisted paste write, a clipboard form that differs (a translated block without
+                // its field gap) is written over the pasted text, as the chord-time divert above
+                // does.
                 if let Err(e) = persist_off_runtime(clip_text.clone()).await {
                     tracing::warn!(
                         "[inject] paste failed and the clipboard hand-off failed too: {e}"

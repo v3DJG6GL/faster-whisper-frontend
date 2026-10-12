@@ -418,9 +418,16 @@ describe("startHandsFree — the picker's store twin", () => {
       handlers.set(event, cb);
       return Promise.resolve(() => {});
     });
+    // Every store state the chip is shown, in order: the first must already be the picker's.
+    const seen: { activeProfile: string | null; routePending: unknown }[] = [];
+    let unsub = () => {};
     try {
       useApp.setState({ status: "idle", routePending: null, activeProfile: null });
+      unsub = useApp.subscribe((st) => seen.push({ activeProfile: st.activeProfile, routePending: st.routePending }));
       startHandsFree(backend, null, profile);
+      unsub();
+      // One write, not a plain-Profile state (rendered "ask", or beside a stale error) first.
+      expect(seen[0]).toEqual({ activeProfile: "p1", routePending: "choosing" });
       expect(useApp.getState()).toMatchObject({ routePending: "choosing", activeProfile: "p1" });
       expect(pickerOffHint(useApp.getState().routePending, useApp.getState().status)).toBe("Answer the target picker first");
       focused(null);
@@ -428,6 +435,7 @@ describe("startHandsFree — the picker's store twin", () => {
       handlers.get("langpick://abort")!({ payload: null });
       await vi.waitFor(() => expect(useApp.getState()).toMatchObject({ routePending: null, activeProfile: null }));
     } finally {
+      unsub();
       listen.mockImplementation(() => Promise.resolve(() => {}));
       useApp.setState({ routePending: s.routePending, activeProfile: s.activeProfile });
     }
