@@ -516,10 +516,16 @@ export default function Transcribe() {
   // What a run sends: a `multilingual` pick the screen no longer offers (an English-only model,
   // a server that locks the key) is dropped at send, not from state — the flag can flip back
   // while caps/decode defaults load, and the pick returns with it.
-  // Retries replay lastOverrides through the same strip (the run may predate the switch).
   const offeredOverrides = (o: DecodeOverrides): DecodeOverrides =>
     multiOffered || !("multilingual" in o) ? o : (({ multilingual: _m, ...rest }) => rest)(o);
   const sentOverrides = offeredOverrides(runOverrides);
+  // Retries replay lastOverrides, but `multilingual` is the other half of the spoken pick and
+  // the language half comes from the screen (buildCtx): it is taken from the screen too, then
+  // through the same strip (the run may predate the switch).
+  const retryOverrides = (o: DecodeOverrides): DecodeOverrides => {
+    const { multilingual: _m, ...rest } = o;
+    return offeredOverrides("multilingual" in runOverrides ? { ...rest, multilingual: runOverrides.multilingual } : rest);
+  };
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE, with the
   // inherited `multilingual` (that pick drops the run's own) folded in as spokenField folds it.
   const serverLang = serverLanguageLabel(decodeDefaults, inheritedBaseline.multilingual === true);
@@ -991,6 +997,8 @@ export default function Transcribe() {
       jobsEnabled: !isStandard && caps?.jobs_enabled === true,
       mediaMaxBytes: caps?.media_max_bytes,
       jobsTtlS: clampJobsTtl(caps?.jobs?.ttl_s),
+      // A link card's frozen spoken pick sends `multilingual` only while the screen offers it.
+      multilingualOffered: multiOffered,
     };
   };
 
@@ -1057,8 +1065,9 @@ export default function Transcribe() {
 
   const retry = (path: string) => {
     if (busy) return;
-    const ctx = buildCtx(offeredOverrides(useTranscribeRun.getState().lastOverrides));
-    if (ctx) retryFile(path, ctx);
+    const o = retryOverrides(useTranscribeRun.getState().lastOverrides);
+    const ctx = buildCtx(o);
+    if (ctx) retryFile(path, ctx, o);
   };
 
   /** The VAD notice's one-click fix: force vad_filter off (visible in the
@@ -1068,7 +1077,7 @@ export default function Transcribe() {
     if (busy || !vadRetryable) return;
     // The run's own settings (the store's), like retry() — the screen's runOverrides is
     // unpersisted state that a remount resets and later panel edits change.
-    const next = offeredOverrides({ ...useTranscribeRun.getState().lastOverrides, vad_filter: false });
+    const next = retryOverrides({ ...useTranscribeRun.getState().lastOverrides, vad_filter: false });
     // The panel keeps the user's later edits and only flips the switch; the retry itself
     // replays the run's own settings.
     setRunOverrides((prev) => ({ ...prev, vad_filter: false }));
@@ -2846,7 +2855,7 @@ export default function Transcribe() {
                       onRetry={
                         panelItem && !runningItem
                           ? () => {
-                              const ctx = buildCtx(offeredOverrides(useTranscribeRun.getState().lastOverrides));
+                              const ctx = buildCtx(retryOverrides(useTranscribeRun.getState().lastOverrides));
                               if (ctx) retryRunVideo(panelItem.path, ctx);
                             }
                           : undefined

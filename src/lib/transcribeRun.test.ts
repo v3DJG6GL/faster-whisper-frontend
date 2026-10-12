@@ -83,6 +83,7 @@ import {
   cancelRun, lostContact, translateParsed, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
   SITE_TRANSCRIPT_FALLBACK,
 } from "./transcribeRun";
+import { MULTI_LANGUAGE } from "./languages";
 import type { PlanStage } from "./types";
 import type { QueueItem } from "./transcribeRun";
 import { deleteRecord, patchRecord, type TranscriptRecord } from "./transcript/transcriptHistory";
@@ -1134,6 +1135,57 @@ describe("a link whose site transcript track cannot be fetched", () => {
       transcribeUrl.mockReset();
       useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {}, urlMeta: {} });
     }
+  });
+});
+
+describe("a link card's spoken pick and an unoffered Multiple languages", () => {
+  // The card freezes its pick at Add link; the model/profile/caps may stop offering the flag by
+  // Run or Retry, and then the pick must not touch `multilingual` (as spokenField drops it).
+  const url = "https://youtu.be/multi";
+  const posted = async (meta: Record<string, unknown>, offered: boolean | undefined) => {
+    let sent: Parameters<typeof import("./api").transcribeUrl>[0] | undefined;
+    transcribeUrl.mockImplementation(async (a) => {
+      sent = a;
+      throw new Error("HTTP 500: boom");
+    });
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    try {
+      useTranscribeRun.setState({
+        files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {},
+        urlMeta: { [url]: meta },
+      });
+      startRun(undefined, { vad_filter: false }, {
+        backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false,
+        decodeOverrides: { vad_filter: false },
+        ...(offered === undefined ? {} : { multilingualOffered: offered }),
+      });
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      return sent;
+    } finally {
+      vi.unstubAllGlobals();
+      transcribeUrl.mockReset();
+      useTranscribeRun.setState({ files: [], queue: [], stageMeta: {}, stageTimes: {}, urlMeta: {} });
+    }
+  };
+
+  it("an unoffered Multiple languages pick goes out as plain auto-detect", async () => {
+    const sent = await posted({ spokenLanguage: MULTI_LANGUAGE }, false);
+    expect(sent?.language).toBe("auto");
+    expect(sent?.decodeOverrides).toEqual({ vad_filter: false });
+  });
+
+  it("an offered (or unknown, an older ledger row) pick still sends the flag", async () => {
+    for (const offered of [true, undefined]) {
+      const sent = await posted({ spokenLanguage: MULTI_LANGUAGE }, offered);
+      expect(sent?.language).toBe("auto");
+      expect(sent?.decodeOverrides).toEqual({ vad_filter: false, multilingual: true });
+    }
+  });
+
+  it("an inherited-on Auto-detect sends no explicit false once the flag is unoffered", async () => {
+    const sent = await posted({ spokenLanguage: "auto", spokenMultiInherited: true }, false);
+    expect(sent?.language).toBe("auto");
+    expect(sent?.decodeOverrides).toEqual({ vad_filter: false });
   });
 });
 

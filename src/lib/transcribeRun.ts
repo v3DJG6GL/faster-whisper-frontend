@@ -526,6 +526,10 @@ export interface RunContext {
    *  `clampJobsTtl`): how long the ledger row stays worth asking about.
    *  Absent = the server's 72 h default. */
   jobsTtlS?: number;
+  /** The screen offers Multiple languages for this run (offersMultilingual at run/retry
+   *  time): false = a link card's frozen spoken pick never touches `multilingual`; unset =
+   *  unknown, treated as offered (ledger rows written before this key replay as before). */
+  multilingualOffered?: boolean;
 }
 
 export interface TranscribeRunState {
@@ -1998,7 +2002,15 @@ async function runLink(
   const req = {
     ...common,
     ...(spoken
-      ? { language: spokenLanguage(spoken), decodeOverrides: applyMultilingual(common.decodeOverrides ?? undefined, spoken, meta?.spokenMultiInherited) }
+      ? {
+          language: spokenLanguage(spoken),
+          // As spokenField: an unoffered flag leaves the overrides as a file run sends them (the
+          // card keeps its pick, which applies again once the flag is offered).
+          decodeOverrides:
+            ctx.multilingualOffered === false
+              ? common.decodeOverrides
+              : applyMultilingual(common.decodeOverrides ?? undefined, spoken, meta?.spokenMultiInherited),
+        }
       : {}),
   };
   if (!site?.fetch.length) return { res: await transcribeUrl({ ...req, sourceUrl: url, options }) };
