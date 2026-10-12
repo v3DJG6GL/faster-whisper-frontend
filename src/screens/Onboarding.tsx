@@ -84,6 +84,24 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // the same-id ("hold"/"handsfree") ones. A retried Restore everything finishes from there, or
   // "Finish without sync" keeps what landed.
   const [landed, setLanded] = useState(false);
+  // The exit after a half-landed restore: keep what landed, sync off. It still does what the
+  // success path does before finishing — the gate's backend (whose key the keyring DID take at
+  // the gate) goes back in when nothing restored routes to its address, and a copy that brought
+  // no profiles still gets the starters, so setup never ends without a profile and a hotkey.
+  const finishLanded = () => {
+    const s = st.getState();
+    const gate = gateBackend.current;
+    const gateUrl = typedServerUrl(url);
+    if (gate && !s.backends.some((b) => normalizeUrl(b.serverUrl) === gateUrl)) s.upsertBackend(gate);
+    if (st.getState().profiles.length === 0) {
+      restored.current = true;
+      if (gate) setBackendId(st.getState().backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl)?.id ?? gate.id);
+      setStartersIntro("none");
+      setStep("starters");
+      return;
+    }
+    finish();
+  };
 
   const testAndContinue = async () => {
     // Re-entrancy guard, matching the Backends screen's twin. The submit Button is disabled while
@@ -434,9 +452,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                 {landed ? (
                   <Button
                     variant="ghost"
-                    onClick={finish}
+                    onClick={finishLanded}
                     disabled={busy}
-                    title="Keep the settings that were restored, without turning sync on"
+                    title="Keep the settings that were restored, without turning sync on — the server's API key may need entering again under Backends"
                   >
                     Finish without sync
                   </Button>

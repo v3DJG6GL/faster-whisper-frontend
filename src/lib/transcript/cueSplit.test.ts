@@ -621,6 +621,11 @@ describe("wrapLines", () => {
     }
     expect(wrapLines(`東京${"」".repeat(30)}`, 13, 2)[0].startsWith("東京")).toBe(true);
     expect(wrapLines(`他说${"”".repeat(30)}`, 13, 2)[0].startsWith("他说")).toBe(true);
+    const run = `He said ${'"'.repeat(40)}word ok`;
+    const runLines = wrapLines(run, 28, 2);
+    expect(runLines.length, runLines.join(" | ")).toBe(3);
+    expect(runLines.some((l) => /\p{L}"|"$/u.test(l) && /w$/.test(l))).toBe(false);
+    expect(runLines.join("").replace(/ /g, "")).toBe(run.replace(/ /g, ""));
     // In CJK text “ after a character still opens (他说“再见”).
     expect(wrapLines("他说：“你好？”“我很好。”他说“再见”", 6, 3)).toEqual(["他说：“你", "好？”“我", "很好。”他", "说“再见”"]);
   });
