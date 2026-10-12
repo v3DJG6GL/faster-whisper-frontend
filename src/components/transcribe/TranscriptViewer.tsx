@@ -479,12 +479,13 @@ export function TranscriptViewer({
   // ── Subtitles view ───────────────────────────────────────────────────────
   const subtitlesView = view === "subtitles" && !editMode && hasSegments;
   /** The export's cues — memoized on edits, options and tracks, never on the
-   *  playhead (the list picks its active cue by binary search). */
+   *  playhead (the list picks its active cue by binary search). Only Read renders
+   *  it; Export builds its own grid, so splitting here too would be thrown away. */
   const subGrid = useMemo(
-    () => (subtitlesView
+    () => (subtitlesView && reading
       ? cueGrid(editedResult, { format: "srt", cues: cueOpts, renames: fileRenames, speakerNames: showNames }, visibleTracks)
       : null),
-    [subtitlesView, editedResult, cueOpts, fileRenames, showNames, visibleTracks],
+    [subtitlesView, reading, editedResult, cueOpts, fileRenames, showNames, visibleTracks],
   );
   const onEditSegment = useCallback((seg: number) => {
     // Edit renders only the first MAX_SEGMENT_ROWS rows — past that the jump

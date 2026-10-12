@@ -2116,9 +2116,9 @@ export default function Transcribe() {
             : null;
         // Effective VAD for this run — labels the "analyzing" phase honestly
         // (per-run override, else the inherited default, else the server's
-        // shipped default of on). A locked vad_filter is the server's value
-        // whatever the run sent.
-        const vadOn = (vadLocked ? undefined : lastOverrides.vad_filter) ?? vadInherited ?? true;
+        // shipped default of on). A locked vad_filter, or a key that takes no
+        // decode overrides, is the server's value whatever the run sent.
+        const vadOn = (vadRetryable ? lastOverrides.vad_filter : undefined) ?? vadInherited ?? true;
         // Timeline strip: segment widths proportional to each stage's share
         // of wall time (measured when finished, estimated ahead), with one
         // axis label anchored below each segment. Skipped stages are absent.

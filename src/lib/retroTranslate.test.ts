@@ -183,6 +183,16 @@ describe("translate progress state machine", () => {
     expect(s.phase).toBe("translating");
   });
 
+  it("the next chunk leaving recovers from 'reconnecting' when no poll ever succeeds", () => {
+    // A server with no progress entry 404s every poll, so only the chunk loop proves
+    // the network is back.
+    let s = beginChunk(start(), idxs(0, 400), 0);
+    s = foldPollFailure(s);
+    expect(s.phase).toBe("reconnecting");
+    s = beginChunk(s, idxs(400, 400), 400);
+    expect(s.phase).toBe("translating");
+  });
+
   it("a reconnect recovery with no entry settles on a safe busy phase", () => {
     let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldPollFailure(s);
@@ -279,6 +289,9 @@ describe("untranslatedIndexes (the resume set after a cancelled run)", () => {
     expect(untranslatedIndexes([{ translations: { de: "a" } }], ["de"])).toEqual([]);
     expect(untranslatedIndexes(segs, [])).toEqual([]);
     expect(untranslatedIndexes(undefined, ["de"])).toEqual([]);
+  });
+  it("never lists a blank-source segment (its translation is blank by design)", () => {
+    expect(untranslatedIndexes([{ text: "  ", translations: { de: "" } }, { text: "hi", translations: { de: "" } }], ["de"])).toEqual([1]);
   });
   it("reads an inherited key like valueOf as missing instead of throwing", () => {
     expect(untranslatedIndexes([{ translations: { valueOf: "x" } }, { translations: {} }], ["valueOf"])).toEqual([1]);

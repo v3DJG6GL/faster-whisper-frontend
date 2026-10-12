@@ -18,14 +18,18 @@ export const TRANSLATE_CHUNK = 32;
 /** Segment indexes missing at least one of `langs` — a cancelled or failed chunked run
  *  leaves these behind, and they are the run's resume set. The viewer's other doors
  *  close the moment the FIRST chunk lands (`langs` is non-empty from then on), so this is
- *  the only way back into a half-translated transcript. */
+ *  the only way back into a half-translated transcript. A blank-source segment is never
+ *  in the set: its translation is blank by design, so it would keep offering a resume
+ *  that can never finish. */
 export function untranslatedIndexes(
-  segments: { translations?: Record<string, string> }[] | undefined,
+  segments: { text?: string; translations?: Record<string, string> }[] | undefined,
   langs: string[],
 ): number[] {
   if (!langs.length) return [];
   return (segments ?? []).flatMap((s, i) =>
-    langs.some((l) => !(ownProp(s.translations, l) ?? "").trim()) ? [i] : [],
+    typeof s.text === "string" && !s.text.trim()
+      ? []
+      : langs.some((l) => !(ownProp(s.translations, l) ?? "").trim()) ? [i] : [],
   );
 }
 
@@ -139,7 +143,15 @@ export function beginChunk(
     // progress entry (every poll 404s, which the viewer swallows) nothing else ever left
     // "starting", so the card read "Starting…" for the whole run while rows landed.
     // Promote only from "starting"; a later poll still corrects to downloading/loading.
-    phase: s.phase === "starting" ? "translating" : s.phase,
+    // Also leave "reconnecting": the previous chunk's answer proves the network is back,
+    // and against that same 404 server no successful poll ever would — settle on the
+    // same busiest safe guess as foldTranslatePoll's recovery.
+    phase:
+      s.phase === "starting"
+        ? "translating"
+        : s.phase === "reconnecting"
+          ? s.modelPhaseSeen && s.pct === 0 ? "loading" : "translating"
+          : s.phase,
     done,
     chunkLen: chunkIdxs.length,
     chunkIdxs,
