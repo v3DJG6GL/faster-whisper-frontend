@@ -220,9 +220,18 @@ mod imp {
             }
         };
         for p in profiles.iter().filter(|p| p.enabled) {
+            // An unmappable code (a synced or imported list never passes the capture UI's
+            // `validate_codes`) is a dead chord: name it, as `triggers.rs` does for the plugin.
+            // Debug-formatting the code list escapes control characters.
             let Some(keys) = codes_to_keys(&p.hotkey) else {
+                tracing::warn!(
+                    "[evdev] profile '{}' has a chord with a key this backend cannot map {:?}; ignoring it",
+                    crate::transport::bounded_server_text(&p.id, 120),
+                    p.hotkey
+                );
                 continue;
             };
+            // Empty = unbound, not unmappable (`codes_to_keys(&[])` is `Some(vec![])`).
             if keys.is_empty() {
                 continue;
             }
@@ -248,11 +257,16 @@ mod imp {
             );
         }
         // The quick-add window shortcut (not a Profile) — matched alongside the chords.
-        if let Some(keys) = codes_to_keys(quick_add_hotkey) {
-            if !keys.is_empty() {
+        match codes_to_keys(quick_add_hotkey) {
+            Some(keys) if !keys.is_empty() => {
                 let keys: Vec<u16> = keys.iter().map(|k| k.code()).collect();
                 push(ChordKind::QuickAdd, keys, "the quick-add shortcut");
             }
+            Some(_) => {}
+            None => tracing::warn!(
+                "[evdev] the quick-add shortcut has a key this backend cannot map {:?}; ignoring it",
+                quick_add_hotkey
+            ),
         }
         out
     }

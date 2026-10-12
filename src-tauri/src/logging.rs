@@ -112,16 +112,23 @@ pub fn split_tag(msg: &str) -> (Option<String>, &str) {
     (None, msg)
 }
 
-/// Pulls the `message` field out of a tracing event (the text `fmt` prints).
+/// Pulls the `message` field out of a tracing event, plus its structured fields as
+/// ` name=value` pairs, the text `fmt` prints. tracing-log's `log.*` metadata fields are
+/// skipped, as `fmt` skips them.
 #[derive(Default)]
 struct MsgVisitor {
     msg: String,
+    fields: String,
 }
 
 impl tracing::field::Visit for MsgVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        if field.name() == "message" {
+        let name = field.name();
+        if name == "message" {
             self.msg = format!("{value:?}");
+        } else if !name.starts_with("log.") {
+            use std::fmt::Write as _;
+            let _ = write!(self.fields, " {name}={value:?}");
         }
     }
 }
@@ -154,6 +161,12 @@ where
         let mut v = MsgVisitor::default();
         event.record(&mut v);
         let (tag, msg) = split_tag(&v.msg);
+        // Fields after the tag split, so `[tag]` parsing is unchanged.
+        let msg = if msg.is_empty() {
+            v.fields.trim_start().to_string()
+        } else {
+            format!("{msg}{}", v.fields)
+        };
         // `log`-crate records (tauri/tao/wry) arrive through LogTracer on a shared callsite
         // whose raw target is "log"; the fmt layers print the normalized one, so the ring
         // must too or the replayed session-file head disagrees with the live tail.
@@ -166,7 +179,7 @@ where
             level: level_str(meta.level()),
             target: meta.target().to_string(),
             tag,
-            msg: msg.to_string(),
+            msg,
         });
     }
 }
@@ -723,7 +736,26 @@ mod tests {
         assert_eq!(l.target, "tauri::manager");
         assert_eq!(l.level, "warn");
         assert_eq!(l.tag.as_deref(), Some("webview"));
+        // tracing-log's `log.target`/`log.file`/… fields are never appended.
         assert_eq!(l.msg, "gone");
+    }
+
+    #[test]
+    fn ring_keeps_the_structured_fields_fmt_prints() {
+        use tracing_subscriber::layer::SubscriberExt;
+        let ring = LogRing::default();
+        let sub = tracing_subscriber::registry().with(RingLayer { ring: ring.clone() });
+        tracing::subscriber::with_default(sub, || {
+            let locale = "xx_YY";
+            tracing::info!(k = 1, ?locale, "[t] m");
+            tracing::info!(only = true);
+        });
+        let t = ring.tail(0);
+        assert_eq!(t.lines.len(), 2);
+        assert_eq!(t.lines[0].tag.as_deref(), Some("t"));
+        assert_eq!(t.lines[0].msg, "m k=1 locale=\"xx_YY\"");
+        assert_eq!(t.lines[1].tag, None);
+        assert_eq!(t.lines[1].msg, "only=true");
     }
 
     #[test]

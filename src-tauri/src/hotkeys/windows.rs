@@ -394,8 +394,17 @@ mod imp {
                 .map(|c| code_to_vk(c))
                 .collect::<Option<Vec<_>>>()
             else {
+                // An unmappable code (a synced or imported list never passes the capture UI's
+                // `validate_codes`) is a dead chord: name it, as `triggers.rs` does for the
+                // plugin. Debug-formatting the code list escapes control characters.
+                tracing::warn!(
+                    "[winhook] profile '{}' has a chord with a key this backend cannot map {:?}; ignoring it",
+                    crate::transport::bounded_server_text(&p.id, 120),
+                    p.hotkey
+                );
                 continue;
             };
+            // Empty = unbound, not unmappable (an empty list collects to `Some(vec![])`).
             if keys.is_empty() {
                 continue;
             }
@@ -418,14 +427,19 @@ mod imp {
                 ),
             );
         }
-        if let Some(keys) = quick_add_hotkey
+        match quick_add_hotkey
             .iter()
             .map(|c| code_to_vk(c))
             .collect::<Option<Vec<_>>>()
         {
-            if !keys.is_empty() {
+            Some(keys) if !keys.is_empty() => {
                 push(ChordKind::QuickAdd, keys, "the quick-add shortcut");
             }
+            Some(_) => {}
+            None => tracing::warn!(
+                "[winhook] the quick-add shortcut has a key this backend cannot map {:?}; ignoring it",
+                quick_add_hotkey
+            ),
         }
         out
     }
