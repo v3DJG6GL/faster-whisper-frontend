@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { Button, Segmented, SectionLabel, Select, SettingRow, Toggle } from "@/components/ui";
 import { safeDisplayText } from "@/lib/sanitize";
-import { pickRecordingsDir, logFolderPath, openLogFolder } from "@/lib/api";
+import { pickRecordingsDir, logFolderPath, logLine, openLogFolder } from "@/lib/api";
+import { errorText } from "@/lib/errors";
 import { SETTING } from "@/lib/settingsManifest";
 import { LOG_RETENTION_OPTIONS, withCurrentDay } from "@/lib/retentionOptions";
 
@@ -26,6 +27,26 @@ export function LoggingSection() {
       live = false;
     };
   }, [logDir]);
+  // As on the Logs screen: a failed open (dead share, read-only path) says so on the
+  // button, and a second click while one is out is refused.
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
+  function openFolder() {
+    if (opening) return;
+    setOpening(true);
+    setOpenError(null);
+    void openLogFolder(logDir)
+      .catch((e: unknown) => {
+        console.error("open log folder:", e);
+        logLine("warn", "logs", "could not open the log folder");
+        setOpenError(safeDisplayText(errorText(e), 160));
+        clearTimeout(openTimerRef.current);
+        openTimerRef.current = setTimeout(() => setOpenError(null), 4000);
+      })
+      .finally(() => setOpening(false));
+  }
 
   return (
     <>
@@ -77,8 +98,14 @@ export function LoggingSection() {
         last
       >
         <div className="flex items-center gap-2">
-          <Button size="sm" variant="ghost" onClick={() => void openLogFolder(logDir).catch(() => {})}>
-            Open folder
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={opening}
+            title={openError ?? undefined}
+            onClick={openFolder}
+          >
+            {openError ? "Couldn't open" : "Open folder"}
           </Button>
           <Button
             size="sm"

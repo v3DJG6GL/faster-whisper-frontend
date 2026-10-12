@@ -32,7 +32,9 @@ import {
   pickRecordingsDir,
   type EvdevStatus,
   subscribe,
+  logLine,
 } from "@/lib/api";
+import { errorText } from "@/lib/errors";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
 import { METHOD_OPTIONS } from "@/lib/dictation/insertion";
 // Row titles come from the settings manifest — the single source both this
@@ -355,8 +357,25 @@ export default function Settings() {
       live = false;
     };
   }, [basePref]);
-  const openRecDir = () =>
-    void openAudioDir(basePref).catch((e) => console.error("open audio dir:", e));
+  // A failed open (the folder on an unplugged drive or dead share) says so in the tab's
+  // message line; a second click while one is out is refused, or a stalled mount queues
+  // opens that all pop up a window when it answers.
+  const [openingDir, setOpeningDir] = useState(false);
+  const openRecDir = () => {
+    if (openingDir) return;
+    setOpeningDir(true);
+    setStoreMsg(null);
+    void openAudioDir(basePref)
+      .catch((e: unknown) => {
+        console.error("open audio dir:", e);
+        // Path-free: the log is pasted into bug reports.
+        logLine("warn", "files", "could not open the audio folder");
+        if (tabRef.current === "Recording & history") {
+          setStoreMsg({ text: `Couldn't open the audio folder: ${safeDisplayText(errorText(e), 200)}`, error: true });
+        }
+      })
+      .finally(() => setOpeningDir(false));
+  };
   // `dirBusy` gates every folder button while a move runs: the move walks every audio
   // file and can take minutes, and a second click (Reset during a Change) started a
   // concurrent move over the same folders with the same stale `current`. A store wipe in flight
@@ -654,7 +673,7 @@ export default function Settings() {
                   </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <Button size="sm" onClick={openRecDir} disabled={dirBusy} title="Open in your file manager">
+                  <Button size="sm" onClick={openRecDir} disabled={dirBusy || openingDir} title="Open in your file manager">
                     <FolderOpen size={14} strokeWidth={2} />
                     Open
                   </Button>

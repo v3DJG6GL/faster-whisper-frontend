@@ -13,7 +13,8 @@ import { ArrowDown, Check, ChevronRight, Copy, Eraser, FolderOpen, ScrollText } 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
-import { appVersion, openLogFolder, type LogLine } from "@/lib/api";
+import { appVersion, logLine, openLogFolder, type LogLine } from "@/lib/api";
+import { errorText } from "@/lib/errors";
 import {
   LOG_BUFFER_CAP,
   attachLogStream,
@@ -184,6 +185,13 @@ export default function Logs() {
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
   useEffect(() => () => window.clearTimeout(copyTimerRef.current), []);
+  // Open log folder fails for real (a custom folder on an unmounted share, a read-only path,
+  // no file manager): say so on the button like Copy does, and refuse a second click while
+  // one is out, or a stalled mount queues opens that all pop up a window when it answers.
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
   // Attach the stream for the screen's lifetime; badge clears on open & close.
@@ -365,6 +373,22 @@ export default function Logs() {
     copyTimerRef.current = setTimeout(() => setCopied(false), 1600);
   }
 
+  function openFolder() {
+    if (opening) return;
+    setOpening(true);
+    setOpenError(null);
+    void openLogFolder(useApp.getState().settings.logging?.logDir ?? null)
+      .catch((e: unknown) => {
+        console.error("open log folder:", e);
+        // Path-free: the log is pasted into bug reports.
+        logLine("warn", "logs", "could not open the log folder");
+        setOpenError(safeDisplayText(errorText(e), 160));
+        clearTimeout(openTimerRef.current);
+        openTimerRef.current = setTimeout(() => setOpenError(null), 4000);
+      })
+      .finally(() => setOpening(false));
+  }
+
   return (
     <div className="flex h-full flex-col px-[var(--page-pad)] pt-6">
       <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("logs")}</div>
@@ -504,11 +528,11 @@ export default function Logs() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() =>
-            void openLogFolder(useApp.getState().settings.logging?.logDir ?? null).catch(() => {})
-          }
+          disabled={opening}
+          title={openError ?? undefined}
+          onClick={openFolder}
         >
-          <FolderOpen className="h-3.5 w-3.5" /> Open log folder
+          <FolderOpen className="h-3.5 w-3.5" /> {openError ? "Couldn't open folder" : "Open log folder"}
         </Button>
         <Button variant="ghost" size="sm" onClick={clearView}>
           <Eraser className="h-3.5 w-3.5" /> Clear view
