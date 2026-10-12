@@ -108,11 +108,15 @@ interface HistoryState {
   /** Newest-first. */
   records: TranscriptRecord[];
   loaded: boolean;
+  /** The last listing failed: `loaded` still turns true (no screen waits forever), but the
+   *  mirror may lack records on disk, so the next non-forced call lists again. */
+  loadFailed: boolean;
 }
 
 export const useTranscriptHistory = create<HistoryState>(() => ({
   records: [],
   loaded: false,
+  loadFailed: false,
 }));
 
 /** The selector behind useRecord: one record by id. */
@@ -366,22 +370,21 @@ let loading: Promise<void> | null = null;
 /** Mirror changes (upsert → record, delete → null) made while a listing is in flight;
  *  replayed over the snapshot when it lands, since the snapshot predates them. */
 let touchedSinceListing: Map<string, TranscriptRecord | null> | null = null;
-/** The last listing failed: `loaded` still turns true (no screen waits forever), but the
- *  mirror may lack what is on disk, so the next non-forced call lists again. */
-let lastLoadFailed = false;
-/** A listing has succeeded this session: the mirror then holds disk state too, not only what
- *  this session made. */
-let everListed = false;
+/** The mirror holds only what this session made: no listing has succeeded yet and no FORCED
+ *  caller has changed the disk under it. Its saves may still be landing or have failed, so a
+ *  non-forced listing replays it over the snapshot; after either, the listing replaces it. */
+let mirrorSessionOnly = true;
 
-/** Tests only: forget the listing outcomes (the store itself is reset by setState). */
+/** Tests only: forget the listing outcomes (the beforeEach setState is partial, so the
+ *  failure flag is reset here too). */
 export function _resetHistoryLoadForTests(): void {
-  lastLoadFailed = false;
-  everListed = false;
+  mirrorSessionOnly = true;
+  useTranscriptHistory.setState({ loadFailed: false });
 }
 
 /** Did the last History listing fail? The mirror then says nothing about records on disk. */
 export function historyLoadFailed(): boolean {
-  return lastLoadFailed;
+  return useTranscriptHistory.getState().loadFailed;
 }
 
 /** Load the history from disk (once; later calls are no-ops unless forced, or until a listing
@@ -389,23 +392,29 @@ export function historyLoadFailed(): boolean {
  *  chains onto an in-flight listing instead of adopting it: every forced caller just changed
  *  the files on disk, and the listing already running was taken before that change.
  *  Mirror changes made while a listing is in flight are replayed over the snapshot — the
- *  snapshot predates them. */
+ *  snapshot predates them. Until a listing has succeeded and while no forced caller has
+ *  changed the disk, the whole mirror is such a change (only this session's records). */
 export function loadHistory(force = false): Promise<void> {
+  // Before the chain: a forced caller just changed the disk, so even a forced call that is
+  // chained or later fails ends the session-only state.
+  if (force) mirrorSessionOnly = false;
   if (loading) {
     if (!force) return loading;
     return loading.then(() => loadHistory(true));
   }
-  if (!force && useTranscriptHistory.getState().loaded && !lastLoadFailed) return Promise.resolve();
+  const { loaded, loadFailed } = useTranscriptHistory.getState();
+  if (!force && loaded && !loadFailed) return Promise.resolve();
   // Issue any parked coalesced write before listing. The write is not awaited (nothing
   // orders the two IPC calls), but without this a just-edited record trailed the listing by
   // the whole debounce window and reverted to its older on-disk text in the UI.
   void flushRecordWrites();
-  // A retry while no listing has ever succeeded: the mirror holds only what this session made (its
-  // saves may still be landing or have failed), so it is replayed over the snapshot like a change
-  // made during the listing — never dropped by it. After an earlier success the mirror is disk
-  // state a forced caller may just have deleted or rewritten, so the listing replaces it.
-  const retry = !force && lastLoadFailed && !everListed;
-  touchedSinceListing = new Map(retry ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
+  // The first listing or a retry while the mirror holds only what this session made (its saves
+  // may still be landing or have failed): it is replayed over the snapshot like a change made
+  // during the listing — never dropped by it. After a success, or once a forced caller changed
+  // the disk, the mirror may hold records that caller just deleted or rewrote, so the listing
+  // replaces it.
+  const seed = !force && mirrorSessionOnly;
+  touchedSinceListing = new Map(seed ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
   loading = listTranscriptRecords()
     .then((raw) => {
       const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();
@@ -416,17 +425,16 @@ export function loadHistory(force = false): Promise<void> {
         if (rec) byId.set(id, rec);
         else byId.delete(id);
       }
-      lastLoadFailed = false;
-      everListed = true;
+      mirrorSessionOnly = false;
       useTranscriptHistory.setState({
         records: newestFirst([...byId.values()]),
         loaded: true,
+        loadFailed: false,
       });
     })
     .catch((e) => {
       console.error("history load failed:", e);
-      lastLoadFailed = true;
-      useTranscriptHistory.setState({ loaded: true });
+      useTranscriptHistory.setState({ loaded: true, loadFailed: true });
     })
     .finally(() => {
       loading = null;

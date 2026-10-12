@@ -16,6 +16,7 @@ import {
   Button,
   Card,
   LangTag,
+  Notice,
   PageHeader,
   RouteBadge,
   Segmented,
@@ -283,6 +284,9 @@ export default function History() {
   const navigate = useNavigate();
   const records = useTranscriptHistory((s) => s.records);
   const loaded = useTranscriptHistory((s) => s.loaded);
+  // The listing failed: `loaded` is true anyway, so without this the screen reads as empty
+  // (or as complete with only this session's records).
+  const loadFailed = useTranscriptHistory((s) => s.loadFailed);
   const running = useTranscribeRun((s) => s.running);
   const settings = useApp((s) => s.settings);
   const backends = useApp((s) => s.backends);
@@ -1072,7 +1076,22 @@ export default function History() {
         </div>
       )}
 
-      {loaded && !records.length && (
+      {loaded && loadFailed && (
+        <Notice className="mt-4">
+          <div>
+            Couldn’t read the saved history — entries kept on disk may be missing here.
+          </div>
+          <div className="mt-2 flex items-center gap-2">
+            {/* Non-forced: the retry keeps the records this session made (their saves may
+                not be on disk). */}
+            <Button variant="ghost" size="sm" onClick={() => void loadHistory()}>
+              <RotateCcw className="size-3.5" />
+              Retry
+            </Button>
+          </div>
+        </Notice>
+      )}
+      {loaded && !loadFailed && !records.length && (
         <Card className="mt-6 p-8 text-center text-[13px] text-dim">
           Nothing here yet — transcribe a file or dictate something and it will be kept automatically.
         </Card>

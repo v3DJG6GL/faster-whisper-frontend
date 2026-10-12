@@ -17,7 +17,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 const {
-  _resetHistoryLoadForTests, appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, loadHistory, patchRecord, recordDictation,
+  _resetHistoryLoadForTests, appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, historyLoadFailed, loadHistory, patchRecord, recordDictation,
   recordEditedResult, recordText, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
@@ -656,6 +656,56 @@ describe("loadHistory", () => {
     listTranscriptRecords.mockResolvedValueOnce([]);
     await loadHistory();
     expect(useTranscriptHistory.getState().records).toEqual([]);
+  });
+
+  it("a retry after a failed FORCED listing replaces the mirror even when none ever succeeded", async () => {
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    await loadHistory();
+    const stale: TranscriptRecord = {
+      schemaVersion: 1, kind: "dictation", id: "D", createdAt: "2026-08-30T13:00:00Z",
+      sourcePath: "", sourceName: "Dictation", status: "done",
+    };
+    useTranscriptHistory.setState({ records: [stale] });
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    await loadHistory(true); // "Delete all dictations" wiped D on disk, then the listing failed
+    listTranscriptRecords.mockResolvedValueOnce([]);
+    await loadHistory();
+    expect(useTranscriptHistory.getState().records).toEqual([]);
+  });
+
+  it("the first listing keeps the records this session made (their saves may not be on disk)", async () => {
+    const made: TranscriptRecord = {
+      schemaVersion: 1, kind: "dictation", id: "B", createdAt: "2026-08-30T13:00:00Z",
+      sourcePath: "", sourceName: "Dictation", status: "done",
+    };
+    useTranscriptHistory.setState({ records: [made] }); // a dictation before History opened; its save failed
+    listTranscriptRecords.mockResolvedValueOnce([{
+      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
+    }]);
+    await loadHistory();
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["B", "A"]);
+  });
+
+  it("a forced call before any listing replaces the mirror (a forced caller changed the disk)", async () => {
+    useTranscriptHistory.setState({ records: [{
+      schemaVersion: 1, kind: "dictation", id: "D", createdAt: "2026-08-30T13:00:00Z",
+      sourcePath: "", sourceName: "Dictation", status: "done",
+    }] });
+    listTranscriptRecords.mockResolvedValueOnce([]);
+    await loadHistory(true);
+    expect(useTranscriptHistory.getState().records).toEqual([]);
+  });
+
+  it("a failed listing is reactive state, cleared by the next successful load", async () => {
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    await loadHistory();
+    expect(useTranscriptHistory.getState().loadFailed).toBe(true);
+    expect(historyLoadFailed()).toBe(true);
+    listTranscriptRecords.mockResolvedValueOnce([]);
+    await loadHistory(); // History's Retry: non-forced
+    expect(useTranscriptHistory.getState().loadFailed).toBe(false);
+    expect(historyLoadFailed()).toBe(false);
   });
 });
 
