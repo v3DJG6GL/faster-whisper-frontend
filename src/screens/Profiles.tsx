@@ -524,7 +524,7 @@ function Editor({
             pinned={server.pinned}
             ignored={server.ignored}
             known={server.known}
-            languagePinned={namedLanguage(ownLang || backend?.language || String(decodeDefaults?.language?.value ?? ""))}
+            languagePinned={namedLanguage(effectiveLanguage(ownLang, backend?.language) || String(decodeDefaults?.language?.value ?? ""))}
             serverKind={serverKind}
             canCustomize={caps?.can_request_decode_overrides}
           />
