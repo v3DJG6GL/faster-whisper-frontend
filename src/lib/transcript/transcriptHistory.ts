@@ -458,7 +458,13 @@ export function listenRetentionSweeps(): void {
   if (sweepsHeard) return;
   sweepsHeard = true;
   void subscribe<number>("transcripts://swept", () => {
-    void loadHistory(true).catch(() => {});
+    // Never loaded: the first listing reads the swept disk anyway (and a forced one would
+    // end the session-only seed). Loaded: let in-flight saves land first, since the listing
+    // replays only parked writes, not ones already on their way to disk.
+    if (!useTranscriptHistory.getState().loaded) return;
+    void flushRecordWrites()
+      .then(() => loadHistory(true))
+      .catch(() => {});
   }).catch(() => {
     sweepsHeard = false;
   });
@@ -504,11 +510,22 @@ function writeNow(rec: TranscriptRecord): Promise<void> {
 /** DROP every coalesced write (never land it): the caller is about to move or wipe the
  *  files the parked records describe, and a write landing after that put the pre-move paths —
  *  or a record Rust just deleted — straight back on disk. */
-export function dropPendingWrites(): void {
-  for (const t of writeTimers.values()) clearTimeout(t);
-  writeTimers.clear();
-  pendingWrite.clear();
-  lastWriteAt.clear();
+export function dropPendingWrites(only?: (r: TranscriptRecord) => boolean): void {
+  if (!only) {
+    for (const t of writeTimers.values()) clearTimeout(t);
+    writeTimers.clear();
+    pendingWrite.clear();
+    lastWriteAt.clear();
+    return;
+  }
+  // Only the matching records' writes: a wipe of one store must not lose another's edit.
+  for (const [id, rec] of pendingWrite) {
+    if (!only(rec)) continue;
+    clearTimeout(writeTimers.get(id));
+    writeTimers.delete(id);
+    pendingWrite.delete(id);
+    lastWriteAt.delete(id);
+  }
 }
 
 /** The workbench registers records it holds open (transcribeRun); a delete must reach those

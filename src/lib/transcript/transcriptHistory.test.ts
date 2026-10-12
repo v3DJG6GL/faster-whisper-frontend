@@ -873,6 +873,7 @@ describe("a listing does not revert the parked writes it flushed", () => {
 describe("listenRetentionSweeps", () => {
   it("a sweep that removed records reloads the mirror (a wiped dictation leaves History)", async () => {
     const id = recordDictation(CAPTURE);
+    useTranscriptHistory.setState({ loaded: true });
     listTranscriptRecords.mockResolvedValueOnce([]);
     listenRetentionSweeps();
     listenRetentionSweeps(); // registered once
@@ -883,6 +884,43 @@ describe("listenRetentionSweeps", () => {
     await vi.waitFor(() => expect(currentRecord(id)).toBeUndefined());
     expect(listTranscriptRecords).toHaveBeenCalledTimes(1);
     dropPendingWrites();
+  });
+
+  it("a sweep before anything listed History lists nothing (the first listing reads the swept disk)", async () => {
+    const id = recordDictation(CAPTURE);
+    listenRetentionSweeps();
+    await Promise.resolve();
+    listeners.get("transcripts://swept")?.(1);
+    await Promise.resolve();
+    expect(listTranscriptRecords).not.toHaveBeenCalled();
+    expect(currentRecord(id)).toBeDefined();
+    dropPendingWrites();
+  });
+});
+
+describe("dropPendingWrites with a filter", () => {
+  it("a dictation-only drop keeps a file transcript's parked edit", async () => {
+    vi.useFakeTimers();
+    try {
+      saveTranscriptRecord.mockClear();
+      const file: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "keep-1", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/k.mp3", sourceName: "k.mp3", status: "done", result: { text: "v0" },
+      };
+      const dict: TranscriptRecord = { ...file, kind: "dictation", id: "drop-1" };
+      upsertRecord(file); // leading edge
+      upsertRecord({ ...file, result: { text: "v1" } }); // parked
+      upsertRecord(dict);
+      upsertRecord({ ...dict, result: { text: "d1" } }); // parked
+      dropPendingWrites((r) => r.kind === "dictation");
+      await flushRecordWrites();
+      const ids = saveTranscriptRecord.mock.calls.map((c) => c[0]);
+      expect(ids).toEqual(["keep-1", "drop-1", "keep-1"]);
+      expect(JSON.parse(saveTranscriptRecord.mock.calls[2][1]).result.text).toBe("v1");
+    } finally {
+      dropPendingWrites();
+      vi.useRealTimers();
+    }
   });
 });
 

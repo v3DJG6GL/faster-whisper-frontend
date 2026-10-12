@@ -2557,8 +2557,11 @@ export async function pushNow(manual = false): Promise<void> {
   if (useApp.getState().saveErrorKind === "save") return;
   inFlight = true;
   const myGen = gen;
-  const prior = useApp.getState(); // the status a push that contacts no server restores
-  const priorError = prior.syncStatus === "error" ? prior.syncError : undefined;
+  // The failure a push that contacts no server restores — not a prompt's own notice, which a
+  // Reject / Later meanwhile may have dismissed.
+  const prior = useApp.getState();
+  const priorError =
+    prior.syncStatus === "error" && !pendingConflict && !pendingReview ? prior.syncError : undefined;
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
@@ -2576,7 +2579,7 @@ export async function pushNow(manual = false): Promise<void> {
       // it waits: restore its notice (cleared by the "syncing" above) instead of "Synced" next to
       // the dialog. Likewise a push that contacts no server must not overwrite an earlier
       // failure (a failed pull, a refused keyring read) with "Synced".
-      if (!pendingConflict && !pendingReview && priorError !== undefined)
+      if (!pendingConflict && !pendingReview && priorError !== undefined && useApp.getState().syncStatus === "syncing")
         setRuntime({ syncStatus: "error", syncError: priorError });
       else idleStatus();
       return;

@@ -362,6 +362,28 @@ describe("usage poll gates", () => {
       useApp.setState({ usageViewQuery: { range: "90", with: [] } });
     }
   });
+
+  it("a reopened 1 year view not yet refetched is no stand-in for the year: coming back fetches it", async () => {
+    const ok = getUsageStats.getMockImplementation()!;
+    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
+    let close = openStatisticsPage();
+    try {
+      useApp.setState({ usageViewQuery: { range: "365", with: [] } });
+      await settle();
+      close(); // left on 1 year: the kept view is from this (now past) visit
+      getUsageStats.mockImplementation((a) => (page(a) ? new Promise<never>(() => {}) : ok(a)));
+      close = openStatisticsPage(); // the reopen's view fetch never lands
+      await settle();
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      await settle();
+      expect(calls().page).toBe(2); // the view AND the year: the kept 1 year view was not confirmed
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+    }
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

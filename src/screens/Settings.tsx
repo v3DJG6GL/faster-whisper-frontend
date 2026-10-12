@@ -8,7 +8,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import { fmtFull, plural } from "@/lib/format";
-import { dropPendingWrites, loadHistory } from "@/lib/transcript/transcriptHistory";
+import { dropPendingWrites, loadHistory, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
@@ -90,6 +90,9 @@ const AUDIO_STORE_TYPES = [
   bytesKey: keyof TranscriptStoreStats; filesKey: keyof TranscriptStoreStats;
 }[];
 type Tab = (typeof TABS)[number];
+
+// The parked writes a dictation-only wipe drops.
+const isDictationRecord = (r: TranscriptRecord) => r.kind === "dictation";
 
 // The folder-move and store-wipe guards live at module scope, not in the screen: Settings is a
 // plain route that unmounts on navigation while the IPC keeps running (a move can take
@@ -197,7 +200,9 @@ export default function Settings() {
     // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
     // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
     // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
-    if (kind === "dict" || kind === "clear") dropPendingWrites();
+    // "dict" wipes only dictation records, so only their writes go.
+    if (kind === "dict") dropPendingWrites(isDictationRecord);
+    else if (kind === "clear") dropPendingWrites();
     const done = (n: number, [one, many]: [string, string]) => {
       if (tabRef.current === "Recording & history") {
         setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
@@ -687,8 +692,8 @@ export default function Settings() {
                 checked={s.transcribe?.keepDictationHistory ?? true}
                 onChange={(v) => {
                   // Off wipes the dictation records (Rust, after the save): like "dict" above, a
-                  // parked coalesced write must not re-create a JSON file that wipe removes.
-                  if (!v) dropPendingWrites();
+                  // parked coalesced dictation write must not re-create a JSON file that wipe removes.
+                  if (!v) dropPendingWrites(isDictationRecord);
                   updateTranscribe({ keepDictationHistory: v });
                 }}
               />

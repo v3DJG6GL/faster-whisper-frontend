@@ -50,6 +50,9 @@ let pageMissed = false; // a hidden pass ran with a Statistics page open, skippi
 // reference: setUsageView/Year keep the old reference when a success re-answers identical data.
 let viewGen = 0;
 let yearGen = 0;
+// The view signature a fetch confirmed during this visit (null after a reopen or a hidden pass):
+// only a confirmed 365-day view may stand in for the calendar's year.
+let viewFreshSig: string | null = null;
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
 function statsPageShown(): boolean {
@@ -65,6 +68,7 @@ export function openStatisticsPage(): () => void {
     // page is closed), so a miss now marks it failed rather than presenting it as current.
     // These fetches cover any hidden pass the previous visit missed.
     pageMissed = false;
+    viewFreshSig = null;
     void refreshView(true).catch(() => {});
     void refreshYear(true, true).catch(() => {});
   }
@@ -161,16 +165,17 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   if (stats !== null) yearGen++;
 }
 
-/** Coming back from 1 year: the page's own 365-day document — kept current by the poll — answers
- *  the calendar's year query exactly (same signature), so it becomes the year document without a
- *  fetch. False when it cannot stand in (another stage filter, a failed or missing view). */
+/** Coming back from 1 year: the page's own 365-day document — once a fetch this visit confirmed
+ *  it — answers the calendar's year query exactly (same signature), so it becomes the year
+ *  document without a fetch. False when it cannot stand in (another stage filter, a failed,
+ *  missing or not-yet-confirmed view: a reopen or hidden pass left it possibly days old). */
 function seedYearFromView(s = useApp.getState()): boolean {
   const backend = viewStatsBackend(s);
   const q = yearPageQuery(s.usageViewQuery);
   if (!backend || !q) return false;
   const sig = viewSignature(backend, effectiveServerUrl(backend, s.settings), q, viewerTimeZone());
   const view = s.usageView;
-  if (view?.sig !== sig || !view.stats || view.failed) return false;
+  if (view?.sig !== sig || sig !== viewFreshSig || !view.stats || view.failed) return false;
   s.setUsageYear(sig, view.stats);
   yearGen++;
   return true;
@@ -198,7 +203,10 @@ async function refreshView(reopened = false): Promise<void> {
   // landed while this fetch was out (that document is current, not the kept one).
   if (stats === null && now.usageView?.sig === sig && (!reopened || viewGen !== gen)) return;
   now.setUsageView(sig, stats);
-  if (stats !== null) viewGen++;
+  if (stats !== null) {
+    viewGen++;
+    viewFreshSig = sig;
+  }
 }
 
 async function refreshOne(backend: Backend): Promise<void> {
@@ -293,6 +301,7 @@ async function refreshAll(): Promise<void> {
         // Hidden with the page open — whichever pass this is (tick, after-session, backend
         // edit): the show handler fetches the page's documents then.
         pageMissed = true;
+        viewFreshSig = null;
       }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
