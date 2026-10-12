@@ -1403,7 +1403,8 @@ describe("the snapshot key stash spans keyring accounts", () => {
     await persistSnapshotSecretsForTests(keys(2, "old"));
     keyring.failWrites.add("__sync_snapshot_secrets_1__");
     const { ids, chunks } = await persistSnapshotSecretsForTests(keys(20, "new"));
-    expect(keyring.store!.size).toBe(0);
+    // The failure drop is issued but not awaited (e59335c): wait for its deletes to land.
+    await vi.waitFor(() => expect(keyring.store!.size).toBe(0));
     expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
   });
 

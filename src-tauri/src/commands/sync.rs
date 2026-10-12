@@ -146,12 +146,13 @@ pub async fn import_settings_file(path: String) -> Result<ImportResult, String> 
 }
 
 fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
-    const MAX_IMPORT_BYTES: u64 = 20_000_000; // sanity cap, not a format limit
-                                              // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync/sync.ts).
-                                              // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
-                                              // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
-                                              // entries in the user's wallet, with the webview blocked throughout. This is the designated
-                                              // validator for the untrusted-file path; it should fail here, with a message.
+    // Sanity cap, not a format limit.
+    const MAX_IMPORT_BYTES: u64 = 20_000_000;
+    // Entry-count ceiling, matching the sync path's own (`MAX_SYNCED_ENTRIES` in lib/sync/sync.ts).
+    // The byte cap alone admits ~130k well-formed backends, and every one with a key becomes a
+    // SERIAL 10s-timeout keyring write in `reconcileBackendSecrets` — permanent credential
+    // entries in the user's wallet, with the webview blocked throughout. This is the designated
+    // validator for the untrusted-file path; it should fail here, with a message.
     const MAX_ENTRIES: usize = 500;
     // Ceiling on the codes in ONE chord, matching `MAX_CHORD_CODES` in lib/sync/sync.ts. The count cap
     // above bounds how MANY chords arrive, never how long one is: `de_hotkey`'s `visit_seq` pushes
