@@ -715,12 +715,16 @@ pub fn client() -> reqwest::Client {
         .clone()
 }
 
+/// [`friendly_err`]'s timeout sentence, shared with the callers that bound a request with their
+/// own `tokio::time::timeout` so both ways of timing out read the same.
+pub(crate) const TIMED_OUT: &str = "Timed out waiting for the server.";
+
 /// A short, user-facing message for a request-level reqwest failure.
 pub fn friendly_err(e: &reqwest::Error) -> String {
     if e.is_connect() {
         "Could not connect — is the server running and the URL correct?".into()
     } else if e.is_timeout() {
-        "Timed out waiting for the server.".into()
+        TIMED_OUT.into()
     } else {
         // `is_connect`/`is_timeout` catch two kinds; everything else lands here, and reqwest's
         // Display appends " for url ({url})" with `Url`'s FULL serialization — userinfo included.

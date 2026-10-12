@@ -31,11 +31,12 @@ const SETTING_NAME_MAX: usize = 64;
 /// across several lists, so one large but valid dictionary passes 1 MiB in compact JSON. The
 /// PATCH reply carries no rule bodies and stays at [`MAX_META_BODY`].
 const RULES_MAX_BODY: usize = 16 * 1024 * 1024;
-/// Per-request bound on the GET, which covers reading the body: sized for the [`RULES_MAX_BODY`]
-/// read the way [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`], and still well under the
-/// shared client's 120 s ceiling. Getting the response HEADERS stays bounded by `META_TIMEOUT`
-/// (the request timeout covers the connect too), so an offline or black-holed host still shows
-/// Retry after 15 s, not 60.
+/// Per-request bound on the GET, which covers reading the body: sized for the 2xx
+/// [`RULES_MAX_BODY`] read the way [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`], and
+/// still well under the shared client's 120 s ceiling. Only that success body gets the 60 s:
+/// getting the response HEADERS (the request timeout covers the connect too) and reading a
+/// non-2xx error body stay bounded by `META_TIMEOUT`, so an offline, black-holed or stalling host
+/// still shows Retry after 15 s, not 60.
 const RULES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
@@ -112,15 +113,9 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
     let send = with_auth(client().get(url), api_key)
         .timeout(RULES_TIMEOUT)
         .send();
-    let Ok(sent) = tokio::time::timeout(super::META_TIMEOUT, send).await else {
-        let msg = "Timed out waiting for the server.".to_string();
-        tracing::warn!("[pipeline] rules GET failed: {msg}");
-        return PipelineFetch {
-            ok: false,
-            status: 0,
-            state: None,
-            error: Some(msg),
-        };
+    let sent = match tokio::time::timeout(super::META_TIMEOUT, send).await {
+        Ok(r) => r.map_err(|e| friendly_err(&e)),
+        Err(_) => Err(super::TIMED_OUT.to_string()),
     };
     match sent {
         Ok(resp) => {
@@ -172,7 +167,13 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                let (_, detail) = super::error_detail(resp).await;
+                // The error body is small (MAX_ERROR_BODY): give it the header bound, not the
+                // 60 s sized for the success body, or a 5xx that stalls holds the card for 60 s.
+                let read = super::error_detail(resp);
+                let detail = match tokio::time::timeout(super::META_TIMEOUT, read).await {
+                    Ok((_, d)) => d,
+                    Err(_) => super::TIMED_OUT.to_string(),
+                };
                 tracing::warn!("[pipeline] rules GET failed: HTTP {code} {detail}");
                 PipelineFetch {
                     ok: false,
@@ -182,8 +183,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                 }
             }
         }
-        Err(e) => {
-            let msg = friendly_err(&e);
+        Err(msg) => {
             tracing::warn!("[pipeline] rules GET failed: {msg}");
             PipelineFetch {
                 ok: false,
