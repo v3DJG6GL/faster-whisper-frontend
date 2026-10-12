@@ -298,9 +298,10 @@ pub fn run() {
                     "[config] settings were reset and not saved since; retention sweeps skipped"
                 );
             } else {
-                commands::apply_recordings_retention(app.handle(), &cfg);
-                // Same once-per-launch sweep for the transcription history.
+                // The transcription history first (as in `save_config`): its records are local,
+                // the recordings sweep walks the (possibly slow) audio base.
                 store::transcripts::apply_transcripts_retention(app.handle(), &cfg);
+                commands::apply_recordings_retention(app.handle(), &cfg);
             }
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start. Known to have

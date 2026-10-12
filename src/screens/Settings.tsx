@@ -93,6 +93,9 @@ type Tab = (typeof TABS)[number];
 
 // The parked writes a dictation-only wipe drops.
 const isDictationRecord = (r: TranscriptRecord) => r.kind === "dictation";
+// The parked writes a "Delete all transcriptions" wipe drops (Rust wipes only the top-level
+// folder; dictations live in transcripts/dictation/).
+const isFileStoreRecord = (r: TranscriptRecord) => r.kind !== "dictation";
 
 // The folder-move and store-wipe guards live at module scope, not in the screen: Settings is a
 // plain route that unmounts on navigation while the IPC keeps running (a move can take
@@ -200,9 +203,10 @@ export default function Settings() {
     // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
     // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
     // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
-    // "dict" wipes only dictation records, so only their writes go.
+    // "dict" wipes only dictation records, so only their writes go; "clear" wipes only
+    // file/URL/text records, so dictation writes stay.
     if (kind === "dict") dropPendingWrites(isDictationRecord);
-    else if (kind === "clear") dropPendingWrites();
+    else if (kind === "clear") dropPendingWrites(isFileStoreRecord);
     const done = (n: number, [one, many]: [string, string]) => {
       if (tabRef.current === "Recording & history") {
         setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
@@ -215,6 +219,8 @@ export default function Settings() {
         setConfirming(null);
         setStoreMsg({ text: safeDisplayText(String(e), 200), error: true });
       } else console.error("store action failed:", e);
+      // A wipe that failed on one folder may still have removed records from another.
+      void loadHistory(true).catch(() => {});
     };
     setBusy("store", true); // set with the IPC, so nothing above can leave it stuck
     // [one, many]: delete_all_dictations returns one combined count of records and audio.
@@ -233,7 +239,7 @@ export default function Settings() {
                   // first (it never rejects), with the pre-wipe ids. Drop again after the await:
                   // an edit debounce firing meanwhile may have parked a write.
                   loadHistory().then(() => {
-                    dropPendingWrites();
+                    dropPendingWrites(isFileStoreRecord);
                     forgetRecord(null, { deleted: true });
                     return clearFileTranscriptions(basePref);
                   }),

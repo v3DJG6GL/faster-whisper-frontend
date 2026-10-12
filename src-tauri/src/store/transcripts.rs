@@ -144,10 +144,15 @@ fn rewrite_record_keep_mtime(path: &Path, out: &str, mtime: Option<std::time::Sy
 
 /// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
 /// (old absolute path → new absolute path), after a migration or base move.
-/// Best-effort per record; a record that fails to parse is left untouched.
-pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::HashMap<&str, &str>) {
+/// Best-effort per record; a record that fails to parse is left untouched. Returns false when
+/// a record DID point at a moved file but could not be rewritten (locked, disk full): the caller
+/// must then leave the heal to re-point it by basename, or it stays broken for good.
+pub(crate) fn rewrite_media_paths(
+    app: &AppHandle,
+    lookup: &std::collections::HashMap<&str, &str>,
+) -> bool {
     let dirs = [transcripts_dir(app), dictations_dir(app)];
-    let mut rewritten = 0;
+    let (mut rewritten, mut failed) = (0, 0);
     for dir in dirs.into_iter().flatten() {
         let Ok(entries) = std::fs::read_dir(&dir) else {
             continue;
@@ -183,18 +188,25 @@ pub(crate) fn rewrite_media_paths(app: &AppHandle, lookup: &std::collections::Ha
                 continue;
             }
             let Ok(out) = serde_json::to_string(&v) else {
+                failed += 1;
                 continue;
             };
             // Re-stat under the lock: the DirEntry's metadata may predate a save.
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             if rewrite_record_keep_mtime(&path, &out, mtime) {
                 rewritten += 1;
+            } else {
+                failed += 1;
             }
         }
     }
     if rewritten > 0 {
         tracing::info!("[transcripts] rewrote media paths in {rewritten} record(s) after move");
     }
+    if failed > 0 {
+        tracing::warn!("[transcripts] could not rewrite media paths in {failed} record(s)");
+    }
+    failed == 0
 }
 
 /// The subfolders `heal_media_paths` may find `key`'s file in, most likely first.
@@ -698,13 +710,19 @@ pub async fn delete_all_dictations(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
-        let mut removed = wipe_records(&dictations_dir(&app)?) as u32;
-        if let Some(dir) = crate::commands::resolve_recordings_dir(&app, audio_base) {
-            removed += remove_own_recordings(&dir);
-        }
+        // Both steps always run, so a readable folder is still wiped when the other is not.
+        let records = wipe_records(&dictations_dir(&app)?);
+        let recordings = match crate::commands::resolve_recordings_dir(&app, audio_base) {
+            Some(dir) => remove_own_recordings(&dir),
+            None => Ok(0),
+        };
+        let removed =
+            records.as_ref().map_or(0, |&n| n as u32) + recordings.as_ref().map_or(0, |&n| n);
         tracing::info!(
             "[transcripts] delete-all dictations: removed {removed} record(s)/recording(s)"
         );
+        records?;
+        recordings?;
         Ok(removed)
     })
     .await
@@ -712,9 +730,9 @@ pub async fn delete_all_dictations(
 }
 
 /// Delete every app-owned file in the recordings folder; returns how many of them were audio.
-fn remove_own_recordings(dir: &Path) -> u32 {
+fn remove_own_recordings(dir: &Path) -> Result<u32, String> {
     let mut removed = 0u32;
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    if let Some(entries) = list_dir(dir, "recordings")? {
         for entry in entries.flatten() {
             let path = entry.path();
             // Only the app's own files (same invariant as prune): a user-chosen
@@ -724,7 +742,7 @@ fn remove_own_recordings(dir: &Path) -> u32 {
             }
         }
     }
-    removed
+    Ok(removed)
 }
 
 /// "Delete all transcriptions": every file/link/text record with its corrections;
@@ -735,7 +753,7 @@ pub async fn clear_file_transcriptions(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
-        let removed = wipe_records(&transcripts_dir(&app)?) as u32;
+        let removed = wipe_records(&transcripts_dir(&app)?)? as u32;
         sweep_orphan_media(&app, audio_base);
         Ok(removed)
     })
@@ -761,18 +779,29 @@ pub async fn remove_transcript_media(
             _ => dirs.extend(all_media_dirs(&app, audio_base)?),
         }
         let mut removed = 0u32;
+        let mut failed = None;
         for dir in dirs {
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if is_own_media(&path) && std::fs::remove_file(&path).is_ok() {
-                        removed += 1;
-                    }
+            // An unlistable folder fails the call, but only after the others were emptied.
+            let entries = match list_dir(&dir, "media") {
+                Ok(Some(entries)) => entries,
+                Ok(None) => continue,
+                Err(e) => {
+                    failed.get_or_insert(e);
+                    continue;
+                }
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if is_own_media(&path) && std::fs::remove_file(&path).is_ok() {
+                    removed += 1;
                 }
             }
         }
         tracing::info!("[transcripts] media store cleared: removed {removed} file(s)");
-        Ok(removed)
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(removed),
+        }
     })
     .await
     .map_err(|e| e.to_string())?
@@ -881,7 +910,9 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 ///   setting's copy promises exactly that).
 ///
 /// When any record went, `transcripts://swept` (payload: the count) tells the History
-/// mirror to reload — otherwise it keeps listing, and an edit re-saves, a deleted entry.
+/// mirror to reload — otherwise it keeps listing, and an edit re-saves, a deleted entry. It goes
+/// out as soon as the records are gone, before the media sweep, which walks the (possibly slow,
+/// network-share) audio base and changes no record.
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
     let mut removed = 0;
     let days = config.settings.transcribe_retention_days();
@@ -892,7 +923,8 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
     }
     if let Ok(dir) = dictations_dir(app) {
         if !config.settings.keep_dictation_history() {
-            removed += wipe_records(&dir);
+            // Best-effort like the prunes: an unlistable folder is retried on the next sweep.
+            removed += wipe_records(&dir).unwrap_or(0);
         } else {
             let ddays = config.settings.effective_dictation_days();
             if ddays > 0 {
@@ -900,17 +932,28 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
             }
         }
     }
-    sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
     if removed > 0 {
         let _ = app.emit("transcripts://swept", removed);
+    }
+    sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
+}
+
+/// List `dir` for a user-asked wipe: a missing folder is nothing to delete (`None`), but one
+/// that exists and cannot be listed is an error — never a silent "removed 0" while every file
+/// stays on disk.
+fn list_dir(dir: &Path, what: &str) -> Result<Option<std::fs::ReadDir>, String> {
+    match std::fs::read_dir(dir) {
+        Ok(entries) => Ok(Some(entries)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(format!("could not list the {what} folder: {e}")),
     }
 }
 
 /// Remove every record in `dir` regardless of age ("Keep dictation history"
-/// turned off). Only touches `.json` files, like the prune.
-fn wipe_records(dir: &Path) -> usize {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
+/// turned off, or a "Delete all"). Only touches `.json` files, like the prune.
+fn wipe_records(dir: &Path) -> Result<usize, String> {
+    let Some(entries) = list_dir(dir, "history")? else {
+        return Ok(0);
     };
     let mut removed = 0;
     for entry in entries.flatten() {
@@ -926,7 +969,7 @@ fn wipe_records(dir: &Path) -> usize {
     if removed > 0 {
         tracing::info!("[transcripts] record wipe: removed {removed} record(s)");
     }
-    removed
+    Ok(removed)
 }
 
 #[cfg(test)]
@@ -1085,7 +1128,7 @@ mod tests {
         std::fs::write(&odd, b"1234").unwrap();
         // The readout promises exactly what the wipe then removes.
         assert_eq!(recordings_usage(&dir), (4, 1, 1));
-        assert_eq!(remove_own_recordings(&dir), 1);
+        assert_eq!(remove_own_recordings(&dir), Ok(1));
         assert!(!odd.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1102,7 +1145,7 @@ mod tests {
         std::fs::write(dir.join("song.wav"), b"123456789").unwrap();
         // The readout's audio count and the wipe's result agree; the sidecars still go.
         assert_eq!(recordings_usage(&dir).2, 3);
-        assert_eq!(remove_own_recordings(&dir), 3);
+        assert_eq!(remove_own_recordings(&dir), Ok(3));
         assert!(!dir.join("dictation-1.txt").exists());
         assert!(dir.join("song.wav").exists());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1125,6 +1168,24 @@ mod tests {
         // A path that exists but cannot be listed (here: a regular file) rejects.
         let mut out = Vec::new();
         assert!(read_records_into(&dir.join("a.json"), &mut out).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_wipe_rejects_an_unlistable_folder_instead_of_removing_nothing() {
+        let dir = std::env::temp_dir().join(format!("fwf-wipe-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A missing folder is nothing to delete, not a failure.
+        assert_eq!(wipe_records(&dir.join("missing")), Ok(0));
+        assert_eq!(remove_own_recordings(&dir.join("missing")), Ok(0));
+        // A path that exists but cannot be listed (here: a regular file) rejects, so
+        // "Delete all" never reports "Removed 0" while every file stays on disk.
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("dictation-1.wav");
+        std::fs::write(&file, b"1234").unwrap();
+        assert!(wipe_records(&file).is_err());
+        assert!(remove_own_recordings(&file).is_err());
+        assert!(file.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

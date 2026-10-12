@@ -461,6 +461,9 @@ export function listenRetentionSweeps(): void {
     // Let in-flight saves land first: the listing replays only parked writes, not ones already
     // on their way to disk. Forced even before any listing: Rust changed the disk, so the
     // session-only seed would put swept records (a wiped dictation) back on the first listing.
+    // A parked dictation write is dropped, not flushed, once dictations are off: this sweep
+    // just wiped that folder, whichever path turned the switch off (Settings, a sync pull).
+    dropPendingWrites(dictationOff);
     void flushRecordWrites()
       .then(() => loadHistory(true))
       .catch(() => {});
@@ -491,8 +494,15 @@ function track(p: Promise<void>): Promise<void> {
   return p;
 }
 
-/** Write one record now; the promise settles when the save does (never rejects). */
+/** A dictation while "Save dictations to History" is off: Rust wipes those on the config save,
+ *  so a write landing after that (a fired coalesce timer, a late patch) would bring it back. */
+const dictationOff = (r: TranscriptRecord) =>
+  r.kind === "dictation" && useApp.getState().settings.transcribe?.keepDictationHistory === false;
+
+/** Write one record now; the promise settles when the save does (never rejects). A dictation
+ *  is not written while dictations are off (the mirror keeps it until the sweep's reload). */
 function writeNow(rec: TranscriptRecord): Promise<void> {
+  if (dictationOff(rec)) return Promise.resolve();
   const now = Date.now();
   // One stamp per record ever written would grow for the whole session (every dictation
   // adds one). A stamp older than the window decides nothing — upsertRecord reads a missing

@@ -115,8 +115,10 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
             if SWEEP_GEN.load(Ordering::SeqCst) != my_gen {
                 return;
             }
-            apply_recordings_retention(&app, &config);
+            // History first: its records are local and its swept event lets the History mirror
+            // reload before either sweep walks a (possibly slow) audio base. Order-free otherwise.
             crate::store::transcripts::apply_transcripts_retention(&app, &config);
+            apply_recordings_retention(&app, &config);
         });
     }
     // Session-file move / prune (written saves only; the level went with the live switches

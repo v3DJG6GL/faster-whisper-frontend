@@ -98,14 +98,15 @@ fn move_dir_contents(
     Ok(())
 }
 
-/// Fix `mediaPath` inside every history record that pointed at a moved file.
-fn rewrite_media_paths(app: &AppHandle, map: &[(String, String)]) {
+/// Fix `mediaPath` inside every history record that pointed at a moved file. False when a
+/// record that pointed at one could not be rewritten.
+fn rewrite_media_paths(app: &AppHandle, map: &[(String, String)]) -> bool {
     if map.is_empty() {
-        return;
+        return true;
     }
     let lookup: std::collections::HashMap<&str, &str> =
         map.iter().map(|(a, b)| (a.as_str(), b.as_str())).collect();
-    crate::store::transcripts::rewrite_media_paths(app, &lookup);
+    crate::store::transcripts::rewrite_media_paths(app, &lookup)
 }
 
 /// One-time (idempotent) migration into the single-base layout: legacy saved
@@ -272,7 +273,12 @@ pub async fn move_audio_base(
         // Always re-point what actually moved: records store ABSOLUTE paths, and a
         // partial move leaves the preference on the old base, which the startup heal
         // then searches — so an unrewritten record would stay broken for good.
-        rewrite_media_paths(&app, &map);
+        if !rewrite_media_paths(&app, &map) {
+            // A record that pointed at a moved file could not be rewritten: drop the stamp so
+            // the next launch's heal re-points it by basename under the new base (the same
+            // remedy as the identifier migration).
+            let _ = std::fs::remove_file(&new_stamp);
+        }
         match &res {
             Ok(()) => tracing::info!(
                 "[audio] base moved: {} file(s) → {}",

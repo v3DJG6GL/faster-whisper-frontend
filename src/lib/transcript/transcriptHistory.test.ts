@@ -27,6 +27,7 @@ const {
   recordEditedResult, recordText, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
+const { useApp } = await import("../store");
 const { trText } = await import("./cueSplit");
 const { translationTracks } = await import("./exportTracks");
 
@@ -896,6 +897,41 @@ describe("listenRetentionSweeps", () => {
     await loadHistory(); // the first screen listing
     expect(currentRecord(id)).toBeUndefined();
     dropPendingWrites();
+  });
+
+  it("a sweep after dictations were turned off drops a parked dictation write, keeps a file's", async () => {
+    vi.useFakeTimers();
+    const prev = useApp.getState().settings;
+    try {
+      saveTranscriptRecord.mockClear();
+      const file: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "sw-file", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/s.mp3", sourceName: "s.mp3", status: "done", result: { text: "v0" },
+      };
+      const dict: TranscriptRecord = { ...file, kind: "dictation", id: "sw-dict" };
+      upsertRecord(dict); // leading edge (dictations still on)
+      upsertRecord({ ...dict, result: { text: "d1" } }); // parked
+      upsertRecord(file); // leading edge
+      upsertRecord({ ...file, result: { text: "v1" } }); // parked
+      // A sync pull (or Settings) turns dictations off; Rust's config save wipes them.
+      useApp.setState({ settings: { ...prev, transcribe: { ...prev.transcribe, keepDictationHistory: false } } });
+      listTranscriptRecords.mockResolvedValue([{ ...file, result: { text: "v1" } }]);
+      listenRetentionSweeps();
+      await Promise.resolve();
+      listeners.get("transcripts://swept")?.(1);
+      await vi.waitFor(() => expect(currentRecord("sw-dict")).toBeUndefined());
+      const ids = saveTranscriptRecord.mock.calls.map((c) => c[0]);
+      expect(ids).toEqual(["sw-dict", "sw-file", "sw-file"]);
+      expect(JSON.parse(saveTranscriptRecord.mock.calls[2][1]).result.text).toBe("v1");
+      // A late patch of the wiped dictation (its timer, a clip attach) never reaches the disk.
+      upsertRecord({ ...dict, result: { text: "d2" } });
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(saveTranscriptRecord.mock.calls.map((c) => c[0])).toEqual(["sw-dict", "sw-file", "sw-file"]);
+    } finally {
+      useApp.setState({ settings: prev });
+      dropPendingWrites();
+      vi.useRealTimers();
+    }
   });
 });
 

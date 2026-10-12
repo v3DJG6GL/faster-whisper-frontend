@@ -1068,9 +1068,19 @@ export default function History() {
       {hiddenMatches > 0 && visible.length > 0 && (
         <div className="mt-4 flex items-center gap-2.5 rounded-xl border border-accent/25 bg-accent-soft/40 px-4 py-2.5 text-[12.5px] text-dim">
           <Search className="size-3.5 shrink-0 text-accent" />
+          {/* The app chip counts too: the hidden matches may be dictations into other apps. */}
           <span className="flex-1">
-            {plural(visible.length, "match", "matches")} in {segLabel} —{" "}
-            {fmtFull(hiddenMatches)} more outside {segLabel}
+            {appFilter && segment === "dictation" ? (
+              <>
+                {plural(visible.length, "match", "matches")} in dictations for this app —{" "}
+                {fmtFull(hiddenMatches)} more in other apps or types
+              </>
+            ) : (
+              <>
+                {plural(visible.length, "match", "matches")} in {segLabel} —{" "}
+                {fmtFull(hiddenMatches)} more outside {segLabel}
+              </>
+            )}
           </span>
           <Button variant="ghost" size="sm" onClick={() => { setSegment("all"); setAppFilter(null); }}>
             Show all
