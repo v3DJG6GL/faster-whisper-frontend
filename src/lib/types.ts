@@ -929,7 +929,8 @@ export interface UsageDictation {
   words: number;
   audio_s: number;
   wpm: number;
-  activation: { hold: number; handsfree: number };
+  /** `unreported` = sessions the server sweep closed without an outcome; absent on older servers. */
+  activation: { hold: number; handsfree: number; unreported?: number };
   delivery: { typed: number; clipboard: number; none: number; unreported: number };
   translation: {
     translated: number;

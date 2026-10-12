@@ -229,7 +229,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
       </Card>
     );
   }
-  const act = d?.activation ?? { hold: 0, handsfree: 0 };
+  const act = d?.activation ?? { hold: 0, handsfree: 0, unreported: 0 };
   const del = d?.delivery ?? { typed: 0, clipboard: 0, none: 0, unreported: 0 };
   const apps = (stats.apps ?? [])
     .filter((a) => a && typeof a.app_id === "string")
@@ -258,6 +258,7 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
           rows={facetRows([
             { label: "Push-to-talk", value: act.hold },
             { label: "Hands-free", value: act.handsfree },
+            ...((act.unreported ?? 0) > 0 ? [{ label: "Unreported", value: act.unreported ?? 0, dim: true }] : []),
           ])}
         />
         <HBars

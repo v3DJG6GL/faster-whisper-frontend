@@ -627,7 +627,7 @@ pub async fn get_decode_defaults(
 #[cfg(test)]
 mod tests {
     use super::{bound_decode_defaults, decode_defaults_url, nonneg_retention};
-    use crate::transport::{DecodeDefaults, UsageStats};
+    use crate::transport::{DecodeDefaults, UsageDictation, UsageStats};
 
     #[test]
     fn usage_jobs_retention_stays_absent_on_older_servers_and_never_goes_negative() {
@@ -644,6 +644,23 @@ mod tests {
         assert_eq!(nonneg_retention(Some(-5)), Some(0));
         assert_eq!(nonneg_retention(Some(30)), Some(30));
         assert_eq!(nonneg_retention(None), None);
+    }
+
+    /// The backend sweep files an outcome-less dictation under `unreported`; the typed
+    /// mirror must carry it to the webview, and an older server that omits it reads as 0.
+    #[test]
+    fn usage_activation_keeps_unreported_and_defaults_it_on_older_servers() {
+        let new: UsageDictation =
+            serde_json::from_str(r#"{"activation":{"hold":1,"handsfree":2,"unreported":3}}"#)
+                .unwrap();
+        assert_eq!(new.activation.unreported, 3);
+        let out = serde_json::to_value(&new).unwrap();
+        assert_eq!(out["activation"]["unreported"], 3);
+
+        let old: UsageDictation =
+            serde_json::from_str(r#"{"activation":{"hold":1,"handsfree":2}}"#).unwrap();
+        assert_eq!(old.activation.unreported, 0);
+        assert_eq!(old.activation.handsfree, 2);
     }
 
     #[test]

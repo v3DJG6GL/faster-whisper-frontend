@@ -72,7 +72,7 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
   };
   const onKey = (e: ReactKeyboardEvent<SVGSVGElement>) => {
     if (n === 0) return;
-    if (e.key === "ArrowLeft") { setHover((h) => Math.max(0, (h ?? n - 1) - 1)); e.preventDefault(); }
+    if (e.key === "ArrowLeft") { setHover((h) => (h == null ? n - 1 : Math.max(0, h - 1))); e.preventDefault(); }
     else if (e.key === "ArrowRight") { setHover((h) => Math.min(n - 1, (h ?? n - 1) + 1)); e.preventDefault(); }
     else if (e.key === "Home") { setHover(0); e.preventDefault(); }
     else if (e.key === "End") { setHover(n - 1); e.preventDefault(); }

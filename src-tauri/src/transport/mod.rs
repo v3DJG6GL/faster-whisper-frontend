@@ -422,6 +422,10 @@ pub struct UsageActivation {
     pub hold: i64,
     #[serde(default)]
     pub handsfree: i64,
+    /// Dictations the backend sweep closed without an outcome (its `unreported`
+    /// activation). Absent on older servers, hence the default.
+    #[serde(default)]
+    pub unreported: i64,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
