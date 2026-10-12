@@ -394,11 +394,24 @@ export default function History() {
       if (cur) cur.n++;
       else counts.set(key, { label: appChipLabel(r), n: 1 });
     }
-    return [...counts.entries()]
+    const top = [...counts.entries()]
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => b.n - a.n)
       .slice(0, 6);
-  }, [dictMatches]);
+    // The picked app keeps its chip even when the search leaves it out of the top six (or
+    // with no match at all), so the page never says "for this app" without naming it.
+    if (appFilter && !top.some((a) => a.id === appFilter)) {
+      const src = records.find((r) => isDictation(r) && (r.appId ?? appLabel(r)) === appFilter);
+      const pinned = {
+        id: appFilter,
+        label: src ? appChipLabel(src) : appFilter,
+        n: counts.get(appFilter)?.n ?? 0,
+      };
+      if (top.length >= 6) top[top.length - 1] = pinned;
+      else top.push(pinned);
+    }
+    return top;
+  }, [dictMatches, appFilter, records]);
 
   const visible = useMemo(() => {
     let out =
@@ -1018,7 +1031,7 @@ export default function History() {
         </button>
       </div>
 
-      {segment === "dictation" && apps.length > 1 && (
+      {segment === "dictation" && (apps.length > 1 || appFilter) && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <span className="font-mono text-[11px] text-faint">dictated into</span>
           {apps.map((a) => (

@@ -8,7 +8,7 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import { fmtFull, plural } from "@/lib/format";
-import { dropPendingWrites, loadHistory, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
+import { dropPendingWrites, flushRecordWrites, loadHistory, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
@@ -697,9 +697,11 @@ export default function Settings() {
               <Toggle
                 checked={s.transcribe?.keepDictationHistory ?? true}
                 onChange={(v) => {
-                  // Off wipes the dictation records (Rust, after the save): like "dict" above, a
-                  // parked coalesced dictation write must not re-create a JSON file that wipe removes.
-                  if (!v) dropPendingWrites(isDictationRecord);
+                  // Off wipes the dictation records in Rust after the debounced save: issue every
+                  // parked write now, ahead of that save, so it lands before the wipe — and a flip
+                  // back on before the save reaches Rust keeps the edit. Anything parked later is
+                  // dropped by listenRetentionSweeps / writeNow, gated on Rust's dictationsWiped.
+                  if (!v) void flushRecordWrites();
                   updateTranscribe({ keepDictationHistory: v });
                 }}
               />

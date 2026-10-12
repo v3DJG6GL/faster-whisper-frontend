@@ -145,28 +145,64 @@ fn rewrite_record_keep_mtime(path: &Path, out: &str, mtime: Option<std::time::Sy
 /// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
 /// (old absolute path → new absolute path), after a migration or base move.
 /// Best-effort per record; a record that fails to parse is left untouched. Returns false when
-/// a record DID point at a moved file but could not be rewritten (locked, disk full): the caller
-/// must then leave the heal to re-point it by basename, or it stays broken for good.
+/// a record that may point at a moved file could not be read or rewritten (locked, unreadable,
+/// disk full): the caller must then leave the heal to re-point it by basename, or it stays
+/// broken for good.
 pub(crate) fn rewrite_media_paths(
     app: &AppHandle,
     lookup: &std::collections::HashMap<&str, &str>,
 ) -> bool {
-    let dirs = [transcripts_dir(app), dictations_dir(app)];
+    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
+        .into_iter()
+        .flatten()
+        .collect();
+    rewrite_media_paths_in(&dirs, lookup)
+}
+
+fn rewrite_media_paths_in(
+    dirs: &[PathBuf],
+    lookup: &std::collections::HashMap<&str, &str>,
+) -> bool {
     let (mut rewritten, mut failed) = (0, 0);
-    for dir in dirs.into_iter().flatten() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
+    for dir in dirs {
+        // No folder = no record to re-point; one that exists but cannot be listed may hide one.
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => {
+                failed += 1;
+                continue;
+            }
         };
-        for entry in entries.flatten() {
+        for entry in entries {
+            // A mid-listing error may hide a matching record too.
+            let Ok(entry) = entry else {
+                failed += 1;
+                continue;
+            };
             let path = entry.path();
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
             // Held to the end of this record (read, parse, stat, rewrite) — see `RECORD_IO`.
-            // A record a sweep removed first is unreadable here and skipped, not resurrected.
+            // A record a sweep removed first is unreadable here and skipped, not resurrected;
+            // a non-UTF-8 file is no record the listing could load either. Any other read
+            // failure (a sync client's or antivirus's lock) may hide a moved path.
             let _io = record_io_lock();
-            let Ok(text) = std::fs::read_to_string(&path) else {
-                continue;
+            let text = match std::fs::read_to_string(&path) {
+                Ok(t) => t,
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData
+                    ) =>
+                {
+                    continue
+                }
+                Err(_) => {
+                    failed += 1;
+                    continue;
+                }
             };
             let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
@@ -491,11 +527,9 @@ pub async fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::V
 }
 
 fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(), String> {
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        // No folder yet = nothing to add.
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(format!("could not list the history folder: {e}")),
+    // No folder yet = nothing to add.
+    let Some(entries) = list_dir(dir, "history")? else {
+        return Ok(());
     };
     for entry in entries {
         // A folder-level readdir failure would otherwise truncate the listing silently.
@@ -909,12 +943,15 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 ///   `keepDictationHistory` is off, the whole dictation store is wiped (the
 ///   setting's copy promises exactly that).
 ///
-/// When any record went, `transcripts://swept` (payload: the count) tells the History
+/// When any record went, `transcripts://swept` (payload: `{ removed, dictationsWiped }` — the
+/// record count, and whether this sweep actually emptied the dictation store; read by
+/// `listenRetentionSweeps` in src/lib/transcript/transcriptHistory.ts) tells the History
 /// mirror to reload — otherwise it keeps listing, and an edit re-saves, a deleted entry. It goes
 /// out as soon as the records are gone, before the media sweep, which walks the (possibly slow,
 /// network-share) audio base and changes no record.
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
     let mut removed = 0;
+    let mut dictations_wiped = false;
     let wipe_dictations = !config.settings.keep_dictation_history();
     let days = config.settings.transcribe_retention_days();
     if days > 0 {
@@ -925,7 +962,15 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
     if let Ok(dir) = dictations_dir(app) {
         if wipe_dictations {
             // Best-effort like the prunes: an unlistable folder is retried on the next sweep.
-            removed += wipe_records(&dir).unwrap_or(0);
+            match wipe_records(&dir) {
+                Ok(n) => {
+                    removed += n;
+                    dictations_wiped = true;
+                }
+                Err(e) => tracing::warn!(
+                    "[transcripts] dictation wipe skipped, retried on the next sweep: {e}"
+                ),
+            }
         } else {
             let ddays = config.settings.effective_dictation_days();
             if ddays > 0 {
@@ -934,20 +979,21 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
         }
     }
     if removed > 0 {
-        // `dictationsWiped`: THIS sweep ran with "Save dictations to History" off, so the
-        // dictation store is empty now — the webview's in-memory switch can be ahead of (or
+        // `dictationsWiped`: THIS sweep ran with "Save dictations to History" off AND listed
+        // (so emptied) the dictation folder — an absent folder counts (Ok(0)); a failed listing
+        // deleted nothing and says false. The webview's in-memory switch can be ahead of (or
         // behind) the config a queued sweep acted on, so it must not infer that itself.
         let _ = app.emit(
             "transcripts://swept",
-            serde_json::json!({ "removed": removed, "dictationsWiped": wipe_dictations }),
+            serde_json::json!({ "removed": removed, "dictationsWiped": dictations_wiped }),
         );
     }
     sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
 }
 
-/// List `dir` for a user-asked wipe: a missing folder is nothing to delete (`None`), but one
-/// that exists and cannot be listed is an error — never a silent "removed 0" while every file
-/// stays on disk.
+/// List `dir` for a wipe or the History listing: a missing folder is nothing to read (`None`),
+/// but one that exists and cannot be listed is an error — never a silent "removed 0" (or an empty
+/// History) while every file stays on disk.
 fn list_dir(dir: &Path, what: &str) -> Result<Option<std::fs::ReadDir>, String> {
     match std::fs::read_dir(dir) {
         Ok(entries) => Ok(Some(entries)),
@@ -1244,6 +1290,37 @@ mod tests {
         assert_eq!(prune_transcripts(&dir, 1), 1);
         assert!(!old.exists());
         assert!(keep.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn media_rewrite_reports_an_unreadable_record() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("fwf-rewrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let lookup: std::collections::HashMap<&str, &str> =
+            [("/old/files/a.wav", "/new/files/a.wav")]
+                .into_iter()
+                .collect();
+        std::fs::write(dir.join("ok.json"), r#"{"mediaPath":"/old/files/a.wav"}"#).unwrap();
+        // Not UTF-8 = no record the listing could load either: skipped, not a failure.
+        std::fs::write(dir.join("bin.json"), [0xff, 0xfe, 0x00]).unwrap();
+        // A missing folder has no record to re-point.
+        let dirs = [dir.clone(), dir.join("missing")];
+        assert!(rewrite_media_paths_in(&dirs, &lookup));
+        let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
+        assert!(ok.contains("/new/files/a.wav"));
+        // A locked record may hide a moved path: the caller must keep the heal armed.
+        let locked = dir.join("locked.json");
+        std::fs::write(&locked, r#"{"mediaPath":"/old/files/a.wav"}"#).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads through 0o000, so there is nothing to assert there.
+        if std::fs::read_to_string(&locked).is_err() {
+            assert!(!rewrite_media_paths_in(&dirs, &lookup));
+        }
+        let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
