@@ -242,9 +242,10 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
 
 /** CJK and fullwidth opening brackets: they stick to the character after them. */
 const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
-/** CJK and fullwidth closing brackets and stops: they stick to the character before them.
- *  Listed, not the whole fullwidth block — fullwidth letters and digits stay breakable. */
-const CLOSE_PUNCT = "、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
+/** CJK and fullwidth closing brackets and stops, and the prolonged sound mark ー: they
+ *  stick to the character before them. Listed, not the whole fullwidth block — fullwidth
+ *  letters and digits stay breakable. */
+const CLOSE_PUNCT = "ー、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
 /** Thai/Lao leading vowels (เ แ โ ใ ไ): written before the consonant they follow in
  *  speech, so they stick to the character after them. */
 const LEADS = "\\u0e40-\\u0e44\\u0ec0-\\u0ec4";
@@ -273,7 +274,7 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
  *  variation selector) — they are Script=Inherited and would otherwise split off. */
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[${LEADS}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]${UNIT_TAIL}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
+  `[${OPEN_PUNCT}]*[${LEADS}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]${UNIT_TAIL}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\u30fc\\uff00-\\uffef])*`
     + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
@@ -536,16 +537,23 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
 /** Tokens of spaced text with a CJK/Thai-like run (MIXED_TOKEN, as spreadTokens), and per
  *  token whether whitespace stood before it. Punctuation glued to its neighbour (an ASCII
  *  "." or ")" after a CJK character, a "(" before one) joins it, so no line starts with a
- *  stop or ends on an opener. */
+ *  stop or ends on an opener. An opener glued to the end of a word moves onto the character
+ *  it opens, so a line may break before the "(" but never right after it. */
 function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
   const toks: string[] = [];
   const gaps: boolean[] = [];
   let end = 0;
   for (const m of t.matchAll(MIXED_TOKEN)) {
-    const w = m[0];
+    let w = m[0];
     const gap = m.index! > end;
     end = m.index! + w.length;
     const k = toks.length - 1;
+    // An opener glued to the end of a Latin word ("Python(") moves onto what it opens.
+    const open = k >= 0 && !gap ? /[\p{Ps}\p{Pi}]+$/u.exec(toks[k]) : null;
+    if (open && open.index > 0) {
+      toks[k] = toks[k].slice(0, open.index);
+      w = open[0] + w;
+    }
     if (k >= 0 && !gap && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(w) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]))) toks[k] += w;
     else {
       toks.push(w);
@@ -571,6 +579,8 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
       start = i;
     }
   }
+  /** Some seam has no space: a CJK/Thai-like run of spaced text breaks inside. */
+  const mixed = gaps.some((g, i) => i > 0 && !g);
   /** Joined length of toks[a..b), b > a. */
   const width = (a: number, b: number) => cum[b] - cum[a] - (gaps[a] ? 1 : 0);
   const join = (a: number, b: number) => {
@@ -601,11 +611,20 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
       let s = 0;
       if (a > cpl) s -= 1000;
       if (b > cpl * (n - 1)) s -= 1000;
-      if (gaps[i]) s += breakScore(toks[i - 1], toks[i]) * 0.3;
+      if (gaps[i]) {
+        s += breakScore(toks[i - 1], toks[i]) * 0.3;
+        // A phrase space between two longer runs ("…行った 楽しかった…") that keeps both lines
+        // within the cap beats a balanced cut inside a CJK word. Not beside a short word or
+        // number ("Tokyo", "2024 年"): that one stays balanced into its sentence.
+        if (mixed && n === 2 && a <= cpl && b <= cpl && Math.min(runLen[i - 1], width(lo, i)) > 6 && runLen[i] > 6) {
+          s += 5;
+        }
+      }
       // Inside a Thai-like phrase or a short CJK word of spaced text ("東京 tower"): a fallback
       // seam only — it loses to every space that keeps both lines within the cap (more than any
       // balance or break score); when no space fits, every space seam already carries -1000.
-      // A longer CJK run is a sentence, and its seams balance freely against the spaces.
+      // A longer CJK run is a sentence, and its seams balance against the spaces (only a
+      // phrase space between two longer runs gets the small bonus above).
       else if (gaps.length && (runLen[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy

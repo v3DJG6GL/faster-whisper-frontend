@@ -369,6 +369,25 @@ describe("wrapLines", () => {
       expect(lines.join("")).toBe(t);
     }
   });
+  it("an opener glued to the end of a Latin word moves onto the line it opens", () => {
+    expect(wrapLines("私たちは昨日 Python(パイソン)について学びました", 16, 2)).toEqual([
+      "私たちは昨日 Python",
+      "(パイソン)について学びました",
+    ]);
+    expect(wrapLines("東京 Google(グーグル)本社に行きました", 16, 2, 6)).toEqual([
+      "東京 Google",
+      "(グーグル)本社に行きました",
+    ]);
+  });
+  it("a line never starts with the prolonged sound mark ー", () => {
+    for (const [t, cpl] of [["コーヒーとケーキが大好きです", 4], ["東京 Google(グーグル)本社に行きました", 13]] as const) {
+      const lines = wrapLines(t, cpl, 9);
+      expect(lines.length).toBeGreaterThan(1);
+      expect(lines.some((l) => l.startsWith("ー"))).toBe(false);
+      expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+    }
+    for (const p of cutByShare("コーヒーコーヒー", [1, 1, 1, 1, 1, 1, 1])) expect(p.startsWith("ー")).toBe(false);
+  });
   it("an over-long word left alone on the last line wraps per character", () => {
     const w = "x".repeat(50);
     expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a", "x".repeat(25), "x".repeat(25)]);
@@ -524,6 +543,14 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     // A phrase space far from the balanced cut still beats a cut inside a Thai syllable.
     const p38 = "ขอบคุณมากครับสำหรับทุกอย่างที่ทำให้เรา";
     expect(wrapLines(p38 + " ครับ", 42, 2)).toEqual([p38, "ครับ"]);
+  });
+  it("wrapLines breaks a CJK sentence at its phrase space when that fits both lines", () => {
+    for (const cpl of [13, 16]) {
+      expect(wrapLines("今日は東京に行った 楽しかったです", cpl, 2)).toEqual(["今日は東京に行った", "楽しかったです"]);
+    }
+    // A short Latin word or number beside the space still balances into its sentence.
+    expect(wrapLines("今日は東京に行った Tokyo", 13, 2)).toEqual(["今日は東京に行", "った Tokyo"]);
+    expect(wrapLines("昨日 2024 年の計画を立てました", 13, 2)).toEqual(["昨日 2024 年", "の計画を立てました"]);
   });
   it("wrapLines never ends a line on a leading vowel", () => {
     for (let cpl = 28; cpl <= 60; cpl++) {
