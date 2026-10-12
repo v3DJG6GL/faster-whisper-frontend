@@ -987,6 +987,19 @@ describe("subtitle cues", () => {
     expect(previewExport(zh, { format: "txt" }, 2).text).toBe("你好。世界。\n");
   });
 
+  it("a single translation's TXT/LRC preview counts the lines its file writes", () => {
+    const r: BatchResult = {
+      text: " Line 0 Line 1 Line 2",
+      segments: [0, 1, 2].map((i) => ({
+        start: i, end: i + 1, text: ` Line ${i}`, translations: { de: i < 2 ? `Zeile ${i}` : "\u200b" },
+      })),
+    };
+    for (const format of ["lrc", "txt"] as const) {
+      const p = previewExport(r, { format, tracks: ["de"] }, 2);
+      expect([p.count, p.total]).toEqual([2, 2]); // the format-mark line is never written
+    }
+  });
+
   it("preview and cps reuse a grid the caller already built", () => {
     const opts: ExportOptions = { format: "srt", tracks: ["orig"], cues: STANDARD };
     const grid = cueGrid(CUED, opts, ["orig"]);

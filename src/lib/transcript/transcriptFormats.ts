@@ -898,11 +898,12 @@ export function previewExport(
   const tracks = tracksOf(opts);
   const segs = result.segments ?? [];
   grid ??= cueGrid(result, opts, tracks);
-  // A subtitle file counts the cues it writes (writtenCues); TXT/LRC/JSON follow their own rules.
+  // A subtitle file counts the cues it writes (writtenCues), a single translation's TXT/LRC the
+  // lines it writes (writtenTrackCues); multi-track TXT/LRC/JSON follow their own rules.
   const list = isSubtitleFormat(opts.format)
     ? writtenCues(grid, tracks)
     : tracks.length === 1
-      ? trackCues(grid, tracks[0])
+      ? (tracks[0] === "orig" ? trackCues(grid, "orig") : writtenTrackCues(grid, tracks[0]))
       : grid.cues.filter((c) => tracks.some((t) => (t === "orig" ? c.text : ownProp(c.tr, t))));
   const last = list[Math.min(n, list.length) - 1];
   // The segments behind the first n cues — or, for a track with its own

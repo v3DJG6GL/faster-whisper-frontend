@@ -263,11 +263,13 @@ export function SubtitleList({
       key: string, n: number, c: { seg: number; start: number; end: number; speaker?: string },
       first: boolean, cols: [track: string, text: string][],
     ): Row => {
-      const d = Math.max(0.001, c.end - c.start);
+      const span = c.end - c.start;
+      const d = Math.max(0.001, span);
       // The column reading fastest against its own language's limit. A cell that cleans to nothing
-      // is never written, so it has no reading speed (as cpsWarnings in the export Summary).
+      // is never written, and a cue with no duration has nothing to read in: neither has a reading
+      // speed (both skipped by cpsWarnings in the export Summary).
       const rates = cols.map(([t, text]) => ({
-        t, rate: stripControlChars(text).trim() ? text.length / d : 0, limit: limitOf(t)?.cps ?? TRANSCRIBED_CPS,
+        t, rate: span > 0 && stripControlChars(text).trim() ? text.length / d : 0, limit: limitOf(t)?.cps ?? TRANSCRIBED_CPS,
       }));
       const worst = rates.reduce((a, b) => (b.rate - b.limit > a.rate - a.limit ? b : a));
       // Synthesized clocks (a clock-less text source) are placeholders, not
