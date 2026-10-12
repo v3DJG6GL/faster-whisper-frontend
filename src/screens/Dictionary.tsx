@@ -1287,7 +1287,10 @@ function SaveBanner({
       {conflicts > 0 && (
         <Notice>
           {conflicts} {conflicts === 1 ? "rule" : "rules"} changed on the server and {conflicts === 1 ? "was" : "were"} not saved.
-          {/* In the fetch-error view the reload is what failed: its own Retry is the way back. */}
+          {/* In the fetch-error view the reload is what failed, so "Reload again" is not offered.
+              FetchError draws its own Retry only for a retryable failure (fetchRetryable); for any
+              other the clause points at the header's Refresh instead (retryBelow says which). */}
+          {reloadFailed && ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"} to load the latest version.`}
           {!reloadFailed && (
             <>
               {" "}The latest version has been reloaded.{" "}
