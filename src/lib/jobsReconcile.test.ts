@@ -585,12 +585,42 @@ describe("reconcileJobs", () => {
     expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A, JOB_B]);
     // That timer fires while the pass is still in flight, which then ends with nothing to retry.
     await vi.advanceTimersByTimeAsync(30_000);
+    // The timer already waited: its pass runs right after the in-flight one, lists again and
+    // settles A's record — no second 30 s wait.
+    listTranscriptRecords.mockResolvedValueOnce([rec]);
     resolveB({ kind: "not_found" });
     await vi.advanceTimersByTimeAsync(0);
-    expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A]);
-    // The dropped timer is carried over: one more pass lists again and settles A's record.
+    expect(ledgerRows()).toEqual([]);
+    expect(records().find((x) => x.id === JOB_A)).toMatchObject({ status: "failed", error: BACKEND_GONE_ERROR });
+  });
+
+  it("the last retry of the launch's budget firing mid-pass still runs its pass", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r, row(JOB_B, T0 + 1));
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    let resolveB: (v: JobOutcome<JobStatus>) => void = () => {};
+    let bCalls = 0;
+    // B fails per row on 19 passes (19 timers spent), then hangs on the 20th.
+    getJob.mockImplementation(({ jobId }) => {
+      if (jobId === JOB_A) return Promise.resolve(ok({ jobId, state: "running" }));
+      bCalls += 1;
+      return bCalls < 20
+        ? Promise.resolve({ kind: "error", message: "HTTP 500" })
+        : new Promise((res) => { resolveB = res; });
+    });
+    await reconcileJobs();
+    while (bCalls < 20) await vi.advanceTimersByTimeAsync(30_000);
+    // A's backend goes while the listing fails: its watcher arms the 20th and last timer.
+    useTranscriptHistory.setState({ records: [], loaded: false });
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    useApp.setState({ backends: [] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(30_000); // it fires while B's pass is still in flight
     listTranscriptRecords.mockResolvedValueOnce([rec]);
-    await vi.advanceTimersByTimeAsync(30_000);
+    resolveB({ kind: "not_found" });
+    await vi.advanceTimersByTimeAsync(0);
     expect(ledgerRows()).toEqual([]);
     expect(records().find((x) => x.id === JOB_A)).toMatchObject({ status: "failed", error: BACKEND_GONE_ERROR });
   });
