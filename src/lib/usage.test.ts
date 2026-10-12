@@ -339,6 +339,15 @@ describe("usage poll gates", () => {
     useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
     await settle();
     expect(calls().page).toBe(1); // the view only: the year was just fetched
+    // Back from 1 year onto a miss: the kept year is marked failed, not shown as current.
+    useApp.setState({ usageViewQuery: { range: "365", with: [] } });
+    await settle();
+    getUsageStats.mockResolvedValue(null as never);
+    useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
+    await settle();
+    expect(useApp.getState().usageYear?.failed).toBe(true);
+    getUsageStats.mockReset();
+    getUsageStats.mockImplementation(async () => ({ today: {}, total: {}, series: [] }));
     close();
     useApp.setState({ usageViewQuery: { range: "90", with: [] } });
   });

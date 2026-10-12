@@ -279,7 +279,7 @@ export function SubtitleList({
       return {
         key, n, seg: c.seg, start: c.start, end: c.end, first,
         lines: cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig")),
-        cps: synth ? "no timing" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
+        cps: synth ? "no timing" : span <= 0 ? "0.0 s · no duration" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`,
         fast,
         bar: synth ? 0 : Math.min(100, (d / maxDur) * 100),
         synth,

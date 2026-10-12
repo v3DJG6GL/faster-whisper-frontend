@@ -358,7 +358,9 @@ export function initUsageController(): void {
       void refreshView().catch(() => {});
       // On the 1 year / All presets nothing kept the year document current, so coming back
       // from one refetches it; a sub-year → sub-year change still reuses the polled year.
-      void refreshYear(!yearPageQuery(prev.usageViewQuery)).catch(() => {});
+      // Like a reopen, a miss then marks the kept year failed rather than current.
+      const fromYear = !yearPageQuery(prev.usageViewQuery);
+      void refreshYear(fromYear, fromYear).catch(() => {});
     }
   });
 }
