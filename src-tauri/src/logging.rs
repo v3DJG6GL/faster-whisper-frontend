@@ -3,8 +3,8 @@
 //! age-based pruning, and a live-reloadable level filter.
 //!
 //! Ordering contract: `LogRing`/`SwapWriter` are created in `run()` BEFORE
-//! `init()` so no startup line is lost; the session file opens later (in
-//! `.setup()`, once the config and path resolver exist) and the ring is
+//! `init()` so no startup line is lost; the session file opens later (queued
+//! from `.setup()`, once the config and path resolver exist) and the ring is
 //! replayed into it, so the file is still complete from line 1.
 
 use std::collections::VecDeque;
@@ -387,9 +387,10 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
         let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
     }
     if let Ok(mut inner) = writer.0.lock() {
-        for line in ring.tail(0).lines {
-            let _ = file.write_all(format_line(&line).as_bytes());
-        }
+        // Snapshot under the writer lock, so no line falls between the replay and the swap, and
+        // one write: every logging thread waits on this lock, and the folder may be a slow share.
+        let replay: String = ring.tail(0).lines.iter().map(format_line).collect();
+        let _ = file.write_all(replay.as_bytes());
         inner.file = Some(file);
         inner.path = Some(path);
     }
@@ -412,11 +413,11 @@ pub fn prune_log_files(dir: &Path, keep_days: u32, except: Option<&Path>) {
 /// The pruning-hold line is logged once per session: `apply_log_settings` runs on every save.
 static LOGGED_PRUNE_HOLD: AtomicBool = AtomicBool::new(false);
 
-/// Config-save side effect (also run once in setup, after the config load): move the session
-/// file if the folder changed, and prune old files unless `held` (the level is a live switch,
-/// applied by `commands::set_live_switches`): a reset
-/// nobody has saved over (`config::retention_held`), as the caller computed before any write —
-/// the same hold as the retention sweeps. The defaults' `keep_days` would otherwise delete logs
+/// Config-save side effect (also run once at launch, after the config load), always called
+/// through `queue_log_settings`: move the session file if the folder changed, and prune old
+/// files unless `held` (the level is a live switch, applied by `commands::set_live_switches`):
+/// a reset nobody has saved over (`config::retention_held`), as the caller computed before any
+/// write — the same hold as the retention sweeps. The defaults' `keep_days` would otherwise delete logs
 /// the user's real (backed-up or unreadable) settings kept — the very logs that explain the reset.
 pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
     let Some(dir) = log_dir(app, config) else {
@@ -469,6 +470,20 @@ pub fn apply_log_settings(app: &AppHandle, config: &Config, held: bool) {
         // `%LOCALAPPDATA%\faster-whisper-frontend` is the program's install directory.
         let _ = std::fs::remove_dir(&legacy);
     }
+}
+
+/// Run `apply_log_settings` off the calling thread — setup() at launch and every written save:
+/// a custom log folder can sit on a stalled mount (network share, sleeping disk), and its
+/// create_dir/read_dir would otherwise freeze the app. Both callers share one newest-wins slot
+/// (`drain_newest`), so a save made while the launch open is stuck replaces the pending entry and
+/// runs after it, never alongside it (two `open_session_file` calls never race on the writer); a
+/// skipped older entry is harmless, the newest compares its folder against the live file again.
+/// Its own slot, so a slow audio sweep does not hold up the log move.
+pub fn queue_log_settings(app: &AppHandle, config: Config, held: bool) {
+    static NEXT: crate::NewestSlot<(AppHandle, Config, bool)> = Mutex::new((None, false));
+    crate::drain_newest(&NEXT, (app.clone(), config, held), |(app, config, held)| {
+        apply_log_settings(&app, &config, held)
+    });
 }
 
 /// Batches ring lines to the Logs screen (only while it's open) and pushes

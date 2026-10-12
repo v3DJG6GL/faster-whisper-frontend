@@ -91,76 +91,46 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     // retention windows, not the backed-up settings' — its sweeps must not delete that history.
     let reset = config::retention_held(&dir);
     config::save(&dir, &config).map_err(|e| e.to_string())?;
-    sync_autostart(&app, config.settings.general.open_at_login);
+    sync_autostart_if_changed(&app, config.settings.general.open_at_login);
     // The retention sweeps are O(history) filesystem work; a sync command runs on the main
-    // thread, so they go to a background thread. The mutex serializes them, so two quick saves
-    // never prune or wipe at the same time, and the generation check drops a superseded save's
-    // sweep (the mutex is not FIFO, so an older, shorter window could otherwise run last).
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+    // thread, so they go to a background worker. A newest-wins slot (`drain_newest`) runs them
+    // one save at a time, so two quick saves never prune or wipe at the same time, a superseded
+    // save's sweep is dropped (an older, shorter window never runs last), and saves made while
+    // a sweep is stuck on a dead audio share replace the pending one instead of parking a thread
+    // each. (The launch sweep in setup() runs before any save can arrive.)
     if reset {
         // The hold is sticky for the session and every debounced autosave lands here, so the line
         // is logged once per session (like the log-prune hold in logging.rs), not once per save.
+        use std::sync::atomic::{AtomicBool, Ordering};
         static LOGGED_SWEEP_HOLD: AtomicBool = AtomicBool::new(false);
         if !LOGGED_SWEEP_HOLD.swap(true, Ordering::SeqCst) {
             tracing::info!("[config] settings were reset; post-save retention sweeps skipped");
         }
     } else {
-        static SWEEP_GEN: AtomicU64 = AtomicU64::new(0);
-        let my_gen = SWEEP_GEN.fetch_add(1, Ordering::SeqCst) + 1;
-        let app = app.clone();
-        let config = config.clone();
-        std::thread::spawn(move || {
-            static SWEEP: std::sync::Mutex<()> = std::sync::Mutex::new(());
-            let _g = SWEEP.lock().unwrap_or_else(|e| e.into_inner());
-            if SWEEP_GEN.load(Ordering::SeqCst) != my_gen {
-                return;
-            }
-            // History first: its records are local and its swept event lets the History mirror
-            // reload before either sweep walks a (possibly slow) audio base. Order-free otherwise.
-            crate::store::transcripts::apply_transcripts_retention(&app, &config);
-            apply_recordings_retention(&app, &config);
-        });
+        static SWEEP_NEXT: crate::NewestSlot<(AppHandle, Config)> =
+            std::sync::Mutex::new((None, false));
+        crate::drain_newest(
+            &SWEEP_NEXT,
+            (app.clone(), config.clone()),
+            |(app, config)| {
+                // History first: its records are local and its swept event lets the History
+                // mirror reload before either sweep walks a (possibly slow) audio base.
+                // Order-free otherwise.
+                crate::store::transcripts::apply_transcripts_retention(&app, &config);
+                apply_recordings_retention(&app, &config);
+            },
+        );
     }
     // Session-file move / prune (written saves only; the level went with the live switches
-    // above) — so Settings changes apply live, not at the next restart. Off the main thread too:
-    // a custom log folder can sit on a stalled mount (network share, sleeping disk), and every
-    // autosave would otherwise freeze the app on its create_dir/read_dir. One worker at a time
-    // drains a single newest-wins slot: saves made while it is stuck on a dead share replace the
-    // pending one instead of parking a thread each, and the newest is applied as soon as the
-    // stuck call returns (a skipped older one is harmless: the newest compares its folder
-    // against the live file again). Its own worker, so a slow audio sweep does not hold up the
-    // log move.
-    static LOG_NEXT: std::sync::Mutex<(Option<(Config, bool)>, bool)> =
-        std::sync::Mutex::new((None, false));
-    let spawn = {
-        let mut slot = LOG_NEXT.lock().unwrap_or_else(|e| e.into_inner());
-        slot.0 = Some((config, reset));
-        !std::mem::replace(&mut slot.1, true)
-    };
-    if spawn {
-        std::thread::spawn(move || loop {
-            let (config, held) = {
-                let mut slot = LOG_NEXT.lock().unwrap_or_else(|e| e.into_inner());
-                match slot.0.take() {
-                    Some(next) => next,
-                    None => {
-                        slot.1 = false;
-                        return;
-                    }
-                }
-            };
-            // A panic must not leave the slot marked as drained by a worker that is gone.
-            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                crate::logging::apply_log_settings(&app, &config, held)
-            }));
-        });
-    }
+    // above) — so Settings changes apply live, not at the next restart. Queued off the main
+    // thread like the launch open; see `queue_log_settings`.
+    crate::logging::queue_log_settings(&app, config, reset);
     Ok(())
 }
 
 /// Enforce the dictation clock on saved recordings. Called on startup (synchronously) and after
 /// every config save, so shortening the window takes effect immediately rather than at the next
-/// restart. The post-save sweep runs off the main thread, serialized by a mutex in `save_config`.
+/// restart. The post-save sweep runs off the main thread, on `save_config`'s newest-wins worker.
 ///
 /// The window is `effective_dictation_days` — the same value Settings' "Delete dictations
 /// after" row shows and the record sweep (store/transcripts.rs) uses, so a dictation's text and
@@ -178,8 +148,9 @@ pub fn apply_recordings_retention(app: &AppHandle, config: &Config) {
     }
 }
 
-/// Keep the OS "launch at login" entry in sync with the saved preference. Called
-/// on startup and whenever the config is saved.
+/// Keep the OS "launch at login" entry in sync with the saved preference. Called on startup
+/// (always, so the entry's args are refreshed once per launch) and on a save that changes the
+/// preference (`sync_autostart_if_changed`).
 ///
 /// A refused write (read-only `~/.config/autostart`, a Run-key write blocked by policy) is
 /// logged, once per distinct (preference, error) so the debounced autosave cannot flood the
@@ -188,6 +159,8 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
     use tauri_plugin_autostart::ManagerExt;
     static LAST_AUTOSTART_ERR: std::sync::Mutex<Option<(bool, String)>> =
         std::sync::Mutex::new(None);
+    // Cleared first, so a sync that bails out below is never remembered as done.
+    *LAST_SYNCED.lock().unwrap_or_else(|e| e.into_inner()) = None;
     let mgr = app.autolaunch();
     let result = if enabled {
         mgr.enable()
@@ -206,7 +179,10 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
         return;
     };
     match result {
-        Ok(()) => *last = None,
+        Ok(()) => {
+            *last = None;
+            *LAST_SYNCED.lock().unwrap_or_else(|e| e.into_inner()) = Some(enabled);
+        }
         Err(e) => {
             let key = (enabled, e.to_string());
             if last.as_ref() != Some(&key) {
@@ -219,6 +195,19 @@ pub fn sync_autostart(app: &AppHandle, enabled: bool) {
             }
         }
     }
+}
+
+/// The preference the OS entry was last written for, `None` after a refused write — so a save
+/// that leaves it unchanged skips the OS work (a non-atomic `.desktop` rewrite on Linux, registry
+/// calls on Windows), while a refused one retries on the next save.
+static LAST_SYNCED: std::sync::Mutex<Option<bool>> = std::sync::Mutex::new(None);
+
+/// `sync_autostart`, unless the entry was already written for `enabled` this session.
+fn sync_autostart_if_changed(app: &AppHandle, enabled: bool) {
+    if *LAST_SYNCED.lock().unwrap_or_else(|e| e.into_inner()) == Some(enabled) {
+        return;
+    }
+    sync_autostart(app, enabled);
 }
 
 /// Serializes keyring mutations in the order the commands queue on it. tokio's Mutex is fair

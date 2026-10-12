@@ -114,6 +114,38 @@ pub(crate) fn open_external(app: &tauri::AppHandle, target: &str) -> Result<(), 
         .map_err(|e| e.to_string())
 }
 
+/// The pending value of a `drain_newest` queue, and whether a worker is draining it.
+pub(crate) type NewestSlot<T> = std::sync::Mutex<(Option<T>, bool)>;
+
+/// A newest-wins background queue for side effects that can stall on a dead mount (a network
+/// share, a sleeping disk) — the log folder move, the retention sweeps. `value` replaces whatever
+/// is still pending in `slot`; one worker at a time drains it, so calls made while a run is stuck
+/// replace the pending one instead of parking a thread each, runs never overlap, and the newest
+/// value is the last one run.
+pub(crate) fn drain_newest<T: Send + 'static>(slot: &'static NewestSlot<T>, value: T, run: fn(T)) {
+    let spawn = {
+        let mut s = slot.lock().unwrap_or_else(|e| e.into_inner());
+        s.0 = Some(value);
+        !std::mem::replace(&mut s.1, true)
+    };
+    if spawn {
+        std::thread::spawn(move || loop {
+            let next = {
+                let mut s = slot.lock().unwrap_or_else(|e| e.into_inner());
+                match s.0.take() {
+                    Some(next) => next,
+                    None => {
+                        s.1 = false;
+                        return;
+                    }
+                }
+            };
+            // A panic must not leave the slot marked as drained by a worker that is gone.
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(next)));
+        });
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn xdg_open_command(target: &str, strip: &[&str]) -> std::process::Command {
     use std::os::unix::process::CommandExt;
@@ -136,8 +168,8 @@ fn xdg_open_command(target: &str, strip: &[&str]) -> std::process::Command {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Ring + file writer exist BEFORE the subscriber so no startup line is
-    // lost; the session file itself opens in .setup() (once paths/config are
-    // known) with the ring replayed into it. See logging.rs.
+    // lost; the session file itself opens once .setup() has the paths/config (on a
+    // worker it queues) with the ring replayed into it. See logging.rs.
     let log_ring = logging::LogRing::default();
     let log_writer = logging::SwapWriter::default();
     logging::init(log_ring.clone(), log_writer.clone());
@@ -257,8 +289,10 @@ pub fn run() {
             );
             // Open this session's log file (ring replayed in, so it's complete from launch),
             // prune old ones (not while `retention_held`), and start the batched log stream for
-            // the Logs screen.
-            logging::apply_log_settings(app.handle(), &cfg, retention_held);
+            // the Logs screen. The file opens off the main thread, as in save_config: a custom
+            // log folder can sit on a stalled mount, and launch must not wait on it — the ring
+            // keeps every line meanwhile for the replay.
+            logging::queue_log_settings(app.handle(), cfg.clone(), retention_held);
             logging::spawn_emit_pump(app.handle().clone());
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
@@ -481,5 +515,66 @@ mod tests {
             cmd.get_args().collect::<Vec<_>>(),
             [std::ffi::OsStr::new("https://example.org")]
         );
+    }
+}
+
+#[cfg(test)]
+mod drain_newest_tests {
+    use super::{drain_newest, NewestSlot};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let start = Instant::now();
+        while !done() {
+            assert!(
+                start.elapsed() < Duration::from_secs(5),
+                "timed out: {what}"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    #[test]
+    fn a_stuck_run_keeps_only_the_newest_value_and_runs_never_overlap() {
+        static SLOT: NewestSlot<u32> = Mutex::new((None, false));
+        static GATE: Mutex<()> = Mutex::new(());
+        static RAN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+        static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+        fn run(v: u32) {
+            assert_eq!(ACTIVE.fetch_add(1, Ordering::SeqCst), 0, "two runs at once");
+            let _stuck = GATE.lock().unwrap();
+            RAN.lock().unwrap().push(v);
+            ACTIVE.fetch_sub(1, Ordering::SeqCst);
+        }
+        let stuck = GATE.lock().unwrap();
+        drain_newest(&SLOT, 1, run);
+        wait_until("worker took 1", || SLOT.lock().unwrap().0.is_none());
+        // Queued while 1 is stuck: 3 replaces 2.
+        drain_newest(&SLOT, 2, run);
+        drain_newest(&SLOT, 3, run);
+        drop(stuck);
+        wait_until("worker drained", || !SLOT.lock().unwrap().1);
+        assert_eq!(*RAN.lock().unwrap(), [1, 3]);
+    }
+
+    #[test]
+    fn a_panicking_run_does_not_strand_the_queue() {
+        static SLOT: NewestSlot<u32> = Mutex::new((None, false));
+        static RAN: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+        fn run(v: u32) {
+            RAN.lock().unwrap().push(v);
+            if v == 1 {
+                panic!("run 1 fails");
+            }
+        }
+        drain_newest(&SLOT, 1, run);
+        wait_until("worker drained", || !SLOT.lock().unwrap().1);
+        drain_newest(&SLOT, 2, run);
+        wait_until("worker drained", || {
+            !SLOT.lock().unwrap().1 && RAN.lock().unwrap().len() == 2
+        });
+        assert_eq!(*RAN.lock().unwrap(), [1, 2]);
     }
 }
