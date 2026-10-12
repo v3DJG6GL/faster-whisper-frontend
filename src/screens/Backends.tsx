@@ -267,9 +267,18 @@ function Editor({
     const testedUrl = effUrl;
     const testedKey = key;
     // Taken BEFORE the await, as the list card's handleTest does: a pull that rotates the stored
-    // key mid-test makes a blank-key verdict describe the old caller.
+    // key mid-test makes a blank-key verdict describe the old caller. The full generation (not
+    // runGen) rides on the result: `resultLive` and doSave compare it once the key field is blanked.
     const gen = credentialGeneration(b.id);
     const run = { url: testedUrl, key: testedKey, gen: runGen };
+    // Whether this run's answer still describes the target on screen. A blank-key run also needs
+    // the stored key unrotated: once a pull rotates it, a new-caller run may already be out, and
+    // this old-caller verdict landing after it must not replace its answer with one `resultLive`
+    // hides (nor bump testGen). A typed key is gen 0 on both sides.
+    const stillLive = () =>
+      liveTarget.current.url === testedUrl &&
+      liveTarget.current.key === testedKey &&
+      requestCredentialGen(b.id, testedKey) === runGen;
     inFlightTests.current.add(run);
     setTestingTargets((ts) => [...ts, run]);
     try {
@@ -284,14 +293,7 @@ function Editor({
       // one persisted. Writing it here cached a DRAFT's verdict under the backend id: edit X, retype
       // the URL, Test, Cancel → `connections[X]` held the other host's answer while X still routed
       // to the old one (and a tested-then-cancelled connect-first draft left an orphan entry).
-      // A blank-key run also needs the stored key unrotated: once a pull rotates it, a new-caller
-      // run may already be out, and this old-caller verdict landing after it must not replace its
-      // answer with one `resultLive` hides (nor bump testGen).
-      if (
-        liveTarget.current.url === testedUrl &&
-        liveTarget.current.key === testedKey &&
-        (testedKey || credentialGeneration(b.id) === gen)
-      ) {
+      if (stillLive()) {
         resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult(info);
         // An unknown → full test bumps the hooks' rise counter in the same render: one refetch.
@@ -299,7 +301,8 @@ function Editor({
         // The one case the store may take it now: the tested target is exactly the persisted
         // one (stored keyring key, same effective address, backend already saved), so the
         // verdict describes what the list card routes to — a Test-then-Cancel on an unedited
-        // backend still refreshes "server came back / went away".
+        // backend still refreshes "server came back / went away". The stored key is unrotated:
+        // stillLive() above checked it, and nothing between here and there awaits.
         const live = useApp.getState();
         const stored = live.backends.find((x) => x.id === b.id);
         if (
@@ -307,8 +310,7 @@ function Editor({
           !testedKey &&
           // Both sides in stored form first: a lenient `http:/host` override normalises to "" raw,
           // while `effectiveServerUrl` resolves it to `http://host`, so the commit never happened.
-          typedServerUrl(testedUrl) === typedServerUrl(effectiveServerUrl(stored, live.settings)) &&
-          credentialGeneration(b.id) === gen
+          typedServerUrl(testedUrl) === typedServerUrl(effectiveServerUrl(stored, live.settings))
         ) {
           setConnection(b.id, info);
         }
@@ -316,11 +318,7 @@ function Editor({
     } catch (e) {
       // IPC reject (same guard the list card's handleTest carries) — surface the
       // failure so the editor doesn't just silently stop.
-      if (
-        liveTarget.current.url === testedUrl &&
-        liveTarget.current.key === testedKey &&
-        (testedKey || credentialGeneration(b.id) === gen)
-      ) {
+      if (stillLive()) {
         resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
