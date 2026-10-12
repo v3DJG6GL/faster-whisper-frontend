@@ -32,3 +32,21 @@ describe("the Statistics year document on a failed fetch", () => {
     }
   });
 });
+
+describe("forgetting a backend's caches", () => {
+  it("drops the Statistics documents that name it and keeps every other backend's", () => {
+    const good = { today: {}, total: {}, series: [] } as never;
+    const viewA = { sig: sig("a", "http://a", "all"), stats: good };
+    const yearB = { sig: sig("b", "http://b", "all"), stats: good };
+    useApp.setState({ usageView: viewA, usageYear: yearB });
+    useApp.getState().forgetBackendCaches("b");
+    expect(useApp.getState().usageYear).toBeNull();
+    expect(useApp.getState().usageView).toBe(viewA);
+    const viewB = { sig: sig("b", "http://b", "dictate"), stats: good };
+    const yearA = { sig: sig("a", "http://a", "dictate"), stats: good };
+    useApp.setState({ usageView: viewB, usageYear: yearA });
+    useApp.getState().forgetBackendCaches("b");
+    expect(useApp.getState().usageView).toBeNull();
+    expect(useApp.getState().usageYear).toBe(yearA);
+  });
+});

@@ -161,6 +161,21 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   if (stats !== null) yearGen++;
 }
 
+/** Coming back from 1 year: the page's own 365-day document — kept current by the poll — answers
+ *  the calendar's year query exactly (same signature), so it becomes the year document without a
+ *  fetch. False when it cannot stand in (another stage filter, a failed or missing view). */
+function seedYearFromView(s = useApp.getState()): boolean {
+  const backend = viewStatsBackend(s);
+  const q = yearPageQuery(s.usageViewQuery);
+  if (!backend || !q) return false;
+  const sig = viewSignature(backend, effectiveServerUrl(backend, s.settings), q, viewerTimeZone());
+  const view = s.usageView;
+  if (view?.sig !== sig || !view.stats || view.failed) return false;
+  s.setUsageYear(sig, view.stats);
+  yearGen++;
+  return true;
+}
+
 /** Fetch the Statistics page's document for the current query against the viewed
  *  backend. A response for a query that is no longer current is dropped. `reopened`: the
  *  page just mounted, so a kept same-query document may be days old — a miss marks it
@@ -356,11 +371,14 @@ export function initUsageController(): void {
           viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id))
     ) {
       void refreshView().catch(() => {});
-      // On the 1 year / All presets nothing kept the year document current, so coming back
-      // from one refetches it; a sub-year → sub-year change still reuses the polled year.
-      // Like a reopen, a miss then marks the kept year failed rather than current.
+      // On the 1 year / All presets nothing kept the year document current. Coming back from
+      // 1 year, the polled 365-day view is that year (seeded, no fetch); otherwise — the All
+      // preset, a stage filter changed alongside, a failed or missing view — it is refetched,
+      // and like a reopen a miss marks the kept year failed rather than current. A sub-year →
+      // sub-year change still reuses the polled year.
       const fromYear = !yearPageQuery(prev.usageViewQuery);
-      void refreshYear(fromYear, fromYear).catch(() => {});
+      if (!(fromYear && prev.usageViewQuery.range === "365" && seedYearFromView(state)))
+        void refreshYear(fromYear, fromYear).catch(() => {});
     }
   });
 }

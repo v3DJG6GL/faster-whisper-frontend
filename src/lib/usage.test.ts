@@ -324,32 +324,43 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
   });
-  it("refetches the year coming back from 1 year, and reuses it between shorter ranges", async () => {
+  it("seeds the year from the 1 year view coming back from it, refetches it from All, and reuses it between shorter ranges", async () => {
+    const ok = getUsageStats.getMockImplementation()!;
+    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
     const close = openStatisticsPage();
-    await settle();
-    useApp.setState({ usageViewQuery: { range: "365", with: [] } });
-    await settle();
-    await vi.advanceTimersByTimeAsync(30_000); // a poll on 1 year: the year document is left alone
-    await settle();
-    getUsageStats.mockClear();
-    useApp.setState({ usageViewQuery: { range: "90", with: [] } });
-    await settle();
-    expect(calls().page).toBe(2); // the view + the year it no longer trusts
-    getUsageStats.mockClear();
-    useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
-    await settle();
-    expect(calls().page).toBe(1); // the view only: the year was just fetched
-    // Back from 1 year onto a miss: the kept year is marked failed, not shown as current.
-    useApp.setState({ usageViewQuery: { range: "365", with: [] } });
-    await settle();
-    getUsageStats.mockResolvedValue(null as never);
-    useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
-    await settle();
-    expect(useApp.getState().usageYear?.failed).toBe(true);
-    getUsageStats.mockReset();
-    getUsageStats.mockImplementation(async () => ({ today: {}, total: {}, series: [] }));
-    close();
-    useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+    try {
+      await settle();
+      // From here the 365-day document carries data the year fetched on open does not.
+      getUsageStats.mockImplementation(async (a) =>
+        a.query.days === 365 ? ({ today: {}, total: { words: 7 }, series: [] } as never) : ok(a),
+      );
+      useApp.setState({ usageViewQuery: { range: "365", with: [] } });
+      await settle();
+      await vi.advanceTimersByTimeAsync(30_000); // a poll on 1 year keeps the view current
+      await settle();
+      const view = useApp.getState().usageView!;
+      expect(view.stats && !view.failed).toBeTruthy();
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      await settle();
+      expect(calls().page).toBe(1); // the view only: the polled 1 year view is the year
+      expect(useApp.getState().usageYear).toEqual({ sig: view.sig, stats: view.stats });
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
+      await settle();
+      expect(calls().page).toBe(1); // the view only: the year is current
+      // Back from All onto a miss: the kept year is refetched and marked failed, not shown as current.
+      useApp.setState({ usageViewQuery: { range: "all", with: [] } });
+      await settle();
+      getUsageStats.mockImplementation(async (a) => (page(a) ? (null as never) : ok(a)));
+      useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
+      await settle();
+      expect(useApp.getState().usageYear).toEqual({ sig: view.sig, stats: view.stats, failed: true });
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+    }
   });
 });
 

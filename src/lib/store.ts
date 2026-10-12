@@ -630,6 +630,19 @@ function viewSource(sig: string): string | null {
   }
 }
 
+/** Whether a usage-view signature (lib/usage.ts viewSignature) names backend `id`. */
+function sigNames(sig: string, id: string): boolean {
+  try {
+    const a: unknown = JSON.parse(sig);
+    return Array.isArray(a) && a[0] === id;
+  } catch {
+    return false;
+  }
+}
+
+// The signature carries no caller identity, so a key rotation would otherwise let the old
+// caller's Statistics documents read as fresh — drop the ones naming this backend too
+// (others keep their reference, so nothing re-renders for them).
 function evictBackendCaches(s: AppState, id: string) {
   const connections = { ...s.connections };
   delete connections[id];
@@ -637,7 +650,9 @@ function evictBackendCaches(s: AppState, id: string) {
   delete usage[id];
   const caps = { ...s.caps };
   delete caps[id];
-  return { connections, usage, caps };
+  const usageView = s.usageView && sigNames(s.usageView.sig, id) ? null : s.usageView;
+  const usageYear = s.usageYear && sigNames(s.usageYear.sig, id) ? null : s.usageYear;
+  return { connections, usage, caps, usageView, usageYear };
 }
 
 export const useApp = create<AppState>((set) => ({
