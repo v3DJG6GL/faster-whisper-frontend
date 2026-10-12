@@ -115,14 +115,17 @@ pub enum FetchWait {
     NoFetch,
 }
 
-/// Who asked us to render. `SelfApp` is our own process (e.g. `begin_injection`'s snapshot read).
+/// Who asked us to render. `SelfApp` is our own process opening the clipboard WITH a window; our
+/// own arboard reads (`begin_injection`'s snapshot, paste's prior-text read, the quick-add grab)
+/// open it windowless and therefore arrive as `Unknown`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Requester {
     SelfApp,
     /// The window our chord went to, or any known remote-desktop client.
     Target,
     Other,
-    /// `GetOpenClipboardWindow` was NULL — a reader that opened the clipboard without a window.
+    /// `GetOpenClipboardWindow` was NULL: a reader that opened the clipboard without a window,
+    /// which includes every arboard read of our own.
     Unknown,
 }
 
@@ -627,11 +630,13 @@ mod imp {
     }
 
     /// The process that currently has the clipboard open (the one asking us to render, or the
-    /// one that just emptied it), as (pid, exe). (0, "unknown") when it opened it windowless.
+    /// one that just emptied it), as (pid, exe). (0, "windowless (may be our own)") when it
+    /// opened it windowless: arboard does, so that includes our own clipboard reads and writes,
+    /// and the diag line must not pin them on a foreign process.
     fn clipboard_opener() -> (u32, String) {
         let w = unsafe { GetOpenClipboardWindow() };
         if w.is_null() {
-            return (0, "unknown".into());
+            return (0, "windowless (may be our own)".into());
         }
         let mut pid = 0u32;
         unsafe { GetWindowThreadProcessId(w, &mut pid) };

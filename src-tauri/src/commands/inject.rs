@@ -24,15 +24,19 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
     // flight is the other "keep prior snapshot" cause: it leaves the user's SELECTION on the
     // clipboard until it puts their text back, so the read takes the clipboard-job lock
     // (`inject::CLIP_JOB`) try-only — never waiting, so the dictation chain is not held up — and
-    // skips when the grab holds it. The guard lives inside the closure: taken and dropped on the
-    // blocking thread that does the read. Windows only: no other platform has the grab, and a
-    // Linux read stuck past its cap would otherwise hold up the next paste for nothing.
-    match read_selection_bounded(|| {
+    // skips when another clipboard job (the grab or a paste) holds it. The guard lives inside the
+    // closure: taken and dropped on the blocking thread that does the read. Windows only: no other
+    // platform has the grab, and a Linux read stuck past its cap would otherwise hold up the next
+    // paste for nothing.
+    // Set when the read was skipped for the lock, so the None arm logs that one cause instead of
+    // claiming a read that never ran came back empty.
+    let lock_held = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    #[cfg(windows)]
+    let held = lock_held.clone();
+    match read_selection_bounded(move || {
         #[cfg(windows)]
         let Some(_clip_job) = crate::inject::try_clip_job() else {
-            tracing::info!(
-                "[clip] begin_injection: a quick-add copy grab holds the clipboard — keeping prior snapshot"
-            );
+            held.store(true, std::sync::atomic::Ordering::Relaxed);
             return None;
         };
         arboard::Clipboard::new()
@@ -60,8 +64,13 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
                 *g = Some(text);
             }
         }
+        None if lock_held.load(std::sync::atomic::Ordering::Relaxed) => tracing::info!(
+            "[clip] begin_injection: the clipboard-job lock is held (a quick-add copy grab or a \
+             paste in flight) — keeping prior snapshot"
+        ),
         None => tracing::info!(
-            "[clip] begin_injection: clipboard read empty/timeout — keeping prior snapshot"
+            "[clip] begin_injection: no clipboard text read (empty, timed out, or a previous read \
+             still running) — keeping prior snapshot"
         ),
     }
     Ok(())

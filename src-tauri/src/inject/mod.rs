@@ -1181,12 +1181,25 @@ fn paste(
         injection_cancelled(epoch) && !cancel_wants_recovery(epoch)
     }) else {
         if injection_cancelled(epoch) {
-            // Answered as the cancel check below answers (see there).
-            tracing::info!("[clip] paste: cancelled while waiting for a quick-add grab — skipping");
+            // Answered as the cancel check below answers (see there). An error abort only gets
+            // here once the whole wait ran out, so its line names the wait and the recovery.
+            if cancel_wants_recovery(epoch) {
+                tracing::info!(
+                    "[clip] paste: error abort — the clipboard-job lock (a quick-add copy grab or \
+                     a stuck snapshot read) was still held after {}s; nothing written, the \
+                     transcript is recovered",
+                    CLIP_JOB_WAIT.as_secs()
+                );
+            } else {
+                tracing::info!(
+                    "[clip] paste: cancelled while waiting for the clipboard-job lock — skipping"
+                );
+            }
             return Ok(Landed::Yes);
         }
         tracing::info!(
-            "[clip] paste: a quick-add copy grab is still in flight after {}s — nothing written",
+            "[clip] paste: the clipboard-job lock (a quick-add copy grab or a stuck snapshot \
+             read) is still held after {}s — nothing written",
             CLIP_JOB_WAIT.as_secs()
         );
         return Ok(Landed::NothingWritten);

@@ -704,10 +704,14 @@ pub(crate) mod win_seed {
         // chord, the wait for the copy and every `put_back`. A live phrase released by the same
         // modifier gate as this grab would otherwise write its transcript mid-grab: that write
         // fakes the copy's sequence bump, and our put_back lands during the paste's settle so its
-        // Ctrl+V pastes the user's old clipboard. Never waited for: a paste is in flight, so skip
-        // the (optional) seed. Nothing has been injected yet; `ready` signals on drop.
+        // Ctrl+V pastes the user's old clipboard. Never waited for: a paste or a dictation's
+        // clipboard snapshot read (`begin_injection`) holds it, so skip the (optional) seed.
+        // Nothing has been injected yet; `ready` signals on drop.
         let Some(_clip_job) = crate::inject::try_clip_job() else {
-            tracing::info!("[quickadd-seed] a paste is in flight; skipping the copy grab");
+            tracing::info!(
+                "[quickadd-seed] a paste or a dictation's clipboard snapshot read holds the \
+                 clipboard; skipping the copy grab"
+            );
             return None;
         };
         let mut cb = arboard::Clipboard::new().ok()?;
