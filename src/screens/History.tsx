@@ -509,7 +509,8 @@ export default function History() {
   };
 
   const quickExport = async (rec: TranscriptRecord) => {
-    setExportError(null);
+    // Only this row's own note: another row's failure stays until that row is retried.
+    setExportError((e) => (e?.id === rec.id ? null : e));
     const t = settings.transcribe ?? {};
     const format = (t.exportFormat ?? "srt") as ExportFormat;
     const ext = EXPORT_EXTENSIONS[format];
