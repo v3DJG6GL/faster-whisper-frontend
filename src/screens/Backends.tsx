@@ -32,7 +32,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveLanguage, eff
 import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { credentialGeneration, forgetCaps, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
+import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
@@ -348,7 +348,7 @@ function Editor({
     // Before onSave: a NEW key on a backend that already exists is a rotation the store can't see.
     const existed = useApp.getState().backends.some((x) => x.id === cur.id);
     // A blank-key verdict was earned with the STORED key: still valid only if no sync pull has
-    // rotated that key since (taken before the forgetCaps below bumps the generation itself). A
+    // rotated that key since (taken before the forgetCredential below bumps the generation itself). A
     // typed-key verdict is exempt — it was tested with the key just saved.
     const genOk = !!key || resultTarget.current.gen === credentialGeneration(cur.id);
     // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
@@ -369,10 +369,7 @@ function Editor({
     // hasApiKey true, so the old caller's connection, caps and usage (/v1/me is per-caller)
     // would stand for the session. Drop them as upsertBackend does — a verdict tested with the
     // new key is re-installed below (and forces a caps refresh); otherwise readers re-probe.
-    if (key && existed) {
-      forgetCaps(cur.id);
-      useApp.getState().forgetBackendCaches(cur.id);
-    }
+    if (key && existed) forgetCredential(cur.id);
     // Now that the target is persisted (upsertBackend's eviction has run inside onSave, and a
     // typed key reached the keyring above), cache the in-editor verdict — only if it still
     // describes the address + key that were just saved.
@@ -808,17 +805,28 @@ function ConnectStep({
 }) {
   const [url, setUrl] = useState("");
   const [key, setKey] = useState("");
-  const [busy, setBusy] = useState(false);
+  // The targets of the tests in flight (mirrors the Editor's testingTarget): only those targets
+  // show the buttons busy, so correcting a mistyped address mid-test re-enables Test, Cancel and
+  // the manual link at once instead of after the old request times out. Every run is kept, not
+  // just the latest: typing an older, still-running target back must show it busy again, or
+  // Cancel would unmount with that run free to pass its liveTarget guard. The ref is the
+  // synchronous twin: two Enter key-repeats in one render must not start two runs.
+  const [testing, setTesting] = useState<readonly { url: string; key: string }[]>([]);
+  const inFlight = useRef(new Set<{ url: string; key: string }>());
+  const busy = testing.some((t) => t.url === url && t.key === key);
   const [error, setError] = useState<string | null>(null);
   // Fields stay editable during a test, so only act on a result whose target
   // still matches what's typed (mirrors the editor's liveTarget guard) — a slow
-  // test must not decide the branch with a stale server's answer.
+  // test must not decide the branch with a stale server's answer. The buttons are busy only for
+  // a tested target, and Cancel/manual are enabled only while the typed target differs from every
+  // run in flight, so after an unmount this stays frozen at a differing value and each stale run
+  // stops here.
   const liveTarget = useRef({ url: "", key: "" });
   liveTarget.current = { url, key };
   const insecure = url.trim() ? insecureUrlWarning(url) : null;
 
   const testAndContinue = async () => {
-    if (busy) return;
+    for (const t of inFlight.current) if (t.url === url && t.key === key) return;
     const typedUrl = url;
     const typedKey = key;
     // Lenient `http:/host` is canonicalised as the editor does (the warning above already judges it so).
@@ -840,7 +848,9 @@ function ConnectStep({
       );
       return;
     }
-    setBusy(true);
+    const run = { url: typedUrl, key: typedKey };
+    inFlight.current.add(run);
+    setTesting((ts) => [...ts, run]);
     setError(null);
     try {
       const info = await testConnection({ serverUrl, apiKey: typedKey || undefined });
@@ -869,7 +879,8 @@ function ConnectStep({
         setError(String(e));
       }
     } finally {
-      setBusy(false);
+      inFlight.current.delete(run);
+      setTesting((ts) => ts.filter((t) => t !== run));
     }
   };
 
@@ -976,10 +987,7 @@ function RestoreOffer({
         await setBackendKey(match.id, keyTyped);
         // Drop them as Editor.doSave does; the verdict tested with this key is re-installed
         // below (forcing a caps refresh), otherwise readers re-probe.
-        if (rotated) {
-          forgetCaps(match.id);
-          useApp.getState().forgetBackendCaches(match.id);
-        }
+        if (rotated) forgetCredential(match.id);
         if (!match.hasApiKey) {
           const withKey = { ...match, hasApiKey: true };
           s.upsertBackend(withKey);

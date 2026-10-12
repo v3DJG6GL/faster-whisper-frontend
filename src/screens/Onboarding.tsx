@@ -17,8 +17,8 @@ import {
   deleteBackendKey, evdevStatus, getPipelineRules, pickAndImportSettings,
   setBackendKey, syncPull, testConnection,
 } from "@/lib/api";
-import { insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
-import { forgetCaps } from "@/lib/capabilities";
+import { effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { forgetCredential } from "@/lib/capabilities";
 import { QUICK_ADD_PEER_ID, withQuickAddPeer } from "@/lib/hotkeyConflicts";
 import {
   applyBlob, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob, restorableCategories,
@@ -220,24 +220,29 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // Write the API key the user proved at the gate to the matched backend's keyring
       // entry — `applyBlob` may have replaced the backends list, orphaning the key that
       // was written under `gateBackend.id`. Mirrors Backends.RestoreOffer.finishRestore, the
-      // flag lift and the rotation eviction included: a restored backend whose peer synced no
-      // secret comes back keyless (hasApiKey false), and sync bound to it showed the Sync tab's
-      // "has no API key" warning over a key that was saved and works. A key written over an
-      // EXISTING keyed backend is a rotation upsertBackend can't see, so the old caller's
-      // caps/usage/connection are dropped. A setBackendKey throw still reaches the catch below
+      // flag lift, the rotation eviction and the verdict re-install included: a restored backend
+      // whose peer synced no secret comes back keyless (hasApiKey false), and sync bound to it
+      // showed the Sync tab's "has no API key" warning over a key that was saved and works. A key
+      // written over an EXISTING keyed backend is a rotation upsertBackend can't see, so the old
+      // caller's caps/usage/connection are dropped. The gate's own backend (kept by a copy with
+      // no backends section) already holds this very key from the gate: no rewrite (a keyring
+      // prompt for nothing) and no rotation. A setBackendKey throw still reaches the catch below
       // (sync not bound); the flag lifts only after the write succeeded.
       if (match && key) {
-        const rotated = !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
-        await setBackendKey(match.id, key);
-        if (rotated) {
-          forgetCaps(match.id);
-          st.getState().forgetBackendCaches(match.id);
-        }
+        const isGate = match.id === gateBackend.current?.id;
+        const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
+        if (!isGate) await setBackendKey(match.id, key);
+        if (rotated) forgetCredential(match.id);
         if (!match.hasApiKey) {
           const withKey = { ...match, hasApiKey: true };
           st.getState().upsertBackend(withKey);
           match = withKey;
         }
+      }
+      // Re-install the verdict tested at the gate, as finishRestore does — only when the backend
+      // really routes to the tested address (a restored per-device URL override may not).
+      if (match && info && normalizeUrl(effectiveServerUrl(match, st.getState().settings)) === gateUrl) {
+        st.getState().setConnection(match.id, info);
       }
       // Once the key sits under the bound backend, drop the gate's own entry if the restore left
       // no backend referencing it — otherwise a second copy of the key lingers in the keyring.

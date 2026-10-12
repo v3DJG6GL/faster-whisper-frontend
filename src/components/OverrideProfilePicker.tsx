@@ -57,8 +57,10 @@ export function OverrideProfilePicker({
   // caller, so they are refetched as the new one (as in useDecodeDefaults).
   const gen = requestCredentialGen(backendId, apiKey);
   // The target the shown names were fetched for: a refetch of the SAME target (a `refresh`
-  // bump) keeps them until the answer lands — blanking them made a listed stored value flash
-  // into the "Custom name" text field for the round trip.
+  // bump, or a first test reclassifying its kind "unknown" → "full") keeps them until the answer
+  // lands — blanking them made a listed stored value flash into the "Custom name" text field for
+  // the round trip. The kind is not part of the target (the listing does not take it); a kind
+  // change still refetches through the deps.
   const fetchedFor = useRef<string | null>(null);
 
   useEffect(() => {
@@ -66,7 +68,7 @@ export function OverrideProfilePicker({
     let cancelled = false;
     // Clear the prior connection's names up front on a target switch so switching backends
     // never shows a stale dropdown while the refetch is in flight (or if it fails/returns empty).
-    const key = JSON.stringify([serverUrl, backendId, apiKey, serverKind, gen]);
+    const key = JSON.stringify([serverUrl, backendId, apiKey, gen]);
     if (fetchedFor.current !== key) setNames([]);
     fetchedFor.current = key;
     void listOverrideProfiles({ serverUrl, backendId, apiKey })
