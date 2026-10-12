@@ -2225,34 +2225,43 @@ async function dropSnapshotChunks(from: number, to: number): Promise<void> {
  *  in the same tick, like `dropSnapshotChunks`: Rust runs keyring writes one at a time in arrival
  *  order, so they all queue ahead of a `clearSnapshotSecrets` delete a reset issues afterwards.
  *  Awaiting each before issuing the next let that delete overtake the later chunks, which then
- *  landed after it with no recorded count left to ever remove them. A failed (or timed out) write
- *  deletes every chunk either stash may hold — the drop is issued after all the writes, so it
+ *  landed after it with no recorded count left to ever remove them. The outcome settles on the
+ *  first failed (or timed out) write, or once every write landed: waiting out every bound kept a
+ *  sync parked for 10 s per chunk behind a locked wallet, long after the first `false` decided it.
+ *  A failed write deletes every chunk either stash may hold — the drop is issued after all the writes, so it
  *  queues behind them: a half-written stash, or the OLDER complete one left paired with the new
  *  ids, would otherwise be read back on the next launch — the first as garbage, the second as
  *  stale keys restored into the merge base. With nothing there, the next launch reads the stash
  *  as missing and latches `snapshotSecretsUnavailable`. */
-async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promise<boolean> {
-  const results = await Promise.all(
-    chunks.map((c, i) =>
-      withTimeout(
-        setBackendKey(snapshotChunkAccount(i), c).then(
-          () => true,
-          (e) => {
-            console.error("snapshot keyring write failed", e);
-            return false;
-          },
-        ),
-        // Chunk i queues behind chunks 0..i-1 on that lock (a wallet-unlock prompt included), so
-        // its bound grows with its place: the 10 s each it had when they ran one after another.
-        10_000 * (i + 1),
-        false,
+async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promise<void> {
+  const writes = chunks.map((c, i) =>
+    withTimeout(
+      setBackendKey(snapshotChunkAccount(i), c).then(
+        () => true,
+        (e) => {
+          console.error("snapshot keyring write failed", e);
+          return false;
+        },
       ),
+      // Chunk i queues behind chunks 0..i-1 on that lock (a wallet-unlock prompt included), so
+      // its bound grows with its place: the 10 s each it had when they ran one after another.
+      10_000 * (i + 1),
+      false,
     ),
   );
-  const ok = results.every(Boolean);
-  // Success: only the tail an earlier, larger stash left behind. Failure: everything.
+  const ok = await new Promise<boolean>((resolve) => {
+    let left = writes.length;
+    if (left === 0) resolve(true);
+    for (const w of writes) {
+      void w.then((v) => {
+        if (!v) resolve(false);
+        else if (--left === 0) resolve(true);
+      });
+    }
+  });
+  // Success: only the tail an earlier, larger stash left behind. Failure: everything — issued
+  // after every write, so on that lock it still queues behind any write still parked.
   await dropSnapshotChunks(ok ? chunks.length : 0, Math.max(chunks.length, prevChunks));
-  return ok;
 }
 
 /** Put the snapshot's keys back after a load. */
@@ -2336,10 +2345,9 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   // NO SecurityChange (`securityChanges` iterates `backends.list`, which is empty), so it applies
   // on the unattended startup/focus pull. Every one of those ids would land in
   // `snapshotSecretIds`, be written to sync-state.json and re-parsed at EVERY launch, and be
-  // `JSON.stringify`d into a single keyring entry — where on Windows wincred's 2560-byte credential
-  // limit makes the write fail into a `.catch(console.error)` while the ids persist anyway, so
-  // every later launch reads back nothing, latches `snapshotSecretsUnavailable`, and drops the
-  // backends category from every push for the session.
+  // stashed as hundreds of 1000-unit keyring chunk accounts, each a serialized wallet write and
+  // each read back at every launch. A stash that size is the failure the id-list bound below
+  // prevents.
   //
   // Bounding by the list is the bound that matters (a secret for a backend the snapshot does not
   // list can never be composed — `composeBlob` builds `secrets` from the local backend list, so

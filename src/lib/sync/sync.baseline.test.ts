@@ -1431,8 +1431,10 @@ describe("the snapshot key stash spans keyring accounts", () => {
   });
 
   // Issued together, a later chunk's bound also covers its wait behind the earlier ones (a wallet
-  // prompt answered late): a flat 10 s each dropped a stash that one-after-another writes kept.
-  it("a later chunk queued behind a slow first write keeps its own 10 s", async () => {
+  // prompt answered late): a flat 10 s each dropped a stash that one-after-another writes kept. The
+  // mock runs writes in parallel, so parking chunk 1 for 15 s stands in for its wait behind chunk 0
+  // on the Rust keyring lock.
+  it("chunk i's write bound grows with its place (10 s x (i + 1))", async () => {
     vi.useFakeTimers();
     try {
       keyring.parkWrites.set("__sync_snapshot_secrets_1__", new Promise<void>((r) => setTimeout(r, 15_000)));
@@ -1442,6 +1444,50 @@ describe("the snapshot key stash spans keyring accounts", () => {
       expect(chunks).toBeGreaterThan(1);
       expect(keyring.store!.size).toBe(chunks);
       expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: false, restored: keys(20, "sk") });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Rust's keyring lock is FIFO: behind a chunk-0 write parked on a locked wallet, no later chunk
+  // lands either. Waiting out every chunk's bound kept the sync parked 10 s per chunk although
+  // chunk 0's timeout already decided the stash failed.
+  it("a stash parked on a locked wallet gives up at chunk 0's bound and drops every chunk", async () => {
+    await persistSnapshotSecretsForTests(keys(40, "old"));
+    const before = keyring.store!.size;
+    expect(before).toBeGreaterThan(2);
+    vi.useFakeTimers();
+    try {
+      for (let i = 0; i < before; i++) {
+        const account = i === 0 ? "__sync_snapshot_secrets__" : `__sync_snapshot_secrets_${i}__`;
+        keyring.parkWrites.set(account, new Promise<void>(() => {}));
+      }
+      let settled = false;
+      const pending = persistSnapshotSecretsForTests(keys(40, "new")).then((r) => ((settled = true), r));
+      await vi.advanceTimersByTimeAsync(11_000);
+      expect(settled).toBe(true);
+      const { ids, chunks } = await pending;
+      expect(chunks).toBe(before);
+      expect(keyring.store!.size).toBe(0);
+      expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a later chunk's fast failure settles the stash without waiting on a parked chunk 0", async () => {
+    vi.useFakeTimers();
+    try {
+      keyring.parkWrites.set("__sync_snapshot_secrets__", new Promise<void>(() => {}));
+      keyring.failWrites.add("__sync_snapshot_secrets_1__");
+      let settled = false;
+      const pending = persistSnapshotSecretsForTests(keys(20, "sk")).then((r) => ((settled = true), r));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(true);
+      const { ids, chunks } = await pending;
+      expect(chunks).toBeGreaterThan(1);
+      expect(keyring.store!.size).toBe(0);
+      expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
     } finally {
       vi.useRealTimers();
     }
