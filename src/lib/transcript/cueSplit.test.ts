@@ -388,6 +388,21 @@ describe("wrapLines", () => {
     }
     for (const p of cutByShare("コーヒーコーヒー", [1, 1, 1, 1, 1, 1, 1])) expect(p.startsWith("ー")).toBe(false);
   });
+  it("a run of ー longer than the cap still wraps and cuts within it (only one ー rides along)", () => {
+    for (const t of ["え" + "ー".repeat(19) + "と 次は", "うわ" + "ー".repeat(29), "すご" + "ー".repeat(22) + "い"]) {
+      const lines = wrapLines(t, 16, 2);
+      for (const l of lines) expect(l.length).toBeLessThanOrEqual(16);
+      expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+    }
+    expect(cutByShare("すご" + "ー".repeat(22) + "い", [1, 1, 1])).toEqual([
+      "すご" + "ー".repeat(6),
+      "ー".repeat(9),
+      "ー".repeat(7) + "い",
+    ]);
+  });
+  it("a German closing quote stays on its word before a glued CJK run", () => {
+    expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
+  });
   it("an over-long word left alone on the last line wraps per character", () => {
     const w = "x".repeat(50);
     expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a", "x".repeat(25), "x".repeat(25)]);

@@ -242,10 +242,14 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
 
 /** CJK and fullwidth opening brackets: they stick to the character after them. */
 const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
-/** CJK and fullwidth closing brackets and stops, and the prolonged sound mark ー: they
- *  stick to the character before them. Listed, not the whole fullwidth block — fullwidth
- *  letters and digits stay breakable. */
-const CLOSE_PUNCT = "ー、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
+/** CJK and fullwidth closing brackets and stops: they stick to the character before them.
+ *  Listed, not the whole fullwidth block — fullwidth letters and digits stay breakable. */
+const CLOSE_PUNCT = "、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
+/** The prolonged sound mark ー: ONE sticks to the character before it (no line starts
+ *  with the ー of コー), each further ー of a run is a character of its own — a whole
+ *  えーーーー… or a hallucinated すごーーー…い glued into one unit could not wrap or cut
+ *  and ran over the cap. A line may then start with ー inside a long run only. */
+const CHOON = "(?:(?<!ー)ー)?";
 /** Thai/Lao leading vowels (เ แ โ ใ ไ): written before the consonant they follow in
  *  speech, so they stick to the character after them. */
 const LEADS = "\\u0e40-\\u0e44\\u0ec0-\\u0ec4";
@@ -274,8 +278,8 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  The character keeps its combining marks (a decomposed が's U+3099, an ideographic
  *  variation selector) — they are Script=Inherited and would otherwise split off. */
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[${LEADS}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]${UNIT_TAIL}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\u30fc\\uff00-\\uffef])*`
-    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}${SYLLABIC}]+`
+  `[${OPEN_PUNCT}]*[${LEADS}]*[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]${UNIT_TAIL}${CHOON}(?:(?![${OPEN_PUNCT}])[\\u3000-\\u303f\\uff00-\\uffef])*`
+    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
 );
@@ -287,7 +291,7 @@ const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
  *  a flag's two regional indicators stay one unit, a Thai/Lao leading vowel rides with the
  *  consonant after it and a following vowel with the one before, and a Burmese/Khmer
  *  stacked consonant stays with the virama above it. */
-const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}[${CLOSE_PUNCT}]*`, "gu");
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** A regional indicator (half of a flag emoji). */
 const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
@@ -432,6 +436,8 @@ export function cutByShare(text: string, shares: number[]): string[] {
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
+    // Nor before the first ー after a character (the second ー of a run is a seam again).
+    if (text[i] === "ー" && text[i - 1] !== "ー") continue;
     // Never between a base and its combining mark (tested on the code point: an
     // astral mark such as the variation selector U+E0100 is a surrogate pair), nor
     // inside a ZWJ sequence, nor before a skin tone, nor between a flag's two
@@ -549,7 +555,9 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
     end = m.index! + w.length;
     const k = toks.length - 1;
     // An opener glued to the end of a Latin word ("Python(") moves onto what it opens.
-    const open = k >= 0 && !gap ? /[\p{Ps}\p{Pi}]+$/u.exec(toks[k]) : null;
+    // Brackets only: an initial quote at the end of a word is a closer in German/Danish
+    // usage („Hallo“, »Hallo«), and peeling it off left „Hallo / “東京… on two lines.
+    const open = k >= 0 && !gap ? /\p{Ps}+$/u.exec(toks[k]) : null;
     if (open && open.index > 0) {
       toks[k] = toks[k].slice(0, open.index);
       w = open[0] + w;

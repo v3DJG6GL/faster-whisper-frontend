@@ -197,6 +197,18 @@ fn fix_records_in(
             if path.extension().and_then(|e| e.to_str()) != Some("json") {
                 continue;
             }
+            // A folder (or a link to one) named `*.json` is no record: reading it fails on every
+            // pass (IsADirectory, PermissionDenied on Windows) and would keep the walk incomplete
+            // for good. Follows a symlink; one that went away is skipped like a removed record.
+            match std::fs::metadata(&path) {
+                Ok(m) if !m.is_file() => continue,
+                Ok(_) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(_) => {
+                    tally.failed += 1;
+                    continue;
+                }
+            }
             if let Some(cap) = size_cap {
                 match entry.metadata() {
                     Ok(m) if m.len() > cap => continue,
@@ -499,14 +511,27 @@ fn is_wav(p: &Path) -> bool {
 /// `transcripts/` and `transcripts/dictation/` — the same directories `heal_media_paths`
 /// scans — so the predicate and the work it guards agree on what a record is.
 pub fn has_any_records(app: &AppHandle) -> bool {
-    [transcripts_dir(app), dictations_dir(app)]
+    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
         .into_iter()
         .flatten()
-        .filter_map(|d| std::fs::read_dir(d).ok())
-        .any(|e| {
-            e.flatten()
-                .any(|x| x.path().extension().and_then(|s| s.to_str()) == Some("json"))
-        })
+        .collect();
+    any_records_in(&dirs)
+}
+
+/// `has_any_records` over `dirs`. Only a missing folder or a clean listing without a `.json`
+/// counts as empty: one that exists but cannot be listed (or fails mid-listing) may hide
+/// records, so it answers true and the heal runs — and, like `fix_records_in`, reports the
+/// folder incomplete instead of the fast path stamping it healed.
+fn any_records_in(dirs: &[PathBuf]) -> bool {
+    dirs.iter().any(|d| match list_dir(d, "history") {
+        Ok(Some(entries)) => entries.into_iter().any(|e| {
+            e.map_or(true, |x| {
+                x.path().extension().and_then(|s| s.to_str()) == Some("json")
+            })
+        }),
+        Ok(None) => false,
+        Err(_) => true,
+    })
 }
 
 /// Delete a dictation record's audio (`dictation-*.wav` + its `.txt` sidecar) — only
@@ -1418,6 +1443,65 @@ mod tests {
             assert!(!heal_media_paths_in(std::slice::from_ref(&dir), &base));
             let lookup = std::collections::HashMap::new();
             assert!(!rewrite_media_paths_in(std::slice::from_ref(&dir), &lookup));
+        }
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_folder_named_like_a_record_is_no_failed_record() {
+        let root = std::env::temp_dir().join(format!("fwf-heal-dirjson-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (dir, base) = (root.join("history"), root.join("base"));
+        std::fs::create_dir_all(dir.join("x.json")).unwrap();
+        std::fs::create_dir_all(base.join("files")).unwrap();
+        std::fs::write(base.join("files").join("a.wav"), b"").unwrap();
+        let gone = "/fwf-heal-gone/files/a.wav";
+        std::fs::write(dir.join("ok.json"), format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(dir.join("x.json"), dir.join("link.json")).unwrap();
+        // Reading a folder fails on every pass: counting it would re-run the heal forever.
+        let dirs = std::slice::from_ref(&dir);
+        assert!(heal_media_paths_in(dirs, &base));
+        let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
+        assert!(ok.contains(&*base.join("files").join("a.wav").to_string_lossy()));
+        let lookup: std::collections::HashMap<&str, &str> =
+            [(gone, "/new/files/a.wav")].into_iter().collect();
+        std::fs::write(dir.join("ok.json"), format!(r#"{{"mediaPath":"{gone}"}}"#)).unwrap();
+        assert!(rewrite_media_paths_in(dirs, &lookup));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_fresh_install_check_finds_records_and_skips_only_missing_folders() {
+        let root = std::env::temp_dir().join(format!("fwf-any-rec-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::write(a.join("notes.txt"), b"x").unwrap();
+        // Missing folders and a folder without a `.json` hold no record.
+        assert!(!any_records_in(&[a.clone(), root.join("missing")]));
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(b.join("r.json"), b"{}").unwrap();
+        assert!(any_records_in(&[a.clone(), b.clone()]));
+        // A path that exists but cannot be listed (here: a regular file) may hide records.
+        assert!(any_records_in(&[a.join("notes.txt")]));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_fresh_install_check_counts_an_unlistable_folder_as_maybe_holding_records() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("fwf-any-unlisted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("history");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root lists through 0o000, so there is nothing to assert there.
+        if std::fs::read_dir(&dir).is_err() {
+            // Read as empty, the startup fast path would stamp the heal done without running it.
+            assert!(any_records_in(std::slice::from_ref(&dir)));
         }
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
         let _ = std::fs::remove_dir_all(&root);
