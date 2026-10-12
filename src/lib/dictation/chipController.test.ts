@@ -17,6 +17,7 @@ import {
   trayRoute,
   trayStatus,
 } from "./chipController";
+import { homeTargetProfile, startOffHint } from "./dictation";
 
 // Only initOverlayController touches these: the rest of this file is pure.
 const emit = vi.hoisted(() => vi.fn((_event: string, _payload?: unknown) => Promise.resolve()));
@@ -332,6 +333,28 @@ describe("initOverlayController — canStart tells the chip whether its start bu
     } finally {
       useApp.setState({ profiles: s.profiles, backends: s.backends });
     }
+  });
+});
+
+describe("startOffHint", () => {
+  // The Home button and the chip's dictate button share this one gate + wording: "" means a
+  // click starts, anything else is the reason it will not — so Home can never say "Press to
+  // dictate" over a click that toggle() then refuses (the last Backend deleted).
+  const p = { id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: "b1" } as unknown as Profile;
+  const b = { id: "b1", name: "b1" } as unknown as Backend;
+  const hint = (profiles: Profile[], backends: Backend[]) =>
+    startOffHint(profiles, homeTargetProfile(profiles, null), backends);
+
+  it("names each reason a start is refused, and is empty only when a start can run", () => {
+    expect(hint([], [b])).toBe("Add a profile to begin");
+    expect(hint([{ ...p, enabled: false }], [b])).toBe("Enable a profile to begin");
+    expect(hint([p], [])).toBe("Add a backend to begin");
+    expect(hint([p], [b])).toBe("");
+  });
+
+  it("never asks for a backend without a target: the cycle hint reuses it that way", () => {
+    expect(startOffHint([p], undefined, [])).toBe("Enable a profile to begin");
+    expect(startOffHint([], undefined, [])).toBe("Add a profile to begin");
   });
 });
 

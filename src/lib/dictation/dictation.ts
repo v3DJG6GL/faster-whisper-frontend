@@ -386,6 +386,21 @@ export function homeTargetProfile(
   );
 }
 
+/** Why the Home button / the chip's dictate button cannot start, "" when it can: no Profile
+ *  at all, none enabled (no `target`), or an enabled target with no Backend to send it to.
+ *  The one gate + wording both surfaces share, so neither promises a start the other (or the
+ *  click itself) refuses. `target` is the caller's homeTargetProfile result. */
+export function startOffHint(
+  profiles: Profile[],
+  target: Profile | undefined,
+  backends: Backend[],
+): string {
+  if (target && backendForProfile(target, backends)) return "";
+  if (profiles.length === 0) return "Add a profile to begin";
+  if (!target) return "Enable a profile to begin";
+  return "Add a backend to begin";
+}
+
 /** Run a dictation action requested from the overlay chip. The chip is a separate
  *  window, so the request arrives via the `overlay://action` event (see api.ts /
  *  App.tsx). Mirrors the Home hero button's hands-free-toggle semantics. */

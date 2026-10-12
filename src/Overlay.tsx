@@ -1461,16 +1461,23 @@ export default function Overlay() {
                         // Nothing to do (the main window refuses these two while idle): say
                         // why, like Home. Not `disabled` — its pointer-events-none would
                         // swallow the very tooltip that explains it; the click stays a no-op.
-                        // Idle only: a running session's toggle must still stop / cancel.
-                        // Each has its own predicate: the cycle needs no Backend.
+                        // The toggle is off while idle only: a running session's toggle must
+                        // still stop / cancel. The cycle is refused outright while a session
+                        // runs (the row also shows for an armed-but-silent one), mirroring
+                        // runOverlayAction's status gate. Each has its own predicate: the
+                        // cycle needs no Backend.
                         const isToggle = e.kind === "action" && e.target === "toggle-dictation";
                         const isCycle = e.kind === "action" && e.target === "cycle-active-profile";
+                        const cycleBusy = isCycle && state.status !== "idle";
                         const off =
-                          state.status === "idle" &&
-                          ((isToggle && !state.canStart) || (isCycle && !state.canCycle));
-                        const tip = off
-                          ? (isToggle ? state.startHint : state.cycleHint) || "Enable a profile to begin"
-                          : label;
+                          cycleBusy ||
+                          (state.status === "idle" &&
+                            ((isToggle && !state.canStart) || (isCycle && !state.canCycle)));
+                        const tip = cycleBusy
+                          ? "Stop dictating to switch profile"
+                          : off
+                            ? (isToggle ? state.startHint : state.cycleHint) || "Enable a profile to begin"
+                            : label;
                         return (
                           <button
                             key={e.id}

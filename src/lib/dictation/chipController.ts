@@ -10,7 +10,7 @@
 import { useApp } from "../store";
 import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "../api";
 import { chipTagFor } from "../profileTag";
-import { backendForProfile, homeTargetProfile } from "./dictation";
+import { backendForProfile, homeTargetProfile, startOffHint } from "./dictation";
 import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
@@ -195,15 +195,6 @@ export function tailUnits(s: string, n: number): string {
   return /^[\uDC00-\uDFFF]/.test(t) ? t.slice(1) : t;
 }
 
-/** Why one of the chip's start buttons is off, in the Home button's words: no Profile at
- *  all, none enabled, or (a Profile but no Backend to send it to) no Backend. The cycle
- *  button never gets the last one — cycling needs no Backend. */
-function startHint(anyProfile: boolean, anyEnabled: boolean): string {
-  if (!anyProfile) return "Add a profile to begin";
-  if (!anyEnabled) return "Enable a profile to begin";
-  return "Add a backend to begin";
-}
-
 /** Assemble the full `dictation://update` payload from a store snapshot. Everything the
  *  chip renders is resolved HERE (main window) because the overlay webview can't read
  *  this store — it only ever sees these payloads. */
@@ -271,8 +262,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // same predicates runOverlayAction refuses on, so an idle chip can say why instead of a dead
   // click. Two flags, not one: the toggle needs a home target AND a Backend for it, while the
   // cycle only needs an enabled Profile (it persists homeProfileId, it starts nothing).
+  // startOffHint is the Home button's gate + wording too, so the two never disagree.
   const homeTarget = homeTargetProfile(state.profiles, state.settings.homeProfileId);
-  const canStart = !!homeTarget && !!backendForProfile(homeTarget, state.backends);
+  const startHint = startOffHint(state.profiles, homeTarget, state.backends);
+  const canStart = startHint === "";
   const canCycle = state.profiles.some((p) => p.enabled);
   return {
     status: state.status,
@@ -322,9 +315,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     quickLaunch: rec.quickLaunch ?? REC_DEFAULTS.quickLaunch,
     // …and why its dictate / cycle-profile buttons are off while idle, worded like Home's.
     canStart,
-    startHint: canStart ? "" : startHint(state.profiles.length > 0, !!homeTarget),
+    startHint,
     canCycle,
-    cycleHint: canCycle ? "" : startHint(state.profiles.length > 0, false),
+    // No target passed: cycling needs no Backend, so this only ever says add / enable a profile.
+    cycleHint: canCycle ? "" : startOffHint(state.profiles, undefined, state.backends),
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",

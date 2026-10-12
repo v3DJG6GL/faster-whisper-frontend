@@ -137,7 +137,8 @@ export interface Profile {
    *  STREAMING profile run HANDS-FREE: batch has no live phrases to insert, and a held
    *  push-to-talk chord folds into every injected keystroke. `liveAllowed` is the authority
    *  — it tests the RUNTIME activation, because the Home button and the chip's quick-launch
-   *  both start a hold profile hands-free. undefined = off. */
+   *  both start a hold profile hands-free. undefined = inherit `general.typeAsISpeak` (resolve
+   *  with `??`). */
   typeAsISpeak?: boolean;
   /** Ask which languages to translate into at the start of each session, instead of
    *  always using `translationOverrides.translateTo`.

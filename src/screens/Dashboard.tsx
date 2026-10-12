@@ -15,7 +15,7 @@ import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/dictation/streaming";
 import { profileDisplayName, safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { plural } from "@/lib/format";
-import { backendForProfile, homeTargetProfile, startHandsFree } from "@/lib/dictation/dictation";
+import { backendForProfile, homeTargetProfile, startHandsFree, startOffHint } from "@/lib/dictation/dictation";
 import { backendLabel, effectiveLanguage } from "@/lib/backends";
 import { ownModelName } from "@/lib/backendChipLabels";
 import { shortModelName } from "@/lib/inherit";
@@ -280,10 +280,12 @@ export default function Dashboard() {
   // style. It targets the profile picked below — falling back to the first enabled
   // hands-free profile, then any enabled — and uses that profile's backend + overrides.
   const target = homeTargetProfile(profiles, homeProfileId);
-  // No target = no enabled profile; with none at all there is nothing to enable. The second string
-  // is the chip's wording too (keep the two aligned).
-  const offHint = profiles.length === 0 ? "Add a profile to begin" : "Enable a profile to begin";
   const headerBackend: Backend | undefined = backendForProfile(target, backends);
+  // Why the button cannot start ("" when it can): no profile, none enabled, or no backend for the
+  // target. The chip's dictate button uses the same helper, so its reason, this copy and the
+  // click gate in toggle() all agree — no "Press to dictate" line that a click then refuses.
+  const offHint = startOffHint(profiles, target, backends);
+  const canStart = offHint === "";
   // While a session is live, the hero READOUTS (model / endpoint / language) describe the
   // RUNNING profile — like the chip + usage do — not the home-button target, which can drift if
   // the profile set changes mid-session (disabling the active profile, reordering, deleting). The
@@ -354,11 +356,11 @@ export default function Dashboard() {
     // (dictate) and chip (runOverlayAction) toggles do.
     if (requestStopIfStarting()) return;
     // idle or error → start fresh (startLive clears any prior error).
-    // No enabled profile → no start: the button stays off until a profile is enabled, matching
-    // the hotkeys (dictate refuses a disabled profile) and the hero copy below. backendForProfile
-    // falls back to the first Backend even for no profile, so the backend check alone let a
-    // profile-less session through.
-    if (!headerBackend || !target) return;
+    // No enabled profile or no backend → no start: the same canStart predicate the hero copy
+    // below and the chip's hint read, matching the hotkeys (dictate refuses a disabled profile
+    // or one with no Backend). backendForProfile falls back to the first Backend even for no
+    // profile, so the backend check alone let a profile-less session through.
+    if (!canStart || !headerBackend || !target) return;
     // Stamps the active Profile for the chip, honours "Ask for target languages", and
     // resolves effective language / prompt / decode (target over backend).
     startHandsFree(headerBackend, micId, target);
@@ -416,7 +418,7 @@ export default function Dashboard() {
                 ? "Stop dictation"
                 : busy
                   ? "Cancel (force stop)"
-                  : target
+                  : canStart
                     ? "Start a live dictation"
                     : offHint
             }
@@ -429,14 +431,16 @@ export default function Dashboard() {
               {vis.label}
             </div>
             <div className="mt-1 text-[16px] font-semibold text-text">
-              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : target ? `Press to dictate with ${profileDisplayName(target.name)}` : offHint}
+              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : canStart && target ? `Press to dictate with ${profileDisplayName(target.name)}` : offHint}
             </div>
             <div className="mt-0.5 text-[12.5px] text-faint">
-              {busy || target
+              {busy || canStart
                 ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is."
                 : profiles.length === 0
                   ? "The button and the hotkeys stay off until you add a profile."
-                  : "The button and the hotkeys stay off until a profile is enabled."}
+                  : !target
+                    ? "The button and the hotkeys stay off until a profile is enabled."
+                    : "The button and the hotkeys stay off until you add a backend."}
             </div>
           </div>
           <LiveWaveform
