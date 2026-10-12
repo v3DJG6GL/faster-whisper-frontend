@@ -450,10 +450,10 @@ export function loadHistory(force = false): Promise<void> {
 }
 
 let sweepsHeard = false;
-/** A sweep ran while "Save dictations to History" was off, so Rust wiped the dictations; cleared
- *  as soon as the switch reads on again. Gates dictation writes on what Rust was TOLD, not on the
- *  in-memory switch, which runs ahead of a debounced (or conflict-held) config save: a dictation
- *  edit skipped there would be lost when the switch goes back on before any wipe. */
+/** Rust reported a sweep that wiped the dictations ("Save dictations to History" off in the
+ *  config it acted on); cleared as soon as the switch reads on again. Gates dictation writes on
+ *  what Rust DID, not on the in-memory switch, which runs ahead of a debounced (or conflict-held)
+ *  config save — a dictation edit skipped there would be lost when the switch goes back on. */
 let dictationsWiped = false;
 /** Rust's retention sweep (after a config save: "Save dictations to History" turned off, a
  *  shorter delete-after window) removed records on disk and says so on `transcripts://swept`.
@@ -465,13 +465,14 @@ export function listenRetentionSweeps(): void {
   useApp.subscribe((s) => {
     if (s.settings.transcribe?.keepDictationHistory !== false) dictationsWiped = false;
   });
-  void subscribe<number>("transcripts://swept", () => {
+  void subscribe<{ removed: number; dictationsWiped?: boolean }>("transcripts://swept", (p) => {
     // Let in-flight saves land first: the listing replays only parked writes, not ones already
     // on their way to disk. Forced even before any listing: Rust changed the disk, so the
     // session-only seed would put swept records (a wiped dictation) back on the first listing.
-    // A parked dictation write is dropped, not flushed, once dictations are off: this sweep
-    // just wiped that folder, whichever path turned the switch off (Settings, a sync pull).
-    if (useApp.getState().settings.transcribe?.keepDictationHistory === false) {
+    // A parked dictation write is dropped, not flushed, when Rust says this sweep wiped that
+    // folder, whichever path turned the switch off (Settings, a sync pull). A prune-only sweep
+    // queued from an earlier save never does, even with the switch already off in memory.
+    if (p?.dictationsWiped === true && useApp.getState().settings.transcribe?.keepDictationHistory === false) {
       dictationsWiped = true;
       dropPendingWrites((r) => r.kind === "dictation");
     }

@@ -915,6 +915,7 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 /// network-share) audio base and changes no record.
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
     let mut removed = 0;
+    let wipe_dictations = !config.settings.keep_dictation_history();
     let days = config.settings.transcribe_retention_days();
     if days > 0 {
         if let Ok(dir) = transcripts_dir(app) {
@@ -922,7 +923,7 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
         }
     }
     if let Ok(dir) = dictations_dir(app) {
-        if !config.settings.keep_dictation_history() {
+        if wipe_dictations {
             // Best-effort like the prunes: an unlistable folder is retried on the next sweep.
             removed += wipe_records(&dir).unwrap_or(0);
         } else {
@@ -933,7 +934,13 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
         }
     }
     if removed > 0 {
-        let _ = app.emit("transcripts://swept", removed);
+        // `dictationsWiped`: THIS sweep ran with "Save dictations to History" off, so the
+        // dictation store is empty now — the webview's in-memory switch can be ahead of (or
+        // behind) the config a queued sweep acted on, so it must not infer that itself.
+        let _ = app.emit(
+            "transcripts://swept",
+            serde_json::json!({ "removed": removed, "dictationsWiped": wipe_dictations }),
+        );
     }
     sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
 }

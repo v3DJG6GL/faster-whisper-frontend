@@ -881,7 +881,7 @@ describe("listenRetentionSweeps", () => {
     await Promise.resolve();
     const fire = listeners.get("transcripts://swept");
     expect(fire).toBeDefined();
-    fire?.(1);
+    fire?.({ removed: 1, dictationsWiped: true });
     await vi.waitFor(() => expect(currentRecord(id)).toBeUndefined());
     expect(listTranscriptRecords).toHaveBeenCalledTimes(1);
     dropPendingWrites();
@@ -892,7 +892,7 @@ describe("listenRetentionSweeps", () => {
     listTranscriptRecords.mockResolvedValue([]);
     listenRetentionSweeps();
     await Promise.resolve();
-    listeners.get("transcripts://swept")?.(1);
+    listeners.get("transcripts://swept")?.({ removed: 1, dictationsWiped: false });
     await vi.waitFor(() => expect(currentRecord(id)).toBeUndefined());
     await loadHistory(); // the first screen listing
     expect(currentRecord(id)).toBeUndefined();
@@ -918,7 +918,7 @@ describe("listenRetentionSweeps", () => {
       listTranscriptRecords.mockResolvedValue([{ ...file, result: { text: "v1" } }]);
       listenRetentionSweeps();
       await Promise.resolve();
-      listeners.get("transcripts://swept")?.(1);
+      listeners.get("transcripts://swept")?.({ removed: 1, dictationsWiped: true });
       await vi.waitFor(() => expect(currentRecord("sw-dict")).toBeUndefined());
       const ids = saveTranscriptRecord.mock.calls.map((c) => c[0]);
       expect(ids).toEqual(["sw-dict", "sw-file", "sw-file"]);
@@ -931,6 +931,31 @@ describe("listenRetentionSweeps", () => {
       useApp.setState({ settings: prev });
       upsertRecord({ ...dict, id: "sw-dict-2" });
       expect(saveTranscriptRecord.mock.calls.map((c) => c[0])).toEqual(["sw-dict", "sw-file", "sw-file", "sw-dict-2"]);
+    } finally {
+      useApp.setState({ settings: prev });
+      dropPendingWrites();
+      vi.useRealTimers();
+    }
+  });
+
+  it("a prune-only sweep with the switch already off in memory keeps a parked dictation edit", async () => {
+    vi.useFakeTimers();
+    const prev = useApp.getState().settings;
+    try {
+      listenRetentionSweeps();
+      saveTranscriptRecord.mockClear();
+      const dict: TranscriptRecord = {
+        schemaVersion: 1, kind: "dictation", id: "pr-dict", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/s.mp3", sourceName: "s.mp3", status: "done", result: { text: "d0" },
+      };
+      upsertRecord(dict); // leading edge
+      upsertRecord({ ...dict, result: { text: "d1" } }); // parked
+      // Off in memory, but the sweep that arrives was queued by an earlier (prune) save.
+      useApp.setState({ settings: { ...prev, transcribe: { ...prev.transcribe, keepDictationHistory: false } } });
+      listTranscriptRecords.mockResolvedValue([dict]);
+      listeners.get("transcripts://swept")?.({ removed: 1, dictationsWiped: false });
+      await vi.waitFor(() => expect(saveTranscriptRecord).toHaveBeenCalledTimes(2));
+      expect(JSON.parse(saveTranscriptRecord.mock.calls[1][1]).result.text).toBe("d1");
     } finally {
       useApp.setState({ settings: prev });
       dropPendingWrites();
