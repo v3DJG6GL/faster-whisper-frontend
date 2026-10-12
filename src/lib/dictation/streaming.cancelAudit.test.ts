@@ -575,6 +575,11 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(between).toContain('bookUtteranceInsert(uttRec, "clipboard"');
     // …and the skipped phrases re-sent with it: the recovery copy is that whole insert.
     expect(between).toContain('bookOwedUtterances("clipboard", { kind: "body" })');
+    // A translated session's typeOut carries the field's PHRASE_GAP; the recovery copy replaces
+    // the clipboard, so it must not open with three blank lines (the clipboard branch's rule).
+    const copyArgs = streamingSrc.slice(copy + "recoverToClipboard(".length, reason).trim();
+    expect(copyArgs.startsWith("typeOut"), "a translated recovery copy must drop the phrase gap").toBe(false);
+    expect(copyArgs).toContain("sessionTranslation ? phrase.text.trim() : typeOut");
   });
 
   it("a live phrase skipped in our own window is booked by the insert that later carries it", () => {

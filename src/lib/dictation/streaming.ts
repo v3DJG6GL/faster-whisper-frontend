@@ -2438,8 +2438,10 @@ async function ensureListeners(): Promise<void> {
               // branch reports `landed: false` on a write failure. Asserting therefore promised
               // a clipboard recovery in exactly the broken-clipboard environment where there
               // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
+              // A translated block is copied WITHOUT the field's phrase gap: like the clipboard-only
+              // branch, the clipboard is replaced, not appended to, so copied text needs no gap.
               const recoverable = await recoverToClipboard(
-                typeOut,
+                sessionTranslation ? phrase.text.trim() : typeOut,
                 t,
                 t.method === "direct" ? "failed live insert" : "failed paste",
               );

@@ -334,6 +334,34 @@ describe("initOverlayController — canStart tells the chip whether its start bu
       useApp.setState({ profiles: s.profiles, backends: s.backends });
     }
   });
+
+  it("turns both buttons off while the target picker is open: start and cycle both bail on it", async () => {
+    const s = useApp.getState();
+    const profile = { id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: "b1" } as unknown as Profile;
+    const backend = { id: "b1", name: "b1" } as unknown as Backend;
+    try {
+      useApp.setState({
+        status: "idle",
+        profiles: [profile],
+        backends: [backend],
+        routePending: null,
+        settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
+      });
+      await initOverlayController();
+      const last = () => {
+        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
+        return u[u.length - 1]?.[1] as { canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string };
+      };
+      // The picker's stamp: status stays "idle", only routePending says it is open.
+      useApp.setState({ routePending: "choosing" });
+      const picker = "Answer the target picker first";
+      expect(last()).toMatchObject({ canStart: false, startHint: picker, canCycle: false, cycleHint: picker });
+      useApp.setState({ routePending: null });
+      expect(last()).toMatchObject({ canStart: true, startHint: "", canCycle: true, cycleHint: "" });
+    } finally {
+      useApp.setState({ profiles: s.profiles, backends: s.backends, routePending: s.routePending });
+    }
+  });
 });
 
 describe("startOffHint", () => {

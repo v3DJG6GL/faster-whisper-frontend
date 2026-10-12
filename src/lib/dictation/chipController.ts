@@ -28,6 +28,9 @@ const REC_DEFAULTS = DEFAULT_SETTINGS.recording;
  *  which is the surface the user actually reads to supervise what is about to be typed. */
 const CHIP_ROUTE_TARGETS = 2;
 
+/** Why the chip's dictate / cycle-profile buttons are off while the target picker is open. */
+const CHOOSING_HINT = "Answer the target picker first";
+
 /** The translation targets the chip should show, resolved and bounded.
  *
  *  A RUNNING session wins: it publishes what it actually resolved, which is the only
@@ -263,10 +266,14 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // click. Two flags, not one: the toggle needs a home target AND a Backend for it, while the
   // cycle only needs an enabled Profile (it persists homeProfileId, it starts nothing).
   // startOffHint is the Home button's gate + wording too, so the two never disagree.
+  // An open target picker refuses both too (startHandsFree and the cycle bail on `pickerOpen`)
+  // while status stays "idle"; its store-visible twin is routePending "choosing", which only
+  // the picker writes, so the chip says why instead of offering two dead buttons.
+  const choosing = state.routePending === "choosing" && state.status === "idle";
   const homeTarget = homeTargetProfile(state.profiles, state.settings.homeProfileId);
-  const startHint = startOffHint(state.profiles, homeTarget, state.backends);
+  const startHint = choosing ? CHOOSING_HINT : startOffHint(state.profiles, homeTarget, state.backends);
   const canStart = startHint === "";
-  const canCycle = state.profiles.some((p) => p.enabled);
+  const canCycle = !choosing && state.profiles.some((p) => p.enabled);
   return {
     status: state.status,
     warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
@@ -317,8 +324,9 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     canStart,
     startHint,
     canCycle,
-    // No target passed: cycling needs no Backend, so this only ever says add / enable a profile.
-    cycleHint: canCycle ? "" : startOffHint(state.profiles, undefined, state.backends),
+    // No target passed: cycling needs no Backend, so this only ever says add / enable a profile
+    // (or, while the target picker is open, to answer it first).
+    cycleHint: canCycle ? "" : choosing ? CHOOSING_HINT : startOffHint(state.profiles, undefined, state.backends),
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",
