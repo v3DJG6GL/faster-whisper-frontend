@@ -311,16 +311,19 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** The units a token longer than a line wraps by (a URL, an e-mail address, a German
  *  compound, a run of ・): units() with ASCII punctuation kept on its character, as
  *  mixedTokens keeps it — a closer or stop joins the unit before it (up to three of them),
- *  an opener the unit after it, and a quote that ends the token closes it („Hallo“), so
- *  no line starts with “ or ends on „. */
+ *  an opener the unit after it, and a quote in the token's trailing punctuation closes it
+ *  („Hallo“ / „Hallo“, / „Hallo“.), so no line starts with “ or ends on „. */
 function tokenUnits(w: string): string[] {
   const out: string[] = [];
   let open = "";
   const u = units(w);
+  // Where the token's trailing run of punctuation units begins: a quote from there on closes.
+  let tail = u.length;
+  while (tail > 0 && /^[\p{Pe}\p{Pf}\p{Po}\p{Pi}]+$/u.test(u[tail - 1])) tail--;
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
     if (prev !== undefined && !open && !/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev)
-      && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) || (k === u.length - 1 && /^\p{Pi}+$/u.test(x)))) out[out.length - 1] += x;
+      && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) || (k >= tail && /^\p{Pi}+$/u.test(x)))) out[out.length - 1] += x;
     else if (/^[\p{Ps}\p{Pi}]+$/u.test(x) && k < u.length - 1) open += x;
     else {
       out.push(open + x);
@@ -477,13 +480,11 @@ export function cutByShare(text: string, shares: number[]): string[] {
   if (!spaced && !BREAKS_ANYWHERE.test(text)) return [text.trim(), ...shares.slice(1).map(() => "")];
   // Unspaced text cuts only between the tokens wrapLines wraps by (mixedTokens), so a
   // glued number, version, e-mail or URL ("3.14159", "1,234,567", "foo@bar.com") stays
-  // whole here as it does on a line — its "." or "," used to draw the cut into it. The
-  // tokens lie back to back from the first non-space character, as in spreadTokens.
+  // whole here as it does on a line — its "." or "," used to draw the cut into it.
   let seams: Set<number> | null = null;
   if (!spaced) {
-    seams = new Set();
-    let at = text.search(/\S/);
-    for (const w of mixedTokens(text).toks) seams.add((at += w.length));
+    const m = mixedTokens(text);
+    seams = new Set(m.toks.map((w, k) => m.at[k] + w.length));
   }
   // Candidate cut positions: a space (dropped) or, for CJK, any code-point
   // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may

@@ -576,6 +576,13 @@ describe("wrapLines", () => {
     expect(wrapLines("ｶﾞ。", 4, 2, 3)).toEqual(["ｶﾞ。"]);
     // A quote that ends the token closes it; an opener rides with what it opens.
     expect(wrapLines("„Hallo“", 4, 2)).toEqual(["„Ha", "llo“"]);
+    // So does one followed by a comma or stop: “ was glued onto the "," and opened a line.
+    const quoted = "Please look at „Rechtsschutzversicherungsgesellschaften“, before the meeting starts";
+    const q28 = wrapLines(quoted, 28, 2);
+    expect(q28.some((l) => l.startsWith("“"))).toBe(false);
+    expect(q28.some((l) => l.endsWith("n“,"))).toBe(true);
+    expect(wrapLines("Go to „Rechtsschutzversicherungsgesellschaften“,, then click.", 14, 2, 6)
+      .some((l) => /^[\p{P}]+$/u.test(l))).toBe(false);
     expect(wrapLines("東京で「Microsoft(Teams)」を使いました。", 10, 2).some((l) => /^[)」“]|[(「„]$/.test(l))).toBe(false);
   });
 });
