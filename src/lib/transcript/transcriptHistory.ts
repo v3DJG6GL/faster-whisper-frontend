@@ -450,6 +450,11 @@ export function loadHistory(force = false): Promise<void> {
 }
 
 let sweepsHeard = false;
+/** A sweep ran while "Save dictations to History" was off, so Rust wiped the dictations; cleared
+ *  as soon as the switch reads on again. Gates dictation writes on what Rust was TOLD, not on the
+ *  in-memory switch, which runs ahead of a debounced (or conflict-held) config save: a dictation
+ *  edit skipped there would be lost when the switch goes back on before any wipe. */
+let dictationsWiped = false;
 /** Rust's retention sweep (after a config save: "Save dictations to History" turned off, a
  *  shorter delete-after window) removed records on disk and says so on `transcripts://swept`.
  *  Reload the mirror, or History keeps listing — and an edit re-saves — entries that are gone.
@@ -457,13 +462,19 @@ let sweepsHeard = false;
 export function listenRetentionSweeps(): void {
   if (sweepsHeard) return;
   sweepsHeard = true;
+  useApp.subscribe((s) => {
+    if (s.settings.transcribe?.keepDictationHistory !== false) dictationsWiped = false;
+  });
   void subscribe<number>("transcripts://swept", () => {
     // Let in-flight saves land first: the listing replays only parked writes, not ones already
     // on their way to disk. Forced even before any listing: Rust changed the disk, so the
     // session-only seed would put swept records (a wiped dictation) back on the first listing.
     // A parked dictation write is dropped, not flushed, once dictations are off: this sweep
     // just wiped that folder, whichever path turned the switch off (Settings, a sync pull).
-    dropPendingWrites(dictationOff);
+    if (useApp.getState().settings.transcribe?.keepDictationHistory === false) {
+      dictationsWiped = true;
+      dropPendingWrites((r) => r.kind === "dictation");
+    }
     void flushRecordWrites()
       .then(() => loadHistory(true))
       .catch(() => {});
@@ -494,15 +505,11 @@ function track(p: Promise<void>): Promise<void> {
   return p;
 }
 
-/** A dictation while "Save dictations to History" is off: Rust wipes those on the config save,
- *  so a write landing after that (a fired coalesce timer, a late patch) would bring it back. */
-const dictationOff = (r: TranscriptRecord) =>
-  r.kind === "dictation" && useApp.getState().settings.transcribe?.keepDictationHistory === false;
-
 /** Write one record now; the promise settles when the save does (never rejects). A dictation
- *  is not written while dictations are off (the mirror keeps it until the sweep's reload). */
+ *  is not written once a sweep wiped them (a fired coalesce timer or a late patch would bring
+ *  it back); the mirror keeps it until the sweep's reload. */
 function writeNow(rec: TranscriptRecord): Promise<void> {
-  if (dictationOff(rec)) return Promise.resolve();
+  if (rec.kind === "dictation" && dictationsWiped) return Promise.resolve();
   const now = Date.now();
   // One stamp per record ever written would grow for the whole session (every dictation
   // adds one). A stamp older than the window decides nothing — upsertRecord reads a missing

@@ -927,10 +927,33 @@ describe("listenRetentionSweeps", () => {
       upsertRecord({ ...dict, result: { text: "d2" } });
       await vi.advanceTimersByTimeAsync(3_000);
       expect(saveTranscriptRecord.mock.calls.map((c) => c[0])).toEqual(["sw-dict", "sw-file", "sw-file"]);
+      // Switched back on: dictation writes reach the disk again.
+      useApp.setState({ settings: prev });
+      upsertRecord({ ...dict, id: "sw-dict-2" });
+      expect(saveTranscriptRecord.mock.calls.map((c) => c[0])).toEqual(["sw-dict", "sw-file", "sw-file", "sw-dict-2"]);
     } finally {
       useApp.setState({ settings: prev });
       dropPendingWrites();
       vi.useRealTimers();
+    }
+  });
+
+  it("dictations switched off but not yet swept still save an edit (the config save may never land)", async () => {
+    const prev = useApp.getState().settings;
+    try {
+      listenRetentionSweeps();
+      saveTranscriptRecord.mockClear();
+      const dict: TranscriptRecord = {
+        schemaVersion: 1, kind: "dictation", id: "ns-dict", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/s.mp3", sourceName: "s.mp3", status: "done", result: { text: "d0" },
+      };
+      // Off in memory only (a debounced or conflict-held save): Rust wiped nothing yet.
+      useApp.setState({ settings: { ...prev, transcribe: { ...prev.transcribe, keepDictationHistory: false } } });
+      upsertRecord(dict);
+      expect(saveTranscriptRecord.mock.calls.map((c) => c[0])).toEqual(["ns-dict"]);
+    } finally {
+      useApp.setState({ settings: prev });
+      dropPendingWrites();
     }
   });
 });

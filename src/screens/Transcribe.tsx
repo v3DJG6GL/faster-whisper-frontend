@@ -516,10 +516,10 @@ export default function Transcribe() {
   // What a run sends: a `multilingual` pick the screen no longer offers (an English-only model,
   // a server that locks the key) is dropped at send, not from state — the flag can flip back
   // while caps/decode defaults load, and the pick returns with it.
-  const sentOverrides: DecodeOverrides =
-    multiOffered || !("multilingual" in runOverrides)
-      ? runOverrides
-      : (({ multilingual: _m, ...rest }) => rest)(runOverrides);
+  // Retries replay lastOverrides through the same strip (the run may predate the switch).
+  const offeredOverrides = (o: DecodeOverrides): DecodeOverrides =>
+    multiOffered || !("multilingual" in o) ? o : (({ multilingual: _m, ...rest }) => rest)(o);
+  const sentOverrides = offeredOverrides(runOverrides);
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE, with the
   // inherited `multilingual` (that pick drops the run's own) folded in as spokenField folds it.
   const serverLang = serverLanguageLabel(decodeDefaults, inheritedBaseline.multilingual === true);
@@ -1057,7 +1057,7 @@ export default function Transcribe() {
 
   const retry = (path: string) => {
     if (busy) return;
-    const ctx = buildCtx(useTranscribeRun.getState().lastOverrides);
+    const ctx = buildCtx(offeredOverrides(useTranscribeRun.getState().lastOverrides));
     if (ctx) retryFile(path, ctx);
   };
 
@@ -1068,7 +1068,7 @@ export default function Transcribe() {
     if (busy || !vadRetryable) return;
     // The run's own settings (the store's), like retry() — the screen's runOverrides is
     // unpersisted state that a remount resets and later panel edits change.
-    const next: DecodeOverrides = { ...useTranscribeRun.getState().lastOverrides, vad_filter: false };
+    const next = offeredOverrides({ ...useTranscribeRun.getState().lastOverrides, vad_filter: false });
     // The panel keeps the user's later edits and only flips the switch; the retry itself
     // replays the run's own settings.
     setRunOverrides((prev) => ({ ...prev, vad_filter: false }));
@@ -2846,7 +2846,7 @@ export default function Transcribe() {
                       onRetry={
                         panelItem && !runningItem
                           ? () => {
-                              const ctx = buildCtx(useTranscribeRun.getState().lastOverrides);
+                              const ctx = buildCtx(offeredOverrides(useTranscribeRun.getState().lastOverrides));
                               if (ctx) retryRunVideo(panelItem.path, ctx);
                             }
                           : undefined

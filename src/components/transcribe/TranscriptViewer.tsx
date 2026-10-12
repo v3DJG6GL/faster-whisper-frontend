@@ -990,8 +990,9 @@ export function TranscriptViewer({
     setPassedSegIdx(-1);
     // The element survives a switch that keeps its src, and fires no loadedmetadata again: keep
     // its known length. A changed src was reset to HAVE_NOTHING at commit and reports on its own;
-    // a blob element is about to be remounted, so it never lends the old record's length.
-    if (a && a.readyState >= 1 && !blobUrlRef.current) takeDuration(a);
+    // a fallback element (a blob or the decoded WAV — this render's blobSrc, before the reset
+    // below) is about to be remounted, so it never lends the old record's length.
+    if (a && a.readyState >= 1 && blobSrc === null) takeDuration(a);
     else setAudioLen(0);
     setFollow(true);
     setMode((m) => (m === "edit" ? "read" : m));

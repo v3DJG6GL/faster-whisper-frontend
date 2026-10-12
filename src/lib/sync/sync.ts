@@ -2802,8 +2802,9 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   if (!applied) {
     // Refused (dictation live) or dropped. Persist no base so the next pull re-offers the blob —
     // the same rule the held-back-review path documents above. No base means no
-    // dropSupersededPending either, so a waiting prompt keeps its notice.
-    idleStatus();
+    // dropSupersededPending either, so a waiting prompt keeps its notice — and a Reject / Later
+    // pressed meanwhile keeps its status (pushNow's 409 twin).
+    if (useApp.getState().syncStatus === "syncing") idleStatus();
     return;
   }
   // Applied without the degraded backends category: the remote becomes the base only when it
