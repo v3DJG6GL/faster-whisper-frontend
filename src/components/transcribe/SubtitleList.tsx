@@ -19,11 +19,11 @@ import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
 import {
-  TRANSCRIBED_CPS, timedTrack, trackCues, trackLimits, wrapLines,
+  TRANSCRIBED_CPS, timedTrack, trackLimits, wrapLines,
   type CueGrid, type CueLimits, type CueOptions,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
-import { writesCue } from "@/lib/transcript/transcriptFormats";
+import { writesCue, writtenTrackCues } from "@/lib/transcript/transcriptFormats";
 import type { BatchResult } from "@/lib/types";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 
@@ -309,7 +309,7 @@ export function SubtitleList({
       lanes: tracks.map((t, li) => {
         // A translation or site lane lists what its file writes: a cue that cleans to nothing
         // (blank, or format characters only) is dropped there, so it is no row here either.
-        const list = t === "orig" ? grid.cues : trackCues(grid, t).filter((c) => stripControlChars(c.text).trim());
+        const list = t === "orig" ? grid.cues : writtenTrackCues(grid, t);
         return {
           track: t,
           code: trackChipLabel(result, t),

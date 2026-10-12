@@ -1014,6 +1014,19 @@ describe("subtitle cues", () => {
     expect(cpsWarnings(fast, { tracks: ["orig", "en"] })).toEqual([]);
     expect(cpsWarnings(CUED, { tracks: ["orig", "de", "fr"], cues: STANDARD })).toEqual([]);
   });
+
+  it("cps skips a cue of only format characters, which no file or lane writes", () => {
+    const marks: BatchResult = {
+      text: "x", language: "en",
+      segments: [{ start: 0, end: 0.1, text: "Hi.", translations: { de: "\u200B\u200B\u200B" } }],
+      timedTracks: [{
+        id: "de-x-site", lang: "de", source: "site", kind: "manual",
+        cues: [{ start: 0, end: 0.1, text: "\u200B\u200B\u200B" }],
+      }],
+    };
+    expect(cpsWarnings(marks, { tracks: ["de"] })).toEqual([]);
+    expect(cpsWarnings(marks, { tracks: ["de-x-site"] })).toEqual([]);
+  });
 });
 
 /** A blank middle segment, an untranslated one and a translation of only a zero-width space. */

@@ -787,6 +787,19 @@ export function TranscriptExport({
   useResizeObserver(panelRef, (el) => setPanelW(el.clientWidth), open);
   const twoCol = panelW >= 860;
 
+  // A site (timed) track gets its own file beside ONE shared file for the rest, so more than
+  // one text file is "one each" only when the count matches the tracks.
+  const filePerTrack = useMemo(() => {
+    const n = plan.files.filter((f) => f.kind === "text").length;
+    return !!plan.sidecars || (n > 1 && n === videoTracks.length);
+  }, [plan, videoTracks]);
+  /** The Summary's subtitle count — memoized like cpsWarn: it walks every cue, and the panel
+   *  re-renders at playhead cadence. subGrid is null while closed, so this costs nothing then. */
+  const sharedCount = useMemo(
+    () => summaryCount(editedResult, subGrid, effTracks, cueOpts, videoPlan || filePerTrack),
+    [editedResult, subGrid, effTracks, cueOpts, videoPlan, filePerTrack],
+  );
+
   if (!open) return null;
 
   const names = plan.files.map((f) => f.name(stem));
@@ -794,19 +807,17 @@ export function TranscriptExport({
   const cpsLimits = new Set(
     videoTracks.map((t) => trackCps(editedResult, cueOpts, t)),
   );
-  // A site (timed) track gets its own file beside ONE shared file for the rest, so more than
-  // one text file is "one each" only when the count matches the tracks.
-  const filePerTrack = !!plan.sidecars || (textNames.length > 1 && textNames.length === videoTracks.length);
   const summary = exportSummary({
     format: exportFormat,
     trackCodes: videoTracks.map((t) => trackCode(editedResult, t)),
     stacked: textNames.length === 1,
     filePerTrack,
     fileCount: textNames.length,
-    // The shared file's subtitles, as it writes them (the original's file when it is exported);
-    // no count when each track has a file (or a video stream) of its own.
+    // The shared file's subtitles, as it writes them (the original's file when it is exported,
+    // a lone track's own file); no count when two or more tracks each have a file (or a video
+    // stream) of their own.
     split: !!cueOpts,
-    ...summaryCount(editedResult, subGrid, effTracks, cueOpts, videoPlan || filePerTrack),
+    ...sharedCount,
     segCount: editedResult.segments?.length ?? 0,
     showTs,
     content,

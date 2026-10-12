@@ -314,9 +314,17 @@ export function writesCue(c: Cue, tracks: string[]): boolean {
 export function writtenCues(
   grid: CueGrid, tracks: string[],
 ): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
-  const own = tracks.length === 1 ? ownProp(grid.own, tracks[0]) : undefined;
-  if (own) return own.filter((c) => clean(c.text) !== "");
+  if (tracks.length === 1 && ownProp(grid.own, tracks[0])) return writtenTrackCues(grid, tracks[0]);
   return grid.cues.filter((c) => writesCue(c, tracks));
+}
+
+/** One track's cues as its own lane/file writes them (trackCues): a cue that cleans to
+ *  nothing (only format marks, say) is dropped — so the lanes, the file and the reading-speed
+ *  check all leave out the same cues. */
+export function writtenTrackCues(
+  grid: CueGrid, track: string,
+): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
+  return trackCues(grid, track).filter((c) => clean(c.text) !== "");
 }
 
 /** A speaker's display name: the user's rename, else the prettified label — the
@@ -967,8 +975,9 @@ export function cpsWarnings(
   const out: { lang: string; index: number; cps: number }[] = [];
   for (const track of tracks) {
     const limit = trackCps(result, opts.cues, track);
-    // Kept-original lines are never exported — trackCues never yields them.
-    for (const c of trackCues(grid, track)) {
+    // Kept-original lines are never exported — trackCues never yields them; a cue that
+    // cleans to nothing is never written either, so it has no reading speed.
+    for (const c of writtenTrackCues(grid, track)) {
       const dur = c.end - c.start;
       if (dur <= 0) continue;
       const cps = c.text.length / dur;
