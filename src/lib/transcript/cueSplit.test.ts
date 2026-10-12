@@ -593,6 +593,28 @@ describe("wrapLines", () => {
       }
     }
     expect(wrapLines("東京で「Microsoft(Teams)」を使いました。", 10, 2).some((l) => /^[)」“]|[(「„]$/.test(l))).toBe(false);
+    // A “ glued to a letter closes mid-token too: „…“-Verband opened a line with “.
+    const verband = "Laut „Rechtsschutzversicherungsgesellschaften“-Verband Laut dem neuen";
+    const v28 = wrapLines(verband, 28, 3);
+    expect(v28.some((l) => l.startsWith("“")), v28.join(" | ")).toBe(false);
+    expect(v28.join(" ").replace(/ /g, "")).toBe(verband.replace(/ /g, ""));
+    // A closing ” » ) or ' rides past the three-stop cap as „…...“ does.
+    for (const [t, cpl] of [
+      ["He said “Supercalifragilisticexpialidocious...” and left", 10],
+      ["Il a dit «anticonstitutionnellementxyzabc...» et partit", 11],
+      ["(Donaudampfschifffahrts...) und “word”", 14],
+      ["He said 'Supercalifragilisticexpialidocious...' and left", 10],
+    ] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.slice(1).some((l) => /^(?:[”»)]|'(?!\p{L}))/u.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+      expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
+    }
+    // An ASCII quote opening an over-long word opens it: no line ends on a bare " or '.
+    for (const q of ["\"", "'"]) {
+      expect(wrapLines(`He said ${q}Supercalifragilisticexpialidocious${q} and left`, 10, 2)[0]).toBe("He said");
+    }
+    // In CJK text “ after a character still opens (他说“再见”).
+    expect(wrapLines("他说：“你好？”“我很好。”他说“再见”", 6, 3)).toEqual(["他说：“你", "好？”“我", "很好。”他", "说“再见”"]);
   });
 });
 

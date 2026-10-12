@@ -311,23 +311,31 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** The units a token longer than a line wraps by (a URL, an e-mail address, a German
  *  compound, a run of ・): units() with ASCII punctuation kept on its character, as
  *  mixedTokens keeps it — a closer or stop joins the unit before it (up to three of them),
- *  an opener the unit after it, and a quote in the token's trailing punctuation closes it
- *  („Hallo“ / „Hallo“, / „Hallo“.), so no line starts with “ or ends on „. */
+ *  an opener the unit after it, a closing quote or bracket in the token's trailing
+ *  punctuation, or a quote glued to a letter or digit, closes it („Hallo“ / „Hallo“, /
+ *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote that starts the token opens
+ *  it, so no line starts with “ ” ) or ends on „ or ". */
 function tokenUnits(w: string): string[] {
   const out: string[] = [];
   let open = "";
   const u = units(w);
-  // Where the token's trailing run of punctuation units begins: a quote from there on closes.
+  // Where the token's trailing run of punctuation units begins: a quote or bracket from there on closes.
   let tail = u.length;
   while (tail > 0 && /^[\p{Pe}\p{Pf}\p{Po}\p{Pi}]+$/u.test(u[tail - 1])) tail--;
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
-    // The closing quote rides even past the three-closer cap („…...“,): left behind, it would
-    // open the next unit and a line could start with “.
+    const last = prev === undefined ? "" : edgeChar(prev, true);
+    // A closing quote or bracket in the trailing run rides even past the three-closer cap
+    // („…...“, / “…...” / (…...)): left behind, it would start a line (a “ would even open
+    // the next unit). A “ or « glued to a letter or digit closes too, mid-token as well
+    // („…“-Verband) — after a CJK character it opens (“你好”). Stops keep the cap (え？？？？).
     if (prev !== undefined && !open
-      && ((k >= tail && /^\p{Pi}+$/u.test(x))
+      && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x))
+        || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
         || (!/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev) && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(x)))) out[out.length - 1] += x;
-    else if (/^[\p{Ps}\p{Pi}]+$/u.test(x) && k < u.length - 1) open += x;
+    // An ASCII quote that starts the token (or follows its openers) opens it: as a closer of
+    // nothing it ended a line on a bare ". One inside a word (don't, 5'10") rides above.
+    else if ((/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && /^["']$/.test(x))) && k < u.length - 1) open += x;
     else {
       out.push(open + x);
       open = "";
