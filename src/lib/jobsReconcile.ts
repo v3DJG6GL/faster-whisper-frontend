@@ -210,8 +210,11 @@ function watchJob(row: LedgerRow, opts: { attached: boolean; epoch?: number; los
         // already forgot the row, and a settle now would re-point the file at the old job.
         if (stoppedIds.has(row.jobId)) return;
         // The listing failed: keep the row (no longer watched, an earlier launch's) for a
-        // later reconcile pass or the next launch, which can still settle its record.
-        if (lost === "unknown") return;
+        // later reconcile pass — scheduled here, nothing else would run one — or the next launch.
+        if (lost === "unknown") {
+          scheduleRetry();
+          return;
+        }
         if (lost === "failed") failJob(row, BACKEND_GONE_ERROR, { attached: false });
       }
       await forgetRow(row.jobId);
@@ -449,11 +452,15 @@ export async function reconcileJobs(): Promise<void> {
     passRows.clear();
     inFlight = false;
   }
-  if (retry && retries < MAX_RETRIES) {
-    retries += 1;
-    clearTimeout(retryTimer);
-    retryTimer = setTimeout(() => void reconcileJobs(), RETRY_MS);
-  }
+  if (retry) scheduleRetry();
+}
+
+/** Run another reconcile pass after RETRY_MS (one timer; at most MAX_RETRIES per launch). */
+function scheduleRetry(): void {
+  if (retries >= MAX_RETRIES) return;
+  retries += 1;
+  clearTimeout(retryTimer);
+  retryTimer = setTimeout(() => void reconcileJobs(), RETRY_MS);
 }
 
 /** Once per launch: load the ledger after the config (backends) is in, then reconcile. */

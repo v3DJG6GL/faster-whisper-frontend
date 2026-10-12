@@ -528,7 +528,7 @@ describe("reconcileJobs", () => {
     expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
   });
 
-  it("a gone backend's headless row is kept when the History listing fails, and settled by a later pass", async () => {
+  it("a gone backend's headless row is kept when the History listing fails, and settled by the retry pass it schedules", async () => {
     const r = row(JOB_A, T0);
     await seed(r);
     const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
@@ -544,11 +544,11 @@ describe("reconcileJobs", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A]);
     expect(records()).toEqual([]);
-    // The watcher ended all the same: nothing polls a backend that is gone.
+    // The watcher ended all the same (nothing polls a backend that is gone), but it scheduled a
+    // reconcile pass, which lists again and settles the record.
+    listTranscriptRecords.mockResolvedValueOnce([rec]);
     await vi.advanceTimersByTimeAsync(60_000);
     expect(getJob).not.toHaveBeenCalled();
-    listTranscriptRecords.mockResolvedValueOnce([rec]);
-    await reconcileJobs();
     expect(ledgerRows()).toEqual([]);
     expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
   });

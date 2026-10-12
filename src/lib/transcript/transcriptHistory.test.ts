@@ -627,6 +627,22 @@ describe("loadHistory", () => {
     await loadHistory();
     expect(listTranscriptRecords).toHaveBeenCalledTimes(2);
   });
+
+  it("a retry after a failed listing keeps the records this session made (their saves may not be on disk)", async () => {
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    await loadHistory();
+    const made: TranscriptRecord = {
+      schemaVersion: 1, kind: "file", id: "B", createdAt: "2026-08-30T13:00:00Z",
+      sourcePath: "/b.mp3", sourceName: "b.mp3", status: "done",
+    };
+    useTranscriptHistory.setState({ records: [made] }); // made after the failed listing; its save failed
+    listTranscriptRecords.mockResolvedValueOnce([{
+      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
+    }]);
+    await loadHistory();
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["B", "A"]);
+  });
 });
 
 describe("per-language tracks", () => {

@@ -391,7 +391,11 @@ export function loadHistory(force = false): Promise<void> {
   // orders the two IPC calls), but without this a just-edited record trailed the listing by
   // the whole debounce window and reverted to its older on-disk text in the UI.
   void flushRecordWrites();
-  touchedSinceListing = new Map();
+  // A retry after a failed listing: the mirror holds only what this session made (its saves may
+  // still be landing or have failed), so it is replayed over the snapshot like a change made
+  // during the listing — never dropped by it.
+  const retry = !force && lastLoadFailed;
+  touchedSinceListing = new Map(retry ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
   loading = listTranscriptRecords()
     .then((raw) => {
       const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();

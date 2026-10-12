@@ -90,7 +90,8 @@ const CueRow = memo(function CueRow({
       className={cn(
         "group relative gap-3.5 rounded-lg px-2 py-2",
         lane ? "flex" : "grid",
-        canSeek && "cursor-pointer hover:bg-surface-2/50",
+        // One background per state (cn is plain clsx): the hover wash would beat the active one.
+        canSeek && (active ? "cursor-pointer" : "cursor-pointer hover:bg-surface-2/50"),
         active && (lane ? "bg-surface-2 shadow-[inset_2px_0_0_var(--c-accent)]" : "bg-surface-2"),
       )}
       style={columns ? { gridTemplateColumns: columns } : undefined}
@@ -263,8 +264,11 @@ export function SubtitleList({
       first: boolean, cols: [track: string, text: string][],
     ): Row => {
       const d = Math.max(0.001, c.end - c.start);
-      // The column reading fastest against its own language's limit.
-      const rates = cols.map(([t, text]) => ({ t, rate: text.length / d, limit: limitOf(t)?.cps ?? TRANSCRIBED_CPS }));
+      // The column reading fastest against its own language's limit. A cell that cleans to nothing
+      // is never written, so it has no reading speed (as cpsWarnings in the export Summary).
+      const rates = cols.map(([t, text]) => ({
+        t, rate: stripControlChars(text).trim() ? text.length / d : 0, limit: limitOf(t)?.cps ?? TRANSCRIBED_CPS,
+      }));
       const worst = rates.reduce((a, b) => (b.rate - b.limit > a.rate - a.limit ? b : a));
       // Synthesized clocks (a clock-less text source) are placeholders, not
       // timing — no reading speed to judge, as the export panel says too.
