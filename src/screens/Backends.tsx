@@ -1094,10 +1094,22 @@ export default function Backends() {
   const moveBackend = useApp((s) => s.moveBackend);
   const setConnection = useApp((s) => s.setConnection);
   const [flow, setFlow] = useState<AddFlow | null>(null);
-  // Set of backend ids whose connection test is in flight. A Set (not a single id) so two
-  // concurrent tests track independently — finishing one can't clear another's spinner, and
-  // its late result can't be misattributed.
-  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
+  // The targets of the list tests in flight (mirrors the Editor's testingTargets): a row shows
+  // "testing…" only while a run for its CURRENT target is out, so repointing a backend mid-test
+  // (Server URL save, key rotation, a live "Address on this device" override) frees its Test at
+  // once instead of spinning for an address nothing is testing — that run's result is dropped by
+  // the guards in handleTest anyway. Per run, not per id: two concurrent tests track
+  // independently, finishing one can't clear another's spinner. The ref is the synchronous twin:
+  // two clicks in one render must not start two runs for the same target.
+  type ListRun = { id: string; serverUrl: string; url: string; hasKey: boolean; gen: number };
+  const [testing, setTesting] = useState<readonly ListRun[]>([]);
+  const inFlight = useRef(new Set<ListRun>());
+  const rowTesting = (b: Backend, url: string) => {
+    const gen = credentialGeneration(b.id);
+    return testing.some(
+      (t) => t.id === b.id && t.serverUrl === b.serverUrl && t.url === url && t.hasKey === b.hasApiKey && t.gen === gen,
+    );
+  };
 
   // Deep link from the Home checklist: /backends?add=1 opens straight into the
   // connect step, then drops the param so back/refresh doesn't re-trigger it.
@@ -1110,11 +1122,16 @@ export default function Backends() {
   }, [searchParams, setSearchParams]);
 
   const handleTest = async (b: Backend) => {
-    setTesting((s) => new Set(s).add(b.id));
     const testedUrl = effectiveServerUrl(b, useApp.getState().settings);
     // A key rotated and saved mid-test keeps all three of the guards below; the save emptied this
     // backend's connection, and the old key's verdict would sit there for the session.
     const gen = credentialGeneration(b.id);
+    const run: ListRun = { id: b.id, serverUrl: b.serverUrl, url: testedUrl, hasKey: b.hasApiKey, gen };
+    for (const t of inFlight.current) {
+      if (t.id === run.id && t.serverUrl === run.serverUrl && t.url === run.url && t.hasKey === run.hasKey && t.gen === run.gen) return;
+    }
+    inFlight.current.add(run);
+    setTesting((ts) => [...ts, run]);
     try {
       const info = await testConnection({
         serverUrl: testedUrl,
@@ -1143,11 +1160,8 @@ export default function Backends() {
         setConnection(b.id, { ok: false, openMode: false, models: [], error: String(e) } as ConnectionInfo);
       }
     } finally {
-      setTesting((s) => {
-        const next = new Set(s);
-        next.delete(b.id);
-        return next;
-      });
+      inFlight.current.delete(run);
+      setTesting((ts) => ts.filter((t) => t !== run));
     }
   };
 
@@ -1228,6 +1242,7 @@ export default function Backends() {
               // Once per card, not five URL parses per render.
               const eff = effectiveUrl(b);
               const auth = authorityOf(eff);
+              const rowBusy = rowTesting(b, eff);
               // Sanitized BEFORE the presence test: a synced model of only format characters
               // (an RLM) would otherwise leave the separator dangling before nothing.
               const rowModel = safeDisplayText(ownModelName(b.model, effectiveServerKind(b, conn)), 80).trim();
@@ -1318,8 +1333,8 @@ export default function Backends() {
                       </div>
                     </div>
                     <div className="flex w-24 items-center justify-end gap-1.5 text-[12px] text-dim" title={conn?.error}>
-                      <StatusDot tone={testing.has(b.id) ? "idle" : conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
-                      {testing.has(b.id) ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
+                      <StatusDot tone={rowBusy ? "idle" : conn?.ok ? "ok" : conn?.error ? "warn" : "idle"} />
+                      {rowBusy ? "testing…" : conn?.ok ? "connected" : conn?.error ? "error" : "untested"}
                     </div>
                     <div className="flex items-center gap-1">
                       <ServerInfoButton
@@ -1329,8 +1344,8 @@ export default function Backends() {
                         onToggle={() => setInfoOpen((cur) => (cur === b.id ? null : b.id))}
                         controls={`${infoBase}-${b.id}`}
                       />
-                      <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={testing.has(b.id)}>
-                        {testing.has(b.id) ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
+                      <Button variant="ghost" size="sm" title="Test connection" onClick={() => handleTest(b)} disabled={rowBusy}>
+                        {rowBusy ? <Loader2 className="size-4 animate-spin" /> : <Plug className="size-4" />}
                       </Button>
                       <Button variant="ghost" size="sm" title="Edit" onClick={() => setFlow({ step: "edit", draft: b })}>
                         <Pencil className="size-4" />
