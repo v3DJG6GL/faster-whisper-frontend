@@ -898,20 +898,18 @@ export function previewExport(
   const tracks = tracksOf(opts);
   const segs = result.segments ?? [];
   grid ??= cueGrid(result, opts, tracks);
-  // Count what the file writes. A subtitle file: the cues it writes (writtenCues). JSON: every
-  // segment, whatever the pick. LRC and timestamped TXT carrying the original: one line per
-  // segment, even a blank one (a bare stamp). A single translation or site track: the lines it
-  // writes (writtenTrackCues — a site track's cues live in grid.own). Otherwise TXT writes a
-  // segment where one of its tracks cleans to a line (txtExport's trOf/clean rule).
+  // Count what the file writes. JSON, LRC and timestamped TXT carrying the original: every
+  // segment, even a blank one (a bare stamp). A subtitle file, or TXT/LRC without the original:
+  // what writtenCues counts (a single own-timed track its own cues, else the shared cues a
+  // picked translation cleans to a line in). Timestamps-off TXT with the original: a segment
+  // where the original or a picked translation cleans to a line (txtExport's trOf/clean rule).
   const every = opts.format === "json"
     || (tracks.includes("orig") && (opts.format === "lrc" || (opts.format === "txt" && !!opts.timestamps)));
-  const list = isSubtitleFormat(opts.format)
-    ? writtenCues(grid, tracks)
-    : every
-      ? grid.cues
-      : tracks.length === 1 && tracks[0] !== "orig"
-        ? writtenTrackCues(grid, tracks[0])
-        : grid.cues.filter((c) => tracks.some((t) => clean(t === "orig" ? c.text : ownProp(c.tr, t) ?? "") !== ""));
+  const list = every
+    ? grid.cues
+    : isSubtitleFormat(opts.format) || !tracks.includes("orig")
+      ? writtenCues(grid, tracks)
+      : grid.cues.filter((c) => clean(c.text) !== "" || writesCue(c, tracks.filter((t) => t !== "orig")));
   const last = list[Math.min(n, list.length) - 1];
   // The segments behind the first n cues — or, for a track with its own
   // timing, everything before the n-th cue ends.

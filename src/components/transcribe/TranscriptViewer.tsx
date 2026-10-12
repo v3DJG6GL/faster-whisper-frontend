@@ -988,7 +988,11 @@ export function TranscriptViewer({
     setActiveWordIdx(-1);
     setPassedWordIdx(-1);
     setPassedSegIdx(-1);
-    setAudioLen(0);
+    // The element survives a switch that keeps its src, and fires no loadedmetadata again: keep
+    // its known length. A changed src was reset to HAVE_NOTHING at commit and reports on its own;
+    // a blob element is about to be remounted, so it never lends the old record's length.
+    if (a && a.readyState >= 1 && !blobUrlRef.current) takeDuration(a);
+    else setAudioLen(0);
     setFollow(true);
     setMode((m) => (m === "edit" ? "read" : m));
     setReassignRow(null);

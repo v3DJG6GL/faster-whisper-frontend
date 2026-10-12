@@ -380,9 +380,11 @@ pub async fn package_to_path(
     let mut written: u64 = 0;
     let write_result: anyhow::Result<()> = async {
         use tokio::io::AsyncWriteExt;
-        let mut f = tokio::fs::File::create(&tmp)
-            .await
-            .context("creating the export file")?;
+        // Synchronous for the rename's reason below: an awaited create could land on the
+        // blocking pool after a Cancel drop and its cleanup, leaving a stray empty tmp.
+        let mut f = tokio::fs::File::from_std(
+            std::fs::File::create(&tmp).context("creating the export file")?,
+        );
         while let Some(chunk) = resp
             .chunk()
             .await

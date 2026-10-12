@@ -315,10 +315,6 @@ export function TranscriptExport({
   const origIncluded = !effTracks.length || effTracks.includes("orig");
   // Uncolored VTT names a translated line with "Name: ", an original one with a voice tag.
   const mtIncluded = effTracks.some((t) => trackInfo(editedResult, t).source === "mt");
-  const content = contentStates({
-    format: exportFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
-    hasWords, origIncluded, mtIncluded,
-  });
   const toggleContent: Record<ContentItem["key"], () => void> = {
     ts: () => setShowTs(!showTs),
     names: () => setShowNames(!showNames),
@@ -341,6 +337,15 @@ export function TranscriptExport({
   }), [effMedia, effContainer, effSubtitleMode, exportFormat, exportOptions, editedResult, audioExt, videoTracks,
     hasVideoSource, copyExt]);
   const videoPlan = plan.primary.kind === "video";
+  /** The subtitle format the Save actually writes: a sidecar in its plan's format, a track
+   *  inside the video always SRT (embeddedSubtitleTracks), whatever subtitle format is
+   *  picked — so the Content box and the Summary never promise VTT voice tags or styling the
+   *  video's streams don't carry. */
+  const writtenFormat: ExportFormat = videoPlan ? plan.sidecars?.format ?? "srt" : exportFormat;
+  const content = contentStates({
+    format: writtenFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
+    hasWords, origIncluded, mtIncluded,
+  });
   /** The server muxes at most this many subtitle tracks into one video; more fails only
    *  after the save dialog, writing nothing (sidecar mode embeds none). Never above 12:
    *  the desktop shell's own media::MAX_TRACKS — package_media refuses more, whatever
@@ -363,15 +368,12 @@ export function TranscriptExport({
     key: string; tracks?: string[]; format: ExportFormat; name: ((stem: string) => string) | null;
   }[] => {
     if (videoPlan) {
-      // A sidecar is written in its plan's format; a track inside the video is always SRT
-      // (embeddedSubtitleTracks), whatever subtitle format is picked.
-      const format: ExportFormat = plan.sidecars ? plan.sidecars.format : "srt";
-      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format, name: sideNames?.[i] ?? null }));
+      return videoTracks.map((t, i) => ({ key: t, tracks: [t], format: writtenFormat, name: sideNames?.[i] ?? null }));
     }
     return exportFileGroups(exportOptions, editedResult).map((g) => ({
-      key: tracksOf(g).join("+"), tracks: g.tracks, format: exportFormat, name: g.name,
+      key: tracksOf(g).join("+"), tracks: g.tracks, format: writtenFormat, name: g.name,
     }));
-  }, [videoPlan, plan, sideNames, exportFormat, editedResult, videoTracks, exportOptions]);
+  }, [videoPlan, sideNames, writtenFormat, editedResult, videoTracks, exportOptions]);
   const [previewKey, setPreviewKey] = useState<string | null>(null);
   const previewFile = previewFiles.find((f) => f.key === previewKey) ?? previewFiles[0];
 
@@ -808,7 +810,7 @@ export function TranscriptExport({
     videoTracks.map((t) => trackCps(editedResult, cueOpts, t)),
   );
   const summary = exportSummary({
-    format: exportFormat,
+    format: writtenFormat,
     trackCodes: videoTracks.map((t) => trackCode(editedResult, t)),
     stacked: textNames.length === 1,
     filePerTrack,
