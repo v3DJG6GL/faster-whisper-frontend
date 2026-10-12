@@ -72,8 +72,9 @@ export const CUE_RANGES: Record<keyof CueLimits, { min: number; max: number; ste
 
 /** Scripts written without spaces between words: a run of them can break anywhere. */
 export const UNSPACED = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}]/u;
-/** CJK punctuation and fullwidth forms: like the unspaced scripts, no space around them. */
-const UNSPACED_PUNCT = /[\u3000-\u303f\uff00-\uffef]/u;
+/** CJK punctuation and fullwidth forms, and the kana marks ・ ー (Script=Common, so
+ *  UNSPACED misses them): like the unspaced scripts, no space around them. */
+const UNSPACED_PUNCT = /[\u3000-\u303f\u30fb\u30fc\uff00-\uffef]/u;
 /** An unspaced-script character or CJK/fullwidth punctuation — the one predicate the LRC
  *  export and import (and joinSegmentTexts) decide a seam's space with, so they agree. */
 export const unspacedChar = (c: string): boolean => UNSPACED.test(c) || UNSPACED_PUNCT.test(c);
@@ -295,11 +296,26 @@ const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNI
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** A regional indicator (half of a flag emoji). */
 const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
+/** A letter or digit of a spaced-script word ("iPhone", "333") — not of a script that
+ *  breaks anywhere, and not ー (Lm, Script=Common), so a ー run still cuts. Unspaced
+ *  text never cuts between two of them, as mixedTokens keeps such a word whole. */
+const WORDCH =
+  /(?![\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}ー])[\p{L}\p{N}]/u;
+/** Length of the whitespace-free run around index `i` of `t`, counted only up to 7 — a
+ *  long run is all cutByShare needs to know, and it must not cost a scan per candidate. */
+function runAt(t: string, i: number): number {
+  let a = i;
+  while (a > 0 && i - a < 7 && !/\s/.test(t[a - 1])) a--;
+  let b = i;
+  while (b < t.length && b - a < 7 && !/\s/.test(t[b])) b++;
+  return b - a;
+}
 
 /** Evenly spread token times over [a, b] by character share — for text that
  *  has no word timing of its own (a translation under own timing). Text
- *  without spaces splits per code point when it is CJK/Thai-like; otherwise it
- *  is one word and one token. */
+ *  without spaces splits per code point when it is CJK/Thai-like (a Latin word or
+ *  number glued into it — "iPhone", "2026年" — stays one token, as wrapLines keeps
+ *  it); otherwise it is one word and one token. */
 function spreadTokens(text: string, a: number, b: number): Tok[] {
   const spans: [number, number][] = [];
   if (/\s/.test(text.trim())) {
@@ -307,8 +323,14 @@ function spreadTokens(text: string, a: number, b: number): Tok[] {
   } else if (!BREAKS_ANYWHERE.test(text)) {
     spans.push([0, text.length]);
   } else {
-    // An opening bracket rides with the code point it opens, a closer with the one it closes.
-    for (const m of text.matchAll(CJK_UNIT)) spans.push([m.index!, m.index! + m[0].length]);
+    // An opening bracket rides with the code point it opens, a closer with the one it
+    // closes; a glued Latin word stays whole. The text has no inner whitespace, so the
+    // tokens lie back to back from its first non-space character.
+    let at = text.search(/\S/);
+    for (const w of mixedTokens(text).toks) {
+      spans.push([at, at + w.length]);
+      at += w.length;
+    }
   }
   const tot = spans.reduce((n, [f, t]) => n + t - f + 1, 0) || 1;
   let c = a;
@@ -438,6 +460,13 @@ export function cutByShare(text: string, shares: number[]): string[] {
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
     // Nor before the first ー after a character (the second ー of a run is a seam again).
     if (text[i] === "ー" && text[i - 1] !== "ー") continue;
+    // In unspaced text, nor inside a glued Latin word or number ("iPhone", "333"), right
+    // after an ASCII opener or before a stop or closer — the tokens wrapLines keeps whole.
+    if (
+      !spaced
+      && (/[\p{Ps}\p{Pi}]/u.test(text[i - 1]) || /[\p{Pe}\p{Pf}\p{Po}]/u.test(text[i])
+        || (WORDCH.test(text[i - 1]) && WORDCH.test(text[i])))
+    ) continue;
     // Never between a base and its combining mark (tested on the code point: an
     // astral mark such as the variation selector U+E0100 is a surrogate pair), nor
     // inside a ZWJ sequence, nor before a skin tone, nor between a flag's two
@@ -491,6 +520,14 @@ export function cutByShare(text: string, shares: number[]): string[] {
         -Math.abs(i - target) +
         (/[.?!。？！]/.test(ch) ? 16 : /[,;:，；、]/.test(ch) ? 9 : 0) +
         (sylSpaced && /\s/.test(text[i]) ? 9 : 0) -
+        // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
+        (spaced && !sylSpaced && !/\s/.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
+        // A space right before a lone closing mark or after a lone opening one (French
+        // « bonjour », "Ça va ?"): the mark stays with its word.
+        (/\s/.test(text[i])
+          && (/^[\p{Pe}\p{Pf}\p{Po}]+(?:\s|$)/u.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
+          ? 20
+          : 0) -
         (NOBREAK.has(prevWord) ? 12 : 0);
       if (s > best) {
         best = s;
@@ -531,8 +568,12 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   // Spaced text holding a CJK/Thai-like run (one Latin word in a Japanese line) wraps
   // between that run's characters too: as one token the run used to take whole lines of
   // its own, a three-line cue under a two-line cap that fits() had judged to fit.
+  // Unspaced text wraps by the same tokens, so a Latin word or number glued into it
+  // ("明日はMicrosoftの", "333メートル") stays whole and ASCII punctuation stays on its
+  // character; no gaps, so every seam is a plain character seam. A token longer than
+  // cpl still wraps per unit below.
   const { toks, gaps } = !spaced
-    ? { toks: units(t), gaps: [] }
+    ? { toks: mixedTokens(t).toks, gaps: [] }
     : BREAKS_ANYWHERE.test(t)
       ? mixedTokens(t)
       : { toks: t.split(/\s+/), gaps: null };
@@ -540,8 +581,9 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   return wrapTokens(toks, gaps ?? toks.map((_, i) => i > 0), cpl, len, firstReserve);
 }
 
-/** Tokens of spaced text with a CJK/Thai-like run (MIXED_TOKEN, as spreadTokens), and per
- *  token whether whitespace stood before it. Punctuation glued to its neighbour (an ASCII
+/** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens and
+ *  wrapLines tokenize unspaced text by them too), and per token whether whitespace stood
+ *  before it. Punctuation glued to its neighbour (an ASCII
  *  "." or ")" after a CJK character, a "(" before one) joins it, so no line starts with a
  *  stop or ends on an opener. An opener glued to the end of a word moves onto the character
  *  it opens, so a line may break before the "(" but never right after it. */
@@ -607,24 +649,33 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
     let past = -1;
     for (let i = lo + 1; i < T; i++) {
       const a = width(lo, i) + reserve;
-      // Past the first over-cpl candidate every later one carries the same -1000 (its b is
-      // then under cpl*(n-1) by construction), breakScore*0.3 + bottom-heavy can add at most
-      // 64, and |a - target| (target <= cpl < a) grows with a at 0.6/char — so a candidate
-      // more than 107 chars further cannot win. Stops a long paragraph costing O(lines x T).
+      // Past the first over-cpl candidate every later one carries the -2000 and a larger
+      // overflow term (its b is then under cpl*(n-1) by construction), breakScore*0.3 +
+      // bottom-heavy can add at most 64, and |a - target| (target <= cpl < a) grows with a at
+      // 0.6/char too — so a candidate more than 107 chars further cannot win (a loose bound).
+      // Stops a long paragraph costing O(lines x T).
       if (a > cpl) {
         if (past < 0) past = a;
         else if (a - past > 107) break;
       }
       const b = width(i, T);
       let s = 0;
-      if (a > cpl) s -= 1000;
+      // An over-cap line is final, an over-full remainder can still wrap: when no candidate
+      // keeps both within their caps, the line itself must fit. A line that cannot (one word
+      // over the cap) ends as early as it can, so that word then wraps per character —
+      // a better break further on used to win and leave a longer over-cap line.
+      if (a > cpl) s -= 2000 + 50 * (a - cpl);
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) {
         s += breakScore(toks[i - 1], toks[i]) * 0.3;
+        // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?"): it
+        // stays with its word — below the over-cap penalties, so a forced cut still happens,
+        // and not on a line over the cap, which only its overflow may decide.
+        if (a <= cpl && (/^[\p{Pe}\p{Pf}\p{Po}]+$/u.test(toks[i]) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[i - 1]))) s -= 500;
         // A phrase space between two longer runs ("…行った 楽しかった…") that keeps both lines
         // within the cap beats a balanced cut inside a CJK word. Not beside a short word or
         // number ("Tokyo", "2024 年"): that one stays balanced into its sentence.
-        if (mixed && n === 2 && a <= cpl && b <= cpl && Math.min(runLen[i - 1], width(lo, i)) > 6 && runLen[i] > 6) {
+        if (mixed && a <= cpl && b <= cpl * (n - 1) && Math.min(runLen[i - 1], width(lo, i)) > 6 && runLen[i] > 6) {
           s += 5;
         }
       }

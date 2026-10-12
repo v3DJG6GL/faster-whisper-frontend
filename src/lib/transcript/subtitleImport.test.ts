@@ -188,6 +188,10 @@ describe("plain text + errors", () => {
     expect(parseImportedText("lrc", "[00:00.00]葛\u{E0100}<00:00.50>城").segments[0].text).toBe("葛\u{E0100}城");
     expect(parseImportedText("lrc", "[00:00.00]か\u3099<00:00.50>次").segments[0].text).toBe("か\u3099次");
   });
+  it("lrc: a word tag after the prolonged sound mark ー joins unspaced", () => {
+    expect(parseImportedText("lrc", "[00:01.00]<00:01.00>サーバー<00:02.00>に<00:03.00>接続").segments[0].text)
+      .toBe("サーバーに接続");
+  });
   it("lrc: a text-less timestamp line ends the line before it (instrumental break)", () => {
     const back = parseImportedText("lrc", "[00:10.00]Hello\n[00:13.00]\n[00:40.00]World\n[00:44.00]");
     expect(back.segments).toEqual([

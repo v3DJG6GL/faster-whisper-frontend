@@ -782,6 +782,13 @@ describe("joinSegmentTexts", () => {
     expect(joinSegmentTexts(["今日は", "iPhone"])).toBe("今日は iPhone");
   });
 
+  it("joins a seam after the kana marks ー and ・ unspaced (they are Script=Common)", () => {
+    expect(joinSegmentTexts(["新しいサーバー", "に接続しました。"])).toBe("新しいサーバーに接続しました。");
+    expect(joinSegmentTexts(["そうですねー", "次は東京です"])).toBe("そうですねー次は東京です");
+    expect(joinSegmentTexts(["コーヒー", "ください"])).toBe("コーヒーください");
+    expect(joinSegmentTexts(["サーバー", "OK"])).toBe("サーバー OK");
+  });
+
   it("keeps the seam rules with empty parts, mixed scripts and astral chars", () => {
     expect(joinSegmentTexts(["日", "", "本"])).toBe("日本");
     expect(joinSegmentTexts(["日本", "abc", "語"])).toBe("日本 abc 語");

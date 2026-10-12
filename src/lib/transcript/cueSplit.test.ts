@@ -244,6 +244,17 @@ describe("buildCues", () => {
     }
   });
 
+  it("own timing: a Latin word glued into a CJK translation is never split across cues", () => {
+    const ja = "今日は朝から新しいiPhoneProMaxを買いに行きましたが駅までの道はとても混んでいて電車も遅れていました";
+    for (const length of ["standard", "short"] as const) {
+      const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+      const grid = buildCues(r, { ...STD, length, timing: "own" }, ["orig", "ja"]);
+      expect(grid.own.ja.length).toBeGreaterThan(1);
+      expect(grid.own.ja.some((c) => c.text.includes("iPhoneProMax"))).toBe(true);
+      expect(grid.own.ja.map((c) => c.text).join("")).toBe(ja);
+    }
+  });
+
   it("site tracks always keep their own timing", () => {
     const r: BatchResult = {
       ...seg1("Hello there.", 0, 2),
@@ -352,9 +363,50 @@ describe("wrapLines", () => {
     const lines = wrapLines(big, 42, 2);
     expect(performance.now() - t0).toBeLessThan(500);
     expect(lines.join(" ")).toBe(big);
-    // Pre-change snapshot: the candidate cut-off changes speed, never the chosen breaks.
-    expect(lines.length).toBe(510);
-    expect(lines[12]).toBe("Hello, Hello, the running so; of extraordinarily and world.");
+    // Snapshot: the candidate cut-off changes speed, never the chosen breaks.
+    expect(lines.length).toBe(592);
+    expect(lines[12]).toBe("Hello, Hello, the running so;");
+    // A line never runs over the cap while its words fit on more lines.
+    expect(lines.every((l) => l.length <= 42)).toBe(true);
+  });
+  it("takes more lines rather than one over the cap when the words fit", () => {
+    expect(wrapLines("to go yesterday and it was", 13, 2)).toEqual(["to go", "yesterday", "and it was"]);
+    const de = "Wir haben das Rindfleischetikettierungsüberwachungsaufgabenübertragungsgesetz gelsen";
+    const lines = wrapLines(de, 42, 2);
+    for (const l of lines) expect(l.length).toBeLessThanOrEqual(42);
+    expect(lines.join("").replace(/\s/g, "")).toBe(de.replace(/\s/g, ""));
+    // A word over the cap by itself: its line ends right after it (and wraps), never at a
+    // better break further on.
+    const x = "x".repeat(50);
+    for (const l of wrapLines(`a ${x} is. Then we go`, 42, 2)) expect(l.length).toBeLessThanOrEqual(42);
+  });
+  it("a Latin word or number glued into unspaced text stays whole", () => {
+    expect(wrapLines("明日はMicrosoftの会議があります", 13, 2)).toEqual(["明日はMicrosoft", "の会議があります"]);
+    const js = "今日はJavaScriptとTypeScriptについて話します";
+    const lines = wrapLines(js, 13, 2);
+    expect(lines.join("")).toBe(js);
+    expect(lines.slice(1).some((l, i) => /[A-Za-z]$/.test(lines[i]) && /^[A-Za-z]/.test(l))).toBe(false);
+    expect(wrapLines("昨日東京に行きました,とても楽しかったです", 13, 2).some((l) => l.startsWith(","))).toBe(false);
+    expect(cutByShare("今日はiPhoneを買いました", [1, 1])).toEqual(["今日はiPhone", "を買いました"]);
+    const zh = "我昨天去了北京(中国的首都)玩得很开心呀朋友们";
+    const parts = cutByShare(zh, [1, 1, 1]);
+    expect(parts.join("")).toBe(zh);
+    expect(parts.some((p) => p.endsWith("(") || p.startsWith(")"))).toBe(false);
+  });
+  it("a CJK line with phrase spaces breaks at a space on every line, not only on two", () => {
+    const lines = wrapLines("2024年に東京へ行った 楽しかったです 本当にありがとうございました", 16, 2);
+    expect(lines.some((l) => l.endsWith("行っ"))).toBe(false);
+    expect(lines.join("").replace(/\s/g, "")).toBe("2024年に東京へ行った楽しかったです本当にありがとうございました");
+  });
+  it("French spaced punctuation stays with its word", () => {
+    for (const [t, cpl] of [["Il a dit « bonjour » à Paris et ailleurs", 16], ["Il a dit « bonjour » à 東京の人たち", 16],
+      ["Ça va ? Oui, très bien merci, et toi ? Je vais bien aussi !", 13]] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.every((l) => l.length <= cpl && !/«$/.test(l) && !/^[»?!]/.test(l))).toBe(true);
+      expect(lines.join(" ")).toBe(t);
+    }
+    const parts = cutByShare("Il a dit « bonjour » à Paris", [1, 1]);
+    expect(parts).toEqual(["Il a dit", "« bonjour » à Paris"]);
   });
   it("a CJK line never ends on an opening bracket nor starts with a closer or stop", () => {
     for (const t of [
@@ -638,13 +690,14 @@ describe("cutByShare", () => {
     expect(parts.join("").replace(/\s/g, "")).toBe(text.replace(/\s/g, ""));
   });
   it("judges a spaced line's CJK seams by code point (decomposed kana, Ext-B)", () => {
-    const pre = cutByShare("AI \u304c\u6b21\u306e\u6587", [1, 1]);
-    expect(pre).toEqual(["AI \u304c", "\u6b21\u306e\u6587"]);
+    // A 7-character run: a sentence, whose seams weigh like the space (a short word's do not).
+    const pre = cutByShare("AI \u304c\u6b21\u306e\u6587を読む", [4, 6]);
+    expect(pre).toEqual(["AI \u304c", "\u6b21\u306e\u6587を読む"]);
     // A decomposed "が" (か + U+3099) cuts like the precomposed one.
-    expect(cutByShare("AI \u304b\u3099\u6b21\u306e\u6587", [1, 1])).toEqual(["AI \u304b\u3099", "\u6b21\u306e\u6587"]);
+    expect(cutByShare("AI \u304b\u3099\u6b21\u306e\u6587を読む", [4, 6])).toEqual(["AI \u304b\u3099", "\u6b21\u306e\u6587を読む"]);
     // An Ext-B Han character (a surrogate pair) can be followed — and preceded — by a cut.
-    const extB = cutByShare("AI \u{20B9F}\u6b21\u306e\u6587", [1, 1]);
-    expect(extB).toEqual(["AI \u{20B9F}", "\u6b21\u306e\u6587"]);
+    const extB = cutByShare("AI \u{20B9F}\u6b21\u306e\u6587を読む", [4, 6]);
+    expect(extB).toEqual(["AI \u{20B9F}", "\u6b21\u306e\u6587を読む"]);
     expect(extB.every(wellFormed)).toBe(true);
   });
   it("never cuts right after an opening bracket", () => {
@@ -658,6 +711,11 @@ describe("cutByShare", () => {
         expect(parts.every((p) => !/^[」）。、]/.test(p))).toBe(true);
       }
     }
+  });
+  it("prefers a space over a seam inside a short CJK word of spaced text", () => {
+    expect(cutByShare("Tomorrow we fly to 東京 and then we go home", [1, 1])).toEqual(["Tomorrow we fly to 東京", "and then we go home"]);
+    expect(cutByShare("Tomorrow we fly to 東京 and then", [1, 1, 1])).toEqual(["Tomorrow we", "fly to 東京", "and then"]);
+    expect(cutByShare("昨日 浅草 でご飯を食べました", [1, 3])).toEqual(["昨日 浅草", "でご飯を食べました"]);
   });
   it("may cut right before an opening bracket in spaced text", () => {
     const text = "iPhone の新機能と「新しい画面」";

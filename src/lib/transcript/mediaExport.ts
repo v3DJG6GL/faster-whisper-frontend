@@ -390,10 +390,15 @@ export function exportStem(title: string | null | undefined, path: string, link?
   return prefix ? `${prefix}___${name}` : name;
 }
 
-/** Where the siblings of a multi-file save go: the picked path names the
+/** Where the files of a multi-file save go: the picked path names the
  *  FIRST file; strip that exact suffix (e.g. ".de.lrc") from what the user
- *  confirmed so siblings never double-suffix and the first file lands on
- *  the picked path. Extracted from the viewer's and History's exports. */
+ *  confirmed so siblings never double-suffix. The first file lands on the
+ *  picked path only when the confirmed name ends with that suffix; otherwise
+ *  (a dialog that does not append the filter's extension, a name without the
+ *  language tag) only a trailing `.fallbackExt` is stripped and the first
+ *  file's name is re-derived from the stem like its siblings' — "/out/talk"
+ *  for ".mkv" saves "/out/talk.mkv", "/out/renamed.lrc" for ".de.lrc" saves
+ *  "/out/renamed.de.lrc". Extracted from the viewer's and History's exports. */
 export function derivePickedStem(
   target: string,
   firstSuffix: string,
