@@ -2337,6 +2337,8 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
 async function ensureStateFor(backendId: string): Promise<void> {
   if (state.serverBackendId === backendId) return;
   state = { deviceId: state.deviceId };
+  // The old server's last sync says nothing about this one (forgetDeadDocument's reset too).
+  setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
   // The old server's snapshot is gone — but its stashed keys are NOT, unless we delete them.
   // The fresh state records no ids, so nothing would ever look for that entry again either.
   await clearSnapshotSecrets();
@@ -2854,7 +2856,12 @@ function handleTransportFailure(status: number, error?: string): void {
   } else if (status === 401 || status === 403) {
     setRuntime({ syncStatus: "error", syncError: "The server rejected the API key." });
   } else {
-    setRuntime({ syncStatus: "error", syncError: error ?? "Sync failed." });
+    // An empty error page (a proxy's bare 502/503) carries no detail: still name the status, or
+    // the Sync tab shows a warn dot with no notice.
+    setRuntime({
+      syncStatus: "error",
+      syncError: error?.trim() || (status ? `Sync failed (HTTP ${status}).` : "Sync failed."),
+    });
   }
 }
 

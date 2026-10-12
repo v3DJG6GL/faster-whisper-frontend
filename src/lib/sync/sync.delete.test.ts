@@ -38,6 +38,8 @@ const api = vi.hoisted(() => ({
   /** When set, a GET waits on it before answering with `pulled`. */
   pullPark: null as null | Promise<void>,
   pullCalled: false,
+  /** When set, a GET fails with this status and error detail instead of answering. */
+  pullFail: null as null | { status: number; error: string },
   /** Every keyring write, in order (the real one is a no-op outside Tauri). */
   keyWrites: [] as [string, string][],
   /** Every keyring delete, in order (the real one is a no-op outside Tauri). */
@@ -74,6 +76,7 @@ vi.mock("../api", async (importOriginal) => {
     syncPull: async () => {
       api.pullCalled = true;
       if (api.pullPark) await api.pullPark;
+      if (api.pullFail) return { ok: false, status: api.pullFail.status, error: api.pullFail.error };
       return { ok: true, status: 200, state: api.pulled };
     },
   };
@@ -1676,6 +1679,48 @@ describe("a pull whose address moved during first contact", () => {
       expect(useApp.getState().syncError).toBeNull();
     } finally {
       api.deletePark = null;
+      api.keys = null;
+      await resetSyncState();
+    }
+  });
+});
+
+// A sync-server switch wipes the bookkeeping for the new server, but the old server's "Last synced
+// 2 h ago from laptop" stayed on screen for a server never reached (and survived until a restart).
+describe("a sync-server switch", () => {
+  it("clears the old server's last-sync time", async () => {
+    try {
+      await seedBase(); // the sync state now belongs to b1
+      const s = useApp.getState();
+      useApp.setState({
+        settings: { ...s.settings, sync: { ...s.settings.sync!, backendId: "b2" } },
+        backends: [...s.backends, backend({ id: "b2", serverUrl: "http://10.0.0.3:8000" })],
+      });
+      useApp.getState().setSyncRuntime({ lastSyncedAt: 123, lastSyncDevice: "laptop" });
+      api.pullFail = { status: 503, error: "" }; // the new server is unreachable
+      await pullNow(true);
+      expect(useApp.getState().lastSyncedAt).toBeNull();
+      expect(useApp.getState().lastSyncDevice).toBeNull();
+    } finally {
+      api.pullFail = null;
+      api.keys = null;
+      await resetSyncState();
+    }
+  });
+});
+
+// An empty-body error (a proxy's bare 503) arrives with an empty detail; `?? "Sync failed."` kept
+// the "" — status "error" with no message, so the Sync tab showed a warn dot and no notice.
+describe("a pull failing with an empty error body", () => {
+  it("still names the failure", async () => {
+    try {
+      await seedBase();
+      api.pullFail = { status: 503, error: "" };
+      await pullNow(true);
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toContain("503");
+    } finally {
+      api.pullFail = null;
       api.keys = null;
       await resetSyncState();
     }
