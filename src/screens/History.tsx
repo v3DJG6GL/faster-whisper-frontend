@@ -72,6 +72,8 @@ function timeOf(iso: string): string {
 }
 
 const isDictation = (r: TranscriptRecord) => r.kind === "dictation";
+/** The "dictated into" chip id: grouping, pinned-chip lookup and filter must share it. */
+const appKey = (r: TranscriptRecord) => r.appId ?? appLabel(r);
 
 /** A dictation's `translationTarget` (the session's targets joined ", ") as the row shows it:
  *  each code by langText, so a joiner-only code drops out of the list and an all-blank list
@@ -385,15 +387,20 @@ export default function History() {
   const textMatches = useMemo(() => searched.filter((r) => r.kind === "text"), [searched]);
   const dictMatches = useMemo(() => searched.filter(isDictation), [searched]);
 
+  // The last label each chip was shown with: the pinned chip falls back to it once no record
+  // carries its key any more (its last dictation deleted or swept), instead of the raw key —
+  // which cannot be relabelled from the key alone (an appLabel key may be a dotted title).
+  const chipLabels = useRef(new Map<string, string>());
   // "dictated into" chips: top apps across the (searched) dictations.
   const apps = useMemo(() => {
     const counts = new Map<string, { label: string; n: number }>();
     for (const r of dictMatches) {
-      const key = r.appId ?? appLabel(r);
+      const key = appKey(r);
       const cur = counts.get(key);
       if (cur) cur.n++;
       else counts.set(key, { label: appChipLabel(r), n: 1 });
     }
+    for (const [id, v] of counts) chipLabels.current.set(id, v.label);
     const top = [...counts.entries()]
       .map(([id, v]) => ({ id, ...v }))
       .sort((a, b) => b.n - a.n)
@@ -401,10 +408,11 @@ export default function History() {
     // The picked app keeps its chip even when the search leaves it out of the top six (or
     // with no match at all), so the page never says "for this app" without naming it.
     if (appFilter && !top.some((a) => a.id === appFilter)) {
-      const src = records.find((r) => isDictation(r) && (r.appId ?? appLabel(r)) === appFilter);
+      const src = records.find((r) => isDictation(r) && appKey(r) === appFilter);
+      if (src) chipLabels.current.set(appFilter, appChipLabel(src));
       const pinned = {
         id: appFilter,
-        label: src ? appChipLabel(src) : appFilter,
+        label: src ? appChipLabel(src) : (chipLabels.current.get(appFilter) ?? appFilter),
         n: counts.get(appFilter)?.n ?? 0,
       };
       if (top.length >= 6) top[top.length - 1] = pinned;
@@ -421,7 +429,7 @@ export default function History() {
             : segment === "dictation" ? dictMatches
               : searched;
     if (appFilter && segment === "dictation") {
-      out = out.filter((r) => (r.appId ?? appLabel(r)) === appFilter);
+      out = out.filter((r) => appKey(r) === appFilter);
     }
     return out;
   }, [searched, fileMatches, linkMatches, textMatches, dictMatches, segment, appFilter]);
