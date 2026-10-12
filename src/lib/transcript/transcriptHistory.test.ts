@@ -17,7 +17,7 @@ vi.mock("../api", async (importOriginal) => ({
 }));
 
 const {
-  appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, loadHistory, patchRecord, recordDictation,
+  _resetHistoryLoadForTests, appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, loadHistory, patchRecord, recordDictation,
   recordEditedResult, recordText, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
@@ -42,6 +42,7 @@ const saved = (id: string): TranscriptRecord => {
 
 beforeEach(() => {
   useTranscriptHistory.setState({ records: [], loaded: false });
+  _resetHistoryLoadForTests();
   listTranscriptRecords.mockReset();
 });
 
@@ -642,6 +643,19 @@ describe("loadHistory", () => {
     }]);
     await loadHistory();
     expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["B", "A"]);
+  });
+
+  it("a retry after a failed FORCED listing replaces the mirror (a wipe is not undone)", async () => {
+    listTranscriptRecords.mockResolvedValueOnce([{
+      schemaVersion: 1, kind: "file", id: "A", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/a.mp3", sourceName: "a.mp3", status: "done",
+    }]);
+    await loadHistory();
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    await loadHistory(true); // e.g. after "Delete all dictations" wiped A on disk
+    listTranscriptRecords.mockResolvedValueOnce([]);
+    await loadHistory();
+    expect(useTranscriptHistory.getState().records).toEqual([]);
   });
 });
 

@@ -455,12 +455,16 @@ export async function reconcileJobs(): Promise<void> {
   if (retry) scheduleRetry();
 }
 
-/** Run another reconcile pass after RETRY_MS (one timer; at most MAX_RETRIES per launch). */
+/** Run another reconcile pass after RETRY_MS (one timer; at most MAX_RETRIES per launch). A call
+ *  while a pass is already scheduled joins it and spends nothing — several watchers failing on
+ *  one listing are one retry. */
 function scheduleRetry(): void {
-  if (retries >= MAX_RETRIES) return;
+  if (retryTimer !== undefined || retries >= MAX_RETRIES) return;
   retries += 1;
-  clearTimeout(retryTimer);
-  retryTimer = setTimeout(() => void reconcileJobs(), RETRY_MS);
+  retryTimer = setTimeout(() => {
+    retryTimer = undefined;
+    void reconcileJobs();
+  }, RETRY_MS);
 }
 
 /** Once per launch: load the ledger after the config (backends) is in, then reconcile. */

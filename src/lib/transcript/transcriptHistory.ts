@@ -369,6 +369,15 @@ let touchedSinceListing: Map<string, TranscriptRecord | null> | null = null;
 /** The last listing failed: `loaded` still turns true (no screen waits forever), but the
  *  mirror may lack what is on disk, so the next non-forced call lists again. */
 let lastLoadFailed = false;
+/** A listing has succeeded this session: the mirror then holds disk state too, not only what
+ *  this session made. */
+let everListed = false;
+
+/** Tests only: forget the listing outcomes (the store itself is reset by setState). */
+export function _resetHistoryLoadForTests(): void {
+  lastLoadFailed = false;
+  everListed = false;
+}
 
 /** Did the last History listing fail? The mirror then says nothing about records on disk. */
 export function historyLoadFailed(): boolean {
@@ -391,10 +400,11 @@ export function loadHistory(force = false): Promise<void> {
   // orders the two IPC calls), but without this a just-edited record trailed the listing by
   // the whole debounce window and reverted to its older on-disk text in the UI.
   void flushRecordWrites();
-  // A retry after a failed listing: the mirror holds only what this session made (its saves may
-  // still be landing or have failed), so it is replayed over the snapshot like a change made
-  // during the listing — never dropped by it.
-  const retry = !force && lastLoadFailed;
+  // A retry while no listing has ever succeeded: the mirror holds only what this session made (its
+  // saves may still be landing or have failed), so it is replayed over the snapshot like a change
+  // made during the listing — never dropped by it. After an earlier success the mirror is disk
+  // state a forced caller may just have deleted or rewritten, so the listing replaces it.
+  const retry = !force && lastLoadFailed && !everListed;
   touchedSinceListing = new Map(retry ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
   loading = listTranscriptRecords()
     .then((raw) => {
@@ -407,6 +417,7 @@ export function loadHistory(force = false): Promise<void> {
         else byId.delete(id);
       }
       lastLoadFailed = false;
+      everListed = true;
       useTranscriptHistory.setState({
         records: newestFirst([...byId.values()]),
         loaded: true,
