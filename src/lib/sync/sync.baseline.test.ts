@@ -546,7 +546,7 @@ describe("applyBlob keep-local (baseline)", () => {
   });
 
   it("with the Transcribe-picks switch on, a translation-model pick applies only beside its backendId", async () => {
-    // A pre-upgrade blob (or an old peer) carries translationModel alone: a model meant for
+    // A pre-upgrade blob with no backendId carries translationModel alone: a model meant for
     // another server must not land under this device's backend.
     const st0 = settings();
     st0.transcribe = { backendId: "b1", translationModel: "mine" };

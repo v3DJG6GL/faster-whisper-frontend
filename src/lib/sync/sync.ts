@@ -1634,8 +1634,11 @@ export async function applyBlob(
       const picks = gates.transcribePicks ? pickFields(raw, TRANSCRIPTION_PICK_SET) : {};
       const pulled = sanitizeTranscription({ ...classified, ...picks });
       // The translation-model pick names a model on its backend's server and travels with
-      // backendId. One without it is a pre-upgrade portable value or an old peer's, so a sync
-      // round keeps this device's own; an explicit restore still applies it.
+      // backendId. A blob that carries it without any backendId (a pre-upgrade portable value)
+      // keeps this device's own on a sync round; an explicit restore still applies it. An old
+      // peer whose picks switch is off still passes the snapshot's backendId beside its own
+      // model, which looks the same as a real pick, so that pair applies until every device
+      // runs this version.
       if (!opts.ignoreGates && typeof pulled.backendId !== "string") delete pulled.translationModel;
       // Over nextSettings.transcribe, not settings.transcribe alone: the recording arm
       // above already routed the dictation-history flags in here, and rebuilding from
