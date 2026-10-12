@@ -458,10 +458,9 @@ export function listenRetentionSweeps(): void {
   if (sweepsHeard) return;
   sweepsHeard = true;
   void subscribe<number>("transcripts://swept", () => {
-    // Never loaded: the first listing reads the swept disk anyway (and a forced one would
-    // end the session-only seed). Loaded: let in-flight saves land first, since the listing
-    // replays only parked writes, not ones already on their way to disk.
-    if (!useTranscriptHistory.getState().loaded) return;
+    // Let in-flight saves land first: the listing replays only parked writes, not ones already
+    // on their way to disk. Forced even before any listing: Rust changed the disk, so the
+    // session-only seed would put swept records (a wiped dictation) back on the first listing.
     void flushRecordWrites()
       .then(() => loadHistory(true))
       .catch(() => {});

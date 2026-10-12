@@ -2579,7 +2579,9 @@ export async function pushNow(manual = false): Promise<void> {
       // it waits: restore its notice (cleared by the "syncing" above) instead of "Synced" next to
       // the dialog. Likewise a push that contacts no server must not overwrite an earlier
       // failure (a failed pull, a refused keyring read) with "Synced".
-      if (!pendingConflict && !pendingReview && priorError !== undefined && useApp.getState().syncStatus === "syncing")
+      // A status another writer set meanwhile (a Reject / Later, an approve) stands.
+      if (useApp.getState().syncStatus !== "syncing") return;
+      if (!pendingConflict && !pendingReview && priorError !== undefined)
         setRuntime({ syncStatus: "error", syncError: priorError });
       else idleStatus();
       return;

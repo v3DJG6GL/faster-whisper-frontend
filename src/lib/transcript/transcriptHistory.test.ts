@@ -886,14 +886,15 @@ describe("listenRetentionSweeps", () => {
     dropPendingWrites();
   });
 
-  it("a sweep before anything listed History lists nothing (the first listing reads the swept disk)", async () => {
+  it("a sweep before anything listed History still drops the swept record (no session seed brings it back)", async () => {
     const id = recordDictation(CAPTURE);
+    listTranscriptRecords.mockResolvedValue([]);
     listenRetentionSweeps();
     await Promise.resolve();
     listeners.get("transcripts://swept")?.(1);
-    await Promise.resolve();
-    expect(listTranscriptRecords).not.toHaveBeenCalled();
-    expect(currentRecord(id)).toBeDefined();
+    await vi.waitFor(() => expect(currentRecord(id)).toBeUndefined());
+    await loadHistory(); // the first screen listing
+    expect(currentRecord(id)).toBeUndefined();
     dropPendingWrites();
   });
 });
