@@ -33,6 +33,12 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
         Some(text) if crate::inject::is_own_injected(&text) => {
             tracing::info!("[clip] begin_injection: clipboard holds our own transcript — keeping prior snapshot");
         }
+        // An empty read is a stalled delayed render (a copy made inside an RDP session), not
+        // the user's clipboard: snapshotting "" would write it over their remote copy at the
+        // end-of-session restore. Behave like the None arm.
+        Some(text) if text.is_empty() => tracing::info!(
+            "[clip] begin_injection: clipboard text read back empty (stalled delayed render?) — keeping prior snapshot"
+        ),
         Some(text) => {
             tracing::info!("[clip] begin_injection: snapshot {} bytes", text.len());
             if let Ok(mut g) = snap.0.lock() {

@@ -853,6 +853,15 @@ mod imp {
         tracing::info!("[wayland-inject] persistent portal session ready");
 
         while let Some(job) = rx.recv().await {
+            // A job cancelled while it sat in the queue is dropped before the keymap build: it
+            // would fork setxkbmap for nothing, and a failed build would answer a keymap error
+            // for a phrase the user already threw away instead of the silent Landed::Yes every
+            // other cancelled path gives.
+            if crate::inject::injection_cancelled(job.epoch) {
+                tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
+                let _ = job.reply.send(Ok(crate::inject::Landed::Yes));
+                continue;
+            }
             // Rebuild the charmap PER JOB, not once per session: a KDE keyboard-layout switch
             // mid-run (e.g. us→de) would otherwise leave a stale snapshot and garble direct-typed
             // text (y↔z, symbols) until an app restart. build_charmap is a cheap setxkbmap +
@@ -921,8 +930,9 @@ mod imp {
 
                 // Before the job, not just between characters: the paste branch below returns without
                 // ever reaching the per-character check, and a bare auto-Enter job has no characters
-                // to iterate — so without this a cancel that lands while the job sits in the queue
-                // still fires Ctrl+V, or still presses Enter, with nothing to abandon mid-loop.
+                // to iterate — so without this a cancel that lands while the job waits still fires
+                // Ctrl+V, or still presses Enter, with nothing to abandon mid-loop. Re-checked here
+                // after the keymap build: the queue check above misses a cancel that lands during it.
                 if crate::inject::injection_cancelled(job.epoch) {
                     tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
                     return Ok(crate::inject::Landed::Yes);

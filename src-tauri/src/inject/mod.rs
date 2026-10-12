@@ -1076,7 +1076,16 @@ fn paste(
             // Refuse to adopt OUR OWN last transcript as "the user's previous clipboard": it
             // lingers there after a failed/skipped restore, and restoring it here would resurrect
             // stale dictation after every future paste (the mstsc wrong-text bug).
+            // An empty read is nothing to restore either: a stalled delayed render (a copy made
+            // inside an RDP session) reads back "", and writing "" back 400 ms later would erase
+            // the user's remote copy; a clipboard that really is empty loses nothing.
             clipboard.get_text().ok().filter(|p| {
+                if p.is_empty() {
+                    tracing::info!(
+                        "[clip] paste: prior clipboard text read back empty (stalled delayed render?) — skipping restore"
+                    );
+                    return false;
+                }
                 let own = is_own_injected(p);
                 if own {
                     tracing::info!(
