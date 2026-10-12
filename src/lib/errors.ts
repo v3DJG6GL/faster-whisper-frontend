@@ -178,7 +178,7 @@ export function translateFailureDoorway(
 }
 
 /** The doorway for a run whose request lost contact and was handed to its headless watcher:
- *  never "nothing was started" (a dropped connect may have reached the server) and never
+ *  never "nothing was started" (a dropped connection may have reached the server) and never
  *  "try again" (a retry stops the watcher and deletes the job that would land in History). */
 export function handedOffDoorway(
   kind: TransportErrorKind,

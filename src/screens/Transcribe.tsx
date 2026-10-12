@@ -938,7 +938,12 @@ export default function Transcribe() {
     } finally {
       picking.current = false;
     }
-    if (paths.length) {
+    // Re-read the live queue: on Linux the open dialog has no parent window, so a run can
+    // start while it is open, and addFiles would abandon it.
+    const running = useTranscribeRun
+      .getState()
+      .queue.some((it) => it.status === "running" || it.status === "queued");
+    if (paths.length && !running) {
       addFiles(paths); // changed inputs abandon any settled results
     }
   };
@@ -1596,9 +1601,11 @@ export default function Transcribe() {
                       label="Music source separation"
                       disabled={!effBgm || separationModels.length < 2}
                       disabledReason={
-                        separationModels.length < 2
-                          ? "This server offers one separation model, nothing to choose"
-                          : "Turn on music source separation to change its settings"
+                        separationModels.length === 0
+                          ? "This server lists no separation models to choose from"
+                          : separationModels.length === 1
+                            ? "This server offers one separation model, nothing to choose"
+                            : "Turn on music source separation to change its settings"
                       }
                     />
                     <StageSwitch

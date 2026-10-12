@@ -1856,11 +1856,12 @@ describe("a ledgered file whose request lost contact", () => {
     expect(doorway).not.toContain("try again");
   });
 
-  it("a handed-off connect failure does not also claim nothing was started", async () => {
-    const { watch, doorway } = await run("Could not connect — is the server running and the URL correct?");
-    expect(watch).toHaveBeenCalled();
-    expect(doorway).toContain("History");
-    expect(doorway).not.toContain("nothing was started");
+  it("a refused connection started no job: forgets the row, is never watched, says nothing was started", async () => {
+    const { watch, rows, doorway } = await run("Could not connect — is the server running and the URL correct?");
+    expect(watch).not.toHaveBeenCalled();
+    expect(rows).toEqual([]);
+    expect(doorway).toContain("nothing was started");
+    expect(doorway).not.toContain("History");
   });
 
   it("a server answer (HTTP 500) still forgets the row and is never watched", async () => {
@@ -1882,7 +1883,7 @@ describe("a ledgered file whose request lost contact", () => {
 describe("lostContact (which failures leave a job the server may still finish)", () => {
   it.each([
     ["Timed out waiting for the server.", true],
-    ["Could not connect — is the server running and the URL correct?", true],
+    ["Could not connect — is the server running and the URL correct?", false],
     ["error sending request", true],
     ["HTTP 504: Gateway Timeout", true],
     ["HTTP 502: Bad Gateway", true],
