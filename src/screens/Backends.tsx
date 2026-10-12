@@ -95,11 +95,15 @@ function Editor({
   // as `effectiveServerUrl` resolves the override. One rule for both, so the live and debounced
   // values can never pick different branches mid-debounce.
   const probeUrl = storedTypedUrl(debouncedUrl);
-  // The target an in-flight test was started for. Only that target shows the button busy: the
-  // fields stay editable mid-test and the liveTarget guard drops the stale run's verdict, so a
-  // single boolean kept Test disabled for the corrected address until the old request timed out.
-  const [testingTarget, setTestingTarget] = useState<{ url: string; key: string } | null>(null);
-  const testing = !!testingTarget && testingTarget.url === effUrl && testingTarget.key === key;
+  // The targets of the tests in flight. Only those targets show the button busy: the fields stay
+  // editable mid-test and the liveTarget guard drops the stale run's verdict, so a single boolean
+  // kept Test disabled for the corrected address until the old request timed out. Every run is
+  // kept, not just the latest: retyping an older, still-running target must show it busy again,
+  // or a click there starts a duplicate run whose verdict and testGen bump land twice. The ref is
+  // the synchronous twin: two clicks in one render must not start two runs.
+  const [testingTargets, setTestingTargets] = useState<readonly { url: string; key: string }[]>([]);
+  const inFlightTests = useRef(new Set<{ url: string; key: string }>());
+  const testing = testingTargets.some((t) => t.url === effUrl && t.key === key);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Bumped by each successful test that still matches the typed target: the hooks below key their
   // fetches on the target and on a rise to "full", so a Test of an unchanged, already-full server
@@ -253,13 +257,16 @@ function Editor({
   liveTarget.current = { url: effUrl, key };
 
   const runTest = async () => {
+    // A test of this exact target is already running: no duplicate run.
+    for (const t of inFlightTests.current) if (t.url === effUrl && t.key === key) return;
     const testedUrl = effUrl;
     const testedKey = key;
     // Taken BEFORE the await, as the list card's handleTest does: a pull that rotates the stored
     // key mid-test makes a blank-key verdict describe the old caller.
     const gen = credentialGeneration(b.id);
     const run = { url: testedUrl, key: testedKey };
-    setTestingTarget(run);
+    inFlightTests.current.add(run);
+    setTestingTargets((ts) => [...ts, run]);
     try {
       const info = await testConnection({
         // The guards keep comparing the raw `testedUrl`; only the request gets the stored form
@@ -302,8 +309,9 @@ function Editor({
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
     } finally {
-      // Only this run's own marker: a newer run for the corrected target keeps its spinner.
-      setTestingTarget((t) => (t === run ? null : t));
+      // Only this run's own marker: a run for another target keeps its spinner.
+      inFlightTests.current.delete(run);
+      setTestingTargets((ts) => ts.filter((t) => t !== run));
     }
   };
 
@@ -805,7 +813,7 @@ function ConnectStep({
 }) {
   const [url, setUrl] = useState("");
   const [key, setKey] = useState("");
-  // The targets of the tests in flight (mirrors the Editor's testingTarget): only those targets
+  // The targets of the tests in flight (mirrors the Editor's testingTargets): only those targets
   // show the buttons busy, so correcting a mistyped address mid-test re-enables Test, Cancel and
   // the manual link at once instead of after the old request times out. Every run is kept, not
   // just the latest: typing an older, still-running target back must show it busy again, or
