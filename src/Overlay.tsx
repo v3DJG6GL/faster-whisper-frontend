@@ -1488,8 +1488,9 @@ export default function Overlay() {
                             disabled={!known}
                             onClick={() => runQuickLaunch(e)}
                             className={cn(
-                              "ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors hover:bg-surface-2 hover:text-text disabled:pointer-events-none disabled:opacity-40",
-                              off && "opacity-40",
+                              "ring-signal grid size-8 shrink-0 place-items-center rounded-lg text-faint transition-colors disabled:pointer-events-none disabled:opacity-40",
+                              // A dimmed button must not light up as if clickable (the ui kit's rule).
+                              off ? "cursor-not-allowed opacity-40" : "hover:bg-surface-2 hover:text-text",
                             )}
                           >
                             <Icon className="size-4" />

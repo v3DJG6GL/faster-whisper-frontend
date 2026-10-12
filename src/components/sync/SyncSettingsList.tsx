@@ -280,7 +280,7 @@ export function SyncSettingsList({ enabled }: { enabled: boolean }) {
             <button
               type="button"
               disabled={totalChanged === 0}
-              className="ring-signal rounded-lg border border-line px-3 py-1.5 text-[12px] text-faint hover:text-dim disabled:opacity-40"
+              className="ring-signal rounded-lg border border-line px-3 py-1.5 text-[12px] text-faint enabled:hover:text-dim disabled:opacity-40"
               onClick={() => setConfirmAll(true)}
             >
               Restore all defaults…
