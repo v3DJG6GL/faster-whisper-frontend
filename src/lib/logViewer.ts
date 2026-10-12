@@ -79,17 +79,11 @@ export function visibleLines(): LogLine[] {
   return visibleCache.lines;
 }
 
-/** Lines "Clear view" hid — still in the ring and on disk, absent from the view. */
+/** Lines "Clear view" hid — still in the ring and on disk, absent from the view.
+ *  `buf` is seq-ordered, so they are exactly the ring minus the per-version visible
+ *  slice: no scan of up to LOG_BUFFER_CAP lines per render. */
 export function clearedCount(): number {
-  // A count, not a filtered copy: this runs in the Logs render body on every batch and
-  // keystroke, and `buf` holds up to LOG_BUFFER_CAP lines. `buf` is seq-ordered.
-  if (clearFloorSeq <= 0) return 0;
-  let n = 0;
-  for (const l of buf) {
-    if (l.seq >= clearFloorSeq) break;
-    n++;
-  }
-  return n;
+  return buf.length - visibleLines().length;
 }
 
 export function clearView() {

@@ -1283,7 +1283,7 @@ export default function Transcribe() {
                         persistScoped({ model: "" });
                       }}
                       title={`Default · ${defaultModelName}`}
-                      className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text"
+                      className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-md px-1 text-[11px] font-normal text-faint hover:text-text disabled:pointer-events-none disabled:opacity-50"
                     >
                       <RotateCcw className="size-3" /> use default
                     </button>

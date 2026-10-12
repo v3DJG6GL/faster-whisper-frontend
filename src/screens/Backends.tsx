@@ -582,7 +582,9 @@ function Editor({
             <div className={OVERRIDE_CONTROL_W}>
               <ModelPicker
                 ariaLabel="Model"
-                value={b.model}
+                // Trimmed, as a run sends it: a synced " small " is the listed model, not a
+                // custom one the picker's blur would rewrite (as on Profiles).
+                value={b.model.trim()}
                 onChange={(v) => set({ model: v })}
                 models={resultLive?.ok ? resultLive.models : stored?.ok ? stored.models : []}
                 placeholder={serverModel ? inheritLabel(serverModel, "Default") : "whisper-1 / large-v3"}

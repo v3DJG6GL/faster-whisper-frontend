@@ -105,10 +105,12 @@ function Editor({
         // what we last auto-filled: if the current label is blank or still equals that, it's ours to
         // refresh; otherwise the user typed it, so leave it. Lets a second "Use current" on a
         // different app update BOTH the id and the label.
+        // Read the ref now: React may run the updater after the assignment below.
+        const prevAuto = lastAutoName.current;
         setR((x) => ({
           ...x,
           appId: app.appId,
-          name: !x.name?.trim() || x.name === lastAutoName.current ? autoLabel : x.name,
+          name: !x.name?.trim() || x.name === prevAuto ? autoLabel : x.name,
         }));
         lastAutoName.current = autoLabel;
         setSaveError(null); // the id it complained about is filled in now

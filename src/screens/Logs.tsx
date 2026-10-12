@@ -215,9 +215,7 @@ export default function Logs() {
   }, []);
 
   const all = visibleLines();
-  // `version` is bumped by every append and by Clear view — the only writes to
-  // the ring or the clear floor — so the full-buffer scan need not repeat per keystroke.
-  const cleared = useMemo(() => clearedCount(), [version]);
+  const cleared = clearedCount();
   // Clear view empties `all` itself (the floor sits past every line), so an empty
   // `all` with a floor is a cleared view; lines that exist but match nothing are a filter miss.
   const emptyKind = all.length > 0 ? "filtered" : cleared > 0 ? "cleared" : "none";

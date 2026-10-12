@@ -165,7 +165,8 @@ function Editor({
   // one the picker's blur would rewrite.
   const ownModel = p.model?.trim() ?? "";
   const ownOverrideProfile = p.overrideProfile?.trim() ? p.overrideProfile : "";
-  const spoken = spokenField(ownLang, p.decodeOverrides, multiInherited, multiOffered);
+  // The spoken picker reads the language as a run sends it (a synced " auto " is auto).
+  const spoken = spokenField(ownLang ? effectiveLanguage(ownLang, "") : "", p.decodeOverrides, multiInherited, multiOffered);
   // The "Vocabulary / prompt" this profile inherits when it sets none: the backend's
   // own prompt, else the server's default prompt. Read through the backend's TRI-state —
   // a backend whose prompt is explicitly CLEARED inherits nothing, so ghosting the server's
