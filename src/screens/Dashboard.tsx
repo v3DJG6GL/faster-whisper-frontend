@@ -276,11 +276,13 @@ export default function Dashboard() {
   const activeProfile = useApp((s) => s.activeProfile);
   const updateSettings = useApp((s) => s.updateSettings);
 
-  const enabled = profiles.filter((p) => p.enabled);
   // The hero button has no held chord (you click it), so it always dictates hands-free
   // style. It targets the profile picked below — falling back to the first enabled
   // hands-free profile, then any enabled — and uses that profile's backend + overrides.
   const target = homeTargetProfile(profiles, homeProfileId);
+  // No target = no enabled profile; with none at all there is nothing to enable. The second string
+  // is the chip's wording too (keep the two aligned).
+  const offHint = profiles.length === 0 ? "Add a profile to begin" : "Enable a profile to begin";
   const headerBackend: Backend | undefined = backendForProfile(target, backends);
   // While a session is live, the hero READOUTS (model / endpoint / language) describe the
   // RUNNING profile — like the chip + usage do — not the home-button target, which can drift if
@@ -416,7 +418,7 @@ export default function Dashboard() {
                   ? "Cancel (force stop)"
                   : target
                     ? "Start a live dictation"
-                    : "Enable a profile to begin"
+                    : offHint
             }
           >
             {busy ? <Square className="size-6" /> : <Mic className="size-7" />}
@@ -427,10 +429,14 @@ export default function Dashboard() {
               {vis.label}
             </div>
             <div className="mt-1 text-[16px] font-semibold text-text">
-              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : !enabled.length ? "Enable a profile to begin" : target ? `Press to dictate with ${profileDisplayName(target.name)}` : "Press to dictate"}
+              {busy ? (isGracefulStop(status, isCapturing()) ? "Press again to stop" : "Press to cancel") : target ? `Press to dictate with ${profileDisplayName(target.name)}` : offHint}
             </div>
             <div className="mt-0.5 text-[12.5px] text-faint">
-              {busy || enabled.length ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is." : "The button and the hotkeys stay off until a profile is enabled."}
+              {busy || target
+                ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is."
+                : profiles.length === 0
+                  ? "The button and the hotkeys stay off until you add a profile."
+                  : "The button and the hotkeys stay off until a profile is enabled."}
             </div>
           </div>
           <LiveWaveform
