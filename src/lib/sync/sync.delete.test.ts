@@ -1575,4 +1575,29 @@ describe("an automatic push with nothing to send", () => {
       api.keys = null;
     }
   });
+
+  // The other push that contacts no server: the sync backend's address changed while the keyring
+  // read was parked, so the PUT is withheld from the abandoned host — and must not read "Synced".
+  it("keeps an earlier sync error when the address moved mid-compose", async () => {
+    let release: (v: Record<string, string>) => void = () => {};
+    try {
+      await seedBase();
+      useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: "Sync failed." });
+      const pushesBefore = api.pushes;
+      api.park = new Promise((r) => (release = r));
+      api.readCalled = false;
+      const pushing = pushNow(true);
+      await vi.waitFor(() => expect(api.readCalled).toBe(true));
+      useApp.setState({ backends: useApp.getState().backends.map((b) => ({ ...b, serverUrl: "http://moved:9" })) });
+      release({ b1: "sk-secret" });
+      await pushing;
+      expect(api.pushes).toBe(pushesBefore);
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toBe("Sync failed.");
+    } finally {
+      api.park = null;
+      api.keys = null;
+      await resetSyncState(); // drop the follow-up push scheduled for the corrected address
+    }
+  });
 });

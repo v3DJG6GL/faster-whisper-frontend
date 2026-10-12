@@ -2480,6 +2480,10 @@ export async function pullNow(manual = false): Promise<void> {
   if (!backend || !canSync() || inFlight) return;
   inFlight = true;
   const myGen = gen;
+  // The failure a pull that contacts no server restores (pushNow's twin).
+  const prior = useApp.getState();
+  const priorError =
+    prior.syncStatus === "error" && !pendingConflict && !pendingReview ? prior.syncError : undefined;
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
@@ -2488,8 +2492,12 @@ export async function pullNow(manual = false): Promise<void> {
     const pullUrl = liveSyncTarget(backend);
     if (pullUrl === null) {
       // The target moved while we were in the keyring. Don't read the abandoned host — the next
-      // window-focus pull runs against the corrected address on its own.
-      idleStatus();
+      // window-focus pull runs against the corrected address on its own. Nothing was contacted:
+      // an earlier failure stands, and so does a status a Reject / Later set meanwhile.
+      if (useApp.getState().syncStatus !== "syncing") return;
+      if (!pendingConflict && !pendingReview && priorError !== undefined)
+        setRuntime({ syncStatus: "error", syncError: priorError });
+      else idleStatus();
       return;
     }
     const res = await syncPull({ serverUrl: pullUrl, backendId: backend.id });
@@ -2562,6 +2570,14 @@ export async function pushNow(manual = false): Promise<void> {
   const prior = useApp.getState();
   const priorError =
     prior.syncStatus === "error" && !pendingConflict && !pendingReview ? prior.syncError : undefined;
+  /** End a push that contacted no server: a status another writer set meanwhile (a Reject /
+   *  Later, an approve) stands, an earlier failure is restored, else the idle status. */
+  const endWithoutServer = () => {
+    if (useApp.getState().syncStatus !== "syncing") return;
+    if (!pendingConflict && !pendingReview && priorError !== undefined)
+      setRuntime({ syncStatus: "error", syncError: priorError });
+    else idleStatus();
+  };
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
@@ -2579,11 +2595,7 @@ export async function pushNow(manual = false): Promise<void> {
       // it waits: restore its notice (cleared by the "syncing" above) instead of "Synced" next to
       // the dialog. Likewise a push that contacts no server must not overwrite an earlier
       // failure (a failed pull, a refused keyring read) with "Synced".
-      // A status another writer set meanwhile (a Reject / Later, an approve) stands.
-      if (useApp.getState().syncStatus !== "syncing") return;
-      if (!pendingConflict && !pendingReview && priorError !== undefined)
-        setRuntime({ syncStatus: "error", syncError: priorError });
-      else idleStatus();
+      endWithoutServer();
       return;
     }
     // Gated on the COMPOSED blob, not on the Backends switch: the snapshot pass-through
@@ -2606,7 +2618,9 @@ export async function pushNow(manual = false): Promise<void> {
       // backend's plaintext key, so it is the one that must not go to an abandoned host.
       const pushUrl = liveSyncTarget(backend);
       if (pushUrl === null) {
-        idleStatus();
+        // A later attempt did reach the (old) server, so an earlier failure is stale by then.
+        if (attempt === 0) endWithoutServer();
+        else if (useApp.getState().syncStatus === "syncing") idleStatus();
         schedulePush(0); // let the corrected address receive this state instead
         return;
       }
@@ -2713,8 +2727,8 @@ export async function pushNow(manual = false): Promise<void> {
         if (!applied) {
           // Refused (dictation live) or dropped: no base adopted and nothing pushed, the next pull
           // re-offers it. Clear the 'syncing' this call set, as reconcileRemote's twin does —
-          // without hiding a prompt that still waits.
-          idleStatus();
+          // without hiding a prompt that still waits, or overwriting a Reject / Later meanwhile.
+          if (useApp.getState().syncStatus === "syncing") idleStatus();
           return;
         }
         // Applied without the degraded backends category: adopt the base and keep pushing only
