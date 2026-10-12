@@ -202,6 +202,55 @@ describe("translate progress state machine", () => {
     expect(s).toMatchObject({ phase: "translating", modelPct: 1 });
   });
 
+  it("a later chunk leaving a model phase reads translating with a full model lane", () => {
+    // Chunk 1 answered inside the poll gap, so no translating poll ever cleared the model phase.
+    let s = foldTranslatePoll(beginChunk(start(), idxs(0, 400), 0), { stage: "loading" });
+    expect(beginChunk(s, idxs(400, 400), 400)).toMatchObject({ phase: "translating", modelPct: 1 });
+    s = foldTranslatePoll(beginChunk(start(), idxs(0, 400), 0), { stage: "downloading", progress: 0.4 });
+    expect(beginChunk(s, idxs(400, 400), 400)).toMatchObject({ phase: "translating", modelPct: 1 });
+  });
+
+  it("a reconnect mid-download fills the model lane once a chunk answered, not before", () => {
+    let s = beginChunk(start(), idxs(0, 400), 0);
+    s = foldTranslatePoll(s, { stage: "downloading", progress: 0.4 });
+    s = foldPollFailure(s);
+    expect(beginChunk(s, idxs(400, 400), 400)).toMatchObject({ phase: "translating", modelPct: 1 });
+    // The first chunk itself leaving proves nothing about the model.
+    expect(beginChunk(s, idxs(0, 400), 0)).toMatchObject({ phase: "loading", modelPct: 0.4 });
+  });
+
+  it("a model-phase poll sent before a later chunk began cannot set the phase back", () => {
+    const s = beginChunk(foldTranslatePoll(beginChunk(start(), idxs(0, 400), 0, 10), { stage: "loading" }), idxs(400, 400), 400, 100);
+    expect(foldTranslatePoll(s, { stage: "loading" }, 120, 50).phase).toBe("translating");
+    expect(foldTranslatePoll(s, { stage: "downloading", progress: 0.2 }, 120, 50)).toMatchObject({ phase: "translating", modelPct: 1 });
+  });
+
+  it("a poll sent before the newest folded poll is dropped, answered or failed", () => {
+    let s = beginChunk(start(), idxs(0, 400), 0, 100);
+    s = foldTranslatePoll(s, { stage: "translating", progress: 0.5 }, 210, 200);
+    const pct = s.pct;
+    const frontier = s.frontierIdx;
+    // An older poll that hung through a blip and timed out after the newer one answered.
+    expect(foldPollFailure(s, 150).phase).toBe("translating");
+    // An older success after a newer one cannot lower pct/frontier.
+    const older = foldTranslatePoll(s, { stage: "translating", progress: 0.1 }, 220, 150);
+    expect(older.pct).toBe(pct);
+    expect(older.frontierIdx).toBe(frontier);
+    // A newer failure still flags it, and a poll answered after that one clears it.
+    s = foldPollFailure(s, 230);
+    expect(s.phase).toBe("reconnecting");
+    expect(foldTranslatePoll(s, {}, 300, 220).phase).toBe("reconnecting");
+    expect(foldTranslatePoll(s, {}, 300, 240).phase).toBe("translating");
+  });
+
+  it("an answered-but-empty poll (an HTTP error) only ever clears 'reconnecting'", () => {
+    // What the viewer folds for a server without a progress entry: every poll 404s.
+    const loading = foldTranslatePoll(beginChunk(start(), idxs(0, 400), 0, 100), { stage: "loading" }, 110, 105);
+    expect(foldTranslatePoll(loading, {}, 130, 120).phase).toBe("loading");
+    const downloading = { ...loading, phase: "downloading" as const };
+    expect(foldTranslatePoll(downloading, {}, 130, 120).phase).toBe("downloading");
+  });
+
   it("a poll sent before the current chunk began cannot flag 'reconnecting' late", () => {
     const s = beginChunk(start(), idxs(0, 400), 0, 100);
     expect(foldPollFailure(s, 50).phase).toBe("translating");

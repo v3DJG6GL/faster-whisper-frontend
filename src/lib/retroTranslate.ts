@@ -85,6 +85,10 @@ export interface TranslateRunUi {
    *  progress id across chunks, so a poll SENT before this belongs to the previous chunk and
    *  must not scale onto this one's frame. */
   chunkAt?: number;
+  /** `sentAt` of the newest poll already folded (answered or failed). Polls overlap — each
+   *  has a 10 s timeout and the 1 s poller does not wait — so one sent earlier can settle
+   *  later; it is older news than what the card shows and is dropped. */
+  pollAt?: number;
   /** ms epoch when the run started (the "running m:ss" clock). */
   startedAt: number;
   /** ms epoch when the run finished — stamped with phase "done", so the receipt's
@@ -146,19 +150,22 @@ export function beginChunk(
     // A chunk request leaving IS the run translating: against a server with no shared
     // progress entry (every poll 404s, which the viewer swallows) nothing else ever left
     // "starting", so the card read "Starting…" for the whole run while rows landed.
-    // Promote only from "starting"; a later poll still corrects to downloading/loading.
-    // Also leave "reconnecting": the previous chunk's answer proves the network is back,
-    // and against that same 404 server no successful poll ever would. It also proves the
-    // model is up (the old pct may still be 0 when no translating poll landed), so only a
-    // first chunk could still be loading; past it the model lane reads full, as
-    // foldTranslatePoll's translating arm sets it.
+    // On the first chunk a later poll still corrects to downloading/loading.
+    // Past it, any chunk having answered proves the model is up (and the network back):
+    // whatever the card read — "loading"/"downloading" from a model phase no translating
+    // poll outlived (a fast chunk inside the poll gap), or "reconnecting" against that same
+    // 404 server where no successful poll ever would clear it — it now reads "translating"
+    // with a full model lane, as foldTranslatePoll's translating arm sets it. On the first
+    // chunk "reconnecting" settles on the busiest safe guess.
     phase:
       s.phase === "starting"
         ? "translating"
-        : s.phase === "reconnecting"
-          ? s.modelPhaseSeen && done === 0 ? "loading" : "translating"
-          : s.phase,
-    modelPct: s.phase === "reconnecting" && s.modelPhaseSeen && done > 0 ? 1 : s.modelPct,
+        : done > 0 && s.phase !== "done"
+          ? "translating"
+          : s.phase === "reconnecting"
+            ? s.modelPhaseSeen ? "loading" : "translating"
+            : s.phase,
+    modelPct: done > 0 && s.modelPhaseSeen ? 1 : s.modelPct,
     done,
     chunkLen: chunkIdxs.length,
     chunkIdxs,
@@ -192,8 +199,12 @@ function frontierAt(s: TranslateRunUi, progress: number, targetProgress?: number
  *  backend counterpart is being built in parallel, so EVERY field may be
  *  absent — an empty poll changes nothing but still returns a fresh object
  *  (the card's clock re-renders off it). Terminal phases are sticky.
- *  `sentAt` = when the poll's request left; a poll sent before the current chunk began
- *  (a late answer about the previous chunk) leaves the chunk-relative pct/frontier alone. */
+ *  `sentAt` = when the poll's request left. Two guards, in this order: a poll sent before
+ *  the newest one already folded (`pollAt`) is dropped whole — the card already shows
+ *  newer news. One that passes but was sent before the current chunk began (a late answer
+ *  about the previous chunk) still folds its passthrough fields and clears "reconnecting",
+ *  but leaves the chunk-relative pct/frontier alone, and past the first chunk cannot set a
+ *  model phase back (that chunk's answer proved the model up). */
 export function foldTranslatePoll(
   s: TranslateRunUi,
   p: BatchProgress,
@@ -201,9 +212,13 @@ export function foldTranslatePoll(
   sentAt?: number,
 ): TranslateRunUi {
   if (s.phase === "done") return s;
+  if (sentAt !== undefined && s.pollAt !== undefined && sentAt < s.pollAt) return s;
   const next: TranslateRunUi = { ...s };
+  if (sentAt !== undefined) next.pollAt = sentAt;
+  const stale = sentAt !== undefined && s.chunkAt !== undefined && sentAt < s.chunkAt;
   switch (p.stage) {
     case "downloading":
+      if (stale && s.done > 0) break;
       next.phase = "downloading";
       next.modelPhaseSeen = true;
       if (typeof p.progress === "number") next.modelPct = clamp01(p.progress);
@@ -211,6 +226,7 @@ export function foldTranslatePoll(
       if (typeof p.totalBytes === "number" && p.totalBytes > 0) next.totalBytes = p.totalBytes;
       break;
     case "loading":
+      if (stale && s.done > 0) break;
       next.phase = "loading";
       next.modelPhaseSeen = true;
       next.modelPct = 1;
@@ -218,7 +234,6 @@ export function foldTranslatePoll(
     case "translating":
       next.phase = "translating";
       if (next.modelPhaseSeen) next.modelPct = 1;
-      const stale = sentAt !== undefined && s.chunkAt !== undefined && sentAt < s.chunkAt;
       if (typeof p.progress === "number" && !stale) {
         next.pct = clamp01((s.done + clamp01(p.progress) * s.chunkLen) / s.total);
         next.frontierIdx = frontierAt(s, p.progress, p.targetProgress);
@@ -248,11 +263,14 @@ export function foldTranslatePoll(
  *  continues until it recovers. Terminal phases are sticky here too.
  *  `sentAt` as in foldTranslatePoll: a poll sent before the current chunk began failing late
  *  says nothing about now (the chunk that just left proves the network), and against a
- *  server whose polls all 404 nothing would clear the flag until the next chunk. */
+ *  server whose polls all 404 nothing would clear the flag until the next chunk. Likewise a
+ *  poll sent before the newest one already folded (`pollAt`): a newer poll answered, so the
+ *  network was back by then. */
 export function foldPollFailure(s: TranslateRunUi, sentAt?: number): TranslateRunUi {
   if (s.phase === "done") return s;
   if (sentAt !== undefined && s.chunkAt !== undefined && sentAt < s.chunkAt) return s;
-  return { ...s, phase: "reconnecting" };
+  if (sentAt !== undefined && s.pollAt !== undefined && sentAt < s.pollAt) return s;
+  return { ...s, phase: "reconnecting", pollAt: sentAt ?? s.pollAt };
 }
 
 export interface ChunkedTranslateArgs {
