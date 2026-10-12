@@ -277,8 +277,8 @@ async function refreshAll(): Promise<void> {
       }
       if (statsPageShown()) {
         // A hidden pass skipped the page's documents, so what it shows may be hours old: a
-        // miss now marks it failed, as on a reopen. Consumed here rather than by the show
-        // handler, so a show folded into an in-flight pass (rerunRequested) still counts.
+        // miss now marks it failed, as on a reopen. The show handler normally fetches them
+        // itself and consumes the flag first; one still set here is consumed the same way.
         const stale = pageMissed;
         pageMissed = false;
         try {
@@ -316,11 +316,21 @@ export function initUsageController(): void {
     void refreshAll();
   }, POLL_MS);
   // Shown again after ticks were passed over — or right after a hidden pass that skipped the
-  // open page's documents (skippedTicks is 0 then): catch up now, not on the next tick.
+  // open page's documents (skippedTicks is 0 then): catch up now, not on the next tick. The
+  // page's documents are fetched directly rather than at the end of a pass, which first
+  // flushes the outcomes and then waits on every backend's trend fetch (30 s each, bounded).
   onWindowHiddenChange((hidden) => {
     if (hidden || (skippedTicks === 0 && !pageMissed)) return;
-    skippedTicks = 0;
-    void refreshAll();
+    if (pageMissed && statsPageShown()) {
+      // Possibly hours old, so a miss marks them failed, as on a reopen.
+      pageMissed = false;
+      void refreshView(true).catch(() => {});
+      void refreshYear(true, true).catch(() => {});
+    }
+    if (skippedTicks > 0) {
+      skippedTicks = 0;
+      void refreshAll();
+    }
   });
 
   let afterTimer: ReturnType<typeof setTimeout> | undefined;

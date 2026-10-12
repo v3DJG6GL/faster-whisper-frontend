@@ -372,6 +372,54 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
   });
+  it("the show catch-up fetches the page documents at once, not behind a pass stuck on another backend", async () => {
+    useApp.setState({
+      backends: [
+        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+      ],
+      usageViewBackendId: "b1",
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
+    await settle();
+    // b2 stops answering its trend document; two more ticks are passed over.
+    const ok = getUsageStats.getMockImplementation()!;
+    let releaseB2!: (v: null) => void;
+    getUsageStats.mockImplementation((a) =>
+      (a as { backendId?: string }).backendId === "b2" && a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2
+        ? (new Promise((r) => (releaseB2 = r)) as never)
+        : ok(a),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(2 * 30_000);
+      await settle();
+      getUsageStats.mockClear();
+      setHidden(false); // the catch-up pass hangs on b2's trend fetch
+      await settle();
+      expect(calls()).toEqual({ fixed: 2, page: 2 }); // b1 + the pending b2, and the page's view + year
+      expect(useApp.getState().usageView?.failed).toBeFalsy();
+      getUsageStats.mockClear();
+      releaseB2(null);
+      await settle();
+      expect(calls().page).toBe(2); // the pass ends with its own (redundant, harmless) page fetch
+    } finally {
+      releaseB2?.(null); // never leave the pass stuck for the later cases
+      await settle();
+      getUsageStats.mockImplementation(ok);
+      close();
+    }
+    useApp.setState({
+      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      usageViewBackendId: null,
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+  });
   it("seeds the year from the 1 year view coming back from it, refetches it from All, and reuses it between shorter ranges", async () => {
     const ok = getUsageStats.getMockImplementation()!;
     const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
