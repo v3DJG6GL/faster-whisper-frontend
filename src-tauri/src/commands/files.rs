@@ -220,6 +220,17 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     // unlistable history folder, is retried on the next launch; a permanently unreadable
     // record re-runs the scan each launch while it exists — the same read+parse the History
     // listing does, accepted.
+    // A base that is no folder (an unplugged drive, an offline share, a broken link) can heal
+    // nothing — every candidate lives under it — and cannot take the stamp either, so the scan
+    // would repeat on every offline launch; skip it and leave the heal armed for when it is back.
+    // (A migration that moved something moved it INTO the base, so it is a folder then.)
+    if !base.is_dir() {
+        tracing::info!(
+            "[audio] audio folder {} unavailable; media-path repair left for a later launch",
+            base.display()
+        );
+        return;
+    }
     let stamp = base.join(HEAL_STAMP);
     if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
         let _ = std::fs::write(&stamp, b"");

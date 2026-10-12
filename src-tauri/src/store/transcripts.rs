@@ -52,6 +52,21 @@ fn dictations_dir(app: &AppHandle) -> Result<PathBuf, String> {
     transcripts_dir(app).map(|d| d.join("dictation"))
 }
 
+/// Both record folders (file/url + dictation): the set every media-path walk and its launch
+/// predicate (`has_any_records`) share, so the fast path never stamps a folder the heal skips.
+fn record_dirs(app: &AppHandle) -> Vec<PathBuf> {
+    [transcripts_dir(app), dictations_dir(app)]
+        .into_iter()
+        .flatten()
+        .collect()
+}
+
+/// Every record field that may hold a media path. Dictation records keep their audio under
+/// `sourcePath`, file/url records under `mediaPath` (+ `videoPath`): the move rewrite, the heal
+/// and `record_media_paths` all read this one list, so a moved file is re-pointed and healed in
+/// whichever field carries it.
+const MEDIA_KEYS: [&str; 3] = ["mediaPath", "videoPath", "sourcePath"];
+
 /// The pre-single-base media store (`transcripts/media`) — referenced only by
 /// the startup migration in `commands::ensure_audio_layout`.
 pub(crate) fn legacy_media_dir(app: &AppHandle) -> Result<PathBuf, String> {
@@ -106,7 +121,7 @@ pub(crate) fn record_media_paths(app: &AppHandle, id: &str) -> Vec<PathBuf> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
         return Vec::new();
     };
-    ["sourcePath", "mediaPath", "videoPath"]
+    MEDIA_KEYS
         .iter()
         .filter_map(|k| v.get(*k).and_then(|p| p.as_str()))
         .filter(|p| !p.is_empty())
@@ -160,7 +175,8 @@ impl FixTally {
 }
 
 /// Walk every `.json` record in `dirs` for a media-path fix-up (`what`: "rewrite" or "heal"),
-/// let `fix` change the parsed record, and write back the ones it changed, keeping their mtime.
+/// let `fix` map each media field (`MEDIA_KEYS`; key, stored path → new path), and write back the
+/// ones it changed, keeping their mtime.
 /// The move rewrite and the heal share it so both count a miss alike: a missing folder, a
 /// record a sweep removed first, a non-UTF-8 file and an unparsable one are nothing the History
 /// listing could load either and are skipped; anything else unread may hide a moved path and is
@@ -169,7 +185,7 @@ fn fix_records_in(
     dirs: &[PathBuf],
     what: &str,
     size_cap: Option<u64>,
-    mut fix: impl FnMut(&mut serde_json::Value) -> bool,
+    mut fix: impl FnMut(&str, &str) -> Option<String>,
 ) -> FixTally {
     let mut tally = FixTally {
         fixed: 0,
@@ -242,7 +258,18 @@ fn fix_records_in(
             let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
                 continue;
             };
-            if !fix(&mut v) {
+            let mut changed = false;
+            for key in MEDIA_KEYS {
+                if let Some(new) = v
+                    .get(key)
+                    .and_then(|m| m.as_str())
+                    .and_then(|old| fix(key, old))
+                {
+                    v[key] = serde_json::Value::String(new);
+                    changed = true;
+                }
+            }
+            if !changed {
                 continue;
             }
             let Ok(out) = serde_json::to_string(&v) else {
@@ -277,32 +304,15 @@ pub(crate) fn rewrite_media_paths(
     app: &AppHandle,
     lookup: &std::collections::HashMap<&str, &str>,
 ) -> bool {
-    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
-        .into_iter()
-        .flatten()
-        .collect();
-    rewrite_media_paths_in(&dirs, lookup)
+    rewrite_media_paths_in(&record_dirs(app), lookup)
 }
 
 fn rewrite_media_paths_in(
     dirs: &[PathBuf],
     lookup: &std::collections::HashMap<&str, &str>,
 ) -> bool {
-    let tally = fix_records_in(dirs, "rewrite", None, |v| {
-        // Dictation records keep their audio under `sourcePath`; file/url
-        // records under `mediaPath` — a moved file must be re-pointed in
-        // whichever field carries it.
-        let mut changed = false;
-        for key in ["mediaPath", "videoPath", "sourcePath"] {
-            let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
-                continue;
-            };
-            if let Some(new) = lookup.get(old) {
-                v[key] = serde_json::Value::String((*new).to_owned());
-                changed = true;
-            }
-        }
-        changed
+    let tally = fix_records_in(dirs, "rewrite", None, |_, old| {
+        lookup.get(old).map(|n| (*n).to_owned())
     });
     if tally.fixed > 0 {
         tracing::info!(
@@ -350,42 +360,26 @@ fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a 
 /// Returns false when a record could not be read or rewritten or a history folder could
 /// not be listed: the caller must then keep the heal armed, or that record stays broken.
 pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) -> bool {
-    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
-        .into_iter()
-        .flatten()
-        .collect();
-    heal_media_paths_in(&dirs, base)
+    heal_media_paths_in(&record_dirs(app), base)
 }
 
 fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> bool {
     let subs = crate::commands::AUDIO_SUBDIRS;
     // Same size guard as `read_records_into`: an oversized record is skipped
     // there too, so parsing it here would be work for a record nobody loads.
-    let tally = fix_records_in(dirs, "heal", Some(MAX_RECORD_BYTES), |v| {
-        let mut changed = false;
-        for key in ["mediaPath", "videoPath", "sourcePath"] {
-            let Some(old) = v.get(key).and_then(|m| m.as_str()) else {
-                continue;
-            };
-            let old_path = std::path::Path::new(old);
-            // Only local absolute paths that are actually gone (a URL in
-            // `sourcePath` or a still-valid path is not ours to touch).
-            if !old_path.is_absolute() || old_path.exists() {
-                continue;
-            }
-            let Some(name) = old_path.file_name() else {
-                continue;
-            };
-            if let Some(found) = heal_candidates(key, old_path, &subs)
-                .into_iter()
-                .map(|s| base.join(s).join(name))
-                .find(|c| c.exists())
-            {
-                v[key] = serde_json::Value::String(found.to_string_lossy().into_owned());
-                changed = true;
-            }
+    let tally = fix_records_in(dirs, "heal", Some(MAX_RECORD_BYTES), |key, old| {
+        let old_path = std::path::Path::new(old);
+        // Only local absolute paths that are actually gone (a URL in
+        // `sourcePath` or a still-valid path is not ours to touch).
+        if !old_path.is_absolute() || old_path.exists() {
+            return None;
         }
-        changed
+        let name = old_path.file_name()?;
+        heal_candidates(key, old_path, &subs)
+            .into_iter()
+            .map(|s| base.join(s).join(name))
+            .find(|c| c.exists())
+            .map(|found| found.to_string_lossy().into_owned())
     });
     if tally.fixed > 0 {
         tracing::info!(
@@ -508,14 +502,10 @@ fn is_wav(p: &Path) -> bool {
 
 /// Does the transcript store hold ANY `.json` record? Cheap (a directory listing), so the
 /// startup migration can skip the full read+parse heal on a fresh install. Checks both
-/// `transcripts/` and `transcripts/dictation/` — the same directories `heal_media_paths`
+/// `transcripts/` and `transcripts/dictation/` — the same `record_dirs` `heal_media_paths`
 /// scans — so the predicate and the work it guards agree on what a record is.
 pub fn has_any_records(app: &AppHandle) -> bool {
-    let dirs: Vec<PathBuf> = [transcripts_dir(app), dictations_dir(app)]
-        .into_iter()
-        .flatten()
-        .collect();
-    any_records_in(&dirs)
+    any_records_in(&record_dirs(app))
 }
 
 /// `has_any_records` over `dirs`. Only a missing folder or a clean listing without a `.json`
