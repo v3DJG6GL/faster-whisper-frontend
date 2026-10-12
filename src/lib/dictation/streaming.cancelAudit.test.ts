@@ -299,29 +299,29 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // `injectedText` is emptied by a hard break (the next block glued onto the last line) and
     // survives a landed Return (the next block opened with three more Returns).
     const final = mask(finalBody);
-    // Owed to ONE window: a block typed into another (focus moved across a hard break) opens
-    // that window's empty field with no Returns.
-    expect(final).toMatch(/\(gapOwed && t\.appId === gapOwedApp \? PHRASE_GAP :/);
+    // Owed per app: a block typed into another (focus moved across a hard break) opens that
+    // app's empty field with no Returns, and going back still owes it in the first one (A, B, A).
+    expect(final).toMatch(/\(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :/);
+    expect(mask(streamingSrc)).toMatch(/const gapOwedApps = new Set</);
     expect(final).not.toMatch(/injectedText\.length > 0[^;]*PHRASE_GAP/);
     // Owed by a phrase typed into the field — not by one diverted to the clipboard.
     const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
     const typed = delivered.indexOf("sessionTyped = true;");
     expect(typed, "the typed branch of the delivered block").toBeGreaterThanOrEqual(0);
-    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwed = true;\s+gapOwedApp = t\.appId;/);
-    expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwed");
+    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwedApps\.add\(t\.appId\);/);
+    expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwedApps");
     // Paid by a Return that landed: the quiet-timer Enter, and the hard break's Enter or newline
     // separator — each after its own injectText, under the session token, and only when it landed
-    // in the window that owes the gap (a Return in window B does not end A's phrase).
-    const settled = /if \(insertCfg === cfg && landed && !diverted && t\.appId === gapOwedApp\) gapOwed = false;/;
-    expect(mask(streamingSrc).match(/(?<!let )\bgapOwed = false;/g) ?? [], "every clear site is window-checked or the reset").toHaveLength(4);
+    // in that app (a Return in app B does not end A's phrase).
+    const settled = /if \(insertCfg === cfg && landed && !diverted\) gapOwedApps\.delete\(t\.appId\);/;
+    expect(mask(streamingSrc).match(/gapOwedApps\.(?:delete|clear)\(/g) ?? [], "every pay site is per app, or the reset").toHaveLength(4);
     const enter = mask(fns.enqueueAutoEnter);
     expect(enter).toMatch(settled);
     expect(enter.search(settled)).toBeGreaterThan(enter.indexOf("injectText("));
     const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
     expect(boundary.match(new RegExp(settled.source, "g")) ?? []).toHaveLength(2);
     // Never before a session's first phrase: every start and abandon resets it.
-    expect(mask(fns.clearPhraseEnd)).toContain("gapOwed = false;");
-    expect(mask(fns.clearPhraseEnd)).toContain("gapOwedApp = null;");
+    expect(mask(fns.clearPhraseEnd)).toContain("gapOwedApps.clear();");
   });
 
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {

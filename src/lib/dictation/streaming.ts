@@ -1090,18 +1090,18 @@ let phraseDirty = false;
 // phrase task that diverts has run, so only this in-queue flag can stop them — the queued Enter
 // would otherwise submit the partial message or press Return in the new window.
 let lastPhraseDiverted = false;
-// Translated live sessions type BLOCKS separated by PHRASE_GAP. The target field's tail is a typed
-// phrase that no Return has followed yet, so the next block owes the gap. Set when a phrase is
-// typed into the field (not diverted), cleared by a Return that landed (the quiet-timer Enter, a
-// hard break's Enter or newline separator). A plain separator leaves it owed; a clipboard copy
-// never sets it (the field did not change). Session-scoped via clearPhraseEnd.
-let gapOwed = false;
-// The window that owes it (resolveTarget's appId at the typing). The gap belongs to THAT field: a
-// block typed into another window (focus moved, often across a hard break) opens without it — three
-// Returns into a chat input are three empty submits — and only a Return landing there pays it. An
-// unknown focus (null) matches another null, the same way publishTarget dedupes and a null
-// expectAppId trusts the target: where focus can't be read at all, every phrase is one window.
-let gapOwedApp: string | null = null;
+// Translated live sessions type BLOCKS separated by PHRASE_GAP. The apps (resolveTarget's appId at
+// the typing) whose field's tail is a typed phrase that no Return has followed yet: the next block
+// typed THERE owes the gap. Added when a phrase is typed into the field (not diverted), removed by
+// a Return that landed in that app (the quiet-timer Enter, a hard break's Enter or newline
+// separator). A plain separator leaves it owed; a clipboard copy never adds one (the field did not
+// change). A block typed into another app (focus moved, often across a hard break) opens without
+// it — three Returns into a chat input are three empty submits — while going back to the first app
+// still owes it there. Keyed on the app, not the window: a window title changes as a terminal runs
+// or a chat switches, so two windows of one app share the gap. An unknown focus (null) matches
+// another null, the same way publishTarget dedupes and a null expectAppId trusts the target.
+// Session-scoped via clearPhraseEnd.
+const gapOwedApps = new Set<string | null>();
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
@@ -1212,7 +1212,7 @@ function enqueueAutoEnter(): void {
     // The Return ended the phrase in the field: the next translated block opens on a fresh line,
     // not three more Returns. The session token, like every task's post-await write. Only a Return
     // in the window that owes the gap pays it.
-    if (insertCfg === cfg && landed && !diverted && t.appId === gapOwedApp) gapOwed = false;
+    if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
   });
 }
 
@@ -1303,8 +1303,7 @@ function clearPhraseEnd(): void {
   clearPhraseEndTimer();
   phraseDirty = false;
   lastPhraseDiverted = false;
-  gapOwed = false;
-  gapOwedApp = null;
+  gapOwedApps.clear();
   clipDirty = false;
   clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
@@ -2381,15 +2380,14 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             // A translated session types BLOCKS, so normalise the seam here
             // rather than inheriting whichever whitespace each path happened to
-            // carry. The gap follows the field's last TYPED phrase (gapOwed), across
+            // carry. The gap follows the field's last TYPED phrase (gapOwedApps), across
             // a hard break too, carry included — the break empties `injectedText`
             // but not the field. A phrase the own-window guard skipped or a
             // clipboard copy put nothing in the field and buys no gap; a Return
             // that already ended the phrase is not followed by three more, and a
-            // block typed into ANOTHER window (gapOwedApp) opens its empty field
-            // without one.
+            // block typed into ANOTHER app opens its empty field without one.
             const typeOut = sessionTranslation
-              ? (gapOwed && t.appId === gapOwedApp ? PHRASE_GAP : "") + phrase.text.trim()
+              ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + phrase.text.trim()
               : phrase.text;
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
@@ -2539,8 +2537,7 @@ async function ensureListeners(): Promise<void> {
               } else {
                 sessionTyped = true;
                 lastPhraseDiverted = false;
-                gapOwed = true;
-                gapOwedApp = t.appId;
+                gapOwedApps.add(t.appId);
                 signalInsert("typed");
               }
               // Everything past the baseline went out with this insert, carry included — so did
@@ -2779,14 +2776,14 @@ async function ensureListeners(): Promise<void> {
             if (dirtyAtBreak) {
               const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
               // A landed Return ended the phrase in the field (see enqueueAutoEnter).
-              if (insertCfg === cfg && landed && !diverted && t.appId === gapOwedApp) gapOwed = false;
+              if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
             }
             return;
           }
           if (!sep) return;
           if (sep.includes("\n")) {
             const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
-            if (insertCfg === cfg && landed && !diverted && t.appId === gapOwedApp) gapOwed = false;
+            if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
           } else {
             const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
