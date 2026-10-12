@@ -195,8 +195,9 @@ export function tailUnits(s: string, n: number): string {
   return /^[\uDC00-\uDFFF]/.test(t) ? t.slice(1) : t;
 }
 
-/** Why the chip's start buttons are off, in the Home button's words: no Profile at all, none
- *  enabled, or (a Profile but no Backend to send it to) no Backend. */
+/** Why one of the chip's start buttons is off, in the Home button's words: no Profile at
+ *  all, none enabled, or (a Profile but no Backend to send it to) no Backend. The cycle
+ *  button never gets the last one — cycling needs no Backend. */
 function startHint(anyProfile: boolean, anyEnabled: boolean): string {
   if (!anyProfile) return "Add a profile to begin";
   if (!anyEnabled) return "Enable a profile to begin";
@@ -266,10 +267,13 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // P16/D: the app being injected into (+ why, if it's coerced to clipboard), gated by the
   // setting and sent only while a session is active so the standby dock shows no stale target.
   const tgt = rec.showTargetOnOverlay && isActiveDictation(state.status) ? state.targetApp : null;
-  // Whether the chip's dictate / cycle-profile quick-launch can start anything: the same
-  // predicate runOverlayAction refuses on, so an idle chip can say why instead of a dead click.
+  // Whether the chip's dictate / cycle-profile quick-launch can do anything while idle: the
+  // same predicates runOverlayAction refuses on, so an idle chip can say why instead of a dead
+  // click. Two flags, not one: the toggle needs a home target AND a Backend for it, while the
+  // cycle only needs an enabled Profile (it persists homeProfileId, it starts nothing).
   const homeTarget = homeTargetProfile(state.profiles, state.settings.homeProfileId);
   const canStart = !!homeTarget && !!backendForProfile(homeTarget, state.backends);
+  const canCycle = state.profiles.some((p) => p.enabled);
   return {
     status: state.status,
     warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
@@ -319,6 +323,8 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // …and why its dictate / cycle-profile buttons are off while idle, worded like Home's.
     canStart,
     startHint: canStart ? "" : startHint(state.profiles.length > 0, !!homeTarget),
+    canCycle,
+    cycleHint: canCycle ? "" : startHint(state.profiles.length > 0, false),
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",

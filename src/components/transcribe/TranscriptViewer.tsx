@@ -398,7 +398,11 @@ export function TranscriptViewer({
   const editCount = Object.keys(fileEdits).length + Object.keys(fileSpkEdits).length;
   // Translated tracks present on this result, in target order.
   const langs = useMemo(() => translationTracks(result), [result]);
-  const untranslatedIdxs = useMemo(() => untranslatedIndexes(result.segments, langs), [result, langs]);
+  // Judged on the edited text, which is what a resume run sends (its textOf reads edits first).
+  const untranslatedIdxs = useMemo(
+    () => untranslatedIndexes(result.segments, langs, fileEdits),
+    [result, langs, fileEdits],
+  );
   const effSegments = useMemo(
     (): EffSegment[] =>
       (result.segments ?? []).map((seg, i) => ({

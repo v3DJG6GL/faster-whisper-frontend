@@ -735,6 +735,26 @@ describe("cutByShare", () => {
     const text = "Understandably everyone waited for the announcement";
     expect(cutByShare(text, [38, 13]).every((p) => !/\bthe$/.test(p))).toBe(true);
   });
+  it("keeps a glued number, version, e-mail or URL whole in unspaced text, as wrapLines does", () => {
+    for (const [text, tok] of [["円周率は3.14159です", "3.14159"], ["人口は1,234,567人です", "1,234,567"],
+      ["バージョン2.0.1をリリース", "2.0.1"], ["メールはfoo@bar.comまで", "foo@bar.com"], ["見てhttps://example.com", "https://example.com"]]) {
+      expect(wrapLines(text, Math.max(8, tok.length), 2)).toContain(tok);
+      for (const shares of [[1, 1], [1, 1, 1], [1, 1, 1, 1, 1], [1, 9], [9, 1], [3, 1, 3, 1]]) {
+        const parts = cutByShare(text, shares);
+        expect(parts.join("")).toBe(text);
+        expect(parts.some((p) => p.includes(tok))).toBe(true);
+      }
+    }
+    expect(cutByShare("円周率は3.14159です", [1, 1, 1])).toEqual(["円周率は", "3.14159", "です"]);
+  });
+  it("leaves no part empty while the text has a seam for every cut", () => {
+    expect(cutByShare("これはiPhoneProMax", [1, 1, 1])).toEqual(["これ", "は", "iPhoneProMax"]);
+    expect(cutByShare("東京2026", [1, 1, 1])).toEqual(["東", "京", "2026"]);
+    expect(cutByShare("電話番号は0123456789012345です", [1, 1, 1, 1, 1]).every(Boolean)).toBe(true);
+    expect(cutByShare("  今日はiPhoneです  ", [1, 1, 8]).every(Boolean)).toBe(true);
+    // Fewer seams than cuts: every seam is used, only the trailing parts stay empty.
+    expect(cutByShare("これはiPhoneProMax", [1, 1, 1, 1, 1])).toEqual(["こ", "れ", "は", "iPhoneProMax", ""]);
+  });
 });
 
 describe("trackLang", () => {

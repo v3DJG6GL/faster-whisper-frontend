@@ -305,6 +305,34 @@ describe("initOverlayController — canStart tells the chip whether its start bu
       useApp.setState({ profiles: s.profiles, backends: s.backends });
     }
   });
+
+  it("keeps the cycle button on with no Backend: cycling persists a home pick, it starts nothing", async () => {
+    const s = useApp.getState();
+    const p1 = { id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: null } as unknown as Profile;
+    const p2 = { ...p1, id: "p2", name: "p2" } as unknown as Profile;
+    try {
+      useApp.setState({
+        status: "idle",
+        profiles: [p1, p2],
+        backends: [],
+        settings: { ...s.settings, recording: { ...s.settings.recording, indicatorPosition: "top" } },
+      });
+      await initOverlayController();
+      const last = () => {
+        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
+        return u[u.length - 1]?.[1] as { canStart?: boolean; startHint?: string; canCycle?: boolean; cycleHint?: string };
+      };
+      useApp.setState({ backends: [] }); // force an emit from this state
+      expect(last()).toMatchObject({ canStart: false, startHint: "Add a backend to begin", canCycle: true, cycleHint: "" });
+      // Every profile off: now the cycle has nothing to cycle, and it says so — never "backend".
+      useApp.setState({ profiles: [{ ...p1, enabled: false }, { ...p2, enabled: false }] });
+      expect(last()).toMatchObject({ canCycle: false, cycleHint: "Enable a profile to begin" });
+      useApp.setState({ profiles: [] });
+      expect(last()).toMatchObject({ canCycle: false, cycleHint: "Add a profile to begin" });
+    } finally {
+      useApp.setState({ profiles: s.profiles, backends: s.backends });
+    }
+  });
 });
 
 describe("tailUnits", () => {

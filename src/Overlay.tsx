@@ -116,11 +116,15 @@ interface ChipState {
   // "Dot size" — factor for the status dot while it is tucked at the screen edge (see dotK).
   dotScale: number;
   quickLaunch: OverlayQuickAction[];
-  // False when the main window's dictate / cycle-profile actions have nothing to start (no
-  // enabled Profile, or no Backend); `startHint` then says why, in the Home button's words.
+  // False when the main window's dictate action has nothing to start (no enabled Profile, or
+  // no Backend); `startHint` then says why, in the Home button's words.
   // Absent from an older core = treat as startable.
   canStart: boolean;
   startHint?: string;
+  // The cycle-profile action's own flag: it needs an enabled Profile but no Backend, so it is
+  // never dimmed for (or explained by) a missing Backend. Absent from an older core = true.
+  canCycle: boolean;
+  cycleHint?: string;
   // False while the payload is built from the store's defaults (the saved config has not
   // landed yet); absent from an older core = treat as loaded.
   configLoaded?: boolean;
@@ -237,6 +241,7 @@ export default function Overlay() {
     dotScale: REC.dotScale,
     quickLaunch: REC.quickLaunch,
     canStart: true,
+    canCycle: true,
   });
 
   // Track the last-applied accent/theme so the ~30 Hz level stream does not
@@ -305,6 +310,8 @@ export default function Overlay() {
             quickLaunch: e.payload.quickLaunch ?? REC.quickLaunch,
             canStart: e.payload.canStart ?? true,
             startHint: e.payload.startHint ?? "",
+            canCycle: e.payload.canCycle ?? true,
+            cycleHint: e.payload.cycleHint ?? "",
             targetTitle: e.payload.targetTitle ?? "",
             targetSkip: e.payload.targetSkip ?? "",
             targetOnlySpeaking: e.payload.targetOnlySpeaking ?? false,
@@ -389,6 +396,7 @@ export default function Overlay() {
           { id: "d3", kind: "action", target: "toggle-dictation" },
         ],
         canStart: true,
+        canCycle: true,
       });
       raf.current = requestAnimationFrame(tick);
     };
@@ -1450,16 +1458,19 @@ export default function Overlay() {
                     <div className="flex items-center gap-2">
                       {state.quickLaunch.map((e) => {
                         const { label, icon: Icon, known } = quickLaunchMeta(e);
-                        // Nothing to start (the main window refuses these two while idle):
-                        // say why, like Home. Not `disabled` — its pointer-events-none would
+                        // Nothing to do (the main window refuses these two while idle): say
+                        // why, like Home. Not `disabled` — its pointer-events-none would
                         // swallow the very tooltip that explains it; the click stays a no-op.
                         // Idle only: a running session's toggle must still stop / cancel.
+                        // Each has its own predicate: the cycle needs no Backend.
+                        const isToggle = e.kind === "action" && e.target === "toggle-dictation";
+                        const isCycle = e.kind === "action" && e.target === "cycle-active-profile";
                         const off =
-                          !state.canStart &&
                           state.status === "idle" &&
-                          e.kind === "action" &&
-                          (e.target === "toggle-dictation" || e.target === "cycle-active-profile");
-                        const tip = off ? state.startHint || "Enable a profile to begin" : label;
+                          ((isToggle && !state.canStart) || (isCycle && !state.canCycle));
+                        const tip = off
+                          ? (isToggle ? state.startHint : state.cycleHint) || "Enable a profile to begin"
+                          : label;
                         return (
                           <button
                             key={e.id}

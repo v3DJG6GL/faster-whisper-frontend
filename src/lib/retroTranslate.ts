@@ -20,17 +20,21 @@ export const TRANSLATE_CHUNK = 32;
  *  close the moment the FIRST chunk lands (`langs` is non-empty from then on), so this is
  *  the only way back into a half-translated transcript. A blank-source segment is never
  *  in the set: its translation is blank by design, so it would keep offering a resume
- *  that can never finish. */
+ *  that can never finish. Blankness is judged on the EFFECTIVE text — `edits` first, as
+ *  the resume run's `textOf` reads it — since that is what the run would send: an edit can
+ *  turn a blank segment into words (then it needs translating) or words into a blank. */
 export function untranslatedIndexes(
   segments: { text?: string; translations?: Record<string, string> }[] | undefined,
   langs: string[],
+  edits?: Record<number, string>,
 ): number[] {
   if (!langs.length) return [];
-  return (segments ?? []).flatMap((s, i) =>
-    typeof s.text === "string" && !s.text.trim()
+  return (segments ?? []).flatMap((s, i) => {
+    const text = edits?.[i] ?? s.text;
+    return typeof text === "string" && !text.trim()
       ? []
-      : langs.some((l) => !(ownProp(s.translations, l) ?? "").trim()) ? [i] : [],
-  );
+      : langs.some((l) => !(ownProp(s.translations, l) ?? "").trim()) ? [i] : [];
+  });
 }
 
 /** Re-runs reproduce the transcript's OWN regime (the mode/model its record carries),

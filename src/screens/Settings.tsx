@@ -8,7 +8,13 @@ import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { cn } from "@/lib/cn";
 import { safeDisplayText } from "@/lib/sanitize";
 import { fmtFull, plural } from "@/lib/format";
-import { dropPendingWrites, flushRecordWrites, loadHistory, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
+import {
+  dropPendingWrites,
+  flushRecordWrites,
+  loadHistory,
+  useTranscriptHistory,
+  type TranscriptRecord,
+} from "@/lib/transcript/transcriptHistory";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
@@ -229,10 +235,18 @@ export default function Settings() {
     // file/URL/text records, so dictation writes stay. "dict" FLUSHES first instead (like the
     // Save-dictations toggle): a wipe that fails (an unlistable folder deletes nothing) must not
     // have thrown an edit away, so parked writes land before the wipe and only what was parked
-    // during it is dropped, after a confirmed wipe (`done`).
+    // during it is dropped, after a confirmed wipe (`done`) — and only for records that existed
+    // when the wipe began. A dictation first saved DURING the flush+wipe (its leading-edge save
+    // lands after Rust listed the folder, so it survives) keeps its parked follow-up write, or
+    // the reload below would read back its stale first version. Every record with a parked
+    // write is in the mirror (upsertRecord puts it there first), so the mirror is the snapshot.
     if (kind === "clear") dropPendingWrites(isFileStoreRecord);
+    const preWipe =
+      kind === "dict"
+        ? new Set(useTranscriptHistory.getState().records.filter(isDictationRecord).map((r) => r.id))
+        : null;
     const done = (n: number, [one, many]: [string, string]) => {
-      if (kind === "dict") dropPendingWrites(isDictationRecord);
+      if (preWipe) dropPendingWrites((r) => isDictationRecord(r) && preWipe.has(r.id));
       if (tabRef.current === "Recording & history") {
         setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
         setConfirming(null);

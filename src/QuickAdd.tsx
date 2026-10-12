@@ -282,11 +282,14 @@ export default function QuickAdd() {
       // every retry ends the same way (a PATCH per summon, rows never re-synced, and once the pin
       // is lifted the retry would push these stale rows over the stored rule unasked).
       const pinned = res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING);
+      // A 2xx whose reply couldn't be read (ok:false) still LANDED: "error" would re-PATCH on every
+      // summon and skip the re-sync. `pinned` stays on res.ok — an unreadable reply names no pins.
+      const landed = res.ok || (res.status >= 200 && res.status < 300);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
       // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).
-      if (saveTimer.current === null) setSaveState(pinned ? "pinned" : res.ok ? "saved" : "error");
-      return res.ok && !pinned;
+      if (saveTimer.current === null) setSaveState(pinned ? "pinned" : landed ? "saved" : "error");
+      return landed && !pinned;
     } catch (e) {
       // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
       // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads

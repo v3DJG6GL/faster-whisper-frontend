@@ -448,6 +448,16 @@ export function cutByShare(text: string, shares: number[]): string[] {
   const spaced = /\s/.test(text.trim());
   // One word of a spaced script ("Ja."): nothing to cut — it goes to the first part.
   if (!spaced && !BREAKS_ANYWHERE.test(text)) return [text.trim(), ...shares.slice(1).map(() => "")];
+  // Unspaced text cuts only between the tokens wrapLines wraps by (mixedTokens), so a
+  // glued number, version, e-mail or URL ("3.14159", "1,234,567", "foo@bar.com") stays
+  // whole here as it does on a line — its "." or "," used to draw the cut into it. The
+  // tokens lie back to back from the first non-space character, as in spreadTokens.
+  let seams: Set<number> | null = null;
+  if (!spaced) {
+    seams = new Set();
+    let at = text.search(/\S/);
+    for (const w of mixedTokens(text).toks) seams.add((at += w.length));
+  }
   // Candidate cut positions: a space (dropped) or, for CJK, any code-point
   // boundary (never inside a surrogate pair, e.g. an emoji). Spaced text may
   // still hold a CJK run (one Latin word in a Japanese line): it cuts between
@@ -457,6 +467,7 @@ export function cutByShare(text: string, shares: number[]): string[] {
   const cand: number[] = [];
   for (let i = 1; i < text.length; i++) {
     const c = text.charCodeAt(i);
+    if (seams && !seams.has(i)) continue;
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
     // Nor before the first ー after a character (the second ー of a run is a seam again).
     if (text[i] === "ー" && text[i - 1] !== "ー") continue;
@@ -501,14 +512,19 @@ export function cutByShare(text: string, shares: number[]): string[] {
   const sylSpaced = spaced && BRK_SYL.test(text);
   const tot = shares.reduce((a, b) => a + b, 0) || 1;
   const cuts: number[] = [];
+  // Every cut after this one still needs a seam of its own: a greedy pick near its target
+  // used to spend the last seam before a glued word and leave the trailing parts empty
+  // ("これは|iPhoneProMax|"). A part stays empty only when the text has fewer seams than cuts.
+  const nCuts = Math.min(shares.length - 1, cand.length);
   let done = 0;
   let prev = 0;
-  for (let k = 0; k < shares.length - 1; k++) {
+  for (let k = 0; k < nCuts; k++) {
     done += shares[k];
     const target = (text.length * done) / tot;
     let best = -Infinity;
     let bi = -1;
-    for (const i of cand) {
+    for (let j = 0; j < cand.length - (nCuts - 1 - k); j++) {
+      const i = cand[j];
       if (i <= prev) continue;
       const ch = text[i - 1];
       // Bounded look-back (NOBREAK words are under 9 chars): unspaced CJK text

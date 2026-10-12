@@ -293,6 +293,12 @@ describe("untranslatedIndexes (the resume set after a cancelled run)", () => {
   it("never lists a blank-source segment (its translation is blank by design)", () => {
     expect(untranslatedIndexes([{ text: "  ", translations: { de: "" } }, { text: "hi", translations: { de: "" } }], ["de"])).toEqual([1]);
   });
+  it("judges blankness on the edited text the resume run sends, edits first", () => {
+    const s = [{ text: " ", translations: { de: "" } }, { text: "hi", translations: { de: "" } }];
+    // A blank original edited into words needs translating; words edited to blank do not.
+    expect(untranslatedIndexes(s, ["de"], { 0: "now words", 1: "  " })).toEqual([0]);
+    expect(untranslatedIndexes(s, ["de"], {})).toEqual([1]);
+  });
   it("reads an inherited key like valueOf as missing instead of throwing", () => {
     expect(untranslatedIndexes([{ translations: { valueOf: "x" } }, { translations: {} }], ["valueOf"])).toEqual([1]);
   });

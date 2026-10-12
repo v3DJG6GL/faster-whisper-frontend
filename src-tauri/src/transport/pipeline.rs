@@ -193,7 +193,9 @@ pub async fn save_pipeline_rules(
             let code = resp.status().as_u16();
             if resp.status().is_success() {
                 // Same split as the GET above, but the 2xx `status` is kept on both failure arms:
-                // it is the only signal that the save landed, so the client reloads.
+                // it is the only signal that the save landed, so the client reloads. The detail
+                // stops at the read failure: only the webview knows whether that reload worked,
+                // so the reload clause is the Dictionary banner's to add.
                 let text = match body_capped_to(resp, MAX_META_BODY).await {
                     Ok(t) => t,
                     Err(reason) => {
@@ -205,7 +207,7 @@ pub async fn save_pipeline_rules(
                             status: code,
                             conflicts: serde_json::json!([]),
                             detail: Some(format!(
-                                "The server accepted the save, but its reply couldn't be read ({reason}). Reloaded from the server."
+                                "The server accepted the save, but its reply couldn't be read ({reason})."
                             )),
                             ..Default::default()
                         };
@@ -254,7 +256,7 @@ pub async fn save_pipeline_rules(
                             status: code,
                             conflicts: serde_json::json!([]),
                             detail: Some(format!(
-                                "The server accepted the save, but its reply was unexpected ({e}). Reloaded from the server."
+                                "The server accepted the save, but its reply was unexpected ({e})."
                             )),
                             ..Default::default()
                         }
@@ -378,6 +380,9 @@ mod tests {
 
     /// A one-shot local server: answers the first request with `head` + `body`, then closes.
     fn serve_once(head: &'static str, body: &'static str) -> String {
+        // The app installs the TLS provider at startup (lib.rs); the shared client needs it, and
+        // a filtered run of just these tests has no sibling that installed it first.
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         std::thread::spawn(move || {
@@ -404,7 +409,8 @@ mod tests {
     }
 
     /// A 2xx PATCH landed even when its reply can't be read or parsed: the status stays 2xx
-    /// (the client reloads on it) and the detail says the save was accepted.
+    /// (the client reloads on it) and the detail says the save was accepted — but never that it
+    /// reloaded: the follow-up GET can fail, and the banner then sits above its error card.
     #[tokio::test]
     async fn rules_patch_keeps_the_2xx_when_its_reply_is_unreadable_or_unparsable() {
         let url = serve_once(
@@ -414,10 +420,9 @@ mod tests {
         let out = save_pipeline_rules(&url, None, serde_json::json!({})).await;
         assert!(!out.ok);
         assert_eq!(out.status, 200);
-        assert!(out
-            .detail
-            .unwrap()
-            .starts_with("The server accepted the save"));
+        let detail = out.detail.unwrap();
+        assert!(detail.starts_with("The server accepted the save"));
+        assert!(!detail.contains("Reload"), "{detail}");
 
         let url = serve_once(
             "HTTP/1.1 200 OK\r\nContent-Length: 8\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n",
@@ -426,9 +431,8 @@ mod tests {
         let out = save_pipeline_rules(&url, None, serde_json::json!({})).await;
         assert!(!out.ok);
         assert_eq!(out.status, 200);
-        assert!(out
-            .detail
-            .unwrap()
-            .starts_with("The server accepted the save"));
+        let detail = out.detail.unwrap();
+        assert!(detail.starts_with("The server accepted the save"));
+        assert!(!detail.contains("Reload"), "{detail}");
     }
 }

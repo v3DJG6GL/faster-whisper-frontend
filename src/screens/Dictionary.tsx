@@ -1236,8 +1236,18 @@ function SaveBanner({
     );
   }
   if (!result.ok) {
+    // A 2xx here LANDED but its reply was unreadable (runSave reloaded on it). Only this side knows
+    // whether that reload worked, so the clause is added here, never baked into the detail: in the
+    // fetch-error view it failed. And with the reply lost, its conflicts are unknown too.
+    const landed = result.status >= 200 && result.status < 300;
     return (
-      <Notice>{result.detail?.trim() || "Couldn't save the changes."}</Notice>
+      <Notice>
+        {result.detail?.trim() || "Couldn't save the changes."}
+        {landed &&
+          (reloadFailed
+            ? " Reloading the rules failed — use Retry below, then check that your changes are there."
+            : " The rules were reloaded from the server — check that your changes are there: a rule changed elsewhere may not have been saved.")}
+      </Notice>
     );
   }
   // `conflicts` is opaque server JSON (passed through verbatim, only null-coerced); a non-array
