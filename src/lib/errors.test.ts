@@ -7,6 +7,7 @@ import {
   doorwayBackendLabel,
   errorText,
   handedOffDoorway,
+  isAnsweredError,
   shortCause,
   transportErrorDoorway,
   translateFailureDoorway,
@@ -187,5 +188,24 @@ describe("a file over the server's upload limit", () => {
     const d = describeTransportError("transcribe", e, "studio");
     expect(d.title).toBe("The file is 3.21 GB, over studio's upload limit of 2.00 GB — nothing was uploaded.");
     expect(d.showLogs).toBe(false);
+  });
+});
+
+describe("isAnsweredError", () => {
+  it("a status or an unreadable body was an answer; no answer is a transport failure", () => {
+    // Rust's progress()/getJob shapes: "HTTP <status>", json_capped_to's body and serde errors.
+    for (const m of [
+      "HTTP 404", "HTTP 503", "malformed job id",
+      "The server sent an unreasonably large response — ignoring it.",
+      "The server sent a response that wasn't valid text.",
+      "expected value at line 1 column 1", "invalid type: string \"x\", expected f64",
+      "missing field `stage`",
+    ]) expect(isAnsweredError(m)).toBe(true);
+    // friendly_err: connect, timeout, and reqwest's own text for a dropped connection.
+    for (const m of [
+      "Could not connect — is the server running and the URL correct?",
+      "Timed out waiting for the server.", "error sending request", "error decoding response body",
+      "Error: Not running in the desktop app.",
+    ]) expect(isAnsweredError(m)).toBe(false);
   });
 });

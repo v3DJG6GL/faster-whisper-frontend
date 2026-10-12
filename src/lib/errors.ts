@@ -50,6 +50,23 @@ export function shortCause(e: unknown): string {
   return "see the log";
 }
 
+/** Did the server answer the request this Rust error comes from? A status it answered (Rust's
+ *  "HTTP <code>"), an over-large or unreadable body, a serde parse failure and a malformed
+ *  job id all say so; only a request that got no answer (connect, timeout, a dropped
+ *  connection) does not. Rust carries no kind on the error, so this reads its fixed message
+ *  shapes (transport/jobs.rs, transport/mod.rs body_capped_to / json_capped_to); anything
+ *  unrecognised counts as no answer. */
+export function isAnsweredError(message: string): boolean {
+  return (
+    /^HTTP \d/.test(message) ||
+    message === "malformed job id" ||
+    message.startsWith("The server sent an unreasonably large response") ||
+    message.startsWith("The server sent a response that wasn't valid text") ||
+    / at line \d+ column \d+$/.test(message) ||
+    /^(invalid (type|value|length)|unknown (variant|field)|missing field|duplicate field|expected |EOF while parsing|trailing (characters|comma)|control character|number out of range|key must be|lone leading surrogate|recursion limit exceeded)/.test(message)
+  );
+}
+
 /** Rust's refusal of a file over the server's upload limit (`batch::UploadTooLarge`), read back
  *  from its fixed `upload_too_large:<bytes>:<limit>` shape; null for any other error. */
 export function uploadTooLarge(e: unknown): { size: number; limit: number } | null {

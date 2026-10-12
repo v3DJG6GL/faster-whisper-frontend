@@ -30,7 +30,7 @@ import {
   beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
   runChunkedTranslate, translateOptsFrom, untranslatedIndexes, type TranslateRunUi,
 } from "@/lib/retroTranslate";
-import { transportErrorDoorway } from "@/lib/errors";
+import { isAnsweredError, transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { TranslationOptionsFields } from "@/components/TranslationFields";
 import { seedTargets } from "@/lib/translationTargets";
@@ -655,12 +655,12 @@ export function TranscriptViewer({
       mode,
     );
     // 1 s poll drives the card. Best-effort split: a 4xx (older backend
-    // without the shared progress entry) folds as an answered but empty
-    // poll — it changes nothing except clearing "reconnecting", since the
-    // server DID answer; a 5xx (a proxy whose backend is down) proves
-    // nothing either way and leaves the card as it is; a NETWORK failure
-    // flips it to "reconnecting" — the chunk request itself is still in
-    // flight on its own long timeout.
+    // without the shared progress entry) or an unreadable 2xx body folds as
+    // an answered but empty poll — it changes nothing except clearing
+    // "reconnecting", since the server DID answer; a 5xx (a proxy whose
+    // backend is down) proves nothing either way and leaves the card as it
+    // is; a NETWORK failure flips it to "reconnecting" — the chunk request
+    // itself is still in flight on its own long timeout.
     // Hidden (closed to the tray), it polls only every fifth tick: the chunk loop, not
     // the poll, ends the run, so nothing is lost; a show polls at once (usage.ts idiom).
     let skipped = 0;
@@ -686,10 +686,13 @@ export function TranscriptViewer({
         })
         .catch((e) => {
           if (trCtls.get(okey) !== ctl) return;
-          // Rust's progress() rejects a non-2xx answer as exactly "HTTP <status>".
-          const http = /^HTTP (\d+)/.exec(String(e));
-          if (!http) setTrRun((s) => (s ? foldPollFailure(s, sentAt) : s));
-          else if (Number(http[1]) < 500) setTrRun((s) => (s ? foldTranslatePoll(s, {}, Date.now(), sentAt) : s));
+          // Rust's progress() rejects a non-2xx answer as exactly "HTTP <status>", a 2xx
+          // body it cannot read with json_capped_to's messages (isAnsweredError knows both).
+          const msg = String(e);
+          const http = /^HTTP (\d+)/.exec(msg);
+          if (http && Number(http[1]) >= 500) return;
+          if (isAnsweredError(msg)) setTrRun((s) => (s ? foldTranslatePoll(s, {}, Date.now(), sentAt) : s));
+          else setTrRun((s) => (s ? foldPollFailure(s, sentAt) : s));
         });
     };
     const pollTimer = window.setInterval(() => {
@@ -944,12 +947,29 @@ export function TranscriptViewer({
   // below purely as the paused/seek fallback.
   useEffect(() => {
     if (!playing) return;
-    let id = requestAnimationFrame(function step() {
+    // Parked while the window is hidden (closed to the tray), as Waveform's meters are: WebView2
+    // on a hidden HWND keeps firing rAF, and the audio plays on. A show catches the highlight up.
+    let id = 0;
+    const step = () => {
+      if (isWindowHidden()) {
+        id = 0;
+        return;
+      }
       const a = audioRef.current;
       if (a) syncPlayhead(a.currentTime);
       id = requestAnimationFrame(step);
+    };
+    id = requestAnimationFrame(step);
+    const offHidden = onWindowHiddenChange((hidden) => {
+      if (hidden || id) return;
+      const a = audioRef.current;
+      if (a) syncPlayhead(a.currentTime, true);
+      id = requestAnimationFrame(step);
     });
-    return () => cancelAnimationFrame(id);
+    return () => {
+      if (id) cancelAnimationFrame(id);
+      offHidden();
+    };
   }, [playing, syncPlayhead]);
 
   useEffect(() => {

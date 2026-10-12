@@ -21,6 +21,7 @@
 
 import { deleteJob, getJob, getJobResult, isTauri } from "./api";
 import { effectiveServerUrl } from "./backends";
+import { isAnsweredError } from "./errors";
 import { configReady } from "./persistence";
 import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
@@ -327,22 +328,11 @@ setOrphanForget((jobId) => {
 });
 
 /** Does a getJob "error" say nothing about the host being reachable? A status the server
- *  answered (Rust's "HTTP <code>": a revoked key on ONE backend entry, a 500 for one job), an
- *  over-large or unreadable body, a serde parse failure and a malformed id are per-row; only a
- *  request that got no answer (connect, timeout, a dropped connection) is per-server. Rust
- *  carries no kind on the outcome, so this reads its fixed message shapes (transport/jobs.rs,
- *  transport/mod.rs body_capped_to / json_capped_to); anything unrecognised stays per-server,
- *  which only costs the skipped rows a retry pass. */
-export function isPerRowJobError(message: string): boolean {
-  return (
-    /^HTTP \d/.test(message) ||
-    message === "malformed job id" ||
-    message.startsWith("The server sent an unreasonably large response") ||
-    message.startsWith("The server sent a response that wasn't valid text") ||
-    / at line \d+ column \d+$/.test(message) ||
-    /^(invalid (type|value|length)|unknown (variant|field)|missing field|duplicate field|expected |EOF while parsing|trailing (characters|comma)|control character|number out of range|key must be|lone leading surrogate|recursion limit exceeded)/.test(message)
-  );
-}
+ *  answered (a revoked key on ONE backend entry, a 500 for one job), an unreadable body or a
+ *  malformed id is per-row; only a request that got no answer (connect, timeout, a dropped
+ *  connection) is per-server — errors.ts isAnsweredError reads Rust's message shapes. Anything
+ *  unrecognised stays per-server, which only costs the skipped rows a retry pass. */
+export const isPerRowJobError = isAnsweredError;
 
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
  *  cannot be reached. */
