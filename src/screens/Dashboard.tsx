@@ -15,7 +15,7 @@ import { SetupChecklist } from "@/components/SetupChecklist";
 import { stopLive, cancelLive, requestStopIfStarting, isCapturing } from "@/lib/dictation/streaming";
 import { profileDisplayName, safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { plural } from "@/lib/format";
-import { backendForProfile, homeTargetProfile, startHandsFree, startOffHint } from "@/lib/dictation/dictation";
+import { backendForProfile, homeTargetProfile, pickerOffHint, startHandsFree, startOffHint } from "@/lib/dictation/dictation";
 import { backendLabel, effectiveLanguage } from "@/lib/backends";
 import { ownModelName } from "@/lib/backendChipLabels";
 import { shortModelName } from "@/lib/inherit";
@@ -264,6 +264,7 @@ export default function Dashboard() {
   const profiles = useApp((s) => s.profiles);
   const backends = useApp((s) => s.backends);
   const status = useApp((s) => s.status);
+  const routePending = useApp((s) => s.routePending);
   const warming = useApp((s) => s.warming);
   const speaking = useApp((s) => s.speaking);
   const serverWork = useApp((s) => s.serverWork);
@@ -282,9 +283,10 @@ export default function Dashboard() {
   const target = homeTargetProfile(profiles, homeProfileId);
   const headerBackend: Backend | undefined = backendForProfile(target, backends);
   // Why the button cannot start ("" when it can): no profile, none enabled, or no backend for the
-  // target. The chip's dictate button uses the same helper, so its reason, this copy and the
-  // click gate in toggle() all agree — no "Press to dictate" line that a click then refuses.
-  const offHint = startOffHint(profiles, target, backends);
+  // target — or the hands-free target picker is still open. The chip's dictate button uses the
+  // same helpers, so its reason, this copy and the click gate in toggle() all agree — no
+  // "Press to dictate" line that a click then refuses.
+  const offHint = pickerOffHint(routePending, status) || startOffHint(profiles, target, backends);
   const canStart = offHint === "";
   // While a session is live, the hero READOUTS (model / endpoint / language) describe the
   // RUNNING profile — like the chip + usage do — not the home-button target, which can drift if

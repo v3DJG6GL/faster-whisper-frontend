@@ -654,11 +654,13 @@ export function TranscriptViewer({
       { ...newTranslateRun(indexes.length, targets), title: fileLabel ?? basename(path) },
       mode,
     );
-    // 1 s poll drives the card. Best-effort split: an HTTP error (older
-    // backend without the shared progress entry) folds as an answered but
-    // empty poll — it changes nothing except clearing "reconnecting", since
-    // the server DID answer; a NETWORK failure flips it to "reconnecting" —
-    // the chunk request itself is still in flight on its own long timeout.
+    // 1 s poll drives the card. Best-effort split: a 4xx (older backend
+    // without the shared progress entry) folds as an answered but empty
+    // poll — it changes nothing except clearing "reconnecting", since the
+    // server DID answer; a 5xx (a proxy whose backend is down) proves
+    // nothing either way and leaves the card as it is; a NETWORK failure
+    // flips it to "reconnecting" — the chunk request itself is still in
+    // flight on its own long timeout.
     // Hidden (closed to the tray), it polls only every fifth tick: the chunk loop, not
     // the poll, ends the run, so nothing is lost; a show polls at once (usage.ts idiom).
     let skipped = 0;
@@ -685,8 +687,9 @@ export function TranscriptViewer({
         .catch((e) => {
           if (trCtls.get(okey) !== ctl) return;
           // Rust's progress() rejects a non-2xx answer as exactly "HTTP <status>".
-          if (String(e).startsWith("HTTP")) setTrRun((s) => (s ? foldTranslatePoll(s, {}, Date.now(), sentAt) : s));
-          else setTrRun((s) => (s ? foldPollFailure(s, sentAt) : s));
+          const http = /^HTTP (\d+)/.exec(String(e));
+          if (!http) setTrRun((s) => (s ? foldPollFailure(s, sentAt) : s));
+          else if (Number(http[1]) < 500) setTrRun((s) => (s ? foldTranslatePoll(s, {}, Date.now(), sentAt) : s));
         });
     };
     const pollTimer = window.setInterval(() => {

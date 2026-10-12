@@ -21,7 +21,7 @@ import { configuredRouteTargets } from "./chipController";
 import { wireCodes } from "../translationTargets";
 import { rememberRecent } from "../recent";
 import { backendTargetCap, translationTargetInfo } from "../capabilities";
-import type { Backend, Profile } from "../types";
+import type { Backend, DictationStatus, Profile } from "../types";
 
 export type TriggerAction = "start" | "stop" | "toggle" | "reclassify";
 
@@ -399,6 +399,17 @@ export function startOffHint(
   if (profiles.length === 0) return "Add a profile to begin";
   if (!target) return "Enable a profile to begin";
   return "Add a backend to begin";
+}
+
+/** Why a start / profile cycle is off while the hands-free target picker is open, "" when it
+ *  is not. startHandsFree and the cycle bail on `pickerOpen` while status stays "idle"; its
+ *  store-visible twin is routePending "choosing", which only the picker writes. The chip and
+ *  the Home button both read it ahead of startOffHint, so neither offers a dead click. */
+export function pickerOffHint(
+  routePending: "undecided" | "choosing" | "original" | null,
+  status: DictationStatus,
+): string {
+  return routePending === "choosing" && status === "idle" ? "Answer the target picker first" : "";
 }
 
 /** Run a dictation action requested from the overlay chip. The chip is a separate

@@ -33,7 +33,9 @@ const SETTING_NAME_MAX: usize = 64;
 const RULES_MAX_BODY: usize = 16 * 1024 * 1024;
 /// Per-request bound on the GET, which covers reading the body: sized for the [`RULES_MAX_BODY`]
 /// read the way [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`], and still well under the
-/// shared client's 120 s ceiling so a black-holed host fails in bounded time.
+/// shared client's 120 s ceiling. Getting the response HEADERS stays bounded by `META_TIMEOUT`
+/// (the request timeout covers the connect too), so an offline or black-holed host still shows
+/// Retry after 15 s, not 60.
 const RULES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
@@ -107,11 +109,20 @@ struct SaveBody {
 pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> PipelineFetch {
     let base = base_url(server_url);
     let url = format!("{base}/v1/pipeline-rules");
-    match with_auth(client().get(url), api_key)
+    let send = with_auth(client().get(url), api_key)
         .timeout(RULES_TIMEOUT)
-        .send()
-        .await
-    {
+        .send();
+    let Ok(sent) = tokio::time::timeout(super::META_TIMEOUT, send).await else {
+        let msg = "Timed out waiting for the server.".to_string();
+        tracing::warn!("[pipeline] rules GET failed: {msg}");
+        return PipelineFetch {
+            ok: false,
+            status: 0,
+            state: None,
+            error: Some(msg),
+        };
+    };
+    match sent {
         Ok(resp) => {
             let code = resp.status().as_u16();
             if resp.status().is_success() {

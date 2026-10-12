@@ -17,7 +17,7 @@ import {
   trayRoute,
   trayStatus,
 } from "./chipController";
-import { homeTargetProfile, startOffHint } from "./dictation";
+import { homeTargetProfile, pickerOffHint, startOffHint } from "./dictation";
 
 // Only initOverlayController touches these: the rest of this file is pure.
 const emit = vi.hoisted(() => vi.fn((_event: string, _payload?: unknown) => Promise.resolve()));
@@ -383,6 +383,17 @@ describe("startOffHint", () => {
   it("never asks for a backend without a target: the cycle hint reuses it that way", () => {
     expect(startOffHint([p], undefined, [])).toBe("Enable a profile to begin");
     expect(startOffHint([], undefined, [])).toBe("Add a profile to begin");
+  });
+});
+
+describe("pickerOffHint", () => {
+  // Home reads it ahead of startOffHint like the chip does: an open target picker leaves
+  // status "idle" while startHandsFree bails, so both surfaces must say why.
+  it("is set only while the picker is open on an idle session", () => {
+    expect(pickerOffHint("choosing", "idle")).toBe("Answer the target picker first");
+    expect(pickerOffHint("choosing", "listening")).toBe("");
+    expect(pickerOffHint("undecided", "idle")).toBe("");
+    expect(pickerOffHint(null, "idle")).toBe("");
   });
 });
 

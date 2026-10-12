@@ -244,6 +244,18 @@ describe("buildCues", () => {
     }
   });
 
+  it("own timing: a word mixing fullwidth and ASCII letters or digits never ends a cue inside", () => {
+    for (const w of ["ＰＳ5", "ＮＨＫnews"]) {
+      for (let p = 0; p < 30; p++) {
+        const ja = "新しい " + "あ".repeat(p) + w + "を 買いました 今日は とても 楽しかったです";
+        const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
+        const grid = buildCues(r, { ...STD, timing: "own" }, ["orig", "ja"]);
+        expect(grid.own.ja.some((c) => /(ＰＳ|ＮＨＫ)$/.test(c.text.trim()))).toBe(false);
+        expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
+      }
+    }
+  });
+
   it("own timing: a Latin word glued into a CJK translation is never split across cues", () => {
     const ja = "今日は朝から新しいiPhoneProMaxを買いに行きましたが駅までの道はとても混んでいて電車も遅れていました";
     for (const length of ["standard", "short"] as const) {
@@ -472,6 +484,18 @@ describe("wrapLines", () => {
     for (let cpl = 12; cpl <= 15; cpl++) {
       const lines = wrapLines("ok Donaudampfschifffahrts.gesellschaftskapitän!!!", cpl, 2);
       expect(lines.some((l) => /^[.!]/.test(l))).toBe(false);
+    }
+  });
+  it("an over-long word of spaced text never takes more lines than kept whole on lines of its own", () => {
+    const mail = "a".repeat(20) + "@" + "b".repeat(15) + ".com";
+    for (const [t, cpl, most] of [
+      ["wonderful https://example.com/a/very/long/path/to/resource.html", 14, 5],
+      [`${mail} ${mail}`, 20, 4],
+    ] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.length).toBeLessThanOrEqual(most);
+      for (const l of lines) expect(l.length).toBeLessThanOrEqual(cpl);
+      expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
     }
   });
   it("a long CJK run before a Latin word wraps per character too, not only a trailing one", () => {

@@ -10,7 +10,7 @@
 import { useApp } from "../store";
 import { isTauri, showOverlay, setOverlayScale, hideOverlay, setTrayState, playCue } from "../api";
 import { chipTagFor } from "../profileTag";
-import { backendForProfile, homeTargetProfile, startOffHint } from "./dictation";
+import { backendForProfile, homeTargetProfile, pickerOffHint, startOffHint } from "./dictation";
 import { activeStatsBackend } from "../usage";
 import { fmtCompact, fmtDuration } from "../format";
 import { ownProp } from "../own";
@@ -27,9 +27,6 @@ const REC_DEFAULTS = DEFAULT_SETTINGS.recording;
  *  `routeParts`' three: the chip's identity row shares one line with the live transcript,
  *  which is the surface the user actually reads to supervise what is about to be typed. */
 const CHIP_ROUTE_TARGETS = 2;
-
-/** Why the chip's dictate / cycle-profile buttons are off while the target picker is open. */
-const CHOOSING_HINT = "Answer the target picker first";
 
 /** The translation targets the chip should show, resolved and bounded.
  *
@@ -266,14 +263,13 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   // click. Two flags, not one: the toggle needs a home target AND a Backend for it, while the
   // cycle only needs an enabled Profile (it persists homeProfileId, it starts nothing).
   // startOffHint is the Home button's gate + wording too, so the two never disagree.
-  // An open target picker refuses both too (startHandsFree and the cycle bail on `pickerOpen`)
-  // while status stays "idle"; its store-visible twin is routePending "choosing", which only
-  // the picker writes, so the chip says why instead of offering two dead buttons.
-  const choosing = state.routePending === "choosing" && state.status === "idle";
+  // An open target picker refuses both too (pickerOffHint), so the chip says why instead of
+  // offering two dead buttons.
+  const pickerHint = pickerOffHint(state.routePending, state.status);
   const homeTarget = homeTargetProfile(state.profiles, state.settings.homeProfileId);
-  const startHint = choosing ? CHOOSING_HINT : startOffHint(state.profiles, homeTarget, state.backends);
+  const startHint = pickerHint || startOffHint(state.profiles, homeTarget, state.backends);
   const canStart = startHint === "";
-  const canCycle = !choosing && state.profiles.some((p) => p.enabled);
+  const canCycle = !pickerHint && state.profiles.some((p) => p.enabled);
   return {
     status: state.status,
     warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
@@ -326,7 +322,7 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     canCycle,
     // No target passed: cycling needs no Backend, so this only ever says add / enable a profile
     // (or, while the target picker is open, to answer it first).
-    cycleHint: canCycle ? "" : choosing ? CHOOSING_HINT : startOffHint(state.profiles, undefined, state.backends),
+    cycleHint: canCycle ? "" : pickerHint || startOffHint(state.profiles, undefined, state.backends),
     // The injection target app title + a skip reason ("blocked" / "notEditable") for the
     // warn-tinted hint. Empty when the feature's off, no app is known, or the session's idle.
     targetTitle: tgt?.title ?? "",

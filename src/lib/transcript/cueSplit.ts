@@ -349,19 +349,15 @@ function runAt(t: string, i: number): number {
  *  it); otherwise it is one word and one token. */
 function spreadTokens(text: string, a: number, b: number): Tok[] {
   const spans: [number, number][] = [];
-  if (/\s/.test(text.trim())) {
-    for (const m of text.matchAll(MIXED_TOKEN)) spans.push([m.index!, m.index! + m[0].length]);
-  } else if (!BREAKS_ANYWHERE.test(text)) {
+  if (!/\s/.test(text.trim()) && !BREAKS_ANYWHERE.test(text)) {
     spans.push([0, text.length]);
   } else {
-    // An opening bracket rides with the code point it opens, a closer with the one it
-    // closes; a glued Latin word stays whole. The text has no inner whitespace, so the
-    // tokens lie back to back from its first non-space character.
-    let at = text.search(/\S/);
-    for (const w of mixedTokens(text).toks) {
-      spans.push([at, at + w.length]);
-      at += w.length;
-    }
+    // The tokens wrapLines and cutByShare use (mixedTokens), spaced or not: an opening
+    // bracket rides with the code point it opens, a closer with the one it closes, a glued
+    // Latin word stays whole, and so does a word mixing both widths ("ＰＳ5") — matched
+    // per MIXED_TOKEN here, an own-timed cue could end on ＰＳ.
+    const m = mixedTokens(text);
+    m.toks.forEach((w, k) => spans.push([m.at[k], m.at[k] + w.length]));
   }
   const tot = spans.reduce((n, [f, t]) => n + t - f + 1, 0) || 1;
   let c = a;
@@ -627,11 +623,20 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   const toks: string[] = [];
   const gaps: boolean[] = [];
   if (spaced && !BREAKS_ANYWHERE.test(t)) {
-    t.split(/\s+/).forEach((w, k) => {
+    const words = t.split(/\s+/);
+    words.forEach((w, k) => {
       const parts = w.length > cpl ? tokenUnits(w) : [w];
       toks.push(...parts);
       parts.forEach((_, j) => gaps.push(j === 0 && k > 0));
     });
+    if (toks.length > words.length) {
+      // A balanced break inside the split word can cost a line at a small cpl (a URL after
+      // "wonderful" at 14, two e-mails at 20) that the word kept whole — on lines of its
+      // own, wrapped per character — did not: the fewer lines win, the shared ones on a tie.
+      const split = wrapTokens(toks, gaps, cpl, len, firstReserve);
+      const whole = wrapTokens(words, words.map((_, i) => i > 0), cpl, len, firstReserve);
+      return whole.length < split.length ? whole : split;
+    }
   } else {
     const m = mixedTokens(t);
     m.toks.forEach((w, k) => {
@@ -652,14 +657,15 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
 }
 
 /** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens and
- *  wrapLines tokenize unspaced text by them too), and per token whether whitespace stood
- *  before it. Punctuation glued to its neighbour (an ASCII
+ *  wrapLines tokenize unspaced text by them too), per token whether whitespace stood
+ *  before it, and where in `t` it starts. Punctuation glued to its neighbour (an ASCII
  *  "." or ")" after a CJK character, a "(" before one) joins it, so no line starts with a
  *  stop or ends on an opener. An opener glued to the end of a word moves onto the character
  *  it opens, so a line may break before the "(" but never right after it. */
-function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
+function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[] } {
   const toks: string[] = [];
   const gaps: boolean[] = [];
+  const at: number[] = [];
   let end = 0;
   for (const m of t.matchAll(MIXED_TOKEN)) {
     let w = m[0];
@@ -670,9 +676,11 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
     // Brackets only: an initial quote at the end of a word is a closer in German/Danish
     // usage („Hallo“, »Hallo«), and peeling it off left „Hallo / “東京… on two lines.
     const open = k >= 0 && !gap ? /\p{Ps}+$/u.exec(toks[k]) : null;
+    let from = m.index!;
     if (open && open.index > 0) {
       toks[k] = toks[k].slice(0, open.index);
       w = open[0] + w;
+      from -= open[0].length;
     }
     // A word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews") is one word.
     if (
@@ -684,9 +692,10 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[] } {
     else {
       toks.push(w);
       gaps.push(gap && k >= 0);
+      at.push(from);
     }
   }
-  return { toks, gaps };
+  return { toks, gaps, at };
 }
 
 /** wrapLines past its early returns: `len` (> cpl) is the text's length incl.

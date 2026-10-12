@@ -25,8 +25,10 @@ pub async fn begin_injection(snap: State<'_, ClipboardSnapshot>) -> Result<(), S
     // clipboard until it puts their text back, so the read takes the clipboard-job lock
     // (`inject::CLIP_JOB`) try-only — never waiting, so the dictation chain is not held up — and
     // skips when the grab holds it. The guard lives inside the closure: taken and dropped on the
-    // blocking thread that does the read.
+    // blocking thread that does the read. Windows only: no other platform has the grab, and a
+    // Linux read stuck past its cap would otherwise hold up the next paste for nothing.
     match read_selection_bounded(|| {
+        #[cfg(windows)]
         let Some(_clip_job) = crate::inject::try_clip_job() else {
             tracing::info!(
                 "[clip] begin_injection: a quick-add copy grab holds the clipboard — keeping prior snapshot"

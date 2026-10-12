@@ -438,8 +438,8 @@ const CLIP_IDLE_WAIT: Duration = Duration::from_secs(1);
 /// same chord-modifier release gate, so a phrase held back by the quick-add chord is released in
 /// the same tick as the grab: the paste's write then bumps the sequence number the grab reads as
 /// "the copy landed", the grab puts the user's old clipboard back during the paste's settle, and
-/// the Ctrl+V pastes that instead of the phrase. A third, try-only taker is `begin_injection`'s
-/// session-snapshot read: mid-grab the clipboard holds the user's SELECTION, which that read would
+/// the Ctrl+V pastes that instead of the phrase. A third, try-only taker (Windows only, like the
+/// grab) is `begin_injection`'s session-snapshot read: mid-grab the clipboard holds the user's SELECTION, which that read would
 /// otherwise store and the end-of-session restore write over their real clipboard. It holds the
 /// lock only across one capped read (a read stuck past its 400 ms cap keeps it, so a paste then
 /// waits up to `CLIP_JOB_WAIT` and answers `NothingWritten` — the same answer a stuck read already
