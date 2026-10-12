@@ -569,6 +569,7 @@ function Editor({
                 value={b.overrideProfile ?? ""}
                 inheritLabel="Server default"
                 onChange={(v) => set({ overrideProfile: v.trim() ? v : undefined })}
+                refresh={hookTestGen}
               />
             </div>
           </OverrideHeader>

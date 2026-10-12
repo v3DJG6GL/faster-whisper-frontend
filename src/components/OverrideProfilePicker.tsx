@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Select, TextInput } from "@/components/ui";
 import { listOverrideProfiles } from "@/lib/api";
 import { requestCredentialGen } from "@/lib/capabilities";
@@ -30,6 +30,7 @@ export function OverrideProfilePicker({
   inheritLabel,
   onChange,
   ariaLabel = "Server override profile",
+  refresh,
 }: {
   serverUrl: string;
   backendId: string;
@@ -45,6 +46,9 @@ export function OverrideProfilePicker({
    *  profile"; a bare <select> has no placeholder fallback, and this composite component slips past
    *  Labeled's auto-aria-label (which only clones onto a direct Select/TextInput child). */
   ariaLabel?: string;
+  /** Bumped by a fresh successful connection test of the same target: refetch the names (an
+   *  admin may have added or removed a profile since). Callers without a test omit it. */
+  refresh?: number;
 }) {
   const [names, setNames] = useState<string[]>([]);
   const [showCustom, setShowCustom] = useState(false);
@@ -52,13 +56,19 @@ export function OverrideProfilePicker({
   // Bumped when the backend's stored key is replaced elsewhere (a sync pull): the names are per
   // caller, so they are refetched as the new one (as in useDecodeDefaults).
   const gen = requestCredentialGen(backendId, apiKey);
+  // The target the shown names were fetched for: a refetch of the SAME target (a `refresh`
+  // bump) keeps them until the answer lands — blanking them made a listed stored value flash
+  // into the "Custom name" text field for the round trip.
+  const fetchedFor = useRef<string | null>(null);
 
   useEffect(() => {
     if (serverKind === "standard" || blocked) return; // no endpoint / not permitted
     let cancelled = false;
-    // Clear the prior connection's names up front so switching backends never shows a stale
-    // dropdown while the refetch is in flight (or if it fails/returns empty).
-    setNames([]);
+    // Clear the prior connection's names up front on a target switch so switching backends
+    // never shows a stale dropdown while the refetch is in flight (or if it fails/returns empty).
+    const key = JSON.stringify([serverUrl, backendId, apiKey, serverKind, gen]);
+    if (fetchedFor.current !== key) setNames([]);
+    fetchedFor.current = key;
     void listOverrideProfiles({ serverUrl, backendId, apiKey })
       .then((n) => {
         // Render cap, matching the MAX_SHOWN_* ceilings the Dictionary/QuickAdd siblings use: the
@@ -74,7 +84,7 @@ export function OverrideProfilePicker({
     return () => {
       cancelled = true;
     };
-  }, [serverUrl, backendId, apiKey, serverKind, blocked, gen]);
+  }, [serverUrl, backendId, apiKey, serverKind, blocked, gen, refresh]);
 
   if (serverKind === "standard") {
     return (
