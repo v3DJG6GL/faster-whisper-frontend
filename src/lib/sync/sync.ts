@@ -2242,7 +2242,9 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
             return false;
           },
         ),
-        10_000,
+        // Chunk i queues behind chunks 0..i-1 on that lock (a wallet-unlock prompt included), so
+        // its bound grows with its place: the 10 s each it had when they ran one after another.
+        10_000 * (i + 1),
         false,
       ),
     ),

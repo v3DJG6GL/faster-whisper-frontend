@@ -1430,6 +1430,23 @@ describe("the snapshot key stash spans keyring accounts", () => {
     expect(keyring.store!.size).toBe(chunks);
   });
 
+  // Issued together, a later chunk's bound also covers its wait behind the earlier ones (a wallet
+  // prompt answered late): a flat 10 s each dropped a stash that one-after-another writes kept.
+  it("a later chunk queued behind a slow first write keeps its own 10 s", async () => {
+    vi.useFakeTimers();
+    try {
+      keyring.parkWrites.set("__sync_snapshot_secrets_1__", new Promise<void>((r) => setTimeout(r, 15_000)));
+      const pending = persistSnapshotSecretsForTests(keys(20, "sk"));
+      await vi.advanceTimersByTimeAsync(16_000);
+      const { ids, chunks } = await pending;
+      expect(chunks).toBeGreaterThan(1);
+      expect(keyring.store!.size).toBe(chunks);
+      expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: false, restored: keys(20, "sk") });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never cuts a surrogate pair between two accounts", async () => {
     // `{"a":"` is 6 units, so the pair sits at units 999-1000: straddling a naive 1000-unit cut.
     const secrets = { a: `${"x".repeat(993)}\u{1F511}${"y".repeat(10)}` };

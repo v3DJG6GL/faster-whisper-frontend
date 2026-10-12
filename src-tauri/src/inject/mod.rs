@@ -452,14 +452,24 @@ pub(crate) fn try_clip_job() -> Option<std::sync::MutexGuard<'static, ()>> {
     }
 }
 
-/// `try_clip_job`, polled every 15 ms for up to `max`. None = still held after `max`.
-fn wait_clip_job(max: Duration) -> Option<std::sync::MutexGuard<'static, ()>> {
+/// How long `paste` waits for a quick-add copy grab to finish. The grab is bounded (after the
+/// modifier gate: the clipboard prologue, then the copy poll and the read, both inside one
+/// `COPY_DEADLINE_RDP_MS` = 6 s deadline), so a phrase waits it out instead of being skipped: a
+/// skipped live phrase is only re-sent with a NEXT insert, and a session's last phrase has none.
+const CLIP_JOB_WAIT: Duration = Duration::from_secs(8);
+
+/// `try_clip_job`, polled every 15 ms for up to `max`, or until `give_up` says so. None = still
+/// held.
+fn wait_clip_job(
+    max: Duration,
+    give_up: impl Fn() -> bool,
+) -> Option<std::sync::MutexGuard<'static, ()>> {
     let t0 = std::time::Instant::now();
     loop {
         if let Some(g) = try_clip_job() {
             return Some(g);
         }
-        if t0.elapsed() >= max {
+        if t0.elapsed() >= max || give_up() {
             return None;
         }
         std::thread::sleep(Duration::from_millis(15));
@@ -1144,12 +1154,19 @@ fn paste(
     use arboard::Clipboard;
     // The clipboard-job lock (see `CLIP_JOB`), held until this function returns — across the
     // write, the settle and the chord. A Windows quick-add copy grab in flight would otherwise put
-    // the user's old clipboard back between our write and our Ctrl+V. Bounded: the grab can run for
-    // seconds over remote desktop, so after `CLIP_IDLE_WAIT` this bails. Nothing has been read or
-    // written yet, so `NothingWritten` is truthful and the caller's re-send cannot duplicate text.
-    let Some(_clip_job) = wait_clip_job(CLIP_IDLE_WAIT) else {
+    // the user's old clipboard back between our write and our Ctrl+V. Waited out for the grab's
+    // whole bound (`CLIP_JOB_WAIT`), or until this job is cancelled; only a grab stuck past that
+    // bails. Nothing has been read or written yet, so `NothingWritten` is truthful and the caller's
+    // re-send cannot duplicate text.
+    let Some(_clip_job) = wait_clip_job(CLIP_JOB_WAIT, || injection_cancelled(epoch)) else {
+        if injection_cancelled(epoch) {
+            // Answered as the cancel check below answers (see there).
+            tracing::info!("[clip] paste: cancelled while waiting for a quick-add grab — skipping");
+            return Ok(Landed::Yes);
+        }
         tracing::info!(
-            "[clip] paste: a quick-add copy grab is in flight — nothing written, the caller re-sends"
+            "[clip] paste: a quick-add copy grab is still in flight after {}s — nothing written",
+            CLIP_JOB_WAIT.as_secs()
         );
         return Ok(Landed::NothingWritten);
     };
@@ -1612,10 +1629,16 @@ mod tests {
         let held = super::try_clip_job().expect("free at start");
         assert!(super::try_clip_job().is_none());
         let t0 = Instant::now();
-        assert!(super::wait_clip_job(Duration::from_millis(40)).is_none());
+        assert!(super::wait_clip_job(Duration::from_millis(40), || false).is_none());
         assert!(t0.elapsed() >= Duration::from_millis(40));
+        let t0 = Instant::now();
+        assert!(super::wait_clip_job(Duration::from_secs(5), || true).is_none());
+        assert!(
+            t0.elapsed() < Duration::from_secs(1),
+            "give_up ends the wait early"
+        );
         drop(held);
-        assert!(super::wait_clip_job(Duration::from_millis(40)).is_some());
+        assert!(super::wait_clip_job(Duration::from_millis(40), || false).is_some());
 
         let _ = std::thread::spawn(|| {
             let _g = super::try_clip_job().expect("free");

@@ -516,8 +516,12 @@ describe("wrapLines", () => {
     fits("Donaudampfschifffahrtsgesellschaftskapitän", 28, 2);
     fits("あ" + "・".repeat(28), 13, 3);
     fits("え" + "？".repeat(18), 13, 2);
-    // Fullwidth letters, halfwidth kana and 〜 are characters of their own, as CJK_UNIT has them.
+    // Halfwidth kana and 〜 are characters of their own, as CJK_UNIT has them; a fullwidth
+    // letter/digit run is one word, wrapped per character only when longer than a line.
     fits("ＩＢＭ".repeat(4), 6, 2);
+    expect(wrapLines("今年は２０２６年です", 6, 2)).toEqual(["今年は", "２０２６", "年です"]); // as "2026" wraps
+    expect(wrapLines("今年の売上は１２３，４５６円でした", 13, 2).join("|")).not.toMatch(/[０-９，]\|[０-９，]/);
+    expect(wrapLines("新しいｺﾝﾋﾟｭｰﾀｰを買いました", 9, 2).some((l) => l.startsWith("ｰ"))).toBe(false);
     fits("ﾃｷｽﾄ".repeat(4), 6, 3);
     fits("〜".repeat(12), 6, 2);
     // A quote that ends the token closes it; an opener rides with what it opens.
@@ -777,7 +781,9 @@ describe("cutByShare", () => {
     expect(cutByShare("これはiPhoneProMax", [1, 1, 1, 1, 1])).toEqual(["こ", "れ", "は", "iPhoneProMax", ""]);
     // Fullwidth and halfwidth forms are characters of their own, not one glued word.
     expect(cutByShare("ﾃｷｽﾄ", [1, 1, 1]).every(Boolean)).toBe(true);
-    expect(cutByShare("ＡＢＣ", [1, 1, 1])).toEqual(["Ａ", "Ｂ", "Ｃ"]);
+    expect(cutByShare("東京ＡＢＣ", [1, 1, 1])).toEqual(["東", "京", "ＡＢＣ"]);
+    expect(cutByShare("売上は１２３，４５６円", [1, 1, 1]).some((p) => /^[，４５６]/.test(p))).toBe(false);
+    expect(cutByShare("ｺﾝﾋﾟｭｰﾀｰ", [1, 1, 1]).some((p) => p.startsWith("ｰ"))).toBe(false);
   });
   it("cuts after a German closing quote glued to CJK, not inside its word", () => {
     expect(cutByShare("„Hallo“東京", [1, 1])).toEqual(["„Hallo“", "東京"]);

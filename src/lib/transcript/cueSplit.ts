@@ -246,11 +246,11 @@ const OPEN_PUNCT = "〈《「『【〔〖〘〚〝（［｛｟｢";
 /** CJK and fullwidth closing brackets and stops: they stick to the character before them.
  *  Listed, not the whole fullwidth block — fullwidth letters and digits stay breakable. */
 const CLOSE_PUNCT = "、。〉》」』】〕〗〙〛〞〟）］｝｠｣！，．：；？";
-/** The prolonged sound mark ー: ONE sticks to the character before it (no line starts
+/** The prolonged sound mark ー (and its halfwidth ｰ): ONE sticks to the character before it (no line starts
  *  with the ー of コー), each further ー of a run is a character of its own — a whole
  *  えーーーー… or a hallucinated すごーーー…い glued into one unit could not wrap or cut
  *  and ran over the cap. A line may then start with ー inside a long run only. */
-const CHOON = "(?:(?<!ー)ー)?";
+const CHOON = "(?:(?<![ーｰ])[ーｰ])?";
 /** Thai/Lao leading vowels (เ แ โ ใ ไ): written before the consonant they follow in
  *  speech, so they stick to the character after them. */
 const LEADS = "\\u0e40-\\u0e44\\u0ec0-\\u0ec4";
@@ -280,10 +280,15 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  variation selector) — they are Script=Inherited and would otherwise split off.
  *  A fullwidth letter or digit, a halfwidth kana (with its voicing mark), a 〜 and the
  *  ideographic space are such characters too, as CJK_UNIT has them: swallowed into the
- *  token before them, "ＩＢＭＩＢＭ…" or "〜〜〜…" could neither wrap nor cut. */
+ *  token before them, "〜〜〜…" could neither wrap nor cut. A run of fullwidth letters and
+ *  digits (with ，．： between two of them) is one word, as its halfwidth spelling is: "２０２６"
+ *  and "１２３，４５６" never break in the middle; a run longer than a line still wraps per
+ *  character through `tokenUnits`. */
 const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
+const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
 const MIXED_TOKEN = new RegExp(
-  `[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}\\uff9e\\uff9f]*`
+  `[${OPEN_PUNCT}]*[${FW_ALNUM}](?:[，．：]?[${FW_ALNUM}])*[${CLOSE_PUNCT}]*`
+    + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}\\uff9e\\uff9f]*`
     + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]+`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
@@ -491,8 +496,8 @@ export function cutByShare(text: string, shares: number[]): string[] {
     const c = text.charCodeAt(i);
     if (seams && !seams.has(i)) continue;
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
-    // Nor before the first ー after a character (the second ー of a run is a seam again).
-    if (text[i] === "ー" && text[i - 1] !== "ー") continue;
+    // Nor before the first ー (or ｰ) after a character (the second ー of a run is a seam again).
+    if (/[ーｰ]/.test(text[i]) && !/[ーｰ]/.test(text[i - 1])) continue;
     // Never between a base and its combining mark (tested on the code point: an
     // astral mark such as the variation selector U+E0100 is a surrogate pair), nor
     // inside a ZWJ sequence, nor before a skin tone, nor between a flag's two
