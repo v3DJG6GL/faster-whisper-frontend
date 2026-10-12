@@ -594,9 +594,11 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
       if (a > cpl) s -= 1000;
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) s += breakScore(toks[i - 1], toks[i]) * 0.3;
-      // Between two syllables of a spaced Thai/Lao/Khmer/Burmese run: a fallback seam, so
-      // the line still breaks at a phrase space first (splitTokens' -40, scaled by 0.3).
-      else if (gaps.length && BRK_SYL.test(edgeChar(toks[i - 1], true)) && BRK_SYL.test(edgeChar(toks[i], false))) s -= 12;
+      // Inside a CJK/Thai-like run of spaced text: a fallback seam only. It loses to every
+      // space that keeps both lines within the cap (more than any balance or break score),
+      // so "東京 tower" and a Thai phrase stay whole; when no space fits, every space seam
+      // already carries -1000 and the run's own seams balance among themselves.
+      else if (gaps.length) s -= 100;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy
       if (s > best) {

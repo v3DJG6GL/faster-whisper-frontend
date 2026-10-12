@@ -413,7 +413,8 @@ describe("wrapLines", () => {
     for (let n = 0; n < 20; n++) {
       const t = "AI " + "あ".repeat(n) + "(東京)." + "い".repeat(20 - n);
       const lines = wrapLines(t, 13, 2);
-      expect(lines.join("")).toBe(t);
+      // Over two lines anyway: the break may take the space after "AI".
+      expect(lines.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
       expect(lines.some((l) => /^[.)]|\($/.test(l))).toBe(false);
     }
   });
@@ -506,6 +507,20 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     // The space lies 10 chars off the balanced cut: still preferred to a syllable seam.
     const t = "ขอบคุณมากครับ วันนี้อากาศดีมากเลยนะครับเพื่อน AI";
     expect(wrapLines(t, 42, 2)).toEqual(["ขอบคุณมากครับ", "วันนี้อากาศดีมากเลยนะครับเพื่อน AI"]);
+  });
+  it("wrapLines keeps a CJK word or a Thai phrase whole when a space fits both lines", () => {
+    // Latin-dominant lines with a CJK name break at a word space, as before the run was split.
+    expect(wrapLines("I went to Tokyo yesterday and saw 東京 tower which was very tall indeed ok", 42, 2)).toEqual([
+      "I went to Tokyo yesterday and saw 東京 tower",
+      "which was very tall indeed ok",
+    ]);
+    expect(wrapLines("We met the Tokyo team at 東京駅 yesterday and it was fine", 42, 2)).toEqual([
+      "We met the Tokyo team",
+      "at 東京駅 yesterday and it was fine",
+    ]);
+    // A phrase space far from the balanced cut still beats a cut inside a Thai syllable.
+    const p38 = "ขอบคุณมากครับสำหรับทุกอย่างที่ทำให้เรา";
+    expect(wrapLines(p38 + " ครับ", 42, 2)).toEqual([p38, "ครับ"]);
   });
   it("wrapLines never ends a line on a leading vowel", () => {
     for (let cpl = 28; cpl <= 60; cpl++) {

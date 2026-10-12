@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getCapabilities } from "@/lib/api";
 import { effectiveServerUrl, normalizeUrl } from "@/lib/backends";
 import { refreshCaps, requestCredentialGen } from "@/lib/capabilities";
@@ -48,6 +48,8 @@ export function useOverrideContext(args: {
   // target directly, into local state, so the capability gate and the translation
   // model/language lists describe the server being configured, not the one saved.
   const [liveCaps, setLiveCaps] = useState<Capabilities | null>(null);
+  // The typed target the live caps were last probed for (null = none / not live).
+  const probedRef = useRef<string | null>(null);
   const [live, setLive] = useState(false);
 
   // Keyed on "standard" (skip) and on each rise to "full": a successful connection test after an
@@ -61,6 +63,7 @@ export function useOverrideContext(args: {
       // returning the last probed server's caps.
       setLive(false);
       setLiveCaps(null);
+      probedRef.current = null;
       return;
     }
     const st = useApp.getState();
@@ -80,6 +83,7 @@ export function useOverrideContext(args: {
       effectiveServerKind(backend, ownProp(st.connections, backendId)) === "standard";
     if (!editing) {
       setLive(false);
+      probedRef.current = null;
       // Absent ⇒ never fetched; the store is invalidated at the sites that repoint or
       // drop a backend. A cached NULL is NOT terminal: refreshCaps cannot tell "server
       // said no" from "the probe failed" (both arrive as null), so one blip pinned the
@@ -94,13 +98,17 @@ export function useOverrideContext(args: {
     setLive(true);
     // Clear before refetching so a backend switch / retyped address shows the neutral
     // "unknown ⇒ permitted" gate during the in-flight window instead of ghosting the
-    // PREVIOUS server's caps.
-    setLiveCaps(null);
+    // PREVIOUS server's caps. A re-probe of the SAME target (a re-test, a rise to full) is no
+    // switch: it keeps the caps it has, and a failed re-probe does not blank them.
+    const target = JSON.stringify([typedTarget, apiKey ?? null, backendId, credentialGen]);
+    const same = probedRef.current === target;
+    probedRef.current = target;
+    if (!same) setLiveCaps(null);
     let cancelled = false;
     void getCapabilities({ serverUrl: typedTarget, backendId, apiKey })
       .catch(() => null)
       .then((c) => {
-        if (!cancelled) setLiveCaps(c);
+        if (!cancelled) setLiveCaps((prev) => c ?? (same ? prev : null));
       });
     return () => {
       cancelled = true;
