@@ -27,7 +27,6 @@ import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
   TranscriptSegment, VideoProgress,
 } from "./types";
-import type { VideoRung } from "./urlSource";
 import { isVideoSourcePath, siteDisplayName } from "./transcript/mediaExport";
 import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage, translateSourceCode } from "./languages";
@@ -553,13 +552,12 @@ export interface TranscribeRunState {
   /** Per-file segment indexes whose translations went stale (the ORIGINAL
    *  text was edited after the MT ran). Cleared per index by re-translate. */
   translationsStale: Record<string, Record<number, true>>;
-  /** Link metadata by URL key (title/duration/uploader from the preview) —
+  /** Link metadata by URL key (title/duration from the preview) —
    *  labels queue rows and survives resetForInputChange (re-adding the same
    *  link keeps its name). */
   urlMeta: Record<string, {
     title?: string;
     durationSec?: number;
-    uploader?: string;
     /** yt-dlp extractor key from the preview ("Youtube", "Generic", …) —
      *  shown as the run panel's source pill. */
     extractor?: string;
@@ -568,15 +566,12 @@ export interface TranscribeRunState {
     estimatedBytes?: number;
     /** "m4a · 128 kbps" — the audio format the download fetches. */
     format?: string;
-    /** The link card's per-item video choice (absent = the Settings
-     *  default) and the preview's ladder + cap for the rail's chips. */
+    /** The link card's per-item video choice (absent = the Settings default). */
     keepVideo?: boolean;
     videoMaxHeight?: number | null;
     /** The link card's explicit rung (a yt-dlp format id); absent = the
      *  Settings height cap decides at run time. */
     videoFormat?: string | null;
-    videoLadder?: VideoRung[];
-    mediaMaxBytes?: number;
     /** The link card's spoken language (a code, "auto" or MULTI_LANGUAGE) when it
      *  differs from the screen's — named by the site, detected, or picked. */
     spokenLanguage?: string;

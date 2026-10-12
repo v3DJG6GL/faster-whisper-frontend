@@ -723,13 +723,9 @@ export default function Transcribe() {
       setUrlMeta(url, {
         title: urlPreviewData.title ?? undefined,
         durationSec: urlPreviewData.duration ?? undefined,
-        uploader: urlPreviewData.uploader ?? undefined,
         extractor: urlPreviewData.extractor ?? undefined,
         estimatedBytes: urlPreviewData.estimated_bytes ?? undefined,
         format: formatLabel(urlPreviewData.ext, urlPreviewData.abr) ?? undefined,
-        videoLadder: urlPreviewData.video_ladder ?? undefined,
-        // The preview's own ceiling, else the server's from /v1/me (now always sent).
-        mediaMaxBytes: urlPreviewData.media_max_bytes ?? caps?.media_max_bytes ?? undefined,
         // Always written (undefined clears a re-added link's old values). For the video
         // picks undefined = the Settings default at run time (so a later Settings change
         // still applies); only an explicit pick on this card rides along.
@@ -752,7 +748,6 @@ export default function Transcribe() {
         keepVideo: undefined,
         videoMaxHeight: undefined,
         videoFormat: undefined,
-        videoLadder: undefined,
         spokenLanguage: undefined,
         spokenMultiInherited: undefined,
         prefetchMediaId: undefined,
@@ -3229,7 +3224,7 @@ export default function Transcribe() {
           onDoubleClick={() => persistOptions({ studioRailPx: STUDIO_RAIL_DEFAULT })}
           className="group -mx-3 flex w-6 shrink-0 cursor-col-resize justify-center outline-none"
         >
-          <i className={cn("block w-px rounded-full bg-line transition-colors group-hover:bg-accent group-focus-visible:bg-accent", railDrag !== null && "bg-accent")} />
+          <i className={cn("block w-px rounded-full transition-colors", railDrag !== null ? "bg-accent" : "bg-line group-hover:bg-accent group-focus-visible:bg-accent")} />
         </div>
       )}
       <div className={studio ? "flex min-h-0 min-w-0 flex-1 flex-col" : undefined}>
