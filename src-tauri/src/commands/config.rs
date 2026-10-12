@@ -163,10 +163,45 @@ pub fn apply_recordings_retention(app: &AppHandle, config: &Config) {
 
 /// Keep the OS "launch at login" entry in sync with the saved preference. Called
 /// on startup and whenever the config is saved.
+///
+/// A refused write (read-only `~/.config/autostart`, a Run-key write blocked by policy) is
+/// logged, once per distinct (preference, error) so the debounced autosave cannot flood the
+/// ring; the save itself still succeeds, since the config was written.
 pub fn sync_autostart(app: &AppHandle, enabled: bool) {
     use tauri_plugin_autostart::ManagerExt;
+    static LAST_AUTOSTART_ERR: std::sync::Mutex<Option<(bool, String)>> =
+        std::sync::Mutex::new(None);
     let mgr = app.autolaunch();
-    let _ = if enabled { mgr.enable() } else { mgr.disable() };
+    let result = if enabled {
+        mgr.enable()
+    } else {
+        // On Windows `disable` fails when there is no Run value to delete — the default "off"
+        // state. Not a failure when no entry is left in effect.
+        mgr.disable().or_else(|e| {
+            if matches!(mgr.is_enabled(), Ok(false)) {
+                Ok(())
+            } else {
+                Err(e)
+            }
+        })
+    };
+    let Ok(mut last) = LAST_AUTOSTART_ERR.lock() else {
+        return;
+    };
+    match result {
+        Ok(()) => *last = None,
+        Err(e) => {
+            let key = (enabled, e.to_string());
+            if last.as_ref() != Some(&key) {
+                tracing::warn!(
+                    "[autostart] could not {} launch at login: {}",
+                    if enabled { "enable" } else { "disable" },
+                    key.1
+                );
+                *last = Some(key);
+            }
+        }
+    }
 }
 
 /// Serializes keyring mutations in the order the commands queue on it. tokio's Mutex is fair
