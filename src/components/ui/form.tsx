@@ -246,7 +246,7 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
           "ring-signal w-full rounded-xl border bg-surface-2 px-3.5 text-text",
           compact ? "h-8" : "h-10",
           mono ? "font-mono text-[12.5px]" : compact ? "text-[12px]" : "text-[13px]",
-          "placeholder:text-faint",
+          "placeholder:text-faint disabled:cursor-not-allowed disabled:opacity-50",
           set ? "border-accent/55" : "border-line",
           className,
         )}
@@ -263,7 +263,7 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
         ref={ref}
         className={cn(
           "ring-signal w-full resize-none rounded-xl border bg-surface-2 px-3.5 py-2.5 text-[13px] text-text",
-          "placeholder:text-faint",
+          "placeholder:text-faint disabled:cursor-not-allowed disabled:opacity-50",
           set ? "border-accent/55" : "border-line",
           className,
         )}
