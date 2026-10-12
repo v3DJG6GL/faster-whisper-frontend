@@ -294,7 +294,8 @@ fn fix_records_in(
     tally
 }
 
-/// Rewrite `mediaPath` in every record whose stored path appears in `lookup`
+/// Re-point every media field ([`MEDIA_KEYS`]: mediaPath, videoPath, sourcePath) of every
+/// record whose stored path appears in `lookup`
 /// (old absolute path → new absolute path), after a migration or base move.
 /// Best-effort per record; a record that fails to parse is left untouched. Returns false when
 /// a record that may point at a moved file could not be read or rewritten (locked, unreadable,
