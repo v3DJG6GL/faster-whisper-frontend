@@ -361,6 +361,24 @@ pub(crate) mod win_seed {
         unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() }
     }
 
+    /// Whether the clipboard announces a text format at all, also readable WITHOUT opening
+    /// it. arboard reports both "no CF_UNICODETEXT" and "announced but the delayed render
+    /// failed" as ContentNotAvailable; only this tells them apart.
+    #[cfg(windows)]
+    fn text_announced() -> bool {
+        const CF_UNICODETEXT: u32 = 13;
+        unsafe {
+            windows_sys::Win32::System::DataExchange::IsClipboardFormatAvailable(CF_UNICODETEXT)
+                != 0
+        }
+    }
+
+    /// Never called off Windows (the grab is Windows-only); keeps the type-check building.
+    #[cfg(not(windows))]
+    fn text_announced() -> bool {
+        true
+    }
+
     /// Physical set-1 make codes; see `send_copy_chord`.
     #[cfg(windows)]
     const SCAN_LCTRL: u16 = 0x1D;
@@ -669,7 +687,29 @@ pub(crate) mod win_seed {
                 return None;
             }
         }
-        let prev = cb.get_text().ok(); // None = empty or non-text (image/files)
+        // None = empty or non-text (image/files). Any OTHER read failure is not "empty": on
+        // Windows arboard gives up after ~25 ms when another process holds the clipboard open
+        // (ClipboardOccupied) — likely right after the restore above woke clipboard listeners
+        // (rdpclip, clipboard history). Snapshotting that as None would make every restore below
+        // CLEAR the user's real text, so retry briefly and otherwise skip the grab. Nothing has
+        // been injected yet, so the clipboard stays untouched; `ready` signals on drop.
+        let mut snapshot_retries = 0;
+        let prev = loop {
+            match cb.get_text() {
+                Ok(text) => break Some(text),
+                Err(arboard::Error::ContentNotAvailable) => break None,
+                Err(e) => {
+                    if snapshot_retries >= 2 || superseded() {
+                        tracing::info!(
+                            "[quickadd-seed] could not snapshot the clipboard ({e}); skipping the copy grab"
+                        );
+                        return None;
+                    }
+                    snapshot_retries += 1;
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+            }
+        };
         #[cfg(windows)]
         let seq0 = clipboard_seq();
         // Third read, at the SINK. The authoritative check above runs before `Clipboard::new()`
@@ -835,8 +875,15 @@ pub(crate) mod win_seed {
             ready.signal();
             // Phase 2: the copy landed — read the text exactly once (this pull is what
             // triggers Office's delayed rendering). Retry a transient read failure within
-            // the same deadline; a persistent one means non-text content (an image copy) —
-            // put the user's text back and give up.
+            // the same deadline. A copy with NO text format at all (files from Explorer, an
+            // image) is told apart instead of polled to the deadline: a ContentNotAvailable
+            // read while no CF_UNICODETEXT is announced (text_announced — arboard gives the
+            // same error for an announced text whose delayed render failed). Once that has
+            // held for NO_TEXT_SETTLE_MS straight (a writer mid-EmptyClipboard/SetClipboardData
+            // never lasts that long), put the user's text back and give up. An announced
+            // (delayed-render, RDP) text format keeps the retry-until-deadline behaviour.
+            const NO_TEXT_SETTLE_MS: u64 = 250;
+            let mut text_absent_since: Option<Instant> = None;
             loop {
                 match cb.get_text() {
                     // The sequence bump is the format ANNOUNCEMENT, not the data. Over RDP
@@ -846,6 +893,7 @@ pub(crate) mod win_seed {
                     // timeout). An empty "copy" of a real selection doesn't exist — keep
                     // polling for the bytes; at the deadline restore and report nothing.
                     Ok(text) if text.is_empty() => {
+                        text_absent_since = None; // text is announced, just not pulled yet
                         if Instant::now() >= deadline || superseded() {
                             match prev {
                                 // Restores carry the history/cloud exclusion hints: the snapshot
@@ -884,10 +932,27 @@ pub(crate) mod win_seed {
                         }
                         return Some(text);
                     }
-                    Err(_) => {
+                    Err(e) => {
+                        match e {
+                            arboard::Error::ContentNotAvailable if !text_announced() => {
+                                text_absent_since.get_or_insert_with(Instant::now);
+                            }
+                            // Says nothing about the formats (another process holds the
+                            // clipboard open) — keep the current absence streak as it is.
+                            arboard::Error::ClipboardOccupied => {}
+                            // Text IS announced (a failed delayed render, or another read
+                            // error) — not a non-text copy.
+                            _ => text_absent_since = None,
+                        }
+                        let no_text = text_absent_since.is_some_and(|t| {
+                            t.elapsed() >= Duration::from_millis(NO_TEXT_SETTLE_MS)
+                        });
+                        if no_text {
+                            tracing::info!("[quickadd-seed] copied content has no text; restoring and treating as no selection");
+                        }
                         // Superseded mid-retry: the copy DID land (we're past the bump), so
                         // restore the user's clipboard exactly like the deadline path.
-                        if Instant::now() >= deadline || superseded() {
+                        if no_text || Instant::now() >= deadline || superseded() {
                             match prev {
                                 // Copied content is non-text — restore.
                                 Some(p) => {
