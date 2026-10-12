@@ -63,6 +63,8 @@ let started = false;
 let inFlight = false;
 let retries = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
+/** A retry timer fired while a pass was in flight: that pass schedules one more. */
+let rerun = false;
 /** Job ids a watcher is polling right now (→ its stop): a retry pass re-reads the live
  *  ledger, where a watched row stays until it settles, and must not start a second watcher. */
 const watching = new Map<string, () => void>();
@@ -345,7 +347,11 @@ export function isPerRowJobError(message: string): boolean {
 /** One pass over the ledger. Single-flight; schedules its own retry while the server
  *  cannot be reached. */
 export async function reconcileJobs(): Promise<void> {
-  if (!isTauri || inFlight) return;
+  if (!isTauri) return;
+  if (inFlight) {
+    rerun = true;
+    return;
+  }
   inFlight = true;
   let retry = false;
   try {
@@ -452,12 +458,15 @@ export async function reconcileJobs(): Promise<void> {
     passRows.clear();
     inFlight = false;
   }
-  if (retry) scheduleRetry();
+  const again = retry || rerun;
+  rerun = false;
+  if (again) scheduleRetry();
 }
 
 /** Run another reconcile pass after RETRY_MS (one timer; at most MAX_RETRIES per launch). A call
  *  while a pass is already scheduled joins it and spends nothing — several watchers failing on
- *  one listing are one retry. */
+ *  one listing are one retry. A timer that lands during a pass (a watcher armed it mid-pass) is
+ *  carried over to that pass's end, which arms the next one. */
 function scheduleRetry(): void {
   if (retryTimer !== undefined || retries >= MAX_RETRIES) return;
   retries += 1;
@@ -482,6 +491,7 @@ export function _resetReconcileForTests(): void {
   started = false;
   inFlight = false;
   retries = 0;
+  rerun = false;
   clearTimeout(retryTimer);
   retryTimer = undefined;
   watching.clear();

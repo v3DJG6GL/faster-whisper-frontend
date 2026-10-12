@@ -42,7 +42,7 @@ const { _resetReconcileForTests, initJobReconcile, isPerRowJobError, reconcileJo
   await import("./jobsReconcile");
 const { useTranscribeRun, forgetRecord, cancelRun, closeRecord, openHistoryRecord, retryFile, startRun } =
   await import("./transcribeRun");
-const { useTranscriptHistory, deleteRecord } = await import("./transcript/transcriptHistory");
+const { useTranscriptHistory, deleteRecord, _resetHistoryLoadForTests } = await import("./transcript/transcriptHistory");
 const { useApp } = await import("./store");
 type LedgerRow = import("./jobsLedger").LedgerRow;
 type TranscriptRecord = import("./transcript/transcriptHistory").TranscriptRecord;
@@ -81,6 +81,8 @@ beforeEach(() => {
   vi.stubGlobal("window", globalThis);
   _resetLedgerForTests();
   _resetReconcileForTests();
+  // A failed listing in an earlier test must not change how this one's first listing merges.
+  _resetHistoryLoadForTests();
   forgetRecord(null);
   useTranscriptHistory.setState({ records: [], loaded: true });
   useTranscribeRun.setState({ files: [], queue: [], progress: null, stageTimes: {}, stageMeta: {},
@@ -96,6 +98,8 @@ beforeEach(() => {
   fetchUrlMedia.mockClear();
   saveTranscriptRecord.mockClear();
   saveJobsLedger.mockClear();
+  // An unconsumed once-listing (a test that failed early) must not answer the next test's.
+  listTranscriptRecords.mockReset();
   loadJobsLedger.mockImplementation(() => Promise.resolve(null));
 });
 
@@ -551,6 +555,44 @@ describe("reconcileJobs", () => {
     expect(getJob).not.toHaveBeenCalled();
     expect(ledgerRows()).toEqual([]);
     expect(records().map((x) => [x.id, x.status, x.error])).toEqual([[JOB_A, "failed", BACKEND_GONE_ERROR]]);
+  });
+
+  it("a retry the headless watcher schedules while a pass is in flight runs after that pass", async () => {
+    const r = row(JOB_A, T0);
+    await seed(r, row(JOB_B, T0 + 1));
+    const rec: TranscriptRecord = { schemaVersion: 1, kind: "file", id: JOB_A, createdAt: new Date(r.startedAt).toISOString(),
+      sourcePath: r.path, sourceName: r.path, status: "failed", error: "timed out" };
+    // A non-idle workbench: A is watched headless; B's per-row error arms the retry timer.
+    useTranscribeRun.setState({ files: ["/picked.wav"] });
+    let resolveB: (v: JobOutcome<JobStatus>) => void = () => {};
+    let bCalls = 0;
+    getJob.mockImplementation(({ jobId }) => {
+      if (jobId === JOB_A) return Promise.resolve(ok({ jobId, state: "running" }));
+      bCalls += 1;
+      return bCalls === 1
+        ? Promise.resolve({ kind: "error", message: "HTTP 500" })
+        : new Promise((res) => { resolveB = res; });
+    });
+    await reconcileJobs();
+    // The retry pass starts and hangs on B's status.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(bCalls).toBe(2);
+    // A's backend goes while the History listing fails: the watcher keeps the row and arms the timer.
+    useTranscriptHistory.setState({ records: [], loaded: false });
+    listTranscriptRecords.mockRejectedValueOnce(new Error("no disk"));
+    useApp.setState({ backends: [] });
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A, JOB_B]);
+    // That timer fires while the pass is still in flight, which then ends with nothing to retry.
+    await vi.advanceTimersByTimeAsync(30_000);
+    resolveB({ kind: "not_found" });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ledgerRows().map((x) => x.jobId)).toEqual([JOB_A]);
+    // The dropped timer is carried over: one more pass lists again and settles A's record.
+    listTranscriptRecords.mockResolvedValueOnce([rec]);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(ledgerRows()).toEqual([]);
+    expect(records().find((x) => x.id === JOB_A)).toMatchObject({ status: "failed", error: BACKEND_GONE_ERROR });
   });
 
   it("a gone backend's row stopped during the History listing settles nothing", async () => {
