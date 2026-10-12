@@ -2557,6 +2557,8 @@ export async function pushNow(manual = false): Promise<void> {
   if (useApp.getState().saveErrorKind === "save") return;
   inFlight = true;
   const myGen = gen;
+  const prior = useApp.getState(); // the status a push that contacts no server restores
+  const priorError = prior.syncStatus === "error" ? prior.syncError : undefined;
   setRuntime({ syncStatus: "syncing", syncError: null });
   try {
     await ensureStateFor(backend.id);
@@ -2572,8 +2574,11 @@ export async function pushNow(manual = false): Promise<void> {
     if (!manual && hashBlob(blob) === state.hash && base > 0) {
       // Nothing to send — but a pending prompt adopts no base, so ANY store edit lands here while
       // it waits: restore its notice (cleared by the "syncing" above) instead of "Synced" next to
-      // the dialog.
-      idleStatus();
+      // the dialog. Likewise a push that contacts no server must not overwrite an earlier
+      // failure (a failed pull, a refused keyring read) with "Synced".
+      if (!pendingConflict && !pendingReview && priorError !== undefined)
+        setRuntime({ syncStatus: "error", syncError: priorError });
+      else idleStatus();
       return;
     }
     // Gated on the COMPOSED blob, not on the Backends switch: the snapshot pass-through

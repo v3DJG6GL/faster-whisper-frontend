@@ -1557,3 +1557,22 @@ describe("a review re-raised by a pull refused while dictating", () => {
     }
   });
 });
+
+// An automatic push whose composed state matches the base contacts no server, yet it ended on
+// "Synced": any later store edit (a machine-local field, the sync settings themselves) turned an
+// earlier failed pull or refused keyring read green while nothing had reached the server.
+describe("an automatic push with nothing to send", () => {
+  it("keeps an earlier sync error", async () => {
+    try {
+      await seedBase();
+      useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: "Sync failed." });
+      const pushesBefore = api.pushes;
+      await pushNow();
+      expect(api.pushes).toBe(pushesBefore);
+      expect(useApp.getState().syncStatus).toBe("error");
+      expect(useApp.getState().syncError).toBe("Sync failed.");
+    } finally {
+      api.keys = null;
+    }
+  });
+});
