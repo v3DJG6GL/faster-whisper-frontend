@@ -32,7 +32,7 @@ import { authorityOf, backendPrompt, backendPromptFields, effectiveLanguage, eff
 import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
-import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps } from "@/lib/capabilities";
+import { credentialGeneration, forgetCredential, maxTranslationTargets, refreshCaps, requestCredentialGen } from "@/lib/capabilities";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
@@ -100,10 +100,14 @@ function Editor({
   // kept Test disabled for the corrected address until the old request timed out. Every run is
   // kept, not just the latest: retyping an older, still-running target must show it busy again,
   // or a click there starts a duplicate run whose verdict and testGen bump land twice. The ref is
-  // the synchronous twin: two clicks in one render must not start two runs.
-  const [testingTargets, setTestingTargets] = useState<readonly { url: string; key: string }[]>([]);
-  const inFlightTests = useRef(new Set<{ url: string; key: string }>());
-  const testing = testingTargets.some((t) => t.url === effUrl && t.key === key);
+  // the synchronous twin: two clicks in one render must not start two runs. A blank-key run also
+  // carries the stored key's generation, as the list card's does: a sync pull that rotates the key
+  // mid-test frees Test for the new caller at once instead of waiting out a run whose verdict
+  // `resultLive` will hide anyway (a typed key is its own credential: gen 0, never stale).
+  const [testingTargets, setTestingTargets] = useState<readonly { url: string; key: string; gen: number }[]>([]);
+  const inFlightTests = useRef(new Set<{ url: string; key: string; gen: number }>());
+  const curGen = requestCredentialGen(b.id, key);
+  const testing = testingTargets.some((t) => t.url === effUrl && t.key === key && t.gen === curGen);
   const [result, setResult] = useState<ConnectionInfo | null>(initialResult ?? null);
   // Bumped by each successful test that still matches the typed target: the hooks below key their
   // fetches on the target and on a rise to "full", so a Test of an unchanged, already-full server
@@ -258,13 +262,14 @@ function Editor({
 
   const runTest = async () => {
     // A test of this exact target is already running: no duplicate run.
-    for (const t of inFlightTests.current) if (t.url === effUrl && t.key === key) return;
+    const runGen = requestCredentialGen(b.id, key);
+    for (const t of inFlightTests.current) if (t.url === effUrl && t.key === key && t.gen === runGen) return;
     const testedUrl = effUrl;
     const testedKey = key;
     // Taken BEFORE the await, as the list card's handleTest does: a pull that rotates the stored
     // key mid-test makes a blank-key verdict describe the old caller.
     const gen = credentialGeneration(b.id);
-    const run = { url: testedUrl, key: testedKey };
+    const run = { url: testedUrl, key: testedKey, gen: runGen };
     inFlightTests.current.add(run);
     setTestingTargets((ts) => [...ts, run]);
     try {
@@ -279,7 +284,14 @@ function Editor({
       // one persisted. Writing it here cached a DRAFT's verdict under the backend id: edit X, retype
       // the URL, Test, Cancel → `connections[X]` held the other host's answer while X still routed
       // to the old one (and a tested-then-cancelled connect-first draft left an orphan entry).
-      if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
+      // A blank-key run also needs the stored key unrotated: once a pull rotates it, a new-caller
+      // run may already be out, and this old-caller verdict landing after it must not replace its
+      // answer with one `resultLive` hides (nor bump testGen).
+      if (
+        liveTarget.current.url === testedUrl &&
+        liveTarget.current.key === testedKey &&
+        (testedKey || credentialGeneration(b.id) === gen)
+      ) {
         resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult(info);
         // An unknown → full test bumps the hooks' rise counter in the same render: one refetch.
@@ -304,7 +316,11 @@ function Editor({
     } catch (e) {
       // IPC reject (same guard the list card's handleTest carries) — surface the
       // failure so the editor doesn't just silently stop.
-      if (liveTarget.current.url === testedUrl && liveTarget.current.key === testedKey) {
+      if (
+        liveTarget.current.url === testedUrl &&
+        liveTarget.current.key === testedKey &&
+        (testedKey || credentialGeneration(b.id) === gen)
+      ) {
         resultTarget.current = { url: testedUrl, key: testedKey, gen };
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
