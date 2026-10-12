@@ -15,9 +15,18 @@ export function LoggingSection() {
   const logging = useApp((s) => s.settings.logging);
   const updateLogging = useApp((s) => s.updateLogging);
   const navigate = useNavigate();
+  // As on the Logs screen: a failed open (dead share, read-only path) says so on the
+  // button, and a second click while one is out is refused.
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState<string | null>(null);
+  const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
   const [folder, setFolder] = useState<string | null>(null);
   const logDir = logging?.logDir ?? null;
   useEffect(() => {
+    // An open failure is about the folder it was asked for: a new folder starts clean.
+    setOpenError(null);
+    window.clearTimeout(openTimerRef.current);
     // Change… then Reset race two lookups; only the latest may land.
     let live = true;
     void logFolderPath(logDir).then((p) => {
@@ -27,20 +36,17 @@ export function LoggingSection() {
       live = false;
     };
   }, [logDir]);
-  // As on the Logs screen: a failed open (dead share, read-only path) says so on the
-  // button, and a second click while one is out is refused.
-  const [opening, setOpening] = useState(false);
-  const [openError, setOpenError] = useState<string | null>(null);
-  const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
   function openFolder() {
     if (opening) return;
     setOpening(true);
     setOpenError(null);
-    void openLogFolder(logDir)
+    const asked = logDir;
+    void openLogFolder(asked)
       .catch((e: unknown) => {
         console.error("open log folder:", e);
         logLine("warn", "logs", "could not open the log folder");
+        // A late answer for a folder Change…/Reset has since replaced must not label the new one.
+        if ((useApp.getState().settings.logging?.logDir ?? null) !== asked) return;
         setOpenError(safeDisplayText(errorText(e), 160));
         clearTimeout(openTimerRef.current);
         openTimerRef.current = setTimeout(() => setOpenError(null), 4000);

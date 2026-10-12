@@ -366,18 +366,29 @@ export default function Settings() {
   // message line; a second click while one is out is refused, or a stalled mount queues
   // opens that all pop up a window when it answers. A click clears only an earlier open
   // failure: the same line may explain a partial move, the very thing Open is clicked to see.
+  // The late answer follows the same rule — it never replaces an error another action owns
+  // (a move, a partial move, a cleanup failure; Change…/Reset stay enabled while Open is
+  // out) — and is dropped once the base has moved on: it is about the folder it was asked for.
   const [openingDir, setOpeningDir] = useState(false);
   const openRecDir = () => {
     if (openingDir) return;
     setOpeningDir(true);
     setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
-    void openAudioDir(basePref)
+    const clicked = basePref;
+    void openAudioDir(clicked)
       .catch((e: unknown) => {
         console.error("open audio dir:", e);
         // Path-free: the log is pasted into bug reports.
         logLine("warn", "files", "could not open the audio folder");
-        if (tabRef.current === "Recording & history") {
-          setStoreMsg({ text: `${OPEN_DIR_FAILED}${safeDisplayText(errorText(e), 200)}`, error: true });
+        if (
+          tabRef.current === "Recording & history" &&
+          audioBasePref(useApp.getState().settings.recording) === clicked
+        ) {
+          setStoreMsg((m) =>
+            m?.error && !m.text.startsWith(OPEN_DIR_FAILED)
+              ? m
+              : { text: `${OPEN_DIR_FAILED}${safeDisplayText(errorText(e), 200)}`, error: true },
+          );
         }
       })
       .finally(() => setOpeningDir(false));
