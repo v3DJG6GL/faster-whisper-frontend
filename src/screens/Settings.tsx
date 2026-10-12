@@ -226,10 +226,13 @@ export default function Settings() {
     // not drop an unrelated edit debounce. The workbench registry holds file/URL transcripts,
     // which only "clear" removes — forgetting it on "dict" closed an open transcript for nothing.
     // "dict" wipes only dictation records, so only their writes go; "clear" wipes only
-    // file/URL/text records, so dictation writes stay.
-    if (kind === "dict") dropPendingWrites(isDictationRecord);
-    else if (kind === "clear") dropPendingWrites(isFileStoreRecord);
+    // file/URL/text records, so dictation writes stay. "dict" FLUSHES first instead (like the
+    // Save-dictations toggle): a wipe that fails (an unlistable folder deletes nothing) must not
+    // have thrown an edit away, so parked writes land before the wipe and only what was parked
+    // during it is dropped, after a confirmed wipe (`done`).
+    if (kind === "clear") dropPendingWrites(isFileStoreRecord);
     const done = (n: number, [one, many]: [string, string]) => {
+      if (kind === "dict") dropPendingWrites(isDictationRecord);
       if (tabRef.current === "Recording & history") {
         setStoreMsg({ text: `Removed ${plural(n, one, many)}.` });
         setConfirming(null);
@@ -248,7 +251,10 @@ export default function Settings() {
     // [one, many]: delete_all_dictations returns one combined count of records and audio.
     const [op, what]: [Promise<number>, [string, string]] =
       kind === "dict"
-        ? [deleteAllDictations(basePref), ["dictation or audio file", "dictations and audio files"]]
+        ? [
+            flushRecordWrites().then(() => deleteAllDictations(basePref)),
+            ["dictation or audio file", "dictations and audio files"],
+          ]
         : kind === "files"
           ? [removeTranscriptMedia("file", basePref), ["audio copy", "audio copies"]]
           : kind === "links"

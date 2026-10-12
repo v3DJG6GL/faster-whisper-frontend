@@ -4,8 +4,9 @@
 // backend's `decodeOverrides`; every batch request drops them (Rust batch.rs post()).
 //
 // The server applies them and keeps the pair rules (inner < outer, hard break 0 or > outer);
-// the steppers keep the inner pause below the outer one, and the preview runs the values through
-// serverTimings() (both server pair rules), so it never shows a pair the server would rewrite.
+// the steppers keep the inner pause below the outer one (a server-locked partner is clamped
+// against, never moved), and the preview runs the values through serverTimings() (both server
+// pair rules), so it never shows a pair the server would rewrite.
 // Nothing here acts on the values — the preview just draws them.
 import { useId, type CSSProperties } from "react";
 import { RangeField, Stepper } from "@/components/ui";
@@ -85,20 +86,39 @@ export function LiveDictationFields({
     onChange(next as DecodeOverrides);
   };
   const own = (k: DecodeKey) => value[k];
+  // What the server applies: a locked key's own value is ignored ("Ignored · locked by the
+  // server"), and its inherited value is already the server's.
+  const eff = (k: DecodeKey) => (locked?.has(k) ? undefined : value[k]);
   const inh = (k: DecodeKey) => inherited?.[k];
   const noteOf = (k: DecodeKey) => (sources?.[k] === "Backend default" ? "backend" : "server");
 
-  // The four knobs as the preview reads them: own value, else inherited, else the server's
-  // documented default (a server that hasn't answered yet).
+  // The four knobs as the preview reads them: own value (unless locked), else inherited, else the
+  // server's documented default (a server that hasn't answered yet).
   const t: LiveTimings = {
-    innerMs: num(own("streaming_vad_inner_silence_ms")) ?? num(inh("streaming_vad_inner_silence_ms")) ?? LIVE_FALLBACK.innerMs,
-    outerMs: num(own("streaming_vad_outer_silence_ms")) ?? num(inh("streaming_vad_outer_silence_ms")) ?? LIVE_FALLBACK.outerMs,
-    hardMs: num(own("streaming_hard_break_silence_ms")) ?? num(inh("streaming_hard_break_silence_ms")) ?? LIVE_FALLBACK.hardMs,
-    separator: str(own("streaming_hard_break_separator")) ?? str(inh("streaming_hard_break_separator")) ?? LIVE_FALLBACK.separator,
+    innerMs: num(eff("streaming_vad_inner_silence_ms")) ?? num(inh("streaming_vad_inner_silence_ms")) ?? LIVE_FALLBACK.innerMs,
+    outerMs: num(eff("streaming_vad_outer_silence_ms")) ?? num(inh("streaming_vad_outer_silence_ms")) ?? LIVE_FALLBACK.outerMs,
+    hardMs: num(eff("streaming_hard_break_silence_ms")) ?? num(inh("streaming_hard_break_silence_ms")) ?? LIVE_FALLBACK.hardMs,
+    separator: str(eff("streaming_hard_break_separator")) ?? str(inh("streaming_hard_break_separator")) ?? LIVE_FALLBACK.separator,
   };
 
-  /** Inner/outer: write the moved one, and the other only when it had to move along. */
+  /** Inner/outer: write the moved one, and the other only when it had to move along. A partner
+   *  the server locked never moves (its write would be ignored): the moved one is clamped against
+   *  it instead. */
   const setPause = (changed: "inner" | "outer", ms: number) => {
+    const partner: DecodeKey = changed === "inner" ? "streaming_vad_outer_silence_ms" : "streaming_vad_inner_silence_ms";
+    if (locked?.has(partner)) {
+      // Roles swapped: the locked partner is the fixed one, so keepInnerBelowOuter moves `changed`.
+      const pair =
+        changed === "inner"
+          ? keepInnerBelowOuter("outer", ms, t.outerMs)
+          : keepInnerBelowOuter("inner", t.innerMs, ms);
+      patch(
+        changed === "inner"
+          ? { streaming_vad_inner_silence_ms: pair.innerMs }
+          : { streaming_vad_outer_silence_ms: pair.outerMs },
+      );
+      return;
+    }
     const pair = keepInnerBelowOuter(
       changed,
       changed === "inner" ? ms : t.innerMs,
@@ -120,10 +140,12 @@ export function LiveDictationFields({
       which === "inner" ? inheritedMs : t.innerMs,
       which === "outer" ? inheritedMs : t.outerMs,
     );
+    // A locked partner is not written (the server ignores it); its value is what the reset meets.
+    const partnerLocked = !!locked?.has(which === "inner" ? "streaming_vad_outer_silence_ms" : "streaming_vad_inner_silence_ms");
     patch({
       [k]: undefined,
-      ...(which === "inner" && pair.outerMs !== t.outerMs ? { streaming_vad_outer_silence_ms: pair.outerMs } : {}),
-      ...(which === "outer" && pair.innerMs !== t.innerMs ? { streaming_vad_inner_silence_ms: pair.innerMs } : {}),
+      ...(!partnerLocked && which === "inner" && pair.outerMs !== t.outerMs ? { streaming_vad_outer_silence_ms: pair.outerMs } : {}),
+      ...(!partnerLocked && which === "outer" && pair.innerMs !== t.innerMs ? { streaming_vad_inner_silence_ms: pair.innerMs } : {}),
     });
   };
 

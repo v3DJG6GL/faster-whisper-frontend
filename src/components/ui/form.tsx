@@ -187,6 +187,8 @@ export function RangeField({
       className={cn(
         "grid items-center gap-3 text-[12.5px] text-dim",
         hideLabel ? "grid-cols-[10.5rem_3.5rem_1.75rem]" : "grid-cols-[minmax(0,9rem)_minmax(0,1fr)_5.5rem_1.75rem]",
+        // Dimmed like Stepper's frame: a locked/unavailable slider must not look live.
+        disabled && "opacity-40",
       )}
     >
       {!hideLabel && <label htmlFor={id}>{label}</label>}
@@ -216,7 +218,7 @@ export function RangeField({
           aria-label={`Reset ${label.toLowerCase()} to ${defaultValue}${unit}`}
           disabled={disabled}
           onClick={() => (onReset ? onReset() : onChange(defaultValue))}
-          className="ring-signal grid size-7 place-items-center rounded-lg text-accent hover:bg-surface-2"
+          className="ring-signal grid size-7 place-items-center rounded-lg text-accent enabled:hover:bg-surface-2 disabled:cursor-not-allowed"
         >
           <RotateCcw className="size-3.5" />
         </button>
