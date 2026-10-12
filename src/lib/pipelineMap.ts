@@ -14,6 +14,12 @@ export function envPinnedOf(result: PipelineSaveResult): string[] {
     .slice(0, 16);
 }
 
+/** The PATCH reached the server: `ok`, or a 2xx whose reply couldn't be read or parsed. That save
+ *  LANDED (see PipelineSaveResult in types.ts): reload, never treat it as unsaved. */
+export function saveLanded(r: PipelineSaveResult): boolean {
+  return r.ok || (r.status >= 200 && r.status < 300);
+}
+
 /** The setting that holds every rule: pinned, nothing in the save takes effect. */
 export const RULE_LIST_SETTING = "PIPELINE_RULES";
 

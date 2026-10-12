@@ -836,9 +836,10 @@ export interface PipelineRulesState {
   map_collapse_after?: number;
 }
 
-/** GET outcome from the Rust command. `status` lets the UI branch: 0 =
- *  unreachable, 200 = ok (state present), 401/403 = gated, 404 = standard/old
- *  server (no such endpoint). */
+/** GET outcome from the Rust command. `ok` ⇒ `state` is present; otherwise
+ *  `status` + `error` say why: 0 = unreachable or a body that couldn't be read,
+ *  a 2xx with `ok: false` = the body didn't parse, 401/403 = gated, 404 =
+ *  standard/old server (no such endpoint). */
 export interface PipelineFetch {
   ok: boolean;
   status: number;
@@ -853,9 +854,11 @@ export interface RuleConflict {
   current_fp: string | null;
 }
 
-/** PATCH outcome. `ok` ⇒ HTTP 2xx (then inspect conflicts/requires_restart).
- *  `errors` is the 422 validation list; `detail` a 400/403/500 message or a
- *  transport error (status 0). */
+/** PATCH outcome. `ok` ⇒ HTTP 2xx with a readable reply (then inspect conflicts/requires_restart).
+ *  A 2xx `status` with `ok: false` means the change LANDED but its reply couldn't be read or
+ *  parsed: reload, never treat it as unsaved (test with `saveLanded` in lib/pipelineMap).
+ *  `errors` is the 422 validation list; `detail` a 400/403/500 message, or a transport error
+ *  before any status arrived (status 0). */
 export interface PipelineSaveResult {
   ok: boolean;
   status: number;

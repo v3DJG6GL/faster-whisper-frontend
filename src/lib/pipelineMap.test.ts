@@ -2,7 +2,7 @@
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
-import { applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleCountOf, ruleListOf } from "./pipelineMap";
+import { applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleCountOf, ruleListOf, saveLanded } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineSaveResult } from "./types";
 
 function fetchWith(rules: unknown): PipelineFetch {
@@ -107,5 +107,20 @@ describe("envPinnedOf", () => {
     expect(envPinnedOf({ env_pinned_ignored: ["PIPELINE_RULES", 3] } as unknown as PipelineSaveResult)).toEqual(["PIPELINE_RULES"]);
     expect(envPinnedOf({ env_pinned_ignored: "PIPELINE_RULES" } as unknown as PipelineSaveResult)).toEqual([]);
     expect(envPinnedOf({} as PipelineSaveResult)).toEqual([]);
+  });
+});
+
+describe("saveLanded", () => {
+  const save = (ok: boolean, status: number) => ({ ok, status, saved: [], conflicts: [], requires_restart: false }) as PipelineSaveResult;
+  it("counts a readable 2xx and a 2xx whose reply was unreadable as landed", () => {
+    expect(saveLanded(save(true, 200))).toBe(true);
+    expect(saveLanded(save(false, 200))).toBe(true);
+    expect(saveLanded(save(false, 204))).toBe(true);
+  });
+  it("treats a transport failure, a rejection or a server error as not landed", () => {
+    expect(saveLanded(save(false, 0))).toBe(false);
+    expect(saveLanded(save(false, 422))).toBe(false);
+    expect(saveLanded(save(false, 500))).toBe(false);
+    expect(saveLanded(save(false, 300))).toBe(false);
   });
 });

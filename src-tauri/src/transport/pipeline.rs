@@ -26,6 +26,11 @@ const MAX_ENV_PINNED: usize = 16;
 /// An env-pinned SETTING name ("PIPELINE_RULES"), never prose and never a rule name: the server
 /// reports which of the settings the save wrote are pinned by its environment.
 const SETTING_NAME_MAX: usize = 64;
+/// Read cap for the GET body, which carries every visible rule in full. The server allows
+/// 10,000 entries per cb:map list (keys and values up to 64 chars, a `map_meta` stamp per key)
+/// across several lists, so one large but valid dictionary passes 1 MiB in compact JSON. The
+/// PATCH reply carries no rule bodies and stays at [`MAX_META_BODY`].
+const RULES_MAX_BODY: usize = 16 * 1024 * 1024;
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
@@ -110,7 +115,7 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                 // timeout or oversized body is a transport failure, not "Unexpected response",
                 // so it reports as status 0 like a send failure (the card offers Retry instead
                 // of titling it "Server error (HTTP 200)").
-                let text = match body_capped_to(resp, MAX_META_BODY).await {
+                let text = match body_capped_to(resp, RULES_MAX_BODY).await {
                     Ok(t) => t,
                     Err(reason) => {
                         tracing::warn!(

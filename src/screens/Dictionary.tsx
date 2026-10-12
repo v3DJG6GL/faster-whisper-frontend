@@ -26,7 +26,7 @@ import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
 import {
-  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, envPinnedOf, RULE_LIST_SETTING,
+  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, envPinnedOf, saveLanded, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
@@ -887,7 +887,7 @@ export default function Dictionary() {
       // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
       // A 2xx whose reply couldn't be read (ok:false) still LANDED: reload too, or the stale
       // fingerprints turn the obvious re-save into bogus conflicts. The banner shows its detail.
-      const landed = res.ok || (res.status >= 200 && res.status < 300);
+      const landed = saveLanded(res);
       if (landed) await load(backend);
       // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
       // during that reload makes load() bail on its own guard (leaving result null), so setting the old
@@ -1065,7 +1065,7 @@ export default function Dictionary() {
         <Stack gap={4}>
           {/* A save that went through, then lost its follow-up reload: keep its notice above the error
               (runSave sets `result` after load(); Retry's load() clears it). */}
-          {result && <SaveBanner result={result} reloadFailed reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
+          {result && <SaveBanner result={result} reloadFailed retryBelow={fetchRetryable(fetchRes)} reloadDisabled={dirty.length > 0} onReload={() => backend && load(backend)} />}
           <FetchError fetch={fetchRes} backendName={backend ? backendLabel(backends, backend) : "the server"} onRetry={() => backend && load(backend)} />
         </Stack>
       ) : rules.length === 0 ? (
@@ -1151,6 +1151,10 @@ function EmptyCard({ title, body }: { title: string; body: string }) {
   );
 }
 
+/** FetchError offers Retry only for these (unreachable / server error); SaveBanner's reload-failed
+ *  clause points at it only when it is there. */
+const fetchRetryable = (f: PipelineFetch) => f.status === 0 || f.status >= 500;
+
 function FetchError({ fetch, backendName, onRetry }: { fetch: PipelineFetch; backendName: string; onRetry: () => void }) {
   const { title, body } = describeFetchError(fetch, backendName);
   return (
@@ -1158,7 +1162,7 @@ function FetchError({ fetch, backendName, onRetry }: { fetch: PipelineFetch; bac
       <AlertTriangle className="mx-auto mb-3 size-6 text-warn" />
       <div className="text-[15px] font-medium text-text">{title}</div>
       <p className="mx-auto mt-1.5 max-w-md text-[13px] text-dim">{body}</p>
-      {(fetch.status === 0 || fetch.status >= 500) && (
+      {fetchRetryable(fetch) && (
         <Button variant="default" size="sm" className="mx-auto mt-4" onClick={onRetry}>
           <RefreshCw className="size-3.5" /> Retry
         </Button>
@@ -1187,12 +1191,15 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
 function SaveBanner({
   result,
   reloadFailed = false,
+  retryBelow = false,
   reloadDisabled,
   onReload,
 }: {
   result: PipelineSaveResult;
   /** The save's follow-up reload is what failed (the fetch-error view): never claim it landed. */
   reloadFailed?: boolean;
+  /** With reloadFailed: the FetchError below offers Retry (fetchRetryable); else point at Refresh. */
+  retryBelow?: boolean;
   reloadDisabled: boolean;
   onReload: () => void;
 }) {
@@ -1239,13 +1246,13 @@ function SaveBanner({
     // A 2xx here LANDED but its reply was unreadable (runSave reloaded on it). Only this side knows
     // whether that reload worked, so the clause is added here, never baked into the detail: in the
     // fetch-error view it failed. And with the reply lost, its conflicts are unknown too.
-    const landed = result.status >= 200 && result.status < 300;
+    const landed = saveLanded(result);
     return (
       <Notice>
         {result.detail?.trim() || "Couldn't save the changes."}
         {landed &&
           (reloadFailed
-            ? " Reloading the rules failed — use Retry below, then check that your changes are there."
+            ? ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"}, then check that your changes are there.`
             : " The rules were reloaded from the server — check that your changes are there: a rule changed elsewhere may not have been saved.")}
       </Notice>
     );

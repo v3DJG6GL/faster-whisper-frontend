@@ -19,7 +19,7 @@ import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import {
-  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, envPinnedOf, RULE_LIST_SETTING,
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, envPinnedOf, saveLanded, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
@@ -284,7 +284,7 @@ export default function QuickAdd() {
       const pinned = res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING);
       // A 2xx whose reply couldn't be read (ok:false) still LANDED: "error" would re-PATCH on every
       // summon and skip the re-sync. `pinned` stays on res.ok — an unreadable reply names no pins.
-      const landed = res.ok || (res.status >= 200 && res.status < 300);
+      const landed = saveLanded(res);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
       // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).

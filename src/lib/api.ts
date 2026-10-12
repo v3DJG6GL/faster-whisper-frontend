@@ -598,8 +598,8 @@ export async function getDecodeDefaults(args: ServerTarget & {
 
 /** P17: the post-processing ("Dictionary") rules the caller may view + edit
  *  (GET /v1/pipeline-rules). Returns a structured result with the HTTP status so
- *  the screen can branch (0 = unreachable, 200 = ok, 401/403 = gated, 404 =
- *  standard/old server). Outside Tauri → an unreachable result. */
+ *  the screen can branch (see PipelineFetch: `ok` = state present, 0 = unreachable,
+ *  401/403 = gated, 404 = standard/old server). Outside Tauri → an unreachable result. */
 export async function getPipelineRules(args: ServerTarget): Promise<PipelineFetch> {
   return invokeServer<PipelineFetch>("get_pipeline_rules", args, {}, { ok: false, status: 0, error: "Not running in the desktop app." });
 }
@@ -700,7 +700,8 @@ export async function saveUsageOutcomes(queue: unknown): Promise<void> {
 /** P17: apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
  *  {rules_patch, fingerprints} object built from the user's edits. Returns
  *  saved / conflicts / requires_restart, plus 422 `errors` or a 400/403/500
- *  `detail`. */
+ *  `detail`. A 2xx with `ok: false` LANDED (see PipelineSaveResult): branch on
+ *  `saveLanded`, not `ok`. */
 export async function savePipelineRules(args: ServerTarget & {
   patch: {
     rules_patch: Record<string, Record<string, unknown>>;
