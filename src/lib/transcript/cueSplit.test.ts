@@ -626,6 +626,9 @@ describe("wrapLines", () => {
     expect(runLines.length, runLines.join(" | ")).toBe(3);
     expect(runLines.some((l) => /\p{L}"|"$/u.test(l) && /w$/.test(l))).toBe(false);
     expect(runLines.join("").replace(/ /g, "")).toBe(run.replace(/ /g, ""));
+    // A short run of quotes before a word still opens it: no line ends on bare quotes.
+    expect(wrapLines('He said """"wordwordwordwordword ok', 12, 2)[1].startsWith('""""w')).toBe(true);
+    expect(wrapLines('He said """(wordwordwordwordword ok', 8, 2).some((l) => /"$/.test(l))).toBe(false);
     // In CJK text “ after a character still opens (他说“再见”).
     expect(wrapLines("他说：“你好？”“我很好。”他说“再见”", 6, 3)).toEqual(["他说：“你", "好？”“我", "很好。”他", "说“再见”"]);
   });

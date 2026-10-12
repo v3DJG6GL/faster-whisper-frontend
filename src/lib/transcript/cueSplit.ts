@@ -322,10 +322,12 @@ function tokenUnits(w: string): string[] {
   // Where the token's trailing run of punctuation units begins: a quote or bracket from there on closes.
   let tail = u.length;
   while (tail > 0 && /^[\p{Pe}\p{Pf}\p{Po}\p{Pi}]+$/u.test(u[tail - 1])) tail--;
-  // An ASCII quote opens only a word that follows it, from the token's leading run of openers
-  // and quotes, and at most three of them: a longer run of bare quotes wraps like other punctuation.
+  // An ASCII quote opens only a word that follows it, and only from a short leading run of
+  // openers and quotes ("(word, """"word): a longer run (a hallucinated wall of quotes) opens
+  // nothing and wraps three to a piece like other punctuation, so it cannot tear the word.
   const firstWord = u.findIndex((x) => /[\p{L}\p{N}]/u.test(x));
   const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}"']+$/u.test(x));
+  const quoteOpens = lead !== -1 && lead <= 6;
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
     const last = prev === undefined ? "" : edgeChar(prev, true);
@@ -341,7 +343,7 @@ function tokenUnits(w: string): string[] {
         || (!/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev) && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(x)))) out[out.length - 1] += x;
     // An ASCII quote that starts the token (or follows its openers) opens it: as a closer of
     // nothing it ended a line on a bare ". One inside a word (don't, 5'10") rides above.
-    else if ((/^[\p{Ps}\p{Pi}]+$/u.test(x) || (k < firstWord && k >= firstWord - 3 && (lead === -1 || k < lead) && /^["']$/.test(x))) && k < u.length - 1) open += x;
+    else if ((/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && quoteOpens && k < firstWord && /^["']$/.test(x))) && k < u.length - 1) open += x;
     else {
       out.push(open + x);
       open = "";

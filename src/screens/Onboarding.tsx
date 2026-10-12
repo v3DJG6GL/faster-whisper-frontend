@@ -84,18 +84,21 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // the same-id ("hold"/"handsfree") ones. A retried Restore everything finishes from there, or
   // "Finish without sync" keeps what landed.
   const [landed, setLanded] = useState(false);
-  // The exit after a half-landed restore: keep what landed, sync off. It still does what the
-  // success path does before finishing — the gate's backend (whose key the keyring DID take at
-  // the gate) goes back in when nothing restored routes to its address, and a copy that brought
-  // no profiles still gets the starters, so setup never ends without a profile and a hotkey.
+  // The restored backend whose keyring write threw after the apply landed (the key the user
+  // proved at the gate is then stored only under the gate's own entry).
+  const keyFailed = useRef<string | null>(null);
+  // The exit after a half-landed restore: keep what landed, sync off. A copy that brought no
+  // profiles still gets the starters, so setup never ends without a profile and a hotkey. When
+  // the key write failed and the restore dropped the gate's entry, its keyring copy would be
+  // orphaned: deleted best-effort (the error line already said where to enter the key).
   const finishLanded = () => {
-    const s = st.getState();
     const gate = gateBackend.current;
-    const gateUrl = typedServerUrl(url);
-    if (gate && !s.backends.some((b) => normalizeUrl(b.serverUrl) === gateUrl)) s.upsertBackend(gate);
+    if (keyFailed.current && gate && !st.getState().backends.some((b) => b.id === gate.id)) {
+      void deleteBackendKey(gate.id).catch(() => {});
+    }
     if (st.getState().profiles.length === 0) {
       restored.current = true;
-      if (gate) setBackendId(st.getState().backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl)?.id ?? gate.id);
+      if (keyFailed.current) setBackendId(keyFailed.current);
       setStartersIntro("none");
       setStep("starters");
       return;
@@ -213,6 +216,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     const blob = pull?.state?.blob;
     if (!blob) return;
     setBusy(true);
+    keyFailed.current = null;
     try {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the
@@ -255,7 +259,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       if (match && key) {
         const isGate = match.id === gateBackend.current?.id;
         const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
-        if (!isGate) await setBackendKey(match.id, key);
+        if (!isGate) {
+          keyFailed.current = match.id;
+          await setBackendKey(match.id, key);
+          keyFailed.current = null;
+        }
         if (rotated) forgetCredential(match.id);
         if (!match.hasApiKey) {
           const withKey = { ...match, hasApiKey: true };
@@ -287,7 +295,11 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       }
       finish();
     } catch (e) {
-      setError(String(e));
+      setError(
+        keyFailed.current
+          ? `Your settings were restored, but this server's API key couldn't be saved to the system keyring (${String(e)}). Try again, or finish without sync and enter the key under Backends.`
+          : String(e),
+      );
     } finally {
       setBusy(false);
     }
@@ -454,7 +466,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                     variant="ghost"
                     onClick={finishLanded}
                     disabled={busy}
-                    title="Keep the settings that were restored, without turning sync on — the server's API key may need entering again under Backends"
+                    title="Keep the settings that were restored, without turning sync on"
                   >
                     Finish without sync
                   </Button>
