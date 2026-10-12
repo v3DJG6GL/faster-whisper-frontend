@@ -53,15 +53,17 @@ import { HoverModeSegmented } from "@/components/settings/HoverModeSegmented";
 import { LoggingSection } from "@/components/settings/LoggingSection";
 import { QuickLaunchEditor } from "@/components/settings/QuickLaunchEditor";
 
-/** "1.2 GB" / "84 MB" for the audio-copy usage readout. */
+/** "1.2 GB" / "84 MB" for the audio-copy usage readout. Decimal units (1 MB = 1 000 000 B),
+ *  as lib/format's fmtBytes uses, so a stored video reads the same size here as on the
+ *  Transcribe card that downloaded it — whole numbers below GB, though. */
 function fmtBytes(n: number): string {
-  if (n <= 0) return "0 KB"; // the floor below is for a sub-512-byte FILE, never for nothing
-  // The unit follows the ROUNDED value: 1023.6 MiB reads "1.0 GB", never "1024 MB".
-  const mb = Math.round(n / 1024 ** 2);
-  if (n >= 1024 ** 3 || mb >= 1024) return `${(n / 1024 ** 3).toFixed(1)} GB`;
-  if (n >= 1024 ** 2) return `${mb} MB`;
-  const kb = Math.max(1, Math.round(n / 1024));
-  return kb >= 1024 ? "1 MB" : `${kb} KB`;
+  if (n <= 0) return "0 KB"; // the floor below is for a sub-500-byte FILE, never for nothing
+  // The unit follows the ROUNDED value: 999.6 MB reads "1.0 GB", never "1000 MB".
+  const kb = Math.round(n / 1e3);
+  if (kb < 1000) return `${Math.max(1, kb)} KB`;
+  const mb = Math.round(n / 1e6);
+  if (mb < 1000) return `${mb} MB`;
+  return `${(n / 1e9).toFixed(1)} GB`;
 }
 
 /** Link-download video height caps. A synced value outside this list (sync accepts any
