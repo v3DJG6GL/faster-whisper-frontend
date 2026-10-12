@@ -287,7 +287,8 @@ mod imp {
             // Cap the scan: an ISO_Level5 layout (Neo, intl-extended) exposes 6-8 levels, and a
             // glyph reachable ONLY at level 4+ would be registered as `shift=false, altgr=false`
             // — a bare keypress that types that key's LEVEL-0 glyph instead. Leaving such glyphs
-            // out of the map makes them fall back to the portal path rather than mis-type.
+            // out of the map makes them unreachable — skipped per character by the typing loop,
+            // or counted by `letter_reach` toward a clipboard divert — rather than mis-typed.
             let levels = keymap.num_levels_for_key(key, g).min(4);
             let caps_safe = key_is_caps_safe(keymap, key, g);
             for level in 0..levels {
