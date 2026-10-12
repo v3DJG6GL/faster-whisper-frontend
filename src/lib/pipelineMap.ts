@@ -135,8 +135,11 @@ export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> }
 }
 
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
- *  exactly: longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE pass
- *  (no cascade). Used to correct a selected word against the current list on close.
+ *  (`compile_map`): longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE
+ *  pass (no cascade), and every ß key also matches its derived ss spelling (ß→ss, ẞ→SS; a key
+ *  written with ss explicitly wins) because the Swiss cleanup rewrites ß before the map runs. Not
+ *  mirrored: the dictated-punctuation prefix, which a selection never carries. Used to correct a
+ *  selected word against the current list on close.
  *
  *  Word boundaries are computed manually (not via regex `\b`, which is ASCII-only in JS, nor
  *  lookbehind, which older WebKitGTK lacks) so they're Unicode-aware AND depend on each key's edge
@@ -146,6 +149,15 @@ export function applyMap(text: string, rows: MapRow[]): string {
   const map = new Map<string, string>();
   for (const r of rows) if (r.k.trim() && !map.has(r.k)) map.set(r.k, r.v); // newest-shown row wins on a dup
   if (map.size === 0) return text;
+  // The backend's derived ss variants: added only when no key (any case) already spells it.
+  const present = new Set([...map.keys()].map((k) => k.toLowerCase()));
+  for (const [k, v] of [...map]) {
+    const derived = k.replace(/ß/g, "ss").replace(/ẞ/g, "SS");
+    if (derived !== k && !present.has(derived.toLowerCase())) {
+      map.set(derived, v);
+      present.add(derived.toLowerCase());
+    }
+  }
   const keys = [...map.keys()].sort((a, b) => b.length - a.length); // longest first → phrases win
   // Each key's lowercase form is loop-invariant — compute it once, not once per text position.
   const lowered = keys.map((k) => [k, k.toLowerCase()] as const);

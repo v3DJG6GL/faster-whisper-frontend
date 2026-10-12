@@ -100,6 +100,19 @@ describe("applyMap", () => {
   it("finds no boundary between an astral letter and a key", () => {
     expect(applyMap("\u{1D400}ok", [{ id: 1, k: "ok", v: "Y" }])).toBe("\u{1D400}ok");
   });
+
+  it("lets a ß key match its ss spelling, like the backend's derived variant", () => {
+    expect(applyMap("grösser als", [{ id: 1, k: "größer als", v: ">" }])).toBe(">");
+    expect(applyMap("GROSSE", [{ id: 1, k: "GROẞE", v: "big" }])).toBe("big");
+  });
+
+  it("lets a key written with ss win over a derived one, whatever the row order", () => {
+    const ss = { id: 1, k: "grösser als", v: "ss" };
+    const sz = { id: 2, k: "größer als", v: "sz" };
+    expect(applyMap("grösser als", [ss, sz])).toBe("ss");
+    expect(applyMap("grösser als", [sz, ss])).toBe("ss");
+    expect(applyMap("größer als", [sz, ss])).toBe("sz");
+  });
 });
 
 describe("envPinnedOf", () => {
