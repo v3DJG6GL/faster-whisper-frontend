@@ -35,9 +35,15 @@ const RULES_MAX_BODY: usize = 16 * 1024 * 1024;
 /// [`RULES_MAX_BODY`] read the way [`super::META_TIMEOUT`] is sized for [`MAX_META_BODY`], and
 /// still well under the shared client's 120 s ceiling. Only that success body gets the 60 s:
 /// getting the response HEADERS (the request timeout covers the connect too) and reading a
-/// non-2xx error body stay bounded by `META_TIMEOUT`, so an offline, black-holed or stalling host
-/// still shows Retry after 15 s, not 60.
+/// non-2xx error body share ONE `META_TIMEOUT` deadline, so an offline, black-holed or stalling
+/// host still shows Retry after 15 s, not 60 (nor 30, headers and error page each taking 15).
 const RULES_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+/// Per-request bound on the PATCH (connect, headers and its [`MAX_META_BODY`] reply). Wider than
+/// `META_TIMEOUT` because the server validates every regex entry in a child process before it
+/// writes, budgeted up to 10 s (and queued behind another save's probe at worst), so a save that
+/// lands must not read as unsaved; still far under the shared client's 120 s ceiling, which left
+/// the Dictionary and QuickAdd on "Saving…" for two minutes against a black-holed host.
+const RULES_SAVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// The GET /v1/pipeline-rules body, passed through verbatim: the rules the
 /// caller may view + edit, their role, and the per-type editable-field allow-list.
@@ -110,10 +116,11 @@ struct SaveBody {
 pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> PipelineFetch {
     let base = base_url(server_url);
     let url = format!("{base}/v1/pipeline-rules");
+    let meta_deadline = tokio::time::Instant::now() + super::META_TIMEOUT;
     let send = with_auth(client().get(url), api_key)
         .timeout(RULES_TIMEOUT)
         .send();
-    let sent = match tokio::time::timeout(super::META_TIMEOUT, send).await {
+    let sent = match tokio::time::timeout_at(meta_deadline, send).await {
         Ok(r) => r.map_err(|e| friendly_err(&e)),
         Err(_) => Err(super::TIMED_OUT.to_string()),
     };
@@ -167,10 +174,11 @@ pub async fn get_pipeline_rules(server_url: &str, api_key: Option<&str>) -> Pipe
                     }
                 }
             } else {
-                // The error body is small (MAX_ERROR_BODY): give it the header bound, not the
-                // 60 s sized for the success body, or a 5xx that stalls holds the card for 60 s.
+                // The error body is small (MAX_ERROR_BODY): it shares the headers' 15 s deadline,
+                // not the 60 s sized for the success body (a 5xx that stalls would hold the card
+                // for 60 s) nor a fresh 15 s of its own (slow headers + a stalled page = 30 s).
                 let read = super::error_detail(resp);
-                let detail = match tokio::time::timeout(super::META_TIMEOUT, read).await {
+                let detail = match tokio::time::timeout_at(meta_deadline, read).await {
                     Ok((_, d)) => d,
                     Err(_) => super::TIMED_OUT.to_string(),
                 };
@@ -206,6 +214,7 @@ pub async fn save_pipeline_rules(
     let url = format!("{base}/v1/pipeline-rules");
     match with_auth(client().patch(url), api_key)
         .json(&patch)
+        .timeout(RULES_SAVE_TIMEOUT)
         .send()
         .await
     {
