@@ -683,7 +683,7 @@ export function TranscriptViewer({
         })
         .catch((e) => {
           if (trCtls.get(okey) !== ctl) return;
-          if (!String(e).startsWith("HTTP")) setTrRun((s) => (s ? foldPollFailure(s) : s));
+          if (!String(e).startsWith("HTTP")) setTrRun((s) => (s ? foldPollFailure(s, sentAt) : s));
         });
     };
     const pollTimer = window.setInterval(() => {

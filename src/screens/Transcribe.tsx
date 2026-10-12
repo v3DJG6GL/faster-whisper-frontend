@@ -461,8 +461,15 @@ export default function Transcribe() {
     serverKind,
   });
   // What a blank per-run field inherits: the server's values, the Backend's stored decode
-  // defaults over them (the Profiles editor's merge), locked keys back to the server's.
-  const server = serverInherited(decodeDefaults, backend?.decodeOverrides, "batch", "Backend default");
+  // defaults over them (the Profiles editor's merge), locked keys back to the server's. A key
+  // that takes no decode overrides has the server ignore the Backend's too, so they are not
+  // layered (unknown caps keep them, as the rest of the screen's `=== false` gates do).
+  const server = serverInherited(
+    decodeDefaults,
+    caps?.can_request_decode_overrides === false ? undefined : backend?.decodeOverrides,
+    "batch",
+    "Backend default",
+  );
   const inheritedBaseline = server.values;
   // The model a blank Model field runs with: the Backend's, else the server's default (named by
   // request-default-settings — only while no per-run model is picked, else it names that one).

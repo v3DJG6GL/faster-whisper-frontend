@@ -148,14 +148,17 @@ export function beginChunk(
     // "starting", so the card read "Starting…" for the whole run while rows landed.
     // Promote only from "starting"; a later poll still corrects to downloading/loading.
     // Also leave "reconnecting": the previous chunk's answer proves the network is back,
-    // and against that same 404 server no successful poll ever would — settle on the
-    // same busiest safe guess as foldTranslatePoll's recovery.
+    // and against that same 404 server no successful poll ever would. It also proves the
+    // model is up (the old pct may still be 0 when no translating poll landed), so only a
+    // first chunk could still be loading; past it the model lane reads full, as
+    // foldTranslatePoll's translating arm sets it.
     phase:
       s.phase === "starting"
         ? "translating"
         : s.phase === "reconnecting"
-          ? s.modelPhaseSeen && s.pct === 0 ? "loading" : "translating"
+          ? s.modelPhaseSeen && done === 0 ? "loading" : "translating"
           : s.phase,
+    modelPct: s.phase === "reconnecting" && s.modelPhaseSeen && done > 0 ? 1 : s.modelPct,
     done,
     chunkLen: chunkIdxs.length,
     chunkIdxs,
@@ -242,9 +245,13 @@ export function foldTranslatePoll(
 /** A progress poll failed on the NETWORK while a chunk request is pending:
  *  the card shows "reconnecting…" (bar dimmed/frozen) but the run itself
  *  keeps going — the chunk request has its own long timeout, and polling
- *  continues until it recovers. Terminal phases are sticky here too. */
-export function foldPollFailure(s: TranslateRunUi): TranslateRunUi {
+ *  continues until it recovers. Terminal phases are sticky here too.
+ *  `sentAt` as in foldTranslatePoll: a poll sent before the current chunk began failing late
+ *  says nothing about now (the chunk that just left proves the network), and against a
+ *  server whose polls all 404 nothing would clear the flag until the next chunk. */
+export function foldPollFailure(s: TranslateRunUi, sentAt?: number): TranslateRunUi {
   if (s.phase === "done") return s;
+  if (sentAt !== undefined && s.chunkAt !== undefined && sentAt < s.chunkAt) return s;
   return { ...s, phase: "reconnecting" };
 }
 

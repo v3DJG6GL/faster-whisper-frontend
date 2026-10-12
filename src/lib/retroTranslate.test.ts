@@ -193,6 +193,21 @@ describe("translate progress state machine", () => {
     expect(s.phase).toBe("translating");
   });
 
+  it("a later chunk leaving 'reconnecting' reads translating even if no translating poll landed", () => {
+    // Chunk 1 answered, so the model is up — the stale pct 0 must not pick "loading".
+    let s = beginChunk(start(), idxs(0, 400), 0);
+    s = foldTranslatePoll(s, { stage: "loading" });
+    s = foldPollFailure(s);
+    s = beginChunk(s, idxs(400, 400), 400);
+    expect(s).toMatchObject({ phase: "translating", modelPct: 1 });
+  });
+
+  it("a poll sent before the current chunk began cannot flag 'reconnecting' late", () => {
+    const s = beginChunk(start(), idxs(0, 400), 0, 100);
+    expect(foldPollFailure(s, 50).phase).toBe("translating");
+    expect(foldPollFailure(s, 150).phase).toBe("reconnecting");
+  });
+
   it("a reconnect recovery with no entry settles on a safe busy phase", () => {
     let s = beginChunk(start(), idxs(0, 400), 0);
     s = foldPollFailure(s);

@@ -240,7 +240,10 @@ export function TranscriptExport({
    *  saves as MKV. Derived, never persisted, like `effSubtitleMode` — the pick stays. */
   const effContainer: MediaContainer = mp4Why ? "mkv" : container;
   // Codec facts for the MP4 verdict, fetched once the panel wants them. `streams` is a
-  // dep: a record switch nulls it AFTER this ran with the predecessor's facts.
+  // dep: a record switch nulls it AFTER this ran with the predecessor's facts. So is the
+  // backend's id: one arriving later (none yet, or the record's own re-added by a sync after
+  // a fallback's 404) must still fetch. `settings` stays out — streams are a fact of the
+  // media id, not of the address.
   useEffect(() => {
     if (!open || effMedia !== "video" || !serverVideoId || streams || !trBackend) return;
     let alive = true;
@@ -251,7 +254,7 @@ export function TranscriptExport({
       .catch(() => {});
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, effMedia, serverVideoId, streams]);
+  }, [open, effMedia, serverVideoId, streams, trBackend?.id]);
   // A different record: forget its predecessor's facts, picks and outcome.
   // Keyed on record identity, not `result`: every retro-translate chunk merge
   // hands in a fresh result object, and resetting on those wiped the track

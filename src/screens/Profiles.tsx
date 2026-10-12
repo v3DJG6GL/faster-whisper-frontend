@@ -140,7 +140,14 @@ function Editor({
     serverKind,
   });
   const streams = (p.endpoint ?? backend?.endpoint ?? "stream") === "stream";
-  const server = serverInherited(decodeDefaults, backend?.decodeOverrides, streams ? "stream" : "batch", "Backend default");
+  // A key that takes no decode overrides has the server ignore the backend's too (unknown caps
+  // keep them, as the disabled-reason gate below does).
+  const server = serverInherited(
+    decodeDefaults,
+    caps?.can_request_decode_overrides === false ? undefined : backend?.decodeOverrides,
+    streams ? "stream" : "batch",
+    "Backend default",
+  );
   // "Multiple languages" is the profile's `multilingual` decode override over its backend's —
   // sent with every request, the streaming handshake included.
   // Judge the model the server resolved when known: a backend on the default model runs the
