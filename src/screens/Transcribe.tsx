@@ -513,6 +513,13 @@ export default function Transcribe() {
     model: decodeDefaults?.model || model.trim() || backend?.model?.trim(),
   });
   const spoken = spokenField(language, runOverrides, inheritedBaseline.multilingual, multiOffered);
+  // What a run sends: a `multilingual` pick the screen no longer offers (an English-only model,
+  // a server that locks the key) is dropped at send, not from state — the flag can flip back
+  // while caps/decode defaults load, and the pick returns with it.
+  const sentOverrides: DecodeOverrides =
+    multiOffered || !("multilingual" in runOverrides)
+      ? runOverrides
+      : (({ multilingual: _m, ...rest }) => rest)(runOverrides);
   // The language a blank ("Default") language runs with: the server's DEFAULT_LANGUAGE, with the
   // inherited `multilingual` (that pick drops the run's own) folded in as spokenField folds it.
   const serverLang = serverLanguageLabel(decodeDefaults, inheritedBaseline.multilingual === true);
@@ -1044,8 +1051,8 @@ export default function Transcribe() {
                 : {}),
           }
         : undefined;
-    const ctx = buildCtx(runOverrides);
-    if (ctx) startRun(options, runOverrides, ctx);
+    const ctx = buildCtx(sentOverrides);
+    if (ctx) startRun(options, sentOverrides, ctx);
   };
 
   const retry = (path: string) => {
@@ -1919,9 +1926,9 @@ export default function Transcribe() {
           onToggle={() => setShowOverrides((v) => !v)}
           title="Decode overrides"
           summary={
-            Object.keys(runOverrides).length > 0 || runOverrideProfile ? (
+            Object.keys(sentOverrides).length > 0 || runOverrideProfile ? (
               <span className="text-accent">
-                {Object.keys(runOverrides).length > 0 && `· ${Object.keys(runOverrides).length} set for this run`}
+                {Object.keys(sentOverrides).length > 0 && `· ${Object.keys(sentOverrides).length} set for this run`}
                 {runOverrideProfile && " · server profile set for this run"}
               </span>
             ) : undefined

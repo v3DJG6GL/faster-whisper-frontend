@@ -1335,8 +1335,8 @@ async fn post(
     };
     let mut req = with_auth(client().post(format!("{base}{endpoint}")), api_key).multipart(form);
     // Per-request override of the shared client's 120 s default (reqwest's RequestBuilder::timeout
-    // replaces the client-level timeout for this request only). Only the file-upload path sets it;
-    // dictation passes None and keeps the 120 s default.
+    // replaces the client-level timeout for this request only). The file-upload and link paths
+    // set it (FILE_TRANSCRIBE_TIMEOUT); batch dictation passes None and keeps the 120 s default.
     if let Some(t) = timeout {
         req = req.timeout(t);
     }
