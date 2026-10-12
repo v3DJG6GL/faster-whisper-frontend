@@ -438,7 +438,9 @@ export default function Dashboard() {
             <div className="mt-0.5 text-[12.5px] text-faint">
               {busy || canStart
                 ? "Or use a profile’s hotkey from any app · the transcript appears wherever your cursor is."
-                : profiles.length === 0
+                : pickerOffHint(routePending, status)
+                  ? "Pick the target languages, or cancel the picker, to dictate again."
+                  : profiles.length === 0
                   ? "The button and the hotkeys stay off until you add a profile."
                   : !target
                     ? "The button and the hotkeys stay off until a profile is enabled."
