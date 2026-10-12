@@ -727,11 +727,22 @@ pub(crate) mod win_seed {
         // error as "no text", which only `text_announced` tells apart. Snapshotting either as
         // None would make every restore below CLEAR the user's real text, so retry the busy
         // case briefly and otherwise skip the grab; the failed render is skipped at once (over
-        // RDP each read can stall for seconds — retrying would triple the prologue). Nothing
-        // has been injected yet, so the clipboard stays untouched; `ready` signals on drop.
+        // RDP each read can stall for seconds — retrying would triple the prologue). A failed
+        // delayed render can also come back as an EMPTY string instead (the shape phase 2
+        // below treats as "not pulled yet"): snapshotting that would make every restore write
+        // an empty text over the user's real clipboard, so it is skipped too — a genuinely
+        // empty text clipboard holds nothing to restore, and skipping only loses the seed.
+        // Nothing has been injected yet, so the clipboard stays untouched; `ready` signals on
+        // drop.
         let mut snapshot_retries = 0;
         let prev = loop {
             match cb.get_text() {
+                Ok(text) if text.is_empty() => {
+                    tracing::info!(
+                        "[quickadd-seed] the clipboard's text read back empty (stalled delayed render?); skipping the copy grab"
+                    );
+                    return None;
+                }
                 Ok(text) => break Some(text),
                 Err(arboard::Error::ContentNotAvailable) if !text_announced() => break None,
                 Err(arboard::Error::ContentNotAvailable) => {

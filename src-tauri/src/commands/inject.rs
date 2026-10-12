@@ -388,10 +388,15 @@ async fn read_primary_now() -> Option<String> {
 /// Turn a raw selection into a usable mapping KEY, or reject it. Multi-WORD selections are kept
 /// verbatim (one key); a multi-LINE selection, an empty/whitespace-only one, or anything longer
 /// than a plausible phrase is rejected — a paragraph isn't a spoken symbol. Edges are trimmed (a
-/// trailing newline from a to-end-of-line highlight just falls away); an INTERIOR newline rejects.
+/// trailing newline from a to-end-of-line highlight just falls away); an INTERIOR line break (any
+/// of \n \r \v \f NEL U+2028 U+2029 — Word's manual line break copies as \v) or other control
+/// character rejects.
 fn sanitize_seed(raw: &str) -> Option<String> {
     let s = raw.trim();
-    if s.is_empty() || s.contains('\n') || s.contains('\r') {
+    if s.is_empty()
+        || s.chars()
+            .any(|c| (c.is_control() && c != '\t') || matches!(c, '\u{2028}' | '\u{2029}'))
+    {
         return None;
     }
     if s.chars().count() > 100 {
@@ -485,4 +490,29 @@ pub fn remote_desktop_auto_detected(app_id: String) -> bool {
     // An app id is short; bound the input so a junk IPC argument costs nothing.
     let id: String = app_id.chars().take(256).collect();
     crate::inject::rdp_client::is_remote_desktop_app(&id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_seed;
+
+    /// Every line-break shape — not only \n/\r — splits a selection into two lines, and a seed
+    /// carrying one could never match a dictated phrase.
+    #[test]
+    fn seed_rejects_any_interior_line_break_or_control() {
+        for raw in [
+            "a\nb",
+            "a\rb",
+            "a\u{b}b",
+            "a\u{c}b",
+            "a\u{85}b",
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "a\u{1}b",
+        ] {
+            assert_eq!(sanitize_seed(raw), None, "{raw:?}");
+        }
+        assert_eq!(sanitize_seed(" two words\n").as_deref(), Some("two words"));
+        assert_eq!(sanitize_seed("a\tb").as_deref(), Some("a\tb"));
+    }
 }
