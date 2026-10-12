@@ -221,10 +221,10 @@ async function startWithPickedTargets(
   pickerOpen = true;
   const preset = configuredRouteTargets(profile, backend) ?? [];
   try {
-    // Resolve the injection target BEFORE taking focus — see the docblock. Non-fatal: an
-    // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
-    // caller and silently drop the whole start; null = no known target, the session still runs.
-    const targetApp = await getFocusedApp().catch(() => null);
+    // Stamp "choosing" in the same tick `pickerOpen` goes up, BEFORE the focus read below (an
+    // AT-SPI round trip on Linux): it is pickerOpen's store-visible twin (pickerOffHint), and a
+    // late stamp left the chip and Home offering starts / cycles that bail on pickerOpen. Store
+    // writes take no focus (the chip is non-focusable), so the captured target is unchanged.
     // The stamp also ends a lingering error: `error` isn't busy, so this start can open inside
     // flashError's linger, whose timer would otherwise null activeProfile mid-pick (wrong chip
     // tag beside the stale error). Its body is guarded by status === "error", so it no-ops.
@@ -233,6 +233,10 @@ async function startWithPickedTargets(
       routePending: "choosing",
       ...(useApp.getState().status === "error" ? { status: "idle" as const, dictationError: null } : {}),
     });
+    // Resolve the injection target BEFORE taking focus — see the docblock. Non-fatal: an
+    // AT-SPI/IPC reject here used to escape as an unhandled rejection from a bare `void`
+    // caller and silently drop the whole start; null = no known target, the session still runs.
+    const targetApp = await getFocusedApp().catch(() => null);
     const pick = await askTranslationTargets(targetPickerSeed(profile, backend, "before"));
     if (pick.kind === "aborted") {
       // The user backed out: nothing starts, and the chip returns to standby (no Profile
@@ -261,6 +265,9 @@ async function startWithPickedTargets(
       targetApp,
     );
   } finally {
+    // The twin never outlives pickerOpen: every normal exit above has already cleared it (a
+    // no-op then), but a throw (e.g. in targetPickerSeed) would otherwise latch "choosing".
+    if (useApp.getState().routePending === "choosing") useApp.getState().setDictation({ routePending: null });
     pickerOpen = false;
   }
 }
@@ -403,8 +410,9 @@ export function startOffHint(
 
 /** Why a start / profile cycle is off while the hands-free target picker is open, "" when it
  *  is not. startHandsFree and the cycle bail on `pickerOpen` while status stays "idle"; its
- *  store-visible twin is routePending "choosing", which only the picker writes. The chip and
- *  the Home button both read it ahead of startOffHint, so neither offers a dead click. */
+ *  store-visible twin is routePending "choosing", which only the picker writes — in the same
+ *  tick pickerOpen goes up, and cleared no later than it drops. The chip and the Home button
+ *  both read it ahead of startOffHint, so neither offers a dead click. */
 export function pickerOffHint(
   routePending: "undecided" | "choosing" | "original" | null,
   status: DictationStatus,

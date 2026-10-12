@@ -579,7 +579,23 @@ describe("work that must wait for the queue or the cancel", () => {
     // the clipboard, so it must not open with three blank lines (the clipboard branch's rule).
     const copyArgs = streamingSrc.slice(copy + "recoverToClipboard(".length, reason).trim();
     expect(copyArgs.startsWith("typeOut"), "a translated recovery copy must drop the phrase gap").toBe(false);
-    expect(copyArgs).toContain("sessionTranslation ? phrase.text.trim() : typeOut");
+    expect(copyArgs).toContain("sessionTranslation ? block : typeOut");
+  });
+
+  it("a diverted translated block is re-copied without the field's phrase gap", () => {
+    // Rust's divert / recovery arms put the text they were handed — the gapped typeOut — on the
+    // clipboard verbatim; pasted, it opened with three blank lines. The FIELD keeps its gap.
+    const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+    const final = mask(finalBody);
+    expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const typeOut = sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block/);
+    // Unmasked: the booking's literals are part of what pins the order.
+    const delivered = bodyAfter(finalBody, "if (delivered) ");
+    const recopy = /if \(diverted && sessionTranslation && typeOut !== block\) await recoverUnguarded\(block,/;
+    expect(delivered, "the divert must re-copy the bare block").toMatch(recopy);
+    // Last, after the bookkeeping: a cancel during the extra await must not skip the booking.
+    const booked = delivered.indexOf('bookUtteranceInsert(uttRec, diverted ? "clipboard" : "typed", body, phrase);');
+    expect(booked).toBeGreaterThanOrEqual(0);
+    expect(delivered.search(recopy)).toBeGreaterThan(booked);
   });
 
   it("a live phrase skipped in our own window is booked by the insert that later carries it", () => {

@@ -17,14 +17,18 @@ import {
   trayRoute,
   trayStatus,
 } from "./chipController";
-import { homeTargetProfile, pickerOffHint, startOffHint } from "./dictation";
+import { getFocusedApp } from "../api";
+import { homeTargetProfile, pickerOffHint, startHandsFree, startOffHint } from "./dictation";
 
-// Only initOverlayController touches these: the rest of this file is pure.
+// Only initOverlayController (and the picker test) touch these: the rest of this file is pure.
 const emit = vi.hoisted(() => vi.fn((_event: string, _payload?: unknown) => Promise.resolve()));
-vi.mock("@tauri-apps/api/event", () => ({ emit, listen: vi.fn(() => Promise.resolve(() => {})) }));
+const listen = vi.hoisted(() => vi.fn((_event: string, _cb: (e: { payload: unknown }) => void) => Promise.resolve(() => {})));
+vi.mock("@tauri-apps/api/event", () => ({ emit, listen }));
 vi.mock("../api", async (orig) => ({
   ...(await orig<typeof import("../api")>()),
   isTauri: true,
+  getFocusedApp: vi.fn(() => Promise.resolve(null)),
+  showLangPick: vi.fn(() => Promise.resolve()),
   showOverlay: vi.fn(() => Promise.resolve()),
   setOverlayScale: vi.fn(() => Promise.resolve()),
   hideOverlay: vi.fn(() => Promise.resolve()),
@@ -394,6 +398,39 @@ describe("pickerOffHint", () => {
     expect(pickerOffHint("choosing", "listening")).toBe("");
     expect(pickerOffHint("undecided", "idle")).toBe("");
     expect(pickerOffHint(null, "idle")).toBe("");
+  });
+});
+
+describe("startHandsFree — the picker's store twin", () => {
+  // pickerOffHint reads routePending "choosing" as the stand-in for `pickerOpen`, so the stamp
+  // must go up with it — not after the focus read (an AT-SPI round trip on Linux), when the
+  // chip and Home would offer starts / cycles that bail on pickerOpen in the meantime.
+  it("stamps 'choosing' before the focus read resolves, and clears it when the picker is aborted", async () => {
+    const s = useApp.getState();
+    const profile = {
+      id: "p1", name: "p1", activation: "handsfree", enabled: true, hotkey: [], backendId: "b1", askTranslationTargets: true,
+    } as unknown as Profile;
+    const backend = { id: "b1", name: "b1" } as unknown as Backend;
+    let focused!: (v: null) => void;
+    vi.mocked(getFocusedApp).mockImplementationOnce(() => new Promise((r) => (focused = r)));
+    const handlers = new Map<string, (e: { payload: unknown }) => void>();
+    listen.mockImplementation((event, cb) => {
+      handlers.set(event, cb);
+      return Promise.resolve(() => {});
+    });
+    try {
+      useApp.setState({ status: "idle", routePending: null, activeProfile: null });
+      startHandsFree(backend, null, profile);
+      expect(useApp.getState()).toMatchObject({ routePending: "choosing", activeProfile: "p1" });
+      expect(pickerOffHint(useApp.getState().routePending, useApp.getState().status)).toBe("Answer the target picker first");
+      focused(null);
+      await vi.waitFor(() => expect(handlers.has("langpick://abort")).toBe(true));
+      handlers.get("langpick://abort")!({ payload: null });
+      await vi.waitFor(() => expect(useApp.getState()).toMatchObject({ routePending: null, activeProfile: null }));
+    } finally {
+      listen.mockImplementation(() => Promise.resolve(() => {}));
+      useApp.setState({ routePending: s.routePending, activeProfile: s.activeProfile });
+    }
   });
 });
 
