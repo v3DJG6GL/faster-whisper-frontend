@@ -3,6 +3,7 @@ import { cn } from "@/lib/cn";
 import { prefersReducedMotion } from "@/lib/theme";
 import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { PRIDE_RAINBOW_STOPS } from "@/lib/prideFlag";
+import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 
 /**
  * The signature motif — a live level meter rendered on canvas. Used both as the
@@ -142,6 +143,15 @@ export function Waveform({
     };
 
     const draw = () => {
+      // Park while the window is hidden (closed to tray): WebView2 on a hidden HWND is never told
+      // it is hidden, so rAF keeps firing for meters nobody sees through a whole dictation. The
+      // onWindowHiddenChange subscription below re-kicks on show; heights and colour dirtiness
+      // live in this closure / refs, so the first visible frame resumes where it left off.
+      if (isWindowHidden()) {
+        running = false;
+        raf = 0;
+        return;
+      }
       const dpr = window.devicePixelRatio || 1;
       const w = canvas.clientWidth;
       const h = canvas.clientHeight;
@@ -269,10 +279,14 @@ export function Waveform({
     // Re-kick on any size change so draw re-syncs the backing store, then it re-parks.
     const ro = new ResizeObserver(() => kick());
     ro.observe(canvas);
+    const offHidden = onWindowHiddenChange((hidden) => {
+      if (!hidden) kick();
+    });
     return () => {
       running = false;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      offHidden();
     };
   }, [bars, variant]);
 

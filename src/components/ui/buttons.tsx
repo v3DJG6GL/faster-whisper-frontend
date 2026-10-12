@@ -25,13 +25,14 @@ function buttonClass(variant: ButtonVariant, size: ButtonSize, part?: "action" |
     part === "action" ? "rounded-l-xl" : part === "chevron" ? "rounded-r-xl" : "rounded-xl",
     sm ? "h-8 text-[12px]" : "h-10 text-[13px]",
     part === "chevron" ? (sm ? "w-7" : "w-8") : sm ? "px-3" : "px-4",
-    variant === "accent" && "bg-accent text-accent-ink hover:brightness-110",
-    variant === "default" && "border border-line-strong bg-surface-2 text-text hover:border-faint",
+    variant === "accent" && "bg-accent text-accent-ink enabled:hover:brightness-110",
+    variant === "default" && "border border-line-strong bg-surface-2 text-text enabled:hover:border-faint",
     // Transparent border at rest reserves the box, so hover/press only
-    // recolor it — no layout shift when the outline appears.
+    // recolor it — no layout shift when the outline appears. Every hover/press is `enabled:`,
+    // like the sibling controls below: a disabled button must not light up as if clickable.
     variant === "ghost" &&
-      "border border-transparent text-dim hover:border-line-strong hover:bg-surface-2 hover:text-text active:border-faint",
-    variant === "danger" && "border border-rec/40 text-rec hover:bg-rec/10",
+      "border border-transparent text-dim enabled:hover:border-line-strong enabled:hover:bg-surface-2 enabled:hover:text-text enabled:active:border-faint",
+    variant === "danger" && "border border-rec/40 text-rec enabled:hover:bg-rec/10",
   );
 }
 
