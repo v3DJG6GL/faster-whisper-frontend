@@ -1726,3 +1726,35 @@ describe("a pull failing with an empty error body", () => {
     }
   });
 });
+
+// "Delete server copy" freed the engine lock (supersede) and then awaited the keyring delete — up
+// to 10 s on a locked wallet. A push started in that window PUT at base 0 and adopted v1, which
+// the reset's own state write then overwrote with version 0 and no snapshot: the next sync hit a
+// needless conflict and "Last synced" went blank right after a successful sync.
+describe("a push during Delete server copy's keyring delete", () => {
+  it("is dropped at the lock, and the next push starts from version 0", async () => {
+    let release: () => void = () => {};
+    try {
+      await seedBase();
+      const pushesBefore = api.pushes;
+      const deletesBefore = api.keyDeletes.length;
+      api.deletePark = new Promise((r) => (release = r));
+      const resetting = resetSyncState();
+      await vi.waitFor(() => expect(api.keyDeletes.length).toBeGreaterThan(deletesBefore));
+      await pushNow(true);
+      expect(api.pushes).toBe(pushesBefore); // dropped at the lock, not sent at base 0
+      release();
+      await resetting;
+      expect(useApp.getState().lastSyncedAt).toBeNull();
+      api.deletePark = null;
+      await pushNow(true);
+      expect(api.pushes).toBe(pushesBefore + 1);
+      expect(api.pushedBase).toBe(0);
+    } finally {
+      release();
+      api.deletePark = null;
+      api.keys = null;
+      await resetSyncState();
+    }
+  });
+});

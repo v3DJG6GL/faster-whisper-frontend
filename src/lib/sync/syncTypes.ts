@@ -273,6 +273,9 @@ export interface SyncState {
    *  here — this file sits beside config.json and used to hold them in cleartext. Absent when
    *  the snapshot carries no keys. */
   snapshotSecretIds?: string[];
+  /** How many keyring accounts the stash of those keys spans (wincred caps one credential at
+   *  2560 bytes). Absent means 1: the legacy single-account stash. */
+  snapshotSecretChunks?: number;
 }
 
 /** Mirror of Rust transport::sync::SyncRemoteState. */

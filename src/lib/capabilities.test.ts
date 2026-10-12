@@ -11,6 +11,7 @@ import { newBackendDraft } from "./backends";
 import {
   credentialGeneration,
   forgetCaps,
+  forgetCredential,
   maxTranslationTargets,
   refreshCaps,
   requestCredentialGen,
@@ -196,6 +197,30 @@ describe("forgetCaps", () => {
     // A typed key is the request's own credential: no stored generation applies.
     expect(requestCredentialGen(id, "sk-typed")).toBe(0);
     expect(requestCredentialGen(null, null)).toBe(0);
+  });
+});
+
+describe("forgetCredential", () => {
+  it("bumps the generation and drops the old caller's caps, usage and connection for that id only", () => {
+    const b = newBackendDraft();
+    const other = newBackendDraft();
+    const info = { ok: true } as never;
+    const c = caps({});
+    useApp.setState({
+      connections: { [b.id]: info, [other.id]: info },
+      caps: { [b.id]: c, [other.id]: c },
+      usage: { [b.id]: {} as never },
+    });
+    const before = credentialGeneration(b.id);
+    forgetCredential(b.id);
+    expect(credentialGeneration(b.id)).toBe(before + 1);
+    const st = useApp.getState();
+    expect(st.connections[b.id]).toBeUndefined();
+    expect(st.caps[b.id]).toBeUndefined();
+    expect(st.usage[b.id]).toBeUndefined();
+    expect(st.connections[other.id]).toBe(info);
+    expect(st.caps[other.id]).toBe(c);
+    expect(credentialGeneration(other.id)).toBe(0);
   });
 });
 

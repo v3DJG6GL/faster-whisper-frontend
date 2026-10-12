@@ -3,7 +3,7 @@
 // per-device category toggles + status/manual controls + conflict dialog).
 // The engine lives in lib/sync/sync.ts; this screen only drives it.
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DownloadCloud, UploadCloud, RefreshCw, Loader2 } from "lucide-react";
 import { useApp, DEFAULT_SYNC } from "@/lib/store";
@@ -50,6 +50,7 @@ import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
+import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import type { Backend, Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
@@ -919,6 +920,23 @@ export function SyncTab() {
   const lastSyncedAt = useApp((st) => st.lastSyncedAt);
   const lastSyncDevice = useApp((st) => st.lastSyncDevice);
   const lastSyncFrom = peerName(lastSyncDevice);
+  // "Last synced …" is relative to now, and nothing else re-renders this tab between syncs (there
+  // is no periodic pull), so it read "just now" for as long as the tab stayed open. Hidden (closed
+  // to the tray): skip the redraw, and catch up at once on show.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!lastSyncedAt) return;
+    const t = window.setInterval(() => {
+      if (!isWindowHidden()) setTick((n) => n + 1);
+    }, 30_000);
+    const off = onWindowHiddenChange((hidden) => {
+      if (!hidden) setTick((n) => n + 1);
+    });
+    return () => {
+      window.clearInterval(t);
+      off();
+    };
+  }, [lastSyncedAt]);
 
   const [includeSecrets, setIncludeSecrets] = useState(false);
   const [exportState, setExportState] = useState<"idle" | "busy" | "done" | "nokeys" | "error">("idle");

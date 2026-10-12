@@ -12,6 +12,7 @@ import {
   hasPendingApplyForTests,
   mergeBlobs,
   migrateBlob,
+  persistSnapshotSecretsForTests,
   rejectPendingReview,
   restorableCategories,
   restoreSnapshotSecretsForTests,
@@ -28,17 +29,36 @@ import { backend } from "./syncTestFixtures";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
  *  parked, the store is live and the user can keep editing. Default is passthrough; `keys`
- *  answers an unparked read (what this device's keyring holds). */
+ *  answers an unparked read (what this device's keyring holds). `store`, when set, is a live
+ *  keyring that reads, writes and deletes go through — refusing a value over wincred's 1280
+ *  UTF-16 units and any write to an account in `failWrites`, and folding a lone surrogate to
+ *  U+FFFD as the IPC hop does. */
 const keyring = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   keys: null as null | Record<string, string>,
+  store: null as null | Map<string, string>,
+  failWrites: new Set<string>(),
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
   return {
     ...orig,
     readBackendKeys: (ids: string[]) =>
-      keyring.park ?? (keyring.keys ? Promise.resolve(keyring.keys) : orig.readBackendKeys(ids)),
+      keyring.park ??
+      (keyring.keys
+        ? Promise.resolve(keyring.keys)
+        : keyring.store
+          ? Promise.resolve(Object.fromEntries(ids.flatMap((id) => (keyring.store!.has(id) ? [[id, keyring.store!.get(id)!]] : []))))
+          : orig.readBackendKeys(ids)),
+    setBackendKey: async (id: string, key: string) => {
+      if (!keyring.store) return orig.setBackendKey(id, key);
+      if (key.length > 1280 || keyring.failWrites.has(id)) throw new Error("TooLong");
+      keyring.store.set(id, key.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "\uFFFD"));
+    },
+    deleteBackendKey: async (id: string) => {
+      if (!keyring.store) return orig.deleteBackendKey(id);
+      keyring.store.delete(id);
+    },
   };
 });
 
@@ -1322,6 +1342,60 @@ describe("restoreSnapshotSecrets reads the stash by the writer's rule", () => {
     expect((await restore({}, ["a"])).blocked).toBe(true); // locked wallet
     expect((await restore({ a: "k" }, ["a", "b"])).blocked).toBe(true); // partial read-back
     expect((await restore("ab", ["0"])).blocked).toBe(true); // string container
+  });
+});
+
+// wincred refuses a credential over 2560 bytes (1280 UTF-16 units), and the whole stash went into
+// one: about a dozen keyed backends failed the write on Windows while the ids persisted anyway, so
+// the next launch latched the backends refusal — or restored an older stash's stale keys as the
+// merge base.
+describe("the snapshot key stash spans keyring accounts", () => {
+  const uuid = (i: number) => `00000000-0000-4000-8000-${String(i).padStart(12, "0")}`;
+  const keys = (n: number, tag: string) =>
+    Object.fromEntries(Array.from({ length: n }, (_, i) => [uuid(i), `${tag}-${"k".repeat(44)}`.slice(0, 48)]));
+  beforeEach(() => {
+    keyring.store = new Map();
+    keyring.failWrites = new Set();
+  });
+  afterEach(async () => {
+    keyring.store = null;
+    keyring.failWrites = new Set();
+    await restoreSnapshotSecretsForTests([]); // clears the latch and the seeded state
+  });
+
+  it("a 20-backend stash round-trips with every account under the wincred limit", async () => {
+    const secrets = keys(20, "sk");
+    const { ids, chunks } = await persistSnapshotSecretsForTests(secrets);
+    expect(chunks).toBeGreaterThan(1);
+    expect(keyring.store!.size).toBe(chunks);
+    for (const v of keyring.store!.values()) expect(v.length).toBeLessThanOrEqual(1280);
+    expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: false, restored: secrets });
+  });
+
+  it("a one-chunk stash keeps the legacy single account, and a shrink drops the old tail", async () => {
+    await persistSnapshotSecretsForTests(keys(20, "sk"));
+    const small = keys(2, "sk");
+    const { ids, chunks } = await persistSnapshotSecretsForTests(small);
+    expect(chunks).toBeUndefined();
+    expect([...keyring.store!.keys()]).toEqual(["__sync_snapshot_secrets__"]);
+    expect(keyring.store!.get("__sync_snapshot_secrets__")).toBe(JSON.stringify(small));
+    expect(await restoreSnapshotSecretsForTests(ids)).toEqual({ blocked: false, restored: small });
+  });
+
+  it("a failed chunk write latches the refusal instead of restoring the older stash", async () => {
+    await persistSnapshotSecretsForTests(keys(2, "old"));
+    keyring.failWrites.add("__sync_snapshot_secrets__#1");
+    const { ids, chunks } = await persistSnapshotSecretsForTests(keys(20, "new"));
+    expect(keyring.store!.size).toBe(0);
+    expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
+  });
+
+  it("never cuts a surrogate pair between two accounts", async () => {
+    // `{"a":"` is 6 units, so the pair sits at units 999-1000: straddling a naive 1000-unit cut.
+    const secrets = { a: `${"x".repeat(993)}\u{1F511}${"y".repeat(10)}` };
+    const { ids, chunks } = await persistSnapshotSecretsForTests(secrets);
+    expect(chunks).toBe(2);
+    expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: false, restored: secrets });
   });
 });
 

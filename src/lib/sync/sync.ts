@@ -167,7 +167,7 @@ const OTHER_BUCKET: "linux" | "windows" = IS_WINDOWS ? "linux" : "windows";
 // ── canonical hash ──────────────────────────────────────────────────────────
 
 import { stableStringify } from "../stable";
-import { forgetCaps } from "../capabilities";
+import { forgetCredential } from "../capabilities";
 
 /** FNV-1a over the canonical string — a compact change-detection token (NOT
  *  crypto; it only gates "did anything sync-relevant change?"). */
@@ -1753,10 +1753,7 @@ export async function applyBlob(
       // OLD caller NOW, while the keyring write is what changed. Waiting for the hydrate lost
       // the eviction on a STALE restart or a dropped apply: the keyring already holds the new
       // key, so every later pass reads prior == incoming and finds nothing rotated.
-      for (const id of reconciled.rotated) {
-        forgetCaps(id);
-        useApp.getState().forgetBackendCaches(id);
-      }
+      for (const id of reconciled.rotated) forgetCredential(id);
       // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
       // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
       // entries against a locked keyring park here for a long time. Everything above was
@@ -2172,14 +2169,77 @@ function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
   return true;
 }
 
-async function stashSnapshotSecrets(secrets: Record<string, string>): Promise<void> {
-  await withTimeout(
-    setBackendKey(SNAPSHOT_SECRETS_ACCOUNT, JSON.stringify(secrets)).catch((e) =>
-      console.error("snapshot keyring write failed", e),
-    ),
-    10_000,
-    undefined,
-  );
+/** Most UTF-16 code units one stash account holds. wincred refuses a credential over 2560 bytes,
+ *  and keyring stores the password as UTF-16 — 1280 units — so a single-account stash of a dozen
+ *  keyed backends (36-char ids) failed to write on Windows. Kept under that with headroom. */
+const SNAPSHOT_CHUNK_UNITS = 1000;
+
+/** Most stash accounts a recorded chunk count may name: `snapshotSecretChunks` is read back from
+ *  sync-state.json, and a damaged value must not build a billion-entry account list. Above what
+ *  any stash can reach — its keys came in a blob under the 4 MiB SYNC_MAX_BODY. */
+const MAX_SNAPSHOT_CHUNKS = 8192;
+
+/** The keyring account of stash chunk `i`. Chunk 0 is the legacy single account, so a one-chunk
+ *  stash is byte-identical to the format before sharding and an old stash reads unchanged. */
+function snapshotChunkAccount(i: number): string {
+  return i === 0 ? SNAPSHOT_SECRETS_ACCOUNT : `${SNAPSHOT_SECRETS_ACCOUNT}#${i}`;
+}
+
+/** The recorded chunk count, as a usable number (absent or damaged → 1, the legacy stash). */
+function snapshotChunkCount(n: unknown): number {
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_SNAPSHOT_CHUNKS ? n : 1;
+}
+
+/** Cut the stash JSON into account-sized chunks, never between the halves of a surrogate pair:
+ *  a lone surrogate does not survive the IPC hop (serde replaces it), so the join would no longer
+ *  parse. */
+function snapshotChunks(json: string): string[] {
+  const out: string[] = [];
+  let at = 0;
+  while (at < json.length) {
+    let end = Math.min(at + SNAPSHOT_CHUNK_UNITS, json.length);
+    const last = json.charCodeAt(end - 1);
+    if (end < json.length && last >= 0xd800 && last <= 0xdbff) end--;
+    out.push(json.slice(at, end));
+    at = end;
+  }
+  return out;
+}
+
+/** Best-effort delete of stash chunks `from`..`to - 1`. In parallel: Rust runs keyring writes one
+ *  at a time in arrival order anyway, and one shared 10 s bound beats one per chunk under a locked
+ *  wallet. */
+async function dropSnapshotChunks(from: number, to: number): Promise<void> {
+  const drops: Promise<void>[] = [];
+  for (let i = from; i < to; i++) {
+    drops.push(withTimeout(deleteBackendKey(snapshotChunkAccount(i)).catch(() => {}), 10_000, undefined));
+  }
+  await Promise.all(drops);
+}
+
+/** Write the stash `chunks` over a previous stash of `prevChunks` accounts. A failed (or timed
+ *  out) write deletes every chunk either stash may hold: a half-written stash, or the OLDER
+ *  complete one left paired with the new ids, would otherwise be read back on the next launch —
+ *  the first as garbage, the second as stale keys restored into the merge base. With nothing
+ *  there, the next launch reads the stash as missing and latches `snapshotSecretsUnavailable`. */
+async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promise<boolean> {
+  let ok = true;
+  for (let i = 0; i < chunks.length && ok; i++) {
+    ok = await withTimeout(
+      setBackendKey(snapshotChunkAccount(i), chunks[i]).then(
+        () => true,
+        (e) => {
+          console.error("snapshot keyring write failed", e);
+          return false;
+        },
+      ),
+      10_000,
+      false,
+    );
+  }
+  // Success: only the tail an earlier, larger stash left behind. Failure: everything.
+  await dropSnapshotChunks(ok ? chunks.length : 0, Math.max(chunks.length, prevChunks));
+  return ok;
 }
 
 /** Put the snapshot's keys back after a load. */
@@ -2187,14 +2247,16 @@ async function restoreSnapshotSecrets(): Promise<void> {
   snapshotSecretsUnavailable = false;
   const ids = state.snapshotSecretIds ?? [];
   if (ids.length === 0) return;
-  const read = await withTimeout(
-    readBackendKeys([SNAPSHOT_SECRETS_ACCOUNT]),
-    10_000,
-    {} as Record<string, string>,
+  // Every chunk in ONE read (one 10 s bound, one wallet prompt). A missing chunk reads as an empty
+  // stash, which the partial-read check below latches like a locked wallet.
+  const accounts = Array.from({ length: snapshotChunkCount(state.snapshotSecretChunks) }, (_, i) =>
+    snapshotChunkAccount(i),
   );
+  const read = await withTimeout(readBackendKeys(accounts), 10_000, {} as Record<string, string>);
+  const parts = accounts.map((a) => read[a]);
   let secrets: unknown = {};
   try {
-    secrets = JSON.parse(read[SNAPSHOT_SECRETS_ACCOUNT] ?? "{}");
+    secrets = parts.every((p) => typeof p === "string") ? JSON.parse(parts.join("")) : {};
   } catch {
     secrets = {};
   }
@@ -2231,19 +2293,20 @@ async function restoreSnapshotSecrets(): Promise<void> {
   }
 }
 
-/** Forget the stashed snapshot keys. The stash is a JSON bundle of every backend's key, so a
- *  state reset that leaves it behind parks plaintext credentials in the OS secret store
- *  indefinitely, under an account name nothing in the UI ever surfaces. */
-async function clearSnapshotSecrets(): Promise<void> {
+/** Forget the stashed snapshot keys — every one of the `chunks` accounts the stash spans (the
+ *  caller passes the count it recorded, read BEFORE any state reset drops it). The stash is a JSON
+ *  bundle of every backend's key, so a state reset that leaves it behind parks plaintext
+ *  credentials in the OS secret store indefinitely, under an account name nothing in the UI ever
+ *  surfaces. */
+async function clearSnapshotSecrets(chunks: number | undefined): Promise<void> {
   snapshotSecretsUnavailable = false;
-  await withTimeout(
-    deleteBackendKey(SNAPSHOT_SECRETS_ACCOUNT).catch(() => {}),
-    10_000,
-    undefined,
-  );
+  await dropSnapshotChunks(0, snapshotChunkCount(chunks));
 }
 
 async function persistState(patch: Partial<SyncState>): Promise<void> {
+  // The accounts the CURRENT stash spans, before a patch can drop the count: a smaller stash
+  // written below must delete the tail a larger one left.
+  const prevChunks = snapshotChunkCount(state.snapshotSecretChunks);
   state = { ...state, ...patch };
   // Split the snapshot's secrets out to the keyring; the file gets ids only.
   const secrets = state.snapshot?.backends?.secrets;
@@ -2295,14 +2358,19 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   if (ids.length > 0) {
     // Stash the NARROWED map, not the original: stashing the attacker's map would put the ids
     // straight back into the keyring entry the id list was just bounded to keep out of.
-    await stashSnapshotSecrets(Object.fromEntries(stash));
+    const chunks = snapshotChunks(JSON.stringify(Object.fromEntries(stash)));
+    // Recorded before the writes, like the ids, and kept on failure: the failed stash is deleted
+    // whole, so the next launch reads these accounts as missing and latches the refusal.
+    state.snapshotSecretChunks = chunks.length > 1 ? chunks.length : undefined;
+    await stashSnapshotSecrets(chunks, prevChunks);
   } else if (hadStash) {
     // The stash must never outlive the snapshot it belongs to. When the new snapshot carries no
     // secrets (locked wallet, or a remote snapshot with no backends category) the old bundle was
     // left in the keyring with nothing left to point at it: `restoreSnapshotSecrets` returns
     // early on an empty id list, and the two `clearSnapshotSecrets` callers only fire on a server
     // switch or a manual reset. A plaintext bundle of every key stayed there indefinitely.
-    await clearSnapshotSecrets();
+    state.snapshotSecretChunks = undefined;
+    await clearSnapshotSecrets(prevChunks);
   }
   // `isPlainObject` on BOTH containers, for the reason the `ids` line above already gives — but
   // this is the half that PERSISTS. `state.snapshot?.backends?.secrets` reads `undefined` when
@@ -2336,12 +2404,13 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
  *  and start the new server from the version-0 zero-state. */
 async function ensureStateFor(backendId: string): Promise<void> {
   if (state.serverBackendId === backendId) return;
+  const stashChunks = state.snapshotSecretChunks;
   state = { deviceId: state.deviceId };
   // The old server's last sync says nothing about this one (forgetDeadDocument's reset too).
   setRuntime({ lastSyncedAt: null, lastSyncDevice: null });
   // The old server's snapshot is gone — but its stashed keys are NOT, unless we delete them.
   // The fresh state records no ids, so nothing would ever look for that entry again either.
-  await clearSnapshotSecrets();
+  await clearSnapshotSecrets(stashChunks);
   await persistState({
     serverBackendId: backendId,
     version: 0,
@@ -3366,7 +3435,7 @@ function serverRecreated(version: number, updatedTs: number | null | undefined):
  *  (numbering restarts at 1) and approving it re-landed the deleted doc's change. False when
  *  superseded during the keyring or state writes. */
 async function forgetDeadDocument(myGen: number): Promise<boolean> {
-  await clearSnapshotSecrets();
+  await clearSnapshotSecrets(state.snapshotSecretChunks);
   if (myGen !== gen) return false;
   // `snapshotSecretIds` too: left set, persistState sees a stash to drop and runs a second
   // keyring delete (another 10 s timeout under a locked wallet) for the one cleared above.
@@ -3377,6 +3446,7 @@ async function forgetDeadDocument(myGen: number): Promise<boolean> {
     hash: undefined,
     snapshot: undefined,
     snapshotSecretIds: undefined,
+    snapshotSecretChunks: undefined,
   });
   if (myGen !== gen) return false;
   setPendingReview(null);
@@ -3623,10 +3693,26 @@ export async function setSyncBaseForTests(base: "none" | "live"): Promise<void> 
  *  pass-through and which keys it put back into the snapshot. */
 export async function restoreSnapshotSecretsForTests(
   ids: string[],
+  chunks?: number,
 ): Promise<{ blocked: boolean; restored: Record<string, string> | undefined }> {
-  state = { snapshot: { backends: { list: [] } }, snapshotSecretIds: ids };
+  state = { snapshot: { backends: { list: [] } }, snapshotSecretIds: ids, snapshotSecretChunks: chunks };
   await restoreSnapshotSecrets();
   return { blocked: backendsPushBlocked(), restored: state.snapshot?.backends?.secrets };
+}
+
+/** Test seam: stash a snapshot carrying `secrets` (one listed backend per id) through
+ *  persistState's writer, over whatever stash the previous call recorded (the keyring writes go
+ *  through `setBackendKey`/`deleteBackendKey`, which a test mocks), and report what it recorded. */
+export async function persistSnapshotSecretsForTests(
+  secrets: Record<string, string>,
+): Promise<{ ids: string[]; chunks: number | undefined }> {
+  state = {
+    snapshotSecretIds: state.snapshotSecretIds,
+    snapshotSecretChunks: state.snapshotSecretChunks,
+    snapshot: { backends: { list: Object.keys(secrets).map((id) => ({ id })) as never, secrets } },
+  };
+  await persistState({});
+  return { ids: state.snapshotSecretIds ?? [], chunks: state.snapshotSecretChunks };
 }
 
 /** Test seam: is a re-pull parked for the end of the dictation session? */
@@ -3971,8 +4057,20 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
  *  next push recreates from version 0. */
 export async function resetSyncState(): Promise<void> {
   supersede();
-  state = { deviceId: state.deviceId, serverBackendId: state.serverBackendId };
-  await clearSnapshotSecrets(); // no snapshot left — drop its stashed keys with it
-  await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
-  setRuntime({ lastSyncedAt: null, lastSyncDevice: null, syncStatus: "idle", syncError: null });
+  // Hold the lock across the keyring delete (up to 10 s on a locked wallet): supersede() freed it,
+  // and a push or pull started in that window passed its gate, PUT at base 0 and adopted v1 — which
+  // the writes below then overwrote with version 0 and no snapshot, so the next push hit a needless
+  // conflict and "Last synced" went blank right after a sync. A trigger dropped at the gate loses
+  // nothing: the reset state has no hash, so the next one sends everything.
+  const myGen = gen;
+  inFlight = true;
+  try {
+    const stashChunks = state.snapshotSecretChunks;
+    state = { deviceId: state.deviceId, serverBackendId: state.serverBackendId };
+    await clearSnapshotSecrets(stashChunks); // no snapshot left — drop its stashed keys with it
+    await persistState({ version: 0, updatedAt: null, device: null, hash: undefined, snapshot: undefined });
+    setRuntime({ lastSyncedAt: null, lastSyncDevice: null, syncStatus: "idle", syncError: null });
+  } finally {
+    if (myGen === gen) inFlight = false;
+  }
 }

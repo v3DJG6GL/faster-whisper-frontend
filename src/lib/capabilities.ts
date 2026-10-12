@@ -49,6 +49,13 @@ export function forgetCaps(id: string): void {
   lastFetchAt.delete(id);
 }
 
+/** A Backend's credential changed (key rotation): bump its caps generation and drop every cache
+ *  measured as the old caller — the one pair every rotation path runs. */
+export function forgetCredential(id: string): void {
+  forgetCaps(id);
+  useApp.getState().forgetBackendCaches(id);
+}
+
 /** The credential generation `forgetCaps` bumps: a caller that awaits a request made with this
  *  Backend's credential (a connection test) snapshots it first and drops the answer if it moved —
  *  a saved key rotation keeps the address and key presence its other guards compare. */
