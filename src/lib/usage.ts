@@ -366,13 +366,12 @@ export function initUsageController(): void {
     // the implicit default moving under it (the home profile cycled from the chip, a sync pull
     // rewriting the profiles): fetch that document now rather than on the next 30 s tick.
     // Usage-map changes are left out: refreshAll refreshes the view after its per-backend loop.
-    if (
-      statsPageShown() &&
-      (state.usageViewQuery !== prev.usageViewQuery ||
-        state.usageViewBackendId !== prev.usageViewBackendId ||
-        ((state.profiles !== prev.profiles || state.settings.homeProfileId !== prev.settings.homeProfileId) &&
-          viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id))
-    ) {
+    const viewMoved =
+      state.usageViewQuery !== prev.usageViewQuery ||
+      state.usageViewBackendId !== prev.usageViewBackendId ||
+      ((state.profiles !== prev.profiles || state.settings.homeProfileId !== prev.settings.homeProfileId) &&
+        viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id);
+    if (viewMoved && statsPageShown()) {
       void refreshView().catch(() => {});
       // On the 1 year / All presets nothing kept the year document current. Coming back from
       // 1 year, the polled 365-day view is that year (seeded, no fetch); otherwise — the All
@@ -382,6 +381,11 @@ export function initUsageController(): void {
       const fromYear = !yearPageQuery(prev.usageViewQuery);
       if (!(fromYear && prev.usageViewQuery.range === "365" && seedYearFromView(state)))
         void refreshYear(fromYear, fromYear).catch(() => {});
+    } else if (viewMoved && statsPagesOpen > 0) {
+      // Moved while the window is hidden with the page open: record the miss the way a hidden
+      // refreshAll pass does, so the show handler catches up even when no tick was skipped.
+      pageMissed = true;
+      viewFreshSig = null;
     }
   });
 }

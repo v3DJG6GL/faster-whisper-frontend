@@ -299,9 +299,12 @@ function useUsageView() {
   // throw in a render body, in a tree with no error boundary.
   const statsBackends = backends.filter((b) => !!ownProp(usage, b.id));
   const stats = viewBackend ? (ownProp(usage, viewBackend.id) ?? null) : null;
+  // Per render, not inside the memo: an idle night leaves `stats` the same reference, and the
+  // window must still move to the new day.
+  const today = localTodayDay();
   const dense = useMemo(
-    () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], TREND_DAYS, localTodayDay()) : []),
-    [stats],
+    () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], TREND_DAYS, today) : []),
+    [stats, today],
   );
   return { backends, statsBackends, viewBackend, setView, stats, dense };
 }

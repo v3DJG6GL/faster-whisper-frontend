@@ -324,6 +324,54 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
   });
+  it("a default backend moved while hidden with the page open is fetched on show, not on the next tick", async () => {
+    useApp.setState((s) => ({
+      backends: [
+        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+      ],
+      profiles: [
+        { id: "p1", enabled: true, backendId: "b1" } as never,
+        { id: "p2", enabled: true, backendId: "b2" } as never,
+      ],
+      usageViewBackendId: null,
+      settings: { ...s.settings, homeProfileId: "p1" },
+    }));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    getUsageStats.mockClear();
+    // The overlay chip cycles the home profile while the window sits in the tray.
+    useApp.setState((s) => ({ settings: { ...s.settings, homeProfileId: "p2" } }));
+    await settle();
+    expect(getUsageStats).not.toHaveBeenCalled(); // hidden: nothing fetched yet
+    setHidden(false); // before any tick was passed over
+    await settle();
+    const pageCalls = () =>
+      getUsageStats.mock.calls
+        .map(([a]) => a as { backendId?: string; query: Record<string, unknown> })
+        .filter((a) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2));
+    expect(pageCalls().length).toBe(2); // the view + the year
+    expect(pageCalls().every((a) => a.backendId === "b2")).toBe(true);
+    // With no page open, a hidden move records nothing: the show runs no pass.
+    close();
+    setHidden(true);
+    getUsageStats.mockClear();
+    useApp.setState((s) => ({ settings: { ...s.settings, homeProfileId: "p1" } }));
+    await settle();
+    setHidden(false);
+    await settle();
+    expect(getUsageStats).not.toHaveBeenCalled();
+    useApp.setState((s) => ({
+      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      profiles: [],
+      settings: { ...s.settings, homeProfileId: undefined },
+    }));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+  });
   it("seeds the year from the 1 year view coming back from it, refetches it from All, and reuses it between shorter ranges", async () => {
     const ok = getUsageStats.getMockImplementation()!;
     const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
