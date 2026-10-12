@@ -33,7 +33,7 @@ import {
   localTodayDay,
   plural,
 } from "@/lib/format";
-import { TREND_DAYS, sameViewSource, viewSignature, viewerTimeZone, yearPageQuery } from "@/lib/usage";
+import { TREND_DAYS, sameViewSource, viewSignature, viewStatsBackend, viewerTimeZone, yearPageQuery } from "@/lib/usage";
 import { effectiveServerUrl } from "@/lib/backends";
 import {
   KINDS,
@@ -62,7 +62,6 @@ import {
   type UsagePageQuery,
   type UsageScope,
 } from "@/lib/usageDerive";
-import { homeTargetProfile } from "@/lib/dictation/dictation";
 import { ownProp } from "@/lib/own";
 import { safeIdentityText } from "@/lib/sanitize";
 import { BackendChips } from "@/components/stats/BackendChips";
@@ -290,20 +289,14 @@ function DictationPanel({ stats, scope }: { stats: UsageStats; scope: UsageScope
 function useUsageView() {
   const backends = useApp((s) => s.backends);
   const usage = useApp((s) => s.usage);
-  const profiles = useApp((s) => s.profiles);
-  const homeProfileId = useApp((s) => s.settings.homeProfileId);
-  const viewId = useApp((s) => s.usageViewBackendId);
+  // The poll's own rule (lib/usage.ts): the page's signature must name the backend it fetched.
+  const viewBackend = useApp((s) => viewStatsBackend(s));
   const setView = useApp((s) => s.setUsageViewBackend);
 
   // Own-property reads throughout: a backend id of `constructor`/`toString`/… reads a function
   // off `Object.prototype`, which is truthy here and then hits `stats.series` undefined — a
   // throw in a render body, in a tree with no error boundary.
   const statsBackends = backends.filter((b) => !!ownProp(usage, b.id));
-  const defaultId = homeTargetProfile(profiles, homeProfileId)?.backendId ?? backends[0]?.id;
-  const viewBackend =
-    statsBackends.find((b) => b.id === viewId) ??
-    statsBackends.find((b) => b.id === defaultId) ??
-    statsBackends[0];
   const stats = viewBackend ? (ownProp(usage, viewBackend.id) ?? null) : null;
   const dense = useMemo(
     () => (stats ? densifyKinds(Array.isArray(stats.series) ? stats.series : [], TREND_DAYS, localTodayDay()) : []),

@@ -356,7 +356,9 @@ export function initUsageController(): void {
           viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id))
     ) {
       void refreshView().catch(() => {});
-      void refreshYear().catch(() => {});
+      // On the 1 year / All presets nothing kept the year document current, so coming back
+      // from one refetches it; a sub-year → sub-year change still reuses the polled year.
+      void refreshYear(!yearPageQuery(prev.usageViewQuery)).catch(() => {});
     }
   });
 }

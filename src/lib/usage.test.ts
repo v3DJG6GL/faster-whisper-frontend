@@ -324,6 +324,24 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
   });
+  it("refetches the year coming back from 1 year, and reuses it between shorter ranges", async () => {
+    const close = openStatisticsPage();
+    await settle();
+    useApp.setState({ usageViewQuery: { range: "365", with: [] } });
+    await settle();
+    await vi.advanceTimersByTimeAsync(30_000); // a poll on 1 year: the year document is left alone
+    await settle();
+    getUsageStats.mockClear();
+    useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+    await settle();
+    expect(calls().page).toBe(2); // the view + the year it no longer trusts
+    getUsageStats.mockClear();
+    useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
+    await settle();
+    expect(calls().page).toBe(1); // the view only: the year was just fetched
+    close();
+    useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {
