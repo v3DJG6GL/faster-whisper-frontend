@@ -79,6 +79,10 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // Set when a restore landed but carried no profiles, so the starters step follows it (and the
   // quick-add step only when the restore did not already pin a list).
   const restored = useRef(false);
+  // Set once a restore's apply landed, even when a later step of it (the keyring write) threw:
+  // the store then holds the peer's profiles, and "Start fresh" would upsert the starters over
+  // the same-id ("hold"/"handsfree") ones. Only a retried Restore everything finishes from there.
+  const [landed, setLanded] = useState(false);
 
   const testAndContinue = async () => {
     // Re-entrancy guard, matching the Backends screen's twin. The submit Button is disabled while
@@ -203,6 +207,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
         return;
       }
+      setLanded(true);
       // Turn sync on for this device, against the restored backend that matches
       // the gate's URL (the restore may have replaced Backend #1's entry).
       const s = st.getState();
@@ -428,7 +433,8 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                     setStartersIntro("fresh");
                     setStep("starters");
                   }}
-                  disabled={busy}
+                  disabled={busy || landed}
+                  title={landed ? "Settings were already restored — use Restore everything to finish" : undefined}
                 >
                   Start fresh instead
                 </Button>
@@ -452,7 +458,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
             onConfirm={(drafts) => {
               const s = st.getState();
               // Stored as the Profiles editor's save() stores it: a cleared name is "Untitled profile".
-              for (const p of drafts) s.upsertProfile({ ...p, name: p.name.trim() || "Untitled profile" });
+              // A starter never replaces a profile that is already there (a restored peer's
+              // same-id "hold"/"handsfree"); a fresh install reaches this with none.
+              for (const p of drafts) {
+                if (s.profiles.some((x) => x.id === p.id)) continue;
+                s.upsertProfile({ ...p, name: p.name.trim() || "Untitled profile" });
+              }
               // After a restore that pinned a quick-add list, finish: the step would re-ask (and
               // could overwrite) what just arrived. Read from the store, not the blob's
               // categories: the apply lands a pin only when its backend came along.
