@@ -2228,8 +2228,9 @@ async function dropSnapshotChunks(from: number, to: number): Promise<void> {
  *  landed after it with no recorded count left to ever remove them. The outcome settles on the
  *  first failed (or timed out) write, or once every write landed: waiting out every bound kept a
  *  sync parked for 10 s per chunk behind a locked wallet, long after the first `false` decided it.
- *  A failed write deletes every chunk either stash may hold — the drop is issued after all the writes, so it
- *  queues behind them: a half-written stash, or the OLDER complete one left paired with the new
+ *  A failed write deletes every chunk either stash may hold — the drop is issued after all the
+ *  writes, and that issue order (not an await) queues it behind them; it is not awaited, so the
+ *  outcome still settles at the first failure: a half-written stash, or the OLDER complete one left paired with the new
  *  ids, would otherwise be read back on the next launch — the first as garbage, the second as
  *  stale keys restored into the merge base. With nothing there, the next launch reads the stash
  *  as missing and latches `snapshotSecretsUnavailable`. */
@@ -2249,19 +2250,19 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
       false,
     ),
   );
-  const ok = await new Promise<boolean>((resolve) => {
-    let left = writes.length;
-    if (left === 0) resolve(true);
-    for (const w of writes) {
-      void w.then((v) => {
-        if (!v) resolve(false);
-        else if (--left === 0) resolve(true);
-      });
-    }
-  });
-  // Success: only the tail an earlier, larger stash left behind. Failure: everything — issued
-  // after every write, so on that lock it still queues behind any write still parked.
-  await dropSnapshotChunks(ok ? chunks.length : 0, Math.max(chunks.length, prevChunks));
+  // Rejects on the first false: Promise.all settles there without waiting out the later bounds.
+  const ok = await Promise.all(writes.map((w) => w.then((v) => v || Promise.reject()))).then(
+    () => true,
+    () => false,
+  );
+  const to = Math.max(chunks.length, prevChunks);
+  // Success: only the tail an earlier, larger stash left behind; no write is parked, so awaited.
+  // Failure: everything. Issue order, not the await, queues it behind any write still parked and
+  // ahead of a later reset or persist, so it is not awaited: on that lock each delete would run
+  // out its own bound after chunk 0's, and a locked wallet gives up at chunk 0's bound instead.
+  // It never rejects: every delete is caught and bounded.
+  if (ok) await dropSnapshotChunks(chunks.length, to);
+  else void dropSnapshotChunks(0, to);
 }
 
 /** Put the snapshot's keys back after a load. */

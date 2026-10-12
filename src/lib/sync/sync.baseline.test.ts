@@ -33,7 +33,9 @@ import { backend } from "./syncTestFixtures";
  *  keyring that reads, writes and deletes go through — refusing a value over wincred's 1280
  *  UTF-16 units and any write to an account in `failWrites`, and folding a lone surrogate to
  *  U+FFFD as the IPC hop does. `writes` records every account a write was issued for, and a write
- *  to an account in `parkWrites` waits on that promise before it lands. */
+ *  to an account in `parkWrites` waits on that promise before it lands. A delete waits on every
+ *  `parkWrites` promise first, as Rust's FIFO keyring lock holds it behind a parked write, and
+ *  `deletes` records every account one landed for. */
 const keyring = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   keys: null as null | Record<string, string>,
@@ -41,6 +43,7 @@ const keyring = vi.hoisted(() => ({
   failWrites: new Set<string>(),
   writes: [] as string[],
   parkWrites: new Map<string, Promise<void>>(),
+  deletes: [] as string[],
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -63,6 +66,8 @@ vi.mock("../api", async (importOriginal) => {
     },
     deleteBackendKey: async (id: string) => {
       if (!keyring.store) return orig.deleteBackendKey(id);
+      await Promise.all([...keyring.parkWrites.values()]);
+      keyring.deletes.push(id);
       keyring.store.delete(id);
     },
   };
@@ -1364,12 +1369,14 @@ describe("the snapshot key stash spans keyring accounts", () => {
     keyring.failWrites = new Set();
     keyring.writes = [];
     keyring.parkWrites = new Map();
+    keyring.deletes = [];
   });
   afterEach(async () => {
     keyring.store = null;
     keyring.failWrites = new Set();
     keyring.writes = [];
     keyring.parkWrites = new Map();
+    keyring.deletes = [];
     await restoreSnapshotSecretsForTests([]); // clears the latch and the seeded state
   });
 
@@ -1450,24 +1457,32 @@ describe("the snapshot key stash spans keyring accounts", () => {
   });
 
   // Rust's keyring lock is FIFO: behind a chunk-0 write parked on a locked wallet, no later chunk
-  // lands either. Waiting out every chunk's bound kept the sync parked 10 s per chunk although
-  // chunk 0's timeout already decided the stash failed.
+  // lands either, and neither does the failure drop. Waiting out every chunk's bound kept the sync
+  // parked 10 s per chunk although chunk 0's timeout already decided the stash failed; awaiting
+  // the drop queued behind that write kept it parked another 10 s.
   it("a stash parked on a locked wallet gives up at chunk 0's bound and drops every chunk", async () => {
     await persistSnapshotSecretsForTests(keys(40, "old"));
     const before = keyring.store!.size;
     expect(before).toBeGreaterThan(2);
     vi.useFakeTimers();
     try {
-      for (let i = 0; i < before; i++) {
-        const account = i === 0 ? "__sync_snapshot_secrets__" : `__sync_snapshot_secrets_${i}__`;
-        keyring.parkWrites.set(account, new Promise<void>(() => {}));
-      }
+      let unlock!: () => void;
+      const wallet = new Promise<void>((r) => (unlock = r));
+      const accounts = Array.from({ length: before }, (_, i) =>
+        i === 0 ? "__sync_snapshot_secrets__" : `__sync_snapshot_secrets_${i}__`,
+      );
+      for (const account of accounts) keyring.parkWrites.set(account, wallet);
       let settled = false;
       const pending = persistSnapshotSecretsForTests(keys(40, "new")).then((r) => ((settled = true), r));
       await vi.advanceTimersByTimeAsync(11_000);
       expect(settled).toBe(true);
       const { ids, chunks } = await pending;
       expect(chunks).toBe(before);
+      expect(keyring.deletes).toEqual([]); // queued behind the parked writes
+      // The prompt answered late: the parked writes land, then every queued delete behind them.
+      unlock();
+      await vi.advanceTimersByTimeAsync(0);
+      expect([...keyring.deletes].sort()).toEqual([...accounts].sort());
       expect(keyring.store!.size).toBe(0);
       expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
     } finally {
@@ -1478,7 +1493,8 @@ describe("the snapshot key stash spans keyring accounts", () => {
   it("a later chunk's fast failure settles the stash without waiting on a parked chunk 0", async () => {
     vi.useFakeTimers();
     try {
-      keyring.parkWrites.set("__sync_snapshot_secrets__", new Promise<void>(() => {}));
+      let unlock!: () => void;
+      keyring.parkWrites.set("__sync_snapshot_secrets__", new Promise<void>((r) => (unlock = r)));
       keyring.failWrites.add("__sync_snapshot_secrets_1__");
       let settled = false;
       const pending = persistSnapshotSecretsForTests(keys(20, "sk")).then((r) => ((settled = true), r));
@@ -1486,6 +1502,10 @@ describe("the snapshot key stash spans keyring accounts", () => {
       expect(settled).toBe(true);
       const { ids, chunks } = await pending;
       expect(chunks).toBeGreaterThan(1);
+      expect(keyring.deletes).toEqual([]); // queued behind the parked chunk 0
+      unlock();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(keyring.deletes).toHaveLength(chunks!);
       expect(keyring.store!.size).toBe(0);
       expect(await restoreSnapshotSecretsForTests(ids, chunks)).toEqual({ blocked: true, restored: undefined });
     } finally {
