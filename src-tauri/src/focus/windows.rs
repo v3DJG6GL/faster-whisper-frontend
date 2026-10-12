@@ -25,7 +25,8 @@
 //! Selection reads stay `Unavailable` (quick-add seeds via the copy-chord grab
 //! in `aux_windows::quickadd::win_seed` instead).
 
-use super::{FocusedApp, Snapshot, APP_ID_MAX};
+use super::exe_name::{is_shell_exe, normalize_exe_basename};
+use super::{FocusedApp, Snapshot};
 use std::sync::{Arc, OnceLock};
 use windows_sys::core::BOOL;
 use windows_sys::Win32::Foundation::{CloseHandle, HWND, LPARAM};
@@ -185,22 +186,6 @@ unsafe fn foreground_app_id(hwnd: HWND) -> Option<String> {
     Some(exe)
 }
 
-/// Shell surfaces that foreground a plain `Windows.UI.Core.CoreWindow` — a class every real
-/// UWP app shares, so they cannot be filtered by class like the taskbar; filter by process
-/// name instead, the way `is_noise` filters plasmashell on Linux. Without this the Start
-/// menu became `current`, the chip's "→ app" readout named it, and a per-app rule for the
-/// app the user came from silently stopped applying to a chord fired over the open menu.
-fn is_shell_exe(base: &str) -> bool {
-    matches!(
-        base,
-        "startmenuexperiencehost" // Start menu (Win10 1903+ / Win11)
-            | "searchhost" | "searchapp" | "searchui" // Search (Win11 / Win10 / older)
-            | "shellexperiencehost" // notification / action centre, volume flyout
-            | "lockapp" // lock screen
-            | "textinputhost" // touch keyboard / emoji panel
-    )
-}
-
 /// Shell surfaces whose momentary focus must not clobber the target readout.
 unsafe fn is_shell_window(hwnd: HWND) -> bool {
     let mut buf = [0u16; 64];
@@ -240,32 +225,6 @@ pub(crate) unsafe fn exe_basename(pid: u32) -> Option<String> {
     normalize_exe_basename(&path)
 }
 
-/// Full image path → lowercased basename without `.exe`, bounded and defanged; None when
-/// nothing displayable is left (a name made only of format/control characters), which keeps
-/// the previous snapshot exactly as the AT-SPI twin's empty-after-bound check does.
-fn normalize_exe_basename(path: &str) -> Option<String> {
-    let base = path.rsplit(['\\', '/']).next()?.to_lowercase();
-    let base = base
-        .strip_suffix(".exe")
-        .map(str::to_string)
-        .unwrap_or(base);
-    // Same bound + defang the AT-SPI twin applies to ITS app id, for the same three sinks (the
-    // overlay payload, a persisted AppRule that rides the sync push, the once-a-second log line).
-    // The earlier refutation — "an NTFS filename cannot contain control characters" — is right for
-    // Cc and wrong for Cf: a filename may carry U+202E/U+2066/U+200B, which is why the overlay's
-    // target readout had to be defanged at the render.
-    //
-    // Doing it HERE rather than at each consumer is what keeps the app-rule matcher honest. The
-    // rule side is normalized with the same character class, and an exe basename that kept an
-    // invisible mark while the rule had it stripped would turn a working "never type here" rule
-    // into a silent no-op — the failure the rule-side normalization exists to prevent, inverted.
-    let id = crate::transport::bounded_server_text(&base, APP_ID_MAX);
-    if id.trim().is_empty() {
-        return None;
-    }
-    Some(id)
-}
-
 /// Resolve a UWP app hosted by ApplicationFrameHost: find the child window of
 /// class `Windows.UI.Core.CoreWindow` owned by a DIFFERENT process — that
 /// process is the actual app.
@@ -294,43 +253,4 @@ unsafe fn uwp_app(host: HWND, host_pid: u32) -> Option<String> {
     };
     EnumChildWindows(host, Some(enum_cb), &mut ctx as *mut Ctx as LPARAM);
     exe_basename(ctx.found?)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{is_shell_exe, normalize_exe_basename};
-
-    #[test]
-    fn an_exe_name_with_nothing_displayable_left_is_not_an_app_id() {
-        assert_eq!(
-            normalize_exe_basename("C:\\Apps\\Code.exe").as_deref(),
-            Some("code")
-        );
-        assert_eq!(normalize_exe_basename("C:\\x\\\u{202e}.exe"), None);
-        assert_eq!(normalize_exe_basename("C:\\x\\\u{1}\u{2}.exe"), None);
-    }
-
-    #[test]
-    fn shell_hosts_are_filtered_by_name_and_real_apps_are_not() {
-        for shell in [
-            "startmenuexperiencehost",
-            "searchhost",
-            "searchapp",
-            "searchui",
-            "shellexperiencehost",
-            "lockapp",
-            "textinputhost",
-        ] {
-            assert!(is_shell_exe(shell), "{shell}");
-        }
-        for app in [
-            "explorer",
-            "code",
-            "chrome",
-            "applicationframehost",
-            "wordpad",
-        ] {
-            assert!(!is_shell_exe(app), "{app}");
-        }
-    }
 }
