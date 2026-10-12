@@ -373,10 +373,42 @@ pub(crate) mod win_seed {
         }
     }
 
-    /// Never called off Windows (the grab is Windows-only); keeps the type-check building.
+    /// Off Windows there is no format probe: ContentNotAvailable means empty/non-text (the
+    /// snapshot's only non-Windows use; the grab itself is Windows-only).
     #[cfg(not(windows))]
     fn text_announced() -> bool {
-        true
+        false
+    }
+
+    /// Put the user's pre-grab clipboard back once the copy has landed: their text, or a clear
+    /// when there was none. Restores carry the history/cloud exclusion hints: the snapshot lost
+    /// its source's flags (see inject::set_text_ext). This runs right after the source app's
+    /// copy woke every clipboard listener (rdpclip, clipboard history), and arboard gives up
+    /// opening the clipboard after ~25 ms (ClipboardOccupied) — so retry that briefly, like the
+    /// snapshot does. Any other error, or the last Occupied, is logged: the copied selection
+    /// stays on the clipboard.
+    #[cfg(windows)]
+    fn put_back(cb: &mut arboard::Clipboard, prev: Option<&str>) -> bool {
+        let mut tries = 0;
+        loop {
+            tries += 1;
+            let res = match prev {
+                Some(p) => crate::inject::set_text_ext(cb, p, true, false),
+                None => cb.clear(),
+            };
+            match res {
+                Ok(()) => return true,
+                Err(arboard::Error::ClipboardOccupied) if tries < 3 => {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "[quickadd-seed] could not restore the clipboard ({e}); the copied selection stays on it"
+                    );
+                    return false;
+                }
+            }
+        }
     }
 
     /// Physical set-1 make codes; see `send_copy_chord`.
@@ -690,14 +722,24 @@ pub(crate) mod win_seed {
         // None = empty or non-text (image/files). Any OTHER read failure is not "empty": on
         // Windows arboard gives up after ~25 ms when another process holds the clipboard open
         // (ClipboardOccupied) — likely right after the restore above woke clipboard listeners
-        // (rdpclip, clipboard history). Snapshotting that as None would make every restore below
-        // CLEAR the user's real text, so retry briefly and otherwise skip the grab. Nothing has
-        // been injected yet, so the clipboard stays untouched; `ready` signals on drop.
+        // (rdpclip, clipboard history) — and it reports an announced text whose delayed render
+        // failed (rdpclip stall, a busy delay-render owner) as ContentNotAvailable, the same
+        // error as "no text", which only `text_announced` tells apart. Snapshotting either as
+        // None would make every restore below CLEAR the user's real text, so retry the busy
+        // case briefly and otherwise skip the grab; the failed render is skipped at once (over
+        // RDP each read can stall for seconds — retrying would triple the prologue). Nothing
+        // has been injected yet, so the clipboard stays untouched; `ready` signals on drop.
         let mut snapshot_retries = 0;
         let prev = loop {
             match cb.get_text() {
                 Ok(text) => break Some(text),
-                Err(arboard::Error::ContentNotAvailable) => break None,
+                Err(arboard::Error::ContentNotAvailable) if !text_announced() => break None,
+                Err(arboard::Error::ContentNotAvailable) => {
+                    tracing::info!(
+                        "[quickadd-seed] the clipboard announces text it could not render; skipping the copy grab"
+                    );
+                    return None;
+                }
                 Err(e) => {
                     if snapshot_retries >= 2 || superseded() {
                         tracing::info!(
@@ -895,16 +937,7 @@ pub(crate) mod win_seed {
                     Ok(text) if text.is_empty() => {
                         text_absent_since = None; // text is announced, just not pulled yet
                         if Instant::now() >= deadline || superseded() {
-                            match prev {
-                                // Restores carry the history/cloud exclusion hints: the snapshot
-                                // lost its source's flags (see inject::set_text_ext).
-                                Some(p) => {
-                                    let _ = crate::inject::set_text_ext(&mut cb, &p, true, false);
-                                }
-                                None => {
-                                    let _ = cb.clear();
-                                }
-                            }
+                            put_back(&mut cb, prev.as_deref());
                             return None;
                         }
                         std::thread::sleep(Duration::from_millis(25));
@@ -916,9 +949,9 @@ pub(crate) mod win_seed {
                             // detector had to read that as "no selection") — and the
                             // clipboard already holds it, so there's nothing to restore.
                             Some(p) if *p == text => {}
+                            // Put the user's clipboard back.
                             Some(p) => {
-                                // Put the user's clipboard back.
-                                let _ = crate::inject::set_text_ext(&mut cb, p, true, false);
+                                put_back(&mut cb, Some(p.as_str()));
                             }
                             // Nothing text-shaped to put back — but the grab still LEFT the
                             // user's selection sitting in the global clipboard, readable by every
@@ -926,8 +959,9 @@ pub(crate) mod win_seed {
                             // user did nothing but press a hotkey to open a word-mapping window.
                             // Clearing is the closest we can get to "as it was".
                             None => {
-                                let _ = cb.clear();
-                                tracing::info!("[quickadd-seed] clipboard held no text before the grab (empty or non-text); cleared the copied selection");
+                                if put_back(&mut cb, None) {
+                                    tracing::info!("[quickadd-seed] clipboard held no text before the grab (empty or non-text); cleared the copied selection");
+                                }
                             }
                         }
                         return Some(text);
@@ -953,16 +987,9 @@ pub(crate) mod win_seed {
                         // Superseded mid-retry: the copy DID land (we're past the bump), so
                         // restore the user's clipboard exactly like the deadline path.
                         if no_text || Instant::now() >= deadline || superseded() {
-                            match prev {
-                                // Copied content is non-text — restore.
-                                Some(p) => {
-                                    let _ = crate::inject::set_text_ext(&mut cb, &p, true, false);
-                                }
-                                // Same residue as above, on the read-failure path.
-                                None => {
-                                    let _ = cb.clear();
-                                }
-                            }
+                            // Copied content is non-text (or never came) — restore; with no
+                            // prior text, clear the same residue as above.
+                            put_back(&mut cb, prev.as_deref());
                             return None;
                         }
                         std::thread::sleep(Duration::from_millis(25));
