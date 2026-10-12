@@ -685,7 +685,12 @@ export default function Settings() {
             >
               <Toggle
                 checked={s.transcribe?.keepDictationHistory ?? true}
-                onChange={(v) => updateTranscribe({ keepDictationHistory: v })}
+                onChange={(v) => {
+                  // Off wipes the dictation records (Rust, after the save): like "dict" above, a
+                  // parked coalesced write must not re-create a JSON file that wipe removes.
+                  if (!v) dropPendingWrites();
+                  updateTranscribe({ keepDictationHistory: v });
+                }}
               />
             </SettingRow>
             <SettingRow

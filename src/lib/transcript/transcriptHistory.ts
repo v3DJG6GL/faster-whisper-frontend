@@ -6,7 +6,7 @@
 
 import { create } from "zustand";
 import {
-  audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord,
+  audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord, subscribe,
 } from "../api";
 import { langText, languageCodeOf } from "../languages";
 import { useApp } from "../store";
@@ -376,9 +376,11 @@ let touchedSinceListing: Map<string, TranscriptRecord | null> | null = null;
 let mirrorSessionOnly = true;
 
 /** Tests only: forget the listing outcomes (the beforeEach setState is partial, so the
- *  failure flag is reset here too). */
+ *  failure flag is reset here too) and an earlier test's parked writes, which a listing
+ *  would replay. */
 export function _resetHistoryLoadForTests(): void {
   mirrorSessionOnly = true;
+  dropPendingWrites();
   useTranscriptHistory.setState({ loadFailed: false });
 }
 
@@ -404,9 +406,12 @@ export function loadHistory(force = false): Promise<void> {
   }
   const { loaded, loadFailed } = useTranscriptHistory.getState();
   if (!force && loaded && !loadFailed) return Promise.resolve();
-  // Issue any parked coalesced write before listing. The write is not awaited (nothing
-  // orders the two IPC calls), but without this a just-edited record trailed the listing by
-  // the whole debounce window and reverted to its older on-disk text in the UI.
+  // Issue any parked coalesced write before listing. The write is still not awaited (nothing
+  // orders the two IPC calls), so the flushed records are replayed over the snapshot below: a
+  // listing that reads the disk before the write lands cannot revert them (a later patch would
+  // then save the reverted copy over the edit). They land on disk anyway, so the replay brings
+  // back nothing; callers that must not bring a record back drop the parked writes first.
+  const flushed = [...pendingWrite.values()];
   void flushRecordWrites();
   // The first listing or a retry while the mirror holds only what this session made (its saves
   // may still be landing or have failed): it is replayed over the snapshot like a change made
@@ -415,6 +420,7 @@ export function loadHistory(force = false): Promise<void> {
   // replaces it.
   const seed = !force && mirrorSessionOnly;
   touchedSinceListing = new Map(seed ? useTranscriptHistory.getState().records.map((r) => [r.id, r]) : []);
+  for (const r of flushed) touchedSinceListing.set(r.id, currentRecord(r.id) ?? r);
   loading = listTranscriptRecords()
     .then((raw) => {
       const touched = touchedSinceListing ?? new Map<string, TranscriptRecord | null>();
@@ -441,6 +447,21 @@ export function loadHistory(force = false): Promise<void> {
       touchedSinceListing = null;
     });
   return loading;
+}
+
+let sweepsHeard = false;
+/** Rust's retention sweep (after a config save: "Save dictations to History" turned off, a
+ *  shorter delete-after window) removed records on disk and says so on `transcripts://swept`.
+ *  Reload the mirror, or History keeps listing — and an edit re-saves — entries that are gone.
+ *  Registered once, from the main window's boot (App); a no-op outside Tauri. */
+export function listenRetentionSweeps(): void {
+  if (sweepsHeard) return;
+  sweepsHeard = true;
+  void subscribe<number>("transcripts://swept", () => {
+    void loadHistory(true).catch(() => {});
+  }).catch(() => {
+    sweepsHeard = false;
+  });
 }
 
 /** Insert or replace one record — in the mirror immediately, on disk

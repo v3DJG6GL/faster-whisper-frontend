@@ -18,7 +18,7 @@ import { cancelLive, requestStopIfStarting } from "@/lib/dictation/streaming";
 import { SCREEN_PATH } from "@/lib/screenRegistry";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
-import { flushRecordWrites } from "@/lib/transcript/transcriptHistory";
+import { flushRecordWrites, listenRetentionSweeps } from "@/lib/transcript/transcriptHistory";
 import { flushPersistEdits } from "@/lib/transcribeRun";
 import { flushOutcomeSave } from "@/lib/usageOutcome";
 import { tryNavigate } from "@/lib/navGuard";
@@ -262,6 +262,8 @@ export default function App() {
     void migrateLegacyMicPin();
     // Sidebar Logs badge: always-on counter feed (tiny, change-gated events).
     initLogStatus();
+    // A retention sweep that removed History records reloads the History mirror.
+    listenRetentionSweeps();
     // A reload lands the same four writes as a quit (History edits, History writes, config save,
     // usage-outcome queue save). A real quit never fires beforeunload — that goes through the
     // `app://before-quit` handshake below.

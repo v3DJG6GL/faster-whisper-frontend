@@ -10,7 +10,7 @@
 //! the same owner-only file/dir permissions.
 
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 /// Serialises a record write against the retention sweep's per-entry stat-then-unlink. The
 /// sweeps run on a background thread (`save_config`), so without it a save could rename a fresh
@@ -456,7 +456,9 @@ pub fn save_transcript_record(
 }
 
 /// All history records, parsed but uninterpreted. Unreadable or unparseable
-/// files are skipped — one corrupt record must never hide the rest. Ordering
+/// files are skipped — one corrupt record must never hide the rest — but an existing
+/// folder that cannot be listed rejects, so History shows its failed-listing notice
+/// instead of an empty list; a missing folder is an empty history. Ordering
 /// is the frontend's job (records carry their own createdAt).
 /// async + spawn_blocking: reading and parsing every record is the heaviest read the app does,
 /// and a sync command would stall the main thread (every window) for its duration. Safe to run
@@ -466,21 +468,26 @@ pub fn save_transcript_record(
 pub async fn list_transcript_records(app: AppHandle) -> Result<Vec<serde_json::Value>, String> {
     let transcripts = transcripts_dir(&app)?;
     let dictations = dictations_dir(&app)?;
-    tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Vec<serde_json::Value>, String> {
         let mut out = Vec::new();
-        read_records_into(&transcripts, &mut out);
-        read_records_into(&dictations, &mut out);
-        out
+        read_records_into(&transcripts, &mut out)?;
+        read_records_into(&dictations, &mut out)?;
+        Ok(out)
     })
     .await
-    .map_err(|e| e.to_string())
+    .map_err(|e| e.to_string())?
 }
 
-fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return; // no folder yet = nothing to add
+fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(), String> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        // No folder yet = nothing to add.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(format!("could not list the history folder: {e}")),
     };
-    for entry in entries.flatten() {
+    for entry in entries {
+        // A folder-level readdir failure would otherwise truncate the listing silently.
+        let entry = entry.map_err(|e| format!("could not list the history folder: {e}"))?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
@@ -499,6 +506,7 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) {
             out.push(v);
         }
     }
+    Ok(())
 }
 
 /// Delete one record's file. The user-facing "Delete" — actually removes data.
@@ -813,7 +821,9 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
             if !is_own_media(&path) {
                 continue;
             }
-            if !records.join(format!("{stem}.json")).exists() && std::fs::remove_file(&path).is_ok()
+            // A stat error is not proof the record is gone: only a definite "absent" sweeps.
+            if matches!(records.join(format!("{stem}.json")).try_exists(), Ok(false))
+                && std::fs::remove_file(&path).is_ok()
             {
                 removed += 1;
             }
@@ -869,24 +879,31 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 ///   default 7), the same window the recordings sweep uses — and when
 ///   `keepDictationHistory` is off, the whole dictation store is wiped (the
 ///   setting's copy promises exactly that).
+///
+/// When any record went, `transcripts://swept` (payload: the count) tells the History
+/// mirror to reload — otherwise it keeps listing, and an edit re-saves, a deleted entry.
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
+    let mut removed = 0;
     let days = config.settings.transcribe_retention_days();
     if days > 0 {
         if let Ok(dir) = transcripts_dir(app) {
-            prune_transcripts(&dir, days);
+            removed += prune_transcripts(&dir, days);
         }
     }
     if let Ok(dir) = dictations_dir(app) {
         if !config.settings.keep_dictation_history() {
-            wipe_records(&dir);
+            removed += wipe_records(&dir);
         } else {
             let ddays = config.settings.effective_dictation_days();
             if ddays > 0 {
-                prune_transcripts(&dir, ddays);
+                removed += prune_transcripts(&dir, ddays);
             }
         }
     }
     sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
+    if removed > 0 {
+        let _ = app.emit("transcripts://swept", removed);
+    }
 }
 
 /// Remove every record in `dir` regardless of age ("Keep dictation history"
@@ -1088,6 +1105,26 @@ mod tests {
         assert_eq!(remove_own_recordings(&dir), 3);
         assert!(!dir.join("dictation-1.txt").exists());
         assert!(dir.join("song.wav").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_listing_skips_bad_files_but_rejects_an_unlistable_folder() {
+        let dir = std::env::temp_dir().join(format!("fwf-list-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // A missing folder (first launch) is an empty history, not a failure.
+        let mut out = Vec::new();
+        assert!(read_records_into(&dir.join("missing"), &mut out).is_ok());
+        assert!(out.is_empty());
+        // One corrupt record never hides the rest.
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.json"), "{\"id\":\"a\"}").unwrap();
+        std::fs::write(dir.join("b.json"), "not json").unwrap();
+        assert!(read_records_into(&dir, &mut out).is_ok());
+        assert_eq!(out.len(), 1);
+        // A path that exists but cannot be listed (here: a regular file) rejects.
+        let mut out = Vec::new();
+        assert!(read_records_into(&dir.join("a.json"), &mut out).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

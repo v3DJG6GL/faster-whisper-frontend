@@ -10,14 +10,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // the disk listing, which we drive here to exercise the malformed-record filter.
 const listTranscriptRecords = vi.fn<() => Promise<unknown[]>>();
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
+// Event subscriptions are captured so a test can fire one (the real one no-ops outside Tauri).
+const listeners = new Map<string, (payload: unknown) => void>();
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listTranscriptRecords: () => listTranscriptRecords(),
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
+  subscribe: (event: string, cb: (payload: unknown) => void) => {
+    listeners.set(event, cb);
+    return Promise.resolve(() => listeners.delete(event));
+  },
 }));
 
 const {
-  _resetHistoryLoadForTests, appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, historyLoadFailed, loadHistory, patchRecord, recordDictation,
+  _resetHistoryLoadForTests, appChipLabel, appLabel, currentRecord, deleteRecord, dropPendingWrites, flushRecordWrites, historyLoadFailed, listenRetentionSweeps, loadHistory, patchRecord, recordDictation,
   recordEditedResult, recordText, recordTracks, upsertRecord, selectRecord, useTranscriptHistory,
 } = await import("./transcriptHistory");
 type TranscriptRecord = import("./transcriptHistory").TranscriptRecord;
@@ -838,6 +844,45 @@ describe("pending writes are droppable and flushable", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("a listing does not revert the parked writes it flushed", () => {
+  it("a forced listing that reads the disk before the flushed save lands keeps the edit", async () => {
+    vi.useFakeTimers();
+    try {
+      const old: TranscriptRecord = {
+        schemaVersion: 1, kind: "file", id: "replay-1", createdAt: "2026-08-30T12:00:00Z",
+        sourcePath: "/r.mp3", sourceName: "r.mp3", status: "done", result: { text: "old" },
+      };
+      listTranscriptRecords.mockResolvedValueOnce([old]);
+      await loadHistory(); // a listing succeeded: the next one replaces the mirror (no seed)
+      upsertRecord({ ...old, result: { text: "e1" } }); // leading edge
+      upsertRecord({ ...old, result: { text: "e2" } }); // parked
+      // The snapshot was read before the flushed write landed: it still has the old text.
+      listTranscriptRecords.mockResolvedValueOnce([old]);
+      await loadHistory(true);
+      expect(currentRecord("replay-1")?.result?.text).toBe("e2");
+    } finally {
+      dropPendingWrites();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("listenRetentionSweeps", () => {
+  it("a sweep that removed records reloads the mirror (a wiped dictation leaves History)", async () => {
+    const id = recordDictation(CAPTURE);
+    listTranscriptRecords.mockResolvedValueOnce([]);
+    listenRetentionSweeps();
+    listenRetentionSweeps(); // registered once
+    await Promise.resolve();
+    const fire = listeners.get("transcripts://swept");
+    expect(fire).toBeDefined();
+    fire?.(1);
+    await vi.waitFor(() => expect(currentRecord(id)).toBeUndefined());
+    expect(listTranscriptRecords).toHaveBeenCalledTimes(1);
+    dropPendingWrites();
   });
 });
 
