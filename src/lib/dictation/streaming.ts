@@ -413,19 +413,24 @@ export function translationOutcome(s: {
 }
 
 /** Queue this session's end-of-session facts for `POST /v1/usage/outcome` (lib/usageOutcome.ts).
- *  Once per session: settleIdle reports the truthful delivery, cancelLive reports "none" with
- *  `abandoned` — before it resets sessionTyped/sessionClipboard, which still say whether
- *  anything landed, so a cancelled translating session with nothing landed reports "aborted".
- *  The stuck-finalize watchdog books its own through deferSessionOutcome, once its clipboard
- *  copy answers. */
+ *  Once per session, through the guard in deferSessionOutcome — every terminal path books, and
+ *  whichever runs first wins: settleIdle reports the truthful delivery; cancelLive reports what
+ *  already landed (live phrases typed or copied, else "none") with `abandoned` — before it resets
+ *  sessionTyped/sessionClipboard; teardownAfterFatalInject reports what landed before the failed
+ *  phrase. The stuck-finalize watchdog, the stream://error handler and the stopLive reject claim
+ *  through deferSessionOutcome before their teardown and book the recovery copy's answer (or, with
+ *  no stop-mode text to recover, what landed) themselves. */
 function reportSessionOutcome(delivery: "typed" | "clipboard" | "none", abandoned = false): void {
   deferSessionOutcome()?.(delivery, abandoned);
 }
 
 /** Claim this session's once-only outcome now and post it when the returned function is called —
- *  for a delivery only known after the session's state is gone (the stuck-finalize watchdog's
- *  recovery copy answers after cancelLive cleared it). Snapshots the session facts the answer
- *  needs; null when there is nothing to report (no session, a batch session, or already claimed).
+ *  for a delivery only known after the session's state is gone (the recovery copy of the
+ *  stuck-finalize watchdog, the stream://error handler and the stopLive reject answers after
+ *  cancelLive or the next start cleared it). Snapshots the session facts the answer needs, job id
+ *  included, so a settle that lands after the next start reset the guard still books THIS session
+ *  and leaves the new one's slot alone; null when there is nothing to report (no session, a batch
+ *  session, or already claimed).
  *  The app id goes only with "Report the app I dictate into" on and never for a target an
  *  App rule blocked (the same promise the history capture keeps). Words and audio seconds
  *  are the server's own — it counted the utterances. */
@@ -1875,7 +1880,7 @@ function armStuckWatchdog(): void {
       // mode with a pending transcript here.
       const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
       // With text to recover, the usage outcome waits for the copy's answer: claiming it here makes
-      // cancelLive's own "nothing landed" report a no-op, and the snapshot keeps the old session's
+      // cancelLive's own report a no-op, and the snapshot keeps the old session's
       // facts, so a new session started in the await window books its own.
       const settleOutcome = pending ? deferSessionOutcome() : null;
       const cancelled = cancelLive({ keepRecording: true }).catch((e) => console.error("stuck-finalize cancel failed:", e));
@@ -3151,6 +3156,14 @@ async function ensureListeners(): Promise<void> {
     // intact by the error path, reset only by the next startLive). Live mode injected per-phrase → "".
     // endInjection above is a no-op in stop mode (beganInjection false → nothing snapshotted), so no race.
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    // No `closed` settles this session, so book its usage outcome here. Claim it before the teardown:
+    // a cancel during the error linger would otherwise book first. With stop-mode text to recover the
+    // copy's answer settles it; otherwise what landed already (live phrases) does, right away.
+    const settleOutcome = deferSessionOutcome();
+    if (!pending) {
+      const landedAs = endOutcome();
+      settleOutcome?.(landedAs, landedAs === "none");
+    }
     // Null insertCfg (AFTER reading it for `pending`) so a live phrase still queued behind the error
     // can't type/paste into the now-refocused window after the session errored — mirrors cancelLive /
     // teardownAfterFatalInject. endInjection is chained on `owed` above, so any snapshot still restores.
@@ -3164,6 +3177,8 @@ async function ensureListeners(): Promise<void> {
     if (pending) {
       void (async () => {
         const onClipboard = await recoverUnguarded(pending, "stream error");
+        // On the clipboard → it landed; a failed copy lost the text, like a cancel.
+        settleOutcome?.(onClipboard ? "clipboard" : "none", !onClipboard);
         if (!onClipboard) return;
         // Upgrade the message only while this errored session still owns the chip.
         const app = useApp.getState();
@@ -3282,6 +3297,11 @@ let errorClearTimer: ReturnType<typeof setTimeout> | null = null;
  *  message promises), so drop the snapshot WITHOUT restoring (restoring would clobber the transcript;
  *  clipDirty is false on a failed paste, so the end-of-session drain would discard it the same way). */
 function teardownAfterFatalInject(): void {
+  // No `closed` settles this session (it bails on status "error"), so book its usage outcome here:
+  // the phrases that landed before the failed one (and a failed phrase its caller recovered to the
+  // clipboard, which set sessionClipboard first), else nothing.
+  const landedAs = endOutcome();
+  reportSessionOutcome(landedAs, landedAs === "none");
   // The failed phrase (or one queued behind it) may still have a translate in
   // flight; nothing will consume it now, so this stops the server's work too.
   abandonSessionWork();
@@ -4026,6 +4046,13 @@ export async function stopLive(): Promise<void> {
     // assembled committedDoc+bankedDoc to the clipboard. endInjection above is a no-op in stop mode
     // (nothing snapshotted), so there's no clobber race; committedDoc/bankedDoc aren't reset by stopLive.
     const pending = insertCfg && !insertCfg.live ? (bankedDoc + committedDoc).trim() : "";
+    // No `closed` settles this session either: claim its usage outcome before the teardown (as the
+    // stream://error handler does) and book the copy's answer, or what already landed.
+    const settleOutcome = deferSessionOutcome();
+    if (!pending) {
+      const landedAs = endOutcome();
+      settleOutcome?.(landedAs, landedAs === "none");
+    }
     // Null insertCfg (AFTER reading it for `pending`) so a LIVE phrase still queued behind the rejected
     // stop can't type/paste into the now-refocused window and pulse a green/amber "inserted" onto the
     // red error chip — the 4th sibling of stream://error / teardownAfterFatalInject / cancelLive, which
@@ -4041,6 +4068,7 @@ export async function stopLive(): Promise<void> {
     if (pending) {
       void (async () => {
         const onClipboard = await recoverUnguarded(pending, "stop reject");
+        settleOutcome?.(onClipboard ? "clipboard" : "none", !onClipboard);
         if (!onClipboard) return;
         // Upgrade the message only while this errored session still owns the chip.
         const app = useApp.getState();
@@ -4079,13 +4107,14 @@ export async function cancelLive(opts?: CancelOpts): Promise<void> {
   // call sites, Home's stop button, App.tsx's resume handler and the chip's ✕ — routes through THIS
   // function, so this one call covers them all; don't add duplicates at those sites.
   abandonSessionWork();
-  // A cancelled session still happened on the server (its utterances are counted); tell it
-  // nothing landed, so the Dictation panel shows "Nothing" rather than "unreported". Before the
-  // sessionTyped/sessionClipboard reset below: they decide a translating session's answer. Every
-  // cancel is abandoned, wake from sleep included — it keeps the audio, not the text. The
-  // stuck-finalize watchdog claimed the outcome before calling (deferSessionOutcome) and books its
-  // recovered copy itself, so this report is a no-op for it.
-  reportSessionOutcome("none", true);
+  // A cancelled session still happened on the server (its utterances are counted); book what
+  // already landed — live phrases typed or copied before the cancel are in the target app — else
+  // Nothing, so the Dictation panel never shows "unreported". Before the
+  // sessionTyped/sessionClipboard reset below: they decide the delivery and a translating session's
+  // answer. Every cancel is abandoned, wake from sleep included — it keeps the audio, not the text.
+  // The stuck-finalize watchdog claimed the outcome before calling (deferSessionOutcome) and books its
+  // recovered copy itself, and an errored session already booked its own, so this is a no-op there.
+  reportSessionOutcome(endOutcome(), true);
   sessionMeta = null; // a cancelled session is never recorded to History…
   resetUtteranceHistory(); // …beyond the utterances it already typed (their records stay)
   committedDoc = "";

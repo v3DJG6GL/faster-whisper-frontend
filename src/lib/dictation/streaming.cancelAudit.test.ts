@@ -382,6 +382,43 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(streamingSrc)).not.toMatch(/\brecovered:/);
   });
 
+  // stream://error and the stopLive reject leave no `closed` behind (it bails on status "error"), so
+  // nothing else books them: without their own booking Statistics showed the session as Unreported.
+  for (const [name, get] of [
+    ["the stream-error handler", () => mask(bodyAfter(streamingSrc, 'reg<string>("stream://error"'))],
+    ["the stopLive reject", () => mask(bodyAfter(fns.stopLive, "} catch (e)"))],
+  ] as const) {
+    it(`${name} books its usage outcome — the copy's answer, or what already landed`, () => {
+      const body = get();
+      const claim = body.indexOf("const settleOutcome = deferSessionOutcome();");
+      expect(claim, `${name} claims the outcome`).toBeGreaterThanOrEqual(0);
+      // Claimed before the teardown, so a cancel during the error linger can't book first.
+      expect(claim).toBeLessThan(body.indexOf("insertCfg = null"));
+      expect(claim).toBeLessThan(body.indexOf("flashError("));
+      const copy = body.indexOf("recoverUnguarded(");
+      expect(claim).toBeLessThan(copy);
+      // Nothing to recover → what landed (live phrases), settled right away.
+      const landed = body.indexOf("const landedAs = endOutcome();", claim);
+      expect(landed, "the no-text branch settles with endOutcome()").toBeGreaterThan(claim);
+      const sync = body.slice(landed).search(/\bsettleOutcome\?\.\(landedAs, landedAs ===\s+\)/);
+      expect(sync, "…synchronously").toBeGreaterThanOrEqual(0);
+      expect(landed + sync).toBeLessThan(body.indexOf("flashError("));
+      // Text to recover → the copy's answer, in both branches (before the failed copy returns).
+      const settle = body.search(/\bsettleOutcome\?\.\(onClipboard \?\s+:\s+, !onClipboard\)/);
+      expect(settle, "the copy's answer settles the outcome").toBeGreaterThan(copy);
+      expect(settle).toBeLessThan(body.indexOf("if (!onClipboard) return"));
+    });
+  }
+
+  it("teardownAfterFatalInject books what landed before the failed phrase", () => {
+    const body = mask(fns.teardownAfterFatalInject);
+    const landed = body.indexOf("const landedAs = endOutcome();");
+    expect(landed, "teardownAfterFatalInject reads what landed").toBeGreaterThanOrEqual(0);
+    const report = body.search(/\breportSessionOutcome\(landedAs, landedAs ===\s+\)/);
+    expect(report, "teardownAfterFatalInject books the outcome").toBeGreaterThan(landed);
+    expect(report).toBeLessThan(body.indexOf("insertCfg = null"));
+  });
+
   it("the stream-error handler flashes the error before awaiting the recovery copy", () => {
     // A dead socket emits error then `closed` back-to-back; a flash deferred behind the copy lets
     // that `closed` see a live status, cancel + settleIdle the session, and then the late flash
@@ -754,9 +791,10 @@ describe("a cancelled translating session's usage outcome", () => {
 
   it("cancelLive reports a user cancel as abandoned before it resets what landed", () => {
     const cancelLive = mask(topLevelFunctions(streamingSrc).cancelLive);
-    // mask() blanks the "none" literal; every cancel is abandoned (wake from sleep keeps the
-    // audio, not the text; the stuck-finalize watchdog claims its outcome before cancelling).
-    const report = cancelLive.search(/\breportSessionOutcome\(\s+, true\)/);
+    // A cancel books what already landed (live phrases are in the target app), else Nothing; every
+    // cancel is abandoned (wake from sleep keeps the audio, not the text; the stuck-finalize
+    // watchdog claims its outcome before cancelling).
+    const report = cancelLive.search(/\breportSessionOutcome\(endOutcome\(\), true\)/);
     expect(report, "cancelLive must report a user cancel as abandoned").toBeGreaterThanOrEqual(0);
     expect(report).toBeLessThan(cancelLive.indexOf("sessionTyped = false"));
     expect(report).toBeLessThan(cancelLive.indexOf("sessionClipboard = false"));
