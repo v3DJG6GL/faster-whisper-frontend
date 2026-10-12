@@ -99,7 +99,8 @@ export function useOverrideContext(args: {
     // Clear before refetching so a backend switch / retyped address shows the neutral
     // "unknown ⇒ permitted" gate during the in-flight window instead of ghosting the
     // PREVIOUS server's caps. A re-probe of the SAME target (a re-test, a rise to full) is no
-    // switch: it keeps the caps it has, and a failed re-probe does not blank them.
+    // switch: it keeps the caps it has while in flight, then takes the answer as it comes (a
+    // null can be the server saying no, which a re-test must show).
     const target = JSON.stringify([typedTarget, apiKey ?? null, backendId, credentialGen]);
     const same = probedRef.current === target;
     probedRef.current = target;
@@ -108,7 +109,7 @@ export function useOverrideContext(args: {
     void getCapabilities({ serverUrl: typedTarget, backendId, apiKey })
       .catch(() => null)
       .then((c) => {
-        if (!cancelled) setLiveCaps((prev) => c ?? (same ? prev : null));
+        if (!cancelled) setLiveCaps(c);
       });
     return () => {
       cancelled = true;

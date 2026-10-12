@@ -563,6 +563,14 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
   const cum = [0];
   toks.forEach((w, i) => cum.push(cum[i] + (gaps[i] ? 1 : 0) + w.length));
   const T = toks.length;
+  /** Length of the space-free run toks[i] belongs to (mixed tokenization only). */
+  const runLen: number[] = [];
+  for (let i = 0, start = 0; i <= T; i++) {
+    if (i === T || (i > 0 && gaps[i])) {
+      for (let k = start; k < i; k++) runLen[k] = cum[i] - cum[start] - (gaps[start] ? 1 : 0);
+      start = i;
+    }
+  }
   /** Joined length of toks[a..b), b > a. */
   const width = (a: number, b: number) => cum[b] - cum[a] - (gaps[a] ? 1 : 0);
   const join = (a: number, b: number) => {
@@ -594,11 +602,11 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
       if (a > cpl) s -= 1000;
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) s += breakScore(toks[i - 1], toks[i]) * 0.3;
-      // Inside a CJK/Thai-like run of spaced text: a fallback seam only. It loses to every
-      // space that keeps both lines within the cap (more than any balance or break score),
-      // so "東京 tower" and a Thai phrase stay whole; when no space fits, every space seam
-      // already carries -1000 and the run's own seams balance among themselves.
-      else if (gaps.length) s -= 100;
+      // Inside a Thai-like phrase or a short CJK word of spaced text ("東京 tower"): a fallback
+      // seam only — it loses to every space that keeps both lines within the cap (more than any
+      // balance or break score); when no space fits, every space seam already carries -1000.
+      // A longer CJK run is a sentence, and its seams balance freely against the spaces.
+      else if (gaps.length && (runLen[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy
       if (s > best) {
