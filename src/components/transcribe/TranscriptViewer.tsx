@@ -1012,7 +1012,11 @@ export function TranscriptViewer({
   }, [okey]);
   useEffect(
     () => () => {
+      // Unmount invalidates the playback fallback chain too: a buffer read or decode landing
+      // after cleanup never mints an unrevoked blob URL or sets state.
+      audioGenRef.current += 1;
       if (blobUrlRef.current) URL.revokeObjectURL(blobUrlRef.current);
+      blobUrlRef.current = null;
     },
     [],
   );

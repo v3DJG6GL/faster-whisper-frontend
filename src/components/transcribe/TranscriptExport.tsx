@@ -231,12 +231,10 @@ export function TranscriptExport({
         ? "none"
         : mediaChoice;
   /** D69 A: with Video on, only subtitle formats stay live — a TXT/LRC/JSON pick exports
-   *  as SRT and the footer says so. Derived, never persisted, like `effMedia`: the pick is
-   *  global, and writing the coercion back lost it for every record without a video. */
+   *  as SRT and the footer says so (`switchNote`, beside `writtenFormat` below). Derived,
+   *  never persisted, like `effMedia`: the pick is global, and writing the coercion back
+   *  lost it for every record without a video. */
   const exportFormat: ExportFormat = effMedia === "video" && !isSubtitleFormat(formatPick) ? "srt" : formatPick;
-  const switchNote = exportFormat !== formatPick
-    ? `SRT — ${formatPick.toUpperCase()} can't ride with a video`
-    : null;
   const mp4Why = effMedia === "video" ? mp4Disabled(streams, trCaps ?? null) : null;
   /** The container this export can honour: an MP4 pick this server or video can't do
    *  saves as MKV. Derived, never persisted, like `effSubtitleMode` — the pick stays. */
@@ -342,6 +340,13 @@ export function TranscriptExport({
    *  picked — so the Content box and the Summary never promise VTT voice tags or styling the
    *  video's streams don't carry. */
   const writtenFormat: ExportFormat = videoPlan ? plan.sidecars?.format ?? "srt" : exportFormat;
+  /** The footer's word on a pick the Save doesn't write: a non-subtitle format with a video,
+   *  or a VTT pick whose tracks only ride inside the video (always SRT there). */
+  const switchNote = writtenFormat !== formatPick
+    ? isSubtitleFormat(formatPick)
+      ? "SRT — subtitles inside a video are always SRT"
+      : `SRT — ${formatPick.toUpperCase()} can't ride with a video`
+    : null;
   const content = contentStates({
     format: writtenFormat, showTs, showNames, colorize, wordTs, hasSpeakers,
     hasWords, origIncluded, mtIncluded,
@@ -1050,7 +1055,7 @@ export function TranscriptExport({
             {/* Format cards — radio semantics, always visible. */}
             <div role="radiogroup" aria-label="Export format" className="flex gap-2">
               {FORMAT_CARDS.map((f) => {
-                const on = exportFormat === f.value;
+                const on = writtenFormat === f.value;
                 const notSubtitle = effMedia === "video" && !isSubtitleFormat(f.value);
                 return (
                   <ChoiceCard
