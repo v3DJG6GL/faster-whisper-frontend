@@ -113,8 +113,9 @@ export function ModelPicker({
             <button
               type="button"
               onClick={() => commit("")}
+              disabled={disabled}
               title={defaultLabel}
-              className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1 hover:text-text"
+              className="ring-signal ml-auto inline-flex shrink-0 items-center gap-1 rounded-md px-1 hover:text-text disabled:pointer-events-none disabled:opacity-50"
             >
               <RotateCcw className="size-3" /> use default
             </button>

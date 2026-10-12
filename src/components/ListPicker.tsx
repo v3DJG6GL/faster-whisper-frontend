@@ -135,8 +135,12 @@ export function OptionRows<R>({
                 onClick={() => onPick(r, index)}
                 className={cn(
                   "flex cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px]",
-                  selected ? "bg-accent-soft" : "hover:bg-surface-2",
-                  index === active && "bg-surface-2 ring-[1.5px] ring-inset ring-accent",
+                  // One background per state: cn is clsx, so with both the built CSS order would decide.
+                  index === active
+                    ? cn("ring-[1.5px] ring-inset ring-accent", selected ? "bg-accent-soft" : "bg-surface-2")
+                    : selected
+                      ? "bg-accent-soft"
+                      : "hover:bg-surface-2",
                 )}
               >
                 {renderRow(r, { selected, index })}
