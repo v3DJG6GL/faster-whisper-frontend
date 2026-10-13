@@ -1186,9 +1186,10 @@ pub fn load(dir: &Path) -> Config {
     load_outcome(dir).0
 }
 
-/// Side-effect-free read for mid-session callers (hotkey re-registration, the evdev rescan and
-/// status, CLI triggers, the Quick-Add window's `read_config`). By then a webview holds the live settings, so an unreadable or
-/// unparseable file must never be renamed to `.bak`, flip the session's reset flags or be
+/// Side-effect-free read for mid-session callers (the hotkey readers through
+/// `commands::bindings_config`: re-registration, the evdev rescan, legacy CLI flags, which fall
+/// back to the last good read; and the Quick-Add window's `read_config`). By then a webview
+/// holds the live settings, so an unreadable or unparseable file must never be renamed to `.bak`, flip the session's reset flags or be
 /// re-saved: `None` on a read or parse error (the caller keeps what it has / skips), the
 /// defaults when the file is absent (first run, or this session's reset already moved it —
 /// the defaults are then what is live), and a legacy config migrated in memory only.

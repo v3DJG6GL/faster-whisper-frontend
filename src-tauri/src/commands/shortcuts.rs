@@ -103,17 +103,22 @@ static LAST_GOOD: std::sync::Mutex<Option<config::Config>> = std::sync::Mutex::n
 /// decides from the same config the live bindings were armed from. None only when no read has
 /// succeeded yet this session.
 pub fn bindings_config(app: &AppHandle) -> Option<config::Config> {
-    let read = config_dir(app).ok().and_then(|dir| config::try_load(&dir));
-    read_or_last_good(&LAST_GOOD, read)
+    read_or_last_good(&LAST_GOOD, || {
+        config_dir(app).ok().and_then(|dir| config::try_load(&dir))
+    })
 }
 
-/// `bindings_config`'s fallback: a good read replaces `last_good`; a failed one returns it.
+/// `bindings_config`'s fallback: a good read replaces `last_good`; a failed one returns it. The
+/// read runs under the slot's lock, so the stores land in read order: the readers don't all hold
+/// APPLY_LOCK (the evdev re-scan and a legacy flag read without it), and a slower reader holding
+/// an older read must not overwrite the newer one the live bindings were just armed from. The
+/// read takes no other lock, and no thread waits on APPLY_LOCK while holding this one.
 fn read_or_last_good(
     last_good: &std::sync::Mutex<Option<config::Config>>,
-    read: Option<config::Config>,
+    read: impl FnOnce() -> Option<config::Config>,
 ) -> Option<config::Config> {
     let mut last = last_good.lock().unwrap_or_else(|e| e.into_inner());
-    match read {
+    match read() {
         Some(cfg) => {
             *last = Some(cfg.clone());
             Some(cfg)
@@ -127,12 +132,11 @@ fn read_or_last_good(
     }
 }
 
-/// The apply step itself; the caller holds APPLY_LOCK. False when nothing was applied (an
-/// unreadable config before any good read this session).
-fn apply_bindings_locked(app: &AppHandle) -> bool {
+/// The apply step itself; the caller holds APPLY_LOCK.
+fn apply_bindings_locked(app: &AppHandle) {
     let Some(cfg) = bindings_config(app) else {
         tracing::warn!("[bindings] config unreadable; nothing applied");
-        return false;
+        return;
     };
     // The quick-add chord stays INERT until a word-mapping list is designated
     // (settings.quickAddList) — the window would have nothing to add to. This
@@ -180,7 +184,6 @@ fn apply_bindings_locked(app: &AppHandle) -> bool {
             crate::hotkeys::triggers::register_from_config(app, &cfg.profiles, quick_add);
         }
     }
-    true
 }
 
 /// Re-apply the bindings unless a binding capture holds them suspended — the check and the
@@ -316,8 +319,6 @@ enum RescanApply {
     Held,
     /// The loss that asked for it was already re-armed by a concurrent apply.
     Covered,
-    /// No config read yet this session, so nothing was applied: kept pending, no loss backoff.
-    Unread,
 }
 
 /// The re-scan's apply, with the capture, hold and loss gates re-checked under the same APPLY_LOCK
@@ -335,11 +336,10 @@ fn apply_bindings_for_rescan(app: &AppHandle, loss: bool) -> RescanApply {
     if loss && !crate::hotkeys::evdev::reader_lost() {
         return RescanApply::Covered;
     }
-    if apply_bindings_locked(app) {
-        RescanApply::Applied
-    } else {
-        RescanApply::Unread
-    }
+    // The caller only gets here with a config in hand, so LAST_GOOD is set and the apply's own
+    // read cannot come back empty.
+    apply_bindings_locked(app);
+    RescanApply::Applied
 }
 
 /// One suspend-watch tick of evdev's device re-scan. A re-apply is a full evdev restart — it aborts
@@ -400,7 +400,7 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
                 );
             }
             // As Defer: kept pending, the next settled tick asks again.
-            RescanApply::Held | RescanApply::Unread => {}
+            RescanApply::Held => {}
             RescanApply::Covered => nodes.pending.clear(),
         },
     }
@@ -894,20 +894,35 @@ mod tests {
     fn bindings_config_falls_back_to_the_last_good_read() {
         let slot = std::sync::Mutex::new(None);
         // No good read yet: an unreadable file is "nothing" (the re-scan keeps pending).
-        assert!(read_or_last_good(&slot, None).is_none());
+        assert!(read_or_last_good(&slot, || None).is_none());
         let mut good = config::Config::default();
         good.settings.general.evdev_enabled = !good.settings.general.evdev_enabled;
         let wanted = good.settings.general.evdev_enabled;
-        let read = read_or_last_good(&slot, Some(good)).expect("a good read is returned");
+        let read = read_or_last_good(&slot, move || Some(good)).expect("a good read is returned");
         assert_eq!(read.settings.general.evdev_enabled, wanted);
         // Unreadable mid-session: every reader decides from the last config read, not "nothing".
-        let fallback = read_or_last_good(&slot, None).expect("the last good read");
+        let fallback = read_or_last_good(&slot, || None).expect("the last good read");
         assert_eq!(fallback.settings.general.evdev_enabled, wanted);
         // A later good read replaces it.
         let fresh = config::Config::default();
         let fresh_flag = fresh.settings.general.evdev_enabled;
-        read_or_last_good(&slot, Some(fresh));
-        let fallback = read_or_last_good(&slot, None).expect("the newer good read");
+        read_or_last_good(&slot, move || Some(fresh));
+        let fallback = read_or_last_good(&slot, || None).expect("the newer good read");
         assert_eq!(fallback.settings.general.evdev_enabled, fresh_flag);
+    }
+
+    #[test]
+    fn bindings_config_reads_under_the_last_good_lock() {
+        // The re-scan and a legacy flag read without APPLY_LOCK: a read taken before the slot's
+        // lock could store an older config over the newer one an apply just armed from.
+        let slot = std::sync::Mutex::new(None);
+        let read = read_or_last_good(&slot, || {
+            assert!(
+                slot.try_lock().is_err(),
+                "the read must run under the slot lock"
+            );
+            Some(config::Config::default())
+        });
+        assert!(read.is_some());
     }
 }
