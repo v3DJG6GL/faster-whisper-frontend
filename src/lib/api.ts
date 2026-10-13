@@ -857,9 +857,34 @@ export async function logFolderPath(custom: string | null): Promise<string | nul
   return invoke<string>("log_folder_path", { custom }).catch(() => null);
 }
 
+// One Open-folder call per folder at a time, shared by every caller: the commands block on a
+// stalled mount with no timeout, and the buttons that gate them are per-mount (Settings unmounts
+// on navigation, the Logs screen has its own button) — a second call queued behind the first
+// pops a second file-manager window when the mount answers. A later click joins the pending
+// call (and hears its answer); a different folder still gets its own call, the way out of a hung
+// share. Keyed by the preference as passed (null and blank both mean the default folder).
+const openLogInFlight = new Map<string, Promise<void>>();
+const openAudioInFlight = new Map<string, Promise<void>>();
+function openOnce(
+  inFlight: Map<string, Promise<void>>,
+  custom: string | null,
+  run: () => Promise<unknown>,
+): Promise<void> {
+  const k = custom ?? "";
+  const pending = inFlight.get(k);
+  if (pending) return pending;
+  const p: Promise<void> = run()
+    .then(() => {})
+    .finally(() => {
+      if (inFlight.get(k) === p) inFlight.delete(k);
+    });
+  inFlight.set(k, p);
+  return p;
+}
+
 export async function openLogFolder(custom: string | null): Promise<void> {
   if (!isTauri) return;
-  return invoke("open_log_folder", { custom });
+  return openOnce(openLogInFlight, custom, () => invoke("open_log_folder", { custom }));
 }
 
 /** Batched new log lines — emitted only while the stream is active. */
@@ -1714,6 +1739,6 @@ export async function audioDirPath(custom: string | null): Promise<string | null
  *  subfolders, if absent). */
 export async function openAudioDir(custom: string | null): Promise<void> {
   if (!isTauri) return;
-  await invoke("open_audio_dir", { custom });
+  await openOnce(openAudioInFlight, custom, () => invoke("open_audio_dir", { custom }));
 }
 

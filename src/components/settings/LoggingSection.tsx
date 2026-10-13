@@ -16,7 +16,9 @@ export function LoggingSection() {
   const updateLogging = useApp((s) => s.updateLogging);
   const navigate = useNavigate();
   // As on the Logs screen: a failed open (dead share, read-only path) says so on the
-  // button, and a second click while one is out is refused.
+  // button. `opening` is only this mount's disabled look: the one-call-per-folder gate lives in
+  // openLogFolder (api.ts), shared with the Logs screen, so a click after a tab switch joins
+  // the pending call instead of queueing a second file-manager window.
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);

@@ -363,12 +363,14 @@ export default function Settings() {
     };
   }, [basePref]);
   // A failed open (the folder on an unplugged drive or dead share) says so in the tab's
-  // message line; a second click while one is out is refused, or a stalled mount queues
-  // opens that all pop up a window when it answers. A click clears only an earlier open
-  // failure: the same line may explain a partial move, the very thing Open is clicked to see.
-  // The late answer follows the same rule — it never replaces an error another action owns
-  // (a move, a partial move, a cleanup failure; Change…/Reset stay enabled while Open is
-  // out) — and is dropped once the base has moved on: it is about the folder it was asked for.
+  // message line. A stalled mount must not queue opens that all pop up a window when it
+  // answers: openAudioDir (api.ts) runs one call per folder at a time, so a click after a
+  // route trip joins the pending one; `openingDir` is only this mount's disabled look. A click
+  // clears only an earlier open failure: the same line may explain a partial move, the very
+  // thing Open is clicked to see. The late answer follows the same rule — it never replaces an
+  // error another action owns (a move, a partial move, a cleanup failure; Change…/Reset stay
+  // enabled while Open is out) — and is dropped once the base has moved on: it is about the
+  // folder it was asked for. A move that completes drops one that landed while it ran.
   const [openingDir, setOpeningDir] = useState(false);
   const openRecDir = () => {
     if (openingDir) return;
@@ -434,6 +436,7 @@ export default function Settings() {
             throw e;
           }
           updateRecording({ audioBaseDir: picked });
+          setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
           // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
           // mirror still holds the pre-move paths — and would write them back on edit.
           // The workbench registry holds them too (an overlay edit persists through it).
@@ -453,6 +456,7 @@ export default function Settings() {
     void moveAudioBase(basePref, null)
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
+        setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
         forgetRecord(null);
         void loadHistory(true).catch(() => {});
       })

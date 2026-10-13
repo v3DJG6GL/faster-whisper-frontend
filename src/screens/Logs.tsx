@@ -186,8 +186,9 @@ export default function Logs() {
   // Clear a still-pending "Copied" timer if the screen unmounts mid-window.
   useEffect(() => () => window.clearTimeout(copyTimerRef.current), []);
   // Open log folder fails for real (a custom folder on an unmounted share, a read-only path,
-  // no file manager): say so on the button like Copy does, and refuse a second click while
-  // one is out, or a stalled mount queues opens that all pop up a window when it answers.
+  // no file manager): say so on the button like Copy does. A stalled mount must not queue opens
+  // that all pop up a window when it answers: openLogFolder (api.ts) runs one call per folder at
+  // a time, shared with Settings → Logging; `opening` is only this mount's disabled look.
   const [opening, setOpening] = useState(false);
   const [openError, setOpenError] = useState<string | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -377,11 +378,14 @@ export default function Logs() {
     if (opening) return;
     setOpening(true);
     setOpenError(null);
-    void openLogFolder(useApp.getState().settings.logging?.logDir ?? null)
+    const asked = useApp.getState().settings.logging?.logDir ?? null;
+    void openLogFolder(asked)
       .catch((e: unknown) => {
         console.error("open log folder:", e);
         // Path-free: the log is pasted into bug reports.
         logLine("warn", "logs", "could not open the log folder");
+        // A late answer for a folder a sync or Settings has since replaced must not label the new one.
+        if ((useApp.getState().settings.logging?.logDir ?? null) !== asked) return;
         setOpenError(safeDisplayText(errorText(e), 160));
         clearTimeout(openTimerRef.current);
         openTimerRef.current = setTimeout(() => setOpenError(null), 4000);
