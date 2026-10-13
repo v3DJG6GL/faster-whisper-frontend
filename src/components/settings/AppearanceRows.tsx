@@ -306,7 +306,10 @@ function MotionRows({
   const [slider, setSlider] = useState(() => secToSlider(motion.period || sliderToSec(500)));
   const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (pending.current === null && motion.period > 0) setSlider(secToSlider(motion.period));
+    if (pending.current !== null) return;
+    if (motion.period > 0) setSlider(secToSlider(motion.period));
+    // Still set elsewhere (a sync pull, another window): Custom… no longer describes it.
+    else setCustomMode(false);
   }, [motion.period]);
   useEffect(
     () => () => {
