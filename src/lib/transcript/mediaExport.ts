@@ -529,6 +529,24 @@ export function isGoneSourceError(e: unknown): boolean {
   return /^reading the (media|video) file: .*\(os error [23]\)$/.test(msg);
 }
 
+/** Why a video Save whose link's kept copy turned out gone cannot fetch it again from the link
+ *  and package that instead (null = it can). Without the local copy the server's packager is
+ *  the only path: a server that can't fetch the video, or can't package one, is told at once
+ *  rather than after a fetch of the whole video. A plain copy whose confirmed name has another
+ *  container than the packager writes is not retried either (that name would lie). */
+export function goneVideoRetryRefusal(a: {
+  urlVideoOnDemand: boolean;
+  packageOn: boolean;
+  embeds: boolean;
+  destExt: string;
+  container: string;
+}): string | null {
+  if (!a.urlVideoOnDemand) return "The kept copy of this video is gone, and this server can't fetch it again from the link.";
+  if (!a.packageOn) return "The kept copy of this video is gone, and this server can't package a video fetched from the link.";
+  if (!a.embeds && a.destExt !== a.container) return "The kept copy of this video is gone — save again to fetch it from the link.";
+  return null;
+}
+
 /** A link's server AUDIO is still there to fetch: an id, and no expiry stored (= available)
  *  or one still ahead. The export panel and History's "Save the audio" agree on it. */
 export function linkServerAudioLive(

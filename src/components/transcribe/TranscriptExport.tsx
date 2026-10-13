@@ -38,7 +38,7 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isGoneSourceError, isVideoSourcePath,
+  audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
@@ -726,9 +726,9 @@ export function TranscriptExport({
   };
   /** exportVideoOnce, and once more without the local copy when a link's kept copy turned
    *  out gone (deleted from Settings or by hand while the record still named it): the record
-   *  forgets it and the video is fetched from the link instead, as Settings promises. A plain
-   *  copy whose confirmed name has another container than the packager writes is not retried
-   *  (that name would lie) — the next Save, planned without the copy, fetches. */
+   *  forgets it and the video is fetched from the link instead, as Settings promises, unless
+   *  goneVideoRetryRefusal says this Save can't (the next Save, planned without the copy, then
+   *  fetches when the server can). */
   const exportVideoTo = async (
     dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
     checked?: { res: BatchResult; tracks: EmbeddedTrack[] },
@@ -739,10 +739,10 @@ export function TranscriptExport({
       const gone = panelLocalVideo;
       if (!urlSource || !rec || !gone || !isGoneSourceError(e)) throw e;
       patchRecord(rec.id, (r) => (r.videoPath === gone ? withoutVideoPath(r) : r));
-      if (!urlVideoOnDemand) throw new Error("The kept copy of this video is gone, and this server can't fetch it again from the link.");
-      if (!embedded.length && extOf(dest) !== effContainer) {
-        throw new Error("The kept copy of this video is gone — save again to fetch it from the link.");
-      }
+      const refusal = goneVideoRetryRefusal({
+        urlVideoOnDemand, packageOn, embeds: embedded.length > 0, destExt: extOf(dest), container: effContainer,
+      });
+      if (refusal) throw new Error(refusal);
       return exportVideoOnce(dest, embedded, started, late, checked, true);
     }
   };

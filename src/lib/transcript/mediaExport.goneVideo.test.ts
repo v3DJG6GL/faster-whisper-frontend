@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copyPathsBeforeWipe, isGoneSourceError, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
+import { copyPathsBeforeWipe, goneVideoRetryRefusal, isGoneSourceError, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
 
 describe("withoutVideoPath", () => {
   it("drops the deleted local video copy and keeps every other field", () => {
@@ -102,5 +102,25 @@ describe("stripWipedCopyPath after the Delete-audio-from-links wipe", () => {
   it("withoutCopyPath forgets only the named copy", () => {
     expect(withoutCopyPath(records[1], "mediaPath")).toEqual({ id: "r2", videoPath: "/base/video/r2.mkv" });
     expect(withoutCopyPath(records[2], "mediaPath")).toBe(records[2]);
+  });
+});
+
+describe("goneVideoRetryRefusal", () => {
+  const can = { urlVideoOnDemand: true, packageOn: true, embeds: true, destExt: "mkv", container: "mkv" };
+
+  it("retries through the packager when the server can fetch and package", () => {
+    expect(goneVideoRetryRefusal(can)).toBeNull();
+    // A plain copy (nothing embedded) retries while the confirmed name is the packager's container.
+    expect(goneVideoRetryRefusal({ ...can, embeds: false })).toBeNull();
+  });
+
+  it("refuses at once on a server that can't package, before fetching the whole video", () => {
+    expect(goneVideoRetryRefusal({ ...can, packageOn: false })).toMatch(/can't package/);
+    expect(goneVideoRetryRefusal({ ...can, packageOn: false, embeds: false })).toMatch(/can't package/);
+  });
+
+  it("refuses on a server that can't fetch from the link, and a plain copy whose name has another container", () => {
+    expect(goneVideoRetryRefusal({ ...can, urlVideoOnDemand: false })).toMatch(/can't fetch it again/);
+    expect(goneVideoRetryRefusal({ ...can, embeds: false, destExt: "webm" })).toMatch(/save again/);
   });
 });
