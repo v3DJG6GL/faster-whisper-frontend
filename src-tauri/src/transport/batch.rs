@@ -699,6 +699,31 @@ mod wire_field_tests {
     }
 
     #[test]
+    fn a_plan_unit_the_rail_cannot_render_is_dropped() {
+        let json = r#"{"stage":"translating","plan":[{"stage":"translating","state":"active",
+            "units":[{"state":"running"},{"target":null,"state":"queued"},
+                     {"target":"\u0007\u200b","state":"queued"},{"target":"es"},
+                     {"target":"it","state":"paused"},{"target":"de","state":"done","took_s":4.0},
+                     {"target":"fr","state":"instant","instant":true}]}]}"#;
+        let parsed: BatchProgress = serde_json::from_str(json).expect("progress parses");
+        let p = bound_progress(parsed);
+        let units = p.plan.as_ref().expect("plan")[0]
+            .units
+            .clone()
+            .expect("units");
+        let kept: Vec<_> = units
+            .iter()
+            .map(|u| (u.target.as_deref(), u.state.as_deref()))
+            .collect();
+        assert_eq!(
+            kept,
+            [(Some("de"), Some("done")), (Some("fr"), Some("instant"))]
+        );
+        let out = serde_json::to_string(&units).expect("serializes");
+        assert!(!out.contains("\"target\":null"), "{out}");
+    }
+
+    #[test]
     fn absent_is_omitted_but_an_empty_list_is_sent_empty() {
         // The distinction the whole change exists for: absent = inherit the server
         // profile's TRANSLATE_TO, empty = explicitly no translation.
@@ -786,6 +811,8 @@ pub struct PlanStage {
 const MAX_PLAN_STAGES: usize = 8;
 /// Matches the server's TRANSLATION_MAX_TARGETS ceiling with headroom.
 const MAX_PLAN_UNITS: usize = 16;
+/// The unit states the webview renders (`PlanUnit["state"]` in lib/types.ts).
+const PLAN_UNIT_STATES: [&str; 4] = ["queued", "running", "done", "instant"];
 
 /// The sanity range for a video height the server reports.
 const SERVER_HEIGHT: std::ops::RangeInclusive<u32> = 1..=8192;
@@ -825,14 +852,25 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
             units: st.units.map(|us| {
                 us.into_iter()
                     .take(MAX_PLAN_UNITS)
-                    .map(|u| PlanUnit {
-                        target: u.target.map(|s| super::bounded_server_text(&s, 16)),
-                        state: u.state.map(|s| super::bounded_server_text(&s, 16)),
-                        instant: u.instant,
-                        est_s: super::fin_nonneg(u.est_s),
-                        took_s: super::fin_nonneg(u.took_s),
-                        elapsed_s: super::fin_nonneg(u.elapsed_s),
-                        progress: fin_frac(u.progress),
+                    .filter_map(|u| {
+                        // The webview's unit is `{target: string, state: <these four>}` and its
+                        // rail renders the target as text: a unit without a language or with a
+                        // state it has no rendering for is dropped here, not passed on as null
+                        // (a null target crashed the Transcribe screen).
+                        let target = u
+                            .target
+                            .map(|s| super::bounded_server_text(&s, 16))
+                            .filter(|s| !s.trim().is_empty())?;
+                        let state = u.state.filter(|s| PLAN_UNIT_STATES.contains(&s.as_str()))?;
+                        Some(PlanUnit {
+                            target: Some(target),
+                            state: Some(state),
+                            instant: u.instant,
+                            est_s: super::fin_nonneg(u.est_s),
+                            took_s: super::fin_nonneg(u.took_s),
+                            elapsed_s: super::fin_nonneg(u.elapsed_s),
+                            progress: fin_frac(u.progress),
+                        })
                     })
                     .collect()
             }),
