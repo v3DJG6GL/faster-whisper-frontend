@@ -764,26 +764,14 @@ pub fn detail_from(body: &str) -> String {
 
 /// Attach a bearer token if one is provided.
 ///
-/// A key REPLACES any `Authorization` already on the request rather than adding a second one:
-/// reqwest turns a server URL's `user:pass@` into a `Basic` header when the builder is made, and
-/// `bearer_auth` appends, so a backend with both sent two headers — the server reads the first
-/// (Basic) and never saw the key, and a proxy may refuse the duplicate outright. A key therefore
-/// wins over URL userinfo, one `Authorization` header per request, matching the stream socket.
-/// Without a key the request is untouched (the userinfo Basic header still goes out).
+/// The key is ADDED next to whatever `Authorization` the request already carries: reqwest turns a
+/// server URL's `user:pass@` into a `Basic` header when the builder is made, so such a backend
+/// sends both, Basic first. That is deliberate — a basic-auth reverse proxy in front of an
+/// open-mode backend reads the first header and lets the request through even when an old key is
+/// still stored; replacing the Basic header with the key would lock that setup out.
 pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest::RequestBuilder {
-    use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
     match api_key {
-        Some(k) if !k.is_empty() => match HeaderValue::from_str(&format!("Bearer {k}")) {
-            Ok(mut v) => {
-                v.set_sensitive(true);
-                let mut m = HeaderMap::new();
-                m.insert(AUTHORIZATION, v);
-                // `headers` replaces every existing value of each name it carries.
-                req.headers(m)
-            }
-            // An invalid key keeps reqwest's own builder-error path.
-            Err(_) => req.bearer_auth(k),
-        },
+        Some(k) if !k.is_empty() => req.bearer_auth(k),
         _ => req,
     }
 }
@@ -1232,8 +1220,11 @@ mod with_auth_tests {
     }
 
     #[test]
-    fn a_key_replaces_the_url_userinfo_basic_header() {
-        assert_eq!(auth_values(Some("k")), ["Bearer k"]);
+    fn a_key_is_sent_after_the_url_userinfo_basic_header() {
+        let v = auth_values(Some("k"));
+        assert_eq!(v.len(), 2, "{v:?}");
+        assert!(v[0].starts_with("Basic "), "{v:?}");
+        assert_eq!(v[1], "Bearer k");
     }
 
     #[test]

@@ -165,6 +165,27 @@ describe("usage poll gates", () => {
     }
   });
 
+  it("a tray reopen whose own page fetch missed leaves the catch-up pass to retry it", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(12 * 30_000);
+    await settle();
+    getUsageStats.mockClear();
+    // The show's direct view + year fetches miss (the network is not back yet); the rest answer.
+    getUsageStats.mockResolvedValueOnce(null as never).mockResolvedValueOnce(null as never);
+    try {
+      setHidden(false);
+      await settle();
+      await settle();
+      expect(calls()).toEqual({ fixed: 1, page: 4 });
+    } finally {
+      close();
+    }
+  });
+
   it("a page closed while hidden does not make every later show run a pass", async () => {
     await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
     await settle();

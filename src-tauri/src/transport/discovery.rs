@@ -570,7 +570,9 @@ const MAX_DECODE_KEYS: usize = 64;
 
 fn bound_decode_defaults(d: &mut DecodeDefaults) {
     let fold = super::bounded_server_text;
-    d.model = bounded_name(&d.model);
+    // The model-id rule the model lists use (`bounded_model_id`), so the resolved default still
+    // matches its entry there (a cut name matches none, and the Backends device chip goes blank).
+    d.model = bounded_model_id(&d.model).unwrap_or_default();
     d.profile_applied = d.profile_applied.as_deref().map(bounded_name);
     let settings = std::mem::take(&mut d.settings);
     d.settings = settings
@@ -1059,6 +1061,20 @@ mod tests {
             .map(|m| m.id)
             .collect();
         assert_eq!(ids, [long, "hy-mt".to_string()]);
+    }
+
+    #[test]
+    fn the_resolved_default_model_follows_the_model_list_rule() {
+        let long = format!("org/{}", "m".repeat(146));
+        let model = |m: &str| -> String {
+            let mut d: DecodeDefaults =
+                serde_json::from_value(serde_json::json!({ "model": m, "settings": {} })).unwrap();
+            bound_decode_defaults(&mut d);
+            d.model
+        };
+        // Whole, exactly as `bound_models` keeps it, so the Backends chip still finds its entry.
+        assert_eq!(model(&long), long);
+        assert_eq!(model(&"x".repeat(250)), "");
     }
 
     #[test]

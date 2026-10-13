@@ -113,7 +113,8 @@ pub(crate) async fn inject_text(
     // (the chord-time own-window divert, a failed paste, an error abort cancelling the paste) it
     // schedules the restore a pasted one gets, arms neither the delivered nor the recovery guard,
     // and reports `landed: true, diverted: false`: the clipboard WAS written, and the caller reads
-    // `landed` as that, to give the user's copy back.
+    // `landed` as that, to give the user's copy back. An error abort that lands before any write
+    // stops it the way a user cancel does (`landed: true`, nothing written): it is never recovered.
     withhold_on_divert: bool,
 ) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
@@ -157,8 +158,10 @@ pub(crate) async fn inject_text(
         // Same check as the mid-function divert below, for the same reason: a cancel landing
         // between the epoch capture and this write (the own-window focus IPC above is an
         // event-loop round trip) must not install the transcript over the user's clipboard.
-        // `cancel_wants_recovery` stays in the condition — an error abort wants its text kept.
-        if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
+        // `cancel_wants_recovery` stays in the condition — an error abort wants its text kept,
+        // unless the caller withheld it (nothing in it to recover).
+        if crate::inject::injection_cancelled(epoch)
+            && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
         {
             tracing::info!("[inject] clipboard-only insert cancelled before the write — skipping");
             return Ok(InjectOutcome {
@@ -595,9 +598,11 @@ pub(crate) async fn inject_text(
             // below keys off `res`, which this branch never produces", but that block keys off
             // `injection_cancelled && cancel_wants_recovery && !recovery_text.is_empty()` — never
             // `res` — and this is an early `return`, so it skipped the block entirely and a died
-            // session lost its transcript instead of leaving it recoverable.
+            // session lost its transcript instead of leaving it recoverable. A withheld insert has
+            // nothing for that recovery to keep (it skips it), so any cancel stops it before the
+            // write, as the X11/Windows paste does.
             if crate::inject::injection_cancelled(epoch)
-                && !crate::inject::cancel_wants_recovery(epoch)
+                && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
             {
                 tracing::info!("[clip] paste: cancelled before the clipboard write — skipping");
                 return Ok(InjectOutcome {

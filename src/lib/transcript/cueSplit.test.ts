@@ -480,6 +480,12 @@ describe("wrapLines", () => {
     // The closing quote still joins what it closes, and an apostrophe (it's) is no quote.
     expect(cutByShare('我说"好"，他说"不"。', [1, 1])).toEqual(['我说"好"，', '他说"不"。']);
     expect(cutByShare("我觉得it's很好，他说'好'然后走了", [1, 1, 1])).toEqual(["我觉得it's很好，", "他说", "'好'然后走了"]);
+    // With no later quote of its kind it closes: the quotation opened in the previous segment,
+    // or a stray inch mark before it flipped the count.
+    expect(cutByShare('去北京"然后回家', [1, 1])).toEqual(['去北京"', "然后回家"]);
+    expect(cutByShare("去北京'然后回家", [1, 1])).toEqual(["去北京'", "然后回家"]);
+    expect(wrapLines('我们明天去北京看看"然后回家吧', 6, 2)).toEqual(["我们明天去", '北京看看"', "然后回家吧"]);
+    expect(wrapLines('屏幕是6.1"的手机，他说"很好"然后走了回家吧', 8, 2).some((l) => /^"|"$/.test(l))).toBe(false);
   });
   it("an over-long word of spaced text wraps per character, sharing a line with its neighbour", () => {
     const w = "x".repeat(50);

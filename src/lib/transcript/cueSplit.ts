@@ -701,6 +701,11 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[]
   let end = 0;
   /** ASCII quotes of each kind before the current match — kept running, so the pass stays linear. */
   const quotes: Record<string, number> = { '"': 0, "'": 0 };
+  /** ASCII quotes of each kind in the whole text (an apostrophe between ASCII letters is none). */
+  const isQuote = (j: number) =>
+    t[j] in quotes && !(/[A-Za-z0-9]/.test(t[j - 1] ?? "") && /[A-Za-z0-9]/.test(t[j + 1] ?? ""));
+  const total: Record<string, number> = { '"': 0, "'": 0 };
+  for (let j = 0; j < t.length; j++) if (isQuote(j)) total[t[j]]++;
   /** The token that ends on an opening ASCII quote: the next one joins it. */
   let quoted = -1;
   for (const m of t.matchAll(MIXED_TOKEN)) {
@@ -711,11 +716,15 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[]
     // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
     const q = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
     const after = m.index! + (q?.[0].length ?? 0);
+    // Glued to the text before it, a quote opens only on positive evidence: an even count of its
+    // kind so far AND a later one of its kind to close it. The last unpaired one — a closer whose
+    // opener was in the previous segment, or the one after a stray inch mark — joins the text it
+    // closes.
+    const c = q?.[1][0] ?? '"';
     const opens = !!q && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(after, after + 2), false))
-      && (gap || k < 0 || q[0] !== q[1] || quotes[q[1][0]] % 2 === 0);
-    for (let j = m.index!; j < end; j++) {
-      if (t[j] in quotes && !(/[A-Za-z0-9]/.test(t[j - 1] ?? "") && /[A-Za-z0-9]/.test(t[j + 1] ?? ""))) quotes[t[j]]++;
-    }
+      && (gap || k < 0 || q[0] !== q[1]
+        || (quotes[c] % 2 === 0 && total[c] > quotes[c] + q[1].split(c).length - 1));
+    for (let j = m.index!; j < end; j++) if (isQuote(j)) quotes[t[j]]++;
     // An opener glued to the end of a Latin word ("Python(") moves onto what it opens, with
     // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
     // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off left „Hallo /
