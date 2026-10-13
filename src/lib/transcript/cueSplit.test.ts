@@ -76,6 +76,15 @@ describe("buildCues", () => {
     expect(cues.map((c) => c.text).join(" ")).toBe(LONG);
   });
 
+  it("a cue whose words would wrap to a third line splits, so no cue exceeds its line cap", () => {
+    const text = "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.";
+    expect(text.length).toBeLessThanOrEqual(84);
+    const { cues } = buildCues(seg1(text, 0, 4.4, { language: "de" }), STD, ["orig"]);
+    expect(cues.length).toBeGreaterThan(1);
+    for (const c of cues) expect(wrapLines(c.text, 42, 2).length).toBeLessThanOrEqual(2);
+    expect(cues.map((c) => c.text).join(" ")).toBe(text);
+  });
+
   it("a pause beats a comma", () => {
     const text = "We went down to the river, it was cold that morning and we waited there for hours";
     // Pause after "morning" (index 10).
@@ -1340,4 +1349,88 @@ describe("trackLimits / limitsTitle", () => {
     expect(limitsTitle(CUE_PRESETS.standard)).toBe("2 lines × 42 characters · up to 7 s · 17 chars/s");
     expect(limitsTitle(CUE_PRESETS.short)).toBe("1 line × 42 characters · up to 4 s · 17 chars/s");
   });
+});
+
+describe("shape matrix: cues, their lines and translation cuts", () => {
+  // Realistic shapes pinned whole, so a heuristic change shows every row it moves. A cue reads
+  // "text ⟨lines it wraps to⟩"; CJK words are two-character chunks with no spaces.
+  const OPTS = {
+    std: { length: "standard", timing: "same" },
+    short: { length: "short", timing: "same" },
+    c3: { length: "custom", custom: { cpl: 42, lines: 3, maxDur: 7, cps: 17 }, timing: "same" },
+    c1: { length: "custom", custom: { cpl: 42, lines: 1, maxDur: 7, cps: 17 }, timing: "same" },
+  } satisfies Record<string, CueOptions>;
+  const split = (lang: string, text: string, spw: number, preset: keyof typeof OPTS, cjk: boolean) => {
+    const ws = cjk ? (text.match(/.{1,2}/gu) ?? []) : text.split(/\s+/);
+    const words = ws.map((w, i) => ({ word: (cjk ? "" : " ") + w, start: i * spw, end: i * spw + spw * 0.9 }));
+    const r: BatchResult = { text, language: lang, words, segments: [{ start: 0, end: ws.length * spw, text: (cjk ? "" : " ") + text }] };
+    const L = limitsFor(OPTS[preset], lang);
+    return buildCues(r, OPTS[preset], ["orig"]).cues
+      .map((c) => `${c.text} ⟨${wrapLines(c.text, L.cpl, L.lines, 0, c.q).length}⟩`).join(" | ");
+  };
+  const SPLIT: [label: string, lang: string, text: string, secPerWord: number, preset: keyof typeof OPTS, want: string][] = [
+    ["en short", "en", "Hello there, how are you?", 0.3, "std", "Hello there, how are you? ⟨1⟩"],
+    ["en LONG std", "en", LONG, 0.3, "std", "The glacier behind me has lost almost forty percent of its volume since 1980. ⟨2⟩ | The scientists who measure it every summer say the pace is still accelerating, ⟨2⟩ | so the valley below will look completely different within a generation. ⟨2⟩"],
+    ["en LONG short", "en", LONG, 0.3, "short", "The glacier behind me has lost almost ⟨1⟩ | forty percent of its volume since 1980. ⟨1⟩ | The scientists who measure it every summer ⟨1⟩ | say the pace is still accelerating, ⟨1⟩ | so the valley below will look completely ⟨1⟩ | different within a generation. ⟨1⟩"],
+    ["en lights on,", "en", "We need to figure out how to turn the lights on, and then we can finally start the show tonight.", 0.25, "std", "We need to figure out how to turn the lights ⟨2⟩ | on, and then we can finally start the show tonight. ⟨2⟩"],
+    ["en lights up,", "en", "We need to figure out how to turn the lights up, and then we can finally start the show tonight.", 0.25, "std", "We need to figure out how to turn the lights up, ⟨2⟩ | and then we can finally start the show tonight. ⟨2⟩"],
+    ["en to her,", "en", "I gave the old letter back to her, because she asked me for it last night after dinner.", 0.25, "std", "I gave the old letter back to her, because ⟨1⟩ | she asked me for it last night after dinner. ⟨2⟩"],
+    ["en in,", "en", "Please come in, sit down and tell me everything that happened at the station this morning.", 0.25, "std", "Please come in, sit down and tell me everything ⟨2⟩ | that happened at the station this morning. ⟨1⟩"],
+    ["en Mr.", "en", "Yesterday afternoon I finally met Mr. Johnson and his wife at the station in the city centre.", 0.25, "std", "Yesterday afternoon I finally met Mr. Johnson ⟨2⟩ | and his wife at the station in the city centre. ⟨2⟩"],
+    ["en Dr. long", "en", "After a very long and tiring meeting with the board we spoke to Dr. Watson about the results of the study.", 0.25, "std", "After a very long and tiring meeting with the board ⟨2⟩ | we spoke to Dr. Watson about the results of the study. ⟨2⟩"],
+    ["en the end", "en", "It was the best thing I have ever seen in my whole life and I will never forget the moment.", 0.25, "std", "It was the best thing I have ever seen in my whole life ⟨2⟩ | and I will never forget the moment. ⟨1⟩"],
+    ["en quotes", "en", "He said, \"Go home now.\" Then we all left the place quickly and nobody said a word on the way.", 0.25, "std", "He said, \"Go home now.\" ⟨1⟩ | Then we all left the place quickly and nobody said a word on the way. ⟨2⟩"],
+    ["en quote ?", "en", "She asked, \"Are you coming with us?\" and I did not know what to answer her at that moment.", 0.25, "std", "She asked, \"Are you coming with us?\" ⟨1⟩ | and I did not know what to answer her at that moment. ⟨2⟩"],
+    ["en paren", "en", "The new model (released last year.) is faster, cheaper and much easier to use than the old one.", 0.25, "std", "The new model (released last year.) ⟨1⟩ | is faster, cheaper and much easier to use than the old one. ⟨2⟩"],
+    ["en numbers", "en", "In 2024 we sold 1,234,567 units at 3.99 dollars each, which is 12.5 percent more than in 2023.", 0.25, "std", "In 2024 we sold 1,234,567 units at 3.99 dollars ⟨2⟩ | each, which is 12.5 percent more than in 2023. ⟨2⟩"],
+    ["en 3-line probe", "en", "The quick brown fox jumps over the lazy dog while the extraordinarily uncomfortable farmer watches.", 0.3, "std", "The quick brown fox jumps over the lazy dog ⟨2⟩ | while the extraordinarily uncomfortable farmer watches. ⟨2⟩"],
+    ["en custom 3 lines", "en", LONG, 0.3, "c3", "The glacier behind me has lost almost forty percent of its volume since 1980. ⟨2⟩ | The scientists who measure it every summer say the pace is still accelerating, ⟨2⟩ | so the valley below will look completely different within a generation. ⟨2⟩"],
+    ["en custom 1 line", "en", "We need to figure out how to turn the lights on, and then we can finally start the show tonight.", 0.25, "c1", "We need to figure out ⟨1⟩ | how to turn the lights ⟨1⟩ | on, and then we can ⟨1⟩ | finally start the show tonight. ⟨1⟩"],
+    ["de compounds", "de", "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.", 0.4, "std", "Wir sprechen heute ⟨1⟩ | über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl. ⟨2⟩"],
+    ["de long", "de", "Die Bundesregierung hat gestern beschlossen, die Mehrwertsteuer auf Lebensmittel zu senken, weil die Inflation weiterhin sehr hoch ist und viele Familien darunter leiden.", 0.3, "std", "Die Bundesregierung hat gestern beschlossen, ⟨2⟩ | die Mehrwertsteuer auf Lebensmittel zu senken, ⟨2⟩ | weil die Inflation weiterhin sehr hoch ist und viele Familien darunter leiden. ⟨2⟩"],
+    ["de z.B.", "de", "Wir brauchen z.B. mehr Geld für die Schulen, die Krankenhäuser und die öffentlichen Verkehrsmittel im ganzen Land.", 0.3, "std", "Wir brauchen z.B. mehr Geld für die Schulen, ⟨2⟩ | die Krankenhäuser und die öffentlichen Verkehrsmittel im ganzen Land. ⟨2⟩"],
+    ["de 3. Mai", "de", "Am 3. Mai treffen wir uns wieder in der Kantine im Erdgeschoss des neuen Verwaltungsgebäudes der Stadt.", 0.3, "std", "Am 3. Mai treffen wir uns wieder in der Kantine ⟨2⟩ | im Erdgeschoss des neuen Verwaltungsgebäudes der Stadt. ⟨2⟩"],
+    ["de quote", "de", "Er sagte: „Wir gehen jetzt nach Hause.“ Dann sind wir alle zusammen gegangen und haben nichts mehr gesagt.", 0.3, "std", "Er sagte: „Wir gehen jetzt nach Hause.“ Dann sind wir alle zusammen gegangen ⟨2⟩ | und haben nichts mehr gesagt. ⟨1⟩"],
+    ["fr guillemets", "fr", "Il a dit : « Rentrons à la maison maintenant. » Puis nous sommes tous partis sans dire un seul mot.", 0.3, "std", "Il a dit : ⟨1⟩ | « Rentrons à la maison maintenant. » Puis nous ⟨2⟩ | sommes tous partis sans dire un seul mot. ⟨1⟩"],
+    ["en short preset quotes", "en", "He said, \"Go home now.\" Then we all left the place quickly.", 0.3, "short", "He said, \"Go home now.\" ⟨1⟩ | Then we all left the place quickly. ⟨1⟩"],
+  ];
+  const SPLIT_CJK: [label: string, lang: string, text: string, secPerWord: number, preset: keyof typeof OPTS, want: string][] = [
+    ["zh 。」", "zh", "他说：「我们走吧。」然后大家一起离开了这个地方，好吗？我们明天再见面吧。", 0.3, "std", "他说：「我们走吧。」然后大家一起离开了这个地方， ⟨2⟩ | 好吗？我们明天再见面吧。 ⟨1⟩"],
+    ["zh 、", "zh", "今天我们去了商店、市场、还有公园，然后在河边吃了午饭，最后坐公交车回家了。", 0.3, "std", "今天我们去了商店、市场、 ⟨1⟩ | 还有公园，然后在河边吃了午饭，最后坐公交车回家了。 ⟨2⟩"],
+    ["ja 「」", "ja", "彼は「もう帰ろう。」と言った。それから私たちは皆で一緒にその場所を離れました。", 0.3, "std", "彼は「もう帰ろう。」と言った。それから私 ⟨2⟩ | たちは皆で一緒にその場所を離れました。 ⟨2⟩"],
+    ["ja short", "ja", "今日はとても良い天気ですね。散歩に行きましょう。", 0.3, "short", "今日はとても良い ⟨1⟩ | 天気ですね。 ⟨1⟩ | 散歩に行きましょう。 ⟨1⟩"],
+    ["zh numbers", "zh", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。", 0.3, "std", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。 ⟨2⟩"],
+  ];
+  const WRAP: [label: string, text: string, cpl: number, lines: number, reserve: number, want: string][] = [
+    ["w lights on", "how to turn the lights on, and then we can start", 42, 2, 0, "how to turn the lights / on, and then we can start"],
+    ["w to her,", "I gave it back to her, because she asked me", 30, 2, 0, "I gave it back / to her, because she asked me"],
+    ["w quote", "He said, \"Go home now.\" Then we all left the place", 42, 2, 0, "He said, \"Go home now.\" / Then we all left the place"],
+    ["w Mr.", "Yesterday I met Mr. Johnson at the station", 30, 2, 0, "Yesterday I met / Mr. Johnson at the station"],
+    ["w de", "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.", 42, 2, 0, "Wir sprechen heute / über Verantwortungsbewusstsein / und Zusammengehörigkeitsgefühl."],
+    ["w zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方", 16, 2, 0, "他说：「我们走吧。」然 / 后大家一起离开了这个地方"],
+    ["w ja 。」", "彼は「もう帰ろう。」と言った。それから皆で", 13, 2, 0, "彼は「もう帰ろう。」 / と言った。それから皆で"],
+    ["w ja ）", "東京（とうきょう）は日本の首都です。大きい", 13, 2, 0, "東京（とうきょう）は / 日本の首都です。大きい"],
+    ["w prefix", "the lights on, and then we can finally start", 42, 2, 8, "the lights on, and / then we can finally start"],
+  ];
+  const CUT: [label: string, text: string, shares: number[], want: string][] = [
+    ["c quote.", "He said, \"Go home now.\" Then we all left the place quickly.", [1, 1], "He said, \"Go home now.\" Then | we all left the place quickly."],
+    ["c quote?", "She asked, \"Are you coming?\" Then we all left the place quickly.", [1, 1], "She asked, \"Are you coming?\" Then | we all left the place quickly."],
+    ["c curly", "He said, “Go home now.” Then we all left the place quickly.", [1, 1], "He said, “Go home now.” Then | we all left the place quickly."],
+    ["c paren", "We bought it (all of it.) Then we went home together quickly.", [1, 1], "We bought it (all of it.) Then | we went home together quickly."],
+    ["c zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方好吗", [1, 1], "他说：「我们走吧。」然后 | 大家一起离开了这个地方好吗"],
+    ["c ja 。）", "彼は帰った（もう遅い。）それから皆で一緒に離れました", [1, 1], "彼は帰った（もう遅い。）そ | れから皆で一緒に離れました"],
+    ["c ja ！』", "彼は『行こう！』と言ったそれから皆で一緒に離れました", [1, 1], "彼は『行こう！』と言ったそ | れから皆で一緒に離れました"],
+    ["c plain .", "We went home. Then we all left the place quickly and quietly.", [1, 1], "We went home. Then we all left | the place quickly and quietly."],
+    ["c plain ,", "We went home, then we all left the place quickly and quietly.", [1, 1], "We went home, then we all left | the place quickly and quietly."],
+    ["c on,", "Turn the lights on, and then we can finally start the show.", [1, 1], "Turn the lights on, | and then we can finally start the show."],
+    ["c Mr.", "Yesterday I met Mr. Johnson at the old station near home.", [1, 1], "Yesterday I met Mr. Johnson | at the old station near home."],
+    ["c 3 parts", "First we ate. \"Then we drank,\" he said. After that we slept for hours.", [1, 1, 1], "First we ate. | \"Then we drank,\" he said. | After that we slept for hours."],
+    ["c de „“", "Er sagte: „Geh jetzt nach Hause.“ Dann gingen wir alle schnell.", [1, 1], "Er sagte: „Geh jetzt nach Hause.“ | Dann gingen wir alle schnell."],
+    ["c fr »", "Il a dit : « Rentre maintenant. » Puis nous sommes tous partis vite.", [1, 1], "Il a dit : « Rentre maintenant. » | Puis nous sommes tous partis vite."],
+    ["c number", "It costs 3.99 dollars. That is cheaper than the 4.50 last year.", [1, 1], "It costs 3.99 dollars. | That is cheaper than the 4.50 last year."],
+  ];
+  it.each(SPLIT)("split %s", (_, lang, text, spw, preset, want) => expect(split(lang, text, spw, preset, false)).toBe(want));
+  it.each(SPLIT_CJK)("split %s", (_, lang, text, spw, preset, want) => expect(split(lang, text, spw, preset, true)).toBe(want));
+  it.each(WRAP)("wrap %s", (_, text, cpl, lines, reserve, want) => expect(wrapLines(text, cpl, lines, reserve).join(" / ")).toBe(want));
+  it.each(CUT)("cut %s", (_, text, shares, want) => expect(cutByShare(text, shares).join(" | ")).toBe(want));
 });

@@ -565,7 +565,11 @@ const sliceOf = (text: string, ts: Tok[]) => text.slice(ts[0].from, ts[ts.length
 type Budget = CueLimits & { reserve: number };
 
 function fits(text: string, ts: Tok[], L: Budget): boolean {
-  return sliceOf(text, ts).length + L.reserve <= L.cpl * L.lines && ts[ts.length - 1].e - ts[0].s <= L.maxDur;
+  const s = sliceOf(text, ts);
+  if (s.length + L.reserve > L.cpl * L.lines || ts[ts.length - 1].e - ts[0].s > L.maxDur) return false;
+  // Lines break at words, so a slice under lines × cpl characters can still need another
+  // line: ask the wrapper itself (only past one line — the cheap test above runs first).
+  return s.length + L.reserve <= L.cpl || wrapLines(s, L.cpl, L.lines, L.reserve).length <= L.lines;
 }
 
 /** Recursive best-gap split until every piece fits. */
