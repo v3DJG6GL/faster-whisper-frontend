@@ -304,10 +304,20 @@ fn vk_to_evdev_mod(vk: u16) -> Option<u16> {
     })
 }
 
+/// Whether the OS reading a held Shift (0xA0/0xA1) as UP may be the NumLock shift override
+/// rather than a release: with NumLock on, a numpad digit/decimal pressed under Shift is wrapped
+/// in a fake Shift-up/Shift-down pair, so the async state reads Shift up for as long as that
+/// numpad key is held.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn shift_masked_by_numpad(held: &std::collections::HashSet<u16>, numlock: bool) -> bool {
+    numlock && held.iter().any(|&id| matches!(id, 0x60..=0x69 | 0x6E))
+}
+
 #[cfg(windows)]
 mod imp {
     use super::{
-        code_to_vk, physical_key_id, vk_to_evdev_mod, Running, WinHookState, NUMPAD_ENTER,
+        code_to_vk, physical_key_id, shift_masked_by_numpad, vk_to_evdev_mod, Running,
+        WinHookState, NUMPAD_ENTER,
     };
     use crate::config::{ActivationType, Profile};
     use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
@@ -1310,10 +1320,13 @@ mod imp {
     ) {
         last_down.retain(|id, _| held.contains(id));
         injected_held.retain(|id| held.contains(id));
+        // A held Shift that only reads up because a numpad key under NumLock masks it is not
+        // released (see `shift_masked_by_numpad`).
+        let shift_masked = shift_masked_by_numpad(held, numlock_on());
         let up_now: HashSet<u16> = held
             .iter()
             .copied()
-            .filter(|&id| !physically_down(id))
+            .filter(|&id| !(shift_masked && matches!(id, 0xA0 | 0xA1)) && !physically_down(id))
             .collect();
         // Retain-then-swap: only keys up on BOTH polls are acted on.
         let mut confirmed: Vec<u16> = up_once.intersection(&up_now).copied().collect();
@@ -1475,6 +1488,20 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_numpad_key_under_numlock_masks_a_held_shift() {
+        use super::shift_masked_by_numpad;
+        let set = |ids: &[u16]| {
+            ids.iter()
+                .copied()
+                .collect::<std::collections::HashSet<u16>>()
+        };
+        assert!(shift_masked_by_numpad(&set(&[0xA0, 0x64]), true));
+        assert!(shift_masked_by_numpad(&set(&[0xA1, 0x6E]), true));
+        assert!(!shift_masked_by_numpad(&set(&[0xA0, 0x64]), false));
+        assert!(!shift_masked_by_numpad(&set(&[0xA0, 0x41]), true));
+    }
+
     // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` +
     // MODIFIER_CODES) MUST map here, or its chord is silently dropped on Windows
     // while still binding fine in the capture UI. Pins the same bindability matrix
