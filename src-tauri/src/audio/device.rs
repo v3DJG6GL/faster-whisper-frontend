@@ -183,13 +183,19 @@ struct AlsaCard {
 /// The offered ALSA capture paths, grouped by card, in ALSA's card order.
 #[cfg(target_os = "linux")]
 fn alsa_cards() -> Vec<AlsaCard> {
+    alsa_cards_of(&host::native_inputs())
+}
+
+/// [`alsa_cards`] over an ALSA input list the caller already enumerated.
+#[cfg(target_os = "linux")]
+fn alsa_cards_of(inputs: &[Device]) -> Vec<AlsaCard> {
     let mut found: Vec<(String, String, PathKind, String)> = Vec::new();
-    for d in host::native_inputs() {
+    for d in inputs {
         let Ok(id) = d.id() else { continue };
         let Some((kind, card)) = alsa_paths::classify(id.id()) else {
             continue;
         };
-        let label = host::device_label(&d)
+        let label = host::device_label(d)
             .map(|l| alsa_paths::card_label(&l).to_string())
             .unwrap_or_else(|| card.clone());
         found.push((card, label, kind, id.to_string()));
@@ -441,7 +447,11 @@ pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
         // recording from the default input: no "not connected" notice, held server or not (the
         // hint list is read from ALSA's config, never from the server). The migration turns the
         // "default" answer into the picker's System default row (micMigration.ts).
-        if legacy_server_route(name, &server_route_labels()) {
+        // ALSA is enumerated at most once here, and only when a known server name misses.
+        let mut inputs: Option<Vec<Device>> = None;
+        if legacy_server_route(name, || {
+            server_route_labels(inputs.get_or_insert_with(host::native_inputs))
+        }) {
             return Some(("default".into(), "System default".into()));
         }
         if !legacy_alsa_fallback(persist, served, super::pulse::held()) {
@@ -449,7 +459,7 @@ pub fn resolve_legacy(name: &str, persist: bool) -> Option<(String, String)> {
         }
         // The card's shared ALSA path.
         let card = alsa_paths::card_label(name);
-        alsa_cards()
+        alsa_cards_of(inputs.get_or_insert_with(host::native_inputs))
             .into_iter()
             .find(|c| c.label == card)
             .and_then(|c| Some((c.paths.first()?.id.clone(), c.label)))
@@ -484,10 +494,10 @@ fn is_server_route(pcm_id: &str) -> bool {
     matches!(pcm_id, "default" | "pipewire" | "pulse")
 }
 
-/// The labels of the sound-server routes ALSA lists right now (see [`is_server_route`]).
+/// The labels of the sound-server routes in an ALSA input list (see [`is_server_route`]).
 #[cfg(target_os = "linux")]
-fn server_route_labels() -> Vec<String> {
-    host::native_inputs()
+fn server_route_labels(inputs: &[Device]) -> Vec<String> {
+    inputs
         .iter()
         .filter(|d| d.id().is_ok_and(|id| is_server_route(id.id())))
         .filter_map(host::device_label)
@@ -497,9 +507,10 @@ fn server_route_labels() -> Vec<String> {
 /// Does a legacy name pin one of the sound-server routes? Their plugin descriptions are fixed
 /// ("PipeWire Sound Server", "PulseAudio Sound Server"), and the default PCM names whichever
 /// server it pointed at when the pin was saved ("Default ALSA Output (currently PipeWire Media
-/// Server)"), so that suffix is ignored on both sides; `routes` covers a distro's own wording.
+/// Server)"), so that suffix is ignored on both sides; `routes` covers a distro's own wording and
+/// is asked only when the fixed names miss (it enumerates ALSA).
 #[cfg(target_os = "linux")]
-fn legacy_server_route(name: &str, routes: &[String]) -> bool {
+fn legacy_server_route(name: &str, routes: impl FnOnce() -> Vec<String>) -> bool {
     fn base(label: &str) -> &str {
         label
             .split_once(" (currently ")
@@ -512,7 +523,7 @@ fn legacy_server_route(name: &str, routes: &[String]) -> bool {
         "Default ALSA Output",
     ];
     let name = base(name);
-    !name.is_empty() && (KNOWN.contains(&name) || routes.iter().any(|r| base(r) == name))
+    !name.is_empty() && (KNOWN.contains(&name) || routes().iter().any(|r| base(r) == name))
 }
 
 #[cfg(target_os = "linux")]
@@ -640,25 +651,28 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn legacy_sound_server_names_route_to_the_default_input() {
-        let none: [String; 0] = [];
-        assert!(legacy_server_route("PipeWire Sound Server", &none));
-        assert!(legacy_server_route("PulseAudio Sound Server", &none));
+        // A fixed name never asks for the route list (that enumerates ALSA).
+        let unasked = || -> Vec<String> { panic!("route list read for a known name") };
+        assert!(legacy_server_route("PipeWire Sound Server", unasked));
+        assert!(legacy_server_route("PulseAudio Sound Server", unasked));
         // The default PCM named the server it pointed at then; today it may point elsewhere.
         assert!(legacy_server_route(
             "Default ALSA Output (currently PulseAudio Sound Server)",
-            &["Default ALSA Output (currently PipeWire Media Server)".to_string()]
+            || vec!["Default ALSA Output (currently PipeWire Media Server)".to_string()]
         ));
         assert!(legacy_server_route(
             "Default ALSA Output (currently PipeWire Media Server)",
-            &none
+            unasked
         ));
         // A distro's own wording, listed by ALSA today.
         let routes = ["Custom PipeWire Route".to_string()];
-        assert!(legacy_server_route("Custom PipeWire Route", &routes));
+        assert!(legacy_server_route("Custom PipeWire Route", || routes.to_vec()));
         // Card names stay with the card lookup.
-        assert!(!legacy_server_route("RØDE PodMic USB, USB Audio", &routes));
-        assert!(!legacy_server_route("PipeWire", &routes));
-        assert!(!legacy_server_route("", &[String::new()]));
+        assert!(!legacy_server_route("RØDE PodMic USB, USB Audio", || {
+            routes.to_vec()
+        }));
+        assert!(!legacy_server_route("PipeWire", || routes.to_vec()));
+        assert!(!legacy_server_route("", || vec![String::new()]));
     }
 
     #[cfg(target_os = "linux")]
