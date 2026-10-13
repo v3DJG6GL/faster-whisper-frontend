@@ -5,6 +5,7 @@ import {
   isLegacyPin,
   isSelectable,
   labelForPick,
+  micFootKey,
   pathText,
   pinHost,
   techId,
@@ -180,5 +181,19 @@ describe("labelForPick", () => {
     expect(labelForPick(inv(true), "alsa:plughw:CARD=USB,DEV=0")).toBe("RØDE PodMic USB Mono · plughw:CARD=USB,DEV=0");
     expect(labelForPick(inv(true), "alsa:sysdefault:CARD=PCH")).toBe("HDA Intel PCH · sysdefault:CARD=PCH");
     expect(labelForPick(inv(), "nope")).toBeNull();
+  });
+});
+
+// Run #75 F12-1: forward Tab from the "Show all audio paths" switch refocused the trigger and
+// cancelled the default, sending focus BACKWARD — the picker could never be Tabbed past that way.
+describe("micFootKey — keys on the menu's paths switch", () => {
+  it("forward Tab leaves the menu onward (no trigger refocus), Shift+Tab returns to the list", () => {
+    expect(micFootKey("Tab", false)).toBe("leave");
+    expect(micFootKey("Tab", true)).toBe("list");
+  });
+  it("Escape closes back to the trigger; other keys are the switch's own", () => {
+    expect(micFootKey("Escape", false)).toBe("close");
+    expect(micFootKey(" ", false)).toBeNull();
+    expect(micFootKey("Enter", false)).toBeNull();
   });
 });

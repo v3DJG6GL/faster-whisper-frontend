@@ -164,3 +164,15 @@ export function labelForPick(inv: MicInventory | null, id: string): string | nul
   }
   return null;
 }
+
+/** A key on the "Show all audio paths" switch at the foot of the open mic menu:
+ *  - `list`: Shift+Tab goes back up into the listbox (the menu stays open).
+ *  - `leave`: forward Tab closes the menu and lets the browser move focus on to the next control,
+ *    as Tab from a list with no switch does — refocusing the trigger and cancelling the default
+ *    sent forward Tab BACKWARD, so a keyboard user could never Tab past the picker.
+ *  - `close`: Escape closes back to the trigger.
+ *  - null: not handled here. */
+export function micFootKey(key: string, shift: boolean): "list" | "leave" | "close" | null {
+  if (key === "Tab") return shift ? "list" : "leave";
+  return key === "Escape" ? "close" : null;
+}

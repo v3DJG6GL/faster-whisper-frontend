@@ -8,14 +8,14 @@
 // and ArrowUp/Down / Home / End move the active row (aria-activedescendant), Enter / Space pick
 // it, Escape closes back to the trigger. Tab moves on to the paths switch at the foot of the
 // menu when it is there (Shift+Tab back to the list); Tab from the switch, or from a list with
-// no switch, closes.
+// no switch, closes and moves on to the next control.
 
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Bluetooth, Check, Mic, SlidersHorizontal } from "lucide-react";
 import { Badge, FieldTrigger, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { navKey } from "@/lib/listNav";
-import { buildMicView, isSelectable, type MicRow, type SelectableRow } from "@/lib/micOptions";
+import { buildMicView, isSelectable, micFootKey, type MicRow, type SelectableRow } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { MicInventory } from "@/lib/types";
@@ -111,8 +111,14 @@ export function MicPicker({
     e.preventDefault();
   };
   const onFootKey = (e: KeyboardEvent) => {
-    if (e.key === "Tab" && e.shiftKey) listRef.current?.focus();
-    else if (e.key === "Tab" || e.key === "Escape") close(true);
+    const act = micFootKey(e.key, e.shiftKey);
+    if (act === "leave") {
+      // No refocus, no preventDefault: the browser's own Tab moves on, as from a switchless list.
+      setOpen(false);
+      return;
+    }
+    if (act === "list") listRef.current?.focus();
+    else if (act === "close") close(true);
     else return;
     e.preventDefault();
   };
