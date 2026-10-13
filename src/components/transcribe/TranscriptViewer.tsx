@@ -1669,8 +1669,7 @@ export function TranscriptViewer({
       const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
       // A correction is one logical line, as every export writes it (clean()): a
       // pasted line break would otherwise show in Read but turn into a space in
-      // the files. Flattened by the seam rule clean() uses (a CJK seam joins without
-      // a space), and compared flattened, so a bare blur on an imported multi-line
+      // the files. Flattened as clean() flattens it (joinLineBreaks), and compared flattened, so a bare blur on an imported multi-line
       // line is still "no edit" (and returns `orig` itself, keeping the caret).
       const flat = joinLineBreaks;
       const edit = t && flat(t) !== flat(orig) ? flat(t) : null;

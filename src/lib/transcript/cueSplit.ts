@@ -115,22 +115,14 @@ export function edgeChar(s: string, end: boolean): string {
   const lo = t.charCodeAt(t.length - 1);
   return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
 }
-/** CJK sentence punctuation (fullwidth 。，、！？；： and the halfwidth ｡､): text using it
- *  marks its phrase ends, so a line break inside it is a wrap. Unpunctuated CJK subtitles
- *  (the convention drops 。， at line ends) separate phrases with the line break itself. */
-const CJK_SENTENCE_PUNCT = /[。，、！？；：｡､]/u;
-/** Text with every line break (and the blanks around it) folded the way the seam rule says:
- *  nothing between two unspaced characters (a CJK cue wrapped over two lines) when the
- *  text — the whole cue, paragraph or segment the caller passes — uses CJK sentence
- *  punctuation, one space otherwise (an unpunctuated CJK break is a phrase separator) —
- *  the subtitle import, the edit commit and every export flatten alike. A match starts
- *  only at a blank run's first character, so a long run is scanned once. */
+/** Text with every line break (and the blanks around it) folded into one space — the
+ *  subtitle import, the edit commit and every export flatten alike. Between two CJK
+ *  characters too: such a break is a wrap in one file and the phrase separator in another
+ *  (unpunctuated subtitles drop 。， at line ends), and no rule tells them apart reliably, so
+ *  a space keeps both readable. A match starts only at a blank run's first character, so a
+ *  long run is scanned once. */
 export function joinLineBreaks(s: string): string {
-  if (!s.includes("\n")) return s;
-  const wraps = CJK_SENTENCE_PUNCT.test(s);
-  return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
-    wraps && unspacedChar(edgeChar(str.slice(Math.max(0, off - 8), off), true))
-      && unspacedChar(edgeChar(str.slice(off + m.length, off + m.length + 2), false)) ? "" : " ");
+  return s.includes("\n") ? s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, " ") : s;
 }
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 

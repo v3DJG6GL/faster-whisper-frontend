@@ -164,8 +164,8 @@ export function exportOptionsFor(a: {
 /** Segment text as every export writes it (and the Subtitles view shows it). */
 export function clean(s: string): string {
   // Exports are single-logical-line records; a newline inside segment text
-  // would corrupt SRT/LRC framing, so collapse it — by the seam rule, so two lines of
-  // punctuated CJK text join without a space, as the edit commit joins them.
+  // would corrupt SRT/LRC framing, so collapse it into one space (joinLineBreaks), as the
+  // edit commit and the subtitle import fold it.
   return joinLineBreaks(stripControlChars(s)).trim();
 }
 

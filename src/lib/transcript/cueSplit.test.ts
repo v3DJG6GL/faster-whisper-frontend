@@ -1046,11 +1046,10 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
 });
 
 describe("joinLineBreaks", () => {
-  it("joins two lines of unspaced text with nothing when the text uses CJK sentence punctuation, anything else with one space", () => {
-    expect(joinLineBreaks("你好\n世界。")).toBe("你好世界。");
-    expect(joinLineBreaks("東京は\n\n大阪より、")).toBe("東京は大阪より、");
-    expect(joinLineBreaks("今日は \n いい天気｡")).toBe("今日はいい天気｡");
-    // Unpunctuated CJK subtitles separate phrases with the line break: it stays a space.
+  it("joins two lines with one space, unspaced (CJK) text too", () => {
+    expect(joinLineBreaks("你好\n世界。")).toBe("你好 世界。");
+    expect(joinLineBreaks("東京は\n\n大阪より、")).toBe("東京は 大阪より、");
+    expect(joinLineBreaks("今日は \n いい天気｡")).toBe("今日は いい天気｡");
     expect(joinLineBreaks("我们走吧\n他们在等我们")).toBe("我们走吧 他们在等我们");
     expect(joinLineBreaks("東京は\n\n大阪より")).toBe("東京は 大阪より");
     expect(joinLineBreaks("Hello\nworld")).toBe("Hello world");

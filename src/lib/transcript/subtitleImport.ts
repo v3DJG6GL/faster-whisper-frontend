@@ -84,8 +84,7 @@ function decodeEntities(s: string): string {
 
 /** Cue text without markup: tags (`<font>`, `<c.x>`, `<i>`, inline word tags) and ASS
  *  override blocks go, then character references decode (after, so `&lt;i&gt;` stays text),
- *  line breaks join by the seam rule (none inside a CJK cue the export wrapped over two
- *  lines) and whitespace collapses. The decode runs after parseImportedText's control-char
+ *  line breaks join with one space (joinLineBreaks) and whitespace collapses. The decode runs after parseImportedText's control-char
  *  pass, so `&#x202E;` / `&#27;` would mint the very characters that pass dropped — strip
  *  again. */
 function stripMarkup(s: string): string {
