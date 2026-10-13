@@ -525,6 +525,26 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   return flipWith(input, st, model(input, st), key);
 }
 
+/** A translation chip's part click. The chip's site part stands for the language, not one
+ *  track: two tracks fold into one language (en, en-GB) and both serve it under Prefer, so
+ *  leaving it out switches off every one the run uses — flipping only the shown one would
+ *  bring up the other and the click looks dead. The panel's own badges stay one track each. */
+export function flipChipPart(input: SiteSubsInput, st: SiteSubsState, key: string): SiteChange {
+  const m = model(input, st);
+  const code = m.codeOf[key];
+  const on = key.startsWith("ex:") && code
+    ? (m.view.rows.find((r) => r.code === code)?.badges ?? [])
+        .filter((b) => b.key?.startsWith("ex:") && b.state === "active")
+        .map((b) => b.key!)
+    : [];
+  if (!on.includes(key)) return flipWith(input, st, m, key);
+  // One at a time, each on the state the last wrote: the last one off is where machine
+  // translation takes over (or the language drops), exactly as for a single track.
+  let ch: SiteChange = { state: st, targets: [...input.targets] };
+  for (const k of on) ch = flip({ ...input, targets: ch.targets }, ch.state, k);
+  return ch;
+}
+
 /** flip on an already-built `model(input, st)`. Only READS `m` (snap, codeOf, capped, mtCapped,
  *  tmap, targets, view.run) — derive's limit pass, which only retitles badges and chip parts,
  *  hands it its own model. */

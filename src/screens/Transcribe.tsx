@@ -9,7 +9,7 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/transcribe/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/transcribe/SiteSubtitlesPanel";
-import { derive, flip, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
+import { derive, flipChipPart, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -659,7 +659,7 @@ export default function Transcribe() {
         targets: siteView.chips.map((c) => c.code),
         parts: Object.fromEntries(siteView.chips.map((c) => [c.code, c.parts])),
         onTargetsChange: (next: string[]) => applySite(setTargets(siteInput, siteState, next)),
-        onPart: (key: string) => applySite(flip(siteInput, siteState, key)),
+        onPart: (key: string) => applySite(flipChipPart(siteInput, siteState, key)),
         // Only machine translations count against the server's cap (the panel's own gate): a chip
         // the site's subtitles alone serve is free, and so is adding a language a site track would
         // serve (freeAdds). Counted from the parts, so it holds while the panel has no run too.

@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
@@ -220,6 +220,25 @@ describe("rows and chips (v30, v34, v37)", () => {
     const en = v.chips.find((c) => c.code === "en")!;
     expect(en.parts.map((p) => [p.key, p.on])).toEqual([["mt:en", false], ["ex:t1", true]]);
     expect(en.parts[1].title).toBe("Leave out the YouTube English subtitles");
+  });
+  it("leaving out a chip's site part leaves out every site track of that language in one click", () => {
+    const inp = input({ tracks: [tr("t0", "en"), tr("t1", "en-GB")], targets: ["en"], site: "YouTube" });
+    const st = initialSiteState(inp.targets);
+    const part = derive(inp, st).chips.find((c) => c.code === "en")!.parts[1];
+    expect([part.key, part.on]).toEqual(["ex:t0", true]);
+    const [i1, st1] = apply(inp, flipChipPart(inp, st, part.key));
+    const v = derive(i1, st1);
+    expect(v.rows.find((r) => r.code === "en")!.badges.filter((b) => b.key?.startsWith("ex:") && b.state === "active")).toEqual([]);
+    expect(v.run!.fetch).toEqual([]);
+    // English stays served: machine translation takes over, as for a single track.
+    expect(v.chips.find((c) => c.code === "en")!.parts.map((p) => p.on)).toEqual([true, false]);
+    // Switched back on from the chip, one track serves it again.
+    const back = v.chips.find((c) => c.code === "en")!.parts[1];
+    const [i2, st2] = apply(i1, flipChipPart(i1, st1, back.key));
+    expect(derive(i2, st2).run!.fetch).toEqual([back.key.slice(3)]);
+    // The panel's per-track badge still flips that one track alone.
+    const [i3, st3] = apply(inp, flip(inp, st, "ex:t0"));
+    expect(derive(i3, st3).run!.fetch).toEqual(["t1"]);
   });
 });
 
