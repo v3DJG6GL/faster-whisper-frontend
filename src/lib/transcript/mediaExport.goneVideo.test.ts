@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGoneSourceError, withoutVideoPath } from "./mediaExport";
+import { isGoneSourceError, stripWipedVideoPath, videoPathsBeforeWipe, withoutVideoPath } from "./mediaExport";
 
 describe("withoutVideoPath", () => {
   it("drops the deleted local video copy and keeps every other field", () => {
@@ -32,5 +32,38 @@ describe("isGoneSourceError", () => {
     expect(isGoneSourceError("reading the media file: Permission denied (os error 13)")).toBe(false);
     expect(isGoneSourceError("reading the video file: No such file or directory (os error 21)")).toBe(false);
     expect(isGoneSourceError("Could not connect to the server")).toBe(false);
+  });
+});
+
+describe("stripWipedVideoPath after the Delete-videos wipe", () => {
+  // The mirror as the wipe begins: r1 and r2 have a copy, r3 has none yet (its link download
+  // is still writing the `.tmp` the wipe skips).
+  const before = videoPathsBeforeWipe([
+    { id: "r1", videoPath: "/base/video/r1.mkv" },
+    { id: "r2", videoPath: "/base/video/r2.mp4" },
+    { id: "r3" },
+  ]);
+
+  it("snapshots only the records that had a copy", () => {
+    expect([...before]).toEqual([
+      ["r1", "/base/video/r1.mkv"],
+      ["r2", "/base/video/r2.mp4"],
+    ]);
+  });
+
+  it("drops a path the wipe deleted", () => {
+    const out = stripWipedVideoPath({ id: "r1", videoPath: "/base/video/r1.mkv" }, before.get("r1"));
+    expect("videoPath" in out).toBe(false);
+  });
+
+  it("keeps a path re-stamped during the wipe (a download renamed into place)", () => {
+    const rec = { id: "r2", videoPath: "/base/video/r2.webm" };
+    expect(stripWipedVideoPath(rec, before.get("r2"))).toBe(rec);
+  });
+
+  it("leaves a record that had no copy when the wipe began untouched", () => {
+    const rec = { id: "r3", videoPath: "/base/video/r3.mp4" };
+    expect(before.get("r3")).toBeUndefined();
+    expect(stripWipedVideoPath(rec, before.get("r3"))).toBe(rec);
   });
 });

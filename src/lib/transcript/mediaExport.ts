@@ -468,6 +468,22 @@ export function withoutVideoPath<T extends { videoPath?: string }>(r: T): T {
   return n;
 }
 
+/** Every record's local video copy as the "Delete videos" wipe begins: id → `videoPath`.
+ *  Taken BEFORE the wipe, so a copy that lands during it (a download's `.tmp`, which the wipe
+ *  skips, renamed into place) is not in it. */
+export function videoPathsBeforeWipe(records: readonly { id: string; videoPath?: string }[]): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const r of records) if (r.videoPath !== undefined) m.set(r.id, r.videoPath);
+  return m;
+}
+
+/** After the wipe: drop the record's `videoPath` only while it is still the path it had when
+ *  the wipe began (`wiped`, from videoPathsBeforeWipe). A path stamped during the wipe names a
+ *  file that survived it; no copy before (`wiped` undefined) = nothing was deleted for it. */
+export function stripWipedVideoPath<T extends { videoPath?: string }>(r: T, wiped: string | undefined): T {
+  return wiped !== undefined && r.videoPath === wiped ? withoutVideoPath(r) : r;
+}
+
 /** A Save's local source file is gone from disk: copy_media_to's or package_media's read of it
  *  failed with "not found" (os error 2 = file, 3 = path; the same numbers on Linux, macOS and
  *  Windows). Only the source read carries that prefix, so a missing export folder never counts. */

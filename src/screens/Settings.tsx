@@ -16,7 +16,7 @@ import {
   useTranscriptHistory,
   type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
-import { withoutVideoPath } from "@/lib/transcript/mediaExport";
+import { stripWipedVideoPath, videoPathsBeforeWipe } from "@/lib/transcript/mediaExport";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
@@ -307,18 +307,23 @@ export default function Settings() {
             ? [removeTranscriptMedia("url", basePref), ["downloaded file", "downloaded files"]]
             : kind === "video"
               ? [
-                  removeTranscriptMedia("video", basePref).then(async (n) => {
-                    // The files are gone: forget every record's path to them, or the export
-                    // panel keeps picking the deleted copy over the promised fetch from the
-                    // link. The mirror is loaded first (it never rejects), so records no screen
-                    // has listed yet are patched too; the writes land before `done`'s forced
-                    // reload lists the disk, which would otherwise bring the old paths back.
-                    await loadHistory();
-                    for (const r of useTranscriptHistory.getState().records) {
-                      if (r.videoPath !== undefined) patchRecord(r.id, withoutVideoPath);
-                    }
-                    await flushRecordWrites();
-                    return n;
+                  // The files are gone: forget each record's path to them, or the export panel
+                  // keeps picking the deleted copy over the promised fetch from the link. The
+                  // mirror is loaded first (it never rejects), so records no screen has listed
+                  // yet are patched too, and the paths are snapshotted BEFORE the wipe: a link
+                  // download finishing during it (its `.tmp` is skipped, then renamed into
+                  // place) stamps a path to a file still on disk, which must survive. The
+                  // writes land before `done`'s forced reload lists the disk, which would
+                  // otherwise bring the old paths back. A copy the wipe could not delete (a
+                  // Windows lock) loses its path too: the export then fetches from the link,
+                  // which is what the confirm promised.
+                  loadHistory().then(() => {
+                    const before = videoPathsBeforeWipe(useTranscriptHistory.getState().records);
+                    return removeTranscriptMedia("video", basePref).then(async (n) => {
+                      for (const [id, vp] of before) patchRecord(id, (r) => stripWipedVideoPath(r, vp));
+                      await flushRecordWrites();
+                      return n;
+                    });
                   }),
                   ["video file", "video files"],
                 ]
