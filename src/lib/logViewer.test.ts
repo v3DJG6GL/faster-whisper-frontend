@@ -62,6 +62,7 @@ let clearView: LogViewer["clearView"];
 let visibleLines: LogViewer["visibleLines"];
 let useLogs: LogViewer["useLogs"];
 let LOG_BUFFER_CAP: LogViewer["LOG_BUFFER_CAP"];
+let sessionLineCount: LogViewer["sessionLineCount"];
 beforeEach(async () => {
   vi.resetModules();
   emit = null;
@@ -69,7 +70,7 @@ beforeEach(async () => {
   failNextTail = false;
   vis.hidden = false;
   vis.listeners.clear();
-  ({ attachLogStream, clearView, visibleLines, useLogs, LOG_BUFFER_CAP } = await import("./logViewer"));
+  ({ attachLogStream, clearView, visibleLines, useLogs, LOG_BUFFER_CAP, sessionLineCount } = await import("./logViewer"));
 });
 
 describe("visibleLines", () => {
@@ -162,6 +163,22 @@ describe("attachLogStream while the window is hidden", () => {
     expect(shown).toHaveLength(LOG_BUFFER_CAP);
     expect(shown[0].seq).toBe(base + total - LOG_BUFFER_CAP);
     expect(shown[shown.length - 1].seq).toBe(base + total - 1);
+    detach();
+  });
+});
+
+describe("sessionLineCount", () => {
+  it("counts the whole session, not the lines the view still keeps", async () => {
+    const detach = await attachLogStream();
+    // A 25k-line session read "10,000 lines this session", the buffer's cap.
+    const many = Array.from({ length: LOG_BUFFER_CAP + 50 }, (_, i) => line(i + 2));
+    emit?.({ lines: many });
+    expect(visibleLines()).toHaveLength(LOG_BUFFER_CAP);
+    expect(sessionLineCount(0)).toBe(LOG_BUFFER_CAP + 52);
+    // The ring's own count wins once known (lines it dropped while the screen was closed).
+    expect(sessionLineCount(25_000)).toBe(25_000);
+    clearView();
+    expect(sessionLineCount(useLogs.getState().status.seq)).toBe(LOG_BUFFER_CAP + 52);
     detach();
   });
 });

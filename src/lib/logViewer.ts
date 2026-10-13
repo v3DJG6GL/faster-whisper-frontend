@@ -86,6 +86,13 @@ export function clearedCount(): number {
   return buf.length - visibleLines().length;
 }
 
+/** Every line logged this session: the ring's dense seq count (`status.seq`, Rust's next_seq), or
+ *  the newest line this view has seen when a status lags it. Not the buffer: that keeps only the
+ *  last LOG_BUFFER_CAP lines (and misses what the ring dropped while the screen was closed). */
+export function sessionLineCount(statusSeq: number): number {
+  return Math.max(statusSeq, nextSeq);
+}
+
 export function clearView() {
   clearFloorSeq = nextSeq;
   useLogs.setState((s) => ({ version: s.version + 1 }));

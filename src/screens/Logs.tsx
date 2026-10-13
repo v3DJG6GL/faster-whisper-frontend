@@ -20,6 +20,7 @@ import {
   attachLogStream,
   clearView,
   markLogsViewed,
+  sessionLineCount,
   takePrefilter,
   useLogs,
   visibleLines, clearedCount } from "@/lib/logViewer";
@@ -163,6 +164,7 @@ function LogRow({ r, wrap, open, onToggle }: {
 
 export default function Logs() {
   const version = useLogs((s) => s.version);
+  const sessionSeq = useLogs((s) => s.status.seq);
   const [threshold, setThreshold] = useState<LevelThreshold>("all");
   // The doorway's "View logs" pre-filter, consumed in an effect keyed on the store value:
   // reading it in the useState initializer only worked on MOUNT, so a click while already
@@ -415,7 +417,7 @@ export default function Logs() {
           <StatusDot tone="live" pulse title="Streaming" /> Streaming
         </span>
         <span className="ml-auto font-mono text-[12px] tabular-nums text-faint">
-          {plural(all.length + cleared, "line")} this session
+          {plural(sessionLineCount(sessionSeq), "line")} this session
         </span>
       </div>
 
