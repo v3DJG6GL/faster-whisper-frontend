@@ -661,6 +661,22 @@ describe("work that must wait for the queue or the cancel", () => {
     }
   });
 
+  it("a per-utterance clip finds its record by ordinal, also after later finals or a break", () => {
+    // Rust writes each clip on its own thread, so it can land after the next utterance's final
+    // (lastUtterance replaced) or a break (lastUtterance nulled): pairing it with lastUtterance
+    // dropped it, leaving the record without its audio and the .wav orphaned.
+    const recording = mask(bodyAfter(streamingSrc, '"stream://recording"'));
+    expect(recording).toContain("routeUtteranceClip(utteranceByOrdinal, ordinal,");
+    expect(recording).not.toContain("lastUtterance");
+    // Past the signature: its return type is the first brace topLevelFunctions sees.
+    const at = streamingSrc.indexOf("function recordUtteranceFinal(");
+    expect(at, "recordUtteranceFinal moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(mask(bodyAfter(streamingSrc.slice(at), "delta: string }"))).toContain("utteranceByOrdinal.set(ordinal, lastUtterance)");
+    // Only the session's end forgets an utterance whose clip is still on its way.
+    expect(mask(bodyAfter(streamingSrc, '"stream://boundary"'))).not.toContain("utteranceByOrdinal");
+    expect(mask(topLevelFunctions(streamingSrc).resetUtteranceHistory)).toContain("utteranceByOrdinal.clear()");
+  });
+
   it("a final dropped at the flood cap owes its record from a link that holds no phrase text", () => {
     // An inline arrow in the final handler shares the dropped task's closure scope (target,
     // phraseClip), keeping up to two transcript-sized strings per link alive until the chain drains.

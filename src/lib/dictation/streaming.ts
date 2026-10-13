@@ -24,7 +24,7 @@
 import { useApp } from "../store";
 import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
-import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
+import { appendChunk, appendDelta, finalDelta, mergeTracks, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
 import { authoredChipTag } from "../profileTag";
@@ -503,14 +503,12 @@ let utteranceDocEnd = 0;
 const utteranceOpenedAt = new Map<number, number>();
 let lastUtteranceFinalAt = 0;
 /** The last finished utterance. A release final appends its held-back words to this record
- *  (or creates it, when the utterance's own final carried no text); its clip lands here when it
- *  arrives before the record exists. */
-let lastUtterance: {
-  ordinal: number;
-  id: string | null;
-  openedAt: number;
-  clip?: { path: string; durationMs: number | null };
-} | null = null;
+ *  (or creates it, when the utterance's own final carried no text). */
+let lastUtterance: UtteranceEntry | null = null;
+/** Every finished utterance whose clip has not reached its record yet, by ordinal (the same
+ *  objects `lastUtterance` points at). A clip lands whenever Rust's writer thread finishes it —
+ *  after later finals or a break — so it is paired by ordinal; cleared only with the session. */
+const utteranceByOrdinal = new Map<number, UtteranceEntry>();
 
 function resetUtteranceHistory(): void {
   sessionPerUtterance = false;
@@ -519,6 +517,7 @@ function resetUtteranceHistory(): void {
   utteranceOpenedAt.clear();
   lastUtteranceFinalAt = 0;
   lastUtterance = null;
+  utteranceByOrdinal.clear();
 }
 
 // ── T2T dictation translation (per-profile "Translate output") ──────────────
@@ -934,6 +933,7 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; delt
     utteranceOpenedAt.delete(ordinal);
     lastUtteranceFinalAt = now;
     lastUtterance = { ordinal, id: null, openedAt };
+    utteranceByOrdinal.set(ordinal, lastUtterance);
   }
   const utt = lastUtterance;
   const meta = historyMeta();
@@ -962,12 +962,15 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; delt
     console.error("dictation history capture failed:", e);
     return { id: null, delta };
   }
-  if (utt.clip) attachUtteranceClip(utt.id, utt.clip);
+  if (utt.clip) {
+    attachUtteranceClip(utt.id, utt.clip);
+    if (utteranceByOrdinal.get(utt.ordinal) === utt) utteranceByOrdinal.delete(utt.ordinal);
+  }
   return { id: utt.id, delta };
 }
 
 /** Link an utterance's clip to its record; the clip's length is the record's duration. */
-function attachUtteranceClip(id: string, clip: { path: string; durationMs: number | null }): void {
+function attachUtteranceClip(id: string, clip: UtteranceClip): void {
   const ms = clip.durationMs;
   patchRecord(id, (r) => ({
     ...r,
@@ -2612,13 +2615,13 @@ async function ensureListeners(): Promise<void> {
     if (!path) return;
     const ordinal = e.payload.utterance;
     if (typeof ordinal === "number") {
-      // One utterance's clip. Rust emits it right behind that utterance's `final`, so it is
-      // the last utterance's; its record may not exist yet (a release final can still create it).
-      const utt = lastUtterance;
+      // One utterance's clip. Rust's writer thread emits it once the .wav is on disk — possibly
+      // after later utterances' finals or a break — so it goes to its utterance by ordinal; that
+      // record may not exist yet (a release final can still create it).
       const clip = { path, durationMs: e.payload.durationMs };
-      if (utt?.ordinal !== ordinal) console.debug(`[dictation] clip for utterance #${ordinal} found no record`);
-      else if (utt.id) attachUtteranceClip(utt.id, clip);
-      else utt.clip = clip;
+      if (!routeUtteranceClip(utteranceByOrdinal, ordinal, clip, attachUtteranceClip)) {
+        console.debug(`[dictation] clip for utterance #${ordinal} found no record`);
+      }
       return;
     }
     // The saved .wav's path. Stash for the capture at settle; if the session
@@ -2717,7 +2720,8 @@ async function ensureListeners(): Promise<void> {
     // synchronous close let that late booking survive into the next document's window.
     seenDoc = "";
     // A new document: utterance text restarts at 0, and no release final reaches back across
-    // a break (the server sends them before it).
+    // a break (the server sends them before it). A clip still on its way finds its utterance by
+    // ordinal (utteranceByOrdinal), which outlives the break.
     utteranceDocEnd = 0;
     lastUtterance = null;
     // The TYPED baseline is cleared IN the inject chain, not here: a phrase task enqueued before

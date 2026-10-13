@@ -37,3 +37,29 @@ export function mergeTracks(
   }
   return Object.keys(out).length ? out : prev;
 }
+
+/** A per-utterance clip: its .wav and measured length (null = unmeasured). */
+export type UtteranceClip = { path: string; durationMs: number | null };
+/** One finished utterance: its History record once written, and its clip while that record
+ *  does not exist yet. */
+export type UtteranceEntry = { ordinal: number; id: string | null; openedAt: number; clip?: UtteranceClip };
+
+/** Hand a clip to the utterance it belongs to, found by ordinal. Rust writes each clip on its
+ *  own thread, so it lands whenever the write finishes — after later utterances' finals or a
+ *  break just as well — and pairing it with "the last utterance" lost it. A record that exists
+ *  takes the clip now (and the entry is done); one that does not yet keeps it on the entry for
+ *  the final that writes the record. False when the ordinal names no utterance of this session. */
+export function routeUtteranceClip(
+  byOrdinal: Map<number, UtteranceEntry>,
+  ordinal: number,
+  clip: UtteranceClip,
+  attach: (id: string, clip: UtteranceClip) => void,
+): boolean {
+  const utt = byOrdinal.get(ordinal);
+  if (!utt) return false;
+  if (utt.id) {
+    attach(utt.id, clip);
+    byOrdinal.delete(ordinal);
+  } else utt.clip = clip;
+  return true;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendChunk, appendDelta, finalDelta, mergeTracks } from "./utteranceHistory";
+import { appendChunk, appendDelta, finalDelta, mergeTracks, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
 
 describe("finalDelta", () => {
   it("is what the document gained since the previous final", () => {
@@ -41,5 +41,51 @@ describe("appendChunk / mergeTracks", () => {
 
   it("takes a language code spelled like an inherited member", () => {
     expect(mergeTracks(undefined, { constructor: "x" })?.constructor).toBe("x");
+  });
+});
+
+describe("routeUtteranceClip", () => {
+  // streaming.ts keeps every finished utterance by ordinal; Rust's clip writer thread can deliver
+  // utterance #1's clip after #2's final or a break, when #1 is no longer the last utterance.
+  const session = () => {
+    const byOrdinal = new Map<number, UtteranceEntry>();
+    const attached: Array<[string, UtteranceClip]> = [];
+    const attach = (id: string, clip: UtteranceClip) => void attached.push([id, clip]);
+    return { byOrdinal, attached, attach };
+  };
+  const clip1 = { path: "/rec/u1.wav", durationMs: 1800 };
+
+  it("a clip that lands after the next utterance's final still reaches its own record", () => {
+    const { byOrdinal, attached, attach } = session();
+    byOrdinal.set(1, { ordinal: 1, id: "rec-1", openedAt: 0 });
+    byOrdinal.set(2, { ordinal: 2, id: "rec-2", openedAt: 1 });
+    expect(routeUtteranceClip(byOrdinal, 1, clip1, attach)).toBe(true);
+    expect(attached).toEqual([["rec-1", clip1]]);
+    // Done with #1; #2 still waits for its clip.
+    expect([...byOrdinal.keys()]).toEqual([2]);
+  });
+
+  it("a clip that lands after a break still reaches its record (the break keeps the entries)", () => {
+    const { byOrdinal, attached, attach } = session();
+    byOrdinal.set(1, { ordinal: 1, id: "rec-1", openedAt: 0 });
+    // stream://boundary nulls lastUtterance only.
+    expect(routeUtteranceClip(byOrdinal, 1, clip1, attach)).toBe(true);
+    expect(attached).toEqual([["rec-1", clip1]]);
+  });
+
+  it("a clip that beats its record waits on the entry for the final that writes it", () => {
+    const { byOrdinal, attached, attach } = session();
+    const utt: UtteranceEntry = { ordinal: 1, id: null, openedAt: 0 };
+    byOrdinal.set(1, utt);
+    expect(routeUtteranceClip(byOrdinal, 1, clip1, attach)).toBe(true);
+    expect(attached).toEqual([]);
+    expect(utt.clip).toEqual(clip1);
+  });
+
+  it("a clip for an ordinal this session never finished finds nothing", () => {
+    const { byOrdinal, attached, attach } = session();
+    byOrdinal.set(2, { ordinal: 2, id: "rec-2", openedAt: 0 });
+    expect(routeUtteranceClip(byOrdinal, 7, clip1, attach)).toBe(false);
+    expect(attached).toEqual([]);
   });
 });
