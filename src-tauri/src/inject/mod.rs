@@ -147,11 +147,15 @@ pub fn clear_recovery_on_clipboard() {
 /// pasted a 7-minute-old transcript (mstsc, 2026-07).
 static LAST_INJECTED: Mutex<Option<String>> = Mutex::new(None);
 
-/// Record `text` as the most recent clipboard content WE set (see `LAST_INJECTED`).
-fn note_injected(text: &str) {
-    if let Ok(mut g) = LAST_INJECTED.lock() {
-        *g = Some(text.to_string());
-    }
+/// Record `text` as the most recent clipboard content WE set (see `LAST_INJECTED`), returning the
+/// value it replaced. Read and replaced under one lock, so a caller that may have to take its note
+/// back (`persist_transcript`) holds exactly what it replaced, not a value a note from another
+/// thread superseded between a separate read and this write.
+fn note_injected(text: &str) -> Option<String> {
+    LAST_INJECTED
+        .lock()
+        .ok()
+        .and_then(|mut g| g.replace(text.to_string()))
 }
 
 /// Take back a `note_injected(text)` whose write then served nothing: put `prev` (the value before
@@ -1078,8 +1082,7 @@ pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
 /// (`unnote_injected`), since an Err only ever comes back when nothing was served. A timeout keeps
 /// it — the write may still land.
 fn persist_transcript(text: &str) -> Result<(), String> {
-    let prev_note = LAST_INJECTED.lock().ok().and_then(|g| g.clone());
-    note_injected(text);
+    let prev_note = note_injected(text);
     let noted = text;
     let text = clipboard_newlines(text, cfg!(windows)).into_owned();
     let exclude = clipboard_privacy();
@@ -1216,16 +1219,18 @@ fn paste(
     // the user's old clipboard back between our write and our Ctrl+V. Waited out for the grab's
     // whole bound (`CLIP_JOB_WAIT`), or until the user cancels this job; an error abort waits, so
     // its clipboard recovery cannot land mid-grab (it then hits the cancel check below, writes
-    // nothing, and the lock is free again before `inject_text` recovers). Only a grab stuck past
-    // that bails. Nothing has been read or written yet, so `NothingWritten` is truthful and the
-    // caller's re-send cannot duplicate text.
+    // nothing, and the lock is free again before `inject_text` recovers). A withheld insert stops
+    // on any cancel, error abort included, as the cancel check below does: it has nothing to
+    // recover. Only a grab stuck past that bails. Nothing has been read or written yet, so
+    // `NothingWritten` is truthful and the caller's re-send cannot duplicate text.
     let Some(_clip_job) = wait_clip_job(CLIP_JOB_WAIT, || {
-        injection_cancelled(epoch) && !cancel_wants_recovery(epoch)
+        injection_cancelled(epoch) && (!cancel_wants_recovery(epoch) || withhold_on_divert)
     }) else {
         if injection_cancelled(epoch) {
             // Answered as the cancel check below answers (see there). An error abort only gets
-            // here once the whole wait ran out, so its line names the wait and the recovery.
-            if cancel_wants_recovery(epoch) {
+            // here once the whole wait ran out (unless withheld), so its line names the wait and
+            // the recovery.
+            if cancel_wants_recovery(epoch) && !withhold_on_divert {
                 tracing::info!(
                     "[clip] paste: error abort — the clipboard-job lock (a quick-add copy grab or \
                      a stuck snapshot read) was still held after {}s; nothing written, the \
@@ -1775,8 +1780,12 @@ mod tests {
         assert!(super::is_own_injected("Befund\r\nZeile 2"));
         // The user's own copy is not ours.
         assert!(!super::is_own_injected("etwas anderes"));
-        // A newer set replaces the remembered value.
-        super::note_injected("neu");
+        // A newer set replaces the remembered value, and hands back the one it replaced (what
+        // `persist_transcript` puts back if its write then serves nothing).
+        assert_eq!(
+            super::note_injected("neu").as_deref(),
+            Some("Befund\nZeile 2")
+        );
         assert!(!super::is_own_injected("Befund\nZeile 2"));
         assert!(super::is_own_injected("neu"));
     }

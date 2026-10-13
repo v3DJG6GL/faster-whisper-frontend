@@ -37,9 +37,10 @@ pub struct InjectOutcome {
     /// Windows: a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read
     /// still held it, or the remote-desktop owner or legacy write failed or timed out — a
     /// timed-out offer may still reach the clipboard later), or an insert the caller marked
-    /// `withhold_on_divert` (the hard-break separator) that would otherwise have been diverted or
-    /// recovered to the clipboard before anything was written: it writes nothing, and that caller
-    /// drops it rather than re-sending.
+    /// `withhold_on_divert` (the hard-break separator) that would otherwise have been diverted, or
+    /// recovered after a sink that wrote nothing, before anything was written: it writes nothing,
+    /// and that caller drops it rather than re-sending. A cancel before the write is not a
+    /// `landed: false` cause, withheld or not.
     ///
     /// The default for any future early return must be `true`. `false` means "send it again", and a
     /// wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
@@ -107,14 +108,19 @@ pub(crate) async fn inject_text(
     clipboard_text: Option<String>,
     // The caller has nothing worth recovering from the clipboard (the hard-break separator, a
     // lone " "), so it never becomes the clipboard's persistent owner over what the user copied,
-    // on any divert or recovery arm. Where nothing has been written yet (the mid-function divert,
-    // the Wayland write guard, the error-abort recovery after a sink that wrote nothing) it writes
-    // nothing and reports `landed: false`. Where the paste write already put it on the clipboard
-    // (the chord-time own-window divert, a failed paste, an error abort cancelling the paste) it
-    // schedules the restore a pasted one gets, arms neither the delivered nor the recovery guard,
-    // and reports `landed: true, diverted: false`: the clipboard WAS written, and the caller reads
-    // `landed` as that, to give the user's copy back. An error abort that lands before any write
-    // stops it the way a user cancel does (`landed: true`, nothing written): it is never recovered.
+    // on any divert or recovery arm. A cancel before any write, user OR error abort, stops it with
+    // `landed: true, diverted: false` and nothing written: it is never recovered. Where a divert
+    // or recovery would write it before anything has been written (the mid-function divert, the
+    // Wayland write guard, the Wayland portal's letters-not-on-the-layout divert, the error-abort
+    // recovery after a sink that wrote nothing) it writes nothing and reports `landed: false,
+    // diverted: false`. Where the paste write already put it on the clipboard (the chord-time
+    // own-window divert, an error abort cancelling the paste) it schedules the restore a pasted
+    // one gets, arms neither the delivered nor the recovery guard, and reports `landed: true,
+    // diverted: false`: the clipboard WAS written, and the caller reads `landed` as that, to give
+    // the user's copy back. A failed paste schedules the same restore and returns the error. That
+    // restore only puts back what the sink read under `restore_clipboard`, which the separator
+    // never passes (its caller owns the restore), so on the reject the caller gives the user's
+    // copy back from its own snapshot.
     withhold_on_divert: bool,
 ) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
@@ -482,7 +488,7 @@ pub(crate) async fn inject_text(
             // branch below: VK type_text("", true) cleanly types Return — and on KWin, where VK is
             // unavailable, it falls back to this same portal path — so the per-phrase Enter takes the
             // SAME silent VK route the phrase's words did instead of forcing a portal consent prompt.)
-            crate::inject::wayland::type_text(&app, typer.inner(), "", "", true, epoch).await
+            crate::inject::wayland::type_text(&app, typer.inner(), "", "", true, epoch, false).await
         } else if method == "direct" {
             // Prefer the virtual keyboard (Caps Lock-/layout-correct typing). Fall back
             // to the portal keycode path when the protocol is unavailable (e.g. GNOME)
@@ -529,6 +535,7 @@ pub(crate) async fn inject_text(
                         &clip_text,
                         auto_enter,
                         epoch,
+                        withhold_on_divert,
                     )
                     .await
                 }

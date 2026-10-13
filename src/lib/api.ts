@@ -1140,8 +1140,10 @@ export interface InjectOutcome {
    *  a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read still held
    *  it, or the remote-desktop owner or legacy write failed or timed out — a timed-out offer may
    *  still reach the clipboard later); or an insert marked `withholdOnDivert` (the hard-break
-   *  separator) that would otherwise have been diverted or recovered to the clipboard before
-   *  anything was written: nothing is written, and that caller drops it rather than re-sending. */
+   *  separator) that would otherwise have been diverted, or recovered after a sink that wrote
+   *  nothing, before anything was written: nothing is written, and that caller drops it rather
+   *  than re-sending. A cancel (user or error abort) before the write is not a `false` cause: it
+   *  stops the insert with `landed: true` and nothing written, like any cancelled insert. */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
    *  focus had moved to a different app, one of our own windows took focus just before the paste
@@ -1179,11 +1181,17 @@ export async function injectText(args: {
    *  the user — the clipboard-only write, a divert, a failed paste, an error-abort recovery —
    *  writes this in place of `text`; the field still gets `text`. Omit for "the same as `text`". */
   clipboardText?: string;
-  /** Nothing here is worth leaving on the clipboard (the hard-break separator): when Rust would
-   *  divert or recover it there (trigger chord still held, focus moved, an own window at the
-   *  chord, an error abort), it writes NOTHING persistent and, if nothing was written, reports
-   *  `landed: false, diverted: false` instead of making `text` the clipboard's owner. Omit for the
-   *  normal divert. */
+  /** Nothing here is worth leaving on the clipboard (the hard-break separator): `text` never
+   *  becomes the clipboard's persistent owner. Before anything is written, a divert or recovery
+   *  that would put it there (trigger chord still held, focus moved, an own window at a Wayland
+   *  chord, the Wayland portal's letters-not-on-the-layout divert, the error-abort recovery after
+   *  a sink that wrote nothing) writes nothing and reports `landed: false, diverted: false`; a
+   *  cancel (user or error abort) stops it with `landed: true` and nothing written, like any
+   *  cancelled insert. Once the paste write has put it on the clipboard (the chord-time own-window
+   *  divert, an error abort cancelling the paste) it reports `landed: true, diverted: false`, and
+   *  the user's copy is given back as for a pasted one. A failed paste rejects, and Rust restores
+   *  nothing for it unless `restoreClipboard` is set — the separator's caller gives the user's
+   *  copy back from its own snapshot. Omit for the normal divert. */
   withholdOnDivert?: boolean;
 }): Promise<InjectOutcome> {
   if (!isTauri) return { landed: true, diverted: false };

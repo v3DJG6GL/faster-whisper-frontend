@@ -747,6 +747,30 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(mask(streamingSrc).match(/withholdOnDivert/g) ?? []).toHaveLength(1);
   });
 
+  it("a separator whose paste fails gives the user's copy back from the snapshot", () => {
+    // The separator passes restoreClipboard: false, so Rust's failed-paste restore has nothing to
+    // put back and the call rejects: without a catch the `landed` gate never ran and a lone " "
+    // sat on the clipboard over the user's copy.
+    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
+    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const call = task.indexOf("injectText({ text: sep,");
+    expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const tryAt = task.lastIndexOf("try {", call);
+    expect(tryAt, "the separator's injectText must sit inside a try").toBeGreaterThanOrEqual(0);
+    expect(task.slice(tryAt, call), "nothing but the call between the try and the separator inject").not.toContain("}");
+    const catchBody = bodyAfter(task.slice(call), "} catch (e)");
+    const guard = catchBody.indexOf("if (insertCfg !== cfg) return;");
+    expect(guard, "the catch must check the session token").toBeGreaterThanOrEqual(0);
+    const restore = catchBody.indexOf("giveClipboardBack(");
+    expect(restore, "the catch must restore after the session-token check").toBeGreaterThan(guard);
+    // Only from a snapshot: the restore's own condition asks for one.
+    const cond = catchBody.slice(catchBody.lastIndexOf("if (", restore), restore);
+    expect(cond).toContain("beganInjection");
+    // The write may not have happened: never claim the clipboard holds our text, never re-send.
+    expect(catchBody).not.toContain("clipHoldsOurs");
+    expect(catchBody).not.toContain("injectText(");
+  });
+
   it("every clipboard restore goes through giveClipboardBack", () => {
     // An inline copy can drift from the clear-before-await ordering (it already did once): the
     // helper body must be the only call site; the other occurrence is the import.

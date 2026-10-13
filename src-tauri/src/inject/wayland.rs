@@ -25,6 +25,10 @@ pub struct Job {
     /// form (`inject_text`'s `clipboard_text`, already resolved — `text` itself when the caller
     /// sent none). Empty for a paste chord.
     clip_text: String,
+    /// The caller's `withhold_on_divert` (the hard-break separator): the layout divert below
+    /// writes nothing instead of putting `clip_text` on the clipboard. Always false for a paste
+    /// chord.
+    withhold: bool,
     /// Injection generation this job belongs to; the typing loop abandons the rest of `text` once
     /// `crate::inject::injection_cancelled` reports it superseded. Without it a long transcript
     /// kept typing into whatever held focus long after the user cancelled.
@@ -620,12 +624,15 @@ mod imp {
         clip_text: &str,
         auto_enter: bool,
         epoch: u64,
+        // `inject_text`'s `withhold_on_divert` — see `Job::withhold`.
+        withhold_on_divert: bool,
     ) -> Result<crate::inject::Landed, String> {
         submit(
             app,
             typer,
             text.to_string(),
             clip_text.to_string(),
+            withhold_on_divert,
             false,
             Vec::new(),
             auto_enter,
@@ -649,6 +656,7 @@ mod imp {
             typer,
             String::new(),
             String::new(),
+            false,
             true,
             chord_codes,
             auto_enter,
@@ -787,6 +795,7 @@ mod imp {
         typer: &WaylandTyper,
         text: String,
         clip_text: String,
+        withhold: bool,
         paste: bool,
         chord_codes: Vec<String>,
         auto_enter: bool,
@@ -814,6 +823,7 @@ mod imp {
         tx.send(Job {
             text,
             clip_text,
+            withhold,
             paste,
             chord_codes,
             auto_enter,
@@ -995,6 +1005,12 @@ mod imp {
                         if crate::inject::injection_cancelled(job.epoch) {
                             tracing::info!("[wayland-inject] cancelled before the clipboard divert — dropping the job");
                             return Ok(crate::inject::Landed::Yes);
+                        }
+                        // A withheld insert (the hard-break separator) never becomes the
+                        // clipboard's owner: nothing is typed or written, and the caller drops it.
+                        if job.withhold {
+                            tracing::info!("[wayland-inject] separator on an unreachable layout withheld");
+                            return Ok(crate::inject::Landed::NothingWritten);
                         }
                         // No key was synthesized: a failed clipboard write is "nothing written"
                         // (the caller's re-send is safe), as in the sibling diverts. The clipboard
@@ -1609,6 +1625,7 @@ pub async fn type_text(
     _clip_text: &str,
     _auto_enter: bool,
     _epoch: u64,
+    _withhold_on_divert: bool,
 ) -> Result<crate::inject::Landed, String> {
     Err("Wayland text injection is only available on Linux".into())
 }

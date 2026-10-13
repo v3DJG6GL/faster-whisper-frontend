@@ -48,6 +48,7 @@ import {
   cancelRecord,
   retireSessionEpoch,
   injectText,
+  type InjectOutcome,
   recoverTextToClipboard,
   beginInjection,
   endInjection,
@@ -2812,16 +2813,36 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
           } else {
             // withholdOnDivert: a separator has nothing to recover, so no Rust divert or recovery
-            // (the trigger chord still held, focus moved, our own window at the chord, a failed
-            // paste, an error abort) may make a lone " " the clipboard's owner over the user's
-            // copy — with the direct method there is no snapshot to give back. Before anything is
-            // written it writes nothing and reports `landed: false`, which the `landed` gate below
-            // already reads as "no clobber": no restore, no clipHoldsOurs, no error. A chord-time
-            // divert (our own window took focus after the paste write) reports `landed: true`,
-            // because the clipboard WAS written: the gate below gives the user's copy back exactly
-            // as for a pasted separator. Either way the separator is never re-sent; a missing
-            // space between two phrases is the lesser harm.
-            const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: true });
+            // (the trigger chord still held, focus moved, our own window at the chord, a layout
+            // that cannot type it, a failed paste, an error abort's recovery) may make a lone " "
+            // the clipboard's owner over the user's copy — with the direct method there is no
+            // snapshot to give back. A divert or recovery that would write it before anything is
+            // written writes nothing and reports `landed: false`, which the `landed` gate below
+            // already reads as "no clobber": no restore, no clipHoldsOurs, no error. A cancel
+            // before the write (user or error abort) reports `landed: true` with nothing written;
+            // after an error abort the gate is then skipped by the `insertCfg !== cfg` guard,
+            // because every error teardown nulls insertCfg before it retires the epoch. A
+            // chord-time divert (our own window took focus after the paste write) reports
+            // `landed: true`, because the clipboard WAS written: the gate below gives the user's
+            // copy back exactly as for a pasted separator.
+            // A failed paste REJECTS, and Rust restores nothing for it (its restore needs
+            // restoreClipboard, which this call never passes), so the catch gives the session
+            // snapshot back. Either way the separator is never re-sent; a missing space between
+            // two phrases is the lesser harm.
+            let outcome: InjectOutcome;
+            try {
+              outcome = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: true });
+            } catch (e) {
+              console.error("separator inject failed:", e);
+              if (insertCfg !== cfg) return;
+              // The paste write may have put `sep` on the clipboard before the chord failed. Only
+              // a snapshot can put the user's copy back (restoring it is harmless if the write
+              // never happened); without one, leave clipHoldsOurs alone — a wrong flag suppresses
+              // the next real snapshot, and the write may not have happened at all.
+              if (t.method === "paste" && t.restoreClipboard && !t.isSelf && beganInjection) await giveClipboardBack();
+              return;
+            }
+            const { landed } = outcome;
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
             // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
             if (insertCfg !== cfg) return;
