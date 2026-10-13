@@ -19,8 +19,9 @@ import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import {
-  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, ruleLockedFor, ruleMapWritable, envPinnedOf, saveLanded, RULE_LIST_SETTING,
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, ruleLockedFor, ruleMapWritable,
 } from "@/lib/pipelineMap";
+import { quickAddSaveOutcome } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
@@ -291,13 +292,14 @@ export default function QuickAdd() {
   // ── autosave: whole-map PATCH, no fingerprint (backend = last-writer-wins) ──
   // Returns whether the PATCH landed, so the summon auto-retry can chain a re-sync on success.
   const flushSave = useCallback(async (): Promise<boolean> => {
-    if (!target.current) return false;
     // A retry (badge click / summon auto-retry) can run while the 600ms debounce is still
     // armed — CANCEL it, don't just null the handle: an orphaned timeout would fire a second,
     // concurrent PATCH of the same rows (and closeNow flushes only while a timer is armed, so it
-    // would never notice an orphaned one).
+    // would never notice an orphaned one). Ahead of the no-target return: a fired timer whose
+    // handle stayed set reads as "save pending" to the summon gate, which then never re-syncs.
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = null;
+    if (!target.current) return false;
     // Mark in flight: the badge shows progress, and the summon auto-retry / a badge
     // double-click are suppressed by the "saving" guards instead of double-PATCHing.
     setSaveState("saving");
@@ -331,17 +333,26 @@ export default function QuickAdd() {
       // not as "error": that state skips the summon re-sync and auto-retries, and against a pin
       // every retry ends the same way (a PATCH per summon, rows never re-synced, and once the pin
       // is lifted the retry would push these stale rows over the stored rule unasked).
-      const pinned = res.ok && envPinnedOf(res).includes(RULE_LIST_SETTING);
       // A 2xx whose reply couldn't be read (ok:false) still LANDED: "error" would re-PATCH on every
-      // summon and skip the re-sync. `pinned` stays on res.ok — an unreadable reply names no pins.
-      const landed = saveLanded(res);
+      // summon and skip the re-sync. A 403 ("refused": the list was locked after this window
+      // loaded) is terminal for the same reason as a pin — see quickAddSaveOutcome.
+      const outcome = quickAddSaveOutcome(res);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
       // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).
       // A newer flight queued behind this one likewise reports its own, newer outcome; and only
       // the newest may tell the summon auto-retry to re-sync (refresh) over the local rows.
-      if (saveTimer.current === null && newest) setSaveState(pinned ? "pinned" : landed ? "saved" : "error");
-      return landed && !pinned && newest;
+      if (saveTimer.current === null && newest) {
+        if (outcome === "refused") {
+          // Re-sync now rather than leave "error" (a re-PATCH of a refused list on every summon):
+          // refresh's write gate then replaces the list with "List locked" / read-only.
+          setSaveState("idle");
+          void refresh();
+        } else {
+          setSaveState(outcome);
+        }
+      }
+      return outcome === "saved" && newest;
     } catch (e) {
       // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
       // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
@@ -350,7 +361,7 @@ export default function QuickAdd() {
       if (saveTimer.current === null && mySeq === saveSeq.current) setSaveState("error");
       return false;
     }
-  }, []);
+  }, [refresh]);
 
   // Each summon: re-sync + reset the add row instantly, then seed "When you say" from the
   // source app's current selection. The reset doesn't wait on the (off-thread, time-bounded)
