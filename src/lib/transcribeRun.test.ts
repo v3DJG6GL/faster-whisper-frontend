@@ -321,6 +321,54 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
     expect(stageTimes.translating?.start).toBe(100_000 + 30_000);
     expect(stageTimes.translating?.end).toBeUndefined();
   });
+  it("a translation-model fetch is told apart by the poll itself, whatever stage the client saw last", () => {
+    const gguf = { model: "org/mt:Q4", compute: "gguf", totalBytes: 5_000_000_000 };
+    const link = ["downloading", "transcribing", "translating"] as const;
+    const active = (rail: readonly string[]) => {
+      const st = useTranscribeRun.getState();
+      return rail[activeRailIndex(st.progress, st.stageTimes, rail as never)];
+    };
+    // (1) The 1 s poll never saw the translating tick: transcribing → downloading{gguf}.
+    at(0, "downloading", { totalBytes: 20_000_000 });
+    at(1_000, "transcribing", { model: "large-v3", compute: "float16" });
+    at(20_000, "transcribing", { model: "large-v3", compute: "float16" });
+    at(21_000, "downloading", gguf);
+    expect(active(link)).toBe("translating");
+    at(200_000, "translating", { model: "org/mt:Q4", compute: "gguf" });
+    let { stageTimes, stageMeta } = useTranscribeRun.getState();
+    expect(stageTimes.transcribing).toMatchObject({ start: 101_000, end: 121_000 });
+    expect(stageTimes.translating).toMatchObject({ start: 121_000, observed: true });
+    expect(stageMeta.transcribing).toMatchObject({ model: "large-v3", compute: "float16" });
+    expect(stageMeta.translating).toMatchObject({ model: "org/mt:Q4", compute: "gguf" });
+    expect(stageMeta.downloading?.bytes).toBe(20_000_000);
+
+    // (3) A site-transcript link (rail: downloading, translating) sees no later stage at all.
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    at(0, "downloading", { totalBytes: 20_000_000 });
+    at(6_000, "downloading", gguf);
+    expect(active(["downloading", "translating"])).toBe("translating");
+    ({ stageTimes, stageMeta } = useTranscribeRun.getState());
+    expect(stageTimes.downloading).toMatchObject({ start: 100_000, end: 106_000 });
+    expect(stageMeta.downloading).toMatchObject({ bytes: 20_000_000, dlStart: 100_000 });
+    expect(stageMeta.downloading?.model).toBeUndefined();
+
+    // (4) A Whisper model fetch (not gguf) before transcribing stays on the download side.
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    at(0, "downloading", { totalBytes: 20_000_000 });
+    at(5_000, "downloading", { model: "large-v3", compute: "float16" });
+    expect(active(link)).toBe("downloading");
+    expect(useTranscribeRun.getState().stageTimes.translating).toBeUndefined();
+
+    // (5) Diarized first: the diarize row keeps its own chips and closes at the fetch.
+    useTranscribeRun.setState({ progress: null, stageTimes: {}, stageMeta: {} });
+    at(0, "transcribing", { model: "large-v3", compute: "float16" });
+    at(20_000, "diarizing", { model: "pyannote", compute: "float32" });
+    at(40_000, "downloading", gguf);
+    ({ stageTimes, stageMeta } = useTranscribeRun.getState());
+    expect(stageTimes.diarizing).toMatchObject({ start: 120_000, end: 140_000 });
+    expect(stageMeta.diarizing).toMatchObject({ model: "pyannote", compute: "float32" });
+    expect(active(["transcribing", "diarizing", "translating"])).toBe("translating");
+  });
 });
 
 describe("skippedStages with a download rail", () => {

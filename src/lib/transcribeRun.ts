@@ -219,7 +219,7 @@ export function activeRailIndex(
     const i = stages.findIndex((st) => !stageTimes[st]?.end && !skipped?.has(st));
     return i === -1 ? railIndex(progress.stage, stages) : i;
   }
-  const mt = mtFetchStage(progress.stage, stageTimes);
+  const mt = mtFetchStage(progress, stageTimes);
   if (mt && stages.includes(mt)) return stages.indexOf(mt);
   return railIndex(progress.stage, stages);
 }
@@ -665,16 +665,23 @@ export function railOf(stage: string | undefined | null): RailStage {
     : "transcribing";
 }
 
-/** The rail row a "downloading" poll belongs to once the rail is past the download:
- *  a media download only ever runs first, so after a later stage was observed it is
- *  the MT-model fetch, a sub-phase of the active stage (the server's run plan labels
- *  it the same way and never rewinds to a finished row). The active stage is the last
- *  observed stage whose clock is still open. Null = not such a poll (use railOf). */
+/** The rail row a "downloading" poll belongs to when it is the translation model's fetch,
+ *  a sub-phase of translating (the server's run plan labels it the same way and never
+ *  rewinds to a finished row). The poll says so itself: the server goes translating →
+ *  downloading within milliseconds, and its progress entry keeps the translating tick's
+ *  llama.cpp `compute` ("gguf") and model — so a client polling once a second, which may
+ *  never see that translating tick, still tells the fetch from the media download (and
+ *  from a Whisper model's). `mtModel` = the run's translation model, when known. Else
+ *  (an older server): a media download only ever runs first, so after a later stage was
+ *  observed it is the fetch, on the last observed stage whose clock is still open.
+ *  Null = not such a poll (use railOf). */
 function mtFetchStage(
-  stage: string | undefined | null,
+  p: Pick<BatchProgress, "stage" | "compute" | "model"> | null | undefined,
   stageTimes: Partial<Record<RailStage, StageTime>>,
+  mtModel?: string,
 ): RailStage | null {
-  if (stage !== "downloading") return null;
+  if (p?.stage !== "downloading") return null;
+  if (p.compute === "gguf" || (!!mtModel && p.model === mtModel)) return "translating";
   for (let i = RAIL_ORDER.length - 1; i > 0; i--) {
     const t = stageTimes[RAIL_ORDER[i]];
     if (t?.observed && !t.end) return RAIL_ORDER[i];
@@ -1538,9 +1545,10 @@ export function foldProgress(p: BatchProgress) {
     const now = Date.now();
     // An MT-model fetch ("downloading" after the rail moved past the download) stays on
     // the active row: no clock closes or reopens, and the media receipt below is kept.
-    const mtPrev = s.progress ? mtFetchStage(s.progress.stage, s.stageTimes) : null;
+    const mtModel = s.lastOptions?.translationModel?.trim() || undefined;
+    const mtPrev = s.progress ? mtFetchStage(s.progress, s.stageTimes, mtModel) : null;
     const prev = s.progress ? (mtPrev ?? railOf(s.progress.stage)) : null;
-    const mtFetch = mtFetchStage(p.stage, s.stageTimes);
+    const mtFetch = mtFetchStage(p, s.stageTimes, mtModel);
     const cur = mtFetch ?? railOf(p.stage);
     // "waiting" is the registry's request-entry seed, not evidence the
     // transcribe row ran: it must not stamp a clock `observed` — a seeded
@@ -1593,7 +1601,9 @@ export function foldProgress(p: BatchProgress) {
     // device did the work. "waiting" reports null meta, so it never taints
     // the transcribe row with the previous stage's chips.
     let stageMeta = s.stageMeta;
-    if (p.model && p.stage !== "waiting") {
+    // A model fetch folded onto another row (the older-server fallback) names the
+    // translation model: those chips belong to the translating row only.
+    if (p.model && p.stage !== "waiting" && (!mtFetch || mtFetch === "translating")) {
       stageMeta = {
         ...stageMeta,
         [cur]: {
