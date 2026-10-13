@@ -342,9 +342,10 @@ pub fn run() {
                     "[config] settings were reset and not saved since; retention sweeps skipped"
                 );
             } else {
-                // On save_config's newest-wins worker (history first, as there): both sweeps
-                // walk the (possibly slow) audio base — the history one for orphaned media — and
-                // a save arriving meanwhile replaces this run instead of overlapping it.
+                // On save_config's newest-wins worker (as there): the record half runs at once;
+                // the audio-base half (orphaned media, recordings) waits for the audio-layout
+                // migration and is dropped if a save supersedes it meanwhile, and a save arriving
+                // later replaces this run instead of overlapping it.
                 commands::queue_retention_sweeps(app.handle(), cfg.clone());
             }
             // Start hidden to the tray if requested (reachable via the tray menu) —

@@ -17,9 +17,11 @@ use tauri::{AppHandle, Emitter, Manager};
 /// record into place between the sweep's mtime check and its `remove_file`, and the just-saved
 /// record would be deleted. Held per entry, never for a whole sweep, so a save waits at most one
 /// stat + unlink. The media-path rewriters (`rewrite_media_paths`, `heal_media_paths`) hold it
-/// per record across their read-parse-rewrite too: an audio-base move runs them on a blocking
-/// thread while saves and sweeps stay live, so an unlocked rewrite could overwrite a newer save
-/// with the stale copy it read, or resurrect a record a sweep or the user's delete just removed.
+/// per record across their re-read and rewrite too: they run on a background thread (the launch
+/// audio-layout job, an audio-base move) while saves and sweeps stay live, so an unlocked rewrite
+/// could overwrite a newer save with the stale copy it read, or resurrect a record a sweep or the
+/// user's delete just removed. Their path stats (the heal's, on possibly offline shares) run
+/// before they take it, so a slow share there cannot stall a main-thread save either.
 /// Holders: `save_transcript_record`, the retention sweeps (`prune_transcripts`, `wipe_records`),
 /// the two rewriters, and `delete_transcript_record` (across its record read + unlink only —
 /// its media-copy and recordings-folder unlinks both run after release, so a slow share there
@@ -31,6 +33,69 @@ static RECORD_IO: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn record_io_lock() -> std::sync::MutexGuard<'static, ()> {
     RECORD_IO.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Every media path a rewrite or heal re-pointed this session (old absolute path → new
+/// absolute path). The History mirror may still hold a record listed before the move, and
+/// `save_transcript_record` writes the webview's record whole: a re-save from that listing (an
+/// edit, a coalesced translate chunk) would put the dead path back after the heal passed it —
+/// for good, since the heal stamp is then written. The save re-points through this map instead.
+/// Noted under the record's `RECORD_IO` hold (see `fix_records_in`), so a save that waited on
+/// it sees the move; locked after `RECORD_IO`, never before.
+static MOVED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
+    std::sync::Mutex::new(None);
+
+fn note_moved(old: String, new: String) {
+    let mut moved = MOVED.lock().unwrap_or_else(|e| e.into_inner());
+    note_moved_in(moved.get_or_insert_with(Default::default), old, new);
+}
+
+/// Add `old → new` to `moved`, chaining: an entry that pointed at `old` now points at `new`, so
+/// a path moved twice (layout migration, then a base move) still maps to where it is now. An
+/// entry moved back onto itself is dropped.
+fn note_moved_in(moved: &mut std::collections::HashMap<String, String>, old: String, new: String) {
+    for target in moved.values_mut() {
+        if *target == old {
+            target.clone_from(&new);
+        }
+    }
+    moved.retain(|from, to| from != to);
+    if old != new {
+        moved.insert(old, new);
+    }
+}
+
+/// `record` with every media field ([`MEDIA_KEYS`]) that names a moved path re-pointed, or
+/// `None` when nothing in it moved (or it does not parse) — then it is written as sent. No stat:
+/// the save is a main-thread command and the base may be stalled.
+fn repoint_moved(
+    record: &str,
+    moved: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    // Cheap prefilter: no parse unless the raw text holds some moved path, JSON-escaped.
+    if !moved
+        .keys()
+        .any(|k| serde_json::to_string(k).is_ok_and(|e| record.contains(e.as_str())))
+    {
+        return None;
+    }
+    let mut v = serde_json::from_str::<serde_json::Value>(record).ok()?;
+    let mut changed = false;
+    for key in MEDIA_KEYS {
+        if let Some(new) = v
+            .get(key)
+            .and_then(|m| m.as_str())
+            .and_then(|p| moved.get(p))
+        {
+            v[key] = serde_json::Value::String(new.clone());
+            changed = true;
+        }
+    }
+    if changed {
+        serde_json::to_string(&v).ok()
+    } else {
+        None
+    }
 }
 
 /// Sanity cap per record — a transcript with word timestamps of an hours-long
@@ -235,42 +300,57 @@ fn fix_records_in(
                     }
                 }
             }
-            // Held to the end of this record (read, parse, stat, rewrite) — see `RECORD_IO`.
-            // A record a sweep removed first is unreadable here and skipped, not resurrected;
-            // a non-UTF-8 file is no record the listing could load either. Any other read
-            // failure (a sync client's or antivirus's lock) may hide a moved path.
-            let _io = record_io_lock();
-            let text = match std::fs::read_to_string(&path) {
-                Ok(t) => t,
+            // Two passes so `fix` (the heal stats arbitrary user paths, possibly on an offline
+            // share) never runs under `RECORD_IO`: first read, parse and map without the lock;
+            // then, under it, re-read and apply each change only where the field still holds the
+            // value it was computed from. A record a sweep removed first is unreadable here and
+            // skipped, not resurrected; a non-UTF-8 file is no record the listing could load
+            // either. Any other read failure (a sync client's or antivirus's lock) may hide a
+            // moved path.
+            let read = |path: &Path, tally: &mut FixTally| match std::fs::read_to_string(path) {
+                Ok(t) => serde_json::from_str::<serde_json::Value>(&t).ok(),
                 Err(e)
                     if matches!(
                         e.kind(),
                         std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidData
                     ) =>
                 {
-                    continue
+                    None
                 }
                 Err(_) => {
                     tally.failed += 1;
-                    continue;
+                    None
                 }
             };
-            let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) else {
+            let Some(v) = read(&path, &mut tally) else {
                 continue;
             };
-            let mut changed = false;
-            for key in MEDIA_KEYS {
-                if let Some(new) = v
-                    .get(key)
-                    .and_then(|m| m.as_str())
-                    .and_then(|old| fix(key, old))
-                {
-                    v[key] = serde_json::Value::String(new);
-                    changed = true;
-                }
+            let changes: Vec<(&str, String, String)> = MEDIA_KEYS
+                .iter()
+                .filter_map(|&key| {
+                    let old = v.get(key)?.as_str()?;
+                    fix(key, old).map(|new| (key, old.to_owned(), new))
+                })
+                .collect();
+            if changes.is_empty() {
+                continue;
             }
-            if !changed {
+            // Held across the re-read and rewrite only — see `RECORD_IO`.
+            let _io = record_io_lock();
+            let Some(mut v) = read(&path, &mut tally) else {
                 continue;
+            };
+            // A save or delete that got there first changed the field: not ours to touch, and
+            // not a failure.
+            let applied: Vec<&(&str, String, String)> = changes
+                .iter()
+                .filter(|(key, old, _)| v.get(*key).and_then(|m| m.as_str()) == Some(old.as_str()))
+                .collect();
+            if applied.is_empty() {
+                continue;
+            }
+            for (key, _, new) in &applied {
+                v[*key] = serde_json::Value::String(new.clone());
             }
             let Ok(out) = serde_json::to_string(&v) else {
                 tally.failed += 1;
@@ -280,6 +360,10 @@ fn fix_records_in(
             let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
             if rewrite_record_keep_mtime(&path, &out, mtime) {
                 tally.fixed += 1;
+                // Still under the record's hold, so a save that waited on it sees the move.
+                for (_, old, new) in applied {
+                    note_moved(old.clone(), new.clone());
+                }
             } else {
                 tally.failed += 1;
             }
@@ -562,7 +646,14 @@ pub fn save_transcript_record(
     // Never in place: `read_records_into` silently skips a file that fails to parse, so a crash
     // between truncate and write would make the record vanish from History.
     let _io = record_io_lock();
-    crate::config::write_private_atomic(&path, &record).map_err(|e| e.to_string())
+    // A record from a listing taken before this session's move or heal may name a dead path.
+    let repointed = MOVED
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .and_then(|moved| repoint_moved(&record, moved));
+    crate::config::write_private_atomic(&path, repointed.as_deref().unwrap_or(&record))
+        .map_err(|e| e.to_string())
 }
 
 /// All history records, parsed but uninterpreted. Unreadable or unparseable
@@ -636,9 +727,9 @@ pub async fn delete_transcript_record(
         // (Windows briefly locking the file) keeps the History entry, and it must keep its
         // playable media too. Runs after the lock is released, like the recordings unlink.
         // Every media unlink first waits out this launch's audio-layout migration, which can move
-        // a file in after the delete looked (see delete_all_dictations). The record unlink does
-        // not: the record lives in app data, and a delete of one that owns nothing on a stalled
-        // audio base must not hang behind it.
+        // a file in after the delete looked (see delete_all_dictations). The record unlink never
+        // does: the record lives in app data, and a delete must not hang behind a stalled audio
+        // base (nor leave the record to come back after a quit while it waits).
         let drop_media = || {
             crate::commands::wait_audio_layout();
             if let Ok(dirs) = all_media_dirs(&app, audio_base.clone()) {
@@ -655,16 +746,6 @@ pub async fn delete_transcript_record(
                 .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
                 .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
         };
-        // A dictation with saved audio: the migration may be moving that audio and re-pointing
-        // the record, so wait it out BEFORE the lock below (its rewrite takes that lock per
-        // record) and before reading the path the unlink uses.
-        if !file_path.exists() {
-            if let Ok(dir) = dictations_dir(&app) {
-                if source_of(&dir.join(&name)).is_some() {
-                    crate::commands::wait_audio_layout();
-                }
-            }
-        }
         // Held across both branches' record read + unlink — see `RECORD_IO`: a media-path
         // rewrite that read this record before the unlink would otherwise rename its copy back
         // into place afterwards.
@@ -694,10 +775,27 @@ pub async fn delete_transcript_record(
         // (main-thread) save hostage.
         drop(io);
         // The audio goes only once the record is gone: a failed unlink (locked file) keeps the
-        // History entry, and it must keep its recording too.
-        if res.is_ok() {
-            if let Some(src) = src {
-                remove_dictation_audio(&src);
+        // History entry, and it must keep its recording too. A dictation without audio stores
+        // `sourcePath: ""` and waits for nothing. One with audio waits out the migration (never
+        // under the lock: its rewrite takes it per record), which may be moving that very file;
+        // the record is already gone, so no rewrite re-points it — if the stored path went
+        // away meanwhile, the file is looked for under its migrated name in the recordings
+        // folder.
+        if let (Ok(()), Some(src)) = (&res, src.filter(|s| !s.trim().is_empty())) {
+            crate::commands::wait_audio_layout();
+            let stored = Path::new(&src);
+            let moved = !stored.exists();
+            remove_dictation_audio(&src);
+            if moved {
+                if let (Some(dir), Some(file)) = (
+                    crate::commands::resolve_recordings_dir(&app, audio_base.clone()),
+                    stored.file_name(),
+                ) {
+                    let twin = dir.join(file);
+                    if twin != stored {
+                        remove_dictation_audio(&twin.to_string_lossy());
+                    }
+                }
             }
         }
         if !existed {
@@ -824,11 +922,12 @@ pub async fn delete_all_dictations(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
-        // Not under this launch's audio-layout migration: a file it moves in after the wipe
-        // listed the folder would be left behind.
-        crate::commands::wait_audio_layout();
         // Both steps always run, so a readable folder is still wiped when the other is not.
+        // The records live in app data and go at once.
         let records = wipe_records(&dictations_dir(&app)?);
+        // The recordings folder is listed only after this launch's audio-layout migration: a
+        // file it moves in after the wipe listed the folder would be left behind.
+        crate::commands::wait_audio_layout();
         let recordings = match crate::commands::resolve_recordings_dir(&app, audio_base) {
             Some(dir) => remove_own_recordings(&dir),
             None => Ok(0),
@@ -870,9 +969,10 @@ pub async fn clear_file_transcriptions(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
-        // As delete_all_dictations: the orphan sweep must see the migrated layout.
-        crate::commands::wait_audio_layout();
+        // The records (app data) go at once; as delete_all_dictations, only the orphan sweep
+        // waits, since it must see the migrated layout.
         let removed = wipe_records(&transcripts_dir(&app)?)? as u32;
+        crate::commands::wait_audio_layout();
         sweep_orphan_media(&app, audio_base);
         Ok(removed)
     })
@@ -1033,9 +1133,10 @@ pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
 /// When any record went, `transcripts://swept` (payload: `{ removed, dictationsWiped }` — the
 /// record count, and whether this sweep actually emptied the dictation store; read by
 /// `listenRetentionSweeps` in src/lib/transcript/transcriptHistory.ts) tells the History
-/// mirror to reload — otherwise it keeps listing, and an edit re-saves, a deleted entry. It goes
-/// out as soon as the records are gone, before the media sweep, which walks the (possibly slow,
-/// network-share) audio base and changes no record.
+/// mirror to reload — otherwise it keeps listing, and an edit re-saves, a deleted entry.
+/// Records only (app data): the orphan-media half walks the (possibly slow, network-share)
+/// audio base and is `apply_transcripts_media_retention`, which the caller runs after this
+/// launch's audio-layout migration — this half never waits for it.
 pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Config) {
     let mut removed = 0;
     let mut dictations_wiped = false;
@@ -1075,6 +1176,12 @@ pub fn apply_transcripts_retention(app: &AppHandle, config: &crate::config::Conf
             serde_json::json!({ "removed": removed, "dictationsWiped": dictations_wiped }),
         );
     }
+}
+
+/// The audio-base half of the history retention: drop the media copies whose record
+/// `apply_transcripts_retention` (or anything else) removed. Changes no record; must see the
+/// migrated layout, so the caller runs it after `wait_audio_layout`.
+pub(crate) fn apply_transcripts_media_retention(app: &AppHandle, config: &crate::config::Config) {
     sweep_orphan_media(app, crate::commands::audio_base_pref(&config.settings));
 }
 
@@ -1410,6 +1517,114 @@ mod tests {
         }
         let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn moved_target(old: &str) -> Option<String> {
+        MOVED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .and_then(|m| m.get(old).cloned())
+    }
+
+    #[test]
+    fn a_media_fix_maps_paths_without_holding_the_record_lock() {
+        let dir = std::env::temp_dir().join(format!("fwf-fixlock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let old = format!("/fwf-fixlock-{}/old/a.wav", std::process::id());
+        let new = format!("/fwf-fixlock-{}/new/a.wav", std::process::id());
+        std::fs::write(dir.join("r.json"), format!(r#"{{"mediaPath":"{old}"}}"#)).unwrap();
+        let tally = fix_records_in(std::slice::from_ref(&dir), "heal", None, |_, p| {
+            // A save (main thread) must be able to take the lock while `fix` stats: retried,
+            // since other tests may hold it for a moment.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while RECORD_IO.try_lock().is_err() {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "`fix` ran under RECORD_IO"
+                );
+                std::thread::yield_now();
+            }
+            (p == old).then(|| new.clone())
+        });
+        assert_eq!((tally.fixed, tally.failed), (1, 0));
+        let text = std::fs::read_to_string(dir.join("r.json")).unwrap();
+        assert!(text.contains(&new));
+        assert_eq!(moved_target(&old).as_deref(), Some(new.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_media_fix_leaves_a_field_a_save_changed_meanwhile_and_notes_no_move() {
+        let dir = std::env::temp_dir().join(format!("fwf-fixrace-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rec = dir.join("r.json");
+        let old = format!("/fwf-fixrace-{}/old/a.wav", std::process::id());
+        let saved = format!("/fwf-fixrace-{}/saved/a.wav", std::process::id());
+        std::fs::write(&rec, format!(r#"{{"mediaPath":"{old}"}}"#)).unwrap();
+        let tally = fix_records_in(std::slice::from_ref(&dir), "heal", None, |_, p| {
+            // A save lands between the unlocked map and the locked rewrite.
+            std::fs::write(&rec, format!(r#"{{"mediaPath":"{saved}"}}"#)).unwrap();
+            (p == old).then(|| "/elsewhere/a.wav".to_owned())
+        });
+        assert_eq!((tally.fixed, tally.failed), (0, 0));
+        assert!(std::fs::read_to_string(&rec).unwrap().contains(&saved));
+        assert_eq!(moved_target(&old), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_save_from_a_pre_move_listing_is_re_pointed() {
+        let mut moved = std::collections::HashMap::new();
+        note_moved_in(
+            &mut moved,
+            "/old/files/a.m4a".into(),
+            "/new/files/a.m4a".into(),
+        );
+        note_moved_in(
+            &mut moved,
+            "/old/dictations/d.wav".into(),
+            "/new/dictations/d.wav".into(),
+        );
+        let out = repoint_moved(
+            r#"{"id":"x","mediaPath":"/old/files/a.m4a","sourcePath":"/old/dictations/d.wav","text":"/old/files/a.m4a"}"#,
+            &moved,
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["mediaPath"], "/new/files/a.m4a");
+        assert_eq!(v["sourcePath"], "/new/dictations/d.wav");
+        // Only media fields: the same text elsewhere in the record is the user's.
+        assert_eq!(v["text"], "/old/files/a.m4a");
+        // A record naming no moved path is written as sent.
+        assert_eq!(
+            repoint_moved(r#"{"mediaPath":"/elsewhere/b.m4a"}"#, &moved),
+            None
+        );
+        // A moved path that is not a media field's value changes nothing either.
+        assert_eq!(
+            repoint_moved(r#"{"title":"/old/files/a.m4a"}"#, &moved),
+            None
+        );
+        assert_eq!(repoint_moved("not json /old/files/a.m4a", &moved), None);
+    }
+
+    #[test]
+    fn a_path_moved_twice_maps_to_where_it_is_now() {
+        let mut moved = std::collections::HashMap::new();
+        note_moved_in(&mut moved, "/a/x.wav".into(), "/b/x.wav".into());
+        note_moved_in(&mut moved, "/b/x.wav".into(), "/c/x.wav".into());
+        assert_eq!(moved.get("/a/x.wav").map(String::as_str), Some("/c/x.wav"));
+        assert_eq!(moved.get("/b/x.wav").map(String::as_str), Some("/c/x.wav"));
+        let out = repoint_moved(r#"{"videoPath":"/a/x.wav"}"#, &moved).unwrap();
+        assert!(out.contains("/c/x.wav"));
+        // Moved back: no entry maps a path onto itself.
+        note_moved_in(&mut moved, "/c/x.wav".into(), "/a/x.wav".into());
+        assert_eq!(moved.get("/a/x.wav"), None);
+        assert_eq!(moved.get("/b/x.wav").map(String::as_str), Some("/a/x.wav"));
+        assert_eq!(moved.get("/c/x.wav").map(String::as_str), Some("/a/x.wav"));
     }
 
     #[cfg(unix)]

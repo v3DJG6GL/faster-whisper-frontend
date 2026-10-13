@@ -140,6 +140,23 @@ impl Gate {
             open = self.cv.wait(open).unwrap_or_else(|e| e.into_inner());
         }
     }
+
+    /// `wait`, but for at most `d`: true once open, false when `d` ran out first.
+    pub(crate) fn wait_timeout(&self, d: std::time::Duration) -> bool {
+        let deadline = std::time::Instant::now() + d;
+        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        while !*open {
+            let Some(left) = deadline.checked_duration_since(std::time::Instant::now()) else {
+                return false;
+            };
+            open = self
+                .cv
+                .wait_timeout(open, left)
+                .unwrap_or_else(|e| e.into_inner())
+                .0;
+        }
+        true
+    }
 }
 
 /// Opens once this launch's `ensure_audio_layout` is over (done, panicked, or never started).
@@ -149,10 +166,11 @@ static AUDIO_LAYOUT: Gate = Gate::new();
 /// before the event loop, and the base can sit on a stalled mount (an offline network share, a
 /// sleeping disk) whose mkdir/read_dir blocks without limit: launch must not wait on it (the
 /// log folder's open is queued for the same reason). What must not overlap a half-done move
-/// waits on [`wait_audio_layout`] instead: the retention sweeps (they look in the new layout),
-/// `move_audio_base` (it moves the same subfolders) and the History deletes (a file moved in after
-/// they looked would stay behind). Every writer creates its own folder,
-/// and the records live in app data, so nothing else depends on the layout being in place; a
+/// waits on [`wait_audio_layout`] instead: the retention sweeps' audio-base halves (they look in
+/// the new layout), `move_audio_base` (it moves the same subfolders) and the History deletes'
+/// audio-folder steps (a file moved in after they looked would stay behind). Their record steps
+/// do not wait: the records live in app data, and a rewrite skips a record already gone. Every
+/// writer creates its own folder, so nothing else depends on the layout being in place; a
 /// History listing taken before a migration moved something is told to reload when it is done.
 pub(crate) fn queue_audio_layout(app: &AppHandle, config: Config) {
     let app = app.clone();
@@ -166,8 +184,9 @@ pub(crate) fn queue_audio_layout(app: &AppHandle, config: Config) {
             .unwrap_or(true);
             AUDIO_LAYOUT.open();
             // A History listing taken while this ran may hold the pre-move paths: have it
-            // reload, or it plays (and an edit re-saves) them. Nothing went, so `removed: 0`
-            // and `dictationsWiped: false`.
+            // reload, or it plays them (a re-save from it is re-pointed by
+            // save_transcript_record, see `MOVED` in store/transcripts.rs). Nothing went, so
+            // `removed: 0` and `dictationsWiped: false`.
             if changed {
                 use tauri::Emitter;
                 let _ = app.emit(
@@ -186,6 +205,11 @@ pub(crate) fn queue_audio_layout(app: &AppHandle, config: Config) {
 /// Block until this launch's audio-layout job is over (see [`queue_audio_layout`]).
 pub(crate) fn wait_audio_layout() {
     AUDIO_LAYOUT.wait();
+}
+
+/// [`wait_audio_layout`] for at most `d`: true once the job is over, false when `d` ran out.
+pub(crate) fn wait_audio_layout_for(d: std::time::Duration) -> bool {
+    AUDIO_LAYOUT.wait_timeout(d)
 }
 
 /// One-time (idempotent) migration into the single-base layout: legacy saved
@@ -467,11 +491,13 @@ fn reveal_target(path: &str) -> Result<PathBuf, String> {
 
 /// Show a saved export in the system file manager: its folder opens with the
 /// file selected. async + spawn_blocking: the Linux path is a blocking D-Bus
-/// call (FileManager1, else the OpenURI portal).
+/// call (FileManager1, else the OpenURI portal), and the existence check runs on the
+/// blocking pool too — a stat of an export on a stalled mount (a sleeping disk, an offline
+/// share) must not park a runtime worker.
 #[tauri::command]
 pub async fn reveal_in_folder(path: String) -> Result<(), String> {
-    let target = reveal_target(&path)?;
     tauri::async_runtime::spawn_blocking(move || {
+        let target = reveal_target(&path)?;
         tauri_plugin_opener::reveal_item_in_dir(target).map_err(|e| e.to_string())
     })
     .await
@@ -630,6 +656,20 @@ mod tests {
         waiter.join().unwrap();
         assert!(PASSED.load(Ordering::SeqCst));
         GATE.wait(); // open for good: a later wait returns at once
+    }
+
+    #[test]
+    fn a_timed_layout_wait_gives_up_while_closed_and_passes_once_open() {
+        use std::time::Duration;
+        static GATE: super::Gate = super::Gate::new();
+        assert!(!GATE.wait_timeout(Duration::from_millis(20)));
+        let opener = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(30));
+            GATE.open();
+        });
+        assert!(GATE.wait_timeout(Duration::from_secs(10)));
+        opener.join().unwrap();
+        assert!(GATE.wait_timeout(Duration::ZERO), "open for good");
     }
 
     #[test]

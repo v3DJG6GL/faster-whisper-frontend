@@ -116,16 +116,38 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
 /// worker (`drain_newest`): sweeps run one at a time, so the launch sweep and two quick saves
 /// never prune or wipe at the same time, a superseded config's sweep is dropped (an older,
 /// shorter window never runs last), and calls made while a sweep is stuck on a dead audio share
-/// replace the pending one instead of parking a thread each. Each run first waits for this
-/// launch's audio-layout migration, so the sweeps look in the moved folders.
+/// replace the pending one instead of parking a thread each.
+/// Each run's record half (app data) runs at once and never waits for this launch's audio-layout
+/// migration. Its audio-base half (orphaned media, recordings) must look in the moved folders, so
+/// it waits for the migration, in slices: a newer config queued meanwhile supersedes it — that
+/// half is dropped and the newer run (whose own record half then runs at once) does it, so a
+/// stale config never sweeps after the user changed the settings during a long migration.
 pub(crate) fn queue_retention_sweeps(app: &AppHandle, config: Config) {
     static SWEEP_NEXT: crate::NewestSlot<(AppHandle, Config)> =
         std::sync::Mutex::new((None, false));
     crate::drain_newest(&SWEEP_NEXT, (app.clone(), config), |(app, config)| {
-        super::wait_audio_layout();
-        // History first: its records are local and its swept event lets the History mirror
-        // reload before either sweep walks a (possibly slow) audio base. Order-free otherwise.
+        let superseded = || {
+            SWEEP_NEXT
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .0
+                .is_some()
+        };
+        // History records first: they are local, and the swept event lets the History mirror
+        // reload before the audio-base sweeps walk a (possibly slow) share.
         crate::store::transcripts::apply_transcripts_retention(&app, &config);
+        while !super::wait_audio_layout_for(std::time::Duration::from_millis(250)) {
+            if superseded() {
+                return;
+            }
+        }
+        if superseded() {
+            return;
+        }
+        crate::store::transcripts::apply_transcripts_media_retention(&app, &config);
+        if superseded() {
+            return;
+        }
         apply_recordings_retention(&app, &config);
     });
 }
