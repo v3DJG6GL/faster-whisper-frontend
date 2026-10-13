@@ -952,6 +952,11 @@ export function SyncTab() {
 
   const syncBackend = backends.find((b) => b.id === sync.backendId) ?? null;
   const busy = syncStatus === "syncing";
+  // "Really delete" deletes the copy on the CURRENT sync server: an arm made for another server,
+  // or before sync was switched off, must not survive to delete this one (or reset sync state
+  // under a row that reads disabled).
+  const canDelete = sync.enabled && !!syncBackend;
+  useEffect(() => setDeleteArmed(false), [sync.backendId, sync.enabled]);
 
   const doExport = async () => {
     try {
@@ -986,7 +991,7 @@ export function SyncTab() {
   };
 
   const doDeleteServerCopy = async () => {
-    if (!syncBackend) return;
+    if (!canDelete || !syncBackend) return;
     setDeleteArmed(false);
     try {
       const r = await syncDelete({
@@ -1138,10 +1143,10 @@ export function SyncTab() {
         <SettingRow
           title="Delete server copy"
           desc="Remove the stored settings from the server. Devices keep their local settings."
-          disabled={!sync.enabled || !syncBackend}
+          disabled={!canDelete}
           last
         >
-          {deleteArmed ? (
+          {deleteArmed && canDelete ? (
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => setDeleteArmed(false)}>
                 Keep
@@ -1151,7 +1156,7 @@ export function SyncTab() {
               </Button>
             </div>
           ) : (
-            <Button variant="ghost" disabled={!sync.enabled || !syncBackend} onClick={() => setDeleteArmed(true)}>
+            <Button variant="ghost" disabled={!canDelete} onClick={() => setDeleteArmed(true)}>
               Delete…
             </Button>
           )}
