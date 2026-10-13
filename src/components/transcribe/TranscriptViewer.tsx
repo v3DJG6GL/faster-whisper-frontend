@@ -759,7 +759,7 @@ export function TranscriptViewer({
         },
         onChunkStart: (chunkIdxs, done) =>
           setTrRun((s) => (s ? beginChunk(s, chunkIdxs, done) : s)),
-        onMerge: (patch, prov, _first, kept) => {
+        onMerge: (patch, prov, _first, kept, sent) => {
           mergeSegmentTranslations(
             okey,
             patch,
@@ -771,6 +771,7 @@ export function TranscriptViewer({
               mode,
             },
             kept,
+            sent,
           );
         },
         // Quality-guard notices accumulate on the card ("N kept original").

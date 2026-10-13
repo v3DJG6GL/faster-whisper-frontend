@@ -44,6 +44,21 @@ describe("runChunkedTranslate", () => {
     expect(r).toMatchObject({ model: "org/model:q4", source: "de", cancelled: false, mergedChunks: 3 });
   });
 
+  it("hands each merged segment's text as it was SENT, not as it reads when the answer lands", async () => {
+    const texts: Record<number, string> = { 3: "A", 17: "B" };
+    const sents: Record<number, string>[] = [];
+    await runChunkedTranslate({
+      indexes: [3, 17],
+      textOf: (i) => texts[i],
+      translate: (sent) => {
+        texts[3] = "A corrected meanwhile";
+        return Promise.resolve(answer(sent));
+      },
+      onMerge: (_patch, _prov, _first, _kept, sent) => sents.push(sent),
+    });
+    expect(sents).toEqual([{ 3: "A", 17: "B" }]);
+  });
+
   it("keys the patch by SEGMENT index even for a sparse stale-row set", async () => {
     const merges: Record<number, Record<string, string>>[] = [];
     await runChunkedTranslate({

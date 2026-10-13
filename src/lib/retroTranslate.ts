@@ -289,12 +289,15 @@ export interface ChunkedTranslateArgs {
    *  (registers provenance / makes the track chips appear). `kept` mirrors
    *  the patch: per merged segment index, the target codes whose entry kept
    *  the SOURCE text (server quality guard) — [] on a clean segment, so a
-   *  successful re-translate REPLACES (clears) an earlier mark. */
+   *  successful re-translate REPLACES (clears) an earlier mark. `sent` mirrors it too: the text
+   *  each merged segment was sent as (textOf at send time), so the merge can tell a line
+   *  corrected while its chunk was in flight from one it really re-translated. */
   onMerge: (
     patch: Record<number, Record<string, string>>,
     prov: { model?: string; source?: string },
     firstChunk: boolean,
     kept: Record<number, string[]>,
+    sent: Record<number, string>,
   ) => void;
   /** Warnings accumulated so far (called after any chunk that added some). */
   onWarnings?: (all: string[]) => void;
@@ -323,7 +326,8 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
     const slice = a.indexes.slice(at, at + chunk);
     a.onChunkStart?.(slice, at);
-    const r = await a.translate(slice.map((i) => a.textOf(i)));
+    const texts = slice.map((i) => a.textOf(i));
+    const r = await a.translate(texts);
     // Cancelled while this chunk was in flight: its results are lost by
     // design (the approved copy says so); everything merged before stays.
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
@@ -343,15 +347,17 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     }
     const patch: Record<number, Record<string, string>> = {};
     const kept: Record<number, string[]> = {};
+    const sent: Record<number, string> = {};
     slice.forEach((segIdx, k) => {
       const tr = r.results[k];
       if (tr && Object.keys(tr).length) {
         patch[segIdx] = tr;
         kept[segIdx] = r.kept?.[k] ?? [];
+        sent[segIdx] = texts[k];
       }
     });
     if (Object.keys(patch).length) {
-      a.onMerge(patch, { model, source }, mergedChunks === 0, kept);
+      a.onMerge(patch, { model, source }, mergedChunks === 0, kept, sent);
       mergedChunks += 1;
     }
   }

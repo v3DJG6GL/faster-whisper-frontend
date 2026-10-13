@@ -1403,7 +1403,8 @@ export function clearEdits(key: string) {
  *  retro-translate): updates the persisted record DIRECTLY (not via the
  *  debounced schedulePersistEdits — its single timer handle could drop a
  *  pending write for another key), patches the open queue item so the viewer
- *  re-renders, and clears the merged indexes' stale marks. */
+ *  re-renders, and clears the merged indexes' stale marks — only where the
+ *  merge re-translated what the line says now, in every language it holds. */
 export function mergeSegmentTranslations(
   key: string,
   patch: Record<number, Record<string, string>>,
@@ -1414,9 +1415,14 @@ export function mergeSegmentTranslations(
    *  Marks of languages NOT in this patch are carried forward so a re-translate
    *  targeting a subset of tracks never erases untouched tracks' marks. */
   kept?: Record<number, string[]>,
+  /** Per merged index: the text it was SENT as (the chunk's textOf, read before the round
+   *  trip). Absent = taken to be the line's current text. */
+  sent?: Record<number, string>,
 ) {
   const rec = registered(key);
   if (!rec?.result?.segments) return;
+  /** The languages each merged line held a translation in before this merge. */
+  const held = new Map(Object.keys(patch).map((k) => [Number(k), Object.keys(rec.result?.segments?.[Number(k)]?.translations ?? {})]));
   const segments = rec.result.segments.map((seg, i) => {
     if (!patch[i]) return seg;
     const next: typeof seg = { ...seg, translations: { ...seg.translations, ...patch[i] } };
@@ -1448,16 +1454,32 @@ export function mergeSegmentTranslations(
       },
     },
   };
-  // Clear the merged indexes' stale marks FIRST so the persisted record
+  // Settle the merged indexes' stale marks FIRST so the persisted record
   // carries the post-merge state (upsertRecord stringifies synchronously).
-  // A segment merged while corrected was translated FROM the correction (the
-  // retro-translate sends the edited text): note it, so dropping the correction
-  // marks it stale again.
+  // A segment translated from a correction (the retro-translate sends the edited
+  // text) is noted, so dropping the correction marks it stale again.
   set((s) => {
     const stale = { ...s.translationsStale[key] };
     const fromEdit = { ...s.translatedFromEdit[key] };
     for (const k of Object.keys(patch)) {
       const i = Number(k);
+      const original = (rec.result?.segments?.[i]?.text ?? "").trim();
+      const now = (s.edits[key]?.[i] ?? rec.result?.segments?.[i]?.text ?? "").trim();
+      const was = sent?.[i] ?? now;
+      if (was !== now) {
+        // Corrected (or the correction dropped) while the chunk was in flight: the
+        // translation is of the text it was sent as, not of what the line says now.
+        stale[i] = true;
+        if (was !== original) fromEdit[i] = true;
+        else delete fromEdit[i];
+        continue;
+      }
+      // Another language of the line (one this merge did not re-translate) still
+      // translates whatever the line said before: its mark stands.
+      if (!(held.get(i) ?? []).every((l) => hasOwn(patch[i], l))) {
+        if (s.edits[key]?.[i] !== undefined) fromEdit[i] = true;
+        continue;
+      }
       delete stale[i];
       if (s.edits[key]?.[i] !== undefined) fromEdit[i] = true;
       else delete fromEdit[i];

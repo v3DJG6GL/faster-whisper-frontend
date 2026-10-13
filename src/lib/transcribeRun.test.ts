@@ -767,6 +767,45 @@ describe("dropping a correction a re-translate was made from", () => {
     setSegmentEdit("fromedit-8", 0, null);
     expect(stale("fromedit-8")).toEqual({ 0: true });
   });
+  const fromEdit = (id: string) => useTranscribeRun.getState().translatedFromEdit[id] ?? {};
+
+  it("a merge into a new language alone leaves the stale mark of the line's other languages", () => {
+    openHistoryRecord(recOf("cover-1"));
+    // The German translation is of the uncorrected text: stale.
+    setSegmentEdit("cover-1", 0, "I read the book");
+    expect(stale("cover-1")).toEqual({ 0: true });
+    // "Translate now" into Spanish only: German still translates the old text.
+    mergeSegmentTranslations("cover-1", { 0: { es: "Leo el libro" } }, { targets: ["es"] }, undefined, { 0: "I read the book" });
+    expect(stale("cover-1")).toEqual({ 0: true });
+    // Re-translated into every language the line holds: fresh.
+    mergeSegmentTranslations(
+      "cover-1", { 0: { de: "Ich lese das Buch", es: "Leo el libro" } }, { targets: ["de", "es"] }, undefined,
+      { 0: "I read the book" },
+    );
+    expect(stale("cover-1")).toEqual({});
+    expect(fromEdit("cover-1")).toEqual({ 0: true });
+  });
+
+  it("a line corrected while its chunk was in flight stays stale, and the translation is not marked as made from the correction", () => {
+    openHistoryRecord(recOf("sent-1"));
+    // Sent as the original text; corrected before the answer lands.
+    setSegmentEdit("sent-1", 0, "I read the book");
+    mergeSegmentTranslations("sent-1", { 0: { de: "Ich rot das Buch!" } }, { targets: ["de"] }, undefined, { 0: "I red the book" });
+    expect(stale("sent-1")).toEqual({ 0: true });
+    expect(fromEdit("sent-1")).toEqual({});
+    // Reverting the correction: the translation matches the original again.
+    setSegmentEdit("sent-1", 0, null);
+    expect(stale("sent-1")).toEqual({});
+  });
+
+  it("a correction dropped while its chunk was in flight leaves the line stale and the translation marked as from it", () => {
+    openHistoryRecord(recOf("sent-2"));
+    setSegmentEdit("sent-2", 0, "I read the book");
+    setSegmentEdit("sent-2", 0, null);
+    mergeSegmentTranslations("sent-2", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] }, undefined, { 0: "I read the book" });
+    expect(stale("sent-2")).toEqual({ 0: true });
+    expect(fromEdit("sent-2")).toEqual({ 0: true });
+  });
 });
 
 describe("mergeSegmentTranslations keeps a known translation source", () => {
