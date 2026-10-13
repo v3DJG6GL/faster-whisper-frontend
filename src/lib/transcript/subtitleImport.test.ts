@@ -147,6 +147,24 @@ describe("round-trips against generateExport", () => {
     expect(lrc).toContain("私は<00:00.50>𠮷野家");
     expect(parseImportedText("lrc", lrc).segments[0].text).toBe(text);
   });
+  it("srt/lrc: literal angle brackets in the text are no markup and re-import verbatim", () => {
+    const lines = ["If x<5 and y>3 we stop.", "Use the <Enter> key."];
+    const r: BatchResult = {
+      text: lines.join(" "),
+      language: "en",
+      segments: lines.map((text, i) => ({ start: i * 2, end: i * 2 + 1.5, text })),
+    };
+    for (const format of ["srt", "lrc"] as const) {
+      const back = parseImportedText(format, generateExport(r, { format }));
+      expect(back.segments.map((s) => s.text)).toEqual(lines);
+    }
+  });
+  it("srt: a foreign file's real markup still strips", () => {
+    const srt =
+      '1\n00:00:01,000 --> 00:00:02,000\n<i>Hello</i> <font color="#ff0">there</font>, <B>friend</B>.\n\n'
+      + "2\n00:00:03,000 --> 00:00:04,000\n<c.mt>Line</c><br/> <00:00:03.500>two {\\an8}here.\n";
+    expect(parseImportedText("srt", srt).segments.map((s) => s.text)).toEqual(["Hello there, friend.", "Line two here."]);
+  });
   it("json: our export shape incl. language and speakerName", () => {
     const json = generateExport(RESULT, { format: "json" });
     const back = parseImportedText("json", json);

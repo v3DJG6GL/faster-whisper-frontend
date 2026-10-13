@@ -125,10 +125,20 @@ function joinLines(lines: string[], wraps: boolean): string {
   return parts.join("");
 }
 
+/** A subtitle tag: a known name, then its attributes or classes (`<font color=…>`, `<c.mt>`,
+ *  `<v Name>`). */
+const MARKUP_TAG =
+  /<\/?(?:b|i|u|s|font|c|v|lang|ruby|rt|rb|rp|span|br|em|strong|sub|sup)(?=[\s.>/])[^<>\n]{0,64}>/gi;
+
 /** A cue line without its tags and ASS override blocks — what a seam or the file's wrap
- *  decision (`cjkWrapsLines`) judges. */
+ *  decision (`cjkWrapsLines`) judges. Only real subtitle markup goes (the known tag names,
+ *  with attributes or classes, and inline timestamps): our SRT/LRC export writes the text
+ *  raw, so "x<5 and y>3" or "<Enter>" is the line's own text and must survive a re-import. */
 function bareLine(s: string): string {
-  return s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "");
+  return s
+    .replace(MARKUP_TAG, "")
+    .replace(/<\d+:\d+(?::\d+)?(?:\.\d+)?>/g, "")
+    .replace(/\{\\[^}]{0,64}\}/g, "");
 }
 
 /** Raw cues → segments, deciding once for the file whether its CJK line breaks are wraps
