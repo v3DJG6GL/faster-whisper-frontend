@@ -91,6 +91,10 @@ function bodyAfter(src: string, anchor: string): string {
   throw new Error(`unbalanced braces after: ${anchor}`);
 }
 
+/** The per-paste snapshot gate (masked: the string literal is blanked), shared by the phrase
+ *  task and the separator. */
+const SNAPSHOT_GATE = /t\.method ===\s+&& t\.restoreClipboard && !clipDirty && !t\.isSelf/;
+
 /** Every top-level `function name(...) {...}` in a module, by name. */
 function topLevelFunctions(src: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -719,22 +723,12 @@ describe("work that must wait for the queue or the cancel", () => {
     }
   });
 
-  it("the clipboard restore helper clears clipHoldsOurs before its awaited restore", () => {
-    // A cancel-then-restart swaps the chain during the await; a clear AFTER it would wipe the
-    // new session's own clipHoldsOurs (set by its first paste).
-    const helper = mask(bodyAfter(streamingSrc, "function giveClipboardBack"));
-    const clear = helper.indexOf("clipHoldsOurs = false");
-    expect(clear, "the helper must clear clipHoldsOurs").toBeGreaterThanOrEqual(0);
-    expect(helper.indexOf("restoreClipboardSnapshot(")).toBeGreaterThan(clear);
-  });
-
   it("the separator task restores through the shared helper", () => {
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
-    const at = task.indexOf("if (beganInjection)");
+    const at = task.indexOf("&& landed && beganInjection)");
     expect(at, "the separator's restore branch moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
-    const branch = task.slice(at, task.indexOf("} else {", at));
-    expect(branch).toContain("giveClipboardBack(");
+    expect(bodyAfter(task, "&& landed && beganInjection)")).toContain("giveClipboardBack(");
   });
 
   it("the separator withholds itself instead of diverting to the clipboard", () => {
@@ -742,7 +736,7 @@ describe("work that must wait for the queue or the cancel", () => {
     // persistent owner over the user's copy; a separator has nothing to recover, so it opts out.
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
-    const call = task.indexOf("injectText({ text: sep,");
+    const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(task.slice(call, task.indexOf("});", call))).toContain("withholdOnDivert: true");
     // Only the separator: the auto-Enter calls (empty text) and every phrase insert keep the divert.
@@ -755,21 +749,20 @@ describe("work that must wait for the queue or the cancel", () => {
     // sat on the clipboard over the user's copy.
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
-    const call = task.indexOf("injectText({ text: sep,");
+    const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const tryAt = task.lastIndexOf("try {", call);
     expect(tryAt, "the separator's injectText must sit inside a try").toBeGreaterThanOrEqual(0);
     expect(task.slice(tryAt, call), "nothing but the call between the try and the separator inject").not.toContain("}");
     const catchBody = bodyAfter(task.slice(call), "} catch (e)");
-    const guard = catchBody.indexOf("if (insertCfg !== cfg) return;");
+    const guard = catchBody.indexOf("if (insertCfg !== cfg) return false;");
     expect(guard, "the catch must check the session token").toBeGreaterThanOrEqual(0);
     const restore = catchBody.indexOf("giveClipboardBack(");
     expect(restore, "the catch must restore after the session-token check").toBeGreaterThan(guard);
     // Only from a snapshot: the restore's own condition asks for one.
     const cond = catchBody.slice(catchBody.lastIndexOf("if (", restore), restore);
     expect(cond).toContain("beganInjection");
-    // The write may not have happened: never claim the clipboard holds our text, never re-send.
-    expect(catchBody).not.toContain("clipHoldsOurs");
+    // The write may not have happened: never re-send.
     expect(catchBody).not.toContain("injectText(");
   });
 
@@ -779,17 +772,51 @@ describe("work that must wait for the queue or the cancel", () => {
     // that older content — on a landed separator and from the catch alike.
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
-    const call = task.indexOf("injectText({ text: sep,");
+    const call = task.indexOf("injectText({ text: part,");
     expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     const begin = task.lastIndexOf("beginInjection(", call);
     expect(begin, "the separator must snapshot the clipboard before its paste").toBeGreaterThanOrEqual(0);
     // The phrase task's gate: never snapshot our own text as the user's original.
     const gate = task.slice(task.lastIndexOf("if (", begin), begin);
-    expect(gate).toMatch(/t\.method ===\s+&& t\.restoreClipboard && !clipHoldsOurs && !t\.isSelf/);
+    expect(gate).toMatch(SNAPSHOT_GATE);
     // The awaited snapshot is a gap a cancel can land in: re-check the session token before pasting.
     const between = task.slice(begin, call);
     expect(between).toContain("beganInjection = true;");
-    expect(between, "a session-token check between the snapshot and the separator paste").toContain("if (insertCfg !== cfg) return;");
+    expect(between, "a session-token check between the snapshot and the separator paste").toContain("if (insertCfg !== cfg) return false;");
+  });
+
+  it("the phrase task takes its snapshot through the same gate", () => {
+    // A JS "the clipboard holds our text" flag cannot see a copy the user made since: only a
+    // paste still owed a restore (clipDirty) skips the read; Rust's is_own_injected decides the rest.
+    const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
+    const begin = final.indexOf("await beginInjection()");
+    expect(begin, "the phrase task's snapshot moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(final.slice(final.lastIndexOf("if (", begin), begin)).toMatch(SNAPSHOT_GATE);
+    expect(streamingSrc).not.toContain("clipHoldsOurs");
+  });
+
+  it("a snapshot latches beganInjection only for the session that took it", () => {
+    // A cancel-then-restart during the awaited read: the late latch handed session B a restore
+    // debt (a spurious injecting tail, and a snapshot-clear on its behalf).
+    const src = mask(streamingSrc);
+    const latches = src.match(/await beginInjection\(\);\s+if \(insertCfg === cfg\) beganInjection = true;/g) ?? [];
+    expect(latches).toHaveLength(2);
+    expect(src.match(/await beginInjection\(\);/g) ?? []).toHaveLength(2);
+  });
+
+  it("a multi-line separator presses a Return per line break and sends the text between", () => {
+    // "\n\n" (a blank line) used to press ONE Return, and ".\n" lost its "." — while the carry
+    // and the Live dictation preview have the separator exactly as written.
+    const boundary = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "enqueueInject(async () =>"));
+    const loop = boundary.indexOf("for (let i = 0; i < parts.length; i++)");
+    expect(loop, "the separator loop moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(boundary).toMatch(/const parts = sep\.split\(\s+\);/);
+    expect(boundary).not.toMatch(/sep\.includes\(/);
+    const body = bodyAfter(boundary.slice(loop), ")");
+    // A Return before every part after the first, each stopping the rest when it did not land.
+    expect(body).toMatch(/if \(i > 0 && \(!\(await pressReturn\(t, cfg\)\) \|\| insertCfg !== cfg\)\) return;/);
+    expect(body).toMatch(/if \(parts\[i\] && \(!\(await sendSepText\(parts\[i\]\)\) \|\| insertCfg !== cfg\)\) return;/);
+    expect(mask(topLevelFunctions(streamingSrc).pressReturn)).toMatch(/return landed && !diverted;/);
   });
 
   it("every clipboard restore goes through giveClipboardBack", () => {

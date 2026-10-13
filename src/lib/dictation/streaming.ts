@@ -1077,9 +1077,11 @@ function captureDictationHistory(): boolean {
     return false;
   }
 }
-// Whether we've taken at least one clipboard snapshot this session (live paste) — set the first
-// time a phrase is actually pasted (the snapshot is re-taken PER PHRASE, just before each paste),
-// so the close handler knows it owes a final restore + snapshot-clear.
+// Whether this session has taken at least one clipboard snapshot (live paste): latched when a
+// beginInjection snapshot succeeds right before a paste — each phrase's and each hard-break
+// separator's — and only for the session that took it (a cancelled session's snapshot is restored
+// by cancelLive's chained endInjection). It stays set if that paste is then withheld or skipped.
+// The close handler reads it to know it owes a final restore + snapshot-clear (finalClip).
 let beganInjection = false;
 // "Press Enter after" in live mode fires per PHRASE, detected client-side: when speech goes
 // quiet for PHRASE_END_QUIET_MS (finals/partials stop) we treat the phrase as finished and
@@ -1108,17 +1110,9 @@ const gapOwedApps = new Set<string | null>();
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
 // not just once at stop (which an ongoing hands-free session never reaches).
 let clipDirty = false;
-// Whether the clipboard currently holds OUR dictated transcript (vs the user's original). Distinct
-// from clipDirty (= restore-debt): a clipboard-only phrase clears the debt yet still leaves our text
-// on the clipboard, so the per-phrase snapshot must gate on THIS, not clipDirty — else the next paste
-// re-snapshots our own text as the user's "original" and the later restore clobbers their content.
-let clipHoldsOurs = false;
 /** Put the user's clipboard back from the Rust-held snapshot (which survives, so a later paste can
- *  restore again). clipHoldsOurs is cleared BEFORE the await: a cancel-then-restart swaps the chain
- *  meanwhile, and a late clear would wipe the next session's own flag. Every restore goes through
- *  here so that ordering cannot drift between the call sites. */
+ *  restore again). Every restore goes through here. */
 async function giveClipboardBack(): Promise<void> {
-  clipHoldsOurs = false;
   try {
     await restoreClipboardSnapshot();
   } catch (e) {
@@ -1215,13 +1209,15 @@ function enqueueAutoEnter(): void {
 
 /** Press a bare Return into the resolved target `t` — the per-phrase Enter and the hard break's
  *  Enter or newline separator all go through here. Empty text takes the keystroke path, so the
- *  clipboard is never touched. A rejection propagates to the caller's enqueueInject catch. */
-async function pressReturn(t: Awaited<ReturnType<typeof resolveTarget>>, cfg: InsertCfg | null): Promise<void> {
+ *  clipboard is never touched. Resolves whether the Return landed in place (not skipped, withheld
+ *  or diverted). A rejection propagates to the caller's enqueueInject catch. */
+async function pressReturn(t: Awaited<ReturnType<typeof resolveTarget>>, cfg: InsertCfg | null): Promise<boolean> {
   const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
   // The Return ended the phrase in the field: the next translated block opens on a fresh line,
   // not three more Returns. The session token, like every task's post-await write. Only a Return
   // in the window that owes the gap pays it.
   if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
+  return landed && !diverted;
 }
 
 /** (Re)arm the phrase-end quiet timer — the single "you paused, the phrase is done" signal that
@@ -1313,7 +1309,6 @@ function clearPhraseEnd(): void {
   lastPhraseDiverted = false;
   gapOwedApps.clear();
   clipDirty = false;
-  clipHoldsOurs = false; // session reset — start clean
   clipBaseline = "";
   clipBooked = null;
   flushClipByLang();
@@ -2333,9 +2328,6 @@ async function ensureListeners(): Promise<void> {
               // restore puts the old snapshot back over it. Covers a fast paste→clipboard-only
               // switch with no pause between, which would otherwise leave clipDirty set from the paste.
               clipDirty = false;
-              // The clipboard now holds OUR text, so a later paste must NOT re-snapshot it as the
-              // user's original (the snapshot guard keys on clipHoldsOurs, not clipDirty).
-              clipHoldsOurs = true;
               // The phrase was DELIVERED — to the clipboard, not typed, but delivered: it is on
               // the clipboard for the user to paste, and they will. So it counts against the typed
               // baseline like a typed phrase does. Leaving `injectedText` behind here meant that
@@ -2402,17 +2394,20 @@ async function ensureListeners(): Promise<void> {
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
             // stays un-advanced), and booking it here appended its translation to history twice.
             // Snapshot the user's CURRENT clipboard right before this paste overwrites it — per phrase,
-            // not once at session start — and only when the clipboard does NOT already hold our own text
-            // (clipHoldsOurs false), so we never capture our own transcript. Gating on clipHoldsOurs (not
-            // clipDirty) covers the clipboard-only→paste case: a clipboard-only phrase clears clipDirty
-            // but leaves our text on the clipboard, which !clipDirty would wrongly re-snapshot.
-            if (t.method === "paste" && t.restoreClipboard && !clipHoldsOurs && !t.isSelf) {
+            // not once at session start. Skipped only while our last paste is still owed a restore
+            // (clipDirty): the clipboard holds that transcript and the snapshot before it is the
+            // user's. Anything else is read, and Rust's begin_injection tells our own text (a
+            // clipboard-only copy, a divert, a restore-off paste, a separator — is_own_injected keeps
+            // the prior snapshot) from a copy the user made since, which JS cannot see.
+            if (t.method === "paste" && t.restoreClipboard && !clipDirty && !t.isSelf) {
               // !t.isSelf: when our own window is focused the Rust guard skips the paste, so there's
               // nothing to snapshot/restore — and latching beganInjection/clipDirty here would flash a
               // spurious "injecting" tail AND pin the stale own-window clipboard over a later real paste.
               try {
                 await beginInjection();
-                beganInjection = true;
+                // Only for the session that took it: a cancel-then-restart during the awaited read
+                // must not hand session B a restore debt (cancelLive restores this snapshot itself).
+                if (insertCfg === cfg) beganInjection = true;
               } catch (e) {
                 console.error("beginInjection failed:", e);
               }
@@ -2521,7 +2516,6 @@ async function ensureListeners(): Promise<void> {
               // path, the copy carries no phrase gap: Rust wrote the `clipboardText` it was handed
               // (the bare block, or the trimmed phrase), not the `typeOut` the field would have got.)
               clipDirty = false;
-              clipHoldsOurs = true;
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
               // dictation (this phrase sits on the clipboard), and Enter would submit that part —
               // or, when focus moved, press Return in whatever window took it. Every Enter producer
@@ -2536,7 +2530,6 @@ async function ensureListeners(): Promise<void> {
               // bare `true` re-armed an earlier window's snapshot over a restore-off app's
               // transcript; `false` here also cancels that earlier window's pending restore.
               clipDirty = t.restoreClipboard;
-              clipHoldsOurs = true;
             }
             // Advance the TYPED baseline + pulse ONLY when the phrase actually landed: leaving it
             // un-advanced re-sends the skipped text with the next insert, which is the whole point.
@@ -2811,81 +2804,86 @@ async function ensureListeners(): Promise<void> {
             return;
           }
           if (!sep) return;
-          if (sep.includes("\n")) {
-            await pressReturn(t, cfg);
-          } else {
-            // withholdOnDivert: a separator has nothing to recover, so no Rust divert or recovery
-            // (the trigger chord still held, focus moved, our own window at the chord, a layout
-            // that cannot type it, a failed paste, an error abort's recovery) may make a lone " "
-            // the clipboard's owner over the user's copy — with the direct method there is no
-            // snapshot to give back. A divert or recovery that would write it before anything is
-            // written writes nothing and reports `landed: false`, which the `landed` gate below
-            // already reads as "no clobber": no restore, no clipHoldsOurs, no error. A cancel
-            // before the write (user or error abort) reports `landed: true` with nothing written;
-            // after an error abort the gate is then skipped by the `insertCfg !== cfg` guard,
-            // because every error teardown nulls insertCfg before it retires the epoch. A
-            // chord-time divert (our own window took focus after the paste write) reports
-            // `landed: true`, because the clipboard WAS written: the gate below gives the user's
-            // copy back exactly as for a pasted separator.
-            // A failed paste REJECTS, and Rust restores nothing for it (its restore needs
-            // restoreClipboard, which this call never passes), so the catch gives the snapshot
-            // back. Either way the separator is never re-sent; a missing space between two
-            // phrases is the lesser harm.
-            // The snapshot is per separator, taken right here exactly as the phrase task takes
+          // One text part of the separator: a plain separator whole, or a run of text between the
+          // line breaks of a multi-line one ("\n" is always a real Return, see pressReturn's callers).
+          // False when it did not land in place (withheld, failed, or this session ended meanwhile):
+          // the rest of the separator then stays unsent.
+          //
+          // withholdOnDivert: a separator has nothing to recover, so no Rust divert or recovery
+          // (the trigger chord still held, focus moved, our own window at the chord, a layout
+          // that cannot type it, a failed paste, an error abort's recovery) may make a lone " "
+          // the clipboard's owner over the user's copy — with the direct method there is no
+          // snapshot to give back. A divert or recovery that would write it before anything is
+          // written writes nothing and reports `landed: false`, which the `landed` gate below
+          // already reads as "no clobber": no restore, no error. A cancel
+          // before the write (user or error abort) reports `landed: true` with nothing written;
+          // after an error abort the gate is then skipped by the `insertCfg !== cfg` guard,
+          // because every error teardown nulls insertCfg before it retires the epoch. A
+          // chord-time divert (our own window took focus after the paste write) reports
+          // `landed: true`, because the clipboard WAS written: the gate below gives the user's
+          // copy back exactly as for a pasted separator.
+          // A failed paste REJECTS, and Rust restores nothing for it (its restore needs
+          // restoreClipboard, which this call never passes), so the catch gives the snapshot
+          // back. Either way the separator is never re-sent; a missing space between two
+          // phrases is the lesser harm.
+          const sendSepText = async (part: string): Promise<boolean> => {
+            // The snapshot is per separator part, taken right here exactly as the phrase task takes
             // one per phrase: the quiet timer has usually given the clipboard back by now, and
             // the user may have copied something since. The previous phrase's snapshot is older
             // than that copy, so restoring IT after the separator (or from the catch) replaced
-            // the user's newer copy with stale content. Gated on !clipHoldsOurs like the phrase
-            // task (Rust keeps the prior snapshot when the clipboard holds our own text anyway).
-            if (t.method === "paste" && t.restoreClipboard && !clipHoldsOurs && !t.isSelf) {
+            // the user's newer copy with stale content. Gated on !clipDirty like the phrase task:
+            // Rust keeps the prior snapshot when the clipboard holds our own text (is_own_injected).
+            if (t.method === "paste" && t.restoreClipboard && !clipDirty && !t.isSelf) {
               try {
                 await beginInjection();
-                beganInjection = true;
+                // Only for the session that took it (see the phrase task).
+                if (insertCfg === cfg) beganInjection = true;
               } catch (e) {
                 console.error("beginInjection failed:", e);
               }
               // Same guard as the phrase task: a cancel or cancel-then-restart during the awaited
               // snapshot must not paste this separator into the refocused / next session's window.
-              if (insertCfg !== cfg) return;
+              if (insertCfg !== cfg) return false;
             }
             let outcome: InjectOutcome;
             try {
-              outcome = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: true });
+              outcome = await injectText({ text: part, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: true });
             } catch (e) {
               console.error("separator inject failed:", e);
-              if (insertCfg !== cfg) return;
-              // The paste write may have put `sep` on the clipboard before the chord failed. Only
+              if (insertCfg !== cfg) return false;
+              // The paste write may have put the part on the clipboard before the chord failed. Only
               // a snapshot can put the user's copy back. Restoring it is harmless if the write
-              // never happened: the snapshot was taken right before this separator (or the
+              // never happened: the snapshot was taken right before this part (or the
               // clipboard still held our own text, which the snapshot predates). Without one,
-              // leave clipHoldsOurs alone — a wrong flag suppresses the next real snapshot, and
-              // the write may not have happened at all.
+              // Rust's next begin_injection tells our text from the user's (is_own_injected).
               if (t.method === "paste" && t.restoreClipboard && !t.isSelf && beganInjection) await giveClipboardBack();
-              return;
+              return false;
             }
-            const { landed } = outcome;
+            const { landed, diverted } = outcome;
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
-            // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
-            if (insertCfg !== cfg) return;
-            // The separator paste just clobbered the clipboard with `sep` (set_clipboard + Ctrl+V).
+            // bookkeeping (a restore) onto the new one — mirrors the inject tasks' guard.
+            if (insertCfg !== cfg) return false;
+            // The separator paste just clobbered the clipboard with the part (set_clipboard + Ctrl+V).
             // (!t.isSelf: an own-window separator is Rust-guard-skipped, so the clipboard is untouched
             // there and the boundary backstop below handles any owed restore — don't touch bookkeeping.)
             // `landed` for the same reason as the phrase task: a sink-side own-window skip wrote
-            // nothing, so there is no clobber to restore and setting clipHoldsOurs would suppress the
-            // NEXT real paste's snapshot — leaving a later paste with nothing recorded to put back.
-            if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed) {
-              if (beganInjection) {
-                // The snapshot above (or, while the clipboard held our text, the earlier one Rust kept)
-                // is the user's clipboard — put it back (mirrors the per-phrase restore contract); the
-                // snapshot survives in Rust and isn't consumed.
-                await giveClipboardBack();
-              } else {
-                // No prior snapshot: `sep` (OUR text) is on the clipboard. Mark clipHoldsOurs so a later
-                // phrase's begin_injection (gated on !clipHoldsOurs) won't snapshot `sep` as the user's
-                // original and then permanently restore it over their content.
-                clipHoldsOurs = true;
-              }
+            // nothing, so there is no clobber to restore.
+            // The snapshot above (or, while the clipboard held our text, the earlier one Rust kept)
+            // is the user's clipboard — put it back (mirrors the per-phrase restore contract); the
+            // snapshot survives in Rust and isn't consumed. With no snapshot the part (OUR text) stays:
+            // Rust's next begin_injection keeps the prior snapshot over it (is_own_injected).
+            if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed && beganInjection) {
+              await giveClipboardBack();
             }
+            return landed && !diverted;
+          };
+          // The separator as written: each "\n" a Return, the text between through sendSepText, in
+          // order ("\n\n" is a blank line, ".\n" keeps its "."), just as the carry's joinCarry and the
+          // Live dictation preview have it. A part that does not land stops the rest.
+          const parts = sep.split("\n");
+          for (let i = 0; i < parts.length; i++) {
+            if (i > 0 && (!(await pressReturn(t, cfg)) || insertCfg !== cfg)) return;
+            if (parts[i] && (!(await sendSepText(parts[i])) || insertCfg !== cfg)) return;
           }
         });
       }
@@ -2895,8 +2893,7 @@ async function ensureListeners(): Promise<void> {
     // hadn't already (clearPhraseEndTimer above just dropped its queued restore). Decided IN the
     // queue, like bumpPhraseEnd's link: a phrase task still awaiting its translate sets clipDirty
     // only after its paste lands, so a synchronous read here saw false and its synchronous clear
-    // then left that late debt unrestored (the transcript sat on the clipboard). Clear
-    // clipHoldsOurs ONLY on a restore — a clipboard-only-last phrase still holds our text.
+    // then left that late debt unrestored (the transcript sat on the clipboard).
     // Chained directly so the flood cap can never drop it; the session token guards a
     // cancel-then-restart (both reset all of this themselves).
     {
@@ -3953,9 +3950,9 @@ async function startLiveInner(
     // never the previous session's drain/transcription (that one is reached only with no live
     // session). A recovery cancel keeps its usual meaning: Rust finishes the session instead of
     // discarding it (a stream drains, a batch clip is transcribed, and the recording is written)
-    // — except a batch session with "Keep recordings" off, which is discarded: the live clip is not
-    // uploaded, and a device-loss salvage is stopped unless its upload had already started (then
-    // only its result is dropped).
+    // — only while "Keep recordings" is on; with it off the session is aborted like a Cancel (a
+    // stream is dropped without a drain; a batch's live clip is not uploaded, and a device-loss
+    // salvage is stopped unless its upload had already started, then only its result is dropped).
     // (TS narrows the module `let` to the `null` set above; cancelLive sets it during the await.)
     const owedCancel = cancelDuringStartInvoke as { keepRecording: boolean } | null;
     if (owedCancel) {
@@ -4028,14 +4025,13 @@ export interface CancelOpts {
   /** The chord-family restart's discard of a hold session, not a session the user ended: one the
    *  server never announced an utterance for books no outcome (see cancelLive). */
   restart?: boolean;
-  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: nothing it reaches is
-   *  discarded that has a recording to keep — a live stream session is finished (drained,
-   *  recording written), a live batch session is finished too when "Keep recordings" is on
-   *  (transcribed, .wav/.txt written, its events silenced; with recordings off it is discarded: the
-   *  live clip is not uploaded, and a device-loss salvage is stopped unless its upload had already
-   *  started, then only its result is dropped), and a drain/transcription still running
-   *  after stop is released, keeping its saved recording — the audio may be the only copy of what
-   *  was said. */
+  /** A recovery cancel (stuck finalize, wake from sleep), not the user's: a live session is
+   *  finished when "Keep recordings" is on (a stream drains and its recording is written; a batch
+   *  clip is transcribed and its .wav/.txt written; its events silenced). With recordings off it is
+   *  aborted like a Cancel: a stream is dropped without a drain; a batch's live clip is not
+   *  uploaded, and a device-loss salvage is stopped unless its upload had already started (then
+   *  only its result is dropped). A drain/transcription still running after stop is released
+   *  either way, keeping its saved recording — the audio may be the only copy of what was said. */
   keepRecording?: boolean;
 }
 

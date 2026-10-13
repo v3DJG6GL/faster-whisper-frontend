@@ -479,12 +479,16 @@ pub async fn inject_text(
     // the field's phrase gap, or a plain phrase without its leading seam space. Omitted = `text`.
     // Sanitized exactly like `text`, in `inject::text`.
     clipboard_text: Option<String>,
-    // `withholdOnDivert` over IPC: no divert or recovery (the mid-function divert, the chord-time
-    // own-window divert, a failed paste, an error-abort recovery) leaves `text` on the clipboard as
-    // its persistent owner. Before anything is written it writes NOTHING and reports
-    // `landed: false`; once the paste write has put it there, it gets the restore a pasted one
-    // gets and reports `landed: true, diverted: false`. For an insert with nothing worth
-    // recovering — the hard-break separator. Omitted = false.
+    // `withholdOnDivert` over IPC: nothing worth recovering (the hard-break separator), so `text`
+    // never becomes the clipboard's persistent owner on any divert or recovery arm. A cancel
+    // before any write (user or error abort) stops it with `landed: true, diverted: false` and
+    // nothing written. Where a divert or recovery would write it before anything has been written
+    // (the mid-function divert, the Wayland write guard, the Wayland portal's
+    // letters-not-on-the-layout divert, the error-abort recovery after a sink that wrote nothing)
+    // it writes NOTHING and reports `landed: false, diverted: false`. Once the paste write has put
+    // it on the clipboard (the chord-time own-window divert, an error abort cancelling the paste)
+    // it gets the restore a pasted one gets and reports `landed: true, diverted: false`; a failed
+    // paste returns the error. See `withhold_on_divert` in `inject::text`. Omitted = false.
     withhold_on_divert: Option<bool>,
 ) -> Result<InjectOutcome, String> {
     crate::inject::text::inject_text(
