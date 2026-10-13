@@ -159,14 +159,18 @@ export function TranslateProgressCard({
         </div>
       )}
       {/* Server warnings (quality guard "kept original" etc.) — compact amber
-          line; the flagged transcript lines carry the per-segment detail. */}
-      {(run.warnings?.length ?? 0) > 0 && (
-        <div className="mt-2 font-mono text-[11px] text-warn">
-          {run.warnings!.length === 1
-            ? safeDisplayText(run.warnings![0], 160)
-            : `${run.warnings!.length} warnings — some segments kept the original`}
-        </div>
-      )}
+          line; the flagged transcript lines carry the per-segment detail. Its own
+          live region, mounted even while empty so the first warning is announced:
+          it changes only when a new warning arrives, not every second. */}
+      <div role="status">
+        {(run.warnings?.length ?? 0) > 0 && (
+          <div className="mt-2 font-mono text-[11px] text-warn">
+            {run.warnings!.length === 1
+              ? safeDisplayText(run.warnings![0], 160)
+              : `${run.warnings!.length} warnings — some segments kept the original`}
+          </div>
+        )}
+      </div>
       {run.lastText && !done && (
         <div className="mt-2 truncate font-mono text-[11px] text-[color:var(--c-translate)]/90">
           {safeDisplayText(run.lastText, 200)}
