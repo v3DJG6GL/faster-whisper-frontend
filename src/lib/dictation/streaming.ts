@@ -3570,7 +3570,30 @@ let startingActivation: ActivationKind | null = null;
 /** How the running (or starting) session is driven at RUNTIME — not its Profile's activation:
  *  Home and the chip run a hold Profile hands-free. Null with no session. */
 export function liveActivation(): ActivationKind | null {
-  return startingSession ? startingActivation : (insertCfg?.activation ?? null);
+  return liveActivationOf({
+    starting: startingSession,
+    startingActivation,
+    upgradeQueued: pendingReclassify !== null,
+    capturing,
+    cfgActivation: insertCfg?.activation ?? null,
+  });
+}
+
+/** liveActivation's decision, pure. Mid-start the frozen launch activation is not the whole
+ *  story: a chord-family upgrade queued in pendingReclassify WILL make the session hands-free,
+ *  and once startLiveInner has set `capturing` (insertCfg is this session's from then on) an
+ *  applied one already did — a re-press of the family in that window must read as the stop of a
+ *  hands-free session, not as another upgrade of a hold one. */
+export function liveActivationOf(s: {
+  starting: boolean;
+  startingActivation: ActivationKind | null;
+  upgradeQueued: boolean;
+  capturing: boolean;
+  cfgActivation: ActivationKind | null;
+}): ActivationKind | null {
+  if (!s.starting) return s.cfgActivation;
+  if (s.upgradeQueued) return "handsfree";
+  return s.capturing && s.cfgActivation ? s.cfgActivation : s.startingActivation;
 }
 
 export async function startLive(

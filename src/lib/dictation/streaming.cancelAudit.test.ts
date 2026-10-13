@@ -14,7 +14,7 @@ import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
 import dictationSrc from "./dictation.ts?raw";
-import { incompleteSurface, translationOutcome } from "./streaming";
+import { incompleteSurface, liveActivationOf, translationOutcome } from "./streaming";
 
 /** Blank out comments, strings and template literals — same length, so indexes
  *  into the original stay valid — so the brace scan can't be thrown off by a
@@ -1077,5 +1077,28 @@ describe("a translate a cancel abandoned stays out of the next session", () => {
     expect(take, "the capture wait moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
     expect(send).toBeGreaterThan(take);
     expect(body.slice(take, send)).toContain("if (insertCfg !== cfg) return {");
+  });
+});
+
+describe("a chord-family re-press during the start reads the activation the session will have", () => {
+  // dictation.ts stops a session liveActivation() calls hands-free and upgrades one it calls
+  // hold: frozen at the launch activation, a re-press over a queued or applied upgrade was taken
+  // for another upgrade instead of the stop that turns hands-free off.
+  const base = { starting: true, startingActivation: "hold" as const, upgradeQueued: false, capturing: false, cfgActivation: null };
+  it("an upgrade already applied by startLiveInner → hands-free", () => {
+    expect(liveActivationOf({ ...base, capturing: true, cfgActivation: "handsfree" })).toBe("handsfree");
+  });
+  it("an upgrade still queued → hands-free", () => {
+    expect(liveActivationOf({ ...base, upgradeQueued: true })).toBe("handsfree");
+    expect(liveActivationOf({ ...base, upgradeQueued: true, capturing: true, cfgActivation: "hold" })).toBe("handsfree");
+  });
+  it("nothing queued → the launch activation, even over a finalizing session's stale config", () => {
+    expect(liveActivationOf(base)).toBe("hold");
+    expect(liveActivationOf({ ...base, cfgActivation: "handsfree" })).toBe("hold");
+    expect(liveActivationOf({ ...base, capturing: true, cfgActivation: "hold" })).toBe("hold");
+  });
+  it("past the start it is the session's own; null with none", () => {
+    expect(liveActivationOf({ ...base, starting: false, capturing: true, cfgActivation: "handsfree" })).toBe("handsfree");
+    expect(liveActivationOf({ ...base, starting: false, startingActivation: null })).toBe(null);
   });
 });
