@@ -1,7 +1,8 @@
 // The ONE table of client decode keys (`decode_overrides` on the wire). Everything that needs to
-// know a key reads it from here: the sync sanitizer (bounds, string caps, which text keeps "\n"),
-// the inherit derivations (inherit.ts), the "· n set" counts and the editors' row tables. A key
-// added to `DecodeOverrides` without a row here is a compile error (`satisfies` below).
+// know a key reads it from here: the sync sanitizer (bounds, string caps, which text keeps "\n"
+// and "\t"), the inherit derivations (inherit.ts), the "· n set" counts and the editors' row
+// tables. A key added to `DecodeOverrides` without a row here is a compile error (`satisfies`
+// below).
 //
 // Bounds mirror the backend's field metadata (config_store.AdminConfig, frozen in the settings
 // batch contract 2026-10-05). The server clamps every value too and stays authoritative; the app
@@ -34,7 +35,7 @@ export interface KeySpec {
   unit?: string;
   /** Text: the longest value the server accepts (characters). */
   maxLen?: number;
-  /** Text: "\n" is part of the value (escaped as `\n` in the editor), never folded away. */
+  /** Text: "\n" and "\t" are part of the value (escaped as `\n` / `\t` in the editor), never folded away. */
   multiline?: boolean;
   /** Live dictation only (every `streaming_` key): stripped from batch requests. */
   live?: boolean;
@@ -314,10 +315,10 @@ const MAX_DECODE_KEYS = 64;
 
 /**
  * The `decodeOverrides` leaf of a synced or imported Profile/Backend. Known keys are clamped by
- * the table (numbers to the server's bounds, text to its length, "\n" kept only where it is part
- * of the value); a key this build does not know passes only as a finite number or a boolean, so a
- * newer peer's numeric knob survives the round trip while unknown text — which could be typed
- * into an app — does not. Anything else (a string root, an array, nested objects) is dropped.
+ * the table (numbers to the server's bounds, text to its length, "\n" and "\t" kept only where
+ * they are part of the value); a key this build does not know passes only as a finite number or
+ * a boolean, so a newer peer's numeric knob survives the round trip while unknown text — which
+ * could be typed into an app — does not. Anything else (a string root, an array, nested objects) is dropped.
  * Rust holds the object as opaque JSON and forwards it into every request, so this is the only
  * floor it gets.
  */
