@@ -73,10 +73,10 @@ fn bounded_name(s: &str) -> String {
 
 /// A server model id for a picker: dropped when empty or longer than [`MODEL_ID_MAX`] rather
 /// than cut with an ellipsis — a truncated id names no model, and the picker matches the
-/// decode-default model refs (same cap) against these ids whole.
+/// decode-default model refs (same cap) against these ids whole. The blank check runs after the
+/// fold, so an id of invisible characters only is dropped too ([`super::model_id_within`]).
 fn bounded_model_id(s: &str) -> Option<String> {
-    (!s.trim().is_empty() && s.chars().count() <= MODEL_ID_MAX)
-        .then(|| super::bounded_server_text(s, MODEL_ID_MAX))
+    super::model_id_within(s, MODEL_ID_MAX)
 }
 
 /// The one shape every failed `test_connection` probe returns: no models, no server identity,
@@ -645,7 +645,7 @@ pub async fn get_decode_defaults(
 
 #[cfg(test)]
 mod tests {
-    use super::{bound_decode_defaults, decode_defaults_url, nonneg_retention};
+    use super::{bound_decode_defaults, bounded_model_id, decode_defaults_url, nonneg_retention};
     use crate::transport::{DecodeDefaults, UsageDictation, UsageStats};
 
     #[test]
@@ -848,7 +848,7 @@ mod tests {
         let hot = &d.settings["hotwords"];
         assert!(hot.value.as_str().unwrap().chars().count() <= 2049); // + "…"
         assert!(hot.label.chars().count() <= 121);
-        assert!(d.model.chars().count() <= 121);
+        assert_eq!(d.model, ""); // past MODEL_ID_MAX: dropped, never cut
         assert!(!d.prompt.value.as_str().unwrap().contains('\u{202e}'));
     }
 
@@ -1080,6 +1080,23 @@ mod tests {
         // Whole, exactly as `bound_models` keeps it, so the Backends chip still finds its entry.
         assert_eq!(model(&long), long);
         assert_eq!(model(&"x".repeat(250)), "");
+    }
+
+    #[test]
+    fn a_model_id_of_invisible_characters_only_is_dropped() {
+        // `trim()` keeps these; the fold deletes them, so the blank check must see the folded id.
+        for blank in ["\u{200b}", " \u{200b} ", "\u{2060}\u{200f}"] {
+            assert_eq!(bounded_model_id(blank), None, "{blank:?}");
+        }
+        let mut d: DecodeDefaults = serde_json::from_value(serde_json::json!({
+            "model": "\u{200b}",
+            "settings": {},
+            "diarization_model": { "value": "\u{200b}", "source": "server" },
+        }))
+        .unwrap();
+        bound_decode_defaults(&mut d);
+        assert_eq!(d.model, "");
+        assert_eq!(d.diarization_model.unwrap().value, serde_json::Value::Null);
     }
 
     #[test]

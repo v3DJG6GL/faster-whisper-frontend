@@ -50,13 +50,13 @@ struct PreloadReq {
 fn plan_body(models: Vec<PreloadModel>) -> Option<PreloadReq> {
     let models: Vec<PreloadModel> = models
         .into_iter()
-        .filter(|m| m.id.chars().count() <= PRELOAD_ID_MAX)
-        .map(|m| PreloadModel {
-            family: super::bounded_server_text(&m.family, FAMILY_MAX),
-            // Folds control characters only: within the bound nothing is cut.
-            id: super::bounded_server_text(&m.id, PRELOAD_ID_MAX),
+        .filter_map(|m| {
+            Some(PreloadModel {
+                // The model-id rule at the server's own bound: within it nothing is cut.
+                id: super::model_id_within(&m.id, PRELOAD_ID_MAX)?,
+                family: super::bounded_server_text(&m.family, FAMILY_MAX),
+            })
         })
-        .filter(|m| !m.id.trim().is_empty())
         .take(MAX_ENTRIES)
         .collect();
     (!models.is_empty()).then_some(PreloadReq {
@@ -142,10 +142,12 @@ mod tests {
     #[test]
     fn an_id_that_folds_to_nothing_is_dropped_not_sent_blank() {
         // `trim()` keeps a zero-width space; the fold deletes it, and a blank id 422s the plan.
-        assert_eq!(
-            ids(vec![entry("whisper", "\u{200B}"), entry("whisper", "m1")]),
-            Some(vec!["m1".to_string()])
-        );
+        for blank in ["\u{200B}", "\u{2060}\u{200F}", " \u{200B} "] {
+            assert_eq!(
+                ids(vec![entry("whisper", blank), entry("whisper", "m1")]),
+                Some(vec!["m1".to_string()])
+            );
+        }
     }
 
     #[test]

@@ -791,6 +791,17 @@ pub const MAX_ERROR_TEXT: usize = 200;
 /// cut with an ellipsis — a cut id names no model.
 pub(crate) const MODEL_ID_MAX: usize = 200;
 
+/// A server model id under the model-id rule with ceiling `max`: an id longer than `max` (counted
+/// on the RAW id, so a kept id is never cut) is dropped, a kept one is folded like any server
+/// string ([`bounded_server_text`]), and one that is blank ONCE FOLDED is dropped too — an id of
+/// invisible characters only folds to "" and names no model. Every site that keeps or sends a
+/// model id uses this, so the copies cannot drift.
+pub(crate) fn model_id_within(s: &str, max: usize) -> Option<String> {
+    (s.chars().count() <= max)
+        .then(|| bounded_server_text(s, max))
+        .filter(|id| !id.trim().is_empty())
+}
+
 /// Ceiling on server-supplied notice/override lists (streaming notices, batch overrides).
 pub const MAX_NOTICES: usize = 50;
 

@@ -253,11 +253,7 @@ pub async fn translate_texts(
     Ok(TextTranslationResult {
         results,
         kept,
-        model: parsed
-            .translation
-            .as_ref()
-            .and_then(|t| t.model.as_deref())
-            .map(|m| bounded_server_text(m, 128)),
+        model: provenance_model(parsed.translation.as_ref()),
         source: parsed
             .translation
             .as_ref()
@@ -266,6 +262,32 @@ pub async fn translate_texts(
         warnings: super::batch::bound_notices(&parsed.warnings),
         plan: parsed.plan.map(super::batch::bound_plan),
     })
+}
+
+/// The translating model the server names: stored and exported as the run's provenance, so it
+/// follows the model-id rule — kept whole up to [`super::MODEL_ID_MAX`], dropped past it.
+fn provenance_model(t: Option<&super::batch::TranslationInfo>) -> Option<String> {
+    super::model_id_within(t?.model.as_deref()?, super::MODEL_ID_MAX)
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::{provenance_model, ResponseBody};
+
+    fn model_of(model: &str) -> Option<String> {
+        let parsed: ResponseBody =
+            serde_json::from_value(serde_json::json!({ "translation": { "model": model } }))
+                .unwrap();
+        provenance_model(parsed.translation.as_ref())
+    }
+
+    #[test]
+    fn the_provenance_model_is_kept_whole_or_dropped_never_cut() {
+        let long = format!("org/{}", "m".repeat(146));
+        assert_eq!(model_of(&long), Some(long));
+        assert_eq!(model_of(&"m".repeat(201)), None);
+        assert_eq!(model_of("\u{200b}"), None);
+    }
 }
 
 #[cfg(test)]

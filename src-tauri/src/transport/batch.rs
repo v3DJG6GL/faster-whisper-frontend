@@ -335,6 +335,9 @@ mod wire_field_tests {
         // Past the cap, or blank: left out (the server's default), never cut.
         assert_eq!(model(&"x".repeat(201)), None);
         assert_eq!(model("  "), None);
+        // Invisible characters only: blank once folded, so left out too, never sent as "".
+        assert_eq!(model("\u{200b}"), None);
+        assert_eq!(model("\u{2060}\u{200f}"), None);
     }
 
     /// A standard server gets the temperature as its own form field: a number as is, a ladder's
@@ -519,6 +522,21 @@ mod wire_field_tests {
         );
         assert_eq!(r.speakers[0].chars().count(), 65);
         assert_eq!(r.segments[0].text.chars().count(), 5000);
+    }
+
+    /// The translating model is provenance (stored, exported): kept whole up to the model-id
+    /// cap, dropped past it — never cut into a name no server knows.
+    #[test]
+    fn to_batch_result_keeps_the_translation_model_whole_or_drops_it() {
+        let model = |m: String| {
+            let raw = serde_json::json!({"text": "t", "translation": {"model": m}});
+            to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap())
+                .translation
+                .and_then(|t| t.model)
+        };
+        let long = format!("org/{}", "m".repeat(146));
+        assert_eq!(model(long.clone()), Some(long));
+        assert_eq!(model("m".repeat(201)), None);
     }
 
     #[test]
@@ -1429,7 +1447,10 @@ pub(crate) fn to_batch_result(parsed: VerboseJson) -> BatchResult {
             .map(|s| super::bounded_server_text(&s, super::MAX_ERROR_TEXT)),
         translations: parsed.translations.map(bound_translation_keys),
         translation: parsed.translation.map(|t| TranslationInfo {
-            model: t.model.map(|m| super::bounded_server_text(&m, 128)),
+            // Stored and exported as provenance: the model-id rule, kept whole or dropped.
+            model: t
+                .model
+                .and_then(|m| super::model_id_within(&m, super::MODEL_ID_MAX)),
             targets: t
                 .targets
                 .iter()
@@ -1864,16 +1885,15 @@ pub async fn url_language_check(
 
 /// `{url, model?, progress_id?}`. The model follows the model-id rule the pickers keep ids by
 /// (characters, not bytes): the route has no cap of its own, so any id a picker offers is checked
-/// with that model, not the server default; an id past [`super::MODEL_ID_MAX`] is left out.
+/// with that model, not the server default; an id past [`super::MODEL_ID_MAX`], or one blank once
+/// folded, is left out ([`super::model_id_within`]).
 fn url_language_body(
     url: &str,
     model: Option<&str>,
     progress_id: Option<&str>,
 ) -> serde_json::Value {
     let mut body = serde_json::json!({ "url": url });
-    if let Some(m) =
-        model.filter(|m| !m.trim().is_empty() && m.chars().count() <= super::MODEL_ID_MAX)
-    {
+    if let Some(m) = model.and_then(|m| super::model_id_within(m, super::MODEL_ID_MAX)) {
         body["model"] = serde_json::json!(m);
     }
     if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
