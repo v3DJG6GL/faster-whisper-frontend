@@ -130,6 +130,9 @@
   --c-glow-a: rgba(255, 158, 44, 0.09);
   --c-glow-b: rgba(255, 158, 44, 0.05);
   --c-glow-0: rgba(255, 158, 44, 0);
+  /* The insert pulses' zero-alpha halo ends, same hue as --c-live / --c-warn for the same reason. */
+  --c-live-0: rgba(54, 208, 122, 0);
+  --c-warn-0: rgba(224, 163, 58, 0);
   color-scheme: dark;
 }
 
@@ -182,6 +185,8 @@
   --c-glow-a: rgba(191, 111, 18, 0.05);
   --c-glow-b: rgba(191, 111, 18, 0.03);
   --c-glow-0: rgba(191, 111, 18, 0);
+  --c-live-0: rgba(31, 157, 87, 0);
+  --c-warn-0: rgba(185, 121, 31, 0);
   color-scheme: light;
 }
 
@@ -401,7 +406,7 @@ textarea {
   }
   100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(54, 208, 122, 0);
+    box-shadow: 0 0 0 0 var(--c-live-0);
   }
 }
 .animate-insert-pulse {
@@ -411,7 +416,8 @@ textarea {
 /* Amber variant of insert-pulse for clipboard feedback (--c-warn, the per-theme amber). Mirrors
    the green pulse so the colour-coded dot pulse — not a distinct icon — conveys "copied to
    clipboard". Both pulses mix the theme's token at the peak, so the halo matches the dot; the
-   100% frames keep a same-hue zero-alpha literal, as the glow stops above explain. */
+   100% frames end on the per-theme same-hue zero-alpha tokens (--c-live-0 / --c-warn-0), as
+   the glow stops above explain. */
 @keyframes insert-pulse-warn {
   0% {
     transform: scale(1);
@@ -423,7 +429,7 @@ textarea {
   }
   100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(224, 163, 58, 0);
+    box-shadow: 0 0 0 0 var(--c-warn-0);
   }
 }
 .animate-insert-pulse-warn {
