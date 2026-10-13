@@ -616,7 +616,9 @@ export function queueMediaExport<T extends { kind: string }>(
     };
     setWaiting([...waiting, entry]);
     exportChain = exportChain.then(async () => {
-      const since = Date.now();
+      // The wait is counted from the first "busy" answer: a local file's attempt uploads the
+      // whole file before the server can say so, and that upload is no time spent waiting.
+      let since: number | null = null;
       for (;;) {
         if (!waiting.includes(entry)) return; // dequeued while it waited
         setWaiting(waiting.filter((w) => w !== entry));
@@ -627,7 +629,7 @@ export function queueMediaExport<T extends { kind: string }>(
           reject(e);
           return;
         }
-        if (out.kind !== "busy" || Date.now() - since >= BUSY_MAX_WAIT_MS) {
+        if (out.kind !== "busy" || Date.now() - (since ??= Date.now()) >= BUSY_MAX_WAIT_MS) {
           resolve(out);
           return;
         }

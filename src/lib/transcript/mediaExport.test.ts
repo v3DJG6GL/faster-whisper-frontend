@@ -521,6 +521,21 @@ describe("queueMediaExport", () => {
     await pb;
   });
 
+  it("counts the busy wait from the first busy answer, not from a long upload before it", async () => {
+    let calls = 0;
+    // The first attempt uploads for longer than the whole busy window, then hears "busy".
+    const p = queueMediaExport("ju", "rec-u", async () => {
+      calls += 1;
+      if (calls === 1) await new Promise((r) => setTimeout(r, BUSY_MAX_WAIT_MS + 60_000));
+      return { kind: calls < 3 ? "busy" : "ok" };
+    });
+    await vi.advanceTimersByTimeAsync(BUSY_MAX_WAIT_MS + 60_000);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(2 * BUSY_RETRY_MS);
+    await expect(p).resolves.toEqual({ kind: "ok" });
+    expect(calls).toBe(3);
+  });
+
   it("gives up on a slot that stays busy past BUSY_MAX_WAIT_MS, and a throw never wedges the chain", async () => {
     let calls = 0;
     const pa = queueMediaExport("ja", "rec-a", async () => {
