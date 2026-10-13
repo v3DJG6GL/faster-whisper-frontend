@@ -175,7 +175,30 @@ describe("completeGates migration", () => {
     expect(g.audioFolder).toBe(true); // legacy recordingsDir → audioFolder
     expect(g.transcribePicks).toBe(true);
     expect(g.autoHideToEdge).toBe(true); // saved gate beats the OFF category fold
-    expect(g.liveTranscript).toBe(false); // unfolded member stays category-off
+    // A manifest-era map: the chip member it lacks follows chip's CURRENT state (on, via
+    // autoHideToEdge), not the frozen legacy OFF toggle.
+    expect(g.liveTranscript).toBe(DEFAULT_SETTING_SYNC.liveTranscript);
+  });
+
+  it("a setting added after the manifest follows its category's current gates, not a frozen legacy OFF toggle", async () => {
+    const { completeGates, settingsOfCategory } = await import("./settingsManifest");
+    // The user had Profiles OFF before the manifest, then turned every Profiles switch back ON;
+    // `sync.categories.profiles` has no writer any more, so it stays false.
+    const withProfiles = (on: boolean) => {
+      const saved: Partial<Record<string, boolean>> = { ...DEFAULT_SETTING_SYNC };
+      for (const d of settingsOfCategory("profiles")) saved[d.id] = on;
+      delete saved.profileInsertion; // shipped in a later version than the saved map
+      return saved;
+    };
+    expect(completeGates(withProfiles(true), { profiles: false }).profileInsertion).toBe(true);
+    // Still off in the saved gates: the new member stays off too.
+    expect(completeGates(withProfiles(false), { profiles: false }).profileInsertion).toBe(false);
+    // A list category's state is its list switch alone.
+    expect(completeGates({ ...withProfiles(true), profileList: false }, undefined).profileInsertion).toBe(false);
+    // A scalar category with no saved member at all still honours the legacy toggle.
+    const noChip: Partial<Record<string, boolean>> = { ...DEFAULT_SETTING_SYNC };
+    for (const d of settingsOfCategory("chip")) delete noChip[d.id];
+    expect(completeGates(noChip, { chip: false }).liveTranscript).toBe(false);
   });
 
   it("a pre-manifest sub map refines only within an ON category (its defaults were auto-persisted)", async () => {

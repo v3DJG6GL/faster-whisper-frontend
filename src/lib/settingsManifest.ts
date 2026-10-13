@@ -504,6 +504,13 @@ export function settingsOfCategory(cat: WireCategory): SettingDef[] {
 
 /* ── Value access (changed-detection / reset) ──────────────────────────── */
 
+/** The switch that IS each list category (syncGates' catsFromGates reads these). */
+const LIST_SWITCH: Partial<Record<WireCategory, SettingId>> = {
+  backends: "backendList",
+  profiles: "profileList",
+  appRules: "rulesThisOs",
+};
+
 /** The sub-toggle keys the pre-manifest store persisted (always all four). */
 const LEGACY_SUB_KEYS = new Set(["recordingsDir", "profileHotkeys", "quickAddHotkey", "transcribePicks"]);
 
@@ -519,22 +526,30 @@ const LEGACY_SUB_KEYS = new Set(["recordingsDir", "profileHotkeys", "quickAddHot
  *     within an ON category: the old store persisted those four with their
  *     defaults whether or not the user touched them, and the old engine read
  *     them only inside an ON category, so they must not beat the OFF fold;
- *  4. explicitly saved per-setting values. */
+ *  4. explicitly saved per-setting values.
+ *  Step 2 is a one-time upgrade: it applies only while the saved map is still
+ *  pre-manifest (or absent). Nothing writes `sync.categories` any more, so its
+ *  OFF entries are frozen at whatever the user had before the manifest. In a
+ *  manifest-era map, an id the map lacks (one added by a later app version)
+ *  follows its category's CURRENT state under the saved gates instead: a list
+ *  category is off when its saved list switch is off, a scalar category when
+ *  every saved member is off. Only a category with no saved member at all
+ *  falls back to the old toggle. */
 export function completeGates(
   saved?: Partial<Record<string, boolean>>,
   savedCategories?: Partial<Record<SyncCategory, boolean>>,
 ): Record<SettingId, boolean> {
   const gates = { ...DEFAULT_SETTING_SYNC };
-  if (savedCategories) {
+  // A manifest-era map always holds other manifest ids too (completeSub persists
+  // the full gate set), so "only the old four keys" identifies a pre-manifest one.
+  const preManifest = !!saved && Object.keys(saved).every((k) => LEGACY_SUB_KEYS.has(k));
+  if (savedCategories && (!saved || preManifest)) {
     for (const [cat, on] of Object.entries(savedCategories)) {
       if (on === false) {
         for (const d of settingsOfCategory(cat as WireCategory)) gates[d.id as SettingId] = false;
       }
     }
   }
-  // A manifest-era map always holds other manifest ids too (completeSub persists
-  // the full gate set), so "only the old four keys" identifies a pre-manifest one.
-  const preManifest = !!saved && Object.keys(saved).every((k) => LEGACY_SUB_KEYS.has(k));
   const categoryOn = (id: SettingId) =>
     savedCategories?.[DEFS.find((d) => d.id === id)!.category] !== false;
   if (saved && preManifest) {
@@ -546,14 +561,34 @@ export function completeGates(
       if (typeof v === "boolean" && categoryOn(id)) gates[id] = v;
     }
   } else if (saved) {
-    if (typeof saved.recordingsDir === "boolean") gates.audioFolder = saved.recordingsDir;
+    const explicit: Partial<Record<SettingId, boolean>> = {};
+    if (typeof saved.recordingsDir === "boolean") explicit.audioFolder = saved.recordingsDir;
     // `latchAutoStop` is the pre-rename id of `handsFreeAutoStop`. Without this remap a
     // user who had deliberately switched that row's sync OFF would have it silently come
     // back ON at the next launch, because the saved key no longer matches any manifest id.
-    if (typeof saved.latchAutoStop === "boolean") gates.handsFreeAutoStop = saved.latchAutoStop;
+    if (typeof saved.latchAutoStop === "boolean") explicit.handsFreeAutoStop = saved.latchAutoStop;
     for (const d of DEFS) {
       const v = saved[d.id];
-      if (typeof v === "boolean") gates[d.id as SettingId] = v;
+      if (typeof v === "boolean") explicit[d.id as SettingId] = v;
+    }
+    // The category's current state under the saved gates (mirrors syncGates' catsFromGates,
+    // which this module cannot import): a list category IS its list switch, a scalar one is
+    // on while any member is.
+    const offNow = new Map<WireCategory, boolean>();
+    const categoryOffNow = (cat: WireCategory): boolean => {
+      let off = offNow.get(cat);
+      if (off === undefined) {
+        const sw = LIST_SWITCH[cat];
+        const members = sw ? [sw] : settingsOfCategory(cat).map((d) => d.id as SettingId);
+        const known = members.map((id) => explicit[id]).filter((v) => typeof v === "boolean");
+        off = known.length > 0 ? known.every((v) => !v) : savedCategories?.[cat] === false;
+        offNow.set(cat, off);
+      }
+      return off;
+    };
+    for (const d of DEFS) {
+      const id = d.id as SettingId;
+      gates[id] = explicit[id] ?? (categoryOffNow(d.category) ? false : gates[id]);
     }
   }
   return gates;
