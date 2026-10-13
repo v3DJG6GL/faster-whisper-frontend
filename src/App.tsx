@@ -1,4 +1,4 @@
-import { useEffect, useState, type DependencyList, type ReactNode, useRef } from "react";
+import { useEffect, useLayoutEffect, useState, type DependencyList, type ReactNode, useRef } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { HashRouter, Routes, Route, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { Sidebar } from "@/components/Sidebar";
@@ -21,7 +21,7 @@ import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
 import { flushRecordWrites, listenRetentionSweeps } from "@/lib/transcript/transcriptHistory";
 import { flushPersistEdits } from "@/lib/transcribeRun";
 import { flushOutcomeSave } from "@/lib/usageOutcome";
-import { tryNavigate } from "@/lib/navGuard";
+import { navGuardDirty, tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
 import Dashboard from "@/screens/Dashboard";
@@ -113,6 +113,63 @@ function NavigationBridge() {
       }),
     [],
   );
+  return null;
+}
+
+// The unsaved-work guard for history traversal: a mouse back/forward button, Alt+Left/Right or a
+// swipe makes the webview walk the HashRouter history the app's own navigations pushed, which no
+// issued-navigation guard sees — the editor would unmount with its draft and no prompt.
+//
+// popstate is the authoritative layer. The router reacts to it with its own (bubble) listener, and
+// React commits that discrete update in the microtask checkpoint right after the listener returns,
+// so the editor would be gone before any later listener ran. This one therefore runs FIRST: capture
+// phase (at-target capture listeners run before bubble ones) and registered in a layout effect of
+// a router child (child layout effects run before HashRouter's own listen()), so either ordering
+// rule puts it ahead. On a refused traversal it re-pushes the editor's location, synchronously,
+// before the router reads `window.location`: the router then sees the editor's location popped
+// (delta 0), the route never changes and the editor never unmounts; the guard's "Discard" / "Save
+// and leave" then navigates to the popped location. (The re-push drops the forward entry the user
+// just left, which the app has no affordance for anyway.)
+//
+// Belt and braces: a back/forward MOUSE button or Browser Back/Forward key is cancelled outright
+// while a draft is dirty, so the restore is rarely needed. Alt+Left/Right is left to the popstate
+// layer: on macOS Option+Arrow is word navigation inside the very fields being edited.
+function HistoryTraversalGuard() {
+  const navigate = useNavigate();
+  const navRef = useRef(navigate);
+  navRef.current = navigate;
+  // The location the router is showing (still the pre-traversal one when popstate fires), spelled
+  // like the hash it was parsed from.
+  const { pathname, search, hash } = useLocation();
+  const lastRef = useRef(pathname + search + hash);
+  lastRef.current = pathname + search + hash;
+  useLayoutEffect(() => {
+    const onPop = () => {
+      const target = window.location.hash.replace(/^#/, "") || "/";
+      const last = lastRef.current;
+      // Same location (forward onto the re-pushed copy): nothing unmounts, nothing to ask.
+      if (target === last) return;
+      if (tryNavigate(() => navRef.current(target))) return;
+      navRef.current(last);
+    };
+    const isNavButton = (e: MouseEvent) => e.button === 3 || e.button === 4;
+    const onMouse = (e: MouseEvent) => {
+      if (isNavButton(e) && navGuardDirty()) e.preventDefault();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key === "BrowserBack" || e.key === "BrowserForward") && navGuardDirty()) e.preventDefault();
+    };
+    window.addEventListener("popstate", onPop, true);
+    window.addEventListener("mouseup", onMouse, true);
+    window.addEventListener("auxclick", onMouse, true);
+    window.addEventListener("keydown", onKey, true);
+    return () => {
+      window.removeEventListener("popstate", onPop, true);
+      window.removeEventListener("mouseup", onMouse, true);
+      window.removeEventListener("auxclick", onMouse, true);
+      window.removeEventListener("keydown", onKey, true);
+    };
+  }, []);
   return null;
 }
 
@@ -348,6 +405,7 @@ export default function App() {
   // starved for seconds by the Dashboard's ~30 Hz dictation level updates interrupting it.
   return (
     <HashRouter useTransitions={false}>
+      <HistoryTraversalGuard />
       <NavigationBridge />
       <ScrollReset />
       <div className="relative z-10 flex h-screen overflow-hidden">

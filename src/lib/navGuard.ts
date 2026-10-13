@@ -8,6 +8,9 @@
 // editor is mounted asks here first — the sidebar links, the overlay's
 // app://navigate bridge (App.tsx NavigationBridge) and the failure doorway's
 // "View logs" button (App.tsx LogsDoorwayBanner). A new in-app link must too.
+// History traversal (mouse back/forward buttons, Alt+Left/Right, a swipe) is
+// not issued by the app, so App.tsx HistoryTraversalGuard asks here on its
+// popstate and puts the editor's location back before the router can leave it.
 //
 // One guard at a time — only one editor screen is ever mounted, since each one
 // is its own route (and a list's editor replaces the list it belongs to).
@@ -37,4 +40,10 @@ export function tryNavigate(proceed: () => void): boolean {
   if (!active || !active.dirty()) return true;
   active.ask(proceed);
   return false;
+}
+
+/** Is there work a navigation would lose right now? For a handler that has to decide on the spot
+ *  (cancel a mouse back-button press) without putting the question to the user. */
+export function navGuardDirty(): boolean {
+  return !!active && active.dirty();
 }
