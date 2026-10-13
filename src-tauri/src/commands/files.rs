@@ -46,11 +46,19 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
     if std::fs::rename(src, dest).is_ok() {
         return Ok(());
     }
-    copy_keeping_mtime(src, dest)?;
-    // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
-    // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
-    crate::audio::restrict_file_private(dest);
-    std::fs::remove_file(src)
+    let moved = copy_keeping_mtime(src, dest).and_then(|()| {
+        // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
+        // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
+        crate::audio::restrict_file_private(dest);
+        std::fs::remove_file(src)
+    });
+    // Both callers checked `dest` did not exist, so whatever a failed copy (a full disk) or an
+    // unremovable source left there is ours: kept, it would trip their never-clobber check on
+    // every retry and strand the file in the old base.
+    if moved.is_err() {
+        let _ = std::fs::remove_file(dest);
+    }
+    moved
 }
 
 /// `move_file`'s cross-volume copy, carrying the source's mtime over (`std::fs::copy` does not
@@ -667,6 +675,32 @@ fn decode_text_source(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::move_dir_contents;
+
+    #[cfg(unix)]
+    #[test]
+    fn a_move_that_cannot_remove_its_source_leaves_no_destination_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = std::env::temp_dir().join(format!("fwf-move-partial-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (from, to) = (root.join("from"), root.join("to"));
+        std::fs::create_dir_all(&from).unwrap();
+        std::fs::create_dir_all(&to).unwrap();
+        let src = from.join("clip.wav");
+        std::fs::write(&src, b"RIFF").unwrap();
+        // A read-only source folder: the rename and the source's removal both fail, the copy
+        // succeeds — the "copied but could not remove the original" path.
+        std::fs::set_permissions(&from, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let writable = std::fs::write(from.join("probe"), b"").is_ok(); // root ignores modes
+        let dest = to.join("clip.wav");
+        let res = super::move_file(&src, &dest);
+        std::fs::set_permissions(&from, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !writable {
+            assert!(res.is_err());
+            assert!(src.exists(), "the original stays");
+            assert!(!dest.exists(), "no partial destination blocks the retry");
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]
