@@ -1503,14 +1503,18 @@ async function reconcileBackendSecrets(
   // nothing in the keyring — defeating the exact promise this function makes. Downstream that
   // phantom also makes `composeBlob`'s erase guard fire forever on a device holding no real keys,
   // silently dropping the backends category from every push.
+  // Rust reports an unreadable key (wallet prompt dismissed, platform error) as ABSENT, in a quick
+  // `{}` or partial map — and this function never deletes a key — so a backend whose local flag is
+  // set and that the read leaves out was not read, not removed: keep its flag like a timeout's.
   const backends = list.map((b) => {
-    const held = present === null ? (localFlag.get(b.id) ?? false) : hasOwn(present, b.id);
+    const local = localFlag.get(b.id) ?? false;
+    const held = local || (present !== null && hasOwn(present, b.id));
     return b.hasApiKey === held ? b : { ...b, hasApiKey: held };
   });
-  // A key added to (or removed from) a backend this device runs is a credential change too: the
-  // generation must move, or the editor's blank-key verdict and every per-caller fetch keyed on
-  // it keep the old caller's answer. A degraded read keeps the local flags, so nothing flips; a
-  // backend new to this device has no old caller.
+  // A key added to a backend this device runs is a credential change too: the generation must
+  // move, or the editor's blank-key verdict and every per-caller fetch keyed on it keep the old
+  // caller's answer. A degraded read keeps the local flags, so nothing flips (nor does a key the
+  // read left out, above); a backend new to this device has no old caller.
   const flipped =
     present === null
       ? []

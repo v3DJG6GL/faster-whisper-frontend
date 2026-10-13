@@ -1364,6 +1364,40 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(b1.name).toBe("from-peer"); // the blob landed
     expect(b1.hasApiKey).toBe(true); // but the degraded read did not demote the flag
   });
+
+  it("a keyring read that FAILS (Rust reports the key absent) keeps the local hasApiKey flag", async () => {
+    // A dismissed wallet prompt reads back a quick {} or a partial map: re-deriving false would
+    // let the next push compose a keyless list past the erase guard and wipe the server's keys.
+    useApp.setState({
+      settings: settings(),
+      backends: [backend({ hasApiKey: true }), backend({ id: "b2", hasApiKey: true }), backend({ id: "b3", hasApiKey: false })],
+    });
+    const list = [
+      backend({ hasApiKey: true }),
+      backend({ id: "b2", hasApiKey: true }),
+      backend({ id: "b3", hasApiKey: false }),
+      backend({ id: "b4", hasApiKey: true }), // new to this device, and the read has no key for it
+      backend({ id: "b5", hasApiKey: false }), // new, and the keyring does hold one
+    ];
+    for (const read of [{ b5: "sk-5" }, { b2: "sk-2", b5: "sk-5" }] as Record<string, string>[]) {
+      keyring.keys = read;
+      try {
+        expect(await applyBlob({ backends: { list } }, { ...CATS_ALL, profiles: false })).toBe(true);
+      } finally {
+        keyring.keys = null;
+      }
+      const flag = (id: string) => useApp.getState().backends.find((b) => b.id === id)!.hasApiKey;
+      expect(flag("b1")).toBe(true);
+      expect(flag("b2")).toBe(true);
+      expect(flag("b3")).toBe(false);
+      expect(flag("b4")).toBe(false);
+      expect(flag("b5")).toBe(true);
+      // Put the device's own flags back for the second read shape.
+      useApp.setState({
+        backends: [backend({ hasApiKey: true }), backend({ id: "b2", hasApiKey: true }), backend({ id: "b3", hasApiKey: false })],
+      });
+    }
+  });
 });
 
 // A key rotated on another device keeps the backend's serverUrl and hasApiKey, so hydrate's own
