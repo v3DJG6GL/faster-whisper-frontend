@@ -76,6 +76,13 @@ describe("round-trips against generateExport", () => {
       expect(back.segments.some((s) => s.text.includes("<v"))).toBe(false);
     }
   });
+  it("srt: a 'Name: ' speaker is bounded at 40 code points, not UTF-16 units", () => {
+    const cue = (name: string) => `1\n00:00:01,000 --> 00:00:02,000\n${name}: hello\n`;
+    const fits = "🎤𠮷" + "A".repeat(37); // 39 code points, 41 UTF-16 units
+    expect(parseImportedText("srt", cue(fits)).segments[0]).toMatchObject({ speaker: fits, text: "hello" });
+    const over = "🎤𠮷" + "A".repeat(39); // 41 code points
+    expect(parseImportedText("srt", cue(over)).segments[0]).toEqual({ start: 1, end: 2, text: `${over}: hello` });
+  });
   it("lrc: line tags parse, enhanced word tags reduce to text", () => {
     const lrc = generateExport(RESULT, { format: "lrc", wordTimestamps: true });
     const back = parseImportedText("lrc", lrc);

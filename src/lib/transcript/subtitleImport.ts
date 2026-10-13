@@ -198,9 +198,10 @@ function cuesOf(cues: RawCue[]): ImportedText {
 }
 
 /** A leading "Name: " prefix — the speaker cueText splits off — but never a clock-like token
- *  ("12: 30 lunch") or a URL scheme. */
+ *  ("12: 30 lunch") or a URL scheme. Its 40 counts code points, as the rename cap does, so a
+ *  name with emoji or rare CJK characters still re-imports. */
 function speakerPrefix(s: string): RegExpExecArray | null {
-  const m = /^([^:\n]{1,40}):\s+/.exec(s);
+  const m = /^([^:\n]{1,40}):\s+/u.exec(s);
   return m && !/^\d+$/.test(m[1].trim()) && !/^(https?|file)$/i.test(m[1].trim()) ? m : null;
 }
 
