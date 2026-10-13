@@ -334,8 +334,9 @@ export default function QuickAdd() {
       // every retry ends the same way (a PATCH per summon, rows never re-synced, and once the pin
       // is lifted the retry would push these stale rows over the stored rule unasked).
       // A 2xx whose reply couldn't be read (ok:false) still LANDED: "error" would re-PATCH on every
-      // summon and skip the re-sync. A 403 ("refused": the list was locked after this window
-      // loaded) is terminal for the same reason as a pin — see quickAddSaveOutcome.
+      // summon and skip the re-sync. A refusal the server names ("refused": the list was locked,
+      // deleted or hidden after this window loaded) is terminal for the same reason as a pin —
+      // see quickAddSaveOutcome.
       const outcome = quickAddSaveOutcome(res);
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
@@ -345,7 +346,8 @@ export default function QuickAdd() {
       if (saveTimer.current === null && newest) {
         if (outcome === "refused") {
           // Re-sync now rather than leave "error" (a re-PATCH of a refused list on every summon):
-          // refresh's write gate then replaces the list with "List locked" / read-only.
+          // refresh's write gate then replaces the list with "List locked" / read-only, or the
+          // "re-pin one" page for a list that is gone.
           setSaveState("idle");
           void refresh();
         } else {
