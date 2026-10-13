@@ -182,7 +182,12 @@ function fromMap(input: SiteSubsInput, state: SiteSubsState, tg: Record<string, 
 
 /** Everything one render needs, plus the click machinery (snapshot + key → language). */
 function model(input: SiteSubsInput, st: SiteSubsState) {
-  const tracks = input.tracks.map((t) => ({ ...t, code: primarySubtag(t.lang) }));
+  // A track joins its language's row: a target (or switched-off code) that names its full tag
+  // ("zh-Hant") when there is one — else, folded to the primary subtag, a target that is
+  // "zh-Hant" never meets the site's own zh-Hant subtitle and machine-translates instead.
+  const named = new Map<string, string>();
+  for (const c of [...input.targets, ...st.off]) if (!named.has(c.toLowerCase())) named.set(c.toLowerCase(), c);
+  const tracks = input.tracks.map((t) => ({ ...t, code: named.get(t.lang.toLowerCase()) ?? primarySubtag(t.lang) }));
   type T = (typeof tracks)[number];
   const avail = tracks.filter((t) => t.kind === "manual" || st.auto);
   const use = (t: T) => st.subs && (t.kind === "manual" || st.auto);
