@@ -792,7 +792,13 @@ pub(crate) mod win_seed {
                     return None;
                 }
                 Err(e) => {
-                    if snapshot_retries >= 2 || superseded() {
+                    if superseded() {
+                        tracing::info!(
+                            "[quickadd-seed] summon superseded while the clipboard snapshot was retrying; abandoning the grab"
+                        );
+                        return None;
+                    }
+                    if snapshot_retries >= 2 {
                         tracing::info!(
                             "[quickadd-seed] could not snapshot the clipboard ({e}); skipping the copy grab"
                         );
