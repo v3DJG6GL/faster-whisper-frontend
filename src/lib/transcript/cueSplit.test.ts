@@ -1097,6 +1097,13 @@ describe("joinLineBreaks", () => {
     expect(cjkWraps("彼は言った：「今日は、とても\nいい天気だ」")).toBe(true);
     // The credit shapes stay no evidence.
     expect(cjkWrapsLines(["我们走吧", "他们在等我们", "快点", "好的", "翻译：小明。"])).toBe(false);
+    // A quoted name closed before the mark is a credit's, not a quotation the mark sits in.
+    expect(cjkWrapsLines(["字幕：「XX字幕组」。翻译：小红", "我们今天去公园", "然后回家吃饭"])).toBe(false);
+    expect(cjkWrapsLines(["翻译：“小明”。字幕：小红", "我们今天去公园", "然后回家吃饭"])).toBe(false);
+    // A long run of colons stays linear.
+    const t0 = performance.now();
+    expect(cjkWrapsLines(["：“".repeat(50_000) + "你好，世界"])).toBe(true);
+    expect(performance.now() - t0).toBeLessThan(500);
   });
   it("with wraps, a seam on a curly quote is judged by the character past the quotes", () => {
     expect(joinLineBreaks("他说：\n“我们走吧。”", true)).toBe("他说：“我们走吧。”");

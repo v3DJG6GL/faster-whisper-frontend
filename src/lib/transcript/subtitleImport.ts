@@ -135,7 +135,8 @@ function bareLine(s: string): string {
  *  (judged on the cue text only: no cue numbers, times, NOTE or STYLE blocks), on the text the
  *  segments keep: each voice span is a line of its own (the blank between two spans is no
  *  phrase space), and a cue's first line goes without the "Name: " prefix cueText splits off as
- *  the speaker (our export writes one on every cue; its colon would hide the line's marks). */
+ *  the speaker (our export writes one on every cue; its colon would hide the line's marks) —
+ *  unless another colon field follows, as on a credit line. */
 function cuesOf(cues: RawCue[]): ImportedText {
   const judged = cues.flatMap((c) =>
     c.lines.flatMap((l, i) =>
@@ -144,7 +145,10 @@ function cuesOf(cues: RawCue[]): ImportedText {
         const b = bareLine(part);
         if (i > 0 || k > 0 || /^\s*<v[\s.]/.test(part)) return b;
         const m = speakerPrefix(b.trimStart());
-        return m ? b.trimStart().slice(m[0].length) : b;
+        const rest = m ? b.trimStart().slice(m[0].length) : b;
+        // A further "X: " field is a credit line ("翻译: 小明。校对: 小刚"), not a speaker's text:
+        // judged whole, so its colons keep discounting its marks.
+        return m && !/[：:]/.test(rest) ? rest : b;
       }),
     ),
   );

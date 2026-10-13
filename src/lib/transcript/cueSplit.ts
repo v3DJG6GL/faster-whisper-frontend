@@ -132,6 +132,10 @@ function markInside(l: string, marks: RegExp): boolean {
   const i = evidenceMark(l, marks);
   return i >= 0 && UNSPACED.test(l.slice(i + 1));
 }
+
+/** The closing quote of each opener a speech quotation after a colon may start with. */
+const QUOTE_CLOSE: Record<string, string> = { "“": "”", "「": "」", "『": "』", '"': '"', "‘": "’", "«": "»", "„": "“" };
+
 /** Where a line's first mark of `marks` sits, or -1 when there is none or it is no evidence: the
  *  credit, note and title shapes an unpunctuated file still writes ("翻译：小明。字幕：小红",
  *  "（注：……。）", "《三体。黑暗森林》") — a mark after a colon or inside brackets. A colon that
@@ -140,7 +144,17 @@ function evidenceMark(l: string, marks: RegExp): number {
   const i = l.search(marks);
   if (i < 0) return -1;
   const before = l.slice(0, i);
-  if (/[：:](?!\s*[“「『"‘«„])/u.test(before)) return -1;
+  // A colon is a credit or note field ("翻译：小明。") unless it opens a quotation the mark sits
+  // inside (他问：“你好，…”): a quote closed before the mark (字幕：「XX字幕组」。) is a credit's name.
+  // One lastIndexOf per closer: a line of many colons stays linear.
+  const lastClose = new Map<string, number>();
+  for (const m of before.matchAll(/[：:]\s*(.)?/gsu)) {
+    const close = m[1] === undefined ? undefined : QUOTE_CLOSE[m[1]];
+    if (close === undefined) return -1;
+    let at = lastClose.get(close);
+    if (at === undefined) lastClose.set(close, (at = before.lastIndexOf(close)));
+    if (at >= m.index + m[0].length) return -1;
+  }
   const open = (o: string, c: string) => before.lastIndexOf(o) > before.lastIndexOf(c);
   return open("（", "）") || open("(", ")") || open("《", "》") || open("〈", "〉") ? -1 : i;
 }

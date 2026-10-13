@@ -2075,87 +2075,12 @@ describe("a sync edit made during the launch work", () => {
     }
   });
 
-  // One more setting switched on inside a category that already syncs: "Log level" syncs
-  // `logging`, "Keep log files" comes on. While it was off, every base passed the server's
-  // keepDays through, so a 3-way merge read this device's different value as an edit of its own.
-  const levelOnly = { ...offSub, logLevel: true } as SyncSubSettings;
   const keepLocal = (keepDays: number) => (st: { settings: AppSettings }) => ({
     settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "debug" as const, keepDays } },
   });
 
-  it("a setting switched ON in a category that already syncs asks when its value differs, and records the question", async () => {
-    const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
-    try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
-      store.setState(keepLocal(90));
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...levelOnly, logRetention: true } } } }));
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
-      expect(store.getState().settings.logging?.keepDays).toBe(90); // nothing decided for the user
-      // Recorded for a restart: the gate is ON by then, so no transition would mark it again.
-      expect(io.saved?.freshCats).toEqual(["logging"]);
-    } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
-    }
-  });
-
-  it("a setting switched ON in a category that already syncs merges without asking when its value matches", async () => {
-    const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
-    try {
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
-      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
-      store.setState(keepLocal(30));
-      const pullsBefore = io.pulls;
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...levelOnly, logRetention: true } } } }));
-      await vi.waitFor(() => expect(io.pulls).toBe(pullsBefore + 1));
-      await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
-      expect(engine.getPendingConflict()).toBeNull();
-      expect(store.getState().settings.logging?.keepDays).toBe(30);
-    } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
-    }
-  });
-
-  it("a setting switched ON during the launch work in a category that already syncs asks", async () => {
-    const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
-    try {
-      store.setState(keepLocal(90));
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...levelOnly, logRetention: true } } } }));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
-    } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
-    }
-  });
-
-  it("a setting switched ON in a category that already syncs still asks after a restart", async () => {
-    // The state the run that recorded the question (above) leaves: both gates ON at launch.
-    const { engine, store, init } = await launchEngine({ sub: { ...levelOnly, logRetention: true } }, serverCopy, { freshCats: ["logging"] });
-    try {
-      store.setState(keepLocal(90));
-      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
-      await init;
-      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
-      await new Promise((r) => setTimeout(r, 30));
-      expect(io.pushes).toBe(0);
-    } finally {
-      io.release({});
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
-    }
-  });
-
   it("an automatic pull with a re-enabled category still to reconcile reconciles it, rather than pushing to start a second pull", async () => {
-    const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
     try {
       io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
       await init;
@@ -2164,7 +2089,7 @@ describe("a sync edit made during the launch work", () => {
       // The server is unreachable when the setting comes on: its reconcile has not landed.
       io.failPulls = true;
       const pullsBefore = io.pulls;
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...levelOnly, logRetention: true } } } }));
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...offSub, logRetention: true } } } }));
       await vi.waitFor(() => expect(io.pulls).toBe(pullsBefore + 1));
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("error"));
       io.failPulls = false;

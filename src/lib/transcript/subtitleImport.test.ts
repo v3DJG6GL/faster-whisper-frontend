@@ -247,6 +247,12 @@ describe("plain text + errors", () => {
       ["SPEAKER_00", "当然，我们什么时候出发？"],
       ["SPEAKER_01", "现在就走吧！"],
     ]);
+    // ASCII-colon credit lines are no speaker: their fields keep discounting their marks.
+    const credits = srt([
+      "翻译: 小明。校对: 小刚", "时间轴: 小李。压制: 小王", "监制: 小张。后期: 小赵",
+      ...Array.from({ length: 10 }, (_, i) => `我们今天去公园\n然后回家吃饭${i}`),
+    ]);
+    expect(credits[12].text).toBe("我们今天去公园 然后回家吃饭9");
     const alice = srt([...Array<string>(6).fill("Alice: 好的。"), "Alice: 今天天气很好，我们\n去公园吧。"]);
     expect(alice[6]).toMatchObject({ speaker: "Alice", text: "今天天气很好，我们去公园吧。" });
     // A quotation after a colon carries its marks.

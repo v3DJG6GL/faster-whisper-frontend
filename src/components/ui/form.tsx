@@ -5,7 +5,7 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { Check, Minus, Plus, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
+import { isHistoryTraversalKey } from "@/lib/navGuard";
 import { KeyHint, ListPicker } from "@/components/ListPicker";
 import { FieldTrigger } from "@/components/ui/buttons";
 import { Badge } from "@/components/ui/feedback";
@@ -604,18 +604,10 @@ export function Stepper({
               setText(String(value));
               return;
             }
-            // The Esc rule's sibling: a keyboard history traversal (Browser Back/Forward, or
-            // Alt+Left/Right outside macOS, where Option+Arrow moves by word) goes through the
-            // popstate guard, which would read the dirty state before the typed number lands and
-            // let the editor unmount without asking — React fires no onBlur on unmount. Blurring
+            // The Esc rule's sibling: a keyboard history traversal goes through the popstate
+            // guard, which would read the editor clean before the typed number lands. Blurring
             // commits it first; the key itself still goes through, so the guard asks.
-            if (
-              editedRef.current &&
-              uncommitted &&
-              (e.key === "BrowserBack" ||
-                e.key === "BrowserForward" ||
-                (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && (IS_WINDOWS || IS_LINUX)))
-            ) {
+            if (editedRef.current && uncommitted && isHistoryTraversalKey(e)) {
               e.currentTarget.blur();
               return;
             }

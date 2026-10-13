@@ -16,6 +16,20 @@
 // One guard at a time — only one editor screen is ever mounted, since each one
 // is its own route (and a list's editor replaces the list it belongs to).
 
+import { IS_LINUX, IS_WINDOWS } from "./platform";
+
+/** Is this key a keyboard history traversal — Browser Back/Forward, or Alt+Left/Right outside
+ *  macOS (where Option+Arrow moves by word)? A field that keeps an uncommitted draft must commit
+ *  it on one (blur), or the popstate guard reads a clean editor and lets it unmount — React
+ *  fires no onBlur on unmount. The key itself still goes through, so the guard then asks. */
+export function isHistoryTraversalKey(e: { key: string; altKey: boolean }): boolean {
+  return (
+    e.key === "BrowserBack" ||
+    e.key === "BrowserForward" ||
+    (e.altKey && (e.key === "ArrowLeft" || e.key === "ArrowRight") && (IS_WINDOWS || IS_LINUX))
+  );
+}
+
 interface NavGuard {
   /** Is there work that would be lost? Read at navigation time, not registration. */
   dirty: () => boolean;

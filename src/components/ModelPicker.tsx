@@ -16,6 +16,7 @@ import { Badge } from "@/components/ui";
 import { deviceChip, WHISPER_ALIAS } from "@/lib/backendChipLabels";
 import type { ServerModel } from "@/lib/types";
 import { imeComposing } from "@/lib/keys";
+import { isHistoryTraversalKey } from "@/lib/navGuard";
 
 export function ModelPicker({
   value,
@@ -83,6 +84,9 @@ export function ModelPicker({
           commit(draft);
           e.stopPropagation();
         }
+        // The Stepper's history-traversal rule: commit the draft so the popstate guard sees the
+        // dirty editor and asks; the key itself goes on (no stopPropagation / preventDefault).
+        else if (draft.trim() !== value && isHistoryTraversalKey(e)) commit(draft);
       }}
     >
       <Combobox

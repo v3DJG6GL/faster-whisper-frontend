@@ -31,6 +31,7 @@ import { speakerOrder as speakersOf } from "@/lib/transcript/transcriptFormats";
 import { useOverrideContext } from "@/lib/useOverrideContext";
 import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useBackendModels } from "@/lib/useBackendModels";
+import { useDebounced } from "@/lib/useDebounced";
 import { fmtBytes, fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
@@ -310,6 +311,9 @@ export default function Transcribe() {
   // Per-run server override-profile pick; "" = inherit the Backend's. Same
   // not-persisted contract as runOverrides.
   const [runOverrideProfile, setRunOverrideProfile] = useState("");
+  // The pre-warm reads the name once typing settles: a custom name typed in the picker would
+  // otherwise send a preload per keystroke, each judged against a profile that does not exist.
+  const warmOverrideProfile = useDebounced(runOverrideProfile, 400);
   // Per-run TRANSLATION_CONTEXT_SEGMENTS; undefined = the backend's, else the server's. Same
   // not-persisted contract as runOverrides (it is not a synced setting).
   const [runContextSegments, setRunContextSegments] = useState<number | undefined>(undefined);
@@ -717,12 +721,12 @@ export default function Transcribe() {
       backendId: backend.id,
       models: plan,
       // The run's rule (buildCtx), so the server judges the plan against the profile the run sends.
-      overrideProfile: effectiveOverrideProfile(runOverrideProfile, backend.overrideProfile),
+      overrideProfile: effectiveOverrideProfile(warmOverrideProfile, backend.overrideProfile),
     });
     return () => lease.release();
   }, [
     files,
-    runOverrideProfile,
+    warmOverrideProfile,
     busy,
     backend,
     settings,

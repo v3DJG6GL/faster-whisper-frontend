@@ -96,7 +96,6 @@ import {
   substituteElementFields,
   type Gates,
   catsFromGates,
-  catsWithGateTurnedOn,
   isPlainObject,
   SCALAR_CATS,
 } from "./syncGates";
@@ -146,17 +145,6 @@ function settingGates(): Gates {
  *  list & settings", "Rules for this OS" — inert. */
 function syncCats(): Record<SyncCategory, boolean> {
   return catsFromGates(settingGates()) as Record<SyncCategory, boolean>;
-}
-
-/** The categories to mark fresh (`freshCats`) for a change of the sync settings: every synced one
- *  a setting's gate came ON in, per setting (`catsWithGateTurnedOn`) — the store subscriber and
- *  the launch work's twin both read it, so the two never disagree on what "turned on" means. */
-function catsTurnedOn(prevSync: AppSettings["sync"], nowSync: AppSettings["sync"]): SyncCategory[] {
-  const turned = catsWithGateTurnedOn(
-    completeGates(prevSync?.sub, prevSync?.categories),
-    completeGates(nowSync?.sub, nowSync?.categories),
-  );
-  return ALL_CATEGORIES.filter((c) => turned.includes(c));
 }
 
 /** applyBlob strips gated-off scalar fields, so the security review must judge what
@@ -4310,9 +4298,10 @@ export async function initSync(): Promise<void> {
     let pruned: SyncCategory[] = [];
     let nowCats: Record<SyncCategory, boolean> | null = null;
     if (prevSync && nowSync && prevSync.backendId === nowSync.backendId) {
+      const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
       nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
       const on = nowCats;
-      turnedOn = catsTurnedOn(prevSync, nowSync);
+      turnedOn = ALL_CATEGORIES.filter((c) => on[c] && !prevCats[c]);
       // Turned off again before its reconcile: not synced, so nothing to ask about.
       pruned = [...freshCats].filter((c) => !on[c]);
     }
@@ -4346,11 +4335,9 @@ export async function initSync(): Promise<void> {
     }
     // A category toggled ON (via the per-setting gates) is reconciled with the server before
     // anything is pushed, against a base without it (`freshCats`): the same value merges, a
-    // different one asks. Keyed on the per-setting gates within a synced category
-    // (`catsTurnedOn`), not the raw `sync.categories` map (no writer since the manifest list
-    // replaced the category rows) nor the derived cats (a second setting switched on in a
-    // category that already syncs left them unchanged): either pushed this device's value of a
-    // re-enabled setting over the peer's.
+    // different one asks. Keyed on the DERIVED cats: `sync.categories` has had no writer since
+    // the manifest list replaced the category rows, so comparing the raw map was permanently
+    // false and a re-enabled setting pushed this device's value over the peer's.
     if (nowCats) {
       // A dialog that still asks about a category turned off again is re-raised without it (or
       // dropped) by a fresh reconcile.
@@ -4402,8 +4389,9 @@ export async function initSync(): Promise<void> {
       persistFresh();
     }
   } else if (launchSync !== nowSync) {
+    const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
     const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
-    const turnedOn = catsTurnedOn(launchSync, nowSync);
+    const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
     const pruned = [...freshCats].filter((c) => !nowCats[c]);
     for (const c of pruned) freshCats.delete(c);
     for (const c of turnedOn) freshCats.add(c);

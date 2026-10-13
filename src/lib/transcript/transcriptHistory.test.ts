@@ -1186,6 +1186,38 @@ describe("deleteRecord", () => {
       err.mockRestore();
     }
   });
+  it("a failed delete re-lists only once a second delete in flight has landed", async () => {
+    const rec = (id: string): TranscriptRecord => ({
+      schemaVersion: 1, kind: "file", id, createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done", result: { text: id },
+    });
+    const onDisk = [rec("del-a"), rec("del-b")];
+    listTranscriptRecords.mockImplementation(async () => [...onDisk]);
+    await loadHistory();
+    let landB = () => {};
+    deleteTranscriptRecord
+      .mockRejectedValueOnce("The process cannot access the file")
+      .mockImplementationOnce(() => new Promise<void>((r) => (landB = () => {
+        onDisk.splice(onDisk.findIndex((x) => x.id === "del-b"), 1);
+        r();
+      })));
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      deleteRecord("del-a"); // refused on disk: History re-lists
+      deleteRecord("del-b"); // still in flight when that refusal lands
+      await new Promise((r) => setTimeout(r, 10));
+      landB();
+      await flushRecordWrites();
+      await vi.waitFor(() =>
+        expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["del-a"]),
+      );
+      await new Promise((r) => setTimeout(r, 10));
+      expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["del-a"]);
+    } finally {
+      err.mockRestore();
+      listTranscriptRecords.mockResolvedValue([]);
+    }
+  });
 });
 
 describe("patchRecord merges onto the latest copy", () => {

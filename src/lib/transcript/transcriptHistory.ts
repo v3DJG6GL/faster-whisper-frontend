@@ -701,8 +701,10 @@ export function deleteRecord(id: string): void {
       logLine("warn", "history", "could not delete a History entry");
       // Rust keeps the record (and its media) when the unlink fails, e.g. Windows briefly
       // locking the file: re-list so the entry comes back instead of hiding until the next
-      // launch while the user believes it is gone from disk.
-      void loadHistory(true).catch(() => {});
+      // launch while the user believes it is gone from disk. In-flight saves and deletes land
+      // first (the swept listener's order): the listing replays only parked writes. Not awaited
+      // here, so the flush does not wait on this very delete.
+      void flushRecordWrites().then(() => loadHistory(true)).catch(() => {});
     },
   ));
 }
