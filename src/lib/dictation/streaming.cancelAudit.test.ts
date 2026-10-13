@@ -716,10 +716,12 @@ describe("work that must wait for the queue or the cancel", () => {
     const boundary = mask(bodyAfter(streamingSrc, '"stream://boundary"'));
     const link = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(async () =>"));
     expect(link).toContain("giveClipboardBack(");
+    // The separator task is queued too (enqueueInject): its own restore may clear the debt it paid.
+    const sepTask = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "enqueueInject(async () =>"));
     for (const step of ["clipDirty && beganInjection", "clipDirty = false"]) {
       expect(link, `${step} must run inside the queued link`).toContain(step);
-      const inLink = link.split(step).length;
-      expect(boundary.split(step).length, `${step} must not run synchronously in the boundary`).toBe(inLink);
+      const queued = link.split(step).length + sepTask.split(step).length - 1;
+      expect(boundary.split(step).length, `${step} must not run synchronously in the boundary`).toBe(queued);
     }
   });
 
@@ -810,13 +812,26 @@ describe("work that must wait for the queue or the cancel", () => {
     const boundary = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "enqueueInject(async () =>"));
     const loop = boundary.indexOf("for (let i = 0; i < parts.length; i++)");
     expect(loop, "the separator loop moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
-    expect(boundary).toMatch(/const parts = sep\.split\(\s+\);/);
+    // A CRLF or lone CR is one break (as Rust's sanitize_injected and the carry have it), not a
+    // "\r" typed as a line break plus a Return.
+    // (mask blanks the regex literal and the strings; the raw source pins the pattern.)
+    expect(boundary).toMatch(/const parts = sep\.replace\(\s+,\s+\)\.split\(\s+\);/);
+    expect(streamingSrc).toContain('const parts = sep.replace(/\\r\\n?/g, "\\n").split("\\n");');
     expect(boundary).not.toMatch(/sep\.includes\(/);
     const body = bodyAfter(boundary.slice(loop), ")");
     // A Return before every part after the first, each stopping the rest when it did not land.
     expect(body).toMatch(/if \(i > 0 && \(!\(await pressReturn\(t, cfg\)\) \|\| insertCfg !== cfg\)\) return;/);
     expect(body).toMatch(/if \(parts\[i\] && \(!\(await sendSepText\(parts\[i\]\)\) \|\| insertCfg !== cfg\)\) return;/);
     expect(mask(topLevelFunctions(streamingSrc).pressReturn)).toMatch(/return landed && !diverted;/);
+  });
+
+  it("a landed separator's restore pays the debt, so the backstop does not restore it again", () => {
+    // The quiet timer's restore was dropped by the boundary, so clipDirty was still set: the
+    // separator restored after its paste and then the backstop link restored the same snapshot.
+    const boundary = mask(bodyAfter(streamingSrc, '"stream://boundary"'));
+    expect(boundary).toMatch(
+      /&& landed && beganInjection\) \{\s+await giveClipboardBack\(\);\s+if \(insertCfg === cfg\) clipDirty = false;\s+\}/,
+    );
   });
 
   it("every clipboard restore goes through giveClipboardBack", () => {

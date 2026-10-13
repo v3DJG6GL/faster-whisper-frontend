@@ -2874,13 +2874,17 @@ async function ensureListeners(): Promise<void> {
             // Rust's next begin_injection keeps the prior snapshot over it (is_own_injected).
             if (t.method === "paste" && t.restoreClipboard && !t.isSelf && landed && beganInjection) {
               await giveClipboardBack();
+              // The debt is paid, so the backstop link below does not restore it a second time.
+              // Re-checked after the await as that link does: a new session's paste may own clipDirty now.
+              if (insertCfg === cfg) clipDirty = false;
             }
             return landed && !diverted;
           };
           // The separator as written: each "\n" a Return, the text between through sendSepText, in
           // order ("\n\n" is a blank line, ".\n" keeps its "."), just as the carry's joinCarry and the
-          // Live dictation preview have it. A part that does not land stops the rest.
-          const parts = sep.split("\n");
+          // Live dictation preview have it. A part that does not land stops the rest. A CRLF or a
+          // lone CR is one line break, as Rust's sanitize_injected (and so the carry) has it.
+          const parts = sep.replace(/\r\n?/g, "\n").split("\n");
           for (let i = 0; i < parts.length; i++) {
             if (i > 0 && (!(await pressReturn(t, cfg)) || insertCfg !== cfg)) return;
             if (parts[i] && (!(await sendSepText(parts[i])) || insertCfg !== cfg)) return;
