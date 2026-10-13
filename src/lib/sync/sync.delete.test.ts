@@ -112,10 +112,15 @@ describe("deleteFailureMessage", () => {
 // copy just deleted, API keys included.
 describe("a push superseded while composing", () => {
   it("never sends", async () => {
+    await resetSyncState();
     const settings = structuredClone(DEFAULT_SETTINGS);
     settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
     const b1 = backend({ hasApiKey: true });
     useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
+    // Relative to this test, like every other push count in the file: run in any order, an
+    // earlier test's pushes and its `readCalled` must not decide (or skip) the parked window.
+    const pushesBefore = api.pushes;
+    api.readCalled = false;
     let release: (v: Record<string, string>) => void = () => {};
     api.park = new Promise((r) => (release = r));
     try {
@@ -127,7 +132,7 @@ describe("a push superseded while composing", () => {
     } finally {
       api.park = null;
     }
-    expect(api.pushes).toBe(0);
+    expect(api.pushes).toBe(pushesBefore);
   });
 });
 
