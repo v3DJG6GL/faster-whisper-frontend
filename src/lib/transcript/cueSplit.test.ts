@@ -467,6 +467,20 @@ describe("wrapLines", () => {
   it("a German closing quote stays on its word before a glued CJK run", () => {
     expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
   });
+  it("an ASCII quote opening a quotation in CJK text rides with what it opens", () => {
+    // As a stop by class it joined the character before it: a line or part ended on the opening ".
+    expect(wrapLines('他说我们明天一起去北京"看看那"里的风景然后回家', 13, 2)).toEqual(["他说我们明天一起去北京", '"看看那"里的风景然后回家']);
+    expect(wrapLines('彼は"東京"と言いました', 13, 2, 6)).toEqual(["彼は", '"東京"と言いました']);
+    expect(wrapLines('我说"好"，他说"不"。然后走了', 4, 2)).toEqual(["我说", '"好"，', "他说", '"不"。', "然后走了"]);
+    expect(wrapLines('他说（"你好"）然后走了回家', 5, 2).some((l) => /["（]$/.test(l))).toBe(false);
+    expect(cutByShare('私たちは"東京"と言いました', [1, 1, 1])).toEqual(["私たちは", '"東京"と', "言いました"]);
+    expect(cutByShare("他说'你好'然后", [1, 1, 1])).toEqual(["他说", "'你好'", "然后"]);
+    // One after a bracket glued to a word (print(") moves onto what it opens with the bracket.
+    expect(cutByShare('使用print("你好")函数', [1, 1])).toEqual(["使用print", '("你好")函数']);
+    // The closing quote still joins what it closes, and an apostrophe (it's) is no quote.
+    expect(cutByShare('我说"好"，他说"不"。', [1, 1])).toEqual(['我说"好"，', '他说"不"。']);
+    expect(cutByShare("我觉得it's很好，他说'好'然后走了", [1, 1, 1])).toEqual(["我觉得it's很好，", "他说", "'好'然后走了"]);
+  });
   it("an over-long word of spaced text wraps per character, sharing a line with its neighbour", () => {
     const w = "x".repeat(50);
     expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a " + "x".repeat(24), "x".repeat(26)]);
@@ -607,6 +621,30 @@ describe("wrapLines", () => {
     ] as const) {
       const lines = wrapLines(t, cpl, 2);
       expect(lines.slice(1).some((l) => /^(?:[”»)]|'(?!\p{L}))/u.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+      expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
+    }
+    // So does the comma or stop after that closer: the stop cap counts only stops, not the
+    // closer that rode (a "," after "…...\"" or "?\")" started the next line).
+    for (const [t, cpl] of [
+      ['She said "Supercalifragilisticexpialidocious...", and left', 10],
+      ['She said "Supercalifragilisticexpialidocious...", and left', 14],
+      ["He said “Supercalifragilisticexpialidocious...”, and left", 10],
+      ['Er sagte ("Bundesverfassungsgericht?"), und ging', 10],
+      ["He said (“Supercalifragilistic...”), then left", 13],
+    ] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.some((l) => /^[.,]/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+      expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
+    }
+    // A » or ” before the word opens it (German »…«, Swedish ”…”): no line ends on a bare one,
+    // and the closing « or ” still closes.
+    for (const [t, cpl] of [
+      ["Er sagte »Donaudampfschifffahrtsgesellschaft« und ging", 10],
+      ["Er sagte »Donaudampfschifffahrtsgesellschaft« und ging", 12],
+      ["Han sa ”Donaudampfschifffahrtsgesellschaft” och gick", 10],
+    ] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.some((l) => /(?:^|\s)[»”]$/u.test(l) || /^[«”](?!\p{L})/u.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
       expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
     }
     // An ASCII quote opening an over-long word opens it: no line ends on a bare " or '.

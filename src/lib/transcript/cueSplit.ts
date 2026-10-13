@@ -313,8 +313,8 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
  *  mixedTokens keeps it — a closer or stop joins the unit before it (up to three of them),
  *  an opener the unit after it, a closing quote or bracket in the token's trailing
  *  punctuation, or a quote glued to a letter or digit, closes it („Hallo“ / „Hallo“, /
- *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote that starts the token opens
- *  it, so no line starts with “ ” ) or ends on „ or ". */
+ *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote or a » ” that starts the
+ *  token opens it (»…« / ”…”), so no line starts with “ ” ) or ends on „ » or ". */
 function tokenUnits(w: string): string[] {
   const out: string[] = [];
   let open = "";
@@ -326,7 +326,7 @@ function tokenUnits(w: string): string[] {
   // openers and quotes ("(word, """"word): a longer run (a hallucinated wall of quotes) opens
   // nothing and wraps three to a piece like other punctuation, so it cannot tear the word.
   const firstWord = u.findIndex((x) => /[\p{L}\p{N}]/u.test(x));
-  const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}"']+$/u.test(x));
+  const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}\p{Pf}"']+$/u.test(x));
   const quoteOpens = lead !== -1 && lead <= 6;
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
@@ -334,16 +334,24 @@ function tokenUnits(w: string): string[] {
     // A closing quote or bracket in the trailing run rides even past the three-closer cap
     // („…...“, / “…...” / (…...)): left behind, it would start a line (a “ would even open
     // the next unit). A “ or « glued to a letter or digit closes too, mid-token as well
-    // („…“-Verband) — after a CJK character it opens (“你好”). Stops keep the cap (え？？？？),
-    // and so do quotes and brackets among themselves: a hallucinated run of ")" or "」" still wraps.
+    // („…“-Verband) — after a CJK character it opens (“你好”). Each class keeps its cap among
+    // itself: a stop counts only the stops before it (え？？？？), so the "," after "…...”" still
+    // rides, and a quote or bracket only the quotes and brackets (a hallucinated run of ")" or
+    // "」" still wraps); six marks in all bound an alternating wall (.".".".").
     if (prev !== undefined && !open
       && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x)
           && !/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u.test(prev))
         || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
-        || (!/[\p{Pe}\p{Pf}\p{Po}]{3}$/u.test(prev) && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(x)))) out[out.length - 1] += x;
-    // An ASCII quote that starts the token (or follows its openers) opens it: as a closer of
-    // nothing it ended a line on a bare ". One inside a word (don't, 5'10") rides above.
-    else if ((/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && quoteOpens && k < firstWord && /^["']$/.test(x))) && k < u.length - 1) open += x;
+        || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && !/\p{P}{6}$/u.test(prev)
+          && !(/^(?:[\p{Pe}\p{Pf}]|["'])/u.test(x) ? /(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u : /(?:(?!["'])\p{Po}){3}$/u)
+            .test(prev)))) out[out.length - 1] += x;
+    // An ASCII quote (or a » ” — German »…«, Swedish ”…”) that starts the token or follows its
+    // openers opens it: as a closer of nothing it ended a line on a bare " or ». One inside a
+    // word (don't, 5'10") rides above.
+    else if (
+      (/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && quoteOpens && k < firstWord && /^(?:["']|\p{Pf})$/u.test(x)))
+      && k < u.length - 1
+    ) open += x;
     else {
       out.push(open + x);
       open = "";
@@ -681,31 +689,49 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
  *  before it, and where in `t` it starts. Punctuation glued to its neighbour (an ASCII
  *  "." or ")" after a CJK character, a "(" before one) joins it, so no line starts with a
  *  stop or ends on an opener. An opener glued to the end of a word moves onto the character
- *  it opens, so a line may break before the "(" but never right after it. */
+ *  it opens, so a line may break before the "(" but never right after it. An ASCII " or '
+ *  is a stop by class, but one that opens a quotation (他说"你好") rides forward too: it
+ *  opens when a space or the text start stands before it, or when it is an odd-numbered
+ *  one of its kind so far (an apostrophe between two letters, it's, is no quote), and a
+ *  letter, digit or opener follows. */
 function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[] } {
   const toks: string[] = [];
   const gaps: boolean[] = [];
   const at: number[] = [];
   let end = 0;
+  /** ASCII quotes of each kind before the current match — kept running, so the pass stays linear. */
+  const quotes: Record<string, number> = { '"': 0, "'": 0 };
+  /** The token that ends on an opening ASCII quote: the next one joins it. */
+  let quoted = -1;
   for (const m of t.matchAll(MIXED_TOKEN)) {
     let w = m[0];
     const gap = m.index! > end;
     end = m.index! + w.length;
     const k = toks.length - 1;
-    // An opener glued to the end of a Latin word ("Python(") moves onto what it opens.
-    // Brackets only: an initial quote at the end of a word is a closer in German/Danish
-    // usage („Hallo“, »Hallo«), and peeling it off left „Hallo / “東京… on two lines.
-    const open = k >= 0 && !gap ? /\p{Ps}+$/u.exec(toks[k]) : null;
+    // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
+    const q = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
+    const after = m.index! + (q?.[0].length ?? 0);
+    const opens = !!q && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(after, after + 2), false))
+      && (gap || k < 0 || q[0] !== q[1] || quotes[q[1][0]] % 2 === 0);
+    for (let j = m.index!; j < end; j++) {
+      if (t[j] in quotes && !(/[A-Za-z0-9]/.test(t[j - 1] ?? "") && /[A-Za-z0-9]/.test(t[j + 1] ?? ""))) quotes[t[j]]++;
+    }
+    // An opener glued to the end of a Latin word ("Python(") moves onto what it opens, with
+    // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
+    // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off left „Hallo /
+    // “東京… on two lines.
+    const open = k >= 0 && !gap ? /\p{Ps}+["']*$/u.exec(toks[k]) : null;
     let from = m.index!;
     if (open && open.index > 0) {
       toks[k] = toks[k].slice(0, open.index);
       w = open[0] + w;
       from -= open[0].length;
     }
+    const opened = quoted === k;
     // A word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews") is one word.
     if (
       k >= 0 && !gap
-      && (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(w) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k])
+      && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]) || opened
         || (/[０-９Ａ-Ｚａ-ｚ]$/u.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
         || (/[A-Za-z0-9]$/.test(toks[k]) && /^[０-９Ａ-Ｚａ-ｚ]/u.test(w)))
     ) toks[k] += w;
@@ -714,6 +740,7 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[]
       gaps.push(gap && k >= 0);
       at.push(from);
     }
+    quoted = opens && end === after ? toks.length - 1 : -1;
   }
   return { toks, gaps, at };
 }
