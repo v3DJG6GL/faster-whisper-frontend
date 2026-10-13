@@ -66,6 +66,7 @@ import { VideoBranchRow } from "@/components/transcribe/VideoBranchRow";
 import {
   aboutLeft, AXIS_NAMES, fmtElapsed, RAIL_DESCRIPTIONS, RAIL_NAMES, STAGE_COLORS, UNIT_LABELS, UNIT_NOUN,
 } from "@/components/transcribe/railTheme";
+import { imeComposing } from "@/lib/keys";
 
 /** Bound the "server ignored N overrides" list — untrusted response, real DOM. */
 const MAX_IGNORED_SHOWN = 50;
@@ -1411,9 +1412,8 @@ export default function Transcribe() {
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => {
-                // Mid-composition the IME owns Enter (it commits the candidate); WebKit still
-                // reports its `key`, with keyCode 229 (the LangPick rule).
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                // Mid-composition the IME owns Enter (it commits the candidate).
+                if (imeComposing(e)) return;
                 if (e.key === "Enter" && canAddLink) addLink();
               }}
               disabled={busy}

@@ -32,6 +32,7 @@ import { effectiveServerUrl } from "@/lib/backends";
 import { IS_WINDOWS } from "@/lib/platform";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
+import { imeComposing } from "@/lib/keys";
 
 // Client-side ceilings on the two server-supplied lists this window renders. Both arrive as
 // opaque JSON with no bound on either side of the IPC, and this webview is summoned by a global
@@ -521,9 +522,8 @@ export default function QuickAdd() {
   // Esc while its dropdown is open, so the first Esc there only closes the dropdown.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      // Mid-composition the IME owns Esc (cancel the half-typed text); WebKit still reports its
-      // `key`, with keyCode 229 (the LangPick rule).
-      if (e.isComposing || e.keyCode === 229) return;
+      // Mid-composition the IME owns Esc (cancel the half-typed text).
+      if (imeComposing(e)) return;
       if (e.key === "Escape") closeNow();
     };
     window.addEventListener("keydown", onKey);
@@ -605,7 +605,7 @@ export default function QuickAdd() {
                 // Enter in the find field with no dropdown selection (not yet handled
                 // by the Combobox) advances to the Insert field. Not mid-composition: the
                 // IME's Enter commits the candidate.
-                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                if (imeComposing(e)) return;
                 if (e.key !== "Enter" || e.defaultPrevented) return;
                 if ((e.target as HTMLElement).getAttribute("role") === "combobox") {
                   e.preventDefault();
@@ -645,7 +645,7 @@ export default function QuickAdd() {
                     onChange={(e) => setInsert(e.target.value)}
                     onKeyDown={(e) => {
                       // The IME's Enter commits a candidate, not the mapping.
-                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      if (imeComposing(e)) return;
                       if (e.key === "Enter") {
                         e.preventDefault();
                         addMapping();

@@ -15,6 +15,7 @@ import { Combobox } from "@/components/Combobox";
 import { Badge } from "@/components/ui";
 import { deviceChip, WHISPER_ALIAS } from "@/lib/backendChipLabels";
 import type { ServerModel } from "@/lib/types";
+import { imeComposing } from "@/lib/keys";
 
 export function ModelPicker({
   value,
@@ -68,8 +69,8 @@ export function ModelPicker({
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commit(draft);
       }}
       onKeyDown={(e) => {
-        // Mid-composition the IME owns Esc and Enter; WebKit reports keyCode 229 (the LangPick rule).
-        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+        // Mid-composition the IME owns Esc and Enter.
+        if (imeComposing(e)) return;
         // Enter on a highlighted suggestion is handled (and preventDefault'ed)
         // by the Combobox; a plain Enter commits the typed text.
         if (e.key === "Enter" && !e.defaultPrevented) commit(draft);

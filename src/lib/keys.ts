@@ -211,3 +211,14 @@ export function canonicalizeCodes(codes: string[]): string[] {
 export function sameCodes(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
+
+/**
+ * True while an input method is composing: the IME owns Enter (commit the candidate), Esc (cancel
+ * the half-typed text) and the arrows (candidate list), so a key handler must leave them alone.
+ * WebKit still reports their `key`, with keyCode 229, so both that and `isComposing` are checked.
+ * Takes a DOM or a React keyboard event.
+ */
+export function imeComposing(e: KeyboardEvent | { nativeEvent: KeyboardEvent; keyCode: number }): boolean {
+  const n = "nativeEvent" in e ? e.nativeEvent : e;
+  return n.isComposing || e.keyCode === 229;
+}

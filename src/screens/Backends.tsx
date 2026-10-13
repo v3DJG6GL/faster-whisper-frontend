@@ -37,6 +37,7 @@ import { useDecodeDefaults } from "@/lib/useDecodeDefaults";
 import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
 import { plural, relTime } from "@/lib/format";
+import { imeComposing } from "@/lib/keys";
 
 function Editor({
   initial,
@@ -434,7 +435,7 @@ function Editor({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Mid-composition the IME owns Esc (it cancels the candidate), not the editor.
-      if (e.isComposing || e.keyCode === 229) return;
+      if (imeComposing(e)) return;
       if (e.key === "Escape" && !guard.asking && !savingKey) guard.guardExit(onCancel);
     };
     window.addEventListener("keydown", onKey);
@@ -949,7 +950,7 @@ function ConnectStep({
             placeholder="http://host:8000"
             autoFocus
             onKeyDown={(e) => {
-              if (e.key === "Enter") void testAndContinue();
+              if (!imeComposing(e) && e.key === "Enter") void testAndContinue();
             }}
           />
         </Labeled>
@@ -960,7 +961,7 @@ function ConnectStep({
             onChange={(e) => setKey(e.target.value)}
             placeholder="wk_…"
             onKeyDown={(e) => {
-              if (e.key === "Enter") void testAndContinue();
+              if (!imeComposing(e) && e.key === "Enter") void testAndContinue();
             }}
           />
         </Labeled>

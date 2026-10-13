@@ -68,6 +68,7 @@ import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
 import { chipStyle, type EffSegment } from "@/components/transcribe/viewerKit";
+import { imeComposing } from "@/lib/keys";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
  *  the chunk loop + its 1 s poller must keep running (and keep the store's
@@ -2190,8 +2191,8 @@ export function TranscriptViewer({
                     onChange={(e) => setRenameDraft(e.target.value)}
                     onBlur={commitRename}
                     onKeyDown={(e) => {
-                      // Mid-composition the IME owns Esc and Enter; WebKit reports keyCode 229 (the LangPick rule).
-                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+                      // Mid-composition the IME owns Esc and Enter.
+                      if (imeComposing(e)) return;
                       if (e.key === "Enter") commitRename();
                       else if (e.key === "Escape") setEditingSpeaker(null);
                     }}

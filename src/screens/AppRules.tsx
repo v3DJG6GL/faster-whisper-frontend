@@ -12,6 +12,7 @@ import { IS_WINDOWS } from "@/lib/platform";
 import type { AppRule } from "@/lib/types";
 import { cn } from "@/lib/cn";
 import { appRuleKey, normalizeAppId, safeIdentityText } from "@/lib/sanitize";
+import { imeComposing } from "@/lib/keys";
 
 // App ids differ per platform: AT-SPI application names on Linux, lowercased exe
 // basenames on Windows — show examples the local detector will actually produce.
@@ -155,7 +156,7 @@ function Editor({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Mid-composition Esc cancels the IME's half-typed text, not the editor.
-      if (e.isComposing || e.keyCode === 229) return;
+      if (imeComposing(e)) return;
       if (e.key === "Escape" && !guard.asking) guard.guardExit(onCancel);
     };
     window.addEventListener("keydown", onKey);

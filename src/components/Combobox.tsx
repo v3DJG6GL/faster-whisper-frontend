@@ -17,6 +17,7 @@ import { createPortal } from "react-dom";
 import { cn } from "@/lib/cn";
 import { TextInput } from "@/components/ui";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
+import { imeComposing } from "@/lib/keys";
 
 const MAX_SHOWN = 50; // popover DOM cap (the source list is already server-capped)
 
@@ -147,9 +148,8 @@ export function Combobox({
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (disabled) return;
-    // Mid-composition the IME owns Esc (cancel), Enter (commit) and the arrows (candidate list);
-    // WebKit still reports their `key`, with keyCode 229.
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // Mid-composition the IME owns Esc (cancel), Enter (commit) and the arrows (candidate list).
+    if (imeComposing(e)) return;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();

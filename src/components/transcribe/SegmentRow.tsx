@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import { ownProp } from "@/lib/own";
 import type { TranscriptWord } from "@/lib/types";
 import { chipStyle, type EffSegment } from "@/components/transcribe/viewerKit";
+import { imeComposing } from "@/lib/keys";
 
 /** One transcript row, memoized: during playback only the row entering and the
  *  row leaving the playhead re-render — the other (up to 5000) rows bail on a
@@ -181,8 +182,8 @@ export const SegmentRow = memo(function SegmentRow({
             if (shown !== typed.trim() || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
-            // Mid-composition the IME owns Esc and Enter; WebKit reports keyCode 229 (the LangPick rule).
-            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            // Mid-composition the IME owns Esc and Enter.
+            if (imeComposing(e)) return;
             if (e.key === "Enter") {
               e.preventDefault();
               e.currentTarget.blur();

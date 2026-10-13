@@ -42,6 +42,7 @@ import { NO_OVERRIDE_PROFILE, type Profile, type TranslationOverrides } from "@/
 import { cn } from "@/lib/cn";
 import { profileDisplayName, safeDisplayText, trimLeadingInvisible } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
+import { imeComposing } from "@/lib/keys";
 
 const ACTIVATION = {
   hold: { icon: Mic, label: "Push-to-talk", hint: "Hold the hotkey while you speak; release to stop." },
@@ -234,7 +235,7 @@ function Editor({
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       // Mid-composition Esc cancels the IME's half-typed text, not the editor.
-      if (e.isComposing || e.keyCode === 229) return;
+      if (imeComposing(e)) return;
       // Not while capturing a chord — Esc cancels the capture there.
       if (e.key === "Escape" && !capturing && !guard.asking) guard.guardExit(onCancel);
     };

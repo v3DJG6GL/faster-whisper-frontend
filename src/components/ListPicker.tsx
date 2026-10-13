@@ -32,6 +32,7 @@ import { POPOVER_PANEL } from "@/components/styles";
 import { Kbd } from "@/components/ui/Kbd";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
+import { imeComposing } from "@/lib/keys";
 
 export interface PickerSection<R> {
   /** "" = no header (pinned rows). */
@@ -254,8 +255,8 @@ export function ListPicker<R>({
 
   const onListKey = (e: KeyboardEvent<HTMLElement>) => {
     // Mid-composition the IME owns Esc (cancel the half-typed text), Enter (commit it) and the
-    // arrows (candidate list); WebKit still reports their `key`, with keyCode 229.
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    // arrows (candidate list).
+    if (imeComposing(e)) return;
     const next = navKey(e.key, act, flat.length);
     if (next !== null) {
       e.preventDefault();

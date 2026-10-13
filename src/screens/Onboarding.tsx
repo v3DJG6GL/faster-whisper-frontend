@@ -37,6 +37,7 @@ import { stripMachineFolders } from "@/lib/sync/settingsFile";
 import { relTime } from "@/lib/format";
 import type { ImportResult, SyncPullResult } from "@/lib/sync/syncTypes";
 import type { Backend, ConnectionInfo, PipelineRule, Profile } from "@/lib/types";
+import { imeComposing } from "@/lib/keys";
 
 
 type Step = "gate" | "restore" | "starters" | "quickadd";
@@ -419,7 +420,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   placeholder="http://host:8000"
                   autoFocus
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void testAndContinue();
+                    if (!imeComposing(e) && e.key === "Enter") void testAndContinue();
                   }}
                 />
               </Labeled>
@@ -430,7 +431,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   onChange={(e) => setKey(e.target.value)}
                   placeholder="wk_…"
                   onKeyDown={(e) => {
-                    if (e.key === "Enter") void testAndContinue();
+                    if (!imeComposing(e) && e.key === "Enter") void testAndContinue();
                   }}
                 />
               </Labeled>
