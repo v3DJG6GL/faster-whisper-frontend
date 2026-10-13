@@ -925,16 +925,16 @@ pub fn read_primary_selection() -> Option<String> {
 /// and TIME-BOUNDED by the caller (read_selection_bounded — see commands/mod.rs), so this no
 /// longer does the unbounded get_text() that could wedge on a dead clipboard owner.
 ///
-/// With clipboard privacy on (Linux), the write goes through the live owner instead: the history
-/// hint makes arboard's X11 backend — which is also what a Wayland session WITHOUT the data-control
-/// protocol (GNOME) runs on, through XWayland — CLEAR the selection when the `Clipboard` drops
-/// instead of handing it to the clipboard manager, so a plain set could be gone before the
-/// portal's Ctrl+V reads it.
+/// On Linux the write goes through the live owner instead (`paste_write_via_live_owner`): arboard's
+/// X11 backend — which is also what a Wayland session WITHOUT the data-control protocol (GNOME)
+/// runs on, through XWayland — tears the selection down when the `Clipboard` drops with no
+/// clipboard manager running, and CLEARS it on that drop with clipboard privacy on, so a plain set
+/// could be gone before the portal's Ctrl+V reads it.
 ///
 /// `Ok(true)` when the write went through that live owner (so it sticks and the caller need not
 /// re-serve it), `Ok(false)` after a plain write that may not outlive this call.
 pub fn set_clipboard(text: &str) -> Result<bool, String> {
-    if cfg!(target_os = "linux") && clipboard_privacy() {
+    if paste_write_via_live_owner(false, cfg!(target_os = "linux")) {
         return persist_transcript(text).map(|()| true);
     }
     let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
@@ -1192,6 +1192,20 @@ fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
     }
 }
 
+/// Whether a paste writes the transcript through the live owner (`persist_transcript`) rather than
+/// a function-local `Clipboard` — for `paste` (X11/Windows/macOS) and `set_clipboard` (the Wayland
+/// portal paste, which calls it for local targets only). A remote target always does (its fetch is
+/// deferred — see the comment at `paste`'s write). So does every local paste on Linux: the target
+/// reads the selection asynchronously, after the synthesized chord and possibly after the writer
+/// has returned and dropped its `Clipboard`. arboard's X11 drop of the last instance hands
+/// the data to a clipboard manager if one runs and otherwise destroys the selection — and with
+/// clipboard privacy on, the history hint turns that drop into a CLEAR (see `set_text_ext`). So a
+/// plain write could leave a slow target pasting nothing while the paste reports `Landed::Yes`.
+/// Windows and macOS keep the synchronous write: their clipboard outlives the handle.
+fn paste_write_via_live_owner(remote_target: bool, linux: bool) -> bool {
+    remote_target || linux
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paste(
     enigo: &mut Enigo,
@@ -1329,10 +1343,9 @@ fn paste(
             persist_transcript(text)?;
         }
         true
-    } else if cfg!(target_os = "linux") && clipboard_privacy() {
-        // The history hint turns arboard's X11 drop into a CLEAR (see `set_text_ext`), so with
-        // privacy on the local paste must be served by the live owner too — the target reads the
-        // selection asynchronously and may do so after this function has returned.
+    } else if paste_write_via_live_owner(remote_target, cfg!(target_os = "linux")) {
+        // A local paste on Linux is served by the live owner too — see
+        // `paste_write_via_live_owner`.
         persist_transcript(text)?;
         true
     } else {
@@ -1600,6 +1613,18 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::sanitize_injected;
+
+    /// A local Linux paste once used the plain write unless clipboard privacy was on, so with no
+    /// clipboard manager the selection died with the function-local `Clipboard` before a slow
+    /// target fetched it.
+    #[test]
+    fn every_linux_paste_write_goes_through_the_live_owner() {
+        use super::paste_write_via_live_owner;
+        assert!(paste_write_via_live_owner(false, true));
+        assert!(paste_write_via_live_owner(true, true));
+        assert!(paste_write_via_live_owner(true, false));
+        assert!(!paste_write_via_live_owner(false, false));
+    }
 
     /// Category Cf is invisible but reorders what the reader sees, and `char::is_control()` (Cc
     /// only) never caught it — so a hostile transcript could make the text that lands differ from

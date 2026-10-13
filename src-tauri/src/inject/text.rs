@@ -680,9 +680,10 @@ pub(crate) async fn inject_text(
                 });
             }
             // A remote-desktop client fetches the clipboard only AFTER the forwarded chord, so its
-            // write goes straight to the persistent owner: the plain `set_clipboard` write is
-            // dropped when it returns (privacy off, no data-control — GNOME through XWayland),
-            // leaving the remote nothing to fetch. Same rule the X11 twin's remote write follows.
+            // write goes straight to the persistent owner, as the X11 twin's remote write does: a
+            // plain write would be dropped when it returns (no data-control — GNOME through
+            // XWayland), leaving the remote nothing to fetch. A local `set_clipboard` on Linux is
+            // served by the live owner too — see `paste_write_via_live_owner`.
             // (`set_clipboard_persistent`'s own pending-restore take is a no-op: `requeue` holds
             // it.) `persisted` says the transcript is already on a live owner, so the two re-sets
             // below need not serve it a second time.
