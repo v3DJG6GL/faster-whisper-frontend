@@ -202,15 +202,16 @@ pub async fn get_job_result(
     api_key: Option<&str>,
     job_id: &str,
 ) -> JobOutcome<BatchResult> {
-    // No JOB_TIMEOUT: a verbose_json payload with words and translations can
-    // be megabytes, so this keeps the shared client's generous default.
+    // The live POST's own budget, not JOB_TIMEOUT or the shared client's
+    // 120 s: a verbose_json payload with words and translations can be tens of
+    // MB, and a timeout here recurs on every retry until the row ages out.
     let resp = match job_request(
         server_url,
         api_key,
         job_id,
         reqwest::Method::GET,
         "/result",
-        None,
+        Some(super::batch::FILE_TRANSCRIBE_TIMEOUT),
     )
     .await
     {
