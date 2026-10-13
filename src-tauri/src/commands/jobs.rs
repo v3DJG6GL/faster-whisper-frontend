@@ -6,7 +6,7 @@
 //! survive an unrelated cancel. Callers switch on the typed outcome (`JobOutcome`), not
 //! an Err.
 
-use super::resolve_key_async;
+use super::{resolve_key_async, store_io};
 use crate::transport;
 use tauri::{AppHandle, Manager};
 
@@ -51,16 +51,25 @@ pub async fn delete_job(
 /// job ids the app posted and has not ingested yet, so a run survives the app being quit
 /// mid-flight. Opaque JSON to Rust; the row shape lives in TS (`lib/jobsLedger.ts`).
 /// `Err` when the file exists but can't be read — the webview then must not save over it.
+/// Off the main thread, one call at a time: see `store_io`.
 #[tauri::command]
-pub fn load_jobs_ledger(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+pub async fn load_jobs_ledger(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     let Ok(dir) = app.path().app_data_dir() else {
         return Ok(None);
     };
-    crate::store::jobs_ledger::load(&dir).map_err(|e| format!("jobs ledger unreadable: {e}"))
+    store_io(&LEDGER_TURN, move || {
+        crate::store::jobs_ledger::load(&dir).map_err(|e| format!("jobs ledger unreadable: {e}"))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_jobs_ledger(app: AppHandle, ledger: serde_json::Value) -> Result<(), String> {
+pub async fn save_jobs_ledger(app: AppHandle, ledger: serde_json::Value) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::store::jobs_ledger::save(&dir, &ledger).map_err(|e| e.to_string())
+    store_io(&LEDGER_TURN, move || {
+        crate::store::jobs_ledger::save(&dir, &ledger).map_err(|e| e.to_string())
+    })
+    .await
 }
+
+static LEDGER_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());

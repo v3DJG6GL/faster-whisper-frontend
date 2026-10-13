@@ -33,6 +33,24 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
     app.path().app_config_dir().map_err(|e| e.to_string())
 }
 
+/// Run a small per-device store's load or save (jobs ledger, sync state, usage-outcome queue)
+/// off the main thread: a sync command runs there, and the store retries a locked file with
+/// sleeps and fsyncs on save — an AV/indexer lock froze every window, once per call.
+///
+/// `turn` is the store's own lock, taken for the whole call: on the main thread the calls ran
+/// one at a time in arrival order, and on workers two saves would otherwise share the
+/// `<file>.tmp` (one truncating the other mid-write) or land older-after-newer. tokio's mutex
+/// queues waiters FIFO, so the order the commands started in is the order they run in.
+async fn store_io<T: Send + 'static>(
+    turn: &'static tokio::sync::Mutex<()>,
+    f: impl FnOnce() -> Result<T, String> + Send + 'static,
+) -> Result<T, String> {
+    let _turn = turn.lock().await;
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// Names of the per-type subfolders inside the audio base folder.
 pub(crate) const AUDIO_SUBDIRS: [&str; 4] = ["dictations", "files", "links", "video"];
 
@@ -160,5 +178,44 @@ pub(crate) async fn read_selection_bounded(
     match tokio::time::timeout(std::time::Duration::from_millis(400), task).await {
         Ok(Ok(v)) => v,
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod store_io_tests {
+    use super::store_io;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
+    #[test]
+    fn calls_on_one_store_never_overlap_on_the_workers() {
+        static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+        static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+        static OVERLAPS: AtomicUsize = AtomicUsize::new(0);
+        let calls: Vec<_> = (0..8)
+            .map(|i| {
+                tauri::async_runtime::spawn(store_io(&TURN, move || {
+                    if ACTIVE.fetch_add(1, Ordering::SeqCst) != 0 {
+                        OVERLAPS.fetch_add(1, Ordering::SeqCst);
+                    }
+                    std::thread::sleep(Duration::from_millis(5));
+                    ACTIVE.fetch_sub(1, Ordering::SeqCst);
+                    Ok(i)
+                }))
+            })
+            .collect();
+        let done: Vec<i32> = tauri::async_runtime::block_on(async {
+            let mut out = Vec::new();
+            for c in calls {
+                out.push(c.await.unwrap().unwrap());
+            }
+            out
+        });
+        assert_eq!(done, (0..8).collect::<Vec<_>>());
+        assert_eq!(
+            OVERLAPS.load(Ordering::SeqCst),
+            0,
+            "two store calls ran at once"
+        );
     }
 }

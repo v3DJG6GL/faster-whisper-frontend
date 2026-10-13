@@ -1,7 +1,7 @@
 //! Settings sync with the server, its local bookkeeping, and the settings file
 //! export/import.
 
-use super::{config_dir, resolve_key_async};
+use super::{config_dir, resolve_key_async, store_io};
 use crate::config;
 use crate::transport;
 use std::path::PathBuf;
@@ -49,25 +49,40 @@ pub async fn sync_delete(
 /// Local sync bookkeeping (device id, last server version, merge-base
 /// snapshot) — opaque to Rust, lives in `<config dir>/sync-state.json`.
 /// `Err` when the file exists but can't be read — the webview then must not save over it.
+/// Off the main thread, one call at a time: see `store_io`.
 #[tauri::command]
-pub fn load_sync_state(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+pub async fn load_sync_state(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     let Ok(dir) = config_dir(&app) else {
         return Ok(None);
     };
-    crate::store::sync_state::load(&dir).map_err(|e| format!("sync state unreadable: {e}"))
+    store_io(&SYNC_STATE_TURN, move || {
+        crate::store::sync_state::load(&dir).map_err(|e| format!("sync state unreadable: {e}"))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_sync_state(app: AppHandle, state: serde_json::Value) -> Result<(), String> {
+pub async fn save_sync_state(app: AppHandle, state: serde_json::Value) -> Result<(), String> {
     let dir = config_dir(&app)?;
-    crate::store::sync_state::save(&dir, &state).map_err(|e| e.to_string())
+    store_io(&SYNC_STATE_TURN, move || {
+        crate::store::sync_state::save(&dir, &state).map_err(|e| e.to_string())
+    })
+    .await
 }
 
-/// This machine's sync identity (persistent uuid + hostname + platform).
+static SYNC_STATE_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// This machine's sync identity (persistent uuid + hostname + platform). Same turn as the
+/// state commands: a first call writes the new id into sync-state.json.
 #[tauri::command]
-pub fn sync_device_info(app: AppHandle) -> Result<crate::store::sync_state::DeviceInfo, String> {
+pub async fn sync_device_info(
+    app: AppHandle,
+) -> Result<crate::store::sync_state::DeviceInfo, String> {
     let dir = config_dir(&app)?;
-    Ok(crate::store::sync_state::device_info(&dir))
+    store_io(&SYNC_STATE_TURN, move || {
+        Ok(crate::store::sync_state::device_info(&dir))
+    })
+    .await
 }
 
 /// Bulk keyring read for export/sync composition: the API keys of the given

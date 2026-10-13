@@ -2,7 +2,7 @@
 //! defaults, pipeline rules, recent words and usage stats (plus the on-disk
 //! usage-outcome queue).
 
-use super::resolve_key_async;
+use super::{resolve_key_async, store_io};
 use crate::transport;
 use tauri::{AppHandle, Manager};
 
@@ -159,17 +159,26 @@ pub async fn post_usage_outcomes(
 /// not be posted yet (server down mid-session) survive a restart here. Opaque JSON to
 /// Rust; the queue logic lives in TS.
 /// `Err` when the file exists but can't be read — the webview then must not save over it.
+/// Off the main thread, one call at a time: see `store_io`.
 #[tauri::command]
-pub fn load_usage_outcomes(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+pub async fn load_usage_outcomes(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     let Ok(dir) = app.path().app_data_dir() else {
         return Ok(None);
     };
-    crate::store::usage_queue::load(&dir)
-        .map_err(|e| format!("usage outcome queue unreadable: {e}"))
+    store_io(&USAGE_QUEUE_TURN, move || {
+        crate::store::usage_queue::load(&dir)
+            .map_err(|e| format!("usage outcome queue unreadable: {e}"))
+    })
+    .await
 }
 
 #[tauri::command]
-pub fn save_usage_outcomes(app: AppHandle, queue: serde_json::Value) -> Result<(), String> {
+pub async fn save_usage_outcomes(app: AppHandle, queue: serde_json::Value) -> Result<(), String> {
     let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    crate::store::usage_queue::save(&dir, &queue).map_err(|e| e.to_string())
+    store_io(&USAGE_QUEUE_TURN, move || {
+        crate::store::usage_queue::save(&dir, &queue).map_err(|e| e.to_string())
+    })
+    .await
 }
+
+static USAGE_QUEUE_TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
