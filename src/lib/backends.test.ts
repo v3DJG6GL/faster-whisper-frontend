@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, typedServerUrl } from "./backends";
+import { backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 
@@ -257,5 +257,41 @@ describe("effectiveServerUrl", () => {
   });
   it("gives a slashless http: override the // the parsers read into it", () => {
     expect(effectiveServerUrl(b, withOverride("http:example.com"))).toBe("http://example.com");
+  });
+});
+
+describe("stripUrlNoise trims the edges the Rust transport trims (str::trim)", () => {
+  // [raw, stripped, authority host (null = unparseable)]. Changed vs 68f08787: the U+00A0, U+2028
+  // and U+3000 rows (and a leading NBSP on a schemeless address) used to keep the character, so
+  // no host, no userinfo flag — while Rust trimmed it and connected. U+FEFF is not White_Space:
+  // Rust keeps it, and so does this (neither side then reads a scheme).
+  const matrix: [string, string, string | null][] = [
+    ["http://h.tld\u00a0", "http://h.tld", "h.tld"],
+    ["\u00a0http://h.tld", "http://h.tld", "h.tld"],
+    ["http://h.tld\u2028", "http://h.tld", "h.tld"],
+    ["\u2028http://h.tld", "http://h.tld", "h.tld"],
+    ["http://h.tld\u3000", "http://h.tld", "h.tld"],
+    ["\u3000http://h.tld", "http://h.tld", "h.tld"],
+    ["\u00a0localhost:8000", "localhost:8000", "localhost:8000"],
+    ["http://h.tld\ufeff", "http://h.tld\ufeff", "h.tld"],
+    ["\ufeffhttp://h.tld", "\ufeffhttp://h.tld", "http"],
+    ["http://h.tld\t", "http://h.tld", "h.tld"],
+    ["\thttp://h.tld", "http://h.tld", "h.tld"],
+    ["http://h.tld\u0000", "http://h.tld", "h.tld"],
+    ["\u0000http://h.tld", "http://h.tld", "h.tld"],
+    ["http://h\u00a0x.tld", "http://h\u00a0x.tld", null],
+    ["https://gpu.example.com", "https://gpu.example.com", "gpu.example.com"],
+  ];
+  it("strips, parses and stores as the transport connects", () => {
+    for (const [raw, stripped, host] of matrix) {
+      expect([raw, stripUrlNoise(raw)]).toEqual([raw, stripped]);
+      expect([raw, authorityOf(raw)?.host ?? null]).toEqual([raw, host]);
+      expect([raw, isStorableServerUrl(raw)]).toEqual([raw, true]);
+    }
+  });
+  it("a synced 'user@host' redirect behind a trailing NBSP shows its real host and the warning", () => {
+    const synced = "http://localhost:8000@evil.tld\u00a0";
+    expect(authorityOf(synced)).toEqual({ host: "evil.tld", hasUserinfo: true });
+    expect(insecureUrlWarning(synced)).not.toBeNull();
   });
 });

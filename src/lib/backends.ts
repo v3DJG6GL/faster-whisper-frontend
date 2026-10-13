@@ -6,6 +6,10 @@ import { backendDisplayName, dropJoiners, safeIdentityText } from "./sanitize";
 import { WHISPER_ALIAS } from "./backendChipLabels";
 import { languageCodeOf } from "./languages";
 
+/** Rust `str::trim` at both edges: the Unicode White_Space property (U+FEFF is not in it). */
+const RUST_TRIM =
+  /^[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\t\n\v\f\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g;
+
 /** The preprocessing WHATWG performs BEFORE it looks for a scheme, reproduced so the tests below
  *  judge the same string the parsers do.
  *
@@ -18,11 +22,20 @@ import { languageCodeOf } from "./languages";
  *  carries every backend's plaintext key. A leading NUL was the same bug via the other rule: JS
  *  `trim()` does not strip C0, but both parsers do.
  *
- *  Note `\s` would be wrong here: it matches Unicode whitespace the parsers do NOT strip
- *  (U+00A0, U+2028…), which would make this helper disagree with them in the other direction. */
+ *  Before both, the Rust transport `str::trim`s the stored address (base_url, the stream URL),
+ *  which strips the Unicode White_Space set at the edges — U+00A0, U+2028, U+3000 … A synced
+ *  "http://localhost:8000@evil.tld<NBSP>" then connected to evil.tld while every helper here saw an
+ *  unparseable address and showed no host and no plaintext warning. So the edges lose that set
+ *  first, exactly: not JS `\s`, which also holds U+FEFF (Rust's trim keeps it; so do the parsers,
+ *  and the address then fails to parse on both sides). Inside the address nothing changes. */
 export function stripUrlNoise(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  return raw.replace(/[\t\n\r]/g, "").replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "");
+  return (
+    raw
+      .replace(RUST_TRIM, "")
+      .replace(/[\t\n\r]/g, "")
+      // eslint-disable-next-line no-control-regex
+      .replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, "")
+  );
 }
 
 /** Loose user input → a connectable URL: trim, strip trailing slashes, default

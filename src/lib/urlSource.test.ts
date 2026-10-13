@@ -72,8 +72,9 @@ describe("normalizeMediaUrl", () => {
       ["https://a/x https://b/y", true, null],
       ["https://a/x\thttps://b/y", true, null],
       ["https://a/x\u00a0https://b/y", true, null],
-      ["\u00a0https://a/x", false, null],
-      ["\u3000https://a/x", false, null],
+      // Edge U+00A0/U+3000 are trimmed as the Rust transport trims a server address (stripUrlNoise).
+      ["\u00a0https://a/x", false, "https://a/x"],
+      ["\u3000https://a/x", false, "https://a/x"],
       ["\ufeffhttps://a/x", false, null],
       ["Watch this: https://youtu.be/abc", false, null],
       ["https://web.archive.org/web/2020/https://h/v.mp4", false, "https://web.archive.org/web/2020/https://h/v.mp4"],
