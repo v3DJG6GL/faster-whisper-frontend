@@ -29,6 +29,10 @@ let loadNotice: string | null = null;
  *  what the store shows until a later save lands. Unlike the save banner, which the user can
  *  dismiss, this only clears on a successful save. */
 let saveHeld = false;
+/** The latest save attempt (a conflict freeze included): saves are not serialized, so only the
+ *  newest attempt's outcome may set `saveHeld` — an earlier write settling late must not clear it
+ *  over a later freeze, nor set it over a later write that landed. */
+let saveSeq = 0;
 
 /** Whether config.json is behind the store (see `saveHeld`): the sync push gate reads this, as
  *  sync ships what config.json holds, not a maybe. */
@@ -177,6 +181,7 @@ export async function initConfig(): Promise<void> {
   // handled below), or at once when the conflict freeze holds it back.
   function saveNow(): Promise<void> {
     timer = undefined;
+    const mySeq = ++saveSeq;
     const s = useApp.getState();
     // Don't persist or register a conflicting binding set — the last good config stays live
     // until the user resolves it. Surface the freeze GLOBALLY via the save banner: otherwise
@@ -208,7 +213,7 @@ export async function initConfig(): Promise<void> {
         // `logging` is optional on a config that predates it: Rust's default, as Settings shows.
         s.settings.logging?.logLevel ?? "info",
       ).catch(() => {});
-      saveHeld = true;
+      saveHeld = true; // the newest attempt, as `mySeq` is
       return Promise.resolve();
     }
     const reReg = pendingBindingChange;
@@ -216,7 +221,7 @@ export async function initConfig(): Promise<void> {
     const saving = saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: CONFIG_VERSION })
       .then(
         () => {
-          saveHeld = false;
+          if (mySeq === saveSeq) saveHeld = false;
           // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
           // notice (settings reset from a corrupt file / failed to load) is not a save failure:
           // it stays until the user dismisses it — and comes back once a save error or conflict
@@ -238,7 +243,7 @@ export async function initConfig(): Promise<void> {
           // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
           // shows the change, but it wasn't written, so warn the user it may be lost on restart.
           console.error("saveConfig failed", e);
-          saveHeld = true;
+          if (mySeq === saveSeq) saveHeld = true;
           useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
           // The write didn't land, so the re-register never ran — restore the intent (like the
           // conflict early-return does) so the NEXT successful save re-registers the bindings.

@@ -91,14 +91,33 @@ pub fn apply_bindings(app: &AppHandle) {
     apply_bindings_locked(app);
 }
 
-/// The apply step itself; the caller holds APPLY_LOCK.
-fn apply_bindings_locked(app: &AppHandle) {
-    let Ok(dir) = config_dir(app) else { return };
+/// The apply step itself; the caller holds APPLY_LOCK. False when nothing was applied (no config
+/// dir, or an unreadable config before any good read this session).
+fn apply_bindings_locked(app: &AppHandle) -> bool {
+    // The config of the last apply that read the file: re-applied when a later read fails. A
+    // capture's re-register runs after suspend_shortcuts unregistered everything, so "keep what
+    // is live" alone would leave every hotkey off until the next resume or re-register.
+    static LAST_GOOD: std::sync::Mutex<Option<config::Config>> = std::sync::Mutex::new(None);
+    let Ok(dir) = config_dir(app) else {
+        return false;
+    };
     // Never the recovering `load`: a read error here must not move the user's config aside, and
-    // must not unregister every hotkey either (the defaults have no profiles) — keep what is live.
-    let Some(cfg) = config::try_load(&dir) else {
-        tracing::warn!("[bindings] config unreadable; keeping current registrations");
-        return;
+    // must not apply the defaults either (they have no profiles: every hotkey would go).
+    let cfg = match config::try_load(&dir) {
+        Some(cfg) => {
+            *LAST_GOOD.lock().unwrap_or_else(|e| e.into_inner()) = Some(cfg.clone());
+            cfg
+        }
+        None => match LAST_GOOD.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+            Some(cfg) => {
+                tracing::warn!("[bindings] config unreadable; re-applying the last one read");
+                cfg
+            }
+            None => {
+                tracing::warn!("[bindings] config unreadable; nothing applied");
+                return false;
+            }
+        },
     };
     // The quick-add chord stays INERT until a word-mapping list is designated
     // (settings.quickAddList) — the window would have nothing to add to. This
@@ -146,6 +165,7 @@ fn apply_bindings_locked(app: &AppHandle) {
             crate::hotkeys::triggers::register_from_config(app, &cfg.profiles, quick_add);
         }
     }
+    true
 }
 
 /// Re-apply the bindings unless a binding capture holds them suspended — the check and the
@@ -281,6 +301,8 @@ enum RescanApply {
     Held,
     /// The loss that asked for it was already re-armed by a concurrent apply.
     Covered,
+    /// The config could not be read, so nothing was applied: kept pending, no loss backoff.
+    Unread,
 }
 
 /// The re-scan's apply, with the capture, hold and loss gates re-checked under the same APPLY_LOCK
@@ -298,8 +320,11 @@ fn apply_bindings_for_rescan(app: &AppHandle, loss: bool) -> RescanApply {
     if loss && !crate::hotkeys::evdev::reader_lost() {
         return RescanApply::Covered;
     }
-    apply_bindings_locked(app);
-    RescanApply::Applied
+    if apply_bindings_locked(app) {
+        RescanApply::Applied
+    } else {
+        RescanApply::Unread
+    }
 }
 
 /// One suspend-watch tick of evdev's device re-scan. A re-apply is a full evdev restart — it aborts
@@ -358,7 +383,7 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
                 );
             }
             // As Defer: kept pending, the next settled tick asks again.
-            RescanApply::Held => {}
+            RescanApply::Held | RescanApply::Unread => {}
             RescanApply::Covered => nodes.pending.clear(),
         },
     }

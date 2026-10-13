@@ -149,8 +149,9 @@ static AUDIO_LAYOUT: Gate = Gate::new();
 /// before the event loop, and the base can sit on a stalled mount (an offline network share, a
 /// sleeping disk) whose mkdir/read_dir blocks without limit: launch must not wait on it (the
 /// log folder's open is queued for the same reason). What must not overlap a half-done move
-/// waits on [`wait_audio_layout`] instead: the retention sweeps (they look in the new layout)
-/// and `move_audio_base` (it moves the same subfolders). Every writer creates its own folder,
+/// waits on [`wait_audio_layout`] instead: the retention sweeps (they look in the new layout),
+/// `move_audio_base` (it moves the same subfolders) and the History deletes (a file moved in after
+/// they looked would stay behind). Every writer creates its own folder,
 /// and the records live in app data, so nothing else depends on the layout being in place; a
 /// History listing taken before a migration moved something is told to reload when it is done.
 pub(crate) fn queue_audio_layout(app: &AppHandle, config: Config) {

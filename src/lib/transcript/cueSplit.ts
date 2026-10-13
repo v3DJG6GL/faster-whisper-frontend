@@ -799,10 +799,11 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
     let qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
     let c = qr?.[1][0] ?? '"';
-    // A glued run whose first quote closes the quotation before it (他说"你好""再见"): that quote
-    // joins the text it closes and the rest of the run is judged on its own. Judged as one, the
+    // A glued run whose first quote closes the quotation before it (他说"你好""再见", or of the
+    // other kind: 他说'你好'"再见"): that quote joins the text it closes and the rest of the run
+    // is judged on its own. Judged as one, the
     // quote opening the next quotation joined backward too, and a line or part ended on it.
-    if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].split(c).length > 2 && flags[idx] && quotes[c] % 2 === 1) {
+    if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].length > 1 && flags[idx] && quotes[c] % 2 === 1) {
       toks[k] += c;
       quotes[c]++;
       idx++;

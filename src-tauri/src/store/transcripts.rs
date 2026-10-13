@@ -632,6 +632,9 @@ pub async fn delete_transcript_record(
         return Err("malformed record id".into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        // As delete_all_dictations: not under this launch's audio-layout migration, which can
+        // move the record's file after the delete looked for it and rewrite the record after.
+        crate::commands::wait_audio_layout();
         // The `files/`/`links/`/video copies go only once the record is gone: a failed unlink
         // (Windows briefly locking the file) keeps the History entry, and it must keep its
         // playable media too. Runs after the lock is released, like the recordings unlink.
@@ -872,6 +875,8 @@ pub async fn remove_transcript_media(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+        // As delete_all_dictations: a file the layout migration moves in after the listing stays.
+        crate::commands::wait_audio_layout();
         let mut dirs: Vec<PathBuf> = Vec::new();
         match kind.as_deref() {
             Some("file") => dirs.push(files_media_dir(&app, audio_base)?),

@@ -124,11 +124,13 @@ function Editor({
   // result to the store when the ref still matches what was just persisted.
   // `gen` = the backend's credential generation when the verdict was earned: a sync pull that
   // rotates the STORED key (forgetCaps) changes neither the address nor the blank key field, so a
-  // blank-key verdict is only still true while the generation is unchanged.
-  const resultTarget = useRef({ url: effUrl, key, gen: credentialGeneration(initial.id) });
+  // blank-key verdict is only still true while the generation is unchanged. `hadKey` = whether a
+  // key was stored then: a pull that ADDS one to a keyless backend moves no generation.
+  const storedHasKey = (id: string) => useApp.getState().backends.find((x) => x.id === id)?.hasApiKey ?? false;
+  const resultTarget = useRef({ url: effUrl, key, gen: credentialGeneration(initial.id), hadKey: storedHasKey(initial.id) });
   useEffect(() => {
     if (resultTarget.current.url === effUrl && resultTarget.current.key === key) return;
-    resultTarget.current = { url: effUrl, key, gen: credentialGeneration(initial.id) };
+    resultTarget.current = { url: effUrl, key, gen: credentialGeneration(initial.id), hadKey: storedHasKey(initial.id) };
     setResult(null);
     // Keyed on the EFFECTIVE address, not the canonical one. Q13 moved `liveTarget` and
     // `runTest` onto `effectiveServerUrl` (which prefers `settings.sync.urlOverrides`) precisely
@@ -169,7 +171,12 @@ function Editor({
   // A blank-key verdict is only still true while the stored key's generation is unchanged (see
   // `resultTarget.gen`): a sync pull that rotates the key moves neither address nor key field, so
   // the reset effect above never fires and the old caller's "Connected", chips and models stayed.
-  const resultLive = result && (key || resultTarget.current.gen === credentialGeneration(b.id)) ? result : null;
+  // Nor may the stored key have come or gone since (`resultTarget.hadKey`).
+  const keyStoredNow = useApp((s) => s.backends.find((x) => x.id === b.id)?.hasApiKey ?? false);
+  const resultLive =
+    result && (key || (resultTarget.current.gen === credentialGeneration(b.id) && resultTarget.current.hadKey === keyStoredNow))
+      ? result
+      : null;
   const conn = resultLive ?? stored;
   // `detected` = what the freshest verdict (this editor's test, else the fresh session cache)
   // inferred; `kind` = the effective classification (a manual override wins). `kind` gates the
@@ -277,13 +284,12 @@ function Editor({
     // hides (nor bump testGen). A typed key is gen 0 on both sides. Nor may the stored key
     // have come or gone: a pull that ADDS a key to a keyless backend moves no generation (the
     // list card's handleTest and useBackendModels guard the same flip).
-    const storedHasKey = () => useApp.getState().backends.find((x) => x.id === b.id)?.hasApiKey ?? false;
-    const hadKey = storedHasKey();
+    const hadKey = storedHasKey(b.id);
     const stillLive = () =>
       liveTarget.current.url === testedUrl &&
       liveTarget.current.key === testedKey &&
       requestCredentialGen(b.id, testedKey) === runGen &&
-      (!!testedKey || storedHasKey() === hadKey);
+      (!!testedKey || storedHasKey(b.id) === hadKey);
     inFlightTests.current.add(run);
     setTestingTargets((ts) => [...ts, run]);
     try {
@@ -299,7 +305,7 @@ function Editor({
       // the URL, Test, Cancel → `connections[X]` held the other host's answer while X still routed
       // to the old one (and a tested-then-cancelled connect-first draft left an orphan entry).
       if (stillLive()) {
-        resultTarget.current = { url: testedUrl, key: testedKey, gen };
+        resultTarget.current = { url: testedUrl, key: testedKey, gen, hadKey };
         setResult(info);
         // An unknown → full test bumps the hooks' rise counter in the same render: one refetch.
         if (info.ok) setTestGen((n) => n + 1);
@@ -324,7 +330,7 @@ function Editor({
       // IPC reject (same guard the list card's handleTest carries) — surface the
       // failure so the editor doesn't just silently stop.
       if (stillLive()) {
-        resultTarget.current = { url: testedUrl, key: testedKey, gen };
+        resultTarget.current = { url: testedUrl, key: testedKey, gen, hadKey };
         setResult({ ok: false, openMode: false, models: [], error: String(e) });
       }
     } finally {
