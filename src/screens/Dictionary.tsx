@@ -3,7 +3,9 @@
 // state, not local config: pick a Backend, fetch its rules, edit the bodies your
 // account may change, push the diff back. Mirrors the server's /quick-config
 // gating — the client only exposes `enabled` + the per-type body (editable_fields);
-// name/label/tags/colour/lock are read-only context (admin-only on the web).
+// a locked rule is read-only for a non-admin caller (an admin owns the lock and may
+// still patch it, as the server enforces); name/label/tags/colour/lock are read-only
+// context (admin-only on the web).
 //
 // Rendering note: per-rule fields are plain controlled inputs inside the stable,
 // module-scope <RuleCard> (keyed by slug) — never a component redefined per
@@ -115,16 +117,30 @@ function emitBody(type: RuleType, e: EditState): Record<string, unknown> {
   }
 }
 
+// The base side's canonical body, memoized by the base EditState reference: base only changes on
+// a load (patchEdit/resetRule clone, never mutate it), so a keystroke re-emits just the edit side —
+// on a large word-mapping list each side is a whole-map sort + stringify. A base object belongs to
+// one rule, so it has one type.
+const baseJsonCache = new WeakMap<EditState, string>();
+function canonJson(type: RuleType, e: EditState): string {
+  let s = baseJsonCache.get(e);
+  if (s === undefined) {
+    s = JSON.stringify(emitBody(type, e));
+    baseJsonCache.set(e, s);
+  }
+  return s;
+}
+
 /** Build the minimal patch (changed allow-listed fields only) for one rule.
- *  Empty object ⇒ unchanged. Locked rules pass `editable = []` ⇒ never dirty. */
+ *  Empty object ⇒ unchanged. A rule locked for a non-admin caller passes `editable = []` ⇒
+ *  never dirty. */
 function buildPatch(type: RuleType, edit: EditState, base: EditState, editable: string[]): Record<string, unknown> {
   const patch: Record<string, unknown> = {};
   if (editable.includes("enabled") && edit.enabled !== base.enabled) patch.enabled = edit.enabled;
   const bodyFields = editable.filter((f) => f !== "enabled");
   if (bodyFields.length) {
     const cur = emitBody(type, edit);
-    const old = emitBody(type, base);
-    if (JSON.stringify(cur) !== JSON.stringify(old)) {
+    if (JSON.stringify(cur) !== canonJson(type, base)) {
       for (const f of bodyFields) if (f in cur) patch[f] = cur[f];
     }
   }
@@ -151,11 +167,14 @@ const MAX_RECENT_WORDS = 500;
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
 function RuleCard({
   rule, edit, editable, dirty, expanded, mapCollapseAfter, recentWords, recentMax,
-  pinned, saving, onTogglePin, onToggleExpand, onPatch, onReset,
+  pinned, saving, readOnlyLock, onTogglePin, onToggleExpand, onPatch, onReset,
 }: {
   rule: PipelineRule;
   edit: EditState;
   editable: string[];
+  /** Locked AND the caller is not an admin: the server refuses every patch to it. An admin owns
+   *  the lock and keeps the rule editable (the Lock icon still shows). */
+  readOnlyLock: boolean;
   dirty: boolean;
   expanded: boolean;
   mapCollapseAfter: number;
@@ -258,7 +277,10 @@ function RuleCard({
           <Badge>{ownProp(TYPE_LABEL, rule.type) ?? safeDisplayText(rule.type, 40)}</Badge>
           {pinned && <Badge tone="accent">quick-add</Badge>}
           {locked && (
-            <span className="inline-flex items-center gap-1 text-faint" title="Locked by the server admin — read-only">
+            <span
+              className="inline-flex items-center gap-1 text-faint"
+              title={readOnlyLock ? "Locked by the server admin — read-only" : "Locked: only admins can edit it"}
+            >
               <Lock className="size-3" />
             </span>
           )}
@@ -294,7 +316,7 @@ function RuleCard({
       {/* expandable body */}
       {expanded && (
         <Stack gap={4} className="border-t border-line bg-surface-2/20 px-5 py-5">
-          {locked && (
+          {readOnlyLock && (
             <div className="flex items-start gap-2 rounded-lg border border-line bg-surface-2/40 px-3 py-2 text-[12px] text-dim">
               <Lock className="mt-0.5 size-3.5 shrink-0 text-faint" />
               <span>Locked by the server admin — read-only. Ask an admin to change it on the server.</span>
@@ -682,13 +704,16 @@ export default function Dictionary() {
   const efRaw = fetchRes?.state?.editable_fields as unknown;
   const editableFields: Record<string, string[]> =
     efRaw && typeof efRaw === "object" && !Array.isArray(efRaw) ? (efRaw as Record<string, string[]>) : {};
+  const role = fetchRes?.state?.role;
+  // A locked rule is read-only only for a non-admin: the server lets an admin patch it (they own
+  // the flag), and so does the web /quick-config editor.
   const editableFor = useCallback(
     (r: PipelineRule) => {
-      if (r.locked) return [];
+      if (r.locked && role !== "admin") return [];
       const f = editableFields[r.type];
       return Array.isArray(f) ? f : [];
     },
-    [editableFields],
+    [editableFields, role],
   );
 
   const load = useCallback(async (b: Backend) => {
@@ -840,7 +865,6 @@ export default function Dictionary() {
   const guard = useUnsavedGuard(dirty.length > 0);
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
 
-  const role = fetchRes?.state?.role;
   const totalRules = useMemo(() => (fetchRes ? ruleCountOf(fetchRes) : rules.length), [fetchRes, rules.length]);
 
   // The save in flight, if any. The sticky Save is disabled while saving, but `dirty` stays true until
@@ -1100,6 +1124,7 @@ export default function Dictionary() {
               rule={r}
               edit={edits[r.name]}
               editable={editableFor(r)}
+              readOnlyLock={!!r.locked && role !== "admin"}
               dirty={dirtyNames.has(r.name)}
               expanded={expanded.has(r.name)}
               mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}
