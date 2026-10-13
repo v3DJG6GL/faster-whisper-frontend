@@ -418,6 +418,23 @@ mod imp {
         compose: Option<&xkb::compose::Table>,
     ) -> HashMap<char, KeySpec> {
         let mut map: HashMap<char, KeySpec> = HashMap::new();
+        // The typer presses the fixed evdev codes KEY_CAPSLOCK and KEY_RIGHTALT, but the live
+        // keymap carries the user's XKB options: `caps:escape` turns Caps into Escape and
+        // `lv3:ralt_alt` turns AltGr into a plain Alt. Typing through a remapped key would send
+        // Escape or Alt+key shortcuts into the focused app — so the Caps Lock capitals and the
+        // AltGr glyphs (and AltGr dead-key prefixes) are registered only while those codes still
+        // produce Caps_Lock / ISO_Level3_Shift; otherwise they stay unreachable.
+        let key_is = |evdev: i32, want: u32| {
+            let key = xkb::Keycode::new(evdev as u32 + EVDEV_OFFSET);
+            let num_layouts = keymap.num_layouts_for_key(key);
+            num_layouts > 0
+                && keymap
+                    .key_get_syms_by_level(key, group % num_layouts, 0)
+                    .iter()
+                    .any(|s| s.raw() == want)
+        };
+        let caps_usable = key_is(KEY_CAPSLOCK, xkb::keysyms::KEY_Caps_Lock);
+        let altgr_usable = key_is(KEY_RIGHTALT, xkb::keysyms::KEY_ISO_Level3_Shift);
         // Dead keysyms (dead_acute, dead_circumflex, dead_tilde...) and the key that types each,
         // fewest-modifier occurrence wins, lowest keycode on a tie (de has dead_circumflex at
         // AltGr on ä and bare on ^: ê must not cost an AltGr chord). They produce no character
@@ -443,6 +460,9 @@ mod imp {
             let levels = keymap.num_levels_for_key(key, g).min(4);
             let caps_safe = key_is_caps_safe(keymap, key, g);
             for level in 0..levels {
+                if !altgr_usable && level >= 2 {
+                    continue;
+                }
                 for sym in keymap.key_get_syms_by_level(key, g, level) {
                     if (0xfe50..=0xfe93).contains(&sym.raw()) {
                         let prefix = (
@@ -492,7 +512,7 @@ mod imp {
         let extras: Vec<(char, KeySpec)> = map
             .iter()
             .filter_map(|(&ch, &spec)| {
-                if !ch.is_lowercase() {
+                if !caps_usable || !ch.is_lowercase() {
                     return None;
                 }
                 let up: Vec<char> = ch.to_uppercase().collect();
@@ -1698,14 +1718,24 @@ mod imp {
         /// the en_US.UTF-8 compose table). `None` — the test then skips — when this machine has no
         /// XKB data or compose table for it.
         fn real_charmap(layout: &str) -> Option<HashMap<char, KeySpec>> {
+            real_charmap_with(layout, "", None)
+        }
+
+        /// `real_charmap` with an XKB variant and options (`caps:escape`, ...), as the live
+        /// keymap carries them.
+        fn real_charmap_with(
+            layout: &str,
+            variant: &str,
+            options: Option<String>,
+        ) -> Option<HashMap<char, KeySpec>> {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
             let keymap = xkb::Keymap::new_from_names(
                 &ctx,
                 "evdev",
                 "pc105",
                 layout,
-                "",
-                None,
+                variant,
+                options,
                 xkb::KEYMAP_COMPILE_NO_FLAGS,
             )?;
             let table = xkb::compose::Table::new_from_locale(
@@ -1746,6 +1776,49 @@ mod imp {
             }
             assert!(case_pairs('\u{e9}') && case_pairs('E'));
             assert!(!case_pairs('\u{130}') && !case_pairs('\u{1f0}') && !case_pairs('\u{df}'));
+        }
+
+        #[test]
+        fn caps_lock_capitals_are_dropped_when_an_xkb_option_remaps_caps_lock() {
+            let (Some(plain), Some(remapped)) = (
+                real_charmap_with("ch", "de_nodeadkeys", None),
+                real_charmap_with("ch", "de_nodeadkeys", Some("caps:escape".into())),
+            ) else {
+                eprintln!("skipped: no XKB data or compose table for `ch(de_nodeadkeys)`");
+                return;
+            };
+            // Without the option Ü is the Caps Lock capital on the ü key...
+            assert!(plain.get(&'\u{dc}').is_some_and(|s| s.lock), "plain Ü");
+            // ...with Caps typing Escape, the bracket would type Escape, ü, Escape instead.
+            assert!(
+                remapped.get(&'\u{dc}').is_none_or(|s| !s.lock),
+                "caps:escape Ü still a lock entry"
+            );
+            assert!(remapped.values().all(|s| !s.lock));
+            assert!(
+                remapped.get(&'\u{fc}').is_some_and(|s| !s.lock),
+                "ü still typed"
+            );
+        }
+
+        #[test]
+        fn altgr_glyphs_are_dropped_when_an_xkb_option_remaps_right_alt() {
+            let (Some(plain), Some(remapped)) = (
+                real_charmap_with("de", "", None),
+                real_charmap_with("de", "", Some("lv3:ralt_alt,lv3:menu_switch".into())),
+            ) else {
+                eprintln!("skipped: no XKB data or compose table for `de`");
+                return;
+            };
+            assert!(plain.get(&'\u{20ac}').is_some_and(|s| s.altgr), "plain €");
+            // Right Alt is a plain Alt here: AltGr+key would land as an Alt+key shortcut.
+            assert!(remapped.values().all(|s| !s.altgr));
+            assert!(remapped.values().all(|s| s.dead.is_none_or(|d| !d.2)));
+            // @ lives only on AltGr+Q; € also has the dedicated KEY_EURO code at level 0, which
+            // stays a valid bare keypress.
+            assert!(!remapped.contains_key(&'@'));
+            assert!(remapped.get(&'\u{20ac}').is_none_or(|s| !s.altgr));
+            assert!(remapped.get(&'a').is_some_and(|s| !s.altgr && !s.shift));
         }
 
         #[test]
