@@ -137,6 +137,9 @@ export function TranscriptExport({
     mounted.current = true;
     return () => { mounted.current = false; };
   }, []);
+  /** The panel is open: closed, it stays mounted but renders nothing (`if (!open)` below). */
+  const openRef = useRef(open);
+  openRef.current = open;
   /** The result a Save writes once its dialog (or a link's video fetch) has been awaited: a
    *  retranslate chunk or an edit may have landed since the click. Another record on screen
    *  by then never lends its result — the click's own stands. */
@@ -524,7 +527,7 @@ export function TranscriptExport({
     checked: { res: BatchResult; tracks: EmbeddedTrack[] } | undefined, skipLocal: boolean,
   ): Promise<boolean> => {
     const localVideo = skipLocal ? null : panelLocalVideo;
-    const mine = () => exportOutcomeShowsHere(mounted.current, latestResult.current.owner, started);
+    const mine = () => exportOutcomeShowsHere(mounted.current, openRef.current, latestResult.current.owner, started);
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
@@ -762,7 +765,7 @@ export function TranscriptExport({
     }
   };
   const runExport = async (started: typeof owner) => {
-    const mine = () => exportOutcomeShowsHere(mounted.current, latestResult.current.owner, started);
+    const mine = () => exportOutcomeShowsHere(mounted.current, openRef.current, latestResult.current.owner, started);
     // Another record on screen by then (or the panel gone): its failure would land nowhere,
     // so it goes to the app's banner, naming the record (taken now, before the awaits).
     const title = safeDisplayText(rec?.title || basename(path), 60);
