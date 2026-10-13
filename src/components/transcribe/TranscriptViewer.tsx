@@ -2200,7 +2200,7 @@ export function TranscriptViewer({
             );
           })}
           <span className="text-[11.5px] text-faint">
-            click a name to rename or pick its color — both apply to Copy and exports
+            click a name to rename or pick its color — names apply to Copy and exports, colors to the exports
           </span>
         </div>
       )}
