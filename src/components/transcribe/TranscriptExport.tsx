@@ -38,7 +38,7 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, extOf, fileStem, isVideoSourcePath,
+  audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
@@ -131,9 +131,17 @@ export function TranscriptExport({
   const owner = rec?.id ?? path;
   /** The latest render's result, tagged with its record. Its `owner` is the record on screen
    *  now — an export's late UI writes (its outcome, "Saved") land only while its own record
-   *  still shows. */
+   *  still shows, and only while the panel is mounted (exportOutcomeShowsHere). */
   const latestResult = useRef({ owner, editedResult });
   latestResult.current = { owner, editedResult };
+  /** The panel is mounted: an export outlives the viewer (a route change, a closed record),
+   *  and its outcome then goes to the app's banner. Set in the effect, so StrictMode's
+   *  remount sets it again. */
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   /** The result a Save writes once its dialog (or a link's video fetch) has been awaited: a
    *  retranslate chunk or an edit may have landed since the click. Another record on screen
    *  by then never lends its result — the click's own stands. */
@@ -475,15 +483,15 @@ export function TranscriptExport({
   /** The video: a plain copy when no tracks ride inside it and a local copy
    *  exists; otherwise the server packages it (uploading a local file first,
    *  or fetching a link's video on demand). False = stopped with an error
-   *  the panel now shows while `started`'s record still shows (no outcome lands
-   *  on another record's panel); otherwise a failure goes to `late`. `checked` = the
+   *  the panel now shows while it is mounted and `started`'s record still shows (no
+   *  outcome lands on another record's panel); otherwise a failure goes to `late`. `checked` = the
    *  tracks the pre-dialog size check built, reused while their result is still the
    *  latest. */
   const exportVideoTo = async (
     dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
     checked?: { res: BatchResult; tracks: EmbeddedTrack[] },
   ): Promise<boolean> => {
-    const mine = () => latestResult.current.owner === started;
+    const mine = () => exportOutcomeShowsHere(mounted.current, latestResult.current.owner, started);
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
     if (!embedded.length && localVideo) {
@@ -695,9 +703,9 @@ export function TranscriptExport({
     }
   };
   const runExport = async (started: typeof owner) => {
-    const mine = () => latestResult.current.owner === started;
-    // Another record on screen by then: its failure would land nowhere, so it goes to
-    // the app's banner, naming the record (taken now, before the awaits).
+    const mine = () => exportOutcomeShowsHere(mounted.current, latestResult.current.owner, started);
+    // Another record on screen by then (or the panel gone): its failure would land nowhere,
+    // so it goes to the app's banner, naming the record (taken now, before the awaits).
     const title = safeDisplayText(rec?.title || basename(path), 60);
     const late = (msg: string) => {
       console.error("media export failed:", msg);

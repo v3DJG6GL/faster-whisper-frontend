@@ -190,6 +190,14 @@ export function sidecarFiles(
   });
 }
 
+/** Whether a Save's outcome (an error, "Saved") may land on the export panel: only while
+ *  the panel is still mounted and still shows the record the Save started on. Otherwise
+ *  the caller reports a failure on the app's banner — an export outlives the viewer that
+ *  started it (the queue below), and an unmounted panel's state updates are dropped. */
+export function exportOutcomeShowsHere(mounted: boolean, onScreen: string, started: string): boolean {
+  return mounted && onScreen === started;
+}
+
 export interface PlannedFile {
   name: (stem: string) => string;
   kind: "text" | "audio" | "video";
