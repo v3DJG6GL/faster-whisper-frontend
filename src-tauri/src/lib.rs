@@ -368,6 +368,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             memwatch::note_route,
             commands::load_config,
+            commands::read_config,
             commands::save_config,
             commands::apply_live_switches,
             commands::set_backend_key,

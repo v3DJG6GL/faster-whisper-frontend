@@ -24,7 +24,7 @@ import {
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
-  loadConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
+  readConfig, getPipelineRules, getRecentWords, savePipelineRules, hideQuickAdd, showMainAtScreen,
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri,
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/dictation/streaming";
@@ -136,6 +136,8 @@ export default function QuickAdd() {
   // loadGen: bumping loadGen here would abort an in-flight refresh()'s rows application, and
   // merely capturing it wouldn't order two standalone fetches between refreshes.
   const recentGen = useRef(0);
+  // One log per run of failed local config reads: refreshLocalConfig runs on every summon.
+  const localReadFailed = useRef(false);
 
   // Recent-words fetch, shared by refresh() and the summon path. Read-only (can never clobber
   // an edit), so unlike the rows re-sync it is safe to run unconditionally. Best-effort: a
@@ -177,7 +179,10 @@ export default function QuickAdd() {
    *  already split out `fetchRecent`. */
   const refreshLocalConfig = useCallback(async () => {
     try {
-      const cfg = (await loadConfig())?.config ?? null;
+      // readConfig, not loadConfig: a mid-session read must never recover (rename the file to
+      // .bak and adopt defaults) — an unreadable file rejects, and the refs keep their last read.
+      const cfg = await readConfig();
+      localReadFailed.current = false;
       if (!cfg) return;
       themeRef.current = cfg.settings.theme;
       applyAccentAndTheme(cfg.settings.accentHue, cfg.settings.accentMotion, cfg.settings.theme);
@@ -186,16 +191,19 @@ export default function QuickAdd() {
       // so both injecting windows agree on which rules match.
       appRulesRef.current = wellFormedAppRules(cfg.appRules);
     } catch (e) {
-      // loadConfig() is a bare IPC invoke; a plumbing failure must not be an unhandled
-      // rejection on a hotkey-summoned window (the refs keep their last good read).
-      console.error("quick-add local config refresh failed:", e);
+      // An unreadable file or an IPC failure must not be an unhandled rejection on a
+      // hotkey-summoned window; the refs keep their last good read (no reset), logged once.
+      if (!localReadFailed.current) console.error("quick-add local config refresh failed:", e);
+      localReadFailed.current = true;
     }
   }, []);
 
   const refresh = useCallback(async () => {
     const gen = ++loadGen.current;
     try {
-      const cfg = (await loadConfig())?.config ?? null; // the recovered-flag banner is the main window's job
+      // Never recovers: the launch recovery already ran in Rust setup, and the main window owns
+      // its banner. An unreadable file rejects into the catch below (an error, not "nopin").
+      const cfg = await readConfig();
       if (gen !== loadGen.current) return; // superseded by a newer refresh/summon
       if (cfg) {
         themeRef.current = cfg.settings.theme;
@@ -211,7 +219,7 @@ export default function QuickAdd() {
         return;
       }
       // Per-device address override wins for the connection (cfg is this
-      // window's own loadConfig snapshot — the quick-add webview has no store).
+      // window's own readConfig snapshot — the quick-add webview has no store).
       const url = effectiveServerUrl(backend, cfg!.settings);
       target.current = { serverUrl: url, backendId: backend.id, slug: pin.slug };
       setPhase("loading");
@@ -240,7 +248,7 @@ export default function QuickAdd() {
       setPhase("ok");
       void fetchRecent();
     } catch (e) {
-      // loadConfig() is a bare IPC invoke that rejects on a plumbing failure; without this the
+      // readConfig() rejects on an unreadable file or a plumbing failure; without this the
       // standalone window would hang on "Loading…" forever (phase never advances) and Retry would
       // re-throw. The main app guards the same call in initConfig — this is the parallel path.
       if (gen !== loadGen.current) return;

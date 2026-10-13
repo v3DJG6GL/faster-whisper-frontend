@@ -38,6 +38,16 @@ pub fn load_config(app: AppHandle) -> LoadedConfig {
     }
 }
 
+/// Mid-session config read for the windows other than the main window's launch load (the
+/// Quick-Add window, on every summon). Never recovers (see `config::try_load`): a settings file
+/// that cannot be read for a moment (an antivirus or sync-client lock, a hand-edit typo) rejects
+/// instead of being moved aside as broken and resetting the session.
+#[tauri::command]
+pub fn read_config(app: AppHandle) -> Result<Config, String> {
+    let dir = config_dir(&app)?;
+    config::try_load(&dir).ok_or_else(|| "the settings file could not be read".to_string())
+}
+
 /// Apply the in-memory process switches that mirror the webview's live settings (clipboard
 /// privacy, Remote desktop rules, log level). Called by `save_config` before its write, and
 /// directly by the webview when it holds a save back (the shortcut-conflict freeze), so these

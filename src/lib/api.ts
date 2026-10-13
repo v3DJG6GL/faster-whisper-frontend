@@ -88,6 +88,14 @@ export async function loadConfig(): Promise<LoadedConfig | null> {
   return invoke<LoadedConfig>("load_config");
 }
 
+/** A mid-session re-read of the config file (an aux window catching up on a save): unlike
+ *  `loadConfig` it never recovers or moves the file — it REJECTS when the file is unreadable,
+ *  so the caller keeps the config it already has instead of adopting defaults. */
+export async function readConfig(): Promise<Config | null> {
+  if (!isTauri) return null;
+  return invoke<Config>("read_config");
+}
+
 export async function saveConfig(config: Config): Promise<void> {
   if (!isTauri) return;
   await invoke("save_config", { config });

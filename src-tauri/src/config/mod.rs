@@ -1121,14 +1121,14 @@ fn backup_unreadable(path: &Path) -> bool {
 /// for a clean load, a migration, and a genuine first-run (absent file).
 pub fn load_outcome(dir: &Path) -> (Config, bool) {
     // Sticky for the process: once a corrupt config is backed up + reset, EVERY later load this
-    // session reports `recovered` — even the caller that lost the startup race. Two webviews load
-    // config concurrently at launch (the main window's initConfig and the prewarmed hidden quick-add
-    // window), both hitting the unsynchronized `load_config` command. Without this, if quick-add wins
-    // it renames config.json → .bak, then the main window's read sees NotFound → `(default, false)`,
-    // so the reset banner (surfaced ONLY by the main window's initConfig on `recovered`) never shows
-    // and its armed auto-save silently persists the seeded defaults over the user's backed-up config.
-    // Held across the whole read+rename so the two concurrent startup loads can't interleave the
-    // destructive recovery (contended only at launch, by exactly those two callers).
+    // session reports `recovered` — even a caller that came after the recovery. setup() runs the
+    // launch load before any webview exists, and the main window's initConfig (the `load_config`
+    // command) loads again after it. Without this, setup's recovery renames config.json → .bak,
+    // then the main window's read sees NotFound → `(default, false)`, so the reset banner
+    // (surfaced ONLY by the main window's initConfig on `recovered`) never shows and its armed
+    // auto-save silently persists the seeded defaults over the user's backed-up config. (The
+    // Quick-Add window reads through `read_config` → `try_load`, which never recovers.)
+    // Held across the whole read+rename so two loads can't interleave the destructive recovery.
     let mut recovered = RECOVERED_THIS_SESSION
         .lock()
         .unwrap_or_else(|e| e.into_inner());
@@ -1187,7 +1187,7 @@ pub fn load(dir: &Path) -> Config {
 }
 
 /// Side-effect-free read for mid-session callers (hotkey re-registration, the evdev rescan and
-/// status, CLI triggers). By then a webview holds the live settings, so an unreadable or
+/// status, CLI triggers, the Quick-Add window's `read_config`). By then a webview holds the live settings, so an unreadable or
 /// unparseable file must never be renamed to `.bak`, flip the session's reset flags or be
 /// re-saved: `None` on a read or parse error (the caller keeps what it has / skips), the
 /// defaults when the file is absent (first run, or this session's reset already moved it —
