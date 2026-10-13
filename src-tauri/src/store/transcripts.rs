@@ -1631,8 +1631,9 @@ mod tests {
         std::fs::write(dir.join("r.json"), format!(r#"{{"mediaPath":"{old}"}}"#)).unwrap();
         let tally = fix_records_in(std::slice::from_ref(&dir), "heal", None, |_, p| {
             // A save (main thread) must be able to take the lock while `fix` stats: retried,
-            // since other tests may hold it for a moment.
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            // since other tests may hold it — across an fsync, which after a build's burst of
+            // writes took over 2 s. Only `fix` running under the lock itself waits this out.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
             while RECORD_IO.try_lock().is_err() {
                 assert!(
                     std::time::Instant::now() < deadline,
