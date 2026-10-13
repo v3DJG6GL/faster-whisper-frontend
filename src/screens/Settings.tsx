@@ -478,7 +478,8 @@ export default function Settings() {
           setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
           // Rust rewrote every record's mediaPath/sourcePath on disk; the load-once
           // mirror still holds the pre-move paths — and would write them back on edit.
-          // The workbench registry holds them too (an overlay edit persists through it).
+          // A pending overlay write would too: forgetRecord drops those timers (the
+          // registry keeps the ids and re-reads the reloaded mirror).
           forgetRecord(null);
           void loadHistory(true).catch(() => {});
         } finally {

@@ -804,24 +804,26 @@ function registered(key: string): TranscriptRecord | undefined {
 }
 
 /** Drop a deleted record from the registries (and close it if it is the open one), so a
- *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk wipe).
- *  `deleted` (bulk only): the records themselves are being deleted (Settings' clear), not
- *  just re-homed (a storage move or reset keeps them) — stop every lost request's job too,
- *  as the single-id path does, or the finished job lands its transcript again. */
+ *  later overlay edit or chunk merge cannot re-save it. `null` = every record (bulk).
+ *  `deleted` (bulk only): the records themselves are being deleted (Settings' clear) — stop
+ *  every lost request's job too, as the single-id path does, or the finished job lands its
+ *  transcript again. Without it the records are only re-homed (a storage move or reset keeps
+ *  their ids): only the pending writes go, since one firing before the reload would re-save
+ *  the pre-move paths. The ID registry stays — it re-reads the mirror (currentRecord), so the
+ *  open record keeps its overlays and later edits save onto the moved copy. */
 export function forgetRecord(id: string | null, opts?: { deleted?: boolean }): void {
   if (id === null) {
-    if (opts?.deleted) {
-      // A lost request's failed record carries its job id: one registered here, or one an
-      // earlier launch left (reconcile watches it headless, nothing registered it). The
-      // hook skips the rail's reattached run and is a no-op for an id nothing watches.
-      const ids = new Set(registeredIds);
-      for (const r of useTranscriptHistory.getState().records) if (r.status === "failed") ids.add(r.id);
-      for (const jobId of ids) orphanForget?.(jobId);
-    }
-    registeredIds.clear();
-    for (const k of Object.keys(idByPath)) delete idByPath[k];
     for (const t of persistTimers.values()) window.clearTimeout(t);
     persistTimers.clear();
+    if (!opts?.deleted) return;
+    // A lost request's failed record carries its job id: one registered here, or one an
+    // earlier launch left (reconcile watches it headless, nothing registered it). The
+    // hook skips the rail's reattached run and is a no-op for an id nothing watches.
+    const ids = new Set(registeredIds);
+    for (const r of useTranscriptHistory.getState().records) if (r.status === "failed") ids.add(r.id);
+    for (const jobId of ids) orphanForget?.(jobId);
+    registeredIds.clear();
+    for (const k of Object.keys(idByPath)) delete idByPath[k];
     set({ openRecordId: null });
     return;
   }

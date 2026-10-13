@@ -1029,9 +1029,57 @@ describe("forgetRecord (a deleted record must stay deleted)", () => {
       expect(useTranscribeRun.getState().openRecordId).toBeNull();
     } finally {
       vi.useRealTimers();
-      forgetRecord(null);
+      forgetRecord(null, { deleted: true });
       vi.unstubAllGlobals();
     }
+  });
+});
+
+describe("forgetRecord(null) without deleted (a storage move or reset re-homes the records)", () => {
+  const rec: TranscriptRecord = {
+    schemaVersion: 1, kind: "file", id: "move-1", createdAt: "2026-10-13T12:00:00Z",
+    sourcePath: "/old/m.mp3", sourceName: "m.mp3", status: "done",
+    renames: { SPEAKER_00: "Alice" },
+    result: { text: "a", segments: [{ start: 0, end: 1, text: "a", speaker: "SPEAKER_00" }] },
+  };
+  beforeEach(async () => {
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    useTranscriptHistory.setState({ records: [rec], loaded: true });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    forgetRecord(null, { deleted: true });
+    vi.unstubAllGlobals();
+  });
+
+  it("the open record keeps its overlays, and a later rename saves onto the moved copy", async () => {
+    const { currentRecord, useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    openHistoryRecord(rec);
+    setRename(rec.id, "SPEAKER_00", "Bob"); // pending when the move lands
+    forgetRecord(null);
+    // The pre-move write is dropped, not landed later on the reloaded mirror.
+    vi.advanceTimersByTime(900);
+    expect(currentRecord(rec.id)?.renames).toEqual({ SPEAKER_00: "Alice" });
+    expect(useTranscribeRun.getState().openRecordId).toBe(rec.id);
+    // loadHistory(true) lands the re-homed copy under the same id.
+    useTranscriptHistory.setState({ records: [{ ...rec, sourcePath: "/new/m.mp3" }] });
+    setRename(rec.id, "SPEAKER_00", "Carol");
+    flushPersistEdits();
+    const cur = currentRecord(rec.id)!;
+    expect(cur.renames).toEqual({ SPEAKER_00: "Carol" });
+    expect(cur.sourcePath).toBe("/new/m.mp3");
+  });
+
+  it("with deleted, the registry and the open record still go", async () => {
+    const { currentRecord } = await import("./transcript/transcriptHistory");
+    openHistoryRecord(rec);
+    forgetRecord(null, { deleted: true });
+    expect(useTranscribeRun.getState().openRecordId).toBeNull();
+    setRename(rec.id, "SPEAKER_00", "Carol");
+    flushPersistEdits();
+    expect(currentRecord(rec.id)?.renames).toEqual({ SPEAKER_00: "Alice" });
   });
 });
 
@@ -1061,7 +1109,7 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
   afterEach(() => {
     vi.useRealTimers();
-    forgetRecord(null);
+    forgetRecord(null, { deleted: true });
     vi.unstubAllGlobals();
   });
 
