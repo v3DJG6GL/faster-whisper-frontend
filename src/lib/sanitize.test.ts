@@ -148,6 +148,13 @@ describe("peerDeviceName", () => {
     expect(peerDeviceName("  ")).toBe("");
     expect(peerDeviceName("Here", "here")).toBe("");
   });
+
+  it("blanks a peer name padded mid-word with a zero-width character", () => {
+    expect(peerDeviceName("Th\u034Fis device", "This device")).toBe("");
+    expect(peerDeviceName("Th\uFE0Fis device", "This device")).toBe("");
+    expect(peerDeviceName("This dev\u{E0100}ice", "This device")).toBe("");
+    expect(peerDeviceName("This laptop", "This device")).toBe("This laptop");
+  });
 });
 
 describe("ruleListLabel", () => {

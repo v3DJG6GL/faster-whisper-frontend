@@ -268,13 +268,15 @@ export const deviceDisplayName = (name: unknown, max = 60): string =>
  *  this device: one calling itself "This device" would produce two identical buttons on the control
  *  that decides whose settings win, and the conflict sentence, the restore header, the sync status
  *  line and the restore offers (Backends, Onboarding) would credit this device with the peer's
- *  copy. Compared as the name renders — case-insensitively, with whitespace, the invisible class
- *  (U+2800, variation selectors, …) and ZWNJ/ZWJ all folded away, since `"This\u2800device"`,
- *  `"This device\uFE0F"` and `"This \u200Ddevice"` all draw as "This device". */
+ *  copy. Compared as the name renders — case-insensitively, with ALL whitespace, the invisible
+ *  class (U+2800, variation selectors, …) and ZWNJ/ZWJ removed, since `"This\u2800device"`,
+ *  `"This device\uFE0F"`, `"This \u200Ddevice"` and `"Th\u034Fis device"` all draw as "This
+ *  device" (the invisible class becomes a space here, but its zero-width members draw nothing, so
+ *  a space inside a word cannot be told from none). "Thisdevice" then falls back too — acceptable. */
 export function peerDeviceName(device: unknown, localLabel = "This device"): string {
   const name = deviceDisplayName(device);
   const norm = (s: string) =>
-    dropJoiners(safeIdentityText(s, 200)).replace(/\s+/g, " ").trim().toLowerCase();
+    dropJoiners(safeIdentityText(s, 200)).replace(/\s+/g, "").toLowerCase();
   return name && norm(name) !== norm(localLabel) ? name : "";
 }
 
