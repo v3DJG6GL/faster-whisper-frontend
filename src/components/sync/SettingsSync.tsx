@@ -27,6 +27,7 @@ import {
   ALL_CATEGORIES,
   applyBlob,
   approvePendingReview,
+  consentDetailCap,
   dismissSyncConflict,
   deleteFailureMessage,
   disableConflictingProfiles,
@@ -763,9 +764,11 @@ function SecurityReviewDialog() {
                     is written to the OS keyring. `sanitizeBackends` length-caps nothing and a
                     rename raises no security change, so a prior pull can set
                     `"Work" + 100 spaces + "EvilCorp"` and the markerless cut lands in the
-                    padding. Its two neighbours in this same block were already converted. */}
+                    padding. Its two neighbours in this same block were already converted.
+                    The detail's cap comes from `consentDetailCap`: a typed-text row shows the
+                    whole value that would be typed, never a head with the rest behind a "…". */}
                 {c.backend ? `${safeIdentityText(c.backend, 80)} · ` : ""}
-                {safeIdentityText(c.detail, 200)}
+                {safeIdentityText(c.detail, consentDetailCap(c.kind))}
               </div>
               {auth?.hasUserinfo && (
                 <div className="mt-1 text-[12px] font-semibold text-rec">

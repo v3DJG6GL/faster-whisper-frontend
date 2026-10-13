@@ -41,7 +41,7 @@ import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflic
 import { canonicalActivation } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
 import { fmtFull, plural } from "../format";
-import { clampDecodeOverrides, DECODE_KEYS, TYPED_TEXT_KEYS } from "../decodeKeys";
+import { clampDecodeOverrides, DECODE_KEYS, keySpec, TYPED_TEXT_KEYS, type DecodeKey } from "../decodeKeys";
 import type {
   AppRule,
   AppSettings,
@@ -3464,12 +3464,27 @@ function typedTextChanges(
         id: e.id,
         backend: name,
         category,
-        detail: `${DECODE_KEYS[key].env} would type ${JSON.stringify(v)}`,
+        detail: typedTextDetail(key, v),
       });
     }
   }
   return out;
 }
+
+const typedTextDetail = (key: DecodeKey, v: string): string => `${DECODE_KEYS[key].env} would type ${JSON.stringify(v)}`;
+
+/** The longest `typedTextDetail` the sanitizer lets through: every code point of a full-length
+ *  value escaped to its widest JSON form (a lone surrogate → `\udXXX`, six characters). */
+const TYPED_TEXT_DETAIL_MAX = Math.max(
+  ...[...TYPED_TEXT_KEYS].map((k) => typedTextDetail(k, "").length + 6 * (keySpec(k).maxLen ?? 512)),
+);
+
+/** How many code points of a consent row's `detail` the review dialog shows. A typed-text row is
+ *  the user's only view of what would be typed into the focused window after every dictation, so
+ *  it is never cut: at the 200 every other row uses, a peer's 512-character suffix put a harmless
+ *  head in front and the escaped newline plus command behind the "…". */
+export const consentDetailCap = (kind: SecurityChange["kind"]): number =>
+  kind === "typed-text" ? TYPED_TEXT_DETAIL_MAX : 200;
 
 export function securityChanges(
   incoming: SyncBlob,
