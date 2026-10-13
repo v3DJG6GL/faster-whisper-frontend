@@ -34,6 +34,21 @@ describe("dayBuckets", () => {
     expect(groups[0].items.map((r) => r.id)).toEqual(["a", "c"]);
   });
 
+  it("orders days newest first and records newest first by instant, whatever their offset", () => {
+    const t1 = new Date(2026, 9, 13, 14, 0).toISOString();
+    const t2 = new Date(2026, 9, 13, 8, 0).toISOString();
+    // Yesterday late evening, written with a far-east offset: its wall clock reads today and
+    // its raw string sorts above today's Z stamps.
+    const y = withOffset(new Date(2026, 9, 12, 21, 30), 14 * 60);
+    // Today 11:00 with a far-west offset: its wall clock reads an earlier time than t2's Z one.
+    const t3 = withOffset(new Date(2026, 9, 13, 11, 0), -12 * 60);
+    const sorted = [rec("y", y), rec("t1", t1), rec("t2", t2), rec("t3", t3)];
+    const groups = dayBuckets(sorted, todayStart);
+    expect(groups.map((g) => g.label)).toEqual(["Today", "Yesterday"]);
+    expect(groups[0].items.map((r) => r.id)).toEqual(["t1", "t3", "t2"]);
+    expect(groups[1].items.map((r) => r.id)).toEqual(["y"]);
+  });
+
   it("leaves valid newest-first records in their order", () => {
     const ts = [13, 13, 12, 10, 10].map((d, i) => new Date(2026, 9, d, 20 - i).toISOString());
     const groups = dayBuckets(ts.map((t, i) => rec(String(i), t)), todayStart);

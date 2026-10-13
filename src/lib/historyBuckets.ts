@@ -7,43 +7,49 @@ const DAY_FMT = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "lo
 
 export const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
 
-/** "Today" / "Yesterday" / a local date — the bucket a record sorts under; null when the stamp
- *  does not parse. `todayStart` is `startOfDay(new Date())`, refreshed at local midnight. */
-function dayBucket(iso: string, todayStart: number): string | null {
-  const d = new Date(iso);
+/** "Today" / "Yesterday" / a local date — the bucket a record sorts under, with the local day
+ *  start it orders by (future stamps count as today); null when the stamp does not parse.
+ *  `todayStart` is `startOfDay(new Date())`, refreshed at local midnight. */
+function dayBucket(d: Date, todayStart: number): { label: string; day: number } | null {
   if (Number.isNaN(d.getTime())) return null;
-  const diffDays = Math.round((todayStart - startOfDay(d)) / 86_400_000);
-  if (diffDays <= 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  return DAY_FMT.format(d);
+  const day = Math.min(startOfDay(d), todayStart);
+  const diffDays = Math.round((todayStart - day) / 86_400_000);
+  if (diffDays <= 0) return { label: "Today", day };
+  if (diffDays === 1) return { label: "Yesterday", day };
+  return { label: DAY_FMT.format(d), day };
 }
 
-/** Group newest-first records by day, in their order. A label is one group even when its
- *  records are not adjacent: the list is sorted on the raw stamp strings, so a damaged or
- *  foreign stamp ('garbage' sorts above ISO, '' below; a non-Z offset among Z stamps) splits
- *  a day — two groups of one label drew twice and shared a React key. Unparseable stamps form
- *  one "Earlier" group, last. */
+/** Group records by day, newest day first and newest record first inside a day. A label is
+ *  one group even when its records are not adjacent, and both orders go by the parsed instant:
+ *  the list is sorted on the raw stamp strings, so a damaged or foreign stamp ('garbage' sorts
+ *  above ISO, '' below; a non-Z offset among Z stamps) splits a day or lifts an older day
+ *  above today — two groups of one label drew twice and shared a React key. Unparseable stamps
+ *  form one "Earlier" group, last, in their given order. */
 export function dayBuckets<T extends { createdAt: string }>(
   records: readonly T[],
   todayStart: number,
 ): { label: string; items: T[] }[] {
-  const out: { label: string; items: T[] }[] = [];
-  const byLabel = new Map<string, { label: string; items: T[] }>();
+  type Group = { label: string; day: number; items: { rec: T; at: number }[] };
+  const byLabel = new Map<string, Group>();
   const earlier: T[] = [];
   for (const rec of records) {
-    const label = dayBucket(rec.createdAt, todayStart);
-    if (label === null) {
+    const d = new Date(rec.createdAt);
+    const bucket = dayBucket(d, todayStart);
+    if (bucket === null) {
       earlier.push(rec);
       continue;
     }
-    let bucket = byLabel.get(label);
-    if (!bucket) {
-      bucket = { label, items: [] };
-      byLabel.set(label, bucket);
-      out.push(bucket);
+    let group = byLabel.get(bucket.label);
+    if (!group) {
+      group = { ...bucket, items: [] };
+      byLabel.set(bucket.label, group);
     }
-    bucket.items.push(rec);
+    group.items.push({ rec, at: d.getTime() });
   }
+  // Both sorts are stable, so equal days / instants keep their given order.
+  const out = [...byLabel.values()]
+    .sort((a, b) => b.day - a.day)
+    .map((g) => ({ label: g.label, items: g.items.sort((a, b) => b.at - a.at).map((x) => x.rec) }));
   if (earlier.length > 0) out.push({ label: "Earlier", items: earlier });
   return out;
 }
