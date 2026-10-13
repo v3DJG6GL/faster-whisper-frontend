@@ -240,17 +240,35 @@ pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
 /// and dictation-audio retention both age by mtime, and an audio move keeps the file's (a
 /// cross-volume one too, see `copy_keeping_mtime`), so a reset record clock would outlive its
 /// audio by a whole retention window.
-/// User edits (`save_transcript_record`) deliberately DO refresh it.
+/// User edits (`save_transcript_record`) keep it too (`write_record_keeping_mtime`).
 fn rewrite_record_keep_mtime(path: &Path, out: &str, mtime: Option<std::time::SystemTime>) -> bool {
     if crate::config::write_private_atomic(path, out).is_err() {
         return false;
     }
     if let Some(t) = mtime {
-        if let Ok(f) = std::fs::File::options().append(true).open(path) {
-            let _ = f.set_modified(t);
-        }
+        restore_mtime(path, t);
     }
     true
+}
+
+/// Best effort: a record whose clock could not be set back is still saved.
+fn restore_mtime(path: &Path, t: std::time::SystemTime) {
+    if let Ok(f) = std::fs::File::options().append(true).open(path) {
+        let _ = f.set_modified(t);
+    }
+}
+
+/// Write a record, keeping the mtime of the file it replaces; a first write dates it now.
+/// Retention ages a record and its dictation audio by their own mtimes, so a re-save (a text
+/// edit, an export-track toggle) that reset the record's clock would let it outlive its audio
+/// by up to a whole window — Settings promises text and audio leave together.
+fn write_record_keeping_mtime(path: &Path, out: &str) -> std::io::Result<()> {
+    let mtime = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    crate::config::write_private_atomic(path, out)?;
+    if let Some(t) = mtime {
+        restore_mtime(path, t);
+    }
+    Ok(())
 }
 
 /// What a media-path fix-up walk (`fix_records_in`) got through.
@@ -653,8 +671,9 @@ fn remove_dictation_audio(source_path: &str) {
     }
 }
 
-/// Write (create or replace) one history record. Atomic tmp+rename with
-/// owner-only permissions, cleanup on both failure paths.
+/// Write (create or replace) one history record, keeping a replaced record's date (see
+/// `write_record_keeping_mtime`). Atomic tmp+rename with owner-only permissions, cleanup on
+/// both failure paths.
 #[tauri::command]
 pub fn save_transcript_record(
     app: AppHandle,
@@ -685,7 +704,7 @@ pub fn save_transcript_record(
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
         .and_then(|moved| repoint_moved(&record, &moved.fwd));
-    crate::config::write_private_atomic(&path, repointed.as_deref().unwrap_or(&record))
+    write_record_keeping_mtime(&path, repointed.as_deref().unwrap_or(&record))
         .map_err(|e| e.to_string())
 }
 
@@ -1180,8 +1199,8 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
 
 /// Delete records older than `days` (0 = keep forever), with the same clamped mtime window as
 /// `audio::prune_older_than`. Its own loop rather than that helper: each entry is re-stat'd and
-/// unlinked under [`RECORD_IO`], so a record `save_transcript_record` just renamed into place
-/// (fresh mtime) is never deleted on the strength of the old file's age.
+/// unlinked under [`RECORD_IO`], so a record `save_transcript_record` just wrote for the first
+/// time (fresh mtime) is never deleted on the strength of an older file's age.
 pub fn prune_transcripts(dir: &Path, days: u32) -> usize {
     if days == 0 {
         return 0;
@@ -1557,6 +1576,33 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&rec).unwrap(), "{\"a\":1}");
         // Still old enough for a 1-day retention to prune it.
         assert_eq!(prune_transcripts(&dir, 1), 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_re_saved_record_keeps_its_date_and_a_new_one_is_dated_now() {
+        let dir = std::env::temp_dir().join(format!("fwf-resave-mtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let rec = dir.join("aaaa1111.json");
+        std::fs::write(&rec, b"{}").unwrap();
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(5 * 86_400);
+        let f = std::fs::File::options().append(true).open(&rec).unwrap();
+        f.set_modified(old).unwrap();
+        drop(f);
+        write_record_keeping_mtime(&rec, "{\"edited\":true}").unwrap();
+        assert_eq!(std::fs::read_to_string(&rec).unwrap(), "{\"edited\":true}");
+        assert_eq!(std::fs::metadata(&rec).unwrap().modified().unwrap(), old);
+
+        let fresh = dir.join("bbbb2222.json");
+        write_record_keeping_mtime(&fresh, "{}").unwrap();
+        let age = std::time::SystemTime::now()
+            .duration_since(std::fs::metadata(&fresh).unwrap().modified().unwrap())
+            .unwrap_or_default();
+        assert!(age < std::time::Duration::from_secs(60), "{age:?}");
+        // The edited record still leaves with a 1-day retention; the new one stays.
+        assert_eq!(prune_transcripts(&dir, 1), 1);
+        assert!(!rec.exists() && fresh.exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
