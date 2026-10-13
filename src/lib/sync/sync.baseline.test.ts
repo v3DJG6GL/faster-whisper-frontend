@@ -1852,6 +1852,10 @@ describe("a sync edit made during the launch work", () => {
     saved: undefined as Record<string, unknown> | undefined,
     failPulls: false,
     pushed: undefined as SyncBlob | undefined,
+    /** The server's blob for this test (default: REMOTE's). */
+    remote: undefined as SyncBlob | undefined,
+    /** The keyring refuses live key reads (the launch stash read still answers). */
+    locked: false,
   };
   const REMOTE = {
     ok: true,
@@ -1872,6 +1876,8 @@ describe("a sync edit made during the launch work", () => {
     io.saved = undefined;
     io.failPulls = false;
     io.pushed = undefined;
+    io.remote = undefined;
+    io.locked = false;
     const parked = new Promise<Record<string, string>>((r) => (io.release = r));
     vi.resetModules();
     vi.doMock("../persistence", async (importOriginal) => ({
@@ -1891,7 +1897,7 @@ describe("a sync edit made during the launch work", () => {
           io.launchRead = true;
           return parked;
         }
-        return Promise.resolve({ b1: "sk-1" });
+        return Promise.resolve(io.locked ? {} : { b1: "sk-1" });
       },
       setBackendKey: async () => {},
       deleteBackendKey: async () => {
@@ -1900,7 +1906,7 @@ describe("a sync edit made during the launch work", () => {
       syncPull: async () => {
         io.pulls++;
         if (io.failPulls) return { ok: false, status: 0, error: "unreachable" };
-        return REMOTE;
+        return io.remote ? { ...REMOTE, state: { ...REMOTE.state, blob: io.remote } } : REMOTE;
       },
       syncPush: async (args: { baseVersion: number; blob: SyncBlob }) => {
         io.pushes++;
@@ -2191,6 +2197,64 @@ describe("a sync edit made during the launch work", () => {
       store.setState(logging({ logLevel: "warn" }));
       await vi.waitFor(() => expect(io.pushed?.logging).toMatchObject({ logLevel: "warn", keepDays: 30 }));
       expect(store.getState().settings.logging?.keepDays).toBe(90);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a setting switched ON that the server holds no value of goes up without asking", async () => {
+    // "Log folder" is machine-specific (off by default): no device ever sent a logDir.
+    const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
+    try {
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      store.setState(logging({ logLevel: "debug", logDir: "/var/log/me" }));
+      store.setState(turnOn({ ...levelOnly, logFolder: true }));
+      await vi.waitFor(() => expect(io.pushes).toBe(1));
+      expect(engine.getPendingConflict()).toBeNull();
+      expect(io.pushed?.logging).toMatchObject({ logDir: "/var/log/me" });
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a re-enabled server-list setting merges around a backend the peer deleted", async () => {
+    // "Server addresses" switched on here before a restart; meanwhile the peer deleted b2 (whose
+    // address differs here) and renamed b3. Neither touches the address question.
+    const list = [backend({ hasApiKey: true }), backend({ id: "b2", name: "two", serverUrl: "http://a" }), backend({ id: "b3", name: "three" })];
+    const base = { ...serverCopy, backends: { list, secrets: { b1: "sk-1" } } } as SyncBlob;
+    const sub = { ...levelOnly, serverAddresses: true } as SyncSubSettings;
+    const { engine, store, init } = await launchEngine({ sub }, base, { version: 0, freshGates: ["serverAddresses"] });
+    try {
+      io.remote = { ...serverCopy, backends: { list: [list[0], { ...list[2], name: "three!" }], secrets: { b1: "sk-1" } } } as SyncBlob;
+      store.setState({ backends: [list[0], { ...list[1], serverUrl: "http://here" }, list[2]] });
+      store.setState(logging({ logLevel: "debug" }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().backends.map((b) => b.name)).toEqual(["local", "three!"]));
+      expect(engine.getPendingConflict()).toBeNull();
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a re-enabled server-list setting under a locked keyring says so instead of asking", async () => {
+    const list = [backend({ hasApiKey: true })];
+    const base = { ...serverCopy, backends: { list, secrets: { b1: "sk-1" } } } as SyncBlob;
+    const { engine, store, init } = await launchEngine({ sub: levelOnly }, base, { version: 0, freshGates: ["apiKeys"] });
+    try {
+      io.remote = { ...serverCopy, backends: { list, secrets: { b1: "sk-2" } } } as SyncBlob; // the peer rotated it
+      io.locked = true;
+      store.setState(logging({ logLevel: "debug" }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncError).toMatch(/keyring/));
+      expect(engine.getPendingConflict()).toBeNull();
+      expect(io.pushes).toBe(0);
     } finally {
       io.release({});
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));

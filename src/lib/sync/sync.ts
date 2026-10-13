@@ -97,6 +97,7 @@ import {
   type Gates,
   catsFromGates,
   gatesTurnedOn,
+  gatePartsPresent,
   gateStillSyncs,
   isPlainObject,
   SCALAR_CATS,
@@ -2110,11 +2111,15 @@ function markFreshFrom(t: FreshTransition): boolean {
 
 /** Every merge's 3-way, with the re-enabled categories (`mergeBase`) and settings (`freshGates`)
  *  reconciled as first contact. A category holding fresh settings is merged in two halves: the
- *  rest of it 3-way, with the fresh settings made the remote's on every side; then the fresh
+ *  rest of it 3-way, with the fresh settings made the remote's on every side (the base's first,
+ *  so an element the remote deleted carries one value on every side too); then the fresh
  *  settings alone — this device's equal to the merge's, it merges; else the category is a
  *  conflict whose two sides (`local` / `remote` here, what a pick lands) differ in those
  *  settings only, so neither pick throws away the other side's edits to the rest of it. A
- *  conflict in the rest of it is the whole category's, as without fresh settings. */
+ *  conflict in the rest of it is the whole category's, as without fresh settings. A setting the
+ *  remote holds nothing of is first contact for it (this device's value goes up, as the plain
+ *  merge decides), and a degraded-keyring backends compose — the snapshot's list, not this
+ *  device's — is left to the plain merge and the callers' keyring notice. */
 function mergeFresh(local: SyncBlob, remote: SyncBlob): MergeResult & { local: SyncBlob; remote: SyncBlob } {
   const base = mergeBase();
   const res = mergeBlobs(base, local, remote);
@@ -2123,14 +2128,18 @@ function mergeFresh(local: SyncBlob, remote: SyncBlob): MergeResult & { local: S
   const merged: SyncBlob = { ...res.merged };
   const conflicts = new Set(res.conflicts);
   let sides = { local, remote };
-  for (const [c, ids] of byCat) {
+  for (const [c, all] of byCat) {
     const b = base[c];
     const l = local[c];
     const r = remote[c];
     // Absent on a side: nothing to judge the settings apart from — the plain merge decides.
     if (b === undefined || l === undefined || r === undefined) continue;
+    if (c === "backends" && degradedComposes.has(local)) continue;
+    const ids = all.filter((id) => gatePartsPresent(c, id, r, MY_BUCKET));
+    if (ids.length === 0) continue;
     const part = (target: unknown, source: unknown) => withGateParts(c, ids, target, source, MY_BUCKET);
-    const rest = mergeBlobs({ [c]: part(b, r) }, { [c]: part(l, r) }, { [c]: r });
+    const neutral = (x: unknown) => part(part(x, b), r);
+    const rest = mergeBlobs({ [c]: neutral(b) }, { [c]: neutral(l) }, { [c]: r });
     if (rest.conflicts.length > 0) {
       conflicts.add(c);
       continue;

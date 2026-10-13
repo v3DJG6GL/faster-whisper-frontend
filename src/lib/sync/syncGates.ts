@@ -254,6 +254,32 @@ function swapElementFields(live: unknown, src: unknown, fields: readonly string[
   });
 }
 
+/** Does this category's wire value hold anything of the setting's parts (see `withGateParts`)? A
+ *  server seeded by devices with the switch off never carries them — gated-off keys the snapshot
+ *  lacks are omitted — so there is nothing to compare this device's value with. A list field
+ *  counts while its list is there: an absent per-element field is itself a value ("inherit"). */
+export function gatePartsPresent(cat: WireCategory, id: SettingId, value: unknown, myBucket: "linux" | "windows"): boolean {
+  const d = DEFS.find((x) => x.id === id);
+  if (!d || d.category !== cat || !isPlainObject(value)) return false;
+  switch (id) {
+    case "serverAddresses":
+    case "modelDecodeDefaults":
+    case "profileHotkeys":
+    case "enabledPerProfile":
+    case "profileInsertion":
+      return Array.isArray(value.list);
+    case "perAppOverrides":
+    case "perAppPasteShortcuts":
+      return Array.isArray(value[myBucket]);
+    case "apiKeys":
+      return value.secrets !== undefined;
+    case "homeProfile":
+      return value.homeProfileId !== undefined;
+    default:
+      return d.fields.some((ref) => value[ref.key] !== undefined);
+  }
+}
+
 /** `target` (one category's wire value) with the parts the given settings govern taken from
  *  `source` — the same parts composeBlob substitutes when their switch is off: scalar fields, the
  *  per-element fields of a list, the keys bundle, the home profile, this OS's app-rule bucket.
