@@ -18,6 +18,7 @@ import { cn } from "@/lib/cn";
 import { TextInput } from "@/components/ui";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { imeComposing } from "@/lib/keys";
+import { listOwnsKey } from "@/lib/comboboxKeys";
 
 const MAX_SHOWN = 50; // popover DOM cap (the source list is already server-capped)
 
@@ -163,7 +164,7 @@ export function Combobox({
         else setActive((a) => (a < 0 ? 0 : Math.min(a + 1, candidates.length - 1)));
         break;
       case "ArrowUp":
-        if (open) { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+        if (listOwnsKey(e.key, showPopover)) { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
         break;
       case "Enter":
         // Only act when an option is highlighted — otherwise leave the typed key
@@ -171,8 +172,11 @@ export function Combobox({
         if (showPopover && active >= 0) { e.preventDefault(); choose(candidates[active]); }
         break;
       case "Escape":
+        // Closes the (possibly undrawn) list either way; only a drawn one keeps the Esc from the window.
         wantFirstRef.current = false;
-        if (open) { e.stopPropagation(); setOpen(false); setActive(-1); }
+        if (listOwnsKey(e.key, showPopover)) e.stopPropagation();
+        setOpen(false);
+        setActive(-1);
         break;
       case "Tab":
         // Accept a highlighted option on Tab (fast entry); else just close.
