@@ -335,7 +335,10 @@ export function dayToIso(day: number): string {
 export function isoToDay(iso: string): number | undefined {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? "");
   if (!m) return undefined;
-  const t = Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  // Date.UTC reads a year 0–99 as 1900+year: "0099-05-01" would come back as a 1999 day.
+  const y = Number(m[1]);
+  if (y < 1970) return undefined;
+  const t = Date.UTC(y, Number(m[2]) - 1, Number(m[3]));
   if (!Number.isFinite(t)) return undefined;
   const day = Math.floor(t / DAY_MS);
   return isDay(day) ? day : undefined;

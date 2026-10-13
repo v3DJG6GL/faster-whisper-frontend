@@ -411,6 +411,9 @@ describe("usageDerive", () => {
     const day = isoToDay("2026-09-02")!;
     expect(dayToIso(day)).toBe("2026-09-02");
     expect(isoToDay("nope")).toBeUndefined();
+    // a two-digit-era year is refused, not read as 19xx; the epoch day itself still parses
+    expect(isoToDay("0099-05-01")).toBeUndefined();
+    expect(isoToDay("1970-01-01")).toBe(0);
     const presets = spanPresets(day);
     expect(presets.map((p) => p.label)).toEqual(["This month", "Last month", "This quarter", "This year", "Last year"]);
     expect(dayToIso(presets[0].from)).toBe("2026-09-01");

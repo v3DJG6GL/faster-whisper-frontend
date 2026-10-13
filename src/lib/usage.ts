@@ -53,6 +53,12 @@ let yearGen = 0;
 // The view signature a fetch confirmed during this visit and no later fetch missed (null after a
 // reopen, a hidden pass or a miss): only a confirmed 365-day view may stand in for the calendar's year.
 let viewFreshSig: string | null = null;
+/** The show handler's direct page fetch: `sentOutcomeCount()` at `at`, and `confirmed` settles to
+ *  whether both documents landed. */
+type DirectFetch = { at: number; confirmed: Promise<boolean> };
+// A direct fetch the show handler made while a pass was already running: that pass's next page
+// step takes it (one step only — a rerun fetches the page as usual), as a fresh pass takes its own.
+let pendingDirect: DirectFetch | undefined;
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
 function statsPageShown(): boolean {
@@ -270,8 +276,10 @@ async function refreshOne(backend: Backend): Promise<void> {
  *  usage view can switch between backends instantly from the store. Guarded so
  *  overlapping polls don't stack. `direct`: the show handler just fetched the page's documents,
  *  with `sentOutcomeCount()` at `at`; `confirmed` settles to whether they landed. The pass skips
- *  its own page step only when they did and no outcome was delivered since. */
-async function refreshAll(direct?: { at: number; confirmed: Promise<boolean> }): Promise<void> {
+ *  its own page step only when they did, the page is still confirmed for the view current at
+ *  that step (the per-backend loop can move the viewed backend, a query change's fetch can
+ *  miss), and no outcome was delivered since. */
+async function refreshAll(direct?: DirectFetch): Promise<void> {
   // Already polling: don't stack a second pass, but record the request so we run once more after —
   // otherwise a refresh triggered by a backend edit (which deleted that backend's cached usage) is
   // dropped and the just-edited backend stays blank until the next 30s tick.
@@ -287,8 +295,6 @@ async function refreshAll(direct?: { at: number; confirmed: Promise<boolean> }):
     await flushOutcomes();
     do {
       rerunRequested = false;
-      const fetched = skipPage; // the first iteration only: a rerun fetches the page as usual
-      skipPage = undefined;
       for (const b of useApp.getState().backends) {
         try {
           await refreshOne(b);
@@ -296,12 +302,19 @@ async function refreshAll(direct?: { at: number; confirmed: Promise<boolean> }):
           /* one backend failing must not stop the rest */
         }
       }
+      // Taken here, not at the loop's head, so a show that landed during the loop above is seen;
+      // one page step only: a rerun fetches the page as usual.
+      const fetched = skipPage ?? pendingDirect;
+      skipPage = pendingDirect = undefined;
       if (statsPageShown()) {
         // The show handler fetched them a moment ago: refetching the same documents is only
-        // worth it when that fetch missed, or the flush above delivered an outcome they may not
-        // include.
+        // worth it when that fetch missed, the page no longer answers the current view, or the
+        // flush above delivered an outcome they may not include.
         const caughtUp =
-          fetched !== undefined && (await fetched.confirmed) && fetched.at === sentOutcomeCount();
+          fetched !== undefined &&
+          (await fetched.confirmed) &&
+          pageConfirmed() &&
+          fetched.at === sentOutcomeCount();
         // A hidden pass skipped the page's documents, so what it shows may be hours old: a
         // miss now marks it failed, as on a reopen. The show handler normally fetches them
         // itself and consumes the flag first; one still set here is consumed the same way.
@@ -328,6 +341,7 @@ async function refreshAll(direct?: { at: number; confirmed: Promise<boolean> }):
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
     pollingAll = false;
+    pendingDirect = undefined;
   }
 }
 
@@ -349,8 +363,9 @@ export function initUsageController(): void {
   // flushes the outcomes and then waits on every backend's trend fetch (30 s each, bounded).
   // That pass then skips its own page step when they landed and its flush delivered no outcome.
   onWindowHiddenChange((hidden) => {
+    if (hidden) pendingDirect = undefined; // the documents it fetched may be old by the next show
     if (hidden || (skippedTicks === 0 && !pageMissed)) return;
-    let direct: { at: number; confirmed: Promise<boolean> } | undefined;
+    let direct: DirectFetch | undefined;
     if (pageMissed && statsPageShown()) {
       // Possibly hours old, so a miss marks them failed, as on a reopen.
       const at = sentOutcomeCount();
@@ -358,6 +373,8 @@ export function initUsageController(): void {
       const view = refreshView(true).catch(() => {});
       const year = refreshYear(true, true).catch(() => {});
       direct = { at, confirmed: Promise.all([view, year]).then(() => pageConfirmed()) };
+      // A pass already running would otherwise refetch them at its page step.
+      if (pollingAll) pendingDirect = direct;
     }
     if (skippedTicks > 0) {
       skippedTicks = 0;

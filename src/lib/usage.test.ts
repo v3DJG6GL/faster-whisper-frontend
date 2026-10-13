@@ -475,6 +475,157 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
   });
+  it("a show while a hidden pass is running hands it the direct fetch: its page step does not refetch", async () => {
+    const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
+    // skipped 0: the show only fetches the page (no pass of its own); 2: it also folds a rerun,
+    // which fetches the page as usual.
+    for (const skipped of [0, 2]) {
+      useApp.setState({
+        backends: [
+          { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+          { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+        ],
+        usageViewBackendId: "b1",
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await settle();
+      const close = openStatisticsPage();
+      await settle();
+      setHidden(true);
+      await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
+      await settle();
+      const ok = getUsageStats.getMockImplementation()!;
+      let releaseB2!: (v: null) => void;
+      getUsageStats.mockImplementation((a) =>
+        (a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (new Promise((r) => (releaseB2 = r)) as never) : ok(a),
+      );
+      try {
+        await vi.advanceTimersByTimeAsync(10 * 30_000); // the next hidden pass hangs on b2's trend fetch
+        await settle();
+        await vi.advanceTimersByTimeAsync(skipped * 30_000);
+        await settle();
+        getUsageStats.mockImplementation(ok);
+        getUsageStats.mockClear();
+        setHidden(false);
+        await settle();
+        expect(calls().page).toBe(2); // the show's direct view + year
+        getUsageStats.mockClear();
+        releaseB2(null);
+        await settle();
+        await settle();
+        // The held pass's page step takes the confirmed direct fetch; only a folded rerun refetches.
+        expect(calls().page).toBe(skipped ? 2 : 0);
+      } finally {
+        releaseB2?.(null);
+        await settle();
+        getUsageStats.mockImplementation(ok);
+        setHidden(false);
+        close();
+      }
+      useApp.setState({
+        backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+        usageViewBackendId: null,
+      });
+      await vi.advanceTimersByTimeAsync(30_000);
+      await settle();
+    }
+  });
+  it("the catch-up pass fetches the picked backend's page when its trend fetch brings it back during the pass", async () => {
+    const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
+    const ok = getUsageStats.getMockImplementation()!;
+    // b2 — the user's pick — is down: no usage, so the page falls back to b1.
+    getUsageStats.mockImplementation((a) => ((a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (Promise.resolve(null) as never) : ok(a)));
+    useApp.setState((s) => {
+      const usage = { ...s.usage };
+      delete usage.b2;
+      return {
+        backends: [
+          { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+          { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+        ],
+        usage,
+        usageViewBackendId: "b2",
+      };
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    const close = openStatisticsPage();
+    try {
+      await settle();
+      setHidden(true);
+      await vi.advanceTimersByTimeAsync(12 * 30_000); // a hidden pass skips the page, two ticks pass over
+      await settle();
+      getUsageStats.mockImplementation(ok); // b2 is back
+      getUsageStats.mockClear();
+      setHidden(false); // the show confirms b1's page; the pass then brings b2's usage in
+      await settle();
+      await settle();
+      const page = getUsageStats.mock.calls.map(([a]) => a as { backendId?: string; query: Record<string, unknown> }).filter((a) => !isTrend(a));
+      expect(page.filter((a) => a.backendId === "b2").length).toBe(2); // b2's view + year, not left to the next tick
+      expect(useApp.getState().usageView?.sig).toContain('"b2"');
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+    }
+    useApp.setState({
+      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      usageViewBackendId: null,
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+  });
+  it("the catch-up pass refetches the page when a range change's fetch missed after the show's direct fetch landed", async () => {
+    const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
+    useApp.setState({
+      backends: [
+        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+      ],
+      usageViewBackendId: "b1",
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
+    await settle();
+    const ok = getUsageStats.getMockImplementation()!;
+    let releaseB2!: (v: null) => void;
+    getUsageStats.mockImplementation((a) =>
+      (a as { backendId?: string }).backendId === "b2" && isTrend(a) ? (new Promise((r) => (releaseB2 = r)) as never) : ok(a),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(2 * 30_000);
+      await settle();
+      setHidden(false); // the direct fetch lands; the catch-up pass hangs on b2's trend fetch
+      await settle();
+      // A range change whose view fetch misses: the page no longer answers what is asked.
+      getUsageStats.mockImplementation((a) => (isTrend(a) ? ok(a) : (Promise.resolve(null) as never)));
+      useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
+      await settle();
+      expect(useApp.getState().usageView?.failed).toBe(true);
+      getUsageStats.mockImplementation(ok);
+      getUsageStats.mockClear();
+      releaseB2(null);
+      await settle();
+      await settle();
+      expect(calls().page).toBe(2); // the pass refetches the view + year instead of trusting the show's answer
+      expect(useApp.getState().usageView?.failed).toBeFalsy();
+    } finally {
+      releaseB2?.(null);
+      await settle();
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+    }
+    useApp.setState({
+      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      usageViewBackendId: null,
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+  });
   it("seeds the year from the 1 year view coming back from it, refetches it from All, and reuses it between shorter ranges", async () => {
     const ok = getUsageStats.getMockImplementation()!;
     const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
