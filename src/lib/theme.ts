@@ -363,9 +363,21 @@ export function applyAccentAndTheme(hue: number | undefined, motion: AccentMotio
 
 export function applyTheme(t: ThemeName): void {
   const resolved = resolvedTheme(t);
+  const changed = document.documentElement.dataset.theme !== resolved;
   document.documentElement.dataset.theme = resolved;
   currentDark = resolved === "dark";
   applyAccent(currentDark);
+  if (changed) for (const fn of themeListeners) fn(resolved);
+}
+
+const themeListeners = new Set<(resolved: "dark" | "light") => void>();
+
+/** Be told when the stamped theme flips (an explicit switch, or "auto" following the OS). For
+ *  what reads a theme token once and keeps it — a canvas resolves its colour via
+ *  getComputedStyle, which no CSS change repaints. Returns the unsubscribe. */
+export function onThemeChange(fn: (resolved: "dark" | "light") => void): () => void {
+  themeListeners.add(fn);
+  return () => void themeListeners.delete(fn);
 }
 
 /** Re-apply on live OS scheme changes while `get()` says "auto". Returns the cleanup. */
@@ -509,4 +521,5 @@ export function _resetThemeEngineForTests(): void {
   shownDark = null;
   pauseReasons.clear();
   listeners.clear();
+  themeListeners.clear();
 }

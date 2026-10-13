@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import { cn } from "@/lib/cn";
-import { prefersReducedMotion } from "@/lib/theme";
+import { onThemeChange, prefersReducedMotion } from "@/lib/theme";
 import type { DictationTone } from "@/lib/dictation/dictationVisual";
 import { PRIDE_RAINBOW_STOPS } from "@/lib/prideFlag";
 import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
@@ -97,7 +97,7 @@ export function Waveform({
   // Re-arms the draw loop after it has parked itself (idle + settled). Set by the
   // setup effect; called from the [active, processing] and [tone] effects below.
   const kickRef = useRef<() => void>(() => {});
-  // Recompute the resolved CSS color on the next frame (set when `tone` changes),
+  // Recompute the resolved CSS color on the next frame (set when `tone` or the theme changes),
   // instead of polling getComputedStyle on a timer for the whole session.
   const colorDirtyRef = useRef(true);
   // Pride hover-reveal state (all refs so the draw loop reads them without re-subscribing).
@@ -283,11 +283,18 @@ export function Waveform({
     const offHidden = onWindowHiddenChange((hidden) => {
       if (!hidden) kick();
     });
+    // The bar colour is a theme token read once: a theme flip must re-resolve it, and wake a
+    // parked meter to repaint, or it keeps the previous theme's grey until the tone changes.
+    const offTheme = onThemeChange(() => {
+      colorDirtyRef.current = true;
+      kick();
+    });
     return () => {
       running = false;
       cancelAnimationFrame(raf);
       ro.disconnect();
       offHidden();
+      offTheme();
     };
   }, [bars, variant]);
 

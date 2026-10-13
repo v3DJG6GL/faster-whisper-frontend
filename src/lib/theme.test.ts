@@ -23,6 +23,7 @@ import {
   motionCostNote,
   motionPhase,
   nearestPreset,
+  onThemeChange,
   secToSlider,
   setAccentHue,
   setAccentDriftPaused,
@@ -259,6 +260,23 @@ describe("applyTheme + setAccentHue", () => {
     setAccentHue(DEFAULT_ACCENT_HUE);
     applyTheme("dark");
     expect(props.size).toBe(0);
+  });
+
+  it("tells subscribers when the stamped theme flips, and only then", () => {
+    // A canvas meter reads its colour token once; without this it kept the old theme's grey.
+    vi.stubGlobal("document", fakeDocument);
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    delete dataset.theme;
+    const seen: string[] = [];
+    const off = onThemeChange((t) => seen.push(t));
+    applyTheme("dark");
+    applyTheme("dark");
+    applyTheme("light");
+    applyTheme("auto"); // the OS is dark: auto follows it
+    expect(seen).toEqual(["dark", "light", "dark"]);
+    off();
+    applyTheme("light");
+    expect(seen).toHaveLength(3);
   });
 
   it("a non-finite hue falls back to the default", () => {
