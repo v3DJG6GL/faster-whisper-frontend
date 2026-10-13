@@ -217,11 +217,33 @@ describe("plain text + errors", () => {
     // Two voices in one cue still split per voice.
     const two = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n- <v Alice>你好\n- <v Bob>再见\n").segments;
     expect(two.map((s) => [s.speaker, s.text])).toEqual([["Alice", "你好"], ["Bob", "再见"]]);
-    // A .txt file decides once for the whole file: punctuated, every CJK wrap joins.
-    expect(parseImportedText("txt", "我们今天去公园\n散步，然后回家\n\n我爱你\n你爱我\n\nSecond\npara").segments.map((s) => s.text))
-      .toEqual(["我们今天去公园散步，然后回家", "我爱你你爱我", "Second para"]);
+    // A .txt file decides once for the whole file: punctuated line ends, every CJK wrap joins.
+    expect(parseImportedText("txt", "我们今天去公园，\n散步然后回家。\n\n我爱你\n你爱我。\n\nSecond\npara").segments.map((s) => s.text))
+      .toEqual(["我们今天去公园，散步然后回家。", "我爱你你爱我。", "Second para"]);
+    // A 、 inside a line is an enumeration, no phrase end: the file keeps its separators.
+    expect(parseImportedText("txt", "我们今天去公园\n散步，然后回家\n\n我爱你\n你爱我").segments.map((s) => s.text))
+      .toEqual(["我们今天去公园 散步，然后回家", "我爱你 你爱我"]);
     expect(parseImportedText("txt", "我们今天去公园\n散步\n\n我爱你\n你爱我").segments.map((s) => s.text))
       .toEqual(["我们今天去公园 散步", "我爱你 你爱我"]);
+  });
+  it("an unpunctuated subtitle file keeps its phrase breaks despite one credit line or a 。 in a NOTE", () => {
+    const cue = (n: number, body: string) => `${n}\n00:00:0${n},000 --> 00:00:0${n},900\n${body}\n`;
+    const file = [cue(1, "我们走吧\n他们在等我们"), cue(2, "快点\n别迟到了"), cue(3, "好的\n马上来"), cue(4, "翻译：小明。")].join("\n");
+    expect(parseImportedText("srt", file).segments.map((s) => s.text).slice(0, 3)).toEqual(["我们走吧 他们在等我们", "快点 别迟到了", "好的 马上来"]);
+    const vtt = "WEBVTT\n\nNOTE 字幕制作。完成。\n\n00:00:01.000 --> 00:00:02.000\n我们走吧\n他们在等我们\n";
+    expect(parseImportedText("vtt", vtt).segments[0].text).toBe("我们走吧 他们在等我们");
+  });
+  it("a JSON segment's line break folds by the file's decision, so every later view agrees", () => {
+    const json = (texts: string[]) => JSON.stringify({ segments: texts.map((text, i) => ({ start: i, end: i + 1, text })) });
+    expect(parseImportedText("json", json(["今日は\nいい天気ですね。", "明日も\n晴れるでしょう。"])).segments.map((s) => s.text))
+      .toEqual(["今日はいい天気ですね。", "明日も晴れるでしょう。"]);
+    expect(parseImportedText("json", json(["我们走吧\n他们在等我们"])).segments[0].text).toBe("我们走吧 他们在等我们");
+  });
+  it("a long punctuated CJK .txt file with no blank lines joins in linear time", () => {
+    const body = Array.from({ length: 20_000 }, (_, i) => `今日は${i}いい天気ですね。`).join("\n");
+    const t0 = performance.now();
+    expect(parseImportedText("txt", body).segments.length).toBe(20_000);
+    expect(performance.now() - t0).toBeLessThan(1500);
   });
   it("srt/vtt: a punctuated CJK cue the export wrapped over two lines reads back without a space at the break", () => {
     const text = "今日はとてもいい天気ですね。明日も晴れるでしょう。";

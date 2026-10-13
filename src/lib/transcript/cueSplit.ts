@@ -120,14 +120,35 @@ const PHRASE_SPACE = new RegExp(
   `(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})[^\\S\\n]+(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})`,
   "u",
 );
-/** Whether a text's line breaks between two CJK characters are wraps, not phrase separators:
- *  it ends its phrases with 。，、 (halfwidth ｡､ too), so a break mid-phrase only wraps it, and
- *  it has no phrase space (unpunctuated subtitles drop 。，、 at line ends and separate phrases
- *  with the break; Whisper's phrase-spaced text and our exports of it wrap at a space and drop
- *  it). ？！：； do not count: the unpunctuated convention keeps them. Judged on the whole
- *  file (import) or the whole edited segment — a rule per line would read one file both ways. */
+/** The phrase ends a punctuated CJK text carries and the unpunctuated convention drops. */
+const CJK_PHRASE_END = /[。，、｡､]/u;
+/** Whether a text's line breaks between two CJK characters are wraps, not phrase separators,
+ *  judged on its lines: it ends its phrases with 。，、 (halfwidth ｡､ too) — at least a quarter
+ *  of the lines that end on a CJK character, and at least one — so a break mid-phrase
+ *  only wraps it, and no line holds a phrase space (unpunctuated subtitles drop 。，、 at line
+ *  ends and separate phrases with the break; Whisper's phrase-spaced text and our exports of it
+ *  wrap at a space and drop it). ？！：； do not count: the unpunctuated convention keeps them.
+ *  One stray 。 (a credit line) does not flip an unpunctuated file of a few cues, and a 、 inside
+ *  a line (an enumeration) is no line end. Judged on
+ *  the whole file (import) or the whole edited segment — a rule per line would read one file
+ *  both ways. */
+export function cjkWrapsLines(lines: Iterable<string>): boolean {
+  let ends = 0;
+  let stops = 0;
+  for (const raw of lines) {
+    const l = raw.trimEnd();
+    if (!l) continue;
+    if (PHRASE_SPACE.test(l)) return false;
+    const e = edgeChar(l, true);
+    if (!unspacedChar(e)) continue;
+    ends++;
+    if (CJK_PHRASE_END.test(e)) stops++;
+  }
+  return stops > 0 && stops * 4 >= ends;
+}
+/** `cjkWrapsLines` for one text (an edited segment). */
 export function cjkWraps(s: string): boolean {
-  return /[。，、｡､]/u.test(s) && !PHRASE_SPACE.test(s);
+  return cjkWrapsLines(s.split("\n"));
 }
 /** Text with every line break (and the blanks around it) folded into one space — the
  *  subtitle import, the edit commit and every export flatten alike — or, with `wraps` (see

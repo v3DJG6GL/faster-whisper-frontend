@@ -5,7 +5,7 @@
 
 import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
-import { cjkWraps, edgeChar, unspacedChar } from "./cueSplit";
+import { cjkWrapsLines, edgeChar, joinLineBreaks, unspacedChar } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -36,15 +36,13 @@ export function isTextSourcePath(path: string): boolean {
  *  file yields no segments. */
 export function parseImportedText(ext: string, content: string): ImportedText {
   const body = stripControlChars(content); // drops a BOM too (isDeceptiveFormatChar)
-  // One decision per file: whether its line breaks between two CJK characters are wraps.
-  const wraps = cjkWraps(body);
   let out: ImportedText;
   switch (ext.toLowerCase()) {
     case "srt":
-      out = parseSrt(body, wraps);
+      out = parseSrt(body);
       break;
     case "vtt":
-      out = parseVtt(body, wraps);
+      out = parseVtt(body);
       break;
     case "lrc":
       out = parseLrc(body);
@@ -53,7 +51,7 @@ export function parseImportedText(ext: string, content: string): ImportedText {
       out = parseJsonExport(body);
       break;
     default:
-      out = parsePlainText(body, wraps);
+      out = parsePlainText(body);
   }
   if (!out.segments.length) {
     throw new Error("No text found in this file — is it empty or a different format?");
@@ -101,18 +99,37 @@ function voiceName(raw: string): string {
 }
 
 /** A cue's (or paragraph's) lines as one: one space between two lines, or none between two
- *  unspaced characters when the file wraps its CJK lines (`cjkWraps`). Joined before the
+ *  unspaced characters when the file wraps its CJK lines (`cjkWrapsLines`). Joined before the
  *  markup goes, so a tag split over two lines still strips; its edges are judged without tags. */
 function joinLines(lines: string[], wraps: boolean): string {
   if (!wraps) return lines.join(" ");
-  const bare = (s: string) => s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "");
-  let out = "";
+  // Each seam judged from the previous line's own edge (its last line with text, tags aside),
+  // never by re-scanning what is joined so far: a paragraph of every line in a file stays linear.
+  const parts: string[] = [];
+  let prevEdge = "";
   for (const l of lines) {
-    const glue =
-      out !== "" && unspacedChar(edgeChar(bare(out).trimEnd(), true)) && unspacedChar(edgeChar(bare(l).trimStart(), false));
-    out = out === "" ? l : glue ? out.trimEnd() + l.trimStart() : `${out} ${l}`;
+    const b = bareLine(l);
+    if (parts.length === 0) parts.push(l);
+    else if (unspacedChar(prevEdge) && unspacedChar(edgeChar(b.trimStart(), false))) {
+      parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
+      parts.push(l.trimStart());
+    } else parts.push(" ", l);
+    const t = b.trimEnd();
+    if (t) prevEdge = edgeChar(t, true);
   }
-  return out;
+  return parts.join("");
+}
+
+/** A cue line without its tags and ASS override blocks — what a seam or the file's wrap
+ *  decision (`cjkWrapsLines`) judges. */
+function bareLine(s: string): string {
+  return s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "");
+}
+
+/** Raw cues → segments, deciding once for the file whether its CJK line breaks are wraps
+ *  (judged on the cue text only: no cue numbers, times, NOTE or STYLE blocks). */
+function cuesOf(cues: RawCue[]): ImportedText {
+  return cuesToSegments(cues, cjkWrapsLines(cues.flatMap((c) => c.lines.map(bareLine))));
 }
 
 /** Strip markup a cue line may carry and split a leading "Name:" speaker. */
@@ -330,18 +347,18 @@ function blocksToCues(body: string, timesAt: (lines: string[]) => number): RawCu
   return cues;
 }
 
-function parseSrt(body: string, wraps: boolean): ImportedText {
+function parseSrt(body: string): ImportedText {
   // The times follow an optional cue number.
-  return cuesToSegments(blocksToCues(body, (lines) => (/^\d+$/.test(lines[0].trim()) ? 1 : 0)), wraps);
+  return cuesOf(blocksToCues(body, (lines) => (/^\d+$/.test(lines[0].trim()) ? 1 : 0)));
 }
 
-function parseVtt(body: string, wraps: boolean): ImportedText {
+function parseVtt(body: string): ImportedText {
   // STYLE, NOTE and REGION blocks are not cues; the WEBVTT header block has no times.
-  return cuesToSegments(blocksToCues(body, (lines) => {
+  return cuesOf(blocksToCues(body, (lines) => {
     const first = lines[0].trim();
     if (first === "STYLE" || first === "NOTE" || first === "REGION") return -1;
     return lines.findIndex((l) => l.includes("-->"));
-  }), wraps);
+  }));
 }
 
 function parseLrc(body: string): ImportedText {
@@ -402,9 +419,10 @@ function parseLrc(body: string): ImportedText {
   return { segments };
 }
 
-function parsePlainText(body: string, wraps: boolean): ImportedText {
+function parsePlainText(body: string): ImportedText {
   // Paragraphs (blank-line separated) become segments; single-paragraph
   // files fall back to one segment per line.
+  const wraps = cjkWrapsLines(body.split("\n"));
   const paras = body
     .split(BLANK_LINE)
     .map((p) => joinLines(p.split("\n"), wraps).replace(/\s+/g, " ").trim())
@@ -469,8 +487,14 @@ function parseJsonExport(body: string): ImportedText {
   const language = shown ? languageCodeOf(shown) : undefined;
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
     // Decoded by JSON.parse after the control-char pass, like the segment text above.
-    const text = stripControlChars(obj.text);
-    return { ...parsePlainText(text, cjkWraps(text)), language };
+    return { ...parsePlainText(stripControlChars(obj.text)), language };
+  }
+  // A line break inside a segment's text folds like the subtitle import folds a cue's (one
+  // decision for the file), so the stored text holds none: the exports, the Subtitles view and
+  // a later edit commit then agree on it.
+  if (segments.some((g) => g.text.includes("\n"))) {
+    const wraps = cjkWrapsLines(segments.flatMap((g) => g.text.split("\n")));
+    for (const g of segments) g.text = joinLineBreaks(g.text, wraps);
   }
   return { segments, language };
 }

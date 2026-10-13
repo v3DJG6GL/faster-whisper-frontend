@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cjkWrapsLines, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "../types";
@@ -1064,9 +1064,11 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("東京\nTokyo", true)).toBe("東京 Tokyo");
     expect(joinLineBreaks("Hello\nworld", true)).toBe("Hello world");
   });
-  it("cjkWraps: 。，、 without a phrase space; ？！： alone and phrase-spaced text do not wrap", () => {
+  it("cjkWraps: lines ending on 。，、 (a quarter of the CJK line ends) and no phrase space; ？！： alone, a mid-line 、 and phrase-spaced text do not wrap", () => {
     expect(cjkWraps("今日はとても\n良い天気ですね。")).toBe(true);
-    expect(cjkWraps("我们今天去公园\n散步､然后")).toBe(true);
+    expect(cjkWraps("我们今天去公园､\n散步然后")).toBe(true);
+    expect(cjkWraps("我们今天去公园\n散步､然后")).toBe(false); // an enumeration mark is no line end
+    expect(cjkWrapsLines(["我们走吧", "他们在等我们", "快点", "好的", "翻译：小明。"])).toBe(false); // one credit line
     expect(cjkWraps("我们走吧\n他们在等我们")).toBe(false);
     expect(cjkWraps("我不知道他去哪儿了\n你知道吗？")).toBe(false);
     expect(cjkWraps("张三：我们走吧！")).toBe(false);

@@ -2048,6 +2048,23 @@ function mergeBase(): SyncBlob | undefined {
   return out;
 }
 
+/** The compose pass-through of a merge against `remote` (see `composeLive`): the snapshot, with
+ *  each fresh category's taken from the remote, as first contact does — merged against a base
+ *  without it, the snapshot's copy of a field this device does not sync would read as an edit
+ *  of this device's and ask (and "Keep mine" pushed it over the peer's newer value). No base:
+ *  the remote. */
+function passThroughFor(remote: SyncBlob): SyncBlob {
+  const b = state.snapshot;
+  if (!b) return remote;
+  if (freshCats.size === 0) return b;
+  const out: SyncBlob = { ...b };
+  for (const c of freshCats) {
+    if (remote[c] === undefined) delete (out as Record<string, unknown>)[c];
+    else (out as Record<string, unknown>)[c] = remote[c];
+  }
+  return out;
+}
+
 function supersede(): void {
   gen++;
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
@@ -2729,6 +2746,7 @@ async function pullCore(manual: boolean): Promise<void> {
         setPendingConflict(null);
         pullParked = false;
       }
+      freshCats.clear(); // an empty server has nothing to reconcile them with: the push seeds it
       setRuntime({ syncStatus: "ok" });
       schedulePush(0);
       return;
@@ -2804,7 +2822,9 @@ export async function pushNow(manual = false): Promise<void> {
   // equal values merge, different ones ask — instead of this device's value going up over the
   // peer's; that pull pushes what it needs once it adopts a base. While its conflict or review
   // waits, nothing goes up (no base was adopted, so the server may still be at this one).
-  if (freshCats.size > 0) {
+  // No base: nothing to merge against, so nothing to wait for (an empty server's pull seeds it
+  // with exactly this push, and gating it turned that into a pull loop).
+  if (freshCats.size > 0 && state.snapshot !== undefined) {
     if (!pendingConflict && !pendingReview) void pullNow(true);
     return;
   }
@@ -2923,7 +2943,7 @@ export async function pushNow(manual = false): Promise<void> {
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
-        if (state.snapshot === undefined) {
+        if (state.snapshot === undefined || freshCats.size > 0) {
           // No base (first contact, or the re-created document's just forgotten): recompose with
           // the remote as the pass-through. The blob above filled its pass-through slots
           // (categories and fields this device does not sync, the other-OS rules, a degraded
@@ -2934,7 +2954,8 @@ export async function pushNow(manual = false): Promise<void> {
           // No keyring-refusal re-check: the forget cleared the stash latch with the snapshot it
           // guarded, and a locked keyring now passes the REMOTE's backends through (marked
           // degraded), which the arms below hold out of the apply and withhold as a base.
-          blob = await composeLive(syncCats(), remoteBlob);
+          // A fresh category (`freshCats`) composes its pass-through from the remote the same way.
+          blob = await composeLive(syncCats(), passThroughFor(remoteBlob));
           if (myGen !== gen) return;
         }
         const { merged, conflicts } = mergeBlobs(mergeBase(), blob, remoteBlob);
@@ -3007,7 +3028,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // Normalize a pre-split peer's blob before merging (the base and local are current-shape).
   const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
   // With no base, the remote fills what this device does not sync (see `composeLive`).
-  const local = await composeLive(cats, state.snapshot ?? remoteBlob);
+  const local = await composeLive(cats, passThroughFor(remoteBlob));
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
   const { merged, conflicts } = mergeBlobs(mergeBase(), local, remoteBlob);
   if (conflicts.length > 0) {
@@ -3686,8 +3707,11 @@ type ApproveOutcome = "push" | "done" | "prompt";
 
 /** approvePendingReview's body, run under the engine lock. */
 async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOutcome> {
-  // A base at or past the reviewed version was adopted meanwhile: the review is moot.
-  if ((state.version ?? 0) >= r.version) {
+  // A base at or past the reviewed version was adopted meanwhile: the review is moot. At the
+  // base's own version only with no fresh category waiting: a reconcile of one raises at the
+  // version the base already holds, and adopting a base clears `freshCats`.
+  const v0 = state.version ?? 0;
+  if (v0 > r.version || (v0 === r.version && freshCats.size === 0)) {
     setPendingReview(null);
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
@@ -3727,7 +3751,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     st0.profiles !== st1.profiles ||
     st0.appRules !== st1.appRules;
   // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
-  const localNow = await composeLive(cats, state.snapshot ?? r.remote);
+  const localNow = await composeLive(cats, passThroughFor(r.remote));
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // The keyring can lock between the raise and this approval: a degraded compose carries the
   // base's (or remote's) backends category, not this device's list, so the merge reads backends
@@ -3976,7 +4000,8 @@ async function resolveLocked(
   myGen: number,
 ): Promise<ApproveOutcome> {
   // Same moot-conflict rule as approveLocked.
-  if ((state.version ?? 0) >= c.remoteVersion) {
+  const v0 = state.version ?? 0;
+  if (v0 > c.remoteVersion || (v0 === c.remoteVersion && freshCats.size === 0)) {
     setPendingConflict(null);
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
@@ -3989,7 +4014,7 @@ async function resolveLocked(
   // approvePendingReview.
   const syncedCats = syncCats();
   // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
-  const localNow = await composeLive(syncedCats, state.snapshot ?? c.remote);
+  const localNow = await composeLive(syncedCats, passThroughFor(c.remote));
   if (myGen !== gen || pendingConflict !== c || useApp.getState().status !== "idle") return "done";
   // `c.merged` was merged against the raise-time local: an edit made here since (to a category
   // only this device changed) would be hydrated back to its old value. Re-merge against the live
@@ -4223,6 +4248,8 @@ export async function initSync(): Promise<void> {
     if (nowSync?.enabled && prevSync?.enabled) {
       const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
       const nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
+      // Turned off again before its reconcile: not synced, so nothing to ask about.
+      for (const c of freshCats) if (!nowCats[c]) freshCats.delete(c);
       const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
       if (turnedOn.length > 0) {
         supersede();

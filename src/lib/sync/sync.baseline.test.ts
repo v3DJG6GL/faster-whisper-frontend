@@ -1996,6 +1996,54 @@ describe("a sync edit made during the launch work", () => {
     }
   });
 
+  it("resolving a re-enabled category's conflict lands the pick and adopts a base: the dialog does not come back", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "warn" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      await engine.resolveSyncConflicts({ logging: "local" }, engine.getPendingConflict()!.id);
+      await vi.waitFor(() => expect(io.pushes).toBe(1));
+      await new Promise((r) => setTimeout(r, 50));
+      expect(engine.getPendingConflict()).toBeNull();
+      expect(io.pushes).toBe(1);
+      expect(store.getState().settings.logging?.logLevel).toBe("warn");
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a re-enabled category asks only about the settings this device syncs", async () => {
+    // The server moved "Keep log files" since the base; this device syncs only "Log level", whose
+    // value it shares with the server: nothing to ask.
+    const older = { logging: { ...(serverCopy.logging as object), keepDays: 7 } } as SyncBlob;
+    const { engine, store, init } = await launchEngine({ sub: offSub }, older);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "debug" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
+      expect(engine.getPendingConflict()).toBeNull();
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
   it("sync turned on reconciles against the server instead of pushing over it", async () => {
     const { engine, store, init } = await launchEngine({ enabled: false });
     try {
@@ -2038,7 +2086,8 @@ describe("a push after a failed config save", () => {
     saves: 0,
     pushes: [] as SyncBlob[],
     states: [] as number[],
-    pull: { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} as SyncBlob } },
+    pull: { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} as SyncBlob | null } },
+    pulls: 0,
   };
 
   async function armEngine() {
@@ -2065,7 +2114,10 @@ describe("a push after a failed config save", () => {
       readBackendKeys: async () => ({ b1: "sk-1" }),
       setBackendKey: async () => {},
       deleteBackendKey: async () => {},
-      syncPull: async () => io.pull,
+      syncPull: async () => {
+        io.pulls++;
+        return io.pull;
+      },
       syncPush: async (args: { blob: SyncBlob; baseVersion: number }) => {
         io.pushes.push(args.blob);
         return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
@@ -2097,6 +2149,28 @@ describe("a push after a failed config save", () => {
     vi.unstubAllGlobals();
     vi.doUnmock("../api");
     vi.resetModules();
+  });
+
+  it("a category turned ON with no base (server copy deleted) seeds the server once instead of looping", async () => {
+    const { engine, store, syncOff } = await armEngine();
+    try {
+      io.saveFails = false;
+      const sub = store.getState().settings.sync!.sub!;
+      // Every logging gate off: the category is off until "Log level" comes on.
+      const off = { ...sub, logLevel: false, logRetention: false, logsInSidebar: false, logFolder: false };
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: off } } }));
+      await engine.resetSyncState(); // no base, sync still on
+      io.pull = { ok: true, status: 200, state: { version: 0, updated_ts: 0, device: null as unknown as string, blob: null } };
+      io.pulls = 0;
+      io.pushes = [];
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...off, logLevel: true } } } }));
+      await vi.waitFor(() => expect(io.pushes.length).toBe(1));
+      await new Promise((r) => setTimeout(r, 100));
+      expect(io.pushes.length).toBe(1);
+      expect(io.pulls).toBeLessThanOrEqual(2);
+    } finally {
+      syncOff();
+    }
   });
 
   it("sends nothing even once the save banner is dismissed", async () => {
