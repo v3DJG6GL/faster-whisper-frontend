@@ -118,6 +118,39 @@ export function foldLines(lines: readonly LogLine[]): FoldedLine[] {
   return out;
 }
 
+/** The top row's key and the run it was given to. A row is keyed by its `firstSeq`, but at
+ *  buffer cap the oldest lines are trimmed from the front, and the top run's `firstSeq` moves
+ *  with every evicting batch — the row remounted (focus lost from its ×N button), its measured
+ *  height reset and an expansion snapped shut. Only the top row can lose its head that way. */
+export interface HeadKey {
+  key: number;
+  firstSeq: number;
+  /** Seq of the run's newest occurrence when the key was given. */
+  lastSeq: number;
+  level: LogLine["level"];
+  tag: LogLine["tag"];
+  msg: string;
+}
+
+/** The head for `rows`: the previous key carried over when `rows[0]` is the same run with its
+ *  front trimmed (same level + tag + message, first occurrence within the previous run — the
+ *  bound is inclusive, so recomputing for the same rows keeps the key), else its own
+ *  `firstSeq`. A carried key is never above `rows[0].firstSeq`, so it stays below every other
+ *  row's key. Null for no rows. */
+export function carryHeadKey(prev: HeadKey | null, rows: readonly FoldedLine[]): HeadKey | null {
+  const r = rows[0];
+  if (!r) return null;
+  const { level, tag, msg } = r.line;
+  const same =
+    prev !== null &&
+    prev.level === level &&
+    prev.tag === tag &&
+    prev.msg === msg &&
+    prev.firstSeq <= r.firstSeq &&
+    r.firstSeq <= prev.lastSeq;
+  return { key: same ? prev.key : r.firstSeq, firstSeq: r.firstSeq, lastSeq: r.line.seq, level, tag, msg };
+}
+
 /** Follow / scroll-lock state machine: following auto-scrolls on new lines;
  *  any upward scroll pauses following and counts pending lines for the
  *  "N new lines ↓" pill; returning to the bottom (or the pill) re-latches. */

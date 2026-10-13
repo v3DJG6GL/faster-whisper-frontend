@@ -32,7 +32,8 @@ import {
   makeLogFilter,
   type FoldedLine,
   type FollowState,
-  type LevelThreshold, bugReportRunFields, countNewer } from "@/lib/logFilter";
+  type HeadKey,
+  type LevelThreshold, bugReportRunFields, carryHeadKey, countNewer } from "@/lib/logFilter";
 import { loadHistory, useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { safeDisplayText, stripControlChars } from "@/lib/sanitize";
 import { backendLabelById } from "@/lib/backends";
@@ -248,6 +249,12 @@ export default function Logs() {
         : lines.map((l) => ({ line: l, count: 1, firstTs: l.ts, firstSeq: l.seq, earlier: [] })),
     [lines, merge],
   );
+  // The top row keeps its key while the buffer trims its run from the front (carryHeadKey);
+  // every other row is keyed by its run's first seq. One key for the virtualizer, the React
+  // key and the expansion set alike.
+  const headRef = useRef<HeadKey | null>(null);
+  const head = useMemo(() => (headRef.current = carryHeadKey(headRef.current, rows)), [rows]);
+  const rowKey = (i: number) => (i === 0 && head ? head.key : rows[i].firstSeq);
   // What the bug report header records about the copied subset (null = the
   // view is unfiltered, so the paste IS the session tail).
   const filterSummary = useMemo(() => {
@@ -274,7 +281,8 @@ export default function Logs() {
     // Keyed on the run's FIRST seq, not `line.seq`: a merged row's `line` is its newest
     // occurrence and changes on every repeat, which remounted the row (dropping focus from
     // its ×N button) and invalidated its measured height on every live duplicate.
-    getItemKey: (index) => rows[index].firstSeq,
+    // The top row's run also loses its first seq to front eviction at buffer cap: rowKey.
+    getItemKey: rowKey,
   });
 
   // Follow: on new content, keep the tail pinned (after paint — wrapped rows
@@ -491,9 +499,10 @@ export default function Logs() {
             <div style={{ height: virtualizer.getTotalSize(), position: "relative" }}>
               {virtualizer.getVirtualItems().map((v) => {
                 const r = rows[v.index];
+                const k = rowKey(v.index);
                 return (
                   <div
-                    key={r.firstSeq}
+                    key={k}
                     ref={virtualizer.measureElement}
                     data-index={v.index}
                     style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${v.start}px)` }}
@@ -501,11 +510,11 @@ export default function Logs() {
                     <LogRow
                       r={r}
                       wrap={wrap}
-                      open={expanded.has(r.firstSeq)}
+                      open={expanded.has(k)}
                       onToggle={() =>
                         setExpanded((prev) => {
                           const next = new Set(prev);
-                          if (!next.delete(r.firstSeq)) next.add(r.firstSeq);
+                          if (!next.delete(k)) next.add(k);
                           return next;
                         })
                       }

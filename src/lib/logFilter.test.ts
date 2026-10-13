@@ -3,6 +3,7 @@ import type { LogLine } from "./api";
 import {
   BUG_REPORT_LINES,
   buildBugReport,
+  carryHeadKey,
   collectTags,
   FOLD_RUN_CAP,
   foldDropped,
@@ -108,6 +109,32 @@ describe("foldLines", () => {
     const [r] = foldLines([line({ seq: 7, ts: 70 })]);
     expect(r).toMatchObject({ count: 1, firstSeq: 7, earlier: [] });
     expect(foldDropped(r)).toBe(0);
+  });
+});
+
+describe("carryHeadKey", () => {
+  const run = (from: number, to: number, msg = "poll wedged") =>
+    Array.from({ length: to - from + 1 }, (_, i) => line({ seq: from + i, ts: from + i, msg }));
+  const tail = [line({ seq: 100, msg: "other" })];
+
+  it("keeps the top run's key while the buffer trims it from the front", () => {
+    const first = carryHeadKey(null, foldLines([...run(10, 19), ...tail]));
+    expect(first?.key).toBe(10);
+    // three oldest occurrences evicted (and one more appended to the run)
+    const trimmed = foldLines([...run(13, 20), ...tail]);
+    expect(trimmed[0].firstSeq).toBe(13);
+    const next = carryHeadKey(first, trimmed);
+    expect(next?.key).toBe(10);
+    // recomputed for the same rows (StrictMode, a re-memo): still carried
+    expect(carryHeadKey(next, trimmed)?.key).toBe(10);
+  });
+
+  it("gives a different top line, or the same message starting after the run, its own key", () => {
+    const first = carryHeadKey(null, foldLines(run(10, 19)));
+    expect(carryHeadKey(first, foldLines([line({ seq: 15, msg: "else" }), ...run(16, 19)]))?.key).toBe(15);
+    // Clear view, then new lines with the same message: a new run
+    expect(carryHeadKey(first, foldLines(run(25, 30)))?.key).toBe(25);
+    expect(carryHeadKey(first, [])).toBeNull();
   });
 });
 
