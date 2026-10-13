@@ -722,7 +722,13 @@ pub(crate) const TIMED_OUT: &str = "Timed out waiting for the server.";
 /// A short, user-facing message for a request-level reqwest failure.
 pub fn friendly_err(e: &reqwest::Error) -> String {
     if e.is_connect() {
-        "Could not connect — is the server running and the URL correct?".into()
+        // Same "Could not connect" head: the frontend's classifiers (errors.ts, the jobs ledger)
+        // key on it to know no request reached the server, which stays true here.
+        if cert_rejected(e) {
+            "Could not connect — the server's TLS certificate isn't trusted (expired, self-signed or for another name).".into()
+        } else {
+            "Could not connect — is the server running and the URL correct?".into()
+        }
     } else if e.is_timeout() {
         TIMED_OUT.into()
     } else {
@@ -741,6 +747,21 @@ pub fn friendly_err(e: &reqwest::Error) -> String {
         // The remainder is still a server-influenced string on its way to a banner and a log.
         bounded_server_text(&msg, MAX_ERR)
     }
+}
+
+/// A connect error whose cause is the server's certificate. reqwest files a rustls rejection
+/// (`invalid peer certificate: UnknownIssuer`, `… certificate expired`) under `is_connect`, so a
+/// LAN backend with a self-signed or expired certificate read as "is the server running?" and sent
+/// the user to debug the wrong thing. Only the source chain names the cause.
+fn cert_rejected(e: &dyn std::error::Error) -> bool {
+    let mut cause = e.source();
+    while let Some(c) = cause {
+        if c.to_string().contains("certificate") {
+            return true;
+        }
+        cause = c.source();
+    }
+    false
 }
 
 /// Cap for the transport's own error text (server-supplied `detail` strings are bounded tighter,
@@ -972,6 +993,48 @@ mod wire_language_tests {
         assert_eq!(wire_language_for(true, ""), None);
         assert_eq!(wire_language_for(true, "de"), Some("de"));
         assert_eq!(wire_language_for(false, "auto"), Some(""));
+    }
+}
+
+#[cfg(test)]
+mod cert_rejected_tests {
+    use super::cert_rejected;
+
+    /// reqwest's shape: a top-level "error sending request" whose cause chain holds the reason.
+    #[derive(Debug)]
+    struct Wrapped(&'static str, std::io::Error);
+
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str(self.0)
+        }
+    }
+
+    impl std::error::Error for Wrapped {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+            Some(&self.1)
+        }
+    }
+
+    fn connect_error(cause: &str) -> Wrapped {
+        Wrapped(
+            "client error (Connect)",
+            std::io::Error::other(cause.to_string()),
+        )
+    }
+
+    /// A rejected certificate (self-signed, expired) is named as such, not as an unreachable server.
+    #[test]
+    fn a_rejected_certificate_is_told_apart_from_a_dead_server() {
+        assert!(cert_rejected(&connect_error(
+            "invalid peer certificate: UnknownIssuer"
+        )));
+        assert!(cert_rejected(&connect_error(
+            "invalid peer certificate: certificate expired"
+        )));
+        assert!(!cert_rejected(&connect_error(
+            "tcp connect error: Connection refused (os error 111)"
+        )));
     }
 }
 

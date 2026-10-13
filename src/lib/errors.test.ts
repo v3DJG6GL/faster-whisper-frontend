@@ -28,6 +28,26 @@ describe("describeTransportError", () => {
     expect(d.showLogs).toBe(false);
   });
 
+  it("a rejected TLS certificate keeps the connect title but names the certificate as the fix", () => {
+    const cert = describeTransportError(
+      "transcribe",
+      "Could not connect — the server's TLS certificate isn't trusted (expired, self-signed or for another name).",
+      "GPU box",
+    );
+    expect(cert.title).toBe("Could not reach GPU box — nothing was started.");
+    expect(cert.hint).toBe(
+      "The server's TLS certificate isn't trusted — expired, self-signed or issued for another name.",
+    );
+    expect(cert.hint).not.toMatch(/server running/);
+    expect(cert.showLogs).toBe(false);
+    const plain = describeTransportError(
+      "transcribe",
+      "Could not connect — is the server running and the URL correct?",
+      "GPU box",
+    );
+    expect(plain.hint).toBe("Is the server running and the URL correct?");
+  });
+
   it("timeout: lost-contact copy per kind", () => {
     const d = describeTransportError("translate", "Timed out waiting for the server.", "GPU box");
     expect(d.title).toBe("Lost contact with GPU box while translating.");

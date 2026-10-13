@@ -113,7 +113,11 @@ export function describeTransportError(
   if (msg.includes("Could not connect")) {
     return {
       title: `Could not reach ${label} — nothing was started.`,
-      hint: "Is the server running and the URL correct?",
+      // friendly_err names a rejected certificate: "is the server running?" sent a user whose
+      // LAN backend has a self-signed or expired certificate after the wrong problem.
+      hint: msg.includes("TLS certificate")
+        ? "The server's TLS certificate isn't trusted — expired, self-signed or issued for another name."
+        : "Is the server running and the URL correct?",
       showLogs: false,
     };
   }
