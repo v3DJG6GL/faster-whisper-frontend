@@ -5,12 +5,12 @@ import { cn } from "@/lib/cn";
 import { plural } from "@/lib/format";
 import {
   CHART_METRICS, KINDS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
-  bucketMode, dayToIso, isFiltered, isoDayProblem, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
+  bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
   type RangePreset, type UsagePageQuery, type UsageScope,
 } from "@/lib/usageDerive";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 import type { UsageStageKey } from "@/lib/types";
-import { BUCKET_WORD, fmtDateRange } from "@/components/stats/chartKit";
+import { BUCKET_WORD, fmtDateRange, fmtSpanDate } from "@/components/stats/chartKit";
 import { Eyebrow, Pill } from "@/components/stats/primitives";
 
 /* ── the filter bar ──────────────────────────────────────────────────────── */
@@ -61,13 +61,13 @@ function CustomSpanPopover({ f, t, setF, setT, today, onApply, onCancel }: { f: 
         <span>
           {ok
             ? `${plural(days, "day")} · shown by ${BUCKET_WORD[mode]}`
-            : isoDayProblem(f) === "empty" || isoDayProblem(t) === "empty"
+            : !f || !t
               ? "Pick a start and an end date."
               : fd === undefined || td === undefined
-                ? "Pick dates between 1970 and 9999."
+                ? `Pick dates from ${fmtSpanDate(isoToDay(MIN_ISO_DAY)!)} to ${fmtSpanDate(isoToDay(MAX_ISO_DAY)!)}.`
                 : fd > td
                   ? "Pick a start on or before the end."
-                  : `Pick at most ${MAX_SPAN_DAYS.toLocaleString()} days (about 10 years).`}
+                  : `Pick at most ${plural(MAX_SPAN_DAYS, "day")} (about 10 years).`}
         </span>
         <span className="flex-1" />
         <button type="button" onClick={onCancel} className="ring-signal rounded-pill border border-line-strong px-3 py-1 text-[12px] text-dim hover:text-text">

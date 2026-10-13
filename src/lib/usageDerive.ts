@@ -349,13 +349,6 @@ export function isoToDay(iso: string): number | undefined {
   const day = Math.floor(t / DAY_MS);
   return isDay(day) && day <= MAX_DAY ? day : undefined;
 }
-/** Why isoToDay refuses a date-input value: "empty" for an empty or incomplete one, "range"
- *  for any other (a year wider than four digits, before MIN_ISO_DAY, after MAX_ISO_DAY);
- *  undefined when it parses. */
-export function isoDayProblem(iso: string): "empty" | "range" | undefined {
-  if (isoToDay(iso) !== undefined) return undefined;
-  return iso ? "range" : "empty";
-}
 /** The first day of the month `months` back from `day`'s month (0 = this month). */
 export function monthStart(day: number, months = 0): number {
   const d = dayDate(day);

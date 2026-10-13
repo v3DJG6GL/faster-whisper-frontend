@@ -16,8 +16,9 @@ import {
   rhythmModel,
   companionMetric,
   sumKinds,
-  isoDayProblem,
   isoToDay,
+  MAX_ISO_DAY,
+  MIN_ISO_DAY,
   legendRanges,
   levelOf,
   orderedStageRows,
@@ -419,11 +420,11 @@ describe("usageDerive", () => {
     expect(isoToDay("9999-11-30")).toBeDefined();
     expect(isoToDay("9999-12-01")).toBeUndefined();
     expect(isoToDay("10000-01-01")).toBeUndefined();
-    expect(isoDayProblem("")).toBe("empty");
-    expect(isoDayProblem("1969-12-31")).toBe("range");
-    expect(isoDayProblem("10000-01-01")).toBe("range");
-    expect(isoDayProblem("9999-12-01")).toBe("range");
-    expect(isoDayProblem("2026-10-13")).toBeUndefined();
+    expect(isoToDay("1969-12-31")).toBeUndefined();
+    expect(isoToDay("")).toBeUndefined();
+    // the popover's input bounds and range hint read these constants
+    expect(isoToDay(MIN_ISO_DAY)).toBe(0);
+    expect(isoToDay(MAX_ISO_DAY)).toBe(isoToDay("9999-11-30"));
     const presets = spanPresets(day);
     expect(presets.map((p) => p.label)).toEqual(["This month", "Last month", "This quarter", "This year", "Last year"]);
     expect(dayToIso(presets[0].from)).toBe("2026-09-01");
