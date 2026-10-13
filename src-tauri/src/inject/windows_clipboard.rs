@@ -105,7 +105,8 @@ pub enum OfferError {
 /// What `await_target_fetch` saw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchWait {
-    /// The target fetched after our chord.
+    /// The target fetched after our chord — or before it (`after_chord_ms` 0), which is then the
+    /// fetch the paste reads (see [`ChordReport::prior_fetch`]).
     Fetched {
         after_chord_ms: u64,
         /// A re-announce was scheduled for this fetch (enforce).
@@ -161,6 +162,17 @@ pub struct RenderReport {
     pub since_offer_ms: u64,
     pub since_chord_ms: Option<u64>,
     pub verdict: RenderVerdict,
+}
+
+/// What noting our chord found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChordReport {
+    pub since_offer_ms: u64,
+    /// The target already fetched this offer BEFORE the chord (a remote clipboard history or
+    /// manager pulling every announced item in the settle), and nobody blinded us. Windows sends
+    /// no second `WM_RENDERFORMAT` for one announce, so that fetch is the one this paste reads:
+    /// `Reannounce` in enforce (once per offer), `Plain` otherwise. `None` without such a fetch.
+    pub prior_fetch: Option<RenderVerdict>,
 }
 
 /// The previous offer, replaced by a new one.
@@ -242,12 +254,24 @@ impl OfferLedger {
         })
     }
 
-    /// Our chord went out for offer `id` to `pid`. Returns ms since the offer, or None when `id`
-    /// is no longer current (then nothing is armed).
-    pub fn on_chord(&mut self, id: u64, pid: u32, now: u64) -> Option<u64> {
+    /// Our chord went out for offer `id` to `pid`. None when `id` is no longer current (then
+    /// nothing is armed).
+    pub fn on_chord(&mut self, id: u64, pid: u32, now: u64) -> Option<ChordReport> {
+        let mode = self.mode;
         let c = self.cur.as_mut().filter(|c| c.id == id)?;
         c.chord = Some((now, pid));
-        Some(now.saturating_sub(c.at))
+        let prior_fetch = (c.target_fetches > 0 && !c.blind).then(|| {
+            if mode == Mode::Enforce && !c.reannounced {
+                c.reannounced = true;
+                RenderVerdict::Reannounce
+            } else {
+                RenderVerdict::Plain
+            }
+        });
+        Some(ChordReport {
+            since_offer_ms: now.saturating_sub(c.at),
+            prior_fetch,
+        })
     }
 
     /// Someone asked us to render the current offer. `None` when we hold no offer.
@@ -885,21 +909,42 @@ mod imp {
         let armed = with_state(|s| {
             let now = s.now();
             let r = s.ledger.on_chord(id, pid, now);
-            if r.is_some() {
+            if let Some(r) = r {
                 s.nofetch_for = Some(id);
+                if r.prior_fetch == Some(RenderVerdict::Reannounce) {
+                    s.set_reannounce_for(Some(id));
+                    s.reannounce_tries = 0;
+                }
             }
             r
         })
         .flatten();
-        match armed {
-            Some(after_offer) => {
-                tracing::info!(
-                    "[winclip] chord #{id} → {} (pid {pid}) +{after_offer}ms after offer",
-                    exe_of(pid)
-                );
-                unsafe { SetTimer(hwnd, T_NOFETCH, NOFETCH_MS, None) };
+        let Some(r) = armed else {
+            tracing::info!("[winclip] chord #{id}: offer no longer current — not tracked");
+            return;
+        };
+        tracing::info!(
+            "[winclip] chord #{id} → {} (pid {pid}) +{}ms after offer",
+            exe_of(pid),
+            r.since_offer_ms
+        );
+        unsafe { SetTimer(hwnd, T_NOFETCH, NOFETCH_MS, None) };
+        // The target fetched before the chord, and no second render will come for this offer:
+        // end the caller's wait now and, in enforce, drop the remote's cache as a post-chord
+        // fetch would.
+        if let Some(v) = r.prior_fetch {
+            let reannounce = v == RenderVerdict::Reannounce;
+            tracing::info!(
+                "[winclip] #{id}: the target fetched before our chord (re-announce scheduled={reannounce})"
+            );
+            publish_fetch(|f| {
+                if f.id == id && f.fetched.is_none() {
+                    f.fetched = Some((0, reannounce));
+                }
+            });
+            if reannounce {
+                unsafe { SetTimer(hwnd, T_REANNOUNCE, REANNOUNCE_DELAY_MS, None) };
             }
-            None => tracing::info!("[winclip] chord #{id}: offer no longer current — not tracked"),
         }
     }
 
@@ -1235,7 +1280,13 @@ mod tests {
     fn enforce_reannounces_once_then_reports_eager_refetch() {
         let mut l = OfferLedger::new(Mode::Enforce);
         assert!(l.on_offer(1, 0).is_none());
-        assert_eq!(l.on_chord(1, 4312, 300), Some(300));
+        assert_eq!(
+            l.on_chord(1, 4312, 300),
+            Some(ChordReport {
+                since_offer_ms: 300,
+                prior_fetch: None
+            })
+        );
         assert_eq!(l.chord_pid(), Some(4312));
         let r = l.on_render(Requester::Target, 348).unwrap();
         assert_eq!(r.verdict, RenderVerdict::Reannounce);
@@ -1269,6 +1320,34 @@ mod tests {
         let r = l.on_render(Requester::Target, 10).unwrap();
         assert_eq!(r.verdict, RenderVerdict::Plain);
         assert_eq!(r.since_chord_ms, None);
+    }
+
+    #[test]
+    fn a_target_fetch_before_the_chord_counts_as_its_fetch() {
+        // Enforce: the chord arms the one-shot re-announce at once, and only once.
+        let mut l = OfferLedger::new(Mode::Enforce);
+        l.on_offer(1, 0);
+        l.on_render(Requester::Target, 10);
+        let c = l.on_chord(1, 7, 300).unwrap();
+        assert_eq!(c.prior_fetch, Some(RenderVerdict::Reannounce));
+        assert_eq!(
+            l.on_render(Requester::Target, 400).unwrap().verdict,
+            RenderVerdict::EagerRefetch
+        );
+        assert_eq!(l.on_nofetch_timer(1), NoFetchVerdict::Fetched);
+
+        // Diag: the fetch is reported, nothing is re-announced.
+        let mut l = OfferLedger::new(Mode::Diag);
+        l.on_offer(1, 0);
+        l.on_render(Requester::Target, 10);
+        let c = l.on_chord(1, 7, 300).unwrap();
+        assert_eq!(c.prior_fetch, Some(RenderVerdict::Plain));
+
+        // Blind before the chord: no fetch of ours is known, so nothing changes.
+        let mut l = OfferLedger::new(Mode::Enforce);
+        l.on_offer(1, 0);
+        l.on_render(Requester::Other, 10);
+        assert_eq!(l.on_chord(1, 7, 300).unwrap().prior_fetch, None);
     }
 
     #[test]
