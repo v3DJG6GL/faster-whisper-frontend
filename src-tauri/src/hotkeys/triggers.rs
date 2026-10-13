@@ -113,16 +113,19 @@ fn emit_trigger(app: &AppHandle, profile_id: String, action: &str, released_at: 
     );
 }
 
-/// Load the persisted config (for resolving CLI flags → a Profile id).
+/// Load the persisted config (for resolving CLI flags → a Profile id). An unreadable file
+/// resolves against the last config read, like the in-app chords armed from it.
 fn load_config(app: &AppHandle) -> Option<crate::config::Config> {
-    let dir = app.path().app_config_dir().ok()?;
-    crate::config::try_load(&dir)
+    crate::commands::bindings_config(app)
 }
 
 /// Resolve a legacy / zero-arg flag to the first enabled Profile with `want`
 /// activation (config order), then emit. Keeps existing desktop shortcuts working.
 fn emit_for_activation(app: &AppHandle, want: ActivationType, action: &str) {
-    let Some(cfg) = load_config(app) else { return };
+    let Some(cfg) = load_config(app) else {
+        tracing::warn!("[trigger] config unreadable; legacy flag ignored");
+        return;
+    };
     match cfg
         .profiles
         .iter()

@@ -91,33 +91,48 @@ pub fn apply_bindings(app: &AppHandle) {
     apply_bindings_locked(app);
 }
 
-/// The apply step itself; the caller holds APPLY_LOCK. False when nothing was applied (no config
-/// dir, or an unreadable config before any good read this session).
-fn apply_bindings_locked(app: &AppHandle) -> bool {
-    // The config of the last apply that read the file: re-applied when a later read fails. A
-    // capture's re-register runs after suspend_shortcuts unregistered everything, so "keep what
-    // is live" alone would leave every hotkey off until the next resume or re-register.
-    static LAST_GOOD: std::sync::Mutex<Option<config::Config>> = std::sync::Mutex::new(None);
-    let Ok(dir) = config_dir(app) else {
-        return false;
-    };
-    // Never the recovering `load`: a read error here must not move the user's config aside, and
-    // must not apply the defaults either (they have no profiles: every hotkey would go).
-    let cfg = match config::try_load(&dir) {
+/// The config of the last good read by [`bindings_config`]: what an unreadable file falls back to.
+/// A capture's re-register runs after suspend_shortcuts unregistered everything, so "keep what is
+/// live" alone would leave every hotkey off until the next resume or re-register.
+static LAST_GOOD: std::sync::Mutex<Option<config::Config>> = std::sync::Mutex::new(None);
+
+/// The config for the mid-session hotkey readers (the bindings apply, the evdev re-scan, a legacy
+/// CLI/DE-shortcut flag); never the recovering `load`: a read error here must not move the user's
+/// config aside, and must not use the defaults either (they have no profiles: every hotkey would
+/// go). An unreadable file falls back to the last config read this session, so every reader
+/// decides from the same config the live bindings were armed from. None only when no read has
+/// succeeded yet this session.
+pub fn bindings_config(app: &AppHandle) -> Option<config::Config> {
+    let read = config_dir(app).ok().and_then(|dir| config::try_load(&dir));
+    read_or_last_good(&LAST_GOOD, read)
+}
+
+/// `bindings_config`'s fallback: a good read replaces `last_good`; a failed one returns it.
+fn read_or_last_good(
+    last_good: &std::sync::Mutex<Option<config::Config>>,
+    read: Option<config::Config>,
+) -> Option<config::Config> {
+    let mut last = last_good.lock().unwrap_or_else(|e| e.into_inner());
+    match read {
         Some(cfg) => {
-            *LAST_GOOD.lock().unwrap_or_else(|e| e.into_inner()) = Some(cfg.clone());
-            cfg
+            *last = Some(cfg.clone());
+            Some(cfg)
         }
-        None => match LAST_GOOD.lock().unwrap_or_else(|e| e.into_inner()).clone() {
-            Some(cfg) => {
-                tracing::warn!("[bindings] config unreadable; re-applying the last one read");
-                cfg
+        None => {
+            if last.is_some() {
+                tracing::warn!("[bindings] config unreadable; using the last one read");
             }
-            None => {
-                tracing::warn!("[bindings] config unreadable; nothing applied");
-                return false;
-            }
-        },
+            last.clone()
+        }
+    }
+}
+
+/// The apply step itself; the caller holds APPLY_LOCK. False when nothing was applied (an
+/// unreadable config before any good read this session).
+fn apply_bindings_locked(app: &AppHandle) -> bool {
+    let Some(cfg) = bindings_config(app) else {
+        tracing::warn!("[bindings] config unreadable; nothing applied");
+        return false;
     };
     // The quick-add chord stays INERT until a word-mapping list is designated
     // (settings.quickAddList) — the window would have nothing to add to. This
@@ -301,7 +316,7 @@ enum RescanApply {
     Held,
     /// The loss that asked for it was already re-armed by a concurrent apply.
     Covered,
-    /// The config could not be read, so nothing was applied: kept pending, no loss backoff.
+    /// No config read yet this session, so nothing was applied: kept pending, no loss backoff.
     Unread,
 }
 
@@ -341,8 +356,10 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
     let Some(reader_lost) = nodes.observe(now, crate::hotkeys::evdev::reader_lost()) else {
         return;
     };
-    // An unreadable config skips this tick (pending kept) rather than reading as "evdev off".
-    let Some(cfg) = config_dir(app).ok().and_then(|dir| config::try_load(&dir)) else {
+    // An unreadable config decides from the last config read (the one the live bindings were
+    // armed from); only with no good read yet this session does it skip the tick (pending kept)
+    // rather than read as "evdev off".
+    let Some(cfg) = bindings_config(app) else {
         return;
     };
     let wanted = cfg.settings.general.evdev_enabled;
@@ -615,26 +632,17 @@ pub struct EvdevStatus {
     available: bool,
     /// We can actually open a keyboard (i.e. the user is in the `input` group).
     permitted: bool,
-    /// The user has turned the backend on in config.
-    enabled: bool,
 }
 
-/// Status for the Permissions UI: is evdev available / permitted / enabled?
-/// `async` + spawn_blocking: `permitted()` opens and probes every /dev/input node and the config
-/// is read from disk — neither belongs on the main thread (a slow device would freeze the window).
+/// Status for the Permissions UI: is evdev available / permitted? (Whether it is turned on is the
+/// store's settings.general.evdevEnabled.)
+/// `async` + spawn_blocking: `permitted()` opens and probes every /dev/input node, which does not
+/// belong on the main thread (a slow device would freeze the window).
 #[tauri::command]
-pub async fn evdev_status(app: AppHandle) -> Result<EvdevStatus, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let enabled = config_dir(&app)
-            .ok()
-            .and_then(|d| config::try_load(&d))
-            .map(|c| c.settings.general.evdev_enabled)
-            .unwrap_or(false);
-        EvdevStatus {
-            available: cfg!(target_os = "linux"),
-            permitted: crate::hotkeys::evdev::permitted(),
-            enabled,
-        }
+pub async fn evdev_status() -> Result<EvdevStatus, String> {
+    tauri::async_runtime::spawn_blocking(|| EvdevStatus {
+        available: cfg!(target_os = "linux"),
+        permitted: crate::hotkeys::evdev::permitted(),
     })
     .await
     .map_err(|e| e.to_string())
@@ -880,5 +888,26 @@ mod tests {
         assert_eq!(rescan_step(true, false, false, || false), RescanStep::Skip);
         // evdev wanted (running or fallen back to the plugin) and a keyboard arrived.
         assert_eq!(rescan_step(true, false, false, || true), RescanStep::Apply);
+    }
+
+    #[test]
+    fn bindings_config_falls_back_to_the_last_good_read() {
+        let slot = std::sync::Mutex::new(None);
+        // No good read yet: an unreadable file is "nothing" (the re-scan keeps pending).
+        assert!(read_or_last_good(&slot, None).is_none());
+        let mut good = config::Config::default();
+        good.settings.general.evdev_enabled = !good.settings.general.evdev_enabled;
+        let wanted = good.settings.general.evdev_enabled;
+        let read = read_or_last_good(&slot, Some(good)).expect("a good read is returned");
+        assert_eq!(read.settings.general.evdev_enabled, wanted);
+        // Unreadable mid-session: every reader decides from the last config read, not "nothing".
+        let fallback = read_or_last_good(&slot, None).expect("the last good read");
+        assert_eq!(fallback.settings.general.evdev_enabled, wanted);
+        // A later good read replaces it.
+        let fresh = config::Config::default();
+        let fresh_flag = fresh.settings.general.evdev_enabled;
+        read_or_last_good(&slot, Some(fresh));
+        let fallback = read_or_last_good(&slot, None).expect("the newer good read");
+        assert_eq!(fallback.settings.general.evdev_enabled, fresh_flag);
     }
 }

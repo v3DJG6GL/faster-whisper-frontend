@@ -337,7 +337,7 @@ export default function Settings() {
     // stay on "Checking…"); an earlier answer from this session is kept.
     void evdevStatus()
       .then(setEvdev)
-      .catch(() => setEvdev((cur) => cur ?? { available: true, permitted: false, enabled: false }));
+      .catch(() => setEvdev((cur) => cur ?? { available: true, permitted: false }));
   }, [tab]);
 
 

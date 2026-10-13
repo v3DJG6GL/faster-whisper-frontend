@@ -1108,12 +1108,12 @@ export async function validateCodes(codes: string[]): Promise<boolean> {
 export interface EvdevStatus {
   available: boolean; // Linux-only backend
   permitted: boolean; // user can read /dev/input (in the `input` group)
-  enabled: boolean; // turned on in config
 }
 
-/** Whether the evdev hotkey backend is available / permitted / enabled. */
+/** Whether the evdev hotkey backend is available / permitted (whether it is turned on is the
+ *  config's `general.evdevEnabled`). */
 export async function evdevStatus(): Promise<EvdevStatus> {
-  if (!isTauri) return { available: false, permitted: false, enabled: false };
+  if (!isTauri) return { available: false, permitted: false };
   return invoke<EvdevStatus>("evdev_status");
 }
 
