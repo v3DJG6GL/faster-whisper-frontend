@@ -33,6 +33,7 @@ import {
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
+import { dictionaryLoadAction, dictionarySelection } from "@/lib/dictionaryHold";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
   Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,
@@ -653,11 +654,8 @@ export default function Dictionary() {
     [backends, connections],
   );
 
+  // The fallback-selection effect sits below `dirty`: a vanished selection is held while edits are unsaved.
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  useEffect(() => {
-    if (selectedId && candidates.some((c) => c.id === selectedId)) return;
-    setSelectedId(candidates[0]?.id ?? null);
-  }, [candidates, selectedId]);
   const backend = candidates.find((b) => b.id === selectedId) ?? null;
   // Mirror of selectedId for the imperative load() ([]-deps): after its await it drops a
   // stale result if the user switched Backend mid-fetch (else it clobbers the new backend's
@@ -670,6 +668,13 @@ export default function Dictionary() {
   // load() calls for the SAME backend (e.g. Refresh during the post-save reload, or rapid Refresh) —
   // an out-of-order network resolution would let the older fetch win. Bump per call, ignore stale.
   const loadGen = useRef(0);
+  // The backend whose rules are on screen, and whether they carry unsaved edits (set each render,
+  // below `dirty`). The load-on-change effect also re-runs when a sync changes the selected
+  // backend's address or drops it from the candidates; with unsaved edits it keeps the document and
+  // sets `held` instead of replacing it in silence (dictionaryLoadAction).
+  const loadedIdRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
+  const [held, setHeld] = useState<"keep-moved" | "keep-gone" | null>(null);
 
   // Start in the loading state so first paint shows the spinner, not the "No rules to manage" empty
   // card (the load effect only flips loading true post-paint; candidates.length===0 is still checked
@@ -723,6 +728,7 @@ export default function Dictionary() {
     const myGen = ++loadGen.current;
     setLoading(true);
     setResult(null);
+    setHeld(null); // a reload brings the document back in line with the backend's current address
     let res: Awaited<ReturnType<typeof getPipelineRules>>;
     try {
       res = await getPipelineRules({
@@ -770,6 +776,13 @@ export default function Dictionary() {
   }, []);
 
   useEffect(() => {
+    const action = dictionaryLoadAction(backend?.id ?? null, loadedIdRef.current, dirtyRef.current);
+    if (action === "keep-moved" || action === "keep-gone") {
+      setHeld(action);
+      return;
+    }
+    setHeld(null);
+    loadedIdRef.current = backend?.id ?? null;
     if (!backend) {
       setFetchRes(null);
       setRules([]);
@@ -862,6 +875,12 @@ export default function Dictionary() {
     [edits, base, editableFor],
   );
   const dirty = useMemo(() => rules.filter((r) => Object.keys(patchFor(r)).length > 0), [rules, patchFor]);
+  const hasDirty = dirty.length > 0;
+  dirtyRef.current = hasDirty;
+  useEffect(() => {
+    const next = dictionarySelection(selectedId, candidates.map((c) => c.id), hasDirty);
+    if (next !== selectedId) setSelectedId(next);
+  }, [candidates, selectedId, hasDirty]);
   // The same unsaved-work guard the three list editors register: the sticky bar and the
   // backend pills already refuse to lose edits, but a sidebar click or the chip's
   // app://navigate unmounted this screen and threw them away in silence.
@@ -949,6 +968,10 @@ export default function Dictionary() {
     // A full discard is a fresh slate — clear any lingering save banner (esp. a 422 rejection whose
     // edits no longer exist; the banner persists independent of `dirty` until the next load).
     setResult(null);
+    // Rules held over an address change are the OLD address's: discarding is the moment to load
+    // the backend's rules again. A held-over vanished backend instead lets the selection move on.
+    if (held === "keep-moved" && backend) void load(backend);
+    else setHeld(null);
   }
 
   return (
@@ -1078,6 +1101,13 @@ export default function Dictionary() {
           onStay={guard.stay}
         />
       )}
+      {held && candidates.length > 0 && (
+        <Notice>
+          {held === "keep-moved"
+            ? "This backend's address changed — your unsaved changes are kept. Save or discard them to load its rules again."
+            : "The backend these rules came from is no longer available — discard your changes to continue."}
+        </Notice>
+      )}
       {/* States */}
       {candidates.length === 0 ? (
         <EmptyCard
@@ -1114,7 +1144,7 @@ export default function Dictionary() {
               </span>
               <div className="ml-auto flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={discardAll} disabled={saving}>Discard</Button>
-                <Button variant="accent" size="sm" onClick={save} disabled={saving}>
+                <Button variant="accent" size="sm" onClick={save} disabled={saving || !backend}>
                   {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Save changes
                 </Button>
               </div>
