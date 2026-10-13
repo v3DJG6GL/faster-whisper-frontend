@@ -84,9 +84,17 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // the same-id ("hold"/"handsfree") ones. A retried Restore everything finishes from there, or
   // "Finish without sync" keeps what landed.
   const [landed, setLanded] = useState(false);
-  // Set when the CURRENT Restore everything attempt threw at its keyring write, after the apply
-  // landed: only for its error line (the key the user proved stays under the gate's own entry).
-  const keyFailed = useRef<string | null>(null);
+  // The backend a half-landed restore kept at the gate's address is keyless here although the
+  // user proved a key at the gate (its keyring write failed): read from the store, not from the
+  // last attempt's error line, which a retry that did not apply replaces. Not while an attempt
+  // runs (its key write may still be pending). Same predicate as finishLanded's startersKeyless.
+  const backends = useApp((s) => s.backends);
+  const keptKeyless = (() => {
+    if (!landed || busy || !key) return false;
+    const gateUrl = typedServerUrl(url);
+    const kept = backends.find((b) => normalizeUrl(b.serverUrl) === gateUrl);
+    return !!kept && kept.id !== gateBackend.current?.id && !kept.hasApiKey;
+  })();
   // Set by finishLanded when the backend the starters bind to has no key here: the quick-add
   // step would load its lists keyless and fail, so setup finishes after the starters instead.
   const startersKeyless = useRef(false);
@@ -96,7 +104,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
   // the starters, bound to that backend, so setup never ends without a profile and a hotkey.
   // When the restore replaced the gate's entry, the gate's keyring copy is referenced by nothing
   // any more and is deleted best-effort; a keyless kept backend gets its key under Backends, as
-  // the error line said.
+  // the keptKeyless note beside this exit says.
   const finishLanded = () => {
     const s = st.getState();
     const gate = gateBackend.current;
@@ -226,7 +234,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     const blob = pull?.state?.blob;
     if (!blob) return;
     setBusy(true);
-    keyFailed.current = null;
+    setError(null);
+    // Only for this attempt's error line (the key the user proved stays under the gate's own entry).
+    let keyWriteFailed = false;
     try {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the
@@ -237,7 +247,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       // The peer's folder paths are stripped: the gate bypass would otherwise apply them here.
       const ok = await applyBlob(stripMachineFolders(migrateBlob(blob)), ALL_ON, 2, { ignoreGates: true });
       if (!ok) {
-        setError("Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.");
+        // A retry after a half-landed attempt: what that one restored is still in the store.
+        setError(
+          landed
+            ? "This retry didn’t apply — the settings restored earlier are kept. Stop dictation or avoid changing settings, then try again, or finish without sync."
+            : "Nothing was restored — stop dictation or avoid changing settings while restoring, then try again.",
+        );
         return;
       }
       setLanded(true);
@@ -270,9 +285,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         const isGate = match.id === gateBackend.current?.id;
         const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
         if (!isGate) {
-          keyFailed.current = match.id;
+          keyWriteFailed = true;
           await setBackendKey(match.id, key);
-          keyFailed.current = null;
+          keyWriteFailed = false;
         }
         if (rotated) forgetCredential(match.id);
         if (!match.hasApiKey) {
@@ -306,7 +321,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
       finish();
     } catch (e) {
       setError(
-        keyFailed.current
+        keyWriteFailed
           ? `Your settings were restored, but this server's API key couldn't be saved to the system keyring (${String(e)}). Try again, or finish without sync and enter the key under Backends.`
           : String(e),
       );
@@ -493,6 +508,12 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
                   </Button>
                 )}
               </div>
+              {keptKeyless && (
+                <Notice className="mt-2.5">
+                  This server’s API key isn’t saved on this device — finish without sync, then enter it
+                  under Backends (or try Restore everything again).
+                </Notice>
+              )}
             </div>
             <p className="mt-4 max-w-[46ch] text-[12px] text-dim">
               {carriesProfiles
