@@ -1733,6 +1733,21 @@ describe("a manual Push / Pull clicked during launch", () => {
     }
   });
 
+  it("repeated Push clicks during launch run as one push", async () => {
+    io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
+    const { engine, store, init } = await launchEngine();
+    try {
+      const clicks = [engine.pushNow(true), engine.pushNow(true), engine.pushNow(true)];
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await Promise.all(clicks);
+      expect(io.pushes.length).toBe(1);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
   it("a Pull and a Push both clicked during launch both run", async () => {
     io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
     const { engine, store, init } = await launchEngine();

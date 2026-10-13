@@ -2588,6 +2588,10 @@ async function rePullAfterSession(): Promise<void> {
  *  parked on one launch wake together, the first taking it. False when a supersede (sync
  *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
  *  the lock one await hop later, so it loops on `inFlight` (the `manual && launchDone` block at the top of pullNow / pushNow). */
+// A manual Pull / Push already parked on launch (see the top of pullNow / pushNow).
+let parkedPull = false;
+let parkedPush = false;
+
 async function waitForLaunch(myGen: number): Promise<boolean> {
   if (launchDone) await launchDone;
   while (inFlight) {
@@ -2600,14 +2604,22 @@ async function waitForLaunch(myGen: number): Promise<boolean> {
 /** Pull the server blob and reconcile it into the running app. `manual` also
  *  re-applies when the version hasn't moved (a "make it so" button press). */
 export async function pullNow(manual = false): Promise<void> {
-  // A click made during launch runs once launch is over and the lock is free. The re-check of
-  // `inFlight` after each wait has no await before the take below: a twin parked on the same
-  // launch may have taken the lock in the hop since waitForLaunch saw it free.
+  // A click made during launch runs once launch is over and the lock is free; further clicks of
+  // the same kind meanwhile fold into it (the buttons stay enabled during the launch work, and
+  // each forced run would be one more server write / re-apply). The re-check of `inFlight` after
+  // each wait has no await before the take below: a twin parked on the same launch may have
+  // taken the lock in the hop since waitForLaunch saw it free.
   if (manual && launchDone) {
+    if (parkedPull) return;
+    parkedPull = true;
     const clickGen = gen;
-    do {
-      if (!(await waitForLaunch(clickGen))) return;
-    } while (inFlight);
+    try {
+      do {
+        if (!(await waitForLaunch(clickGen))) return;
+      } while (inFlight);
+    } finally {
+      parkedPull = false;
+    }
   }
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
@@ -2695,14 +2707,22 @@ export async function pullNow(manual = false): Promise<void> {
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
-  // A click made during launch runs once launch is over and the lock is free. The re-check of
-  // `inFlight` after each wait has no await before the take below: a twin parked on the same
-  // launch may have taken the lock in the hop since waitForLaunch saw it free.
+  // A click made during launch runs once launch is over and the lock is free; further clicks of
+  // the same kind meanwhile fold into it (the buttons stay enabled during the launch work, and
+  // each forced run would be one more server write / re-apply). The re-check of `inFlight` after
+  // each wait has no await before the take below: a twin parked on the same launch may have
+  // taken the lock in the hop since waitForLaunch saw it free.
   if (manual && launchDone) {
+    if (parkedPush) return;
+    parkedPush = true;
     const clickGen = gen;
-    do {
-      if (!(await waitForLaunch(clickGen))) return;
-    } while (inFlight);
+    try {
+      do {
+        if (!(await waitForLaunch(clickGen))) return;
+      } while (inFlight);
+    } finally {
+      parkedPush = false;
+    }
   }
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
