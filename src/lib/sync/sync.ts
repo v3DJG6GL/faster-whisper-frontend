@@ -2589,6 +2589,13 @@ async function waitForLaunch(): Promise<boolean> {
   if (!launchDone) return true;
   const myGen = gen;
   await launchDone;
+  // A "Delete server copy" made during the launch work can still hold the lock (its keyring
+  // delete queues behind launch's keyring read): wait it out too, as rePullAfterSession does,
+  // or the click drops at the gate after all.
+  while (inFlight) {
+    if (myGen !== gen) return false;
+    await new Promise((r) => setTimeout(r, 50));
+  }
   return myGen === gen;
 }
 

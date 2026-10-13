@@ -1589,6 +1589,8 @@ describe("a manual Push / Pull clicked during launch", () => {
     // When set, answers syncPull instead of `pull` (a hung startup pull).
     pullFn: null as null | (() => Promise<unknown>),
     pulls: 0,
+    // When set, keyring deletes wait on it (a reset's delete queued behind launch's read).
+    delHold: null as Promise<void> | null,
   };
 
   async function launchEngine() {
@@ -1597,6 +1599,7 @@ describe("a manual Push / Pull clicked during launch", () => {
     io.pushes = [];
     io.pullFn = null;
     io.pulls = 0;
+    io.delHold = null;
     const parked = new Promise<Record<string, string>>((r) => {
       io.release = (v) => {
         io.released = true;
@@ -1623,7 +1626,7 @@ describe("a manual Push / Pull clicked during launch", () => {
         return Promise.resolve({ b1: "sk-1" });
       },
       setBackendKey: async () => {},
-      deleteBackendKey: async () => {},
+      deleteBackendKey: () => io.delHold ?? Promise.resolve(),
       syncPull: async () => {
         io.pulls++;
         return io.pullFn ? io.pullFn() : io.pull;
@@ -1722,8 +1725,32 @@ describe("a manual Push / Pull clicked during launch", () => {
       io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
       await init;
       await click;
+      expect(io.pushes.length).toBeGreaterThan(0); // the click ran
       expect(io.pushes.every((p) => p.afterRelease)).toBe(true);
     } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a click made after a server-copy delete runs even when the delete outlasts launch", async () => {
+    io.pull = { ok: false, status: 0, error: "unreachable" };
+    const { engine, store, init } = await launchEngine();
+    let endDelete!: () => void;
+    io.delHold = new Promise<void>((r) => (endDelete = r));
+    try {
+      const reset = engine.resetSyncState(); // holds the lock until its keyring delete lands
+      const click = engine.pushNow(true);
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init; // launch ends; the startup pull dropped at the reset's lock
+      await new Promise((r) => setTimeout(r, 50));
+      expect(io.pushes).toEqual([]);
+      endDelete();
+      await reset;
+      await click;
+      expect(io.pushes.length).toBe(1);
+    } finally {
+      endDelete();
       io.release({});
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
     }
