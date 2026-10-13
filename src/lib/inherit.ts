@@ -12,13 +12,18 @@ import type { DecodeDefault, DecodeDefaults, InheritedValues, ServerModel } from
 import { spokenText, spokenValue } from "./languages";
 import { safeDisplayText } from "./sanitize";
 import { escapeText } from "./escapeText";
+import { separatorGlyphs } from "./livePreview";
 import { BOOL_KEYS, isDecodeKey, keySpec, NULL_TEXT, type DecodeKey } from "./decodeKeys";
 
 export type InheritWord = "Inherit" | "Default";
 
 export function inheritLabel(value: string | null | undefined, word: InheritWord | "Set by server" = "Inherit"): string {
-  const v = typeof value === "string" ? value.trim() : "";
-  return v ? `${word} · ${v}` : word;
+  if (typeof value !== "string" || value === "") return word;
+  // A value made only of whitespace is still a value (an output suffix of one space): drawn as
+  // ␠ per space (a tab ⇥, a line break ↵, as the live preview draws separators), never trimmed
+  // away into a bare word that reads as "unknown".
+  const v = value.trim() || separatorGlyphs(value).replace(/\s/g, "␠");
+  return `${word} · ${v}`;
 }
 
 /** A tri-state boolean's inherited side as the word its segments use. */
@@ -63,7 +68,8 @@ function shownValue(key: DecodeKey, v: DecodeDefault["value"] | undefined): stri
   // A multiline key's "" is itself the value (the hard-break separator "" = glue, shown
   // as "nothing"), never the word "none" the preview would type.
   if (v === "" && keySpec(key).kind === "text") return keySpec(key).multiline ? "" : NULL_TEXT[key] ?? "none";
-  if (typeof v === "string") return (keySpec(key).multiline ? v !== "" : v.trim()) ? v : undefined;
+  // A text key's whitespace-only value is a value too (OUTPUT_SUFFIX=" "); inheritLabel draws it.
+  if (typeof v === "string") return (keySpec(key).kind === "text" || keySpec(key).multiline ? v !== "" : v.trim()) ? v : undefined;
   return undefined;
 }
 

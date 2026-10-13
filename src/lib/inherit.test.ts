@@ -11,8 +11,16 @@ describe("inheritLabel", () => {
   });
   it("falls back to the bare word when the value is unknown", () => {
     expect(inheritLabel(undefined)).toBe("Inherit");
-    expect(inheritLabel("  ", "Default")).toBe("Default");
+    expect(inheritLabel("")).toBe("Inherit");
     expect(inheritLabel(null)).toBe("Inherit");
+  });
+  it("draws a value made only of whitespace instead of dropping it", () => {
+    // Changed: "  " used to give the bare word, which reads as "value unknown".
+    expect(inheritLabel("  ", "Default")).toBe("Default · ␠␠");
+    expect(inheritLabel(" ")).toBe("Inherit · ␠");
+    expect(inheritLabel("\t", "Set by server")).toBe("Set by server · ⇥");
+    // Padding around a real value still goes.
+    expect(inheritLabel(" on ")).toBe("Inherit · on");
   });
   it("maps booleans to on/off", () => {
     expect(onOff(true)).toBe("on");
@@ -139,6 +147,18 @@ describe("serverInherited", () => {
     // A multiline key's "" is itself the value (glue), never the word "none".
     expect(serverInherited(null, { streaming_hard_break_separator: "" }).values.streaming_hard_break_separator).toBe("");
   });
+  it("an output suffix of one space is a value, from the server and from a Backend", () => {
+    const fromServer = serverInherited(
+      dd({ settings: { output_suffix: { value: " ", source: "server", label: "", locked: false } } as DecodeDefaults["settings"] }),
+    );
+    expect(inheritLabel(String(fromServer.values.output_suffix))).toBe("Inherit · ␠");
+    expect(fromServer.sources.output_suffix).toBe("Server default");
+    const fromBackend = serverInherited(null, { output_suffix: " " }, "batch", "Backend default");
+    expect(inheritLabel(String(fromBackend.values.output_suffix))).toBe("Inherit · ␠");
+    expect(fromBackend.sources.output_suffix).toBe("Backend default");
+    // An empty one keeps its "none".
+    expect(serverInherited(null, { output_suffix: "" }).values.output_suffix).toBe("none");
+  });
   it("lets the backend beat the server, except where the server locks", () => {
     const s = serverInherited(dd(), { beam_size: 3, patience: 2 }, "batch", "Backend default");
     expect(s.values.beam_size).toBe(3);
@@ -187,7 +207,8 @@ describe("serverInherited", () => {
       }),
     );
     expect(s.values.streaming_hard_break_separator).toBe("\n");
-    expect(s.values.output_prefix).toBeUndefined(); // blank single-line text shows nothing
+    // A space is a value (inheritLabel draws it as ␠), no longer dropped as "blank".
+    expect(s.values.output_prefix).toBe(" ");
     expect(s.values.hallucination_silence_threshold).toBe("off");
     expect(s.values.suppress_chars).toBe("none");
     expect(Object.keys(s.values)).not.toContain("some_newer_server_key");
