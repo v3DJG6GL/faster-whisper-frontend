@@ -373,8 +373,11 @@ pub(crate) async fn inject_text(
         // `cancel_wants_recovery` is NOT redundant here: an error abort (a died session) reaches
         // this branch through the same race, and it DOES want its text recovered. Because this is
         // an early `return`, it never reaches the recovery block at the end of the function, so
-        // falling through and letting the write happen is what reproduces that recovery.
-        if crate::inject::injection_cancelled(epoch) && !crate::inject::cancel_wants_recovery(epoch)
+        // falling through and letting the write happen is what reproduces that recovery. Unless the
+        // caller withheld it: a withheld insert has nothing to recover, so any cancel stops it here
+        // with `landed: true`, as the clipboard-only arm and the paste write gate do.
+        if crate::inject::injection_cancelled(epoch)
+            && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
         {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
             return Ok(InjectOutcome {
