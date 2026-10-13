@@ -1006,11 +1006,15 @@ fn migrate_legacy(text: &str) -> Option<Config> {
 /// clears within tens of ms) so a momentary glitch isn't mistaken for a corrupt config. Returns
 /// `Ok(None)` when the file genuinely doesn't exist yet (first run). Also reads sync-state.json,
 /// jobs-ledger.json and usage-outcomes.json.
+///
+/// Decoded lossily: invalid UTF-8 is a permanent CONTENT fault, so it reaches the callers' parse
+/// (unparseable → rebuilt) instead of their unreadable path, which never saves over the file and
+/// so paused sync on every launch for one stray byte.
 pub(crate) fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     let mut attempt = 0;
     loop {
-        match std::fs::read_to_string(path) {
-            Ok(text) => return Ok(Some(text)),
+        match std::fs::read(path) {
+            Ok(bytes) => return Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => {
                 attempt += 1;

@@ -141,6 +141,24 @@ pub fn device_info(dir: &Path) -> DeviceInfo {
 mod tests {
     use super::*;
 
+    /// A state file that is not valid UTF-8 is unparseable (rebuilt), not unreadable: the
+    /// unreadable path never saves over the file, so one stray byte paused sync on every launch.
+    #[test]
+    fn a_state_file_that_is_not_utf8_reads_as_no_state() {
+        let dir = std::env::temp_dir().join(format!("fwf-syncstate-utf8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = sync_state_path(&dir);
+        std::fs::write(&path, b"\xff\xfe garbage").unwrap();
+        assert!(load(&dir).unwrap().is_none());
+        // A stray byte inside a string still parses: the rest of the state is kept.
+        std::fs::write(&path, b"{\"a\":\"x\xff\"}").unwrap();
+        let text = crate::config::read_config_text(&path).unwrap().unwrap();
+        assert_eq!(text, "{\"a\":\"x\u{fffd}\"}");
+        assert_eq!(load(&dir).unwrap().unwrap()["a"], "x\u{fffd}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn a_non_object_state_file_does_not_mint_a_new_device_id_every_call() {
         let dir = std::env::temp_dir().join(format!("fwf-syncstate-{}", std::process::id()));
