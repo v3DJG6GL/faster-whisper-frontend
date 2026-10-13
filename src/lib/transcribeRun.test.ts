@@ -652,6 +652,9 @@ describe("mergeSegmentTranslations kept-original marks", () => {
 });
 
 describe("dropping a correction a re-translate was made from", () => {
+  // The overlay persist debounces through window timers.
+  beforeEach(() => vi.stubGlobal("window", globalThis));
+  afterEach(() => vi.unstubAllGlobals());
   const recOf = (id: string): TranscriptRecord => ({
     schemaVersion: 1, kind: "file", id, createdAt: "2026-10-13T12:00:00Z",
     sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done",
