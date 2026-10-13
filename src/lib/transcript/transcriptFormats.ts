@@ -5,8 +5,8 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueResult, edgeChar, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
-  type Cue, type CueGrid, type CueLimits, type CueOptions,
+  buildCues, cueQuoteCtx, cueResult, edgeChar, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
+  type Cue, type CueGrid, type CueLimits, type CueOptions, type QuoteCtx,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
 import { ownProp } from "../own";
@@ -200,8 +200,9 @@ interface Ctx {
   /** The included tracks in line order ("orig" among them). */
   lineTracks: string[];
   /** Line-wrap one cue line of `track` (identity without cue options);
-   *  `reserve` = chars a prefix takes on the first line. */
-  wrap: (text: string, track: string, reserve: number) => string;
+   *  `reserve` = chars a prefix takes on the first line, `q` = the quotes of its segment
+   *  around it (cueQuoteCtx). */
+  wrap: (text: string, track: string, reserve: number, q?: QuoteCtx) => string;
 }
 
 /** A code point stripControlChars + trim() always keep: not whitespace, Cc or Cf, not a Hangul
@@ -313,7 +314,7 @@ export function writesCue(c: Cue, tracks: string[]): boolean {
  *  the Summary show, so none of them disagrees with the file. */
 export function writtenCues(
   grid: CueGrid, tracks: string[],
-): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
+): { start: number; end: number; text: string; seg: number; speaker?: string; q?: QuoteCtx }[] {
   if (tracks.length === 1 && ownProp(grid.own, tracks[0])) return writtenTrackCues(grid, tracks[0]);
   return grid.cues.filter((c) => writesCue(c, tracks));
 }
@@ -323,7 +324,7 @@ export function writtenCues(
  *  check all leave out the same cues. */
 export function writtenTrackCues(
   grid: CueGrid, track: string,
-): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
+): { start: number; end: number; text: string; seg: number; speaker?: string; q?: QuoteCtx }[] {
   return trackCues(grid, track).filter((c) => clean(c.text) !== "");
 }
 
@@ -504,7 +505,7 @@ function nameReserve(ctx: Ctx, seg: TranscriptSegment): number {
 }
 
 function srtLine(ctx: Ctx, seg: TranscriptSegment): string {
-  return srtStyled(ctx, seg, ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg)));
+  return srtStyled(ctx, seg, ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg), cueQuoteCtx(seg, "orig")));
 }
 
 function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string): string {
@@ -515,7 +516,7 @@ function srtMtLine(ctx: Ctx, text: string, seg: TranscriptSegment, lang: string)
   // is tagged too (as the TXT export does).
   const orphan = ctx.origIncluded && !clean(seg.text);
   const tag = ambiguous(ctx) || orphan ? `[${lang.toUpperCase()}] ` : "";
-  return srtStyled(ctx, seg, tag + ctx.wrap(text, lang, tag.length + nameReserve(ctx, seg)));
+  return srtStyled(ctx, seg, tag + ctx.wrap(text, lang, tag.length + nameReserve(ctx, seg), cueQuoteCtx(seg, lang)));
 }
 
 function srtExport(result: BatchResult, ctx: Ctx): string {
@@ -581,14 +582,14 @@ function vttExport(result: BatchResult, ctx: Ctx): string {
       if (mode === "line") return `<c.${cls}>${name}: ${text}</c>`;
       return `<c.${cls}>${text}</c>`;
     };
-    const orig = plain(vttEscape(ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg))));
+    const orig = plain(vttEscape(ctx.wrap(clean(seg.text), "orig", nameReserve(ctx, seg), cueQuoteCtx(seg, "orig"))));
     const lines = cueLines(ctx, seg, orig, (t, _s, lang) => {
-      if (isSite(lang)) return plain(vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg))));
+      if (isSite(lang)) return plain(vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg), cueQuoteCtx(seg, lang))));
       const mt = ambiguous(ctx) ? `mt.mt-${vttClass(lang)}` : "mt";
       // Translated lines carry the SAME speaker classes as the original (the
       // speaker is language-independent) stacked with .mt — the spk STYLE
       // block is emitted after .mt's, so the speaker color wins when on.
-      const escaped = vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg)));
+      const escaped = vttEscape(ctx.wrap(t, lang, nameReserve(ctx, seg), cueQuoteCtx(seg, lang)));
       if (!seg.speaker || !ctx.hasSpeakers) return `<c.${mt}>${escaped}</c>`;
       const name = vttEscape(nameOf(ctx, seg.speaker));
       if (mode === "off") {
@@ -811,11 +812,11 @@ function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
     visLangs: lineTracks.filter((t) => t !== "orig"),
     origIncluded: lineTracks.includes("orig"),
     lineTracks,
-    wrap: (text, track, reserve) => {
+    wrap: (text, track, reserve, q) => {
       if (!lim.has(track)) lim.set(track, trackLimits(result, cues, track));
       const L = lim.get(track);
       if (!L) return text;
-      return wrapLines(text, L.cpl, L.lines, reserve).join("\n");
+      return wrapLines(text, L.cpl, L.lines, reserve, q).join("\n");
     },
   };
 }

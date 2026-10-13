@@ -210,6 +210,22 @@ describe("buildCues", () => {
     expect(grid.own.ja.map((c) => c.text).join("").replace(/\s/g, "")).toBe(ja.replace(/\s/g, ""));
   });
 
+  it("own timing: a quote whose partner lies in the next cue of its segment opens forward", () => {
+    // Its cue (or line) was tokenized alone, where the partner is missing: it ended on 说".
+    const zh = '今天下午他终于对我说"我今天真的很累很累，想早点回家休息一下"然后就走了';
+    const short: CueOptions = { length: "short", timing: "own" };
+    const L = limitsFor(short, "zh");
+    for (const pause of [3, 8, 13, 20, 25]) {
+      const r = seg1(LONG, 0, 20, { segments: [{ start: 0, end: 20, text: " " + LONG, translations: { zh } }] }, { [pause]: 1.5 });
+      const own = buildCues(r, short, ["orig", "zh"]).own.zh;
+      expect(own.map((c) => c.text).join("")).toBe(zh);
+      for (const c of own) {
+        expect(c.text, `${pause}: ${own.map((x) => x.text).join(" | ")}`).not.toMatch(/说"$/);
+        for (const l of wrapLines(c.text, L.cpl, L.lines, 0, c.q)) expect(l).not.toMatch(/说"$/);
+      }
+    }
+  });
+
   it("own timing: an opening bracket stays with the character it opens", () => {
     const ja = "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
@@ -487,6 +503,41 @@ describe("wrapLines", () => {
     expect(wrapLines('我们明天去北京看看"然后回家吧', 6, 2)).toEqual(["我们明天去", '北京看看"', "然后回家吧"]);
     expect(wrapLines('屏幕是6.1"的手机，他说"很好"然后走了回家吧', 8, 2).some((l) => /^"|"$/.test(l))).toBe(false);
   });
+  it("an inch or foot mark after a digit is no quote: the quotation after it still opens", () => {
+    for (const t of ['屏幕是6.1"的手机，他说"很好"然后走了回家吧', '我买了27"的显示器，他说"真大"然后笑了']) {
+      for (let cpl = 4; cpl <= 16; cpl++) {
+        const lines = wrapLines(t, cpl, 2);
+        expect(lines.some((l) => /说"$/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+        expect(lines.join("")).toBe(t);
+      }
+      for (let n = 2; n <= 6; n++) {
+        const parts = cutByShare(t, Array(n).fill(1));
+        expect(parts.some((p) => /说"$/.test(p)), `${n}: ${parts.join(" | ")}`).toBe(false);
+        expect(parts.join("")).toBe(t);
+      }
+    }
+    // At an odd count a quote after a digit closes, as before: the pair after it still opens.
+    expect(wrapLines('他说"是2024"然后"好"了', 6, 2)).toEqual(['他说"是', '2024"', '然后"好"了']);
+    expect(cutByShare('他说"是2024"然后"好"了', [1, 1, 1, 1])).toEqual(['他说"是', '2024"', "然后", '"好"了']);
+  });
+  it("a cue's lines pair its quotes over its whole segment (QuoteCtx)", () => {
+    const none = { '"': 0, "'": 0 };
+    // The opening quote's partner lies in the next cue of the segment: it still opens forward,
+    // as the whole segment wraps it.
+    const whole = '今天下午他终于对我说"我今天真的很累很累，想早点回家休息一下"然后就走了';
+    const cue = '今天下午他终于对我说"我今天真的很累很累，想';
+    expect(wrapLines(whole, 16, 2).some((l) => /说"$/.test(l))).toBe(false);
+    expect(wrapLines(cue, 16, 2, 0, { before: none, after: { ...none, '"': 1 } }))
+      .toEqual(["今天下午他终于对我说", '"我今天真的很累很累，想']);
+    // A cue that starts inside a quotation: its first quote closes it, the next one opens.
+    const inner = '我们明天一起去北京"然后他说"好的我们走吧';
+    const q = { before: { ...none, '"': 1 }, after: { ...none, '"': 1 } };
+    for (let cpl = 6; cpl <= 16; cpl++) {
+      const lines = wrapLines(inner, cpl, 2, 0, q);
+      expect(lines.some((l) => /^"然|说"$/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+      expect(lines.join("")).toBe(inner);
+    }
+  });
   it("an over-long word of spaced text wraps per character, sharing a line with its neighbour", () => {
     const w = "x".repeat(50);
     expect(wrapLines(`a ${w}`, 42, 2)).toEqual(["a " + "x".repeat(24), "x".repeat(26)]);
@@ -664,6 +715,13 @@ describe("wrapLines", () => {
       expect(lines.join("").replace(/ /g, "")).toBe(t.replace(/ /g, ""));
     }
     expect(wrapLines(`東京${"」".repeat(30)}`, 13, 2)[0].startsWith("東京")).toBe(true);
+    // …and so does a wall of opening brackets before a character: at most three ride along.
+    for (const [t, cpl] of [[`東京${"「".repeat(30)}です`, 13], [`東京は${"（".repeat(30)}本当`, 13]] as const) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.every((l) => l.length <= cpl), lines.join(" | ")).toBe(true);
+      expect(lines.join("")).toBe(t);
+      expect(lines[0]).toMatch(/^東京/);
+    }
     expect(wrapLines(`他说${"”".repeat(30)}`, 13, 2)[0].startsWith("他说")).toBe(true);
     const run = `He said ${'"'.repeat(40)}word ok`;
     const runLines = wrapLines(run, 28, 2);

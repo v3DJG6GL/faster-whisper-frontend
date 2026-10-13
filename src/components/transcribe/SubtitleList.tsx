@@ -20,7 +20,7 @@ import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
 import {
   TRANSCRIBED_CPS, timedTrack, trackLimits, wrapLines,
-  type CueGrid, type CueLimits, type CueOptions,
+  type CueGrid, type CueLimits, type CueOptions, type QuoteCtx,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
 import { writesCue, writtenTrackCues } from "@/lib/transcript/transcriptFormats";
@@ -248,21 +248,22 @@ export function SubtitleList({
       return limCache.get(track)!;
     };
     const maxDur = limitOf("orig")?.maxDur ?? 7;
-    /** One track's text of a cue: name prefix, wrapped to its limits. */
-    const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean): Line => {
+    /** One track's text of a cue: name prefix, wrapped to its limits (`q` = the quotes of its
+     *  segment around it, as the export wraps it). */
+    const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean, q?: QuoteCtx): Line => {
       const body = stripControlChars(text);
       // No name on an empty cell: the export writes none there either.
       const prefix = showNames && speaker && body.trim() ? `${displayName(speaker)}: ` : "";
       const L = limitOf(track);
       return {
-        text: prefix + (L ? wrapLines(body, L.cpl, L.lines, prefix.length).join("\n") : body),
+        text: prefix + (L ? wrapLines(body, L.cpl, L.lines, prefix.length, q).join("\n") : body),
         main,
         color: main && colorize && speaker ? colorOf(speaker) : undefined,
       };
     };
     const rowOf = (
       key: string, n: number, c: { seg: number; start: number; end: number; speaker?: string },
-      first: boolean, cols: [track: string, text: string][],
+      first: boolean, cols: [track: string, text: string, q?: QuoteCtx][],
     ): Row => {
       const span = c.end - c.start;
       const d = Math.max(0.001, span);
@@ -277,7 +278,7 @@ export function SubtitleList({
       // timing — no reading speed to judge, as the export panel says too.
       const synth = !!result.timingSynthesized;
       const fast = !synth && worst.rate > worst.limit;
-      const lines = cols.map(([t, text]) => lineOf(t, text, c.speaker, t === "orig"));
+      const lines = cols.map(([t, text, q]) => lineOf(t, text, c.speaker, t === "orig", q));
       const cps = synth ? "no timing" : span <= 0 ? "0.0 s · no duration" : `${d.toFixed(1)} s · ${fast && cols.length > 1 ? `${trackCode(result, worst.t)} ` : ""}${worst.rate.toFixed(fast ? 1 : 0)} chars/s`;
       return {
         // The key carries what sets the row's height (its lines, the bar, the rate line), so a
@@ -297,7 +298,8 @@ export function SubtitleList({
       // line, even blank, keeps it.
       const kept = grid.cues.flatMap((c, i) => {
         if (!writesCue(c, tracks)) return [];
-        const cols = tracks.map((t): [string, string] => [t, t === "orig" ? c.text : (ownProp(c.tr, t) ?? "")]);
+        const cols = tracks.map((t): [string, string, QuoteCtx?] =>
+          [t, t === "orig" ? c.text : (ownProp(c.tr, t) ?? ""), t === "orig" ? c.q : ownProp(c.trq, t)]);
         return [{ c, i, cols }];
       });
       return {
@@ -326,7 +328,7 @@ export function SubtitleList({
           track: t,
           code: trackChipLabel(result, t),
           rows: list.map((c, i) =>
-            rowOf(`${t}-${i}`, i + 1, c, li === idLane && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text]])),
+            rowOf(`${t}-${i}`, i + 1, c, li === idLane && (i === 0 || list[i - 1].seg !== c.seg), [[t, c.text, c.q]])),
         };
       }),
     };

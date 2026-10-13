@@ -47,6 +47,22 @@ export interface Cue {
   speaker?: string;
   /** Translations cut onto this cue (same timing only). */
   tr: Record<string, string>;
+  /** The quotes of its segment around `text` (absent when there are none): wrapLines needs
+   *  them to pair a quote whose partner lies in the next cue of the same segment. */
+  q?: QuoteCtx;
+  /** The same per translation in `tr`. */
+  trq?: Record<string, QuoteCtx>;
+}
+
+/** Counted ASCII quotes of each kind (quoteFlags). */
+export type QuoteCount = Record<'"' | "'", number>;
+/** The counted ASCII quotes of a segment's text before and after one cue's (or part's) text.
+ *  mixedTokens judges a glued quote by the quotes around it, and a cue's text is a substring:
+ *  counted over the cue alone, an opening quote whose partner fell into the next cue of the
+ *  segment had none, and the cue or line ended on it. */
+export interface QuoteCtx {
+  before: QuoteCount;
+  after: QuoteCount;
 }
 
 export interface CueGrid {
@@ -305,8 +321,10 @@ const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
  *  a flag's two regional indicators stay one unit, a Thai/Lao leading vowel rides with the
  *  consonant after it and a following vowel with the one before, and a Burmese/Khmer
  *  stacked consonant stays with the virama above it. At most three closers ride along,
- *  as one ー does: a hallucinated "え？？？？…" glued into one unit could not wrap. */
-const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]{0,3}`, "gu");
+ *  as one ー does: a hallucinated "え？？？？…" glued into one unit could not wrap. At most
+ *  three openers ride along, as three closers do: a hallucinated wall of 「 before a
+ *  character was one unit and ran a line far over the cap. */
+const CJK_UNIT = new RegExp(`[${OPEN_PUNCT}]{0,3}[${LEADS}]*(?:\\p{RI}\\p{RI}|\\S)${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]{0,3}`, "gu");
 const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
 /** The units a token longer than a line wraps by (a URL, an e-mail address, a German
  *  compound, a run of ・): units() with ASCII punctuation kept on its character, as
@@ -376,8 +394,9 @@ function runAt(t: string, i: number): number {
  *  has no word timing of its own (a translation under own timing). Text
  *  without spaces splits per code point when it is CJK/Thai-like (a Latin word or
  *  number glued into it — "iPhone", "2026年" — stays one token, as wrapLines keeps
- *  it); otherwise it is one word and one token. */
-function spreadTokens(text: string, a: number, b: number): Tok[] {
+ *  it); otherwise it is one word and one token. `q` = the quotes of the segment around
+ *  `text` (QuoteCtx). */
+function spreadTokens(text: string, a: number, b: number, q?: QuoteCtx): Tok[] {
   const spans: [number, number][] = [];
   if (!/\s/.test(text.trim()) && !BREAKS_ANYWHERE.test(text)) {
     spans.push([0, text.length]);
@@ -386,7 +405,7 @@ function spreadTokens(text: string, a: number, b: number): Tok[] {
     // bracket rides with the code point it opens, a closer with the one it closes, a glued
     // Latin word stays whole, and so does a word mixing both widths ("ＰＳ5") — matched
     // per MIXED_TOKEN here, an own-timed cue could end on ＰＳ.
-    const m = mixedTokens(text);
+    const m = mixedTokens(text, q);
     m.toks.forEach((w, k) => spans.push([m.at[k], m.at[k] + w.length]));
   }
   const tot = spans.reduce((n, [f, t]) => n + t - f + 1, 0) || 1;
@@ -499,8 +518,9 @@ function stretchesOf(pieces: { start: number; end: number; text: string }[]): { 
 // ── translation cutting (same timing) ───────────────────────────────────────
 
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
- *  cuts after sentence/clause punctuation and never right after an article. */
-export function cutByShare(text: string, shares: number[]): string[] {
+ *  cuts after sentence/clause punctuation and never right after an article. `q` = the
+ *  quotes of the segment around `text` when it is only part of one (QuoteCtx). */
+export function cutByShare(text: string, shares: number[], q?: QuoteCtx): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
   // One word of a spaced script ("Ja."): nothing to cut — it goes to the first part.
@@ -510,7 +530,7 @@ export function cutByShare(text: string, shares: number[]): string[] {
   // whole here as it does on a line — its "." or "," used to draw the cut into it.
   let seams: Set<number> | null = null;
   if (!spaced) {
-    const m = mixedTokens(text);
+    const m = mixedTokens(text, q);
     seams = new Set(m.toks.map((w, k) => m.at[k] + w.length));
   }
   // Candidate cut positions: a space (dropped) or, for CJK, any code-point
@@ -630,8 +650,9 @@ export function cutByShare(text: string, shares: number[]): string[] {
  *  caller's limit), bottom-heavy (the second line may be longer), preferring
  *  breaks after punctuation and never after an article. Text that cannot fit
  *  gets extra lines rather than losing words. `firstReserve` = chars a prefix
- *  ("Name: ", "[DE] ") takes on the first line. */
-export function wrapLines(text: string, cpl: number, _lines: number, firstReserve = 0): string[] {
+ *  ("Name: ", "[DE] ") takes on the first line. `q` = the quotes of the cue's segment
+ *  around `text` (Cue.q), so a quote pairs with its partner in the next cue. */
+export function wrapLines(text: string, cpl: number, _lines: number, firstReserve = 0, q?: QuoteCtx): string[] {
   const t = text.trim();
   const len = t.length + firstReserve;
   if (len <= cpl) return [t];
@@ -666,7 +687,7 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
       return whole.length < split.length ? whole : split;
     }
   } else {
-    const m = mixedTokens(t);
+    const m = mixedTokens(t, q);
     m.toks.forEach((w, k) => {
       const parts = w.length > cpl ? tokenUnits(w) : [w];
       toks.push(...parts);
@@ -684,6 +705,50 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   return wrapTokens(toks, gaps, cpl, len, firstReserve);
 }
 
+/** Which characters of `t` are counted ASCII quotes, `seed` = those of each kind before `t`
+ *  (its segment's, when `t` is a cue of it). A " or ' between two ASCII letters or digits is
+ *  none (it's, rock'n'roll), and neither is an inch or foot mark: one glued right after an
+ *  ASCII digit while the count of its kind so far is even (6.1", 27") — counted, it flipped
+ *  the pairing of every quote after it. At an odd count the same quote closes (他说"是2024"). */
+function quoteFlags(t: string, seed?: QuoteCount): boolean[] {
+  const n: QuoteCount = { '"': seed?.['"'] ?? 0, "'": seed?.["'"] ?? 0 };
+  const out: boolean[] = [];
+  for (let j = 0; j < t.length; j++) {
+    const c = t[j];
+    const prev = t[j - 1] ?? "";
+    const is = (c === '"' || c === "'")
+      && !(/[A-Za-z0-9]/.test(prev) && /[A-Za-z0-9]/.test(t[j + 1] ?? ""))
+      && !(/[0-9]/.test(prev) && n[c] % 2 === 0);
+    if (is) n[c as keyof QuoteCount]++;
+    out.push(is);
+  }
+  return out;
+}
+
+/** The QuoteCtx of each of `parts` — trimmed substrings of `whole`, in order (cues, cut parts)
+ *  — counted over `whole` in one pass; undefined for an empty or unfound part, or when no
+ *  quote stands outside it. */
+function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
+  const f = quoteFlags(whole);
+  /** Counted quotes of each kind before index i. */
+  const dq = [0];
+  const sq = [0];
+  for (let j = 0; j < whole.length; j++) {
+    dq.push(dq[j] + (f[j] && whole[j] === '"' ? 1 : 0));
+    sq.push(sq[j] + (f[j] && whole[j] === "'" ? 1 : 0));
+  }
+  const L = whole.length;
+  let from = 0;
+  return parts.map((p) => {
+    const at = p ? whole.indexOf(p, from) : -1;
+    if (at < 0) return undefined;
+    const e = at + p.length;
+    from = e;
+    const q: QuoteCtx = { before: { '"': dq[at], "'": sq[at] }, after: { '"': dq[L] - dq[e], "'": sq[L] - sq[e] } };
+    return q.before['"'] + q.before["'"] + q.after['"'] + q.after["'"] ? q : undefined;
+  });
+}
+
 /** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens and
  *  wrapLines tokenize unspaced text by them too), per token whether whitespace stood
  *  before it, and where in `t` it starts. Punctuation glued to its neighbour (an ASCII
@@ -691,21 +756,26 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
  *  stop or ends on an opener. An opener glued to the end of a word moves onto the character
  *  it opens, so a line may break before the "(" but never right after it. An ASCII " or '
  *  is a stop by class, but one that opens a quotation (他说"你好") rides forward too: it
- *  opens when a space or the text start stands before it, or when it is an odd-numbered
- *  one of its kind so far (an apostrophe between two letters, it's, is no quote), and a
- *  letter, digit or opener follows. */
-function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[] } {
+ *  opens when a space, the text start or an opening bracket stands before it, or when it
+ *  would be an odd-numbered one of its kind AND a later one of its kind follows to close it
+ *  — both counted over the whole segment (`q`, the quotes around `t` when it is one cue of
+ *  it) — and in every case a letter, digit or opener must follow. A quote between two ASCII
+ *  letters or digits (it's) and an inch or foot mark after a digit (6.1") are no quotes
+ *  (quoteFlags). The last unpaired one joins the text before it: a single unpaired quote,
+ *  including a closer whose opener was in the previous segment, is ambiguous and stays
+ *  joined backward. */
+function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]; at: number[] } {
   const toks: string[] = [];
   const gaps: boolean[] = [];
   const at: number[] = [];
   let end = 0;
-  /** ASCII quotes of each kind before the current match — kept running, so the pass stays linear. */
-  const quotes: Record<string, number> = { '"': 0, "'": 0 };
-  /** ASCII quotes of each kind in the whole text (an apostrophe between ASCII letters is none). */
-  const isQuote = (j: number) =>
-    t[j] in quotes && !(/[A-Za-z0-9]/.test(t[j - 1] ?? "") && /[A-Za-z0-9]/.test(t[j + 1] ?? ""));
-  const total: Record<string, number> = { '"': 0, "'": 0 };
-  for (let j = 0; j < t.length; j++) if (isQuote(j)) total[t[j]]++;
+  const flags = quoteFlags(t, q?.before);
+  /** Counted quotes of each kind before the current match (from the segment start) — kept
+   *  running, so the pass stays linear. */
+  const quotes: Record<string, number> = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
+  /** Counted quotes of each kind in the whole segment. */
+  const total: Record<string, number> = { '"': quotes['"'] + (q?.after['"'] ?? 0), "'": quotes["'"] + (q?.after["'"] ?? 0) };
+  for (let j = 0; j < t.length; j++) if (flags[j]) total[t[j]]++;
   /** The token that ends on an opening ASCII quote: the next one joins it. */
   let quoted = -1;
   for (const m of t.matchAll(MIXED_TOKEN)) {
@@ -714,17 +784,16 @@ function mixedTokens(t: string): { toks: string[]; gaps: boolean[]; at: number[]
     end = m.index! + w.length;
     const k = toks.length - 1;
     // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
-    const q = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
-    const after = m.index! + (q?.[0].length ?? 0);
+    const qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
+    const after = m.index! + (qr?.[0].length ?? 0);
     // Glued to the text before it, a quote opens only on positive evidence: an even count of its
-    // kind so far AND a later one of its kind to close it. The last unpaired one — a closer whose
-    // opener was in the previous segment, or the one after a stray inch mark — joins the text it
-    // closes.
-    const c = q?.[1][0] ?? '"';
-    const opens = !!q && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(after, after + 2), false))
-      && (gap || k < 0 || q[0] !== q[1]
-        || (quotes[c] % 2 === 0 && total[c] > quotes[c] + q[1].split(c).length - 1));
-    for (let j = m.index!; j < end; j++) if (isQuote(j)) quotes[t[j]]++;
+    // kind so far in the segment AND a later one of its kind to close it. The last unpaired one —
+    // a closer whose opener was in the previous segment — joins the text it closes.
+    const c = qr?.[1][0] ?? '"';
+    const opens = !!qr && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(after, after + 2), false))
+      && (gap || k < 0 || qr[0] !== qr[1]
+        || (quotes[c] % 2 === 0 && total[c] > quotes[c] + qr[1].split(c).length - 1));
+    for (let j = m.index!; j < end; j++) if (flags[j]) quotes[t[j]]++;
     // An opener glued to the end of a Latin word ("Python(") moves onto what it opens, with
     // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
     // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off left „Hallo /
@@ -892,7 +961,9 @@ export function buildCues(
       ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg) })
       : null;
     const pieces = split && needMine ? split : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
-    const mine: Cue[] = pieces.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} }));
+    // Each cue's quotes around it in the segment, so its lines pair a quote across cues.
+    const mq = pieces.length > 1 ? quoteCtxs(seg.text, pieces.map((p) => p.text)) : [];
+    const mine: Cue[] = pieces.map((p, k) => ({ seg: si, ...p, speaker: seg.speaker, tr: {}, ...(mq[k] ? { q: mq[k] } : {}) }));
     // Spoken stretches: the original's cues joined until it shows a gap (a pause
     // timedPieces left open), so an own-timed translation never runs over silence.
     const spans = split && ownMt ? stretchesOf(split) : [];
@@ -906,15 +977,22 @@ export function buildCues(
           continue;
         }
         const texts = cutByShare(t, spans.map((sp) => sp.len));
+        // Each stretch's text is a part of the translation: its tokens pair a quote with the
+        // partner the next stretch holds, and so do the lines of its cues.
+        const tq = quoteCtxs(t, texts);
+        const parts: { start: number; end: number; text: string }[] = [];
         spans.forEach((sp, k) => {
           if (!texts[k]) return;
-          const parts = timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end), sp.start, sp.end, LL);
-          own[lang].push(...parts.map((p) => ({ seg: si, ...p, speaker: seg.speaker, tr: {} })));
+          parts.push(...timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end, tq[k]), sp.start, sp.end, LL));
         });
+        const pq = quoteCtxs(t, parts.map((p) => p.text));
+        own[lang].push(...parts.map((p, k) => ({ seg: si, ...p, speaker: seg.speaker, tr: {}, ...(pq[k] ? { q: pq[k] } : {}) })));
       } else {
         const parts = cutByShare(t, mine.map((c) => Math.max(1, c.text.length)));
+        const pq = quoteCtxs(t, parts);
         mine.forEach((c, k) => {
           if (parts[k]) c.tr[lang] = parts[k];
+          if (pq[k]) (c.trq ??= {})[lang] = pq[k];
         });
       }
     }
@@ -940,18 +1018,22 @@ export function trText(seg: TranscriptSegment, lang: string): string | null {
  *  shared cues (original text, or that language's cut). */
 export function trackCues(
   grid: CueGrid, track: string,
-): { start: number; end: number; text: string; seg: number; speaker?: string }[] {
+): { start: number; end: number; text: string; seg: number; speaker?: string; q?: QuoteCtx }[] {
   const own = ownProp(grid.own, track);
   if (own) return own;
   // Speaker kept like own-timed cues keep it, so a shared-cue lane still prefixes "Name: ".
   return grid.cues
-    .map((c) => ({
-      start: c.start,
-      end: c.end,
-      seg: c.seg,
-      ...(c.speaker ? { speaker: c.speaker } : {}),
-      text: track === "orig" ? c.text : (ownProp(c.tr, track) ?? ""),
-    }))
+    .map((c) => {
+      const q = track === "orig" ? c.q : ownProp(c.trq, track);
+      return {
+        start: c.start,
+        end: c.end,
+        seg: c.seg,
+        ...(c.speaker ? { speaker: c.speaker } : {}),
+        text: track === "orig" ? c.text : (ownProp(c.tr, track) ?? ""),
+        ...(q ? { q } : {}),
+      };
+    })
     .filter((c) => c.text);
 }
 
@@ -970,6 +1052,16 @@ export function trackLang(result: Pick<BatchResult, "language" | "timedTracks">,
   return langText(raw, 16).trim() ? raw : "und";
 }
 
+/** Each projected cue segment's quote contexts by track (cueResult) — beside the segment
+ *  rather than on it, so no export or file ever carries them. */
+const projectedQuotes = new WeakMap<TranscriptSegment, Record<string, QuoteCtx>>();
+
+/** The quotes around a cueResult segment's text of `track` in its source segment (Cue.q), for
+ *  wrapLines; undefined for any other segment. */
+export function cueQuoteCtx(seg: TranscriptSegment, track: string): QuoteCtx | undefined {
+  return ownProp(projectedQuotes.get(seg), track);
+}
+
 /** Cues as a BatchResult, so the existing generators render them unchanged:
  *  one segment per cue, translations from the cut (or one own-timed track). */
 export function cueResult(result: BatchResult, grid: CueGrid, ownTrack?: string): BatchResult {
@@ -977,20 +1069,24 @@ export function cueResult(result: BatchResult, grid: CueGrid, ownTrack?: string)
   if (ownTrack) {
     return {
       ...result,
-      segments: (ownProp(grid.own, ownTrack) ?? []).map((c) => ({
-        start: c.start,
-        end: c.end,
-        text: "",
-        ...(c.speaker ? { speaker: c.speaker } : {}),
-        translations: { [ownTrack]: c.text },
-      })),
+      segments: (ownProp(grid.own, ownTrack) ?? []).map((c) => {
+        const out: TranscriptSegment = {
+          start: c.start,
+          end: c.end,
+          text: "",
+          ...(c.speaker ? { speaker: c.speaker } : {}),
+          translations: { [ownTrack]: c.text },
+        };
+        if (c.q) projectedQuotes.set(out, { [ownTrack]: c.q });
+        return out;
+      }),
     };
   }
   return {
     ...result,
     segments: grid.cues.map((c) => {
       const kept = segs[c.seg]?.translationsKept;
-      return {
+      const out: TranscriptSegment = {
         start: c.start,
         end: c.end,
         text: c.text,
@@ -998,6 +1094,8 @@ export function cueResult(result: BatchResult, grid: CueGrid, ownTrack?: string)
         ...(Object.keys(c.tr).length ? { translations: c.tr } : {}),
         ...(kept?.length ? { translationsKept: kept } : {}),
       };
+      if (c.q || c.trq) projectedQuotes.set(out, { ...c.trq, ...(c.q ? { orig: c.q } : {}) });
+      return out;
     }),
   };
 }

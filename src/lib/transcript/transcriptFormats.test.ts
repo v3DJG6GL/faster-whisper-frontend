@@ -846,6 +846,18 @@ const CUED: BatchResult = {
 const STANDARD = { length: "standard", timing: "same" } as const;
 
 describe("subtitle cues", () => {
+  it("a cue's lines pair a quote with its partner in the next cue of the segment", () => {
+    // Wrapped alone (after its "Speaker 1: "), the cue's opening quote had no partner: the line
+    // ended on 说".
+    for (const zh of ['今天下午他终于对我说"我今天真的很累很累，想早点回家休息一下"然后就走了', '冰川失去了四成体积，科学家们说"速度还在加快"然后离开了']) {
+      const r: BatchResult = { ...CUED, segments: [{ ...CUED.segments![0], translations: { zh } }] };
+      for (const format of ["srt", "vtt"] as const) {
+        const out = generateExport(r, { format, tracks: ["zh"], cues: STANDARD });
+        expect(out.split("\n").some((l) => /说"(?:<\/c>)?$/.test(l)), out).toBe(false);
+      }
+    }
+  });
+
   it("no cue options ⇒ one cue per segment, unwrapped (the pre-cue output)", () => {
     const out = generateExport(CUED, { format: "srt", tracks: ["orig", "de"] });
     expect(out.split("\n\n").filter(Boolean)).toHaveLength(1);
