@@ -329,6 +329,20 @@ describe("buildCues", () => {
     }
   });
 
+  it("own timing: a cue whose glued quote pairs with the next cue stays in its line cap as its export wraps it", () => {
+    // The " after 好 opens a quotation the next cue closes: wrapped with the cue's quotes (Cue.q,
+    // as the export and the Subtitles view do) it rides forward, judged without them it joined
+    // backward, and the cue the splitter accepted took a third line.
+    const zh = '园他，的天"好说去起们气他好"OKiPhone公"天"天，今气OK们我天好"公OK"很的的';
+    const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { zh } }] });
+    const o: CueOptions = { ...STD, timing: "own" };
+    const L = trackLimits(r, o, "zh")!;
+    const cues = buildCues(r, o, ["orig", "zh"], () => 9).own.zh;
+    expect(cues.length).toBeGreaterThan(1);
+    for (const c of cues) expect(wrapLines(c.text, L.cpl, L.lines, 9, c.q).length, c.text).toBeLessThanOrEqual(L.lines);
+    expect(cues.map((c) => c.text).join("")).toBe(zh);
+  });
+
   it("site tracks always keep their own timing", () => {
     const r: BatchResult = {
       ...seg1("Hello there.", 0, 2),

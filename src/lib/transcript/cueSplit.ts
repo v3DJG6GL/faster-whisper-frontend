@@ -572,15 +572,22 @@ function spreadTokens(text: string, a: number, b: number, q?: QuoteCtx): Tok[] {
 
 const sliceOf = (text: string, ts: Tok[]) => text.slice(ts[0].from, ts[ts.length - 1].to).trim();
 
-/** Limits of one segment's text: `reserve` = chars a "Name: " prefix takes. */
-type Budget = CueLimits & { reserve: number };
+/** Limits of one segment's text: `reserve` = chars a "Name: " prefix takes; `q(at, e)` = the
+ *  quotes around the piece `text[at, e)` that its cue will carry (Cue.q), absent when the
+ *  piece is the whole text the cue's quotes are counted over. */
+type Budget = CueLimits & { reserve: number; q?: (at: number, e: number) => QuoteCtx | undefined };
 
 function fits(text: string, ts: Tok[], L: Budget): boolean {
   const s = sliceOf(text, ts);
   if (s.length + L.reserve > L.cpl * L.lines || ts[ts.length - 1].e - ts[0].s > L.maxDur) return false;
+  if (s.length + L.reserve <= L.cpl) return true;
   // Lines break at words, so a slice under lines × cpl characters can still need another
-  // line: ask the wrapper itself (only past one line — the cheap test above runs first).
-  return s.length + L.reserve <= L.cpl || wrapLines(s, L.cpl, L.lines, L.reserve).length <= L.lines;
+  // line: ask the wrapper itself (only past one line — the cheap test above runs first), with
+  // the quotes the export and the Subtitles view wrap the cue with — a glued quote whose
+  // partner lies in the next cue tokenises differently without them, and the cue's real
+  // wrap took a line more than the one judged here.
+  const at = text.indexOf(s, ts[0].from);
+  return wrapLines(s, L.cpl, L.lines, L.reserve, L.q?.(at, at + s.length)).length <= L.lines;
 }
 
 /** Recursive best-gap split until every piece fits. */
@@ -891,31 +898,46 @@ function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
   return out;
 }
 
-/** The QuoteCtx of each of `parts` — trimmed substrings of `whole`, in order (cues, cut parts)
- *  — counted over `whole` in one pass; undefined for an empty or unfound part, or when no
- *  quote stands outside it and no ASCII letter or digit borders it (only those change how
- *  quoteFlags judges a quote at its edge). */
-function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
-  const f = quoteFlags(whole);
-  /** Counted quotes of each kind before index i. */
-  const dq = [0];
-  const sq = [0];
-  for (let j = 0; j < whole.length; j++) {
-    dq.push(dq[j] + (f[j] && whole[j] === '"' ? 1 : 0));
-    sq.push(sq[j] + (f[j] && whole[j] === "'" ? 1 : 0));
-  }
-  const L = whole.length;
+/** Where each of `parts` — trimmed substrings of `whole`, in order (cues, cut parts) — starts
+ *  in `whole`; -1 for an empty or unfound part. */
+function partsAt(whole: string, parts: string[]): number[] {
   let from = 0;
   return parts.map((p) => {
     const at = p ? whole.indexOf(p, from) : -1;
-    if (at < 0) return undefined;
-    const e = at + p.length;
-    from = e;
+    if (at >= 0) from = at + p.length;
+    return at;
+  });
+}
+
+/** The QuoteCtx of `whole[at, e)`, counted over `whole` once (on the first ask); undefined
+ *  when no quote stands outside it and no ASCII letter or digit borders it (only those change
+ *  how quoteFlags judges a quote at its edge). */
+function quotesIn(whole: string): (at: number, e: number) => QuoteCtx | undefined {
+  /** Counted quotes of each kind before index i. */
+  let dq: number[] | null = null;
+  const sq = [0];
+  const L = whole.length;
+  return (at, e) => {
+    if (!dq) {
+      const f = quoteFlags(whole);
+      dq = [0];
+      for (let j = 0; j < L; j++) {
+        dq.push(dq[j] + (f[j] && whole[j] === '"' ? 1 : 0));
+        sq.push(sq[j] + (f[j] && whole[j] === "'" ? 1 : 0));
+      }
+    }
     const q: QuoteCtx = { before: { '"': dq[at], "'": sq[at] }, after: { '"': dq[L] - dq[e], "'": sq[L] - sq[e] } };
     if (/[A-Za-z0-9]/.test(whole[at - 1] ?? "")) q.prev = whole[at - 1];
     if (/[A-Za-z0-9]/.test(whole[e] ?? "")) q.next = whole[e];
     return q.before['"'] + q.before["'"] + q.after['"'] + q.after["'"] || q.prev || q.next ? q : undefined;
-  });
+  };
+}
+
+/** The QuoteCtx of each of `parts` — trimmed substrings of `whole`, in order (cues, cut parts)
+ *  — counted over `whole` in one pass; undefined for an empty or unfound part (quotesIn). */
+function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
+  const qa = quotesIn(whole);
+  return partsAt(whole, parts).map((at, k) => (at < 0 ? undefined : qa(at, at + parts[k].length)));
 }
 
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
@@ -1178,8 +1200,9 @@ export function buildCues(
 
   segs.forEach((seg, si) => {
     const toks = ranges && L ? tokensOf(seg.text, words.slice(ranges[si][0], ranges[si][1])) : null;
+    // A piece's quotes as its cue will carry them (Cue.q), so fits() wraps it as the export does.
     const split = toks && L && needSplit
-      ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg) })
+      ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg), q: quotesIn(seg.text) })
       : null;
     const pieces = split && needMine ? split : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
     // Each cue's quotes around it in the segment, so its lines pair a quote across cues.
@@ -1199,12 +1222,17 @@ export function buildCues(
         }
         const texts = cutByShare(t, spans.map((sp) => sp.len));
         // Each stretch's text is a part of the translation: its tokens pair a quote with the
-        // partner the next stretch holds, and so do the lines of its cues.
-        const tq = quoteCtxs(t, texts);
+        // partner the next stretch holds, and so do the lines of its cues — counted over the
+        // whole translation, as each cue's own (pq below) is.
+        const qa = quotesIn(t);
+        const tAt = partsAt(t, texts);
         const parts: { start: number; end: number; text: string }[] = [];
         spans.forEach((sp, k) => {
           if (!texts[k]) return;
-          parts.push(...timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end, tq[k]), sp.start, sp.end, LL));
+          const o = tAt[k];
+          const tq = o < 0 ? undefined : qa(o, o + texts[k].length);
+          const q = o < 0 ? undefined : (a: number, e: number) => qa(o + a, o + e);
+          parts.push(...timedPieces(texts[k], spreadTokens(texts[k], sp.start, sp.end, tq), sp.start, sp.end, { ...LL, q }));
         });
         const pq = quoteCtxs(t, parts.map((p) => p.text));
         own[lang].push(...parts.map((p, k) => ({ seg: si, ...p, speaker: seg.speaker, tr: {}, ...(pq[k] ? { q: pq[k] } : {}) })));
