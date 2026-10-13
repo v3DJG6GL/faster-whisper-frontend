@@ -1044,14 +1044,12 @@ mod imp {
     // a mid-hold session would otherwise lose — see stop_held_sessions and
     // evdev::ACTIVE_HOLDS. The keys are what lets the teardown ask the OS whether
     // that chord is STILL physically down before it arms the loss latch on it.
-    static ACTIVE_HOLDS: Mutex<Vec<(String, Vec<u16>)>> = Mutex::new(Vec::new());
+    static ACTIVE_HOLDS: crate::hotkeys::chord_engine::ActiveHolds = Mutex::new(Vec::new());
 
-    fn note_hold(profile_id: &str, keys: &[u16], active: bool) {
+    /// A hold ended (released, or handed its session to a superset): drop its entry.
+    fn forget_hold(profile_id: &str) {
         if let Ok(mut h) = ACTIVE_HOLDS.lock() {
             h.retain(|(p, _)| p != profile_id);
-            if active {
-                h.push((profile_id.to_string(), keys.to_vec()));
-            }
         }
     }
 
@@ -1174,14 +1172,23 @@ mod imp {
         for fire in fires {
             match fire {
                 Fire::Start(pid) => {
-                    // Registered before the emit, as evdev's twin does. No generation check is
-                    // needed here: this worker's own post-loop claims every hold it registered
-                    // (`take_hold`), so one registered after a teardown drain still gets its stop.
-                    note_hold(&pid, &engine.keys_for_profile(&pid), true);
-                    // A fresh rising edge: this press IS in the map, so the still-held check
-                    // works normally for it and any pending loss latch is now a dud.
-                    crate::hotkeys::held_keys::clear_chord_lost();
-                    emit(app, &pid, "start", Some(&chord_mods(&pid)));
+                    // Registered and emitted under one ACTIVE_HOLDS guard, as evdev's twin does,
+                    // so a teardown drain cannot claim the hold and emit its stop before this
+                    // start went out (see `chord_engine::register_hold_then`). No generation
+                    // check is needed here: this worker's own post-loop claims every hold it
+                    // registered (`take_hold`), so one registered after a drain still gets its stop.
+                    crate::hotkeys::chord_engine::register_hold_then(
+                        &ACTIVE_HOLDS,
+                        &pid,
+                        &engine.keys_for_profile(&pid),
+                        || true,
+                        || {
+                            // A fresh rising edge: this press IS in the map, so the still-held
+                            // check works normally for it and any pending loss latch is now a dud.
+                            crate::hotkeys::held_keys::clear_chord_lost();
+                            emit(app, &pid, "start", Some(&chord_mods(&pid)));
+                        },
+                    );
                 }
                 Fire::Stop(pid) => {
                     if teardown {
@@ -1190,12 +1197,12 @@ mod imp {
                         }
                     } else {
                         emit(app, &pid, "stop", Some(&chord_mods(&pid)));
-                        note_hold(&pid, &[], false);
+                        forget_hold(&pid);
                     }
                 }
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
-                Fire::ReleaseHold(pid) => note_hold(&pid, &[], false),
+                Fire::ReleaseHold(pid) => forget_hold(&pid),
                 Fire::Toggle(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.

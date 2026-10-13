@@ -150,11 +150,11 @@ pub fn registration_conflict(existing: &ChordSpec, candidate: &ChordSpec) -> Opt
 /// What the backend must do after a key event, in order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Fire {
-    /// Hold began — emit "start" + note_hold(true).
+    /// Hold began — emit "start" + register the hold.
     Start(String),
-    /// Hold ended by real release — emit "stop" + note_hold(false).
+    /// Hold ended by real release — emit "stop" + forget the hold.
     Stop(String),
-    /// Hold handed its session to a superset — note_hold(false), NO "stop".
+    /// Hold handed its session to a superset — forget the hold, NO "stop".
     ReleaseHold(String),
     /// Hands-free chord pressed with no hold to upgrade — emit "toggle".
     Toggle(String),
@@ -292,6 +292,42 @@ pub fn any_chord_mod_down(
     down: impl Fn(u16) -> bool,
 ) -> bool {
     keys.iter().copied().filter(|&k| is_mod(k)).any(down)
+}
+
+/// A backend's push-to-talk holds that are live ("start" emitted, no "stop" yet), each with the
+/// chord keys that started it — what a listener teardown drains to manufacture the stops its
+/// aborted listener can no longer emit.
+pub type ActiveHolds = std::sync::Mutex<Vec<(String, Vec<u16>)>>;
+
+/// Register `profile_id`'s hold in `holds` and run `start` (the backend's "start" emit) under
+/// the SAME guard — the one shared registration rule of both backends. A teardown drain takes
+/// this lock, so it lands either wholly before (the hold is not in the set yet; `admit` can
+/// refuse it) or wholly after the start went out, and its manufactured "stop" can never reach
+/// the webview ahead of the "start" it ends: that order is a no-op stop on an idle session
+/// followed by a push-to-talk session nothing will ever stop. `admit` runs under the guard too,
+/// so a check against what the teardown changed before draining is race-free; on `false`
+/// nothing is registered or emitted and this returns `false`. A poisoned lock still registers:
+/// refusing there would silence push-to-talk for the rest of the run.
+///
+/// `start` must not take `holds` (it would deadlock), and the drain must take its entries out
+/// before emitting its stops, so no emit ever runs under this lock but this one.
+pub fn register_hold_then(
+    holds: &ActiveHolds,
+    profile_id: &str,
+    keys: &[u16],
+    admit: impl FnOnce() -> bool,
+    start: impl FnOnce(),
+) -> bool {
+    let mut h = holds
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if !admit() {
+        return false;
+    }
+    h.retain(|(p, _)| p != profile_id);
+    h.push((profile_id.to_string(), keys.to_vec()));
+    start();
+    true
 }
 
 impl Engine {
@@ -869,5 +905,54 @@ mod tests {
         assert_eq!(e.active_holds(), vec!["ptt".to_string()]);
         run(&mut e, &[(&[], t)]);
         assert!(e.active_holds().is_empty());
+    }
+
+    /// A teardown drain racing a reader's start: the drain blocks while the start is being
+    /// emitted, so its manufactured "stop" always follows the "start" it ends — never
+    /// `[stop, start]`, which left a push-to-talk session nothing would ever stop.
+    #[test]
+    fn a_teardown_drain_never_stops_a_hold_before_its_start_went_out() {
+        use std::sync::{Arc, Barrier, Mutex};
+        static HOLDS: ActiveHolds = Mutex::new(Vec::new());
+        let events: Arc<Mutex<Vec<String>>> = Arc::default();
+        let registered = Arc::new(Barrier::new(2));
+        let drain = {
+            let (events, registered) = (events.clone(), registered.clone());
+            std::thread::spawn(move || {
+                registered.wait();
+                // `stop_held_sessions`: take the entries out, then emit their stops.
+                let stuck = std::mem::take(&mut *HOLDS.lock().unwrap());
+                for (pid, _) in stuck {
+                    events.lock().unwrap().push(format!("stop {pid}"));
+                }
+            })
+        };
+        let started = register_hold_then(
+            &HOLDS,
+            "ptt",
+            &[CTRL_L, SPACE],
+            || true,
+            || {
+                // The hold is registered: let the drain run, and give it every chance to get ahead.
+                registered.wait();
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                events.lock().unwrap().push("start ptt".into());
+            },
+        );
+        drain.join().unwrap();
+        assert!(started);
+        assert_eq!(*events.lock().unwrap(), vec!["start ptt", "stop ptt"]);
+
+        // A refused registration emits nothing and leaves nothing for a drain to stop.
+        let mut emitted = false;
+        assert!(!register_hold_then(
+            &HOLDS,
+            "ptt",
+            &[CTRL_L],
+            || false,
+            || emitted = true
+        ));
+        assert!(!emitted);
+        assert!(HOLDS.lock().unwrap().is_empty());
     }
 }

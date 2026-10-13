@@ -295,9 +295,10 @@ mod imp {
         let generation = retire_readers();
         // The abort skips their post-loop "stop" for a PTT chord held across this restart, so
         // emit it now — after the generation moved on: a reader still inside `commit` past the
-        // abort registers (and emits) a start only under the live generation, so every hold that
-        // emitted a start is one this drain sees (`register_hold`). Also covers the no-chords
-        // early return below.
+        // abort registers and emits a start only under the live generation, and under the lock
+        // this drain takes, so every hold that emitted a start is one this drain sees and stops
+        // AFTER that start went out (`register_hold`). Also covers the no-chords early return
+        // below.
         stop_held_sessions(app);
         // Fresh start: drop any held-key counts left over from a previous run so the
         // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
@@ -380,34 +381,36 @@ mod imp {
     // deduped on insert and dictate("stop") is a no-op when idle, so any staleness is harmless.
     // Each entry carries the evdev codes of the chord that started the hold, so the teardown can
     // ask the kernel whether that chord is STILL physically down before arming the loss latch.
-    static ACTIVE_HOLDS: std::sync::Mutex<Vec<(String, Vec<u16>)>> =
+    static ACTIVE_HOLDS: crate::hotkeys::chord_engine::ActiveHolds =
         std::sync::Mutex::new(Vec::new());
 
-    fn note_hold(profile_id: &str, keys: &[u16], active: bool) {
+    /// A hold ended (released, or handed its session to a superset): drop its entry.
+    fn forget_hold(profile_id: &str) {
         if let Ok(mut h) = ACTIVE_HOLDS.lock() {
             h.retain(|(p, _)| p != profile_id);
-            if active {
-                h.push((profile_id.to_string(), keys.to_vec()));
-            }
         }
     }
 
-    /// Register a hold that is about to emit "start" — only while `generation` (the reader's own)
-    /// is still the live one. `abort()` cancels a reader only at its next yield, so one already
-    /// inside the synchronous `commit` runs on past a teardown; checked under the lock the
-    /// teardown drain takes, after the teardown bumped GENERATION, this either lands before the
-    /// drain (and is drained) or is refused, and the caller then emits nothing. A poisoned lock
-    /// still registers: refusing there would silence push-to-talk for the rest of the run.
-    fn register_hold(generation: u64, profile_id: &str, keys: &[u16]) -> bool {
-        let mut h = ACTIVE_HOLDS
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if GENERATION.load(std::sync::atomic::Ordering::SeqCst) != generation {
-            return false;
-        }
-        h.retain(|(p, _)| p != profile_id);
-        h.push((profile_id.to_string(), keys.to_vec()));
-        true
+    /// Register a hold and emit its "start" under one ACTIVE_HOLDS guard — only while
+    /// `generation` (the reader's own) is still the live one. `abort()` cancels a reader only at
+    /// its next yield, so one already inside the synchronous `commit` runs on past a teardown;
+    /// checked under the lock the teardown drain takes, after the teardown bumped GENERATION,
+    /// this either registers and emits wholly before the drain (which then stops it) or is
+    /// refused and emits nothing — see `chord_engine::register_hold_then` for why the emit must
+    /// sit under the guard too.
+    fn register_hold(
+        generation: u64,
+        profile_id: &str,
+        keys: &[u16],
+        start: impl FnOnce(),
+    ) -> bool {
+        crate::hotkeys::chord_engine::register_hold_then(
+            &ACTIVE_HOLDS,
+            profile_id,
+            keys,
+            || GENERATION.load(std::sync::atomic::Ordering::SeqCst) == generation,
+            start,
+        )
     }
 
     /// Is any shortcut MODIFIER of the chord still physically down on SOME keyboard, per the
@@ -538,18 +541,21 @@ mod imp {
         for fire in fires {
             match fire {
                 Fire::Start(pid) => {
-                    // Registered BEFORE the emit, so no teardown drain can miss a hold that
-                    // started; a retired reader's start is dropped (see `register_hold`).
-                    if !register_hold(generation, &pid, &engine.keys_for_profile(&pid)) {
+                    // Registered and emitted under one guard, so no teardown drain can miss a
+                    // hold that started or stop it before its start went out; a retired reader's
+                    // start is dropped (see `register_hold`).
+                    let started =
+                        register_hold(generation, &pid, &engine.keys_for_profile(&pid), || {
+                            // A fresh rising edge: this press IS in the map, so the still-held check
+                            // works normally for it and any pending loss latch is now a dud.
+                            crate::hotkeys::held_keys::clear_chord_lost();
+                            emit(app, &pid, "start", Some(&chord_mods(&pid)));
+                        });
+                    if !started {
                         tracing::info!(
                             "[evdev] chord start from a retired reader — not emitted (the listener is restarting)"
                         );
-                        continue;
                     }
-                    // A fresh rising edge: this press IS in the map, so the still-held check
-                    // works normally for it and any pending loss latch is now a dud.
-                    crate::hotkeys::held_keys::clear_chord_lost();
-                    emit(app, &pid, "start", Some(&chord_mods(&pid)));
                 }
                 Fire::Stop(pid) => {
                     if teardown {
@@ -558,12 +564,12 @@ mod imp {
                         }
                     } else {
                         emit(app, &pid, "stop", Some(&chord_mods(&pid)));
-                        note_hold(&pid, &[], false);
+                        forget_hold(&pid);
                     }
                 }
                 // Handoff: the hold's session lives on under the superset —
                 // release the teardown bookkeeping, emit no "stop".
-                Fire::ReleaseHold(pid) => note_hold(&pid, &[], false),
+                Fire::ReleaseHold(pid) => forget_hold(&pid),
                 Fire::Toggle(pid) => {
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
@@ -873,10 +879,12 @@ mod imp {
         fn a_retired_reader_registers_no_hold_and_the_drain_sees_every_registered_one() {
             use super::{register_hold, retire_readers, ACTIVE_HOLDS, GENERATION};
             let live = GENERATION.load(std::sync::atomic::Ordering::SeqCst);
-            assert!(register_hold(live, "gen-test-a", &[29, 42]));
+            let mut emitted = Vec::new();
+            assert!(register_hold(live, "gen-test-a", &[29, 42], || emitted.push("a")));
             // A teardown: the generation moves on before the drain takes the lock.
             retire_readers();
-            assert!(!register_hold(live, "gen-test-b", &[29, 42]));
+            assert!(!register_hold(live, "gen-test-b", &[29, 42], || emitted.push("b")));
+            assert_eq!(emitted, vec!["a"], "a refused start emits nothing");
             let drained: Vec<String> = std::mem::take(&mut *ACTIVE_HOLDS.lock().unwrap())
                 .into_iter()
                 .map(|(p, _)| p)
