@@ -1105,6 +1105,23 @@ describe("joinLineBreaks", () => {
     expect(cjkWrapsLines(["：“".repeat(50_000) + "你好，世界"])).toBe(true);
     expect(performance.now() - t0).toBeLessThan(500);
   });
+  it("cjkWrapsLines: a mark counts while any colon's quotation is still open, so a second speaker's or an outer quote counts", () => {
+    // Seven unpunctuated lines plus one: the eighth line alone decides (one line in eight).
+    const file = (l: string) => cjkWrapsLines(["我们今天去公园", "然后去吃饭", "天气很好", "我很开心", "明天再见", "大家都来了", "晚上回家", l]);
+    // Two speakers, the first quote closed, the mark inside the second (false before this fix).
+    expect(file("甲问：“好吗” 乙答：“好的，我来了”")).toBe(true);
+    expect(file("甲问：「好吗」乙答：「好的，我来了」")).toBe(true);
+    expect(file("乙答：“好的，我来了”")).toBe(true);
+    expect(file("他问：“你好，你今天要去哪里”")).toBe(true);
+    // An inner quote closed, the mark inside the outer one (false at 9ed9c273).
+    expect(file("他说：“她说：‘好’，我们走吧”")).toBe(true);
+    // A quoted credit name closed before the mark stays no evidence, also behind an earlier
+    // credit (both counted before 9ed9c273, which let any colon opening a quote through).
+    expect(file("字幕：「XX字幕组」。翻译：小红")).toBe(false);
+    expect(file("字幕：「XX字幕组」翻译：「小红」。谢谢观看")).toBe(false);
+    // A plain credit field stays no evidence.
+    expect(file("翻译: 小明，字幕: 小红")).toBe(false);
+  });
   it("with wraps, a seam on a curly quote is judged by the character past the quotes", () => {
     expect(joinLineBreaks("他说：\n“我们走吧。”", true)).toBe("他说：“我们走吧。”");
     expect(joinLineBreaks("他说：“我们走吧。”\n然后他就走了。", true)).toBe("他说：“我们走吧。”然后他就走了。");

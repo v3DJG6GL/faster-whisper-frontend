@@ -146,15 +146,22 @@ function evidenceMark(l: string, marks: RegExp): number {
   const before = l.slice(0, i);
   // A colon is a credit or note field ("翻译：小明。") unless it opens a quotation the mark sits
   // inside (他问：“你好，…”): a quote closed before the mark (字幕：「XX字幕组」。) is a credit's name.
+  // Only when every colon's quote is closed: one still open holds the mark, whether a second
+  // speaker's (甲问：“好吗” 乙答：“好的，…”) or an outer one around a closed inner quote
+  // (他说：“她说：‘好’，…”).
   // One lastIndexOf per closer: a line of many colons stays linear.
   const lastClose = new Map<string, number>();
+  let quoted = false;
+  let inside = false;
   for (const m of before.matchAll(/[：:]\s*(.)?/gsu)) {
     const close = m[1] === undefined ? undefined : QUOTE_CLOSE[m[1]];
     if (close === undefined) return -1;
     let at = lastClose.get(close);
     if (at === undefined) lastClose.set(close, (at = before.lastIndexOf(close)));
-    if (at >= m.index + m[0].length) return -1;
+    quoted = true;
+    if (at < m.index + m[0].length) inside = true;
   }
+  if (quoted && !inside) return -1;
   const open = (o: string, c: string) => before.lastIndexOf(o) > before.lastIndexOf(c);
   return open("（", "）") || open("(", ")") || open("《", "》") || open("〈", "〉") ? -1 : i;
 }
