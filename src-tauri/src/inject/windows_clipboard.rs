@@ -313,7 +313,10 @@ impl OfferLedger {
 }
 
 #[cfg(windows)]
-pub use imp::{await_target_fetch, foreground_pid, note_chord, offer, shutdown};
+pub use imp::{
+    await_target_fetch, foreground_pid, note_chord, offer, reannounce_pending, shutdown,
+    REANNOUNCE_MAX_WAIT,
+};
 
 #[cfg(windows)]
 mod imp {
@@ -364,6 +367,10 @@ mod imp {
     const REANNOUNCE_DELAY_MS: u32 = 30;
     /// A re-announce that keeps finding the clipboard open is retried this often, then dropped.
     const REANNOUNCE_TRIES: u32 = 10;
+    /// The longest a pending re-announce normally stays pending (every retry, plus slack): how
+    /// long another clipboard user may wait for [`reannounce_pending`] to clear.
+    pub const REANNOUNCE_MAX_WAIT: Duration =
+        Duration::from_millis(REANNOUNCE_TRIES as u64 * REANNOUNCE_DELAY_MS as u64 + 50);
     /// How long after our chord the target has to fetch before we call it a stale paste.
     const NOFETCH_MS: u32 = 1500;
     /// The caller's bound on one offer round trip (open retries are ≤ ~100ms of it).
@@ -404,6 +411,12 @@ mod imp {
         closed: false,
     });
     static FETCH_CV: Condvar = Condvar::new();
+    /// Mirror of `State::reannounce_for.is_some()`, readable off the owner thread. `paste()`
+    /// returns (dropping `CLIP_JOB`) once the target's fetch is published, but the re-announce
+    /// that fetch arms (EmptyClipboard + the same text again) runs ~30 ms later: a clipboard
+    /// reader in that window would see its sequence bump as someone else's write. Set before
+    /// the fetch is published, cleared only once the re-announce ran or was dropped.
+    static REANNOUNCE_PENDING: AtomicBool = AtomicBool::new(false);
 
     fn publish_fetch(f: impl FnOnce(&mut FetchSlot)) {
         if let Ok(mut g) = FETCH.lock() {
@@ -432,6 +445,12 @@ mod imp {
     impl State {
         fn now(&self) -> u64 {
             self.t0.elapsed().as_millis() as u64
+        }
+
+        /// Every write of `reannounce_for` goes through here, so `REANNOUNCE_PENDING` mirrors it.
+        fn set_reannounce_for(&mut self, id: Option<u64>) {
+            self.reannounce_for = id;
+            REANNOUNCE_PENDING.store(id.is_some(), Ordering::SeqCst);
         }
     }
 
@@ -609,6 +628,8 @@ mod imp {
             }
             WM_SHUTDOWN => {
                 publish_fetch(|s| s.closed = true);
+                // The window (and its re-announce timer) is going away: nothing is pending now.
+                REANNOUNCE_PENDING.store(false, Ordering::SeqCst);
                 // Sends WM_RENDERALLFORMATS while we still own unrendered data, so the text the
                 // user may still paste survives our exit. No borrow is held here.
                 unsafe {
@@ -816,7 +837,7 @@ mod imp {
             let now = s.now();
             s.text = Some(crlf);
             s.exclude = exclude;
-            s.reannounce_for = None;
+            s.set_reannounce_for(None);
             s.reannounce_tries = 0;
             s.nofetch_for = None;
             s.ledger.on_offer(id, now)
@@ -917,7 +938,7 @@ mod imp {
             let rep = s.ledger.on_render(who, now);
             if let Some(r) = rep {
                 if r.verdict == RenderVerdict::Reannounce {
-                    s.reannounce_for = Some(r.id);
+                    s.set_reannounce_for(Some(r.id));
                     s.reannounce_tries = 0;
                 }
             }
@@ -988,7 +1009,7 @@ mod imp {
         let lost = with_state(|s| {
             let now = s.now();
             s.text = None;
-            s.reannounce_for = None;
+            s.set_reannounce_for(None);
             s.nofetch_for = None;
             s.ledger.on_lost(now)
         })
@@ -1019,7 +1040,7 @@ mod imp {
         let Some(id) = want else { return };
         // Same text, and only while it is still ours: a newer offer or another app's copy wins.
         if current != Some(id) || unsafe { GetClipboardOwner() } != hwnd {
-            with_state(|s| s.reannounce_for = None);
+            with_state(|s| s.set_reannounce_for(None));
             return;
         }
         if unsafe { OpenClipboard(hwnd) } == 0 {
@@ -1034,14 +1055,14 @@ mod imp {
                 tracing::warn!(
                     "[winclip] #{id} re-announce given up: the clipboard stayed open for {tries} tries"
                 );
-                with_state(|s| s.reannounce_for = None);
+                with_state(|s| s.set_reannounce_for(None));
             }
             return;
         }
         let announced = announce(exclude, fh, fc);
         unsafe { CloseClipboard() };
         let after = with_state(|s| {
-            s.reannounce_for = None;
+            s.set_reannounce_for(None);
             let now = s.now();
             s.ledger.on_reannounced(id, now)
         })
@@ -1146,6 +1167,13 @@ mod imp {
             },
             Err(_) => FetchWait::NoFetch,
         }
+    }
+
+    /// Whether a re-announce armed by a target fetch has yet to run (enforce mode only; always
+    /// false in diag mode and when the owner never started). A clipboard reader that judges
+    /// "someone wrote" by the sequence number waits this out, at most [`REANNOUNCE_MAX_WAIT`].
+    pub fn reannounce_pending() -> bool {
+        REANNOUNCE_PENDING.load(Ordering::SeqCst)
     }
 
     /// Pid of the foreground window's process (0 when none) — the target of the chord we are

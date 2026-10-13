@@ -733,6 +733,26 @@ pub(crate) mod win_seed {
                 return None;
             }
         }
+        // The pending restore's twin in the remote-paste enforce mode: a paste returns (dropping
+        // CLIP_JOB) once the remote fetched its text, but the owner re-announces that same text
+        // ~30 ms later (EmptyClipboard + delayed render). Fired mid-grab it fakes the copy's
+        // sequence bump, and phase 2 then reads the re-rendered transcript as the copy. Wait it
+        // out, bounded by the owner's own retry budget, before `prev` and `seq0` are read; still
+        // pending past that, skip the (optional) seed. Nothing has been injected yet.
+        #[cfg(windows)]
+        {
+            use crate::inject::windows_clipboard::{reannounce_pending, REANNOUNCE_MAX_WAIT};
+            let deadline = Instant::now() + REANNOUNCE_MAX_WAIT;
+            while reannounce_pending() {
+                if Instant::now() >= deadline || superseded() {
+                    tracing::info!(
+                        "[quickadd-seed] a clipboard re-announce is pending; skipping the copy grab"
+                    );
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(15));
+            }
+        }
         // None = empty or non-text (image/files). Any OTHER read failure is not "empty": on
         // Windows arboard gives up after ~25 ms when another process holds the clipboard open
         // (ClipboardOccupied) — likely right after the restore above woke clipboard listeners
