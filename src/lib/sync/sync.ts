@@ -83,6 +83,7 @@ import type {
 } from "./syncTypes";
 import type { SyncSubSettings } from "../types";
 import { DEFS, MANIFEST, completeGates, type SettingId } from "../settingsManifest";
+import { DEFAULT_SETTINGS } from "../defaults";
 import { isValidAccentMotion } from "../theme";
 import {
   APP_RULE_OVERRIDE_FIELDS,
@@ -483,6 +484,52 @@ function extractDictionary(
   return out;
 }
 
+/** Per scalar category, every key this version CLASSIFIES: what its extractor emits (read off the
+ *  factory defaults, so a newly extracted field counts at once), the category's manifest fields,
+ *  and the keys it keeps off the wire on purpose (local-only, machine-local, owned by another
+ *  category, legacy names `migrateBlob` rewrites). A key outside this set in the snapshot's copy
+ *  came from a newer peer. Built on first use, not at module load. */
+let knownScalarKeys: Map<SyncCategory, ReadonlySet<string>> | undefined;
+function knownKeysOf(c: SyncCategory): ReadonlySet<string> {
+  knownScalarKeys ??= (() => {
+    const d = DEFAULT_SETTINGS;
+    const extracted: Partial<Record<SyncCategory, object | undefined>> = {
+      general: extractGeneral(d),
+      recording: extractRecording(d, true, undefined),
+      chip: extractChip(d),
+      dictionary: extractDictionary(d, true, true, undefined),
+      transcription: extractTranscription(d, true, undefined),
+      fileTranscriptions: extractFileTranscriptions(d),
+      logging: extractLogging(d, true, undefined),
+    };
+    const also: Partial<Record<SyncCategory, Iterable<string>>> = {
+      general: ["autoEnter", "evdevEnabled", "quickAddHotkey"],
+      recording: [...CHIP_FIELD_SET, ...DICTATION_HISTORY_SET, "recordingsDir", "audioBaseDir", "latchAutoStopMin"],
+      chip: CHIP_FIELD_SET,
+      dictionary: ["quickAddList", "quickAddHotkey"],
+      transcription: [
+        ...TRANSCRIPTION_FIELD_SET,
+        ...TRANSCRIPTION_PICK_SET,
+        ...DICTATION_HISTORY_SET,
+        ...FILE_TRANSCRIPTION_SET,
+      ],
+      fileTranscriptions: FILE_TRANSCRIPTION_SET,
+      logging: ["logDir"],
+    };
+    return new Map(
+      SCALAR_CATS.map((cat) => [
+        cat,
+        new Set<string>([
+          ...Object.keys(extracted[cat] ?? {}),
+          ...(also[cat] ?? []),
+          ...DEFS.filter((def) => def.category === cat).flatMap((def) => def.fields.map((f) => f.key)),
+        ]),
+      ]),
+    );
+  })();
+  return knownScalarKeys.get(c) ?? new Set();
+}
+
 type StoreSlice = Pick<Config, "settings" | "backends" | "profiles"> & { appRules: AppRule[] };
 
 /** Blobs `composeBlob` built through its degraded-keyring pass-through (see `backendsDegraded`). */
@@ -581,6 +628,25 @@ export async function composeBlob(
     blob.appRules = buckets;
   } else {
     blob.appRules = snapshot?.appRules;
+  }
+  // FORWARD-COMPAT inside a category (the top-level carry-through is below): the extractors
+  // allowlist their fields, so a newer peer's field in a category this device syncs never made
+  // it into the compose. The 3-way merge read that absence as a LOCAL edit on every sync — a
+  // conflict dialog for a category the user never touched, or a push that erased the field
+  // from the server. Echo the snapshot's keys this version does not classify; a key it knows
+  // keeps the live (or gated) value. Before the gate pass, which only touches known keys.
+  if (snapshot) {
+    for (const c of SCALAR_CATS) {
+      const out = blob[c];
+      const snap = snapshot[c];
+      if (!cats[c] || !isPlainObject(out) || !isPlainObject(snap)) continue;
+      const known = knownKeysOf(c);
+      for (const [k, v] of Object.entries(snap)) {
+        // defineProperty: the snapshot is parsed server JSON, so `__proto__` can be an own key.
+        if (v === undefined || known.has(k) || hasOwn(out, k)) continue;
+        Object.defineProperty(out, k, { value: v, writable: true, enumerable: true, configurable: true });
+      }
+    }
   }
   // Per-setting gates (the granular "What this device syncs" switches). The
   // legacy four already act inside the extractors via `opts.sub`; this pass

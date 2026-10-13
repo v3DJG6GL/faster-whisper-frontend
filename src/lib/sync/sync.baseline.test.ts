@@ -232,6 +232,51 @@ describe("composeBlob passthrough (baseline)", () => {
   });
 });
 
+describe("composeBlob forward-compat inside a category", () => {
+  const allOn = () =>
+    Object.fromEntries(Object.keys(DEFAULT_SETTING_SYNC).map((k) => [k, true])) as typeof DEFAULT_SETTING_SYNC;
+  const opts = () => ({ includeSecrets: false, sub: LEGACY_SUB, gates: allOn() });
+
+  it("a newer peer's field in a synced category is echoed, so a peer's theme change does not conflict", async () => {
+    const cfg = slice();
+    const mine = await composeBlob(cfg, CATS_ALL, undefined, opts());
+    // The base a pull of the newer peer's push leaves: this device's content plus fields only the
+    // newer version knows, in three scalar categories.
+    const base: SyncBlob = {
+      ...mine,
+      general: { ...mine.general, newerFlag: true } as never,
+      recording: { ...mine.recording, newerRecording: 7 } as never,
+      logging: { ...mine.logging, newerLogging: "x" } as never,
+    };
+    const local = await composeBlob(cfg, CATS_ALL, base, opts());
+    expect(local.general).toEqual(base.general);
+    expect(local.recording).toEqual(base.recording);
+    expect(local.logging).toEqual(base.logging);
+    // A peer then changes only the theme: it applies with no conflict, and the newer field stays.
+    const remote: SyncBlob = { ...base, general: { ...base.general, theme: "dark" } as never };
+    const { conflicts, merged } = mergeBlobs(base, local, remote);
+    expect(conflicts).toEqual([]);
+    expect(merged.general).toEqual(remote.general);
+  });
+
+  it("a known field keeps the live value, and a deliberately local one is not echoed", async () => {
+    const cfg = slice();
+    cfg.settings.general.soundEffects = false;
+    const snapshot: SyncBlob = {
+      general: { soundEffects: true, autoEnter: true, evdevEnabled: true, newerFlag: 1 } as never,
+    };
+    const blob = await composeBlob(cfg, CATS_ALL, snapshot, opts());
+    const g = blob.general as Record<string, unknown>;
+    expect(g.soundEffects).toBe(false);
+    expect("autoEnter" in g).toBe(false);
+    expect("evdevEnabled" in g).toBe(false);
+    expect(g.newerFlag).toBe(1);
+    // A category this device does not sync passes through whole as before.
+    const off = await composeBlob(cfg, { ...CATS_ALL, general: false }, snapshot, opts());
+    expect(off.general).toBe(snapshot.general);
+  });
+});
+
 describe("migrateBlob (baseline)", () => {
   it("splits a pre-split recording payload into recording + chip", () => {
     const old: SyncBlob = {
