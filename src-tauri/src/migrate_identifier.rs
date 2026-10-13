@@ -167,16 +167,27 @@ fn verdict(legacy_running: bool, failed: &[PathBuf]) -> Verdict {
 }
 
 pub fn run() -> Verdict {
-    if legacy_instance_running() {
-        tracing::warn!(
-            "[migrate] a build with the old identifier is running; not starting until it is closed"
+    migrate(&roots(), legacy_instance_running())
+}
+
+fn migrate(roots: &[Root], legacy_running: bool) -> Verdict {
+    // A running old build only matters while there is still something to move out from under
+    // it: once every root moved (or never had data), an old binary started by hand would
+    // otherwise block every launch of this one for good.
+    if legacy_running {
+        if roots.iter().any(pending) {
+            tracing::warn!(
+                "[migrate] a build with the old identifier is running; not starting until it is closed"
+            );
+            return verdict(true, &[]);
+        }
+        tracing::info!(
+            "[migrate] a build with the old identifier is running, but there is nothing left to move"
         );
-        return verdict(true, &[]);
     }
-    let roots = roots();
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
     let mut failed: Vec<PathBuf> = Vec::new();
-    for root in &roots {
+    for root in roots {
         let old = root.base.join(LEGACY_ID);
         let new = root.base.join(NEW_ID);
         let outcome = migrate_dir(&old, &new, root.disposable);
@@ -201,7 +212,7 @@ pub fn run() -> Verdict {
     // The fix-ups still run when another root failed: the roots that moved now carry the
     // marker and are never looked at again, so it is now or never for them.
     if !moved.is_empty() {
-        rewrite_moved_paths(&roots, moved);
+        rewrite_moved_paths(roots, moved);
     }
     verdict(false, &failed)
 }
@@ -286,25 +297,44 @@ fn is_empty_dir(p: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn migrate_dir(old: &Path, new: &Path, disposable: bool) -> Outcome {
+/// `Some` when a folder pair has nothing (left) to move — `migrate_dir`'s first rule, shared
+/// with `pending`.
+fn settled(old: &Path, new: &Path) -> Option<Outcome> {
     if !old.is_dir() {
-        return Outcome::Absent;
+        return Some(Outcome::Absent);
     }
     if new.join(MARKER).exists() {
-        return Outcome::AlreadyDone;
+        return Some(Outcome::AlreadyDone);
+    }
+    None
+}
+
+/// The new folder holds data of its own (not merely an empty shell): never moved over.
+fn has_own_data(new: &Path) -> bool {
+    new.exists() && !is_empty_dir(new)
+}
+
+/// Would `migrate_dir` move anything for this root? Touches nothing. (A cache is only
+/// deleted, never moved — nothing of the user's can be stranded there.)
+fn pending(root: &Root) -> bool {
+    let (old, new) = (root.base.join(LEGACY_ID), root.base.join(NEW_ID));
+    !root.disposable && settled(&old, &new).is_none() && !has_own_data(&new)
+}
+
+fn migrate_dir(old: &Path, new: &Path, disposable: bool) -> Outcome {
+    if let Some(outcome) = settled(old, new) {
+        return outcome;
     }
     if disposable {
         let _ = std::fs::remove_dir_all(old);
         return Outcome::Absent;
     }
-    if new.exists() {
-        if !is_empty_dir(new) {
-            return Outcome::Conflict;
-        }
-        // An empty shell (something only created the folder) must not block the move.
-        if std::fs::remove_dir(new).is_err() {
-            return Outcome::Conflict;
-        }
+    if has_own_data(new) {
+        return Outcome::Conflict;
+    }
+    // An empty shell (something only created the folder) must not block the move.
+    if new.exists() && std::fs::remove_dir(new).is_err() {
+        return Outcome::Conflict;
     }
     if std::fs::rename(old, new).is_ok() {
         let _ = std::fs::write(new.join(MARKER), b"");
@@ -437,6 +467,52 @@ mod tests {
         }
         // Absent / AlreadyDone / Moved / Conflict leave nothing in `failed`.
         assert_eq!(verdict(false, &[]), Verdict::Proceed);
+    }
+
+    fn root(base: &Path) -> Root {
+        Root {
+            base: base.to_path_buf(),
+            disposable: false,
+        }
+    }
+
+    #[test]
+    fn a_running_old_build_does_not_block_a_launch_once_nothing_is_left_to_move() {
+        // Moved on an earlier launch (the old build since recreated its folder), and a root
+        // the old build never used.
+        let (done, absent) = (scratch("legacy-done"), scratch("legacy-absent"));
+        std::fs::create_dir_all(done.join(NEW_ID)).unwrap();
+        std::fs::write(done.join(NEW_ID).join(MARKER), b"").unwrap();
+        std::fs::create_dir_all(done.join(LEGACY_ID)).unwrap();
+        std::fs::write(done.join(LEGACY_ID).join("config.json"), "{}").unwrap();
+        // The user started fresh under the new name: never moved either.
+        let fresh = scratch("legacy-conflict");
+        std::fs::create_dir_all(fresh.join(LEGACY_ID)).unwrap();
+        std::fs::write(fresh.join(LEGACY_ID).join("config.json"), "old").unwrap();
+        std::fs::create_dir_all(fresh.join(NEW_ID)).unwrap();
+        std::fs::write(fresh.join(NEW_ID).join("config.json"), "new").unwrap();
+
+        let roots = [root(&done), root(&absent), root(&fresh)];
+        assert_eq!(migrate(&roots, true), Verdict::Proceed);
+        assert!(done.join(LEGACY_ID).join("config.json").exists());
+        assert!(!absent.join(NEW_ID).exists());
+    }
+
+    #[test]
+    fn a_running_old_build_stops_the_launch_while_its_data_is_still_to_move() {
+        let (done, todo) = (scratch("legacy-done2"), scratch("legacy-todo"));
+        std::fs::create_dir_all(done.join(NEW_ID)).unwrap();
+        std::fs::write(done.join(NEW_ID).join(MARKER), b"").unwrap();
+        std::fs::create_dir_all(todo.join(LEGACY_ID)).unwrap();
+        std::fs::write(todo.join(LEGACY_ID).join("config.json"), "old").unwrap();
+
+        let roots = [root(&done), root(&todo)];
+        assert!(matches!(migrate(&roots, true), Verdict::Stop(m) if m.contains("still running")));
+        // Nothing touched: the next launch, with the old build closed, moves it.
+        assert!(todo.join(LEGACY_ID).join("config.json").exists());
+        assert!(!todo.join(NEW_ID).exists());
+        assert_eq!(migrate(&roots, false), Verdict::Proceed);
+        assert!(todo.join(NEW_ID).join(MARKER).exists());
     }
 
     #[cfg(unix)]
