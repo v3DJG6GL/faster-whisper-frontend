@@ -1,6 +1,5 @@
 // A compact vertical up/down reorder control — drag-free and keyboard-accessible,
-// matching the arrow-button pattern used in the Dictionary rule list. Used to reorder
-// profiles and backends in their lists.
+// used to reorder profiles, backends and the entries of a Dictionary regex list.
 
 import { useLayoutEffect, useRef } from "react";
 import { ChevronUp, ChevronDown } from "lucide-react";

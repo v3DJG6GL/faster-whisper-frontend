@@ -18,7 +18,7 @@ import { ownProp } from "@/lib/own";
 import { backendLabel, backendLabelById, effectiveServerUrl } from "@/lib/backends";
 import {
   BookA, Loader2, RefreshCw, Plus, Trash2, Lock, RotateCcw, ChevronRight,
-  ArrowUp, ArrowDown, AlertTriangle, Check, Crosshair, Info,
+  AlertTriangle, Check, Crosshair, Info,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { useUnsavedGuard } from "@/lib/useUnsavedGuard";
@@ -26,6 +26,7 @@ import { Badge, Button, Card, ConfirmLeave, Labeled, Notice, SectionLabel, Stack
 import { plural } from "@/lib/format";
 import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
+import { ReorderControls } from "@/components/ReorderControls";
 import { IS_LINUX } from "@/lib/platform";
 import {
   type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, ruleLockedFor, envPinnedOf, saveLanded, RULE_LIST_SETTING,
@@ -354,19 +355,16 @@ function RuleCard({
                       <span className="grid size-5 place-items-center rounded-full bg-accent-soft font-mono text-[10.5px] font-semibold text-accent">
                         {i + 1}
                       </span>
+                      {/* ReorderControls keeps keyboard focus on the arrow across the re-keyed move
+                          and at the top/bottom, where a native `disabled` dropped it to <body>. */}
                       {bodyEditable && (
-                        <>
-                          <button type="button" title="Move up" disabled={saving || i === 0}
-                            onClick={() => setEntries((rows) => swap(rows, i, i - 1))}
-                            className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
-                            <ArrowUp className="size-3.5" />
-                          </button>
-                          <button type="button" title="Move down" disabled={saving || last}
-                            onClick={() => setEntries((rows) => swap(rows, i, i + 1))}
-                            className="ring-signal grid size-6 place-items-center rounded-md text-faint hover:text-text disabled:opacity-30">
-                            <ArrowDown className="size-3.5" />
-                          </button>
-                        </>
+                        <ReorderControls
+                          canUp={!saving && i > 0}
+                          canDown={!saving && !last}
+                          onUp={() => setEntries((rows) => swap(rows, i, i - 1))}
+                          onDown={() => setEntries((rows) => swap(rows, i, i + 1))}
+                          className="gap-2"
+                        />
                       )}
                     </div>
                     {/* body */}

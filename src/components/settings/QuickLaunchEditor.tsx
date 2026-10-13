@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { ArrowUp, ArrowDown, Trash2, Plus } from "lucide-react";
+import { Trash2, Plus } from "lucide-react";
 import { swap } from "@/lib/arr";
 import { Button, Select } from "@/components/ui";
+import { ReorderControls } from "@/components/ReorderControls";
 import { VISIBLE_SCREENS, OVERLAY_ACTIONS, quickLaunchMeta } from "@/lib/screenRegistry";
 import { safeDisplayText } from "@/lib/sanitize";
 import type { OverlayQuickAction } from "@/lib/types";
@@ -67,18 +68,14 @@ export function QuickLaunchEditor({
               {safeDisplayText(e.kind, 24)}
             </span>
             <div className="ml-auto flex items-center gap-1">
-              <Button variant="ghost" size="sm" title="Move up" onClick={() => move(i, -1)} disabled={disabled || i === 0}>
-                <ArrowUp className="size-3.5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                title="Move down"
-                onClick={() => move(i, 1)}
-                disabled={disabled || i === items.length - 1}
-              >
-                <ArrowDown className="size-3.5" />
-              </Button>
+              {/* ReorderControls keeps keyboard focus on the arrow across the re-keyed move and at
+                  the top/bottom, where a native `disabled` dropped it to <body>. */}
+              <ReorderControls
+                canUp={!disabled && i > 0}
+                canDown={!disabled && i < items.length - 1}
+                onUp={() => move(i, -1)}
+                onDown={() => move(i, 1)}
+              />
               <Button
                 variant="ghost"
                 size="sm"
