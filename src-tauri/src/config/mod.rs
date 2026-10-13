@@ -1311,9 +1311,35 @@ pub mod keys {
         Ok(())
     }
 
+    /// What one keyring read found. `Absent` and `Unreadable` both leave the caller without a
+    /// key, but only `Absent` is the store saying so: an `Unreadable` key (wallet prompt
+    /// dismissed, platform error) may still exist, so nothing may conclude "no key" from it.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum KeyRead {
+        Found(String),
+        Absent,
+        Unreadable,
+    }
+
+    /// A read that failed for good: only `NoEntry` means nothing is stored.
+    pub(crate) fn failed_read(e: &keyring::Error) -> KeyRead {
+        if matches!(e, keyring::Error::NoEntry) {
+            KeyRead::Absent
+        } else {
+            KeyRead::Unreadable
+        }
+    }
+
     pub fn get(backend_id: &str) -> Option<String> {
+        match read(backend_id) {
+            KeyRead::Found(k) => Some(k),
+            KeyRead::Absent | KeyRead::Unreadable => None,
+        }
+    }
+
+    pub fn read(backend_id: &str) -> KeyRead {
         if let Some(k) = cache().lock().unwrap().get(backend_id) {
-            return k.clone();
+            return k.clone().map_or(KeyRead::Absent, KeyRead::Found);
         }
         let seen = GEN.load(Ordering::SeqCst);
         // One extra attempt on a transient platform error: each try opens a
@@ -1327,33 +1353,37 @@ pub mod keys {
                     }
                     // Returned either way; cached only if no write raced this read.
                     remember(backend_id, seen, Some(k.clone()));
-                    return Some(k);
+                    return KeyRead::Found(k);
                 }
-                // Simply not stored — the caller treats the backend as keyless. Memoized
-                // like a hit: `set`/`delete` write through (and a read that raced one is not
-                // cached), so it cannot go stale in-process.
-                Err(keyring::Error::NoEntry) => {
-                    remember(backend_id, seen, None);
-                    return None;
-                }
-                // Anything else (Ambiguous duplicate items, a store/platform failure) means a
-                // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
-                // connect, so say what actually happened.
                 Err(e) => {
                     if should_retry(attempt, &e) {
                         continue;
                     }
-                    // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
-                    // string with no length bound and no control-character fold, so a Display copy would
-                    // let a peer forge whole records in the log the user is asked to send for support.
-                    tracing::warn!("[keys] keyring read failed for backend {backend_id:?}: {e}");
+                    let read = failed_read(&e);
+                    match read {
+                        // Simply not stored — the caller treats the backend as keyless. Memoized
+                        // like a hit: `set`/`delete` write through (and a read that raced one is not
+                        // cached), so it cannot go stale in-process.
+                        KeyRead::Absent => {
+                            remember(backend_id, seen, None);
+                        }
+                        // Anything else (Ambiguous duplicate items, a store/platform failure) means a
+                        // key may EXIST but cannot be read — the visible symptom is an opaque 403 on
+                        // connect, so say what actually happened.
+                        // Debug-format the id, like `resolve_key`'s sibling log: it is a sync/import-supplied
+                        // string with no length bound and no control-character fold, so a Display copy would
+                        // let a peer forge whole records in the log the user is asked to send for support.
+                        _ => tracing::warn!(
+                            "[keys] keyring read failed for backend {backend_id:?}: {e}"
+                        ),
+                    }
                     // Not `continue`: falling out of the match re-entered the loop, so every
                     // non-retryable error was read (and prompted for) a second time anyway.
-                    return None;
+                    return read;
                 }
             }
         }
-        None
+        KeyRead::Unreadable
     }
 
     pub fn delete(backend_id: &str) -> anyhow::Result<()> {
@@ -1567,6 +1597,26 @@ mod tests {
         // No write in between: the read is cached as before.
         assert!(remember(&id, generation(), Some("k".into())));
         assert_eq!(cached(&id), Some(Some("k".into())));
+    }
+
+    #[test]
+    fn only_a_missing_entry_reads_as_absent() {
+        use super::keys::{failed_read, generation, read, remember, KeyRead};
+        // The store saying "nothing here" is the one failure a caller may treat as "no key".
+        assert_eq!(failed_read(&keyring::Error::NoEntry), KeyRead::Absent);
+        for e in [
+            keyring::Error::NoStorageAccess("locked".into()),
+            keyring::Error::PlatformFailure("dbus".into()),
+            keyring::Error::Ambiguous(vec![]),
+        ] {
+            assert_eq!(failed_read(&e), KeyRead::Unreadable, "{e}");
+        }
+        // A memoized "no entry" is still an absence, and a memoized key is found.
+        let id = format!("absent-{}", uuid::Uuid::new_v4());
+        assert!(remember(&id, generation(), None));
+        assert_eq!(read(&id), KeyRead::Absent);
+        assert!(remember(&id, generation(), Some("k".into())));
+        assert_eq!(read(&id), KeyRead::Found("k".into()));
     }
 
     #[test]

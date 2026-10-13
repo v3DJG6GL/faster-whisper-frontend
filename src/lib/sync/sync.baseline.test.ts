@@ -40,10 +40,12 @@ import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
  *  U+FFFD as the IPC hop does. `writes` records every account a write was issued for, and a write
  *  to an account in `parkWrites` waits on that promise before it lands. A delete waits on every
  *  `parkWrites` promise first, as Rust's FIFO keyring lock holds it behind a parked write, and
- *  `deletes` records every account one landed for, and `reads` counts the key reads issued. */
+ *  `deletes` records every account one landed for, and `reads` counts the key reads issued.
+ *  `unreadable` lists the ids a read reports it FAILED on (locked wallet), not absent. */
 const keyring = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   keys: null as null | Record<string, string>,
+  unreadable: [] as string[],
   store: null as null | Map<string, string>,
   failWrites: new Set<string>(),
   writes: [] as string[],
@@ -53,18 +55,23 @@ const keyring = vi.hoisted(() => ({
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
+  const readBackendKeys = (ids: string[]) => {
+    keyring.reads++;
+    return (
+      keyring.park ??
+      (keyring.keys
+        ? Promise.resolve(keyring.keys)
+        : keyring.store
+          ? Promise.resolve(Object.fromEntries(ids.flatMap((id) => (keyring.store!.has(id) ? [[id, keyring.store!.get(id)!]] : []))))
+          : orig.readBackendKeys(ids))
+    );
+  };
   return {
     ...orig,
-    readBackendKeys: (ids: string[]) => {
-      keyring.reads++;
-      return (
-        keyring.park ??
-        (keyring.keys
-          ? Promise.resolve(keyring.keys)
-          : keyring.store
-            ? Promise.resolve(Object.fromEntries(ids.flatMap((id) => (keyring.store!.has(id) ? [[id, keyring.store!.get(id)!]] : []))))
-            : orig.readBackendKeys(ids))
-      );
+    readBackendKeys,
+    readBackendKeyStates: async (ids: string[]) => {
+      const keys = await readBackendKeys(ids);
+      return keys === null ? (null as never) : { keys, unreadable: keyring.unreadable.filter((id) => ids.includes(id)) };
     },
     setBackendKey: async (id: string, key: string) => {
       if (!keyring.store) return orig.setBackendKey(id, key);
@@ -1499,7 +1506,7 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(b1.hasApiKey).toBe(true); // but the degraded read did not demote the flag
   });
 
-  it("a keyring read that FAILS (Rust reports the key absent) keeps the local hasApiKey flag", async () => {
+  it("a keyring read that FAILS (wallet prompt dismissed) keeps the local hasApiKey flag", async () => {
     // A dismissed wallet prompt reads back a quick {} or a partial map: re-deriving false would
     // let the next push compose a keyless list past the erase guard and wipe the server's keys.
     useApp.setState({
@@ -1513,12 +1520,18 @@ describe("applyBlob keep-local (baseline)", () => {
       backend({ id: "b4", hasApiKey: true }), // new to this device, and the read has no key for it
       backend({ id: "b5", hasApiKey: false }), // new, and the keyring does hold one
     ];
-    for (const read of [{ b5: "sk-5" }, { b2: "sk-2", b5: "sk-5" }] as Record<string, string>[]) {
+    const reads: [Record<string, string>, string[]][] = [
+      [{ b5: "sk-5" }, ["b1", "b2", "b3", "b4"]],
+      [{ b2: "sk-2", b5: "sk-5" }, ["b1", "b3", "b4"]],
+    ];
+    for (const [read, unreadable] of reads) {
       keyring.keys = read;
+      keyring.unreadable = unreadable;
       try {
         expect(await applyBlob({ backends: { list } }, { ...CATS_ALL, profiles: false })).toBe(true);
       } finally {
         keyring.keys = null;
+        keyring.unreadable = [];
       }
       const flag = (id: string) => useApp.getState().backends.find((b) => b.id === id)!.hasApiKey;
       expect(flag("b1")).toBe(true);
@@ -1531,6 +1544,25 @@ describe("applyBlob keep-local (baseline)", () => {
         backends: [backend({ hasApiKey: true }), backend({ id: "b2", hasApiKey: true }), backend({ id: "b3", hasApiKey: false })],
       });
     }
+  });
+
+  it("a key the keyring reports ABSENT clears a stale local hasApiKey flag", async () => {
+    // config.json copied to a new machine, wallet reset, entry deleted by hand: the flag claims a
+    // key the store does not hold. Kept, it holds every compose on the degraded pass-through.
+    useApp.setState({
+      settings: settings(),
+      backends: [backend({ hasApiKey: true }), backend({ id: "b2", hasApiKey: true })],
+    });
+    const list = [backend({ hasApiKey: true }), backend({ id: "b2", hasApiKey: true })];
+    keyring.keys = { b2: "sk-2" };
+    try {
+      expect(await applyBlob({ backends: { list } }, { ...CATS_ALL, profiles: false })).toBe(true);
+    } finally {
+      keyring.keys = null;
+    }
+    const flag = (id: string) => useApp.getState().backends.find((b) => b.id === id)!.hasApiKey;
+    expect(flag("b1")).toBe(false);
+    expect(flag("b2")).toBe(true);
   });
 });
 

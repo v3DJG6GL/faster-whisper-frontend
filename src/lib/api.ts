@@ -1572,11 +1572,24 @@ export async function syncDeviceInfo(): Promise<SyncDeviceInfo | null> {
   return syncStateTurn(() => invoke<SyncDeviceInfo>("sync_device_info"));
 }
 
+/** One bulk keyring read: `keys` holds what was read, `unreadable` the ids whose read FAILED
+ *  (locked wallet, dismissed prompt, platform error). An id in neither has no stored key. */
+export interface BackendKeyRead {
+  keys: Record<string, string>;
+  unreadable: string[];
+}
+
+/** Bulk keyring read, telling a key that cannot be read apart from one that is not stored —
+ *  for a caller that re-derives `hasApiKey`, where only the store's own "absent" may clear it. */
+export async function readBackendKeyStates(backendIds: string[]): Promise<BackendKeyRead> {
+  if (!isTauri) return { keys: {}, unreadable: [] };
+  return invoke<BackendKeyRead>("read_backend_keys", { backendIds });
+}
+
 /** Bulk keyring read: the stored API keys of the given Backends (ids without a
- *  key are omitted). Feeds export-with-secrets and the synced blob. */
+ *  readable key are omitted). Feeds export-with-secrets and the synced blob. */
 export async function readBackendKeys(backendIds: string[]): Promise<Record<string, string>> {
-  if (!isTauri) return {};
-  return invoke<Record<string, string>>("read_backend_keys", { backendIds });
+  return (await readBackendKeyStates(backendIds)).keys;
 }
 
 /** Write a settings-export envelope to `path` (atomic tmp+rename, Rust-side). */

@@ -23,6 +23,7 @@ import {
   isTauri,
   loadSyncState,
   readBackendKeys,
+  readBackendKeyStates,
   saveSyncState,
   setBackendKey,
   setDeepFieldDetection,
@@ -82,6 +83,7 @@ import type {
   SyncTranscription,
 } from "./syncTypes";
 import type { SyncSubSettings } from "../types";
+import type { BackendKeyRead } from "../api";
 import { DEFS, MANIFEST, completeGates, type SettingId } from "../settingsManifest";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { isValidAccentMotion } from "../theme";
@@ -621,8 +623,8 @@ export async function composeBlob(
         10_000,
         {} as Record<string, string>,
       );
-      // COMPLETENESS, not non-emptiness. `read_backend_keys` is a `filter_map`: it drops the
-      // individual entries it cannot read rather than failing the batch, so a PARTIAL map is the
+      // COMPLETENESS, not non-emptiness. `readBackendKeys` leaves out the individual entries it
+      // cannot read rather than failing the batch, so a PARTIAL map is the
       // normal degraded shape. Uploading it replaces the server's copy of every key that is
       // missing here with nothing — the same erase hazard the `else` branch below guards, one
       // step earlier. (`restoreSnapshotSecrets` already treats a partial read-back as failure.)
@@ -1519,7 +1521,8 @@ export function backendKeyFates(
 /** Write incoming secrets to the keyring, then re-derive every backend's
  *  hasApiKey from KEYRING TRUTH (imported key present, or one already stored
  *  on this machine) — so a synced "hasApiKey: true" can't claim a key that
- *  isn't actually available here. `rotated` = backends this device already knew
+ *  isn't actually available here. A key the read FAILED on keeps the local flag; only the
+ *  store reporting it absent clears it. `rotated` = backends this device already knew
  *  whose stored credential the apply changed — a key replaced with a different one, or one
  *  added or removed (the keyring now disagrees with the live `hasApiKey`): their caps and
  *  connection state were measured as the old caller, so the caller evicts them, which also
@@ -1571,9 +1574,9 @@ async function reconcileBackendSecrets(
   }
   if (aborted()) return { backends: list, rotated: landed() };
   const present = await withTimeout(
-    readBackendKeys(list.map((b) => b.id)),
+    readBackendKeyStates(list.map((b) => b.id)),
     10_000,
-    null as Record<string, string> | null,
+    null as BackendKeyRead | null,
   );
   // A degraded read (locked wallet, timed out) must NOT demote: re-deriving `hasApiKey: false`
   // for every backend would be hydrated and persisted, and the next push would then see no
@@ -1587,12 +1590,17 @@ async function reconcileBackendSecrets(
   // nothing in the keyring — defeating the exact promise this function makes. Downstream that
   // phantom also makes `composeBlob`'s erase guard fire forever on a device holding no real keys,
   // silently dropping the backends category from every push.
-  // Rust reports an unreadable key (wallet prompt dismissed, platform error) as ABSENT, in a quick
-  // `{}` or partial map — and this function never deletes a key — so a backend whose local flag is
-  // set and that the read leaves out was not read, not removed: keep its flag like a timeout's.
+  // A key the read could not get at (wallet prompt dismissed, platform error) was not read, not
+  // removed — this function never deletes a key — so an `unreadable` id keeps its local flag like
+  // a timeout's. One the store reports ABSENT clears it: a stale `true` (config copied from another
+  // machine, wallet reset, entry deleted by hand) would otherwise hold every compose on the
+  // degraded pass-through for good, and no restart could clear it.
+  const unreadable = new Set(present?.unreadable ?? []);
   const backends = list.map((b) => {
-    const local = localFlag.get(b.id) ?? false;
-    const held = local || (present !== null && hasOwn(present, b.id));
+    const held =
+      present === null || unreadable.has(b.id)
+        ? (localFlag.get(b.id) ?? false)
+        : hasOwn(present.keys, b.id);
     return b.hasApiKey === held ? b : { ...b, hasApiKey: held };
   });
   // A key added to a backend this device runs is a credential change too: the generation must

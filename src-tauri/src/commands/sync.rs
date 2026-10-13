@@ -86,8 +86,11 @@ pub async fn sync_device_info(
 }
 
 /// Bulk keyring read for export/sync composition: the API keys of the given
-/// Backends, omitting ids with no stored key. The result stays in memory on
-/// its way into an export the user asked for (or the sync blob) — never log it.
+/// Backends in `keys`, and in `unreadable` the ids whose read FAILED (locked wallet,
+/// dismissed prompt, platform error) — an id in neither has no stored key. The two must
+/// stay apart: a sync pull keeps a backend's "has a key" flag across a failed read but
+/// clears it when the store says nothing is there. The result stays in memory on its way
+/// into an export the user asked for (or the sync blob) — never log it.
 ///
 /// async + spawn_blocking: a sync command runs on the MAIN thread, and a
 /// keyring read can BLOCK indefinitely (locked KWallet parks the request
@@ -95,17 +98,39 @@ pub async fn sync_device_info(
 /// later invoke. On a worker it can hang harmlessly; the TS caller wraps this
 /// in a 10s timeout and degrades to "no secrets".
 #[tauri::command]
-pub async fn read_backend_keys(
+pub async fn read_backend_keys(backend_ids: Vec<String>) -> BackendKeys {
+    let ids = backend_ids.clone();
+    tauri::async_runtime::spawn_blocking(move || collect_keys(backend_ids, config::keys::read))
+        .await
+        // A panicked worker read nothing: every id unreadable, never absent.
+        .unwrap_or_else(|_| BackendKeys {
+            keys: Default::default(),
+            unreadable: ids,
+        })
+}
+
+#[derive(serde::Serialize, Default, Debug, PartialEq)]
+pub struct BackendKeys {
+    keys: std::collections::HashMap<String, String>,
+    unreadable: Vec<String>,
+}
+
+fn collect_keys(
     backend_ids: Vec<String>,
-) -> std::collections::HashMap<String, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        backend_ids
-            .into_iter()
-            .filter_map(|id| config::keys::get(&id).map(|k| (id, k)))
-            .collect()
-    })
-    .await
-    .unwrap_or_default()
+    mut read: impl FnMut(&str) -> config::keys::KeyRead,
+) -> BackendKeys {
+    use config::keys::KeyRead;
+    let mut out = BackendKeys::default();
+    for id in backend_ids {
+        match read(&id) {
+            KeyRead::Found(k) => {
+                out.keys.insert(id, k);
+            }
+            KeyRead::Absent => {}
+            KeyRead::Unreadable => out.unreadable.push(id),
+        }
+    }
+    out
 }
 
 /// Write a settings-export envelope (built by the TS side) to the path the
@@ -368,6 +393,19 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_failed_key_read_is_reported_apart_from_a_missing_key() {
+        use crate::config::keys::KeyRead;
+        let ids = ["found", "absent", "locked"].map(String::from).to_vec();
+        let got = super::collect_keys(ids, |id| match id {
+            "found" => KeyRead::Found("sk-1".into()),
+            "absent" => KeyRead::Absent,
+            _ => KeyRead::Unreadable,
+        });
+        assert_eq!(got.keys, [("found".to_string(), "sk-1".to_string())].into());
+        assert_eq!(got.unreadable, vec!["locked".to_string()]);
+    }
+
     #[test]
     fn an_export_saved_with_a_byte_order_mark_is_read_as_json() {
         let dir = std::env::temp_dir().join(format!("fwf-import-bom-{}", std::process::id()));

@@ -49,15 +49,17 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
+  const readBackendKeys = (ids: string[]) => {
+    api.readCalled = true;
+    api.reads++;
+    const park = api.parkOn === null || api.reads === api.parkOn ? api.park : null;
+    return park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
+  };
   return {
     ...orig,
     isTauri: true,
-    readBackendKeys: (ids: string[]) => {
-      api.readCalled = true;
-      api.reads++;
-      const park = api.parkOn === null || api.reads === api.parkOn ? api.park : null;
-      return park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
-    },
+    readBackendKeys,
+    readBackendKeyStates: async (ids: string[]) => ({ keys: await readBackendKeys(ids), unreadable: [] }),
     setBackendKey: async (id: string, key: string) => {
       api.keyWrites.push([id, key]);
     },
