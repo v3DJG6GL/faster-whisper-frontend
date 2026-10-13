@@ -28,6 +28,7 @@ import {
   ALL_CATEGORIES,
   applyBlob,
   approvePendingReview,
+  backendKeyFates,
   consentDetailCap,
   dismissSyncConflict,
   deleteFailureMessage,
@@ -48,14 +49,13 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
-import { ownProp } from "@/lib/own";
+import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
 import { everyWhileVisible } from "@/lib/windowVisibility";
 import { backendDisplayName, peerDeviceName, profileDisplayName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
-import type { Backend, Profile, SyncCategory } from "@/lib/types";
+import type { Profile, SyncCategory } from "@/lib/types";
 import type { ImportResult, SyncBlob, SyncRemoteState } from "@/lib/sync/syncTypes";
 
 const MY_BUCKET = IS_WINDOWS ? ("windows" as const) : ("linux" as const);
@@ -158,6 +158,52 @@ function Modal({ children, onClose }: { children: ReactNode; onClose: () => void
   );
 }
 
+/** The API-key half of the import / restore disclosure (`backendKeyFates`): keys the apply
+ *  stores, keys nobody supplies, and a key this device keeps that now goes to another server. */
+function KeyFateNotices({ fates, source }: { fates: ReturnType<typeof backendKeyFates>; source: "file" | "backup" }) {
+  const what = source === "file" ? "This file" : "The server copy";
+  return (
+    <>
+      {fates.carried && (
+        <Notice tone="warn">{what} contains API keys — they&apos;ll be stored in the system keyring.</Notice>
+      )}
+      {fates.missing.length > 0 && (
+        <Notice tone="warn">
+          {fates.missing.map((b) => `“${backendDisplayName(b.name, 60)}”`).join(", ")} need
+          {fates.missing.length === 1 ? "s" : ""} an API key re-entered after{" "}
+          {source === "file" ? "importing (not included in the file)" : "restoring (not in the server copy)"}.
+        </Notice>
+      )}
+      {fates.moved.map(({ backend: b, to }) => {
+        // An empty address (the sanitizer blanks a scheme this app does not speak) is the
+        // "not configured" state: nothing is sent, so say that rather than "sent to an empty
+        // address".
+        if (!to) {
+          return (
+            <Notice key={`moved-${b.id}`} tone="warn">
+              &ldquo;{backendDisplayName(b.name, 60)}&rdquo; is left without a usable server address — its
+              API key stays on this device and nothing is sent until you set one.
+            </Notice>
+          );
+        }
+        // The host through the IDENTITY helper, like `IncomingAddresses`: `serverUrl` is uncapped
+        // on the import path, and the markerless display cut let a padded host show a
+        // trusted-looking prefix of itself on the line that says where the key goes.
+        const auth = authorityOf(to);
+        return (
+          <Notice key={`moved-${b.id}`} tone="warn">
+            &ldquo;{backendDisplayName(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
+            <span className="font-mono font-semibold">
+              {auth ? safeIdentityText(auth.host, 80) : "an unreadable address"}
+            </span>
+            {auth?.hasUserinfo ? " (the address hides the real host behind a username)" : ""}.
+          </Notice>
+        );
+      })}
+    </>
+  );
+}
+
 /** Per-category selection + hazard preview for a parsed import file. */
 export function ImportPreview({ result, onClose }: { result: ImportResult; onClose: () => void }) {
   const dictating = useApp((st) => st.status !== "idle");
@@ -227,19 +273,8 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
   // Judged on what the apply installs (sanitized, as above). Import never deletes a stored key
   // and the apply re-derives `hasApiKey` from the keyring by id, so a same-id backend this
   // device holds a key for keeps it: nothing to re-enter — but if the file moves it to another
-  // server, that key goes there, whatever the file's own `hasApiKey` says. "Server" is where the
-  // app CONNECTS (`effectiveServerUrl`): an "Address on this device" override wins over the
-  // canonical address, and the import leaves a surviving id's override in place, so the current
-  // settings are also the post-import ones. Comparing canonical addresses warned that the key
-  // goes to a host an overridden backend never reaches.
-  const incoming = sel.backends ? installBackends : [];
-  const dest = (x: Backend) => effectiveServerUrl(x, st.settings);
-  const keyHere = (b: Backend) => st.backends.find((x) => x.id === b.id && x.hasApiKey);
-  const missingKeys = incoming.filter((b) => b.hasApiKey && !ownProp(result.secrets, b.id) && !keyHere(b));
-  const movedKeys = incoming.filter((b) => {
-    const here = keyHere(b);
-    return !!here && !ownProp(result.secrets, b.id) && normalizeUrl(dest(here)) !== normalizeUrl(dest(b));
-  });
+  // server, that key goes there, whatever the file's own `hasApiKey` says (`backendKeyFates`).
+  const keyFates = backendKeyFates(sel.backends ? installBackends : [], result.secrets, st.backends, st.settings);
 
   // Same helper `RestoreFromServer` uses for its own replace warning — see the notice below.
   const replaced = replacedNames(sel, categories, st);
@@ -321,45 +356,10 @@ export function ImportPreview({ result, onClose }: { result: ImportResult; onClo
             {joinNames(replaced)} are overwritten.
           </Notice>
         )}
-        {result.hasSecrets && sel.backends && (
-          <Notice tone="warn">This file contains API keys — they'll be stored in the system keyring.</Notice>
-        )}
         {sel.backends && categories.backends && (
           <IncomingAddresses list={categories.backends.list} />
         )}
-        {missingKeys.length > 0 && (
-          <Notice tone="warn">
-            {missingKeys.map((b) => `“${backendDisplayName(b.name, 60)}”`).join(", ")} need{missingKeys.length === 1 ? "s" : ""} an
-            API key re-entered after importing (not included in the file).
-          </Notice>
-        )}
-        {movedKeys.map((b) => {
-          const to = dest(b);
-          // An empty address (the sanitizer blanks a scheme this app does not speak) is the
-          // "not configured" state: nothing is sent, so say that rather than "sent to an empty
-          // address".
-          if (!to) {
-            return (
-              <Notice key={`moved-${b.id}`} tone="warn">
-                &ldquo;{backendDisplayName(b.name, 60)}&rdquo; is left without a usable server address — its
-                API key stays on this device and nothing is sent until you set one.
-              </Notice>
-            );
-          }
-          // The host through the IDENTITY helper, like `IncomingAddresses`: `serverUrl` is uncapped
-          // on the import path, and the markerless display cut let a padded host show a
-          // trusted-looking prefix of itself on the line that says where the key goes.
-          const auth = authorityOf(to);
-          return (
-            <Notice key={`moved-${b.id}`} tone="warn">
-              &ldquo;{backendDisplayName(b.name, 60)}&rdquo; keeps this device&apos;s API key, which is then sent to{" "}
-              <span className="font-mono font-semibold">
-                {auth ? safeIdentityText(auth.host, 80) : "an unreadable address"}
-              </span>
-              {auth?.hasUserinfo ? " (the address hides the real host behind a username)" : ""}.
-            </Notice>
-          );
-        })}
+        <KeyFateNotices fates={keyFates} source="file" />
         {/* These interpolate a backend name straight out of the imported file. The missing-keys
             line above renders the same field through backendDisplayName; this one did not, so a bidi
             override could rewrite the sentence the user reads to decide whether to import. */}
@@ -446,6 +446,9 @@ export function RestoreFromServer({
     sel.profiles && isPlainObject(blob.profiles),
   );
   const replaced = replacedNames(sel, blob, st);
+  // The apply bypasses the review gate (ignoreGates), so this is the only place a moved key or
+  // the account's stored keys replacing this device's is disclosed — ImportPreview's notices.
+  const keyFates = backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings);
 
   const apply = async () => {
     // Re-check right before applying: applyBlob refuses while dictating, and
@@ -519,6 +522,7 @@ export function RestoreFromServer({
           </Notice>
         )}
         {sel.backends && blob.backends && <IncomingAddresses list={blob.backends.list} />}
+        <KeyFateNotices fates={keyFates} source="backup" />
         <Notice tone="ok">
           After restoring, settings sync turns on for this device against this server.
         </Notice>

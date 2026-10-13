@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   applyBlob,
+  backendKeyFates,
   categorySelection,
   composeBlob,
   disableConflictingProfiles,
@@ -1438,6 +1439,33 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(keyRows([{ id: "0", name: "Zero", serverUrl: "http://p:8000" }], "abc")).toEqual([]);
     // A real key still asks.
     expect(keyRows(known, { b1: "sk-1" })).toHaveLength(1);
+  });
+
+  it("backendKeyFates: the API-key disclosure the import AND the restore dialog show", () => {
+    // Restore applies with ignoreGates, so the review dialog's api-key row never appears; this is
+    // what it must disclose instead: a repointed backend sending this device's key elsewhere.
+    const local = [backend({ hasApiKey: true, serverUrl: "https://home.example" })];
+    const s = settings();
+    const moved = backendKeyFates([backend({ hasApiKey: true, serverUrl: "https://other.example" })], undefined, local, s);
+    expect(moved.carried).toBe(false);
+    expect(moved.moved.map((m) => [m.backend.id, m.to])).toEqual([["b1", "https://other.example"]]);
+    // The incoming copy carries its own key: that one replaces ours, nothing of ours moves.
+    const carried = backendKeyFates([backend({ serverUrl: "https://other.example" })], { b1: "sk-acct" }, local, s);
+    expect(carried).toMatchObject({ carried: true, moved: [], missing: [] });
+    // A non-string or empty "key" is written by nobody (inboundSecret), so it neither counts as
+    // carried nor stops the move warning.
+    expect(backendKeyFates([backend({ serverUrl: "https://other.example" })], { b1: 5 }, local, s)).toMatchObject({
+      carried: false,
+      moved: [{ to: "https://other.example" }],
+    });
+    // Same address (normalized) → nothing moves; an "Address on this device" override wins.
+    expect(backendKeyFates([backend({ serverUrl: "https://home.example/" })], undefined, local, s).moved).toEqual([]);
+    const pinned = settings();
+    pinned.sync = { ...pinned.sync!, urlOverrides: { b1: "https://lan.example" } } as never;
+    expect(backendKeyFates([backend({ serverUrl: "https://other.example" })], undefined, local, pinned).moved).toEqual([]);
+    // Claims a key nobody supplies → missing; a backend not selected (empty list) → nothing.
+    expect(backendKeyFates([backend({ id: "b2", hasApiKey: true })], undefined, local, s).missing.map((b) => b.id)).toEqual(["b2"]);
+    expect(backendKeyFates([], { b1: "sk" }, local, s)).toEqual({ carried: false, missing: [], moved: [] });
   });
 
   it("sanitizeProfiles clamps decodeOverrides like its Backend twin", () => {

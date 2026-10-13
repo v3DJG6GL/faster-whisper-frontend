@@ -1486,6 +1486,36 @@ function inboundSecret(secrets: unknown, id: string): string | undefined {
   return typeof key === "string" && key ? key : undefined;
 }
 
+/** What an import or a restore does to each incoming backend's API key — the disclosure both
+ *  consent dialogs show, judged on the list the apply installs (`incoming`, sanitized; empty when
+ *  backends are not selected) and the keys it carries (`secrets`, read as the apply writes them).
+ *  - `carried`: the apply writes keys into this device's keyring.
+ *  - `missing`: claims a key nobody supplies — neither carried nor already held here.
+ *  - `moved`: keeps the key this device holds for that id (nothing carried replaces it, and an
+ *    apply never deletes one), but now CONNECTS elsewhere, so the key goes to `to`. "Connects" is
+ *    `effectiveServerUrl`: an "Address on this device" override wins, and the apply leaves a
+ *    surviving id's override in place, so the current settings are also the post-apply ones. */
+export function backendKeyFates(
+  incoming: Backend[],
+  secrets: unknown,
+  local: Backend[],
+  settings: AppSettings,
+): { carried: boolean; missing: Backend[]; moved: { backend: Backend; to: string }[] } {
+  const dest = (x: Backend) => effectiveServerUrl(x, settings);
+  const keyHere = (b: Backend) => local.find((x) => x.id === b.id && x.hasApiKey);
+  const carries = (b: Backend) => inboundSecret(secrets, b.id) !== undefined;
+  return {
+    carried: incoming.some(carries),
+    missing: incoming.filter((b) => b.hasApiKey && !carries(b) && !keyHere(b)),
+    moved: incoming.flatMap((b) => {
+      const here = keyHere(b);
+      return here && !carries(b) && normalizeUrl(dest(here)) !== normalizeUrl(dest(b))
+        ? [{ backend: b, to: dest(b) }]
+        : [];
+    }),
+  };
+}
+
 /** Write incoming secrets to the keyring, then re-derive every backend's
  *  hasApiKey from KEYRING TRUTH (imported key present, or one already stored
  *  on this machine) — so a synced "hasApiKey: true" can't claim a key that
