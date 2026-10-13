@@ -312,11 +312,21 @@ pub struct StreamSession {
     ws_task: Option<tauri::async_runtime::JoinHandle<()>>,
     /// Shared with the WS task's `StreamParams::detached` (see [`cancel_detached_stream`]).
     detached: Arc<DetachedStream>,
+    /// "Keep recordings": the session was started with a save dir (see [`Self::keeps_recording`]).
+    keeps_recording: bool,
     // Unmutes system audio on drop (after the Drop body below runs).
     _mute: SystemMuteGuard,
 }
 
 impl StreamSession {
+    /// Whether this session has a save dir ("Keep recordings"), as `RecordSession::keeps_recording`.
+    /// A recovery cancel finishes a live session only when this is true; otherwise it aborts it.
+    /// Without a save dir the drain writes nothing and every event is already suppressed by the
+    /// cancel's epoch retire, so a flush would only make the server decode the last utterance.
+    pub fn keeps_recording(&self) -> bool {
+        self.keeps_recording
+    }
+
     /// Claim this session as the detached drain BEFORE the state lock is released, as
     /// `RecordSession::claim_detached` does: a Cancel landing between stop and finish must
     /// reach this session, not the one before it.
@@ -438,6 +448,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         capture_stop.clone(),
     )?;
 
+    let keeps_recording = p.save_dir.is_some();
     let params = StreamParams {
         ws_url: stream::http_to_ws(&p.server_url),
         model: p.model,
@@ -586,6 +597,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
         ws_stop: ws_stop_tx,
         ws_task: Some(ws_task),
         detached,
+        keeps_recording,
         _mute: mute,
     })
 }

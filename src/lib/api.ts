@@ -988,8 +988,9 @@ export async function stopStream(): Promise<void> {
  *  `discardRecording`: a user's Cancel after stop also drops the recording the detached drain
  *  would save (the batch path's rule); a recovery cancel passes false to keep that audio.
  *  The one exception to "without draining": a recovery cancel (`userInitiated` true,
- *  `discardRecording` false) FINISHES a live session, so its drain writes the recording (its UI
- *  events epoch-silenced), and settles a detached drain so its keep is final. */
+ *  `discardRecording` false) FINISHES a live session when "Keep recordings" is on, so its drain
+ *  writes the recording (its UI events epoch-silenced); with it off the session is aborted like a
+ *  Cancel. Either way it settles a detached drain so its keep is final. */
 export async function cancelStream(userInitiated = false, discardRecording = userInitiated): Promise<void> {
   if (!isTauri) return;
   await invoke("cancel_stream", { userInitiated, discardRecording });

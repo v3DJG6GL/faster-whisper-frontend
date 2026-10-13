@@ -113,8 +113,10 @@ pub async fn stop_stream(app: AppHandle) -> Result<(), String> {
 /// teardown the frontend's `closed` handler calls to release a parked session (capture-thread death /
 /// server-initiated close that never went through stop_stream): a no-op when already taken.
 /// A recovery cancel (`user_initiated` with `discard_recording: false`: wake from sleep) keeps a
-/// LIVE session's audio too: it `finish`es that session instead, so the drain writes the recording
-/// (its events are already silenced by the epoch retire), and never claims it, so the keep is final.
+/// LIVE session's audio too when "Keep recordings" is on: it `finish`es that session instead, so
+/// the drain writes the recording (its events are already silenced by the epoch retire), and never
+/// claims it, so the keep is final. With recordings off there is nothing to keep, so it aborts the
+/// session like a Cancel: a drain would only make the server decode a phrase nobody sees.
 #[tauri::command]
 pub async fn cancel_stream(
     app: AppHandle,
@@ -143,10 +145,11 @@ pub async fn cancel_stream(
             sess
         };
         // OUTSIDE the lock — capture join, mute release, etc. Drop (not finish) for a Cancel or the
-        // closed-handler release; a recovery cancel drains instead, so the live session's recording
-        // is written rather than aborted with the WS task. Unclaimed, so no later Cancel reaches it.
+        // closed-handler release; a recovery cancel drains instead when "Keep recordings" is on, so
+        // the live session's recording is written rather than aborted with the WS task. Unclaimed,
+        // so no later Cancel reaches it. With recordings off it is dropped like a Cancel.
         match sess {
-            Some(s) if user_initiated && !discard_recording => s.finish(),
+            Some(s) if user_initiated && !discard_recording && s.keeps_recording() => s.finish(),
             sess => drop(sess),
         }
 
