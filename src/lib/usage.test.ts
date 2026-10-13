@@ -29,6 +29,7 @@ vi.mock("./windowVisibility", () => ({
 
 import { useApp } from "./store";
 import { initUsageController, openStatisticsPage, sameViewSource, TREND_DAYS } from "./usage";
+import { forgetCredential } from "./capabilities";
 
 const setHidden = (h: boolean) => {
   vis.hidden = h;
@@ -322,6 +323,29 @@ describe("usage poll gates", () => {
     // Restore, and let the pass it arms run before the next case.
     useApp.getState().setUrlOverride("b1", null);
     await vi.advanceTimersByTimeAsync(1_000);
+    await settle();
+  });
+  it("a fetch sent with a rotated-out key does not re-install the old caller's numbers", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    getUsageStats.mockClear();
+    const OLD = { today: { words: 111 }, total: {}, series: [] };
+    let release!: (v: typeof OLD) => void;
+    getUsageStats
+      .mockImplementationOnce(() => new Promise((r) => (release = r)) as never)
+      .mockResolvedValueOnce(null as never); // the new key cannot read /v1/usage (403)
+    await vi.advanceTimersByTimeAsync(30_000); // the tick's fetch, with the old key, hangs
+    await settle();
+    expect(calls().fixed).toBe(1);
+    forgetCredential("b1"); // another user's key saved for the same address
+    await vi.advanceTimersByTimeAsync(1_000); // the eviction pass folds into the running one
+    await settle();
+    release(OLD);
+    await settle();
+    // The rerun fetched with the new key and missed: nothing of the old caller's is kept.
+    expect(calls().fixed).toBe(2);
+    expect(useApp.getState().usage.b1).toBeNull();
+    await vi.advanceTimersByTimeAsync(30_000); // restore b1's document before the next case
     await settle();
   });
   it("a page reopened onto a miss marks the kept documents failed instead of current", async () => {

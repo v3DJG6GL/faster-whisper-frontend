@@ -27,6 +27,7 @@ import { flushOutcomes, initOutcomeQueue, sentOutcomeCount } from "./usageOutcom
 import { backendForProfile, homeTargetProfile } from "./dictation/dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
+import { credentialGeneration } from "./capabilities";
 import { hasOwn, ownProp } from "./own";
 import { toUsageQuery, type UsagePageQuery, viewSigSource } from "./usageDerive";
 import type { Backend } from "./types";
@@ -162,10 +163,11 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   const sig = viewSignature(backend, target, q, tz);
   if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !force) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
   const gen = yearGen;
+  const cred = credentialGeneration(backend.id);
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
-  if (!cur || cur.id !== backend.id) return;
+  if (!cur || cur.id !== backend.id || credentialGeneration(backend.id) !== cred) return; // see refreshOne
   const nq = yearPageQuery(now.usageViewQuery);
   if (!nq || viewSignature(cur, effectiveServerUrl(cur, now.settings), nq, tz) !== sig) return;
   if (stats === null && now.usageYear?.sig === sig && (!reopened || yearGen !== gen)) return;
@@ -218,10 +220,11 @@ async function refreshView(reopened = false): Promise<void> {
   const q = s.usageViewQuery;
   const sig = viewSignature(backend, target, q, tz);
   const gen = viewGen;
+  const cred = credentialGeneration(backend.id);
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
   const now = useApp.getState();
   const cur = viewStatsBackend(now);
-  if (!cur || cur.id !== backend.id) return;
+  if (!cur || cur.id !== backend.id || credentialGeneration(backend.id) !== cred) return; // see refreshOne
   if (viewSignature(cur, effectiveServerUrl(cur, now.settings), now.usageViewQuery, tz) !== sig) return;
   // A miss revokes this query's confirmation (the kept document may now be hours old), unless a
   // success landed while this fetch was out; the next success confirms it again.
@@ -251,6 +254,7 @@ async function refreshOne(backend: Backend): Promise<void> {
     return;
   }
   const target = effectiveServerUrl(backend, useApp.getState().settings);
+  const cred = credentialGeneration(backend.id);
   const stats = await getUsageStats({
     serverUrl: target,
     backendId: backend.id,
@@ -269,6 +273,10 @@ async function refreshOne(backend: Backend): Promise<void> {
   // already in flight against the old address resolve afterwards and re-install its counters
   // under a backend that now points somewhere else — undoing the invalidation that just ran.
   if (effectiveServerUrl(cur, st.settings) !== target) return;
+  // …and the CREDENTIAL: /v1/usage is per caller, and a rotated key moves neither the address nor
+  // key presence. A fetch sent with the old key must not re-install the old caller's numbers —
+  // which keep-last-known below would then hold for good if the new key's fetch keeps missing.
+  if (credentialGeneration(backend.id) !== cred) return;
   // `series` is server-supplied (Rust caps it at 3,700). We asked for TREND_DAYS buckets, so
   // anything past that is not data we can use — but it WOULD be stored and then re-serialized by
   // setUsage's two stringify passes on the main thread, every 30s, for every backend, forever.
