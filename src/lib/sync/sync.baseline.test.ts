@@ -1710,4 +1710,22 @@ describe("a manual Push / Pull clicked during launch", () => {
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
     }
   });
+
+  it("a click made after a server-copy delete still waits for the keys launch is restoring", async () => {
+    io.pull = { ok: false, status: 0, error: "unreachable" };
+    const { engine, store, init } = await launchEngine();
+    try {
+      await engine.resetSyncState(); // mid launch work: the snapshot keys are still being read
+      const click = engine.pushNow(true);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(io.pushes).toEqual([]);
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await click;
+      expect(io.pushes.every((p) => p.afterRelease)).toBe(true);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
 });

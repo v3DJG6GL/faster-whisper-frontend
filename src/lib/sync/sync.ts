@@ -2008,7 +2008,8 @@ let gen = 0;
  *  clicked meanwhile awaits it instead of dropping at the `inFlight` gate; awaiting the launch
  *  work alone would wake with the startup pull holding the lock and drop all the same. */
 let launchDone: Promise<void> | null = null;
-/** Settles `launchDone` (and clears both); null outside launch. */
+/** Settles `launchDone` (and clears both) — set only for the startup pull, the part of launch a
+ *  supersede may cut short; null during the launch work and outside launch. */
 let endLaunch: (() => void) | null = null;
 
 /** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
@@ -2016,9 +2017,11 @@ let endLaunch: (() => void) | null = null;
 function supersede(): void {
   gen++;
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
-  // Launch is over for whatever comes next: a pull for the new server must not wait out the
-  // superseded startup pull (up to a keyring wait plus the request timeout). Clicks parked on it
-  // wake and are voided by their gen check.
+  // A pull for the new server must not wait out the superseded startup pull (up to a keyring wait
+  // plus the request timeout): that part of launch is over. Clicks parked on it wake and are
+  // voided by their gen check. A supersede during the launch work itself (resetSyncState while
+  // the keys are still being restored) leaves the wait alone: a click must not compose a push
+  // against a base that has no keys yet.
   endLaunch?.();
   clearTimeout(pushTimer);
   setPendingConflict(null); // a conflict against the old server is unresolvable now
@@ -3990,15 +3993,15 @@ export async function initSync(): Promise<void> {
   const myGen = gen;
   inFlight = true;
   let launchEnded!: () => void;
-  launchDone = new Promise<void>((r) => {
+  const thisLaunch: Promise<void> = new Promise<void>((r) => {
     launchEnded = () => {
       // A supersede may have ended this launch already and a later one begun: leave that alone.
-      if (endLaunch !== launchEnded) return;
+      if (launchDone !== thisLaunch) return;
       launchDone = endLaunch = null;
       r();
     };
-    endLaunch = launchEnded;
   });
+  launchDone = thisLaunch;
   try {
     await configReady;
     state = (await loadSyncState()) ?? {};
@@ -4108,9 +4111,12 @@ export async function initSync(): Promise<void> {
   });
 
   // Launch ends with the startup pull (pullNow takes the lock before its first await, so no click
-  // released below can slip in ahead of it), or here when there is none.
-  if (canSync()) void pullNow().then(launchEnded, launchEnded);
-  else launchEnded();
+  // released below can slip in ahead of it), or here when there is none. Only this pull may be cut
+  // short by a supersede (a server switch must not wait it out).
+  if (canSync()) {
+    endLaunch = launchEnded;
+    void pullNow().then(launchEnded, launchEnded);
+  } else launchEnded();
 }
 
 /** Plain-language failure line for "Delete server copy" — the one server call on
