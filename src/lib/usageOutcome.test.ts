@@ -11,6 +11,7 @@ const post = vi.hoisted(() => ({
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
   isTauri: true,
+  loadUsageOutcomes: () => Promise.resolve(null),
   saveUsageOutcomes: (q: unknown) => {
     post.saves.push(q);
     return post.holdSaves ? new Promise<void>((res) => post.saveRelease.push(res)) : Promise.resolve();

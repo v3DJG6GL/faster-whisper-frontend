@@ -158,12 +158,14 @@ pub async fn post_usage_outcomes(
 /// The on-disk outcome queue (`<app_data_dir>/usage-outcomes.json`): outcomes that could
 /// not be posted yet (server down mid-session) survive a restart here. Opaque JSON to
 /// Rust; the queue logic lives in TS.
+/// `Err` when the file exists but can't be read — the webview then must not save over it.
 #[tauri::command]
-pub fn load_usage_outcomes(app: AppHandle) -> Option<serde_json::Value> {
-    app.path()
-        .app_data_dir()
-        .ok()
-        .and_then(|d| crate::store::usage_queue::load(&d))
+pub fn load_usage_outcomes(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return Ok(None);
+    };
+    crate::store::usage_queue::load(&dir)
+        .map_err(|e| format!("usage outcome queue unreadable: {e}"))
 }
 
 #[tauri::command]

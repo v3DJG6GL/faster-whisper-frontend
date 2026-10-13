@@ -186,7 +186,8 @@ export function parseQueue(raw: unknown): OutcomeQueue {
 
 let queue: OutcomeQueue = EMPTY_QUEUE;
 let loaded = false;
-let loading = false; // the persisted file is being read — a save now would clobber its backlog
+// The persisted file is being read — a save now would clobber its backlog.
+let loading: Promise<void> | undefined;
 let flushing = false;
 // The running flush pass, so a caller that arrives mid-pass can wait for it (refreshAll
 // must not refetch before the outcome it flushes has landed).
@@ -207,7 +208,17 @@ export function sentOutcomeCount(): number {
 
 /** Write the queue now, tracked in `saveInFlight` until it settles; never rejects. */
 function startSave(): Promise<void> {
-  const p: Promise<void> = saveUsageOutcomes(queue)
+  const p: Promise<void> = (async () => {
+    // A save replaces the whole file: before the disk copy was read (or while it can't be — a
+    // Windows AV lock) it would erase the backlog of unposted outcomes for good. Read it now
+    // (merging), and if it still can't be read keep it as is.
+    if (!loaded) await readPersisted();
+    if (!loaded) {
+      console.warn("usage outcome queue not saved: the file on disk could not be read, so it is kept as is");
+      return;
+    }
+    await saveUsageOutcomes(queue);
+  })()
     .catch((e) => console.error("usage outcome queue save failed:", e))
     .finally(() => {
       if (saveInFlight === p) saveInFlight = undefined;
@@ -219,7 +230,7 @@ function startSave(): Promise<void> {
 /** Debounced persist — an enqueue and the flush that follows it a moment later would
  *  otherwise write the file twice. */
 function persist(): void {
-  if (!isTauri || loading) return; // initOutcomeQueue writes the merged queue once the read lands
+  if (!isTauri || loading) return; // whoever started the read writes the merged queue once it lands
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     saveTimer = undefined;
@@ -237,23 +248,32 @@ export function flushOutcomeSave(): Promise<void> {
   return startSave();
 }
 
+/** Read the persisted queue once, merging this session's items after it. A failed read (the
+ *  file exists but can't be read) leaves it unloaded, so the next save tries again. */
+function readPersisted(): Promise<void> {
+  if (loaded) return Promise.resolve();
+  loading ??= (async () => {
+    try {
+      const persisted = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
+      queue = { ...persisted, items: [...persisted.items, ...queue.items] };
+      loaded = true;
+    } catch (e) {
+      console.error("usage outcome queue load failed:", e);
+    } finally {
+      loading = undefined;
+    }
+  })();
+  return loading;
+}
+
 /** Load the persisted queue (once) and post whatever is due. */
 export async function initOutcomeQueue(): Promise<void> {
   if (!isTauri || loaded) return;
-  loading = true;
-  try {
-    const persisted = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
-    queue = { ...persisted, items: [...persisted.items, ...queue.items] };
-    loaded = true;
-  } catch (e) {
-    console.error("usage outcome queue load failed:", e);
-  } finally {
-    loading = false;
-  }
+  await readPersisted();
   // The merged queue — including anything enqueued while the read was in flight — is
   // written once now (an enqueue's own persist() during the load was a no-op). Only after a
-  // SUCCESSFUL read: a failed one would write the near-empty in-memory queue over the on-disk
-  // backlog it could not read — the next enqueue persists what this session adds either way.
+  // SUCCESSFUL read: a failed one leaves the on-disk backlog as is, and every later save
+  // first tries to read it again (startSave).
   if (loaded) persist();
   await flushOutcomes();
 }

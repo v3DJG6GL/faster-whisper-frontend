@@ -704,7 +704,8 @@ export async function saveJobsLedger(ledger: unknown): Promise<void> {
   await invoke("save_jobs_ledger", { ledger });
 }
 
-/** The on-disk outcome queue (opaque to Rust; shape owned by lib/usageOutcome.ts). */
+/** The on-disk outcome queue (opaque to Rust; shape owned by lib/usageOutcome.ts).
+ *  `null` when absent or corrupt; REJECTS when the file exists but can't be read. */
 export async function loadUsageOutcomes(): Promise<unknown> {
   if (!isTauri) return null;
   return invoke<unknown>("load_usage_outcomes");
