@@ -120,6 +120,21 @@ describe("applyMap", () => {
     expect(applyMap("Strasse", rows)).toBe("B");
     expect(applyMap("Straße", rows)).toBe("A");
   });
+
+  it("gives keys differing only in case the server's one value, whatever the row order", () => {
+    // The server's lookup is keyed lower-cased, filled in the saved map's code-point order:
+    // "komma" sorts after "Komma", so its value wins for both spellings.
+    const upper = { id: 1, k: "Komma", v: ";" };
+    const lower = { id: 2, k: "komma", v: "," };
+    for (const rows of [[upper, lower], [lower, upper]]) {
+      expect(applyMap("Komma", rows)).toBe(",");
+      expect(applyMap("komma", rows)).toBe(",");
+    }
+    // The ß pair in the other row order: the same saved map, so the same values.
+    const rows = [{ id: 2, k: "STRAẞE", v: "B" }, { id: 1, k: "Straße", v: "A" }];
+    expect(applyMap("Straße", rows)).toBe("A");
+    expect(applyMap("Strasse", rows)).toBe("B");
+  });
 });
 
 describe("envPinnedOf", () => {

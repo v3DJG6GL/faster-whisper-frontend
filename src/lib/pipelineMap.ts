@@ -146,21 +146,26 @@ export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> }
  *  char — reproducing Python's `\b(key)\b` for keys whose edge is a space/punct (e.g. " Prozent").
  *  Returns the transformed string, terminal-trimmed of spaces/tabs/CR like the backend's last step. */
 export function applyMap(text: string, rows: MapRow[]): string {
-  const map = new Map<string, string>();
-  for (const r of rows) if (r.k.trim() && !map.has(r.k)) map.set(r.k, r.v); // newest-shown row wins on a dup
-  if (map.size === 0) return text;
+  // Built over the SAVED body, as compile_map builds over the stored map: an exact duplicate key
+  // goes to the newest row (mapBodyFromRows keeps it), and keys differing only in case are ONE
+  // mapping on the server — its lookup is keyed by the lower-cased key, filled in the saved map's
+  // (code-point sorted) key order, so the code-point-last twin's value wins for every spelling.
+  const entries = Object.entries(mapBodyFromRows(rows).map);
+  if (entries.length === 0) return text;
+  const lookup = new Map<string, string>();
+  for (const [k, v] of entries) lookup.set(k.toLowerCase(), v);
+  const keys = entries.map(([k]) => k);
   // The backend's derived ss variants: added only when no key (any case) already spells it, in
-  // the saved map's key order (mapBodyFromRows sorts it), so two ß keys differing only in case
-  // give their shared variant the same value as on the server.
-  const present = new Set([...map.keys()].map((k) => k.toLowerCase()));
-  for (const [k, v] of Object.entries(mapBodyFromRows(rows).map)) {
+  // the saved map's key order, so two ß keys differing only in case give their shared variant
+  // the same value as on the server.
+  for (const [k, v] of entries) {
     const derived = k.replace(/ß/g, "ss").replace(/ẞ/g, "SS");
-    if (derived !== k && !present.has(derived.toLowerCase())) {
-      map.set(derived, v);
-      present.add(derived.toLowerCase());
+    if (derived !== k && !lookup.has(derived.toLowerCase())) {
+      lookup.set(derived.toLowerCase(), v);
+      keys.push(derived);
     }
   }
-  const keys = [...map.keys()].sort((a, b) => b.length - a.length); // longest first → phrases win
+  keys.sort((a, b) => b.length - a.length); // longest first → phrases win
   // Each key's lowercase form is loop-invariant — compute it once, not once per text position.
   const lowered = keys.map((k) => [k, k.toLowerCase()] as const);
 
@@ -184,7 +189,7 @@ export function applyMap(text: string, rows: MapRow[]): string {
       }
     }
     if (hit) {
-      out += map.get(hit) ?? hit; // hit is always a real key → the matched (newest) key's own value
+      out += lookup.get(hit.toLowerCase()) ?? hit; // hit is always a key → the server's value for it
       i += hit.length;
     } else {
       out += text[i];
