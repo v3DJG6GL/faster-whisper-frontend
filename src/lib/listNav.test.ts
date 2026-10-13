@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { navKey, pickerKeyActsOnce } from "./listNav";
+// Raw sources (vite `?raw`): the other keyboard lists that must consult the same predicate.
+import listPickerSrc from "../components/ListPicker.tsx?raw";
+import buttonsSrc from "../components/ui/buttons.tsx?raw";
 
 describe("navKey", () => {
   it("moves by one, by a page, and to either end, clamped", () => {
@@ -35,5 +38,28 @@ describe("pickerKeyActsOnce", () => {
     for (const k of ["ArrowDown", "ArrowUp", "PageDown", "PageUp", "Home", "End"]) {
       expect(pickerKeyActsOnce(k, false, true)).toBe(false);
     }
+  });
+});
+
+/** The source from `start` to the end of that component-level arrow function (its `  };` line). */
+function bodyOf(src: string, start: string): string {
+  const at = src.indexOf(start);
+  expect(at).toBeGreaterThanOrEqual(0);
+  return src.slice(at, src.indexOf("\n  };", at));
+}
+
+describe("held keys in the other picker lists act once", () => {
+  it("ListPicker's list keys swallow a held Space / Enter, and so does its trigger", () => {
+    expect(bodyOf(listPickerSrc, "const onListKey")).toMatch(/e\.repeat && pickerKeyActsOnce\(/);
+    expect(listPickerSrc.slice(listPickerSrc.indexOf("renderTrigger({"))).toMatch(
+      /onKeyDown: \(e\) => \{\s*(\/\/[^\n]*\s*)*if \(e\.repeat && pickerKeyActsOnce\(/,
+    );
+  });
+
+  it("SplitButton's menu keys swallow a held Space / Enter, and so does its chevron", () => {
+    expect(bodyOf(buttonsSrc, "const onMenuKey")).toMatch(/e\.repeat && pickerKeyActsOnce\(/);
+    expect(buttonsSrc.slice(buttonsSrc.indexOf("ref={chevronRef}"))).toMatch(
+      /onKeyDown=\{\(e\) => \{\s*if \(e\.repeat && pickerKeyActsOnce\(/,
+    );
   });
 });

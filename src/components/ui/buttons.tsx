@@ -7,7 +7,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { langCode, languageLabel } from "@/lib/languages";
 import { POPOVER_PANEL } from "@/components/styles";
-import { navKey } from "@/lib/listNav";
+import { navKey, pickerKeyActsOnce } from "@/lib/listNav";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
 import { useOutsidePress } from "@/lib/useOutsidePress";
 
@@ -128,6 +128,13 @@ export function SplitButton({
     if (o) o.onChange(!o.checked);
   };
   const onMenuKey = (e: ReactKeyboardEvent<HTMLElement>) => {
+    // A held key acts once, as in the language pickers (the arrows keep repeating): a held Space
+    // ticked the row on and off at the key-repeat rate, a held Enter ticked, closed, and its
+    // repeat reopened the menu from the chevron (which swallows those below) to tick again.
+    if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
+      e.preventDefault();
+      return;
+    }
     const next = navKey(e.key, active, options.length);
     if (next !== null) {
       e.preventDefault();
@@ -167,6 +174,10 @@ export function SplitButton({
         aria-controls={open ? menuId : undefined}
         onClick={() => (open ? close(false) : show(0))}
         onKeyDown={(e) => {
+          if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
+            e.preventDefault();
+            return;
+          }
           if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
             e.preventDefault();
             show(e.key === "ArrowUp" ? options.length - 1 : 0);

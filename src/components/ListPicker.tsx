@@ -27,7 +27,7 @@ import {
 import { createPortal } from "react-dom";
 import { Search } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { comboboxInputProps, navKey, optionId } from "@/lib/listNav";
+import { comboboxInputProps, navKey, optionId, pickerKeyActsOnce } from "@/lib/listNav";
 import { POPOVER_PANEL } from "@/components/styles";
 import { Kbd } from "@/components/ui/Kbd";
 import { popoverBox, useAnchoredRect } from "@/lib/useAnchoredRect";
@@ -257,6 +257,13 @@ export function ListPicker<R>({
     // Mid-composition the IME owns Esc (cancel the half-typed text), Enter (commit it) and the
     // arrows (candidate list).
     if (imeComposing(e)) return;
+    // A held key acts once, as in LangPick (the arrows keep repeating): a held Space ticked the
+    // row on and off at the key-repeat rate, a held Enter closed the list and its repeat reopened
+    // it from the trigger (the trigger swallows those below). Typing in the search still repeats.
+    if (e.repeat && pickerKeyActsOnce(e.key, query.length > 0, query.length === 0)) {
+      e.preventDefault();
+      return;
+    }
     const next = navKey(e.key, act, flat.length);
     if (next !== null) {
       e.preventDefault();
@@ -308,6 +315,12 @@ export function ListPicker<R>({
         "aria-expanded": open,
         onClick: () => (open ? close(false) : show()),
         onKeyDown: (e) => {
+          // The repeat of the Enter that picked and closed lands here: it would click the trigger
+          // and reopen the list.
+          if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
+            e.preventDefault();
+            return;
+          }
           if (!open && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
             e.preventDefault();
             show();
