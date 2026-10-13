@@ -475,12 +475,16 @@ pub async fn inject_text(
     // window class). See the resolution at the sink in `inject::text`.
     remote_desktop: Option<bool>,
     // The clipboard form of `text` (`clipboardText` over IPC): what every divert, recovery and
-    // clipboard-only write puts on the clipboard in its place — a translated live block without
-    // the field's phrase gap. Omitted = `text`. Sanitized exactly like `text`, in `inject::text`.
+    // clipboard-only write puts on the clipboard in its place: a translated live block without
+    // the field's phrase gap, or a plain phrase without its leading seam space. Omitted = `text`.
+    // Sanitized exactly like `text`, in `inject::text`.
     clipboard_text: Option<String>,
-    // `withholdOnDivert` over IPC: a mid-function divert (the trigger chord still held, or focus
-    // moved) writes NOTHING and reports `landed: false` instead of leaving `text` on the clipboard.
-    // For an insert with nothing worth recovering — the hard-break separator. Omitted = false.
+    // `withholdOnDivert` over IPC: no divert or recovery (the mid-function divert, the chord-time
+    // own-window divert, a failed paste, an error-abort recovery) leaves `text` on the clipboard as
+    // its persistent owner. Before anything is written it writes NOTHING and reports
+    // `landed: false`; once the paste write has put it there, it gets the restore a pasted one
+    // gets and reports `landed: true, diverted: false`. For an insert with nothing worth
+    // recovering — the hard-break separator. Omitted = false.
     withhold_on_divert: Option<bool>,
 ) -> Result<InjectOutcome, String> {
     crate::inject::text::inject_text(

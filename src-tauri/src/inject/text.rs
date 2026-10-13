@@ -36,7 +36,10 @@ pub struct InjectOutcome {
     /// keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on
     /// Windows: a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read
     /// still held it, or the remote-desktop owner or legacy write failed or timed out — a
-    /// timed-out offer may still reach the clipboard later).
+    /// timed-out offer may still reach the clipboard later), or an insert the caller marked
+    /// `withhold_on_divert` (the hard-break separator) that would otherwise have been diverted or
+    /// recovered to the clipboard before anything was written: it writes nothing, and that caller
+    /// drops it rather than re-sending.
     ///
     /// The default for any future early return must be `true`. `false` means "send it again", and a
     /// wrong `false` re-types a phrase the user already has — visibly duplicated text, which is
@@ -103,8 +106,14 @@ pub(crate) async fn inject_text(
     // `text`. `None` = the same as `text`. See `clipboard_form`.
     clipboard_text: Option<String>,
     // The caller has nothing worth recovering from the clipboard (the hard-break separator, a
-    // lone " "): a mid-function divert writes nothing and reports `landed: false` rather than
-    // making that text the clipboard's persistent owner over what the user copied.
+    // lone " "), so it never becomes the clipboard's persistent owner over what the user copied,
+    // on any divert or recovery arm. Where nothing has been written yet (the mid-function divert,
+    // the Wayland write guard, the error-abort recovery after a sink that wrote nothing) it writes
+    // nothing and reports `landed: false`. Where the paste write already put it on the clipboard
+    // (the chord-time own-window divert, a failed paste, an error abort cancelling the paste) it
+    // schedules the restore a pasted one gets, arms neither the delivered nor the recovery guard,
+    // and reports `landed: true, diverted: false`: the clipboard WAS written, and the caller reads
+    // `landed` as that, to give the user's copy back.
     withhold_on_divert: bool,
 ) -> Result<InjectOutcome, String> {
     // Strip control characters (except Tab/LF; CR is normalized to LF) from the server-transcribed
@@ -616,9 +625,11 @@ pub(crate) async fn inject_text(
                 // this function — the exact defect P4 recorded for the cancel check above, which
                 // cost a died session its transcript. The two states are not exclusive: the cancel
                 // arm only returns when `!cancel_wants_recovery`, so an ERROR abort reaches here.
+                // A withheld insert has nothing to recover: it falls through to the plain skip.
                 if crate::inject::injection_cancelled(epoch)
                     && crate::inject::cancel_wants_recovery(epoch)
                     && !recovery_text.is_empty()
+                    && !withhold_on_divert
                 {
                     // Arm the session-restore guard ONLY if the recovery actually landed. Arming
                     // it on a failed write would suppress the restore of the user's own clipboard
@@ -737,6 +748,19 @@ pub(crate) async fn inject_text(
             if matches!(r, Ok(crate::inject::Landed::NothingWritten))
                 && !crate::inject::injection_cancelled(epoch)
             {
+                // A withheld insert is not diverted (see `withhold_on_divert`): no persistent
+                // owner, no delivered guard, just the restore a pasted one gets. `landed: true`,
+                // because the paste write above already replaced the clipboard.
+                if withhold_on_divert {
+                    tracing::info!(
+                        "[inject] separator not pasted (our own window took focus) — withheld"
+                    );
+                    crate::inject::restore_clipboard_later(prev);
+                    return Ok(InjectOutcome {
+                        landed: true,
+                        diverted: false,
+                    });
+                }
                 tracing::info!(
                     "[inject] our own window took focus before the paste chord — left on the clipboard"
                 );
@@ -750,10 +774,11 @@ pub(crate) async fn inject_text(
                 // confirmation. No chord was pressed, so the caller's re-send is safe.
                 //
                 // A clipboard form that differs from the pasted text (a translated block's field
-                // gap) is written over it even when the paste write already persisted: this is
-                // now a divert, and the user pastes it. That second write is unavoidable here —
-                // the paste write went out before the divert was known. If only IT fails, the
-                // gapped text is still on a live owner, so the divert stands.
+                // gap, a plain phrase's seam space) is written over it even when the paste write
+                // already persisted: this is now a divert, and the user pastes it. That second
+                // write is unavoidable here — the paste write went out before the divert was
+                // known. If only IT fails, the gapped text is still on a live owner, so the divert
+                // stands.
                 if !persisted || clip_text != text {
                     if let Err(e) = persist_off_runtime(clip_text.clone()).await {
                         if !persisted {
@@ -787,10 +812,13 @@ pub(crate) async fn inject_text(
             // that matters, because the recovery block at the end of this function is about to put
             // the transcript on the clipboard — and this restore, which serves `prev` 400ms later,
             // would erase it, leaving the text neither typed nor recoverable. A plain user cancel
-            // still restores: there the clobbered clipboard IS the thing to put back.
-            if r.is_ok()
-                && !(crate::inject::injection_cancelled(epoch)
-                    && crate::inject::cancel_wants_recovery(epoch))
+            // still restores: there the clobbered clipboard IS the thing to put back. So does a
+            // withheld insert, on success, error abort and failure alike: the recovery block skips
+            // it, and there is nothing in it to paste manually.
+            if withhold_on_divert
+                || (r.is_ok()
+                    && !(crate::inject::injection_cancelled(epoch)
+                        && crate::inject::cancel_wants_recovery(epoch)))
             {
                 crate::inject::restore_clipboard_later(prev);
             } else if r.is_err() && (!persisted || clip_text != text) {
@@ -799,8 +827,8 @@ pub(crate) async fn inject_text(
                 // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does
                 // — in its clipboard form, since it is now there to paste manually. After a
                 // persisted paste write, a clipboard form that differs (a translated block without
-                // its field gap) is written over the pasted text, as the chord-time divert above
-                // does.
+                // its field gap, or a plain phrase without its seam space) is written over the
+                // pasted text, as the chord-time divert above does.
                 if let Err(e) = persist_off_runtime(clip_text.clone()).await {
                     tracing::warn!(
                         "[inject] paste failed and the clipboard hand-off failed too: {e}"
@@ -831,6 +859,7 @@ pub(crate) async fn inject_text(
                 remote_target,
                 epoch,
                 &own_focused_probe,
+                withhold_on_divert,
             )
         })
         .await
@@ -852,10 +881,13 @@ pub(crate) async fn inject_text(
     // If a DIED session (not a user cancel) cut this injection short, the text stopped somewhere
     // mid-sentence and the window it was going into has already been refocused by the teardown.
     // Leave the transcript on the clipboard so it is recoverable — the same courtesy the
-    // stop-mode path extends. A user-initiated cancel deliberately does not land here.
+    // stop-mode path extends. A user-initiated cancel deliberately does not land here, and neither
+    // does a withheld insert: it has nothing to recover, so the error teardown's snapshot restore
+    // (and the sink's own restore, scheduled above) is left alone.
     let mut recovered = crate::inject::injection_cancelled(epoch)
         && crate::inject::cancel_wants_recovery(epoch)
-        && !recovery_text.is_empty();
+        && !recovery_text.is_empty()
+        && !withhold_on_divert;
     if recovered {
         // `recovered` is what upgrades `NothingWritten` to `landed: true, diverted: true` below,
         // i.e. the claim "the text IS somewhere the user can reach". Now that the write can say
@@ -943,8 +975,8 @@ fn clipboard_form(text: &str, clipboard_text: Option<String>) -> String {
 mod tests {
     use super::clipboard_form;
 
-    /// A translated live block types behind the field's phrase gap, but every clipboard write of
-    /// it — divert, recovery, clipboard-only — gets the bare block the caller handed over.
+    /// A live phrase types behind the field's phrase gap or seam space, but every clipboard write
+    /// of it (divert, recovery, clipboard-only) gets the clipboard form the caller handed over.
     #[test]
     fn the_clipboard_form_is_what_the_caller_handed_over() {
         let typed = "\n\n\nHallo Welt";

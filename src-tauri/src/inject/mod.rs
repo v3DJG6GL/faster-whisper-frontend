@@ -154,6 +154,20 @@ fn note_injected(text: &str) {
     }
 }
 
+/// Take back a `note_injected(text)` whose write then served nothing: put `prev` (the value before
+/// it) back into `slot`, but only while `slot` still names `text` — a newer note is a newer write
+/// and stays. Otherwise the slot names a string that never reached the clipboard while what IS
+/// there (a divert's pasted text, say) is no longer recognised as ours, and the next capture
+/// adopts our own transcript as the user's clipboard. A parameter, not the global, so it can be
+/// tested without touching `LAST_INJECTED` (see `own_injected_matches_last_set_modulo_crlf`).
+fn unnote_injected(slot: &Mutex<Option<String>>, prev: Option<String>, text: &str) {
+    if let Ok(mut g) = slot.lock() {
+        if g.as_deref() == Some(text) {
+            *g = prev;
+        }
+    }
+}
+
 /// True when `text` is the last text we put on the clipboard ourselves — i.e. NOT something
 /// the user copied. Compared with CRLF normalized to LF: the Windows clipboard round-trips
 /// LF as CRLF, which would otherwise defeat the match for multi-line transcripts.
@@ -766,6 +780,9 @@ pub fn inject(
     // Re-asked at the sinks below — see `OwnWindowFocused`. `inject_text`'s own-window guard runs
     // before `spawn_blocking`, and everything in this function happens after it.
     own_window_focused: OwnWindowFocused<'_>,
+    // `inject_text`'s `withhold_on_divert`: the paste never leaves `text` on the clipboard for the
+    // user — see `paste`.
+    withhold_on_divert: bool,
 ) -> Result<Landed, String> {
     if text.is_empty() && !auto_enter {
         return Ok(Landed::Yes);
@@ -844,6 +861,7 @@ pub fn inject(
                     remote_target,
                     epoch,
                     own_window_focused,
+                    withhold_on_divert,
                 )? {
                     // Nothing was pressed, so the auto-Enter below must not fire either — it would
                     // submit whatever the focused field already holds.
@@ -1055,8 +1073,14 @@ pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
 /// Windows (`clipboard_newlines`). The serving thread first waits out a stuck clipboard read
 /// (`wait_clip_read_idle`) and reports Err if it never finishes, so the caller's recv bound is
 /// raised by that wait on Windows (the only platform where it waits).
+///
+/// `note_injected` runs before the write, so a fast capture cannot miss it; an Err takes it back
+/// (`unnote_injected`), since an Err only ever comes back when nothing was served. A timeout keeps
+/// it — the write may still land.
 fn persist_transcript(text: &str) -> Result<(), String> {
+    let prev_note = LAST_INJECTED.lock().ok().and_then(|g| g.clone());
     note_injected(text);
+    let noted = text;
     let text = clipboard_newlines(text, cfg!(windows)).into_owned();
     let exclude = clipboard_privacy();
     let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
@@ -1076,7 +1100,11 @@ fn persist_transcript(text: &str) -> Result<(), String> {
         Duration::from_millis(200)
     };
     match rx.recv_timeout(bound) {
-        Ok(r) => r,
+        Ok(Err(e)) => {
+            unnote_injected(&LAST_INJECTED, prev_note, noted);
+            Err(e)
+        }
+        Ok(Ok(())) => Ok(()),
         Err(_) => Ok(()),
     }
 }
@@ -1176,6 +1204,11 @@ fn paste(
     // distinction the Wayland twin was already fixed for.
     epoch: u64,
     own_window_focused: OwnWindowFocused<'_>,
+    // Nothing here is worth leaving on the clipboard (the hard-break separator): every arm that
+    // would keep the pasted text there for the user — the chord-time divert, a failed paste, an
+    // error abort's cancel — schedules the restore a pasted one gets instead, never a persistent
+    // owner.
+    withhold_on_divert: bool,
 ) -> Result<Landed, String> {
     use arboard::Clipboard;
     // The clipboard-job lock (see `CLIP_JOB`), held until this function returns — across the
@@ -1338,7 +1371,8 @@ fn paste(
     // recoverable — scheduling a restore here would erase it 400ms later.
     if injection_cancelled(epoch) {
         tracing::info!("[clip] paste: cancelled during the settle — not pasting");
-        if !cancel_wants_recovery(epoch) {
+        // A withheld insert has nothing for that recovery to keep (`inject_text` skips it).
+        if !cancel_wants_recovery(epoch) || withhold_on_divert {
             restore_clipboard_later(previous);
         }
         return Ok(Landed::Yes);
@@ -1352,12 +1386,23 @@ fn paste(
         // above does (the Wayland twin's `&& !injection_cancelled(epoch)` gate in text.rs).
         if injection_cancelled(epoch) {
             tracing::info!("[clip] paste: cancelled during the own-window probe — not pasting");
-            if !cancel_wants_recovery(epoch) {
+            if !cancel_wants_recovery(epoch) || withhold_on_divert {
                 restore_clipboard_later(previous);
             }
             return Ok(Landed::Yes);
         }
         tracing::info!("[clip] paste: skipped at the chord — our own window took focus");
+        // A withheld insert is not diverted: no persistent owner and no `OnClipboard` (which
+        // would arm `DELIVERED_ON_CLIPBOARD`), just the restore a pasted one gets. `Yes`, not
+        // `NothingWritten`: the paste write above already replaced the clipboard, and the caller
+        // reads `landed` as "the clipboard was clobbered" to give the user's copy back.
+        if withhold_on_divert {
+            tracing::info!(
+                "[clip] paste: separator not pasted (our own window took focus) — withheld"
+            );
+            restore_clipboard_later(previous);
+            return Ok(Landed::Yes);
+        }
         // Hand the selection to the persistent owner BEFORE returning. The `set_text` above went
         // through this local `Clipboard`, which is dropped when this function returns — and on X11
         // with no clipboard manager running, arboard tears the selection down on that drop. So
@@ -1370,10 +1415,11 @@ fn paste(
         // duplicate text that was never typed. (The `set_text` above went through a local
         // `Clipboard` that is dropped on return, so it is not a fallback.)
         //
-        // A clipboard form that differs from the pasted text (a translated block's field gap) is
-        // written over it even after a persisted paste write: this is a divert now, and the user
-        // pastes it. The second write is unavoidable — the paste write went out before the divert
-        // was known. If only IT fails, the gapped text still sits on a live owner: still a divert.
+        // A clipboard form that differs from the pasted text (a translated block's field gap, a
+        // plain phrase's seam space) is written over it even after a persisted paste write: this
+        // is a divert now, and the user pastes it. The second write is unavoidable — the paste
+        // write went out before the divert was known. If only IT fails, the gapped text still sits
+        // on a live owner: still a divert.
         if !persisted || clip_text != text {
             if let Err(e) = persist_transcript(clip_text) {
                 if !persisted {
@@ -1431,20 +1477,27 @@ fn paste(
     // worse than losing the prior clipboard. This matches the Wayland paste path AND streaming.ts's
     // end-of-session "it's on the clipboard to paste manually" message, which documents this
     // skip-restore-on-failure contract. No-op when restore is off (`previous` is None).
-    if res.is_ok() {
+    // A withheld insert restores either way: there is nothing in it to paste manually.
+    if res.is_ok() || withhold_on_divert {
         restore_clipboard_later(previous);
     } else if !persisted || clip_text != text {
         // The local arboard Clipboard is dropped when this function returns — on X11/Wayland
         // without a clipboard manager that destroys the selection. Hand it to the persistent
         // owner so "it's on the clipboard to paste manually" stays true — in its clipboard form,
         // since the user now pastes it. After a persisted paste write the clipboard form (a
-        // translated block without its field gap) is written over the pasted text, as the
-        // chord-time divert arm above does; if only that write fails, the pasted text still sits
-        // on a live owner.
+        // translated block without its field gap, or a plain phrase without its seam space) is
+        // written over the pasted text, as the chord-time divert arm above does; if only that
+        // write fails, the pasted text still sits on a live owner.
         if let Err(e) = persist_transcript(clip_text) {
-            tracing::warn!(
-                "[clip] paste failed: the clipboard form could not replace the pasted text: {e}"
-            );
+            if !persisted {
+                tracing::warn!(
+                    "[clip] paste failed and the clipboard hand-off failed too — the transcript may not stay on the clipboard: {e}"
+                );
+            } else {
+                tracing::warn!(
+                    "[clip] paste failed: the clipboard form could not replace the pasted text: {e}"
+                );
+            }
         }
     }
     res.map(|()| Landed::Yes)
@@ -1726,6 +1779,23 @@ mod tests {
         super::note_injected("neu");
         assert!(!super::is_own_injected("Befund\nZeile 2"));
         assert!(super::is_own_injected("neu"));
+    }
+
+    /// A persistent write that served nothing gives its `note_injected` back, so the slot keeps
+    /// naming what IS on the clipboard — unless a newer note replaced it meanwhile.
+    #[test]
+    fn a_failed_persist_takes_its_injected_note_back() {
+        let slot = std::sync::Mutex::new(Some("Second phrase.".to_string()));
+        super::unnote_injected(&slot, Some(" Second phrase.".into()), "Second phrase.");
+        assert_eq!(slot.lock().unwrap().as_deref(), Some(" Second phrase."));
+        // A newer write noted its own text in between: that one stays.
+        let slot = std::sync::Mutex::new(Some("Third phrase.".to_string()));
+        super::unnote_injected(&slot, Some(" Second phrase.".into()), "Second phrase.");
+        assert_eq!(slot.lock().unwrap().as_deref(), Some("Third phrase."));
+        // Nothing noted before: back to nothing.
+        let slot = std::sync::Mutex::new(Some("Second phrase.".to_string()));
+        super::unnote_injected(&slot, None, "Second phrase.");
+        assert_eq!(slot.lock().unwrap().as_deref(), None);
     }
 
     #[test]

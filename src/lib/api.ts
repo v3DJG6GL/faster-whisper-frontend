@@ -1114,7 +1114,9 @@ export interface InjectOutcome {
    *  keystroke: on the clipboard-only, divert or recovery path, or at the paste sink (on Windows:
    *  a quick-add copy grab still held the clipboard after 8 s, a stuck clipboard read still held
    *  it, or the remote-desktop owner or legacy write failed or timed out — a timed-out offer may
-   *  still reach the clipboard later). */
+   *  still reach the clipboard later); or an insert marked `withholdOnDivert` (the hard-break
+   *  separator) that would otherwise have been diverted or recovered to the clipboard before
+   *  anything was written: nothing is written, and that caller drops it rather than re-sending. */
   landed: boolean;
   /** Rust diverted to the clipboard against what we asked for — the trigger chord was still held,
    *  focus had moved to a different app, one of our own windows took focus just before the paste
@@ -1145,13 +1147,16 @@ export async function injectText(args: {
    *  optional field is the one a new call site forgets, and forgetting it here would
    *  silently ignore the user's rule. Pass null where no target was resolved. */
   remoteDesktop: boolean | null;
-  /** The CLIPBOARD form of `text`, when it differs from what goes into the field (a translated
-   *  live block typed behind the field's phrase gap). Every Rust arm that leaves the transcript on
-   *  the clipboard for the user — the clipboard-only write, a divert, an error-abort recovery —
+  /** The CLIPBOARD form of `text`, when it differs from what goes into the field: a translated
+   *  live block without the field's phrase gap, or a typed untranslated phrase without its
+   *  leading seam space (it is pasted somewhere new). The clipboard-only method sends none — it
+   *  copies its own trimmed window. Every Rust arm that leaves the transcript on the clipboard for
+   *  the user — the clipboard-only write, a divert, a failed paste, an error-abort recovery —
    *  writes this in place of `text`; the field still gets `text`. Omit for "the same as `text`". */
   clipboardText?: string;
-  /** Nothing here is worth recovering from the clipboard (the hard-break separator): when Rust
-   *  diverts mid-function (trigger chord still held, focus moved), it writes NOTHING and reports
+  /** Nothing here is worth leaving on the clipboard (the hard-break separator): when Rust would
+   *  divert or recover it there (trigger chord still held, focus moved, an own window at the
+   *  chord, an error abort), it writes NOTHING persistent and, if nothing was written, reports
    *  `landed: false, diverted: false` instead of making `text` the clipboard's owner. Omit for the
    *  normal divert. */
   withholdOnDivert?: boolean;

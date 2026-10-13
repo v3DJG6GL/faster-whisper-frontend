@@ -2418,7 +2418,8 @@ async function ensureListeners(): Promise<void> {
             if (insertCfg !== cfg) return;
             let landed = true;
             let diverted = false;
-            // The field gets `typeOut`, gap included; the clipboard gets the bare block. ONE rule
+            // The field gets `typeOut`, gap or seam space included; the clipboard gets its clipboard
+            // form (a translated block without the gap, a plain phrase trimmed). ONE rule
             // for the phrase's clipboard form, shared by Rust's writes and the catch's recovery
             // copy below (`clipboardText ?? typeOut`), so the two can never put different text on
             // the clipboard. Every Rust arm that leaves the phrase on the clipboard for the user —
@@ -2430,9 +2431,10 @@ async function ensureListeners(): Promise<void> {
             // JS re-copy after the await never ran for it, and one that did ran a second, gapped
             // clipboard write into the user's clipboard history. An untranslated phrase's form
             // drops the seam space it is typed with (" Second phrase."): diverted or recovered,
-            // it is pasted somewhere new. The clipboard-only method keeps it — there the user
-            // pastes phrase after phrase into one text, and the space joins them.
-            const clipForm = sessionTranslation ? block : t.method === "clipboard" ? typeOut : typeOut.trim();
+            // it is pasted somewhere new. The clipboard-only method never reaches this branch:
+            // holdCoerced routes it to the window copy above, which copies the whole quiet
+            // window, trimmed, and replaces the clipboard each time.
+            const clipForm = sessionTranslation ? block : typeOut.trim();
             const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
             try {
               ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
@@ -2455,8 +2457,9 @@ async function ensureListeners(): Promise<void> {
               // branch reports `landed: false` on a write failure. Asserting therefore promised
               // a clipboard recovery in exactly the broken-clipboard environment where there
               // isn't one. Re-issuing the copy cannot duplicate text — the paste already failed.
-              // A translated block is copied WITHOUT the field's phrase gap: like the clipboard-only
-              // branch, the clipboard is replaced, not appended to, so copied text needs no gap.
+              // The phrase's clipboard form is copied (a translated block without the field's phrase
+              // gap, a plain phrase without its seam space): like the clipboard-only branch, the
+              // clipboard is replaced, not appended to.
               // The same clipboard form Rust's own divert and recovery writes take — the
               // `clipboardText` passed above, hoisted so both read one rule.
               const recoverable = await recoverToClipboard(
@@ -2508,7 +2511,7 @@ async function ensureListeners(): Promise<void> {
               // phrase path above exactly; without this the end-of-phrase restore would put the
               // user's old clipboard back over the text we just told them to paste. (Like that
               // path, the copy carries no phrase gap: Rust wrote the `clipboardText` it was handed
-              // — the bare block — not the gapped `typeOut`.)
+              // (the bare block, or the trimmed phrase), not the `typeOut` the field would have got.)
               clipDirty = false;
               clipHoldsOurs = true;
               // Nor the per-phrase / tail Enter: the target field now holds at most part of the
@@ -2808,12 +2811,16 @@ async function ensureListeners(): Promise<void> {
             const { landed, diverted } = await injectText({ text: "", method: t.method, autoEnter: true, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop });
             if (insertCfg === cfg && landed && !diverted) gapOwedApps.delete(t.appId);
           } else {
-            // withholdOnDivert: a separator has nothing to recover, so a Rust divert (the trigger
-            // chord still held, focus moved) must not make a lone " " the clipboard's owner over the
-            // user's copy — with the direct method there is no snapshot to give back. It writes
-            // nothing and reports `landed: false`, which the `landed` gate below already reads as
-            // "no clobber": no restore, no clipHoldsOurs, no error. The separator is simply lost;
-            // a missing space between two phrases is the lesser harm.
+            // withholdOnDivert: a separator has nothing to recover, so no Rust divert or recovery
+            // (the trigger chord still held, focus moved, our own window at the chord, a failed
+            // paste, an error abort) may make a lone " " the clipboard's owner over the user's
+            // copy — with the direct method there is no snapshot to give back. Before anything is
+            // written it writes nothing and reports `landed: false`, which the `landed` gate below
+            // already reads as "no clobber": no restore, no clipHoldsOurs, no error. A chord-time
+            // divert (our own window took focus after the paste write) reports `landed: true`,
+            // because the clipboard WAS written: the gate below gives the user's copy back exactly
+            // as for a pasted separator. Either way the separator is never re-sent; a missing
+            // space between two phrases is the lesser harm.
             const { landed } = await injectText({ text: sep, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: true });
             // A cancel-then-fresh-start during the paste await must not stamp the OLD session's clipboard
             // bookkeeping (clipHoldsOurs / a restore) onto the new one — mirrors the inject tasks' guard.
