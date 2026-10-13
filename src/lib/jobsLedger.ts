@@ -136,6 +136,14 @@ let loading: Promise<void> | null = null;
 
 async function write(): Promise<void> {
   if (!isTauri) return;
+  // A save replaces the whole file: before the disk copy was read (or while it can't be — a
+  // Windows AV lock), it would erase an earlier launch's rows for good. Read it now (merging),
+  // and if it still can't be read keep it as is: this session's rows lose only their re-attach.
+  if (!loaded) await initLedger();
+  if (!loaded) {
+    console.warn("jobs ledger not saved: the file on disk could not be read, so it is kept as is");
+    return;
+  }
   try {
     await saveJobsLedger(ledger);
   } catch (e) {
@@ -143,7 +151,8 @@ async function write(): Promise<void> {
   }
 }
 
-/** Load the persisted ledger once. Rows added before the read landed are kept. */
+/** Load the persisted ledger once. Rows added before the read landed are kept. A failed
+ *  read (the file exists but can't be read) leaves it unloaded, so the next save tries again. */
 export function initLedger(): Promise<void> {
   if (!isTauri || loaded) return Promise.resolve();
   if (loading) return loading;

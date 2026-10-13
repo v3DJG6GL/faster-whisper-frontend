@@ -50,12 +50,13 @@ pub async fn delete_job(
 /// The on-disk in-flight jobs ledger (`<app_data_dir>/jobs-ledger.json`): which server
 /// job ids the app posted and has not ingested yet, so a run survives the app being quit
 /// mid-flight. Opaque JSON to Rust; the row shape lives in TS (`lib/jobsLedger.ts`).
+/// `Err` when the file exists but can't be read — the webview then must not save over it.
 #[tauri::command]
-pub fn load_jobs_ledger(app: AppHandle) -> Option<serde_json::Value> {
-    app.path()
-        .app_data_dir()
-        .ok()
-        .and_then(|d| crate::store::jobs_ledger::load(&d))
+pub fn load_jobs_ledger(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let Ok(dir) = app.path().app_data_dir() else {
+        return Ok(None);
+    };
+    crate::store::jobs_ledger::load(&dir).map_err(|e| format!("jobs ledger unreadable: {e}"))
 }
 
 #[tauri::command]

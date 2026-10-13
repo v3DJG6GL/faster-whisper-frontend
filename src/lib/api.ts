@@ -692,7 +692,8 @@ export async function deleteJob(args: ServerTarget & {
   }, { kind: "error", message: "Not running in the desktop app." });
 }
 
-/** The on-disk in-flight jobs ledger (opaque to Rust; shape owned by lib/jobsLedger.ts). */
+/** The on-disk in-flight jobs ledger (opaque to Rust; shape owned by lib/jobsLedger.ts).
+ *  `null` when absent or corrupt; REJECTS when the file exists but can't be read. */
 export async function loadJobsLedger(): Promise<unknown> {
   if (!isTauri) return null;
   return invoke<unknown>("load_jobs_ledger");

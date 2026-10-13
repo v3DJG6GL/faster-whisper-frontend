@@ -21,20 +21,26 @@ fn ledger_path(dir: &Path) -> PathBuf {
     dir.join("jobs-ledger.json")
 }
 
-/// Load the ledger, or `None` when absent / oversized / unparseable / not an object.
-/// An unreadable file means the app forgets its in-flight runs; the server still holds
-/// them for its TTL, so nothing is destroyed — only the automatic re-attach is lost.
-pub fn load(dir: &Path) -> Option<serde_json::Value> {
+/// Load the ledger: `Ok(None)` when absent / oversized / unparseable / not an object. A
+/// corrupt file means the app forgets its in-flight runs; the server still holds them for
+/// its TTL, so nothing is destroyed — only the automatic re-attach is lost.
+///
+/// A file that exists but can't be READ (a Windows AV/indexer lock outlasting the retries of
+/// `config::read_config_text`, an EIO) is an `Err`, never `None`: the same file reads fine a
+/// moment later, but the webview would take "no ledger" as an empty one and its next save
+/// would replace an earlier launch's rows for good.
+pub fn load(dir: &Path) -> std::io::Result<Option<serde_json::Value>> {
     let path = ledger_path(dir);
-    let len = std::fs::metadata(&path).ok()?.len();
-    if len > MAX_LEDGER_BYTES as u64 {
-        tracing::warn!("[jobs] ledger file is {len} bytes — ignoring it");
-        return None;
+    if let Ok(meta) = std::fs::metadata(&path) {
+        let len = meta.len();
+        if len > MAX_LEDGER_BYTES as u64 {
+            tracing::warn!("[jobs] ledger file is {len} bytes — ignoring it");
+            return Ok(None);
+        }
     }
-    let text = std::fs::read_to_string(path).ok()?;
-    serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .filter(|v| v.is_object())
+    Ok(crate::config::read_config_text(&path)?
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .filter(|v| v.is_object()))
 }
 
 /// Persist atomically (tmp + rename, owner-only) via `config::write_private_atomic`.
@@ -59,16 +65,37 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("fwf-jobs-ledger-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(load(&dir).is_none());
+        assert!(load(&dir).unwrap().is_none());
         let doc = serde_json::json!({"v": 1, "rows": [{"jobId": "ab"}]});
         save(&dir, &doc).unwrap();
-        assert_eq!(load(&dir), Some(doc));
+        assert_eq!(load(&dir).unwrap(), Some(doc));
         // Not an object → refused on read.
         std::fs::write(dir.join("jobs-ledger.json"), "[1,2]").unwrap();
-        assert!(load(&dir).is_none());
+        assert!(load(&dir).unwrap().is_none());
         // Oversized → refused on write.
         let big = serde_json::json!({"x": "y".repeat(MAX_LEDGER_BYTES)});
         assert!(save(&dir, &big).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_ledger_is_an_error_not_an_empty_ledger() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir =
+            std::env::temp_dir().join(format!("fwf-jobs-ledger-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("jobs-ledger.json");
+        let original = r#"{"v":1,"rows":[{"jobId":"ab"}]}"#;
+        std::fs::write(&path, original).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads a 0o000 file anyway: nothing unreadable to test there.
+        if std::fs::read_to_string(&path).is_err() {
+            assert!(load(&dir).is_err());
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
