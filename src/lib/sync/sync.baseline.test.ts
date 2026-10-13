@@ -39,7 +39,7 @@ import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
  *  UTF-16 units and any write to an account in `failWrites`, and folding a lone surrogate to
  *  U+FFFD as the IPC hop does. `writes` records every account a write was issued for, and a write
  *  to an account in `parkWrites` waits on that promise before it lands. A delete waits on every
- *  `parkWrites` promise first, as Rust's FIFO keyring lock holds it behind a parked write, and
+ *  `parkWrites` promise first, as api.ts's keyring turn holds it behind a parked write, and
  *  `deletes` records every account one landed for, and `reads` counts the key reads issued.
  *  `unreadable` lists the ids a read reports it FAILED on (locked wallet), not absent. */
 const keyring = vi.hoisted(() => ({

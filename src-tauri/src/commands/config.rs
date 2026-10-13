@@ -250,8 +250,9 @@ fn sync_autostart_if_changed(app: &AppHandle, enabled: bool) {
 /// run one at a time, in the order their command tasks reached `lock()`: a set parked behind the
 /// wallet prompt can no longer land after a delete issued later (sync's clearSnapshotSecrets).
 /// That order is the IPC order whenever the earlier call reached the lock first, which the
-/// runtime does not strictly promise for two calls arriving in the same instant. Only the queued
-/// writes wait; the UI thread never does.
+/// runtime does not promise (each invoke's args are deserialised in its own task first), so
+/// api.ts sends these one at a time (its keyring turn). Only the queued writes wait; the UI
+/// thread never does.
 static KEYRING_WRITE_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 // Keyring writes can park behind a locked-wallet prompt; off the main thread so the app does

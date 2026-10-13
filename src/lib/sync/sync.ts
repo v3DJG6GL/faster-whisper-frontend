@@ -2581,9 +2581,9 @@ function snapshotChunks(json: string): string[] {
   return out;
 }
 
-/** Best-effort delete of stash chunks `from`..`to - 1`. In parallel: Rust runs keyring writes one
- *  at a time in arrival order anyway, and one shared 10 s bound beats one per chunk under a locked
- *  wallet. */
+/** Best-effort delete of stash chunks `from`..`to - 1`. In parallel: api.ts's keyring turn sends
+ *  keyring writes one at a time in call order anyway, and one shared 10 s bound beats one per
+ *  chunk under a locked wallet. */
 async function dropSnapshotChunks(from: number, to: number): Promise<void> {
   const drops: Promise<void>[] = [];
   for (let i = from; i < to; i++) {
@@ -2593,8 +2593,9 @@ async function dropSnapshotChunks(from: number, to: number): Promise<void> {
 }
 
 /** Write the stash `chunks` over a previous stash of `prevChunks` accounts. Every write is issued
- *  in the same tick, like `dropSnapshotChunks`: Rust runs keyring writes one at a time in arrival
- *  order, so they all queue ahead of a `clearSnapshotSecrets` delete a reset issues afterwards.
+ *  in the same tick, like `dropSnapshotChunks`: api.ts's keyring turn sends keyring writes one at a
+ *  time in call order, so they all queue ahead of a `clearSnapshotSecrets` delete a reset issues
+ *  afterwards.
  *  Awaiting each before issuing the next let that delete overtake the later chunks, which then
  *  landed after it with no recorded count left to ever remove them. The outcome settles on the
  *  first failed (or timed out) write, or once every write landed: waiting out every bound kept a
@@ -2615,7 +2616,7 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
           return false;
         },
       ),
-      // Chunk i queues behind chunks 0..i-1 on that lock (a wallet-unlock prompt included), so
+      // Chunk i queues behind chunks 0..i-1 on that turn (a wallet-unlock prompt included), so
       // its bound grows with its place: the 10 s each it had when they ran one after another.
       10_000 * (i + 1),
       false,
@@ -2629,7 +2630,7 @@ async function stashSnapshotSecrets(chunks: string[], prevChunks: number): Promi
   const to = Math.max(chunks.length, prevChunks);
   // Success: only the tail an earlier, larger stash left behind; no write is parked, so awaited.
   // Failure: everything. Issue order, not the await, queues it behind any write still parked and
-  // ahead of a later reset or persist, so it is not awaited: on that lock each delete would run
+  // ahead of a later reset or persist, so it is not awaited: on that turn each delete would run
   // out its own bound after chunk 0's, and a locked wallet gives up at chunk 0's bound instead.
   // It never rejects: every delete is caught and bounded.
   if (ok) await dropSnapshotChunks(chunks.length, to);

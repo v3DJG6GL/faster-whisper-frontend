@@ -115,14 +115,21 @@ export async function applyLiveSwitches(
   await invoke("apply_live_switches", { appRules, excludeFromClipboardHistory, logLevel });
 }
 
+/** Keyring writes and deletes, one invoke at a time in call order (see `storeTurn`): Rust's
+ *  keyring lock serializes them but only in the order their command tasks reach it, so a reset's
+ *  delete issued after a snapshot-secret write could otherwise run first and leave a stale secret,
+ *  or delete a chunk just written. Reads stay off it: they take no Rust lock, and a write parked
+ *  behind a wallet prompt must not hold every read with it. */
+const keyringTurn = storeTurn();
+
 export async function setBackendKey(backendId: string, key: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("set_backend_key", { backendId, key });
+  await keyringTurn(() => invoke("set_backend_key", { backendId, key }));
 }
 
 export async function deleteBackendKey(backendId: string): Promise<void> {
   if (!isTauri) return;
-  await invoke("delete_backend_key", { backendId });
+  await keyringTurn(() => invoke("delete_backend_key", { backendId }));
 }
 
 /** The app version baked into the binary at build time. Sourced from tauri.conf.json,

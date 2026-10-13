@@ -87,6 +87,36 @@ describe("per-store invoke order", () => {
     await b;
   });
 
+  it("a keyring delete is sent only after the write issued before it settled", async () => {
+    // A reset's delete must not overtake a snapshot-secret write still parked behind the wallet.
+    const w = api.setBackendKey("A", "sk-a");
+    const d = api.deleteBackendKey("A");
+    await flush();
+    expect(sent.map((p) => p.cmd)).toEqual(["set_backend_key"]);
+    sent[0].resolve(undefined);
+    await w;
+    await flush();
+    expect(sent.map((p) => [p.cmd, p.args])).toEqual([
+      ["set_backend_key", { backendId: "A", key: "sk-a" }],
+      ["delete_backend_key", { backendId: "A" }],
+    ]);
+    sent[1].resolve(undefined);
+    await d;
+  });
+
+  it("a failed keyring write still lets the delete after it through", async () => {
+    const w = api.setBackendKey("A", "sk-a");
+    const d = api.deleteBackendKey("A");
+    await flush();
+    expect(sent).toHaveLength(1);
+    sent[0].reject("NoStorageAccess");
+    await expect(w).rejects.toBe("NoStorageAccess");
+    await flush();
+    expect(sent.map((p) => p.cmd)).toEqual(["set_backend_key", "delete_backend_key"]);
+    sent[1].resolve(undefined);
+    await d;
+  });
+
   it("different stores don't wait on each other", async () => {
     const j = api.saveJobsLedger({ rows: [] });
     const u = api.saveUsageOutcomes([]);
