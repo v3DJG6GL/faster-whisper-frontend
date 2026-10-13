@@ -16,6 +16,7 @@ import {
   rhythmModel,
   companionMetric,
   sumKinds,
+  isoDayProblem,
   isoToDay,
   legendRanges,
   levelOf,
@@ -414,6 +415,15 @@ describe("usageDerive", () => {
     // a two-digit-era year is refused, not read as 19xx; the epoch day itself still parses
     expect(isoToDay("0099-05-01")).toBeUndefined();
     expect(isoToDay("1970-01-01")).toBe(0);
+    // the top is the server's ceiling, not the four-digit year: past it the server 422s
+    expect(isoToDay("9999-11-30")).toBeDefined();
+    expect(isoToDay("9999-12-01")).toBeUndefined();
+    expect(isoToDay("10000-01-01")).toBeUndefined();
+    expect(isoDayProblem("")).toBe("empty");
+    expect(isoDayProblem("1969-12-31")).toBe("range");
+    expect(isoDayProblem("10000-01-01")).toBe("range");
+    expect(isoDayProblem("9999-12-01")).toBe("range");
+    expect(isoDayProblem("2026-10-13")).toBeUndefined();
     const presets = spanPresets(day);
     expect(presets.map((p) => p.label)).toEqual(["This month", "Last month", "This quarter", "This year", "Last year"]);
     expect(dayToIso(presets[0].from)).toBe("2026-09-01");

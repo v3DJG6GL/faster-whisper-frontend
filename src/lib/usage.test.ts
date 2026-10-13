@@ -205,6 +205,53 @@ describe("usage poll gates", () => {
     expect(calls()).toEqual({ fixed: 0, page: 0 });
   });
 
+  it("a page mounted around a tray show fetches its documents once, whichever lands first", async () => {
+    for (const mountFirst of [false, true]) {
+      await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous round left pending
+      await settle();
+      setHidden(true);
+      await vi.advanceTimersByTimeAsync(2 * 30_000); // two ticks passed over, the page closed
+      await settle();
+      getUsageStats.mockClear();
+      let close: (() => void) | undefined;
+      try {
+        // Tray → Statistics: the show and the navigation land in either order.
+        if (mountFirst) close = openStatisticsPage();
+        setHidden(false);
+        if (!mountFirst) close = openStatisticsPage();
+        await settle();
+        await settle();
+        // The mount's view + year; the catch-up pass takes them instead of refetching.
+        expect(calls()).toEqual({ fixed: 1, page: 2 });
+      } finally {
+        setHidden(false);
+        close?.();
+      }
+    }
+  });
+
+  it("a page mounted while hidden a tick before the show is refetched by the catch-up pass", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    getUsageStats.mockClear();
+    const close = openStatisticsPage();
+    try {
+      await settle();
+      await vi.advanceTimersByTimeAsync(30_000); // another tick passes over: the mount's fetch ages
+      await settle();
+      setHidden(false);
+      await settle();
+      await settle();
+      expect(calls()).toEqual({ fixed: 1, page: 4 });
+    } finally {
+      setHidden(false);
+      close();
+    }
+  });
+
   it("refetches a backend whose cached usage was dropped without a backend edit", async () => {
     await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
     await settle();

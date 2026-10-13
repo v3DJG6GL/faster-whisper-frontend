@@ -53,13 +53,17 @@ let yearGen = 0;
 // The view signature a fetch confirmed during this visit and no later fetch missed (null after a
 // reopen, a hidden pass or a miss): only a confirmed 365-day view may stand in for the calendar's year.
 let viewFreshSig: string | null = null;
-/** The show handler's direct page fetch: `sentOutcomeCount()` at `at`, and `confirmed` settles to
- *  whether both documents landed. */
+/** A direct page fetch (the show handler's, or a page mount's): `sentOutcomeCount()` at `at`, and
+ *  `confirmed` settles to whether both documents landed. */
 type DirectFetch = { at: number; confirmed: Promise<boolean> };
 // The show handler's direct fetch for the running pass, whether that show started the pass or found
 // it running: the pass's next page step takes it (one step only — a rerun fetches the page as
 // usual). A hide drops it: the documents it fetched may be old by the next show.
 let pendingDirect: DirectFetch | undefined;
+// A Statistics page mounted while hidden with no pass running (Tray → Statistics navigates
+// before or after the show): its own fetch, for the pass the show that follows starts. Trusted
+// within one tick only — a hidden tick drops it, and so does any show or hide.
+let mountDirect: DirectFetch | undefined;
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
 function statsPageShown(): boolean {
@@ -76,8 +80,14 @@ export function openStatisticsPage(): () => void {
     // These fetches cover any hidden pass the previous visit missed.
     pageMissed = false;
     viewFreshSig = null;
-    void refreshView(true).catch(() => {});
-    void refreshYear(true, true).catch(() => {});
+    const at = sentOutcomeCount();
+    const view = refreshView(true).catch(() => {});
+    const year = refreshYear(true, true).catch(() => {});
+    // Handed to the pass that would otherwise refetch them at its page step: the running one,
+    // or — mounted while hidden — the one the coming show starts.
+    const direct = { at, confirmed: Promise.all([view, year]).then(() => pageConfirmed()) };
+    if (pollingAll) pendingDirect = direct;
+    else if (isWindowHidden()) mountDirect = direct;
   }
   let closed = false;
   return () => {
@@ -354,7 +364,10 @@ export function initUsageController(): void {
   // previous run could not — refreshAll flushes again on every pass.
   void initOutcomeQueue().finally(() => void refreshAll()).catch(() => {});
   setInterval(() => {
-    if (isWindowHidden() && ++skippedTicks < HIDDEN_EVERY) return;
+    if (isWindowHidden()) {
+      mountDirect = undefined; // a hidden mount's fetch is trusted within one tick only
+      if (++skippedTicks < HIDDEN_EVERY) return;
+    }
     skippedTicks = 0;
     void refreshAll();
   }, POLL_MS);
@@ -365,8 +378,11 @@ export function initUsageController(): void {
   // That pass then skips its own page step when they landed and its flush delivered no outcome.
   onWindowHiddenChange((hidden) => {
     if (hidden) pendingDirect = undefined; // the documents it fetched may be old by the next show
+    const mounted = mountDirect; // taken or dropped on every flip, like pendingDirect on a hide
+    mountDirect = undefined;
     if (hidden || (skippedTicks === 0 && !pageMissed)) return;
-    let direct: DirectFetch | undefined;
+    // A page mounted while hidden already fetched its documents.
+    let direct: DirectFetch | undefined = mounted;
     if (pageMissed && statsPageShown()) {
       // Possibly hours old, so a miss marks them failed, as on a reopen.
       const at = sentOutcomeCount();

@@ -5,7 +5,7 @@ import { cn } from "@/lib/cn";
 import { plural } from "@/lib/format";
 import {
   CHART_METRICS, KINDS, METRIC_LABEL, RANGE_LABEL, RANGE_PRESETS, SCOPE_LABEL, STAGE_CHIP_LABEL, STAGE_KEYS,
-  bucketMode, dayToIso, isFiltered, isoToDay, resolveWindow, spanPresets, MAX_SPAN_DAYS, type ChartMetric,
+  bucketMode, dayToIso, isFiltered, isoDayProblem, isoToDay, resolveWindow, spanPresets, MAX_ISO_DAY, MAX_SPAN_DAYS, MIN_ISO_DAY, type ChartMetric,
   type RangePreset, type UsagePageQuery, type UsageScope,
 } from "@/lib/usageDerive";
 import { useOutsidePress } from "@/lib/useOutsidePress";
@@ -35,11 +35,11 @@ function CustomSpanPopover({ f, t, setF, setT, today, onApply, onCancel }: { f: 
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
           From
-          <input type="date" value={f} min="1970-01-01" max={t} onChange={(e) => setF(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
+          <input type="date" value={f} min={MIN_ISO_DAY} max={td !== undefined ? t : MAX_ISO_DAY} onChange={(e) => setF(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
         </label>
         <label className="flex flex-col gap-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
           To
-          <input type="date" value={t} min={f || "1970-01-01"} onChange={(e) => setT(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
+          <input type="date" value={t} min={fd !== undefined ? f : MIN_ISO_DAY} max={MAX_ISO_DAY} onChange={(e) => setT(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
         </label>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -61,9 +61,13 @@ function CustomSpanPopover({ f, t, setF, setT, today, onApply, onCancel }: { f: 
         <span>
           {ok
             ? `${plural(days, "day")} · shown by ${BUCKET_WORD[mode]}`
-            : fd === undefined || td === undefined
-              ? "Pick a start and an end date from 1970 on."
-              : "Pick a start on or before the end, at most 10 years apart."}
+            : isoDayProblem(f) === "empty" || isoDayProblem(t) === "empty"
+              ? "Pick a start and an end date."
+              : fd === undefined || td === undefined
+                ? "Pick dates between 1970 and 9999."
+                : fd > td
+                  ? "Pick a start on or before the end."
+                  : `Pick at most ${MAX_SPAN_DAYS.toLocaleString()} days (about 10 years).`}
         </span>
         <span className="flex-1" />
         <button type="button" onClick={onCancel} className="ring-signal rounded-pill border border-line-strong px-3 py-1 text-[12px] text-dim hover:text-text">

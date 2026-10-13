@@ -213,7 +213,7 @@ export interface UsagePageQuery {
 
 export const DEFAULT_PAGE_QUERY: Readonly<UsagePageQuery> = Object.freeze({ range: "30", with: [] });
 
-/** Longest span the server accepts (10 years). */
+/** Longest span the server accepts: 3650 days, just under 10 years. */
 export const MAX_SPAN_DAYS = 3650;
 
 export function isDay(v: unknown): v is number {
@@ -332,6 +332,12 @@ export const dayDate = dayToDate;
 export function dayToIso(day: number): string {
   return dayDate(day).toISOString().slice(0, 10);
 }
+/** The first and last day isoToDay accepts; the date inputs and their hint state the same
+ *  bounds. The last is the server's ceiling (usage_store `_MAX_EPOCH_DAY`, 9999-11-30, which
+ *  leaves room for a month bucket's end): a later To would pass here and 422 there. */
+export const MIN_ISO_DAY = "1970-01-01";
+export const MAX_ISO_DAY = "9999-11-30";
+const MAX_DAY = Math.floor(Date.UTC(9999, 10, 30) / DAY_MS);
 export function isoToDay(iso: string): number | undefined {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso ?? "");
   if (!m) return undefined;
@@ -341,7 +347,14 @@ export function isoToDay(iso: string): number | undefined {
   const t = Date.UTC(y, Number(m[2]) - 1, Number(m[3]));
   if (!Number.isFinite(t)) return undefined;
   const day = Math.floor(t / DAY_MS);
-  return isDay(day) ? day : undefined;
+  return isDay(day) && day <= MAX_DAY ? day : undefined;
+}
+/** Why isoToDay refuses a date-input value: "empty" for an empty or incomplete one, "range"
+ *  for any other (a year wider than four digits, before MIN_ISO_DAY, after MAX_ISO_DAY);
+ *  undefined when it parses. */
+export function isoDayProblem(iso: string): "empty" | "range" | undefined {
+  if (isoToDay(iso) !== undefined) return undefined;
+  return iso ? "range" : "empty";
 }
 /** The first day of the month `months` back from `day`'s month (0 = this month). */
 export function monthStart(day: number, months = 0): number {
