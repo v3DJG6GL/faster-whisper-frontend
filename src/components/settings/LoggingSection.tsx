@@ -16,15 +16,18 @@ export function LoggingSection() {
   const updateLogging = useApp((s) => s.updateLogging);
   const navigate = useNavigate();
   // As on the Logs screen: a failed open (dead share, read-only path) says so on the
-  // button. `opening` is only this mount's disabled look: the one-call-per-folder gate lives in
-  // openLogFolder (api.ts), shared with the Logs screen, so a click after a tab switch joins
-  // the pending call instead of queueing a second file-manager window.
-  const [opening, setOpening] = useState(false);
+  // button. `openingFor` is only this mount's disabled look, for the folder it is opening: the
+  // one-call-per-folder gate lives in openLogFolder (api.ts), shared with the Logs screen, so a
+  // click after a tab switch joins the pending call instead of queueing a second file-manager
+  // window — and an open hung on an offline share leaves a folder chosen since clickable.
+  // undefined = nothing opening (null is the default folder).
+  const [openingFor, setOpeningFor] = useState<string | null | undefined>(undefined);
   const [openError, setOpenError] = useState<string | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
   const [folder, setFolder] = useState<string | null>(null);
   const logDir = logging?.logDir ?? null;
+  const opening = openingFor !== undefined && openingFor === logDir;
   useEffect(() => {
     // An open failure is about the folder it was asked for: a new folder starts clean.
     setOpenError(null);
@@ -40,9 +43,9 @@ export function LoggingSection() {
   }, [logDir]);
   function openFolder() {
     if (opening) return;
-    setOpening(true);
-    setOpenError(null);
     const asked = logDir;
+    setOpeningFor(asked);
+    setOpenError(null);
     void openLogFolder(asked)
       .catch((e: unknown) => {
         console.error("open log folder:", e);
@@ -52,7 +55,7 @@ export function LoggingSection() {
         clearTimeout(openTimerRef.current);
         openTimerRef.current = setTimeout(() => setOpenError(null), 4000);
       })
-      .finally(() => setOpening(false));
+      .finally(() => setOpeningFor((cur) => (cur === asked ? undefined : cur)));
   }
 
   return (

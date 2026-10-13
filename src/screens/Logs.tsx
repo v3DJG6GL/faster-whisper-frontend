@@ -191,12 +191,15 @@ export default function Logs() {
   // Open log folder fails for real (a custom folder on an unmounted share, a read-only path,
   // no file manager): say so on the button like Copy does. A stalled mount must not queue opens
   // that all pop up a window when it answers: openLogFolder (api.ts) runs one call per folder at
-  // a time, shared with Settings → Logging; `opening` is only this mount's disabled look.
-  const [opening, setOpening] = useState(false);
+  // a time, shared with Settings → Logging; `openingFor` is only this mount's disabled look, for
+  // the folder it is opening, so a hung share never greys out a folder chosen since. undefined =
+  // nothing opening (null is the default folder).
+  const [openingFor, setOpeningFor] = useState<string | null | undefined>(undefined);
   const [openError, setOpenError] = useState<string | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
   const logDir = useApp((s) => s.settings.logging?.logDir ?? null);
+  const opening = openingFor !== undefined && openingFor === logDir;
   useEffect(() => {
     // An open failure is about the folder it was asked for: a new folder starts clean.
     setOpenError(null);
@@ -399,9 +402,9 @@ export default function Logs() {
 
   function openFolder() {
     if (opening) return;
-    setOpening(true);
-    setOpenError(null);
     const asked = logDir;
+    setOpeningFor(asked);
+    setOpenError(null);
     void openLogFolder(asked)
       .catch((e: unknown) => {
         console.error("open log folder:", e);
@@ -411,7 +414,7 @@ export default function Logs() {
         clearTimeout(openTimerRef.current);
         openTimerRef.current = setTimeout(() => setOpenError(null), 4000);
       })
-      .finally(() => setOpening(false));
+      .finally(() => setOpeningFor((cur) => (cur === asked ? undefined : cur)));
   }
 
   return (
