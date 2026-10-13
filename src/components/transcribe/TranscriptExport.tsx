@@ -38,9 +38,9 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isVideoSourcePath,
+  audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isGoneSourceError, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
-  subscribeExportQueue, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
+  subscribeExportQueue, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
@@ -202,6 +202,8 @@ export function TranscriptExport({
       : rec?.result?.sourceMediaBackendId ?? rec?.backendId ?? null;
   // The local VIDEO: the app's copy of a link's video, or the file itself.
   const localVideo = rec?.videoPath ?? (!urlSource && !textSource && isVideoSourcePath(path) ? path : null);
+  /** `localVideo`, for exportVideoOnce, which shadows it with null once the copy is gone. */
+  const panelLocalVideo = localVideo;
   const packageOn = trCaps?.media_package_enabled === true;
   const noPackageWhy = trCaps?.media_package?.reason ?? "this server can't package subtitles";
   /** The subtitle mode this server can honour: without packaging only files beside the
@@ -486,11 +488,12 @@ export function TranscriptExport({
    *  the panel now shows while it is mounted and `started`'s record still shows (no
    *  outcome lands on another record's panel); otherwise a failure goes to `late`. `checked` = the
    *  tracks the pre-dialog size check built, reused while their result is still the
-   *  latest. */
-  const exportVideoTo = async (
+   *  latest. `skipLocal` = the local copy is known gone (exportVideoTo's retry). */
+  const exportVideoOnce = async (
     dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
-    checked?: { res: BatchResult; tracks: EmbeddedTrack[] },
+    checked: { res: BatchResult; tracks: EmbeddedTrack[] } | undefined, skipLocal: boolean,
   ): Promise<boolean> => {
+    const localVideo = skipLocal ? null : panelLocalVideo;
     const mine = () => exportOutcomeShowsHere(mounted.current, latestResult.current.owner, started);
     if (!rec) throw new Error("This transcription has no record to export from.");
     const audioBase = audioBasePref(settings.recording);
@@ -683,6 +686,28 @@ export function TranscriptExport({
     // A user's cancel needs no banner.
     else if (outcome.kind !== "cancelled") late(msg);
     return false;
+  };
+  /** exportVideoOnce, and once more without the local copy when a link's kept copy turned
+   *  out gone (deleted from Settings or by hand while the record still named it): the record
+   *  forgets it and the video is fetched from the link instead, as Settings promises. A plain
+   *  copy whose confirmed name has another container than the packager writes is not retried
+   *  (that name would lie) — the next Save, planned without the copy, fetches. */
+  const exportVideoTo = async (
+    dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
+    checked?: { res: BatchResult; tracks: EmbeddedTrack[] },
+  ): Promise<boolean> => {
+    try {
+      return await exportVideoOnce(dest, embedded, started, late, checked, false);
+    } catch (e) {
+      const gone = panelLocalVideo;
+      if (!urlSource || !rec || !gone || !isGoneSourceError(e)) throw e;
+      patchRecord(rec.id, (r) => (r.videoPath === gone ? withoutVideoPath(r) : r));
+      if (!urlVideoOnDemand) throw new Error("The kept copy of this video is gone, and this server can't fetch it again from the link.");
+      if (!embedded.length && extOf(dest) !== effContainer) {
+        throw new Error("The kept copy of this video is gone — save again to fetch it from the link.");
+      }
+      return exportVideoOnce(dest, embedded, started, late, checked, true);
+    }
   };
 
   const doExport = async () => {

@@ -12,9 +12,11 @@ import {
   dropPendingWrites,
   flushRecordWrites,
   loadHistory,
+  patchRecord,
   useTranscriptHistory,
   type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
+import { withoutVideoPath } from "@/lib/transcript/mediaExport";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
@@ -304,7 +306,22 @@ export default function Settings() {
           : kind === "links"
             ? [removeTranscriptMedia("url", basePref), ["downloaded file", "downloaded files"]]
             : kind === "video"
-              ? [removeTranscriptMedia("video", basePref), ["video file", "video files"]]
+              ? [
+                  removeTranscriptMedia("video", basePref).then(async (n) => {
+                    // The files are gone: forget every record's path to them, or the export
+                    // panel keeps picking the deleted copy over the promised fetch from the
+                    // link. The mirror is loaded first (it never rejects), so records no screen
+                    // has listed yet are patched too; the writes land before `done`'s forced
+                    // reload lists the disk, which would otherwise bring the old paths back.
+                    await loadHistory();
+                    for (const r of useTranscriptHistory.getState().records) {
+                      if (r.videoPath !== undefined) patchRecord(r.id, withoutVideoPath);
+                    }
+                    await flushRecordWrites();
+                    return n;
+                  }),
+                  ["video file", "video files"],
+                ]
               : [
                   // forgetRecord's deleted path reads an earlier launch's lost requests from the
                   // history mirror, which only the Transcribe/History/Logs screens load: load it

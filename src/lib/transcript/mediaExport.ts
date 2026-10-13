@@ -448,6 +448,24 @@ export function revealAfterSaveOn(t: Pick<TranscribeSettings, "revealAfterSave">
   return t?.revealAfterSave !== false;
 }
 
+/** A record without its local video copy (`videoPath`) — the same object when it has none, so
+ *  patchRecord writes nothing. For when the copy is gone: Settings' "Delete videos from link
+ *  transcriptions" removes the files, and a stale path would outrank the fetch from the link. */
+export function withoutVideoPath<T extends { videoPath?: string }>(r: T): T {
+  if (r.videoPath === undefined) return r;
+  const n = { ...r };
+  delete n.videoPath;
+  return n;
+}
+
+/** A Save's local source file is gone from disk: copy_media_to's or package_media's read of it
+ *  failed with "not found" (os error 2 = file, 3 = path; the same numbers on Linux, macOS and
+ *  Windows). Only the source read carries that prefix, so a missing export folder never counts. */
+export function isGoneSourceError(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e);
+  return /^reading the (media|video) file: .*\(os error [23]\)$/.test(msg);
+}
+
 /** A link's server AUDIO is still there to fetch: an id, and no expiry stored (= available)
  *  or one still ahead. The export panel and History's "Save the audio" agree on it. */
 export function linkServerAudioLive(

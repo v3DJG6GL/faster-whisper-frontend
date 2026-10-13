@@ -477,7 +477,10 @@ pub async fn package_media(
                 }
                 (None, Some(p)) => {
                     let p = PathBuf::from(p);
-                    let meta = std::fs::metadata(&p).map_err(|e| e.to_string())?;
+                    // Prefixed like copy_media_to's: the panel reads a missing link copy
+                    // from it (mediaExport.ts isGoneSourceError) and fetches from the link.
+                    let meta = std::fs::metadata(&p)
+                        .map_err(|e| format!("reading the video file: {e}"))?;
                     if !meta.is_file() {
                         return Err("the video is not a file".into());
                     }
