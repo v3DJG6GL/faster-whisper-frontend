@@ -3556,6 +3556,16 @@ export function isStarting(): boolean {
   return startingSession;
 }
 
+/** The activation the session starting now was launched with — insertCfg carries it only once
+ *  the prologue has built it. */
+let startingActivation: ActivationKind | null = null;
+
+/** How the running (or starting) session is driven at RUNTIME — not its Profile's activation:
+ *  Home and the chip run a hold Profile hands-free. Null with no session. */
+export function liveActivation(): ActivationKind | null {
+  return startingSession ? startingActivation : (insertCfg?.activation ?? null);
+}
+
 export async function startLive(
   backend: Backend,
   deviceId: string | null,
@@ -3568,6 +3578,7 @@ export async function startLive(
 ): Promise<void> {
   if (startingSession) return;
   startingSession = true;
+  startingActivation = activation;
   stopRequestedDuringStart = false; // fresh start; a prologue stop sets it (see requestStopIfStarting)
   pendingReclassify = null; // a stale queued upgrade must not latch this unrelated session
   restartOwed = null; // …nor a stale queued restart replace it

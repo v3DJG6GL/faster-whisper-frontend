@@ -7,7 +7,7 @@ import { useApp } from "../store";
 import {
   startLive, stopLive, cancelLive, requestStopIfStarting, cancelStopIfStarting, isStarting,
   queuePendingHoldStart, voidPendingHoldStart, registerPendingStartRunner, reclassifyLive, abortDictationTranslate,
-  isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs,
+  isCapturing, setSettleTargetPicker, setRouteHint, restartLiveAs, liveActivation,
 } from "./streaming";
 import type { TargetPick } from "./streaming";
 import { abortLangPick, getFocusedApp, isTauri, showLangPick, showQuickAdd } from "../api";
@@ -90,12 +90,13 @@ export function dictate(profileId: string, action: TriggerAction): void {
     if (requestStopIfStarting()) return;
   }
   // Chord family: the hands-free superset completed over the hold root. Three meanings:
-  //   • session running under ANOTHER profile → upgrade it in place (hold → hands-free) when
+  //   • a HOLD session running under ANOTHER profile → upgrade it in place (hold → hands-free) when
   //     both Profiles resolve to the same session (sessionShape); otherwise the upgrade would
   //     keep the hold's backend/language under the hands-free label, so discard the hold
   //     session and start the hands-free Profile for real (restartLiveAs);
-  //   • session running under THIS hands-free profile → the user pressed the family again:
-  //     toggle off (the root's own "start" was the busy-gate no-op just before this);
+  //   • session running under THIS hands-free profile, or any session already running
+  //     hands-free → the user pressed the family again: toggle off (the root's own "start" was
+  //     the busy-gate no-op just before this);
   //   • idle → the keys arrived (near-)simultaneously and the root never started, or
   //     the session already ended — behave like a plain hands-free toggle-on (fall through).
   if (action === "reclassify") {
@@ -108,6 +109,12 @@ export function dictate(profileId: string, action: TriggerAction): void {
         // root's queued fast re-press: the engine has handed that hold off (ReleaseHold), so the
         // hold session it would start on settle gets no Stop on release and keeps listening.
         voidPendingHoldStart();
+      } else if (liveActivation() !== "hold") {
+        // The running session is already hands-free (started from Home, the chip or another
+        // hands-free Profile — the root's start was the busy no-op): there is no hold to upgrade,
+        // so this is a hands-free hotkey pressed over a busy session — stop it gracefully, as a
+        // toggle does, instead of discarding it (restart) or relabelling it (upgrade).
+        stopOrCancel(true);
       } else if (handsFree && handsFree.enabled) {
         const running = s.profiles.find((p) => p.id === s.activeProfile);
         const shape = (p: Profile) => sessionShape(p, backendForProfile(p, s.backends));
