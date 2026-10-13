@@ -547,27 +547,40 @@ pub async fn decode_media_file(app: AppHandle, path: String) -> Result<String, S
 /// user-picked sink (USB stick, network share).
 #[tauri::command]
 pub async fn save_text_file(path: String, contents: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        use std::io::Write as _;
-        let path = PathBuf::from(path);
-        let tmp = crate::transport::media::tmp_sibling(&path);
-        let write = || -> std::io::Result<()> {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(contents.as_bytes())?;
-            f.sync_all()
-        };
-        if let Err(e) = write() {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.to_string());
+    tauri::async_runtime::spawn_blocking(move || write_text_atomic(&PathBuf::from(path), &contents))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// The body of `save_text_file`. The predictable `<path>.tmp` is opened without following a
+/// symlink at its last component, as `config::write_private` does for the same reason: the
+/// export folder may be shared, and a planted `<name>.tmp` link would otherwise have this
+/// truncate and overwrite whatever it points at. Such a link fails the export, and the cleanup
+/// below removes the link itself (never its target), so a retry goes through.
+fn write_text_atomic(path: &std::path::Path, contents: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let tmp = crate::transport::media::tmp_sibling(path);
+    let write = || -> std::io::Result<()> {
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.custom_flags(libc::O_NOFOLLOW);
         }
-        if let Err(e) = std::fs::rename(&tmp, &path) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e.to_string());
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+        let mut f = opts.open(&tmp)?;
+        f.write_all(contents.as_bytes())?;
+        f.sync_all()
+    };
+    if let Err(e) = write() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e.to_string());
+    }
+    Ok(())
 }
 
 /// Read a text/subtitle source file for a translate-only run. Size-capped —
@@ -654,6 +667,26 @@ fn decode_text_source(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::move_dir_contents;
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn an_export_never_writes_through_a_planted_tmp_symlink() {
+        let dir = std::env::temp_dir().join(format!("fwf-export-tmp-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let victim = dir.join("victim.txt");
+        std::fs::write(&victim, "keep").unwrap();
+        let dest = dir.join("transcript.srt");
+        let tmp = crate::transport::media::tmp_sibling(&dest);
+        std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+        assert!(super::write_text_atomic(&dest, "exported").is_err());
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        // The planted link is gone, so the retry writes the export.
+        super::write_text_atomic(&dest, "exported").unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "exported");
+        assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_layout_gate_holds_waiters_until_it_opens_then_lets_every_one_through() {
