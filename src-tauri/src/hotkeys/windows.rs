@@ -307,10 +307,17 @@ fn vk_to_evdev_mod(vk: u16) -> Option<u16> {
 /// Whether the OS reading a held Shift (0xA0/0xA1) as UP may be the NumLock shift override
 /// rather than a release: with NumLock on, a numpad digit/decimal pressed under Shift is wrapped
 /// in a fake Shift-up/Shift-down pair, so the async state reads Shift up for as long as that
-/// numpad key is held.
+/// numpad key is held. The navigation ids count too (VK_CLEAR, PgUp..Down, Insert, Delete): the
+/// override hands the low-level hook the key's navigation VK (Shift+Numpad4 → VK_LEFT, scan 0x4B,
+/// not extended), so on the hook feed the numpad id never reaches the held set. The price is a
+/// real Shift release while an arrow/nav key is held with NumLock on: that hold lasts until the
+/// key is released.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn shift_masked_by_numpad(held: &std::collections::HashSet<u16>, numlock: bool) -> bool {
-    numlock && held.iter().any(|&id| matches!(id, 0x60..=0x69 | 0x6E))
+    numlock
+        && held
+            .iter()
+            .any(|&id| matches!(id, 0x60..=0x69 | 0x6E | 0x0C | 0x21..=0x28 | 0x2D | 0x2E))
 }
 
 #[cfg(windows)]
@@ -1503,6 +1510,12 @@ mod tests {
         assert!(shift_masked_by_numpad(&set(&[0xA1, 0x6E]), true));
         assert!(!shift_masked_by_numpad(&set(&[0xA0, 0x64]), false));
         assert!(!shift_masked_by_numpad(&set(&[0xA0, 0x41]), true));
+        // The hook reports Shift+Numpad4 under NumLock as VK_LEFT (scan 0x4B, not extended).
+        assert!(shift_masked_by_numpad(&set(&[0xA0, 0x25]), true));
+        assert!(!shift_masked_by_numpad(&set(&[0xA0, 0x25]), false));
+        for nav in [0x0C, 0x21, 0x22, 0x23, 0x24, 0x26, 0x27, 0x28, 0x2D, 0x2E] {
+            assert!(shift_masked_by_numpad(&set(&[0xA1, nav]), true), "{nav:#x}");
+        }
     }
 
     // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` +
