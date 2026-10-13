@@ -11,7 +11,7 @@ export interface AnchorRect {
 /**
  * Track an anchor's viewport position while its popover is open, so a popover PORTALED to
  * <body> (and fixed-positioned there, out of reach of an ancestor's `overflow-hidden`) follows
- * it through scrolling and resizing. null while closed or before the first measure.
+ * it through scrolling, resizing and the host's own re-renders. null while closed or before the first measure.
  */
 export function useAnchoredRect(ref: RefObject<HTMLElement | null>, open: boolean): AnchorRect | null {
   const [rect, setRect] = useState<AnchorRect | null>(null);
@@ -48,6 +48,12 @@ export function useAnchoredRect(ref: RefObject<HTMLElement | null>, open: boolea
       setRect(null);
     };
   }, [open, place]);
+  // A layout shift with no scroll or resize moves the anchor too (ticking a language adds a chip
+  // before a multi-select's trigger and reflows its row): re-measure after every host render
+  // while open. place(false) keeps the same object when nothing moved, so it cannot loop.
+  useLayoutEffect(() => {
+    if (open) place(false);
+  });
   // The close commit itself already reports null (the cleanup's reset lands one render later).
   return open ? rect : null;
 }
