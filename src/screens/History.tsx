@@ -310,7 +310,8 @@ export default function History() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   // Quick export's failure, per record — the dialog already confirmed a save,
   // so a silent no-op (or a half-written multi-file set) must not look like one.
-  const [exportError, setExportError] = useState<{ id: string; msg: string } | null>(null);
+  // A Map, not a record: a wire id like "__proto__" needs no own-property guard.
+  const [exportErrors, setExportErrors] = useState<ReadonlyMap<string, string>>(() => new Map());
   const copyTimer = useRef<number | undefined>(undefined);
   const rootRef = useRef<HTMLDivElement | null>(null);
   // Local midnight of today, re-read when midnight passes so a History left
@@ -508,9 +509,17 @@ export default function History() {
     if (openHistoryRecord(rec)) navigate("/transcribe", { state: { openExport: { media } } });
   };
 
+  const dropExportError = (id: string) =>
+    setExportErrors((m) => {
+      if (!m.has(id)) return m;
+      const n = new Map(m);
+      n.delete(id);
+      return n;
+    });
+
   const quickExport = async (rec: TranscriptRecord) => {
     // Only this row's own note: another row's failure stays until that row is retried.
-    setExportError((e) => (e?.id === rec.id ? null : e));
+    dropExportError(rec.id);
     const t = settings.transcribe ?? {};
     const format = (t.exportFormat ?? "srt") as ExportFormat;
     const ext = EXPORT_EXTENSIONS[format];
@@ -527,7 +536,7 @@ export default function History() {
       path = await pickExportPath(`${stem}.${ext}`, format.toUpperCase(), ext);
     } catch (e) {
       console.error("history export dialog failed:", e);
-      setExportError({ id: rec.id, msg: String(e) });
+      setExportErrors((m) => new Map(m).set(rec.id, String(e)));
       return;
     }
     if (!path) return;
@@ -572,7 +581,7 @@ export default function History() {
       if (revealAfterSaveOn(t)) void revealSaved(written);
     } catch (e) {
       console.error("history export failed:", e);
-      setExportError({ id: rec.id, msg: String(e) });
+      setExportErrors((m) => new Map(m).set(rec.id, String(e)));
     }
   };
 
@@ -586,6 +595,7 @@ export default function History() {
       onClick={() => {
         if (armedDelete === rec.id) {
           deleteRecord(rec.id);
+          dropExportError(rec.id);
           setArmedDelete(null);
           if (expandedId === rec.id) setExpandedId(null);
         } else {
@@ -956,9 +966,9 @@ export default function History() {
             <Film className="size-3.5" />
           </Button>
         )}
-        {exportError?.id === rec.id && (
+        {exportErrors.has(rec.id) && (
           <span className="text-[11px] text-warn" role="alert">
-            Export failed: {safeDisplayText(exportError.msg, 120)}
+            Export failed: {safeDisplayText(exportErrors.get(rec.id) ?? "", 120)}
           </span>
         )}
         <Button
