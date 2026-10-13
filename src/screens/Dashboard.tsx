@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { dictationVisual, isActiveDictation, isGracefulStop, isProcessing, type DictationTone } from "@/lib/dictation/dictationVisual";
 import { Button, Card, Notice, Toggle } from "@/components/ui";
-import { ROUTE_TARGETS_SHOWN, routeParts } from "@/lib/routeParts";
+import { ROUTE_TARGETS_SHOWN, profileEditHref, routeParts } from "@/lib/routeParts";
 import { Waveform } from "@/components/Waveform";
 import { HotkeyChips } from "@/components/HotkeyChips";
 import { HomeUsageStrip } from "@/components/stats/UsageStats";
@@ -150,7 +150,7 @@ function ProfileRow({ p, chosen, running, runningLabel, onChoose }: { p: Profile
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-accent">{p.endpoint ?? backend?.endpoint ?? "—"}</div>
       <div role="gridcell" className="whitespace-nowrap font-mono text-[12px] text-text" title={`${profileRoute(p, backend)}${backend ? ` · ${backendLabel(backends, backend)}` : " · No backend"}`}>{profileRouteShort(p, backend)}</div>
       <div role="gridcell" className="flex items-center gap-1.5" onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
-        <Button variant="ghost" size="sm" title="Edit profile" onClick={() => navigate(`/profiles?edit=${p.id}`)}>
+        <Button variant="ghost" size="sm" title="Edit profile" onClick={() => navigate(profileEditHref(p.id))}>
           <Pencil className="size-4" />
         </Button>
         <Toggle ariaLabel={`Enable ${name}`} checked={p.enabled} onChange={(v) => updateProfile(p.id, { enabled: v })} />

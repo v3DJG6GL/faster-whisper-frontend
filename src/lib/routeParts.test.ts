@@ -5,7 +5,7 @@
 // a LIST of them multiplies it, hence the per-part cap AND the "+N" list cap.
 
 import { describe, expect, it } from "vitest";
-import { routeParts } from "./routeParts";
+import { profileEditHref, routeParts } from "./routeParts";
 
 describe("routeParts", () => {
   it("renders as a plain language badge with no targets", () => {
@@ -69,5 +69,15 @@ describe("routeParts", () => {
     expect(routeParts("German", ["\u200d", "fr"])).toEqual({ source: "German", targets: ["French"], more: 0 });
     expect(routeParts("German", ["fr", "\u200c\u200d", "it", "es", "\u200d"]).more).toBe(0);
     expect(routeParts("d\u200de").source).toBe("German");
+  });
+});
+
+describe("profileEditHref", () => {
+  it("round-trips an id with query-significant characters through the ?edit= param Profiles reads", () => {
+    for (const id of ["work+laptop", "a&b", "x#1", "100%", "plain-id"]) {
+      const href = profileEditHref(id);
+      expect(href.startsWith("/profiles?edit=")).toBe(true);
+      expect(new URLSearchParams(href.split("?")[1]).get("edit")).toBe(id);
+    }
   });
 });

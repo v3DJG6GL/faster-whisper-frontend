@@ -43,3 +43,10 @@ export function routeParts(
     more: Math.max(0, labels.length - ROUTE_TARGETS_SHOWN),
   };
 }
+
+/** The Profiles deep link that opens one profile's editor (Profiles reads `?edit=` back with
+ *  URLSearchParams.get). The id is encoded: a synced or imported id is any string, and a raw
+ *  `&`, `#`, `+` or `%` would cut or alter it on the way back, so the editor would never open. */
+export function profileEditHref(id: string): string {
+  return `/profiles?edit=${encodeURIComponent(id)}`;
+}
