@@ -37,10 +37,11 @@ fn config_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// off the main thread: a sync command runs there, and the store retries a locked file with
 /// sleeps and fsyncs on save — an AV/indexer lock froze every window, once per call.
 ///
-/// `turn` is the store's own lock, taken for the whole call: on the main thread the calls ran
-/// one at a time in arrival order, and on workers two saves would otherwise share the
-/// `<file>.tmp` (one truncating the other mid-write) or land older-after-newer. tokio's mutex
-/// queues waiters FIFO, so the order the commands started in is the order they run in.
+/// `turn` is the store's own lock, taken for the whole call: on workers two saves would
+/// otherwise share the `<file>.tmp` (one truncating the other mid-write). It does NOT keep
+/// their order: Tauri runs each invoke as its own task and deserialises its args before this
+/// lock, so a later save can reach it first. Order comes from the webview, which sends one
+/// invoke per store at a time (`storeTurn` in api.ts).
 async fn store_io<T: Send + 'static>(
     turn: &'static tokio::sync::Mutex<()>,
     f: impl FnOnce() -> Result<T, String> + Send + 'static,

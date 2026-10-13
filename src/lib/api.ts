@@ -696,28 +696,47 @@ export async function deleteJob(args: ServerTarget & {
   }, { kind: "error", message: "Not running in the desktop app." });
 }
 
+/** One invoke at a time for a per-device store (jobs ledger, usage queue, sync state): the next
+ *  is only SENT once the previous one settled. Rust's per-store lock keeps two saves from
+ *  interleaving but not their order — Tauri deserialises each invoke's (possibly MB-sized)
+ *  args in its own task before the lock, so a later save could take the lock first and an
+ *  older snapshot land over a newer one. A failed call doesn't wedge the chain; its caller
+ *  still gets the rejection. */
+function storeTurn(): <T>(call: () => Promise<T>) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve();
+  return (call) => {
+    const next = tail.then(call);
+    tail = next.catch(() => undefined);
+    return next;
+  };
+}
+
+const jobsLedgerTurn = storeTurn();
+const usageOutcomesTurn = storeTurn();
+const syncStateTurn = storeTurn();
+
 /** The on-disk in-flight jobs ledger (opaque to Rust; shape owned by lib/jobsLedger.ts).
  *  `null` when absent or corrupt; REJECTS when the file exists but can't be read. */
 export async function loadJobsLedger(): Promise<unknown> {
   if (!isTauri) return null;
-  return invoke<unknown>("load_jobs_ledger");
+  return jobsLedgerTurn(() => invoke<unknown>("load_jobs_ledger"));
 }
 
 export async function saveJobsLedger(ledger: unknown): Promise<void> {
   if (!isTauri) return;
-  await invoke("save_jobs_ledger", { ledger });
+  await jobsLedgerTurn(() => invoke("save_jobs_ledger", { ledger }));
 }
 
 /** The on-disk outcome queue (opaque to Rust; shape owned by lib/usageOutcome.ts).
  *  `null` when absent or corrupt; REJECTS when the file exists but can't be read. */
 export async function loadUsageOutcomes(): Promise<unknown> {
   if (!isTauri) return null;
-  return invoke<unknown>("load_usage_outcomes");
+  return usageOutcomesTurn(() => invoke<unknown>("load_usage_outcomes"));
 }
 
 export async function saveUsageOutcomes(queue: unknown): Promise<void> {
   if (!isTauri) return;
-  await invoke("save_usage_outcomes", { queue });
+  await usageOutcomesTurn(() => invoke("save_usage_outcomes", { queue }));
 }
 
 /** P17: apply a per-rule patch (PATCH /v1/pipeline-rules). `patch` is the
@@ -1538,18 +1557,19 @@ export async function syncDelete(args: ServerTarget): Promise<SyncDeleteResult> 
  *  corrupt; REJECTS when the file exists but can't be read. */
 export async function loadSyncState(): Promise<SyncState | null> {
   if (!isTauri) return null;
-  return invoke<SyncState | null>("load_sync_state");
+  return syncStateTurn(() => invoke<SyncState | null>("load_sync_state"));
 }
 
 export async function saveSyncState(state: SyncState): Promise<void> {
   if (!isTauri) return;
-  await invoke("save_sync_state", { state });
+  await syncStateTurn(() => invoke("save_sync_state", { state }));
 }
 
-/** This machine's sync identity (persistent uuid + hostname + platform). */
+/** This machine's sync identity (persistent uuid + hostname + platform). Rides the sync-state
+ *  turn: a first call writes the new id into sync-state.json. */
 export async function syncDeviceInfo(): Promise<SyncDeviceInfo | null> {
   if (!isTauri) return null;
-  return invoke<SyncDeviceInfo>("sync_device_info");
+  return syncStateTurn(() => invoke<SyncDeviceInfo>("sync_device_info"));
 }
 
 /** Bulk keyring read: the stored API keys of the given Backends (ids without a
