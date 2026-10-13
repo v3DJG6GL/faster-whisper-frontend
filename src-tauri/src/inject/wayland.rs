@@ -2,8 +2,8 @@
 //!
 //! enigo's X11/XTEST text path can't type into native-Wayland windows, and sending
 //! keysyms lets KWin pick a mismatched keymap (wrong symbols / y↔z). Instead we
-//! read the machine's **active** XKB layout (`setxkbmap -query`), build that keymap
-//! with libxkbcommon, look up the exact `(keycode, Shift/AltGr)` that produces each
+//! read the machine's **active** XKB keymap (the one XWayland holds, `xkbcomp -xkb`;
+//! layout names as a fallback), compile it with libxkbcommon, look up the exact `(keycode, Shift/AltGr)` that produces each
 //! character on it, and inject those **keycodes** via `NotifyKeyboardKeycode`. The
 //! focused app interprets the keycode with the same layout, so every character —
 //! `!`, `y`/`z`, AltGr symbols — comes out right, on any layout (CH-de, FR, US, …).
@@ -206,30 +206,91 @@ mod imp {
             .unwrap_or_default()
     }
 
-    /// The machine's active XKB layout (rules, model, layout, variant), via
-    /// `setxkbmap -query` (KWin keeps XWayland in sync with the Wayland layout), else the
-    /// configured one from `localectl status` — setxkbmap is optional on several distros. US only
-    /// when neither names a layout, and that is logged: a US charmap on a de/ch/fr machine types
-    /// y↔z and wrong symbols while every job reports success.
-    fn query_layout() -> (String, String, String, String) {
+    /// Where the typing charmap's keymap came from.
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum KeymapSource {
+        /// The compiled keymap the X display (XWayland) really holds, via `xkbcomp -xkb`.
+        LiveKeymap,
+        Setxkbmap,
+        /// The system default layout, which need not be this session's.
+        Localectl,
+        UsDefault,
+    }
+
+    /// The text dump of the keymap the X display really holds (`xkbcomp -xkb $DISPLAY -`), or
+    /// `None` with no display, no xkbcomp, a failed dump or empty output. This is the
+    /// authoritative source: KWin loads its compiled keymap into XWayland but never updates the
+    /// `_XKB_RULES_NAMES` property `setxkbmap -query` reads, which stays `us` on a ch/de/fr session.
+    fn live_keymap_text() -> Option<String> {
+        let display = std::env::var("DISPLAY").ok().filter(|d| !d.is_empty())?;
+        let text = query_text("xkbcomp", &["-xkb", &display, "-"]);
+        (!text.trim().is_empty()).then_some(text)
+    }
+
+    /// The layout names as a fallback to the live keymap: (rules, model, layout, variant) from
+    /// `setxkbmap -query` (only the X rule names, see `live_keymap_text`), else the configured one
+    /// from `localectl status` — setxkbmap is optional on several distros. US only when neither
+    /// names a layout, and that is logged: a US charmap on a de/ch/fr machine types y↔z and wrong
+    /// symbols while every job reports success.
+    fn query_layout() -> ((String, String, String, String), KeymapSource) {
         static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         let setxkbmap = parse_setxkbmap(&query_text("setxkbmap", &["-query"]));
-        resolve_layout(setxkbmap, || {
+        let source = if setxkbmap.layout.is_some() {
+            KeymapSource::Setxkbmap
+        } else {
+            KeymapSource::Localectl
+        };
+        match resolve_layout(setxkbmap, || {
             parse_localectl(&query_text("localectl", &["status"]))
-        })
-        .unwrap_or_else(|| {
-            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                tracing::warn!(
-                    "[inject] keyboard layout unknown (neither setxkbmap nor localectl named one) — typing assumes US"
-                );
+        }) {
+            Some(names) => (names, source),
+            None => {
+                if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                    tracing::warn!(
+                        "[inject] keyboard layout unknown (neither setxkbmap nor localectl named one) — typing assumes US"
+                    );
+                }
+                (
+                    (
+                        "evdev".to_string(),
+                        "pc105".to_string(),
+                        "us".to_string(),
+                        String::new(),
+                    ),
+                    KeymapSource::UsDefault,
+                )
             }
-            (
-                "evdev".to_string(),
-                "pc105".to_string(),
-                "us".to_string(),
-                String::new(),
+        }
+    }
+
+    /// The keymap to type with: the `live` keymap text when it compiles, else the one `names`
+    /// resolves. Split from `build_charmap` so tests can drive the choice without a display.
+    fn compile_keymap(
+        ctx: &xkb::Context,
+        live: Option<String>,
+        names: impl FnOnce() -> ((String, String, String, String), KeymapSource),
+    ) -> Option<(xkb::Keymap, KeymapSource)> {
+        if let Some(keymap) = live.and_then(|text| {
+            xkb::Keymap::new_from_string(
+                ctx,
+                text,
+                xkb::KEYMAP_FORMAT_TEXT_V1,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
             )
-        })
+        }) {
+            return Some((keymap, KeymapSource::LiveKeymap));
+        }
+        let ((rules, model, layout, variant), source) = names();
+        let keymap = xkb::Keymap::new_from_names(
+            ctx,
+            &rules,
+            &model,
+            &layout,
+            &variant,
+            None,
+            xkb::KEYMAP_COMPILE_NO_FLAGS,
+        )?;
+        Some((keymap, source))
     }
 
     /// The compositor's currently-ACTIVE XKB group index — 0 for a single layout, 1+ for the Nth
@@ -301,22 +362,21 @@ mod imp {
     /// paste job, which only looks up the chord's ASCII letter) skips the compose table and the
     /// dead-key pass: they only add accented chars no key types directly.
     fn build_charmap(composes: bool) -> Option<HashMap<char, KeySpec>> {
-        let (rules, model, layout, variant) = query_layout();
+        static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         // Look glyphs up in the ACTIVE layout group, not always group 0: with a multi-layout config
         // (us,de,…) the portal injects raw keycodes KWin resolves under the live group, so a group-0
         // charmap mistypes (y↔z, missing AltGr glyphs) whenever a non-first layout is active. 0 on a
         // single layout / any query failure ⇒ identical to the previous group-0-only behavior.
         let group = active_xkb_group();
         let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
-        let keymap = xkb::Keymap::new_from_names(
-            &ctx,
-            &rules,
-            &model,
-            &layout,
-            &variant,
-            None,
-            xkb::KEYMAP_COMPILE_NO_FLAGS,
-        )?;
+        let (keymap, source) = compile_keymap(&ctx, live_keymap_text(), query_layout)?;
+        // Which source the charmap came from, once: a mistyping report is then readable from the log.
+        if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let layouts: Vec<&str> = (0..keymap.num_layouts())
+                .map(|i| keymap.layout_get_name(i))
+                .collect();
+            tracing::info!(?source, ?layouts, group, "[inject] typing keymap");
+        }
         let compose = if composes { compose_table() } else { None };
         Some(charmap_from_keymap(&keymap, group, compose.as_ref()))
     }
@@ -964,9 +1024,9 @@ mod imp {
 
         while let Some(job) = rx.recv().await {
             // A job cancelled while it sat in the queue is dropped before the keymap build: it
-            // would fork setxkbmap for nothing, and a failed build would answer a keymap error
-            // for a phrase the user already threw away instead of the silent Landed::Yes every
-            // other cancelled path gives.
+            // would fork the keymap queries for nothing, and a failed build would answer a keymap
+            // error for a phrase the user already threw away instead of the silent Landed::Yes
+            // every other cancelled path gives.
             if crate::inject::injection_cancelled(job.epoch) {
                 tracing::info!("[wayland-inject] cancelled before typing — dropping the job");
                 let _ = job.reply.send(Ok(crate::inject::Landed::Yes));
@@ -974,14 +1034,14 @@ mod imp {
             }
             // Rebuild the charmap PER JOB, not once per session: a KDE keyboard-layout switch
             // mid-run (e.g. us→de) would otherwise leave a stale snapshot and garble direct-typed
-            // text (y↔z, symbols) until an app restart. build_charmap is a cheap setxkbmap +
+            // text (y↔z, symbols) until an app restart. build_charmap is a cheap xkbcomp dump +
             // libxkbcommon compile (ms) next to a multi-second utterance, and the persistent portal
             // session stays open, so this adds no consent re-prompt. It resolves the ACTIVE XKB
             // group per job (active_xkb_group), so a multi-layout `us,de` with group 1 active types
             // correctly too — the group snapshot is re-read here every job alongside the rebuild.
             // A bare auto-Enter job (no text, no chord) presses only the constant KEY_ENTER and never
             // reads the map, so it skips the rebuild — and with it a keymap failure that would
-            // otherwise fail an Enter that needs no keymap. Built on the blocking pool: setxkbmap,
+            // otherwise fail an Enter that needs no keymap. Built on the blocking pool: xkbcomp,
             // XOpenDisplay and the xkb compile must not stall a runtime worker. A paste job reads
             // only the chord's letter key, so it skips the compose table and the dead-key pass.
             let charmap = if !job.paste && job.text.is_empty() {
@@ -1433,6 +1493,49 @@ mod imp {
             let sx = parse_setxkbmap("rules:      evdev\nmodel:      pc105\nlayout:     fr\n");
             let picked = resolve_layout(sx, || panic!("localectl asked"));
             assert_eq!(picked.map(|t| t.2), Some("fr".to_string()));
+        }
+
+        #[test]
+        fn live_keymap_wins_over_stale_us_rule_names() {
+            // KDE Wayland on a ch machine: XWayland holds the ch keymap while setxkbmap still
+            // reports KWin's never-updated `us` rule names.
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let Some(ch) = xkb::Keymap::new_from_names(
+                &ctx,
+                "evdev",
+                "pc105",
+                "ch",
+                "de_nodeadkeys",
+                None,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            ) else {
+                return; // no XKB data on this machine
+            };
+            let live = ch.get_as_string(xkb::KEYMAP_FORMAT_TEXT_V1);
+            let us = || {
+                (
+                    (
+                        "evdev".to_string(),
+                        "pc105".to_string(),
+                        "us".to_string(),
+                        String::new(),
+                    ),
+                    KeymapSource::Setxkbmap,
+                )
+            };
+            const KEY_Y: i32 = 21;
+            const KEY_Z: i32 = 44;
+
+            let (keymap, source) = compile_keymap(&ctx, Some(live), us).expect("live keymap");
+            assert_eq!(source, KeymapSource::LiveKeymap);
+            assert_eq!(charmap_from_keymap(&keymap, 0, None)[&'z'].keycode, KEY_Y);
+
+            // No live keymap, or one that does not compile: the names chain, as before.
+            for live in [None, Some("not a keymap".to_string())] {
+                let (keymap, source) = compile_keymap(&ctx, live, us).expect("us keymap");
+                assert_eq!(source, KeymapSource::Setxkbmap);
+                assert_eq!(charmap_from_keymap(&keymap, 0, None)[&'z'].keycode, KEY_Z);
+            }
         }
 
         fn us_letters() -> HashMap<char, KeySpec> {
