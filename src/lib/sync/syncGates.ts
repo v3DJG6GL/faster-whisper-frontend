@@ -274,7 +274,8 @@ export function gatePartsPresent(cat: WireCategory, id: SettingId, value: unknow
     case "apiKeys":
       return value.secrets !== undefined;
     case "homeProfile":
-      return value.homeProfileId !== undefined;
+      // The compose writes null when nobody ever sent one (gate off, no snapshot value).
+      return typeof value.homeProfileId === "string";
     default:
       return d.fields.some((ref) => value[ref.key] !== undefined);
   }

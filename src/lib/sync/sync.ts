@@ -2135,16 +2135,20 @@ function mergeFresh(local: SyncBlob, remote: SyncBlob): MergeResult & { local: S
     // Absent on a side: nothing to judge the settings apart from — the plain merge decides.
     if (b === undefined || l === undefined || r === undefined) continue;
     if (c === "backends" && degradedComposes.has(local)) continue;
-    const ids = all.filter((id) => gatePartsPresent(c, id, r, MY_BUCKET));
-    if (ids.length === 0) continue;
+    // A setting the remote holds nothing of is first contact: kept out of the merge on every side
+    // and this device's value laid back on afterwards, whatever the rest of the category does.
+    const absent = all.filter((id) => !gatePartsPresent(c, id, r, MY_BUCKET));
+    const ids = all.filter((id) => !absent.includes(id));
+    const strip = (x: unknown) => (absent.length > 0 ? withGateParts(c, absent, x, {}, MY_BUCKET) : x);
+    const mineOf = (x: unknown) => (absent.length > 0 ? withGateParts(c, absent, x, l, MY_BUCKET) : x);
     const part = (target: unknown, source: unknown) => withGateParts(c, ids, target, source, MY_BUCKET);
-    const neutral = (x: unknown) => part(part(x, b), r);
-    const rest = mergeBlobs({ [c]: neutral(b) }, { [c]: neutral(l) }, { [c]: r });
+    const neutral = (x: unknown) => part(part(strip(x), b), r);
+    const rest = mergeBlobs({ [c]: neutral(b) }, { [c]: neutral(l) }, { [c]: strip(r) });
     if (rest.conflicts.length > 0) {
       conflicts.add(c);
       continue;
     }
-    const merge = rest.merged[c];
+    const merge = mineOf(rest.merged[c]);
     const mine = part(merge, l);
     if (catEqual(mine, merge)) {
       (merged as Record<string, unknown>)[c] = merge;

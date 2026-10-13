@@ -7,7 +7,7 @@ import {
   applyBlob, backendsBlobIncomplete, carriesQuickAddPin, categorySelection, composeBlob, mergeBlobs,
 } from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "../settingsManifest";
-import { catsFromGates, gatesTurnedOn, gateStillSyncs, withGateParts, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
+import { catsFromGates, gatePartsPresent, gatesTurnedOn, gateStillSyncs, withGateParts, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
 import { stableStringify } from "../stable";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
@@ -321,6 +321,17 @@ describe("gatesTurnedOn", () => {
     expect(gateStillSyncs({ ...GATES_ALL, logRetention: false }, "logRetention")).toBe(false);
     expect(gateStillSyncs({ ...GATES_ALL, backendList: false }, "modelDecodeDefaults")).toBe(false);
     expect(gateStillSyncs(GATES_ALL, "notASetting" as SettingId)).toBe(false);
+  });
+});
+
+describe("gatePartsPresent", () => {
+  it("a server seeded with the switch off holds nothing of the setting", () => {
+    expect(gatePartsPresent("logging", "logFolder", { logLevel: "info" }, "linux")).toBe(false);
+    expect(gatePartsPresent("logging", "logFolder", { logDir: "/x" }, "linux")).toBe(true);
+    expect(gatePartsPresent("backends", "apiKeys", { list: [] }, "linux")).toBe(false);
+    expect(gatePartsPresent("profiles", "homeProfile", { list: [], homeProfileId: null }, "linux")).toBe(false);
+    expect(gatePartsPresent("profiles", "homeProfile", { list: [], homeProfileId: "p1" }, "linux")).toBe(true);
+    expect(gatePartsPresent("appRules", "perAppOverrides", { windows: [] }, "linux")).toBe(false);
   });
 });
 

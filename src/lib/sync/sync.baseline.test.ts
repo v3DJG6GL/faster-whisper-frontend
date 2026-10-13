@@ -1856,6 +1856,8 @@ describe("a sync edit made during the launch work", () => {
     remote: undefined as SyncBlob | undefined,
     /** The keyring refuses live key reads (the launch stash read still answers). */
     locked: false,
+    /** The server's version for this test (default: REMOTE's). */
+    remoteVersion: undefined as number | undefined,
   };
   const REMOTE = {
     ok: true,
@@ -1878,6 +1880,7 @@ describe("a sync edit made during the launch work", () => {
     io.pushed = undefined;
     io.remote = undefined;
     io.locked = false;
+    io.remoteVersion = undefined;
     const parked = new Promise<Record<string, string>>((r) => (io.release = r));
     vi.resetModules();
     vi.doMock("../persistence", async (importOriginal) => ({
@@ -1906,7 +1909,9 @@ describe("a sync edit made during the launch work", () => {
       syncPull: async () => {
         io.pulls++;
         if (io.failPulls) return { ok: false, status: 0, error: "unreachable" };
-        return io.remote ? { ...REMOTE, state: { ...REMOTE.state, blob: io.remote } } : REMOTE;
+        return io.remote
+          ? { ...REMOTE, state: { ...REMOTE.state, version: io.remoteVersion ?? REMOTE.state.version, blob: io.remote } }
+          : REMOTE;
       },
       syncPush: async (args: { baseVersion: number; blob: SyncBlob }) => {
         io.pushes++;
@@ -2215,6 +2220,27 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(io.pushes).toBe(1));
       expect(engine.getPendingConflict()).toBeNull();
       expect(io.pushed?.logging).toMatchObject({ logDir: "/var/log/me" });
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a setting the server never held goes up beside the peer's change to another setting of the group", async () => {
+    const { engine, store, init } = await launchEngine({ sub: levelOnly }, serverCopy);
+    try {
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      store.setState(logging({ logLevel: "debug", logDir: "/var/log/me" }));
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      // The peer moves "Log level" meanwhile; nobody ever sent a log folder.
+      io.remote = { logging: { logLevel: "info", keepDays: 30, showInSidebar: true } } as SyncBlob;
+      io.remoteVersion = 2;
+      store.setState(turnOn({ ...levelOnly, logFolder: true }));
+      await vi.waitFor(() => expect(io.pushes).toBe(1));
+      expect(engine.getPendingConflict()).toBeNull();
+      expect(store.getState().settings.logging).toMatchObject({ logLevel: "info", logDir: "/var/log/me" });
+      expect(io.pushed?.logging).toMatchObject({ logLevel: "info", logDir: "/var/log/me" });
     } finally {
       io.release({});
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
