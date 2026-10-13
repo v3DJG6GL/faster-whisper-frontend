@@ -1530,7 +1530,8 @@ export async function syncDelete(args: ServerTarget): Promise<SyncDeleteResult> 
 }
 
 /** Local sync bookkeeping (<config dir>/sync-state.json): last-synced snapshot
- *  (the 3-way merge base) + server version + hash + device id. */
+ *  (the 3-way merge base) + server version + hash + device id. `null` when absent or
+ *  corrupt; REJECTS when the file exists but can't be read. */
 export async function loadSyncState(): Promise<SyncState | null> {
   if (!isTauri) return null;
   return invoke<SyncState | null>("load_sync_state");

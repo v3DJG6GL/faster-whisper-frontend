@@ -2011,6 +2011,10 @@ let applyingRemote = false;
 /** A pull-apply was refused because dictation ran: re-pull once the session is idle. */
 let pullParked = false;
 let state: SyncState = {};
+/** sync-state.json exists but could not be read at launch (a Windows AV lock, an EIO): sync stays
+ *  off until the next launch reads it. Every save replaces the whole file, so one made from the
+ *  empty state would drop the merge base, version and stashed-key ids it holds. */
+let stateUnreadable = false;
 let device: SyncDeviceInfo | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
 let lastFocusPull = 0;
@@ -2281,7 +2285,7 @@ function syncBackend(): Backend | null {
 }
 
 function canSync(): boolean {
-  return Boolean(isTauri && syncMeta()?.enabled && syncBackend());
+  return Boolean(isTauri && !stateUnreadable && syncMeta()?.enabled && syncBackend());
 }
 
 /** Re-resolve the sync target AT the request and return its address, or `null` if the backend the
@@ -2599,6 +2603,10 @@ async function stashSnapshot(prevChunks: number): Promise<void> {
 }
 
 async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean } = {}): Promise<void> {
+  if (stateUnreadable) {
+    console.warn("sync state not saved: sync-state.json could not be read at launch, so it is kept as is");
+    return;
+  }
   // The accounts the CURRENT stash spans, before a patch can drop the count: a smaller stash
   // written below must delete the tail a larger one left.
   const prevChunks = snapshotChunkCount(state.snapshotSecretChunks);
@@ -2946,6 +2954,10 @@ async function pullCore(manual: boolean): Promise<void> {
     if (myGen === gen) inFlight = false;
   }
 }
+
+/** The status line while sync-state.json could not be read at launch (see `stateUnreadable`). */
+const STATE_UNREADABLE_ERROR =
+  "Sync is paused until the app restarts: this device's record of the last sync (sync-state.json) could not be read, and syncing without it would lose that record.";
 
 /** The status line of a sync this device's held config save stopped (see `configSaveHeld`): the
  *  save banner explains the hold, but the user can dismiss it. */
@@ -4331,7 +4343,15 @@ export async function initSync(): Promise<void> {
   try {
     await configReady;
     launchSync = useApp.getState().settings.sync;
-    state = (await loadSyncState()) ?? {};
+    try {
+      state = (await loadSyncState()) ?? {};
+    } catch (e) {
+      // Not "no state": the file is there but locked. Sync stays off for this launch (the
+      // launch fails below) rather than starting from {} and saving that over the merge base.
+      stateUnreadable = true;
+      setRuntime({ syncStatus: "error", syncError: STATE_UNREADABLE_ERROR });
+      throw e;
+    }
     // Normalize a pre-split snapshot to the current category layout. Without this the 3-way
     // base stays old-shape while fresh composes are new-shape, so the first sync after an
     // upgrade would read EVERY category as changed-on-both-sides and raise spurious conflicts.
@@ -4539,6 +4559,9 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
 /** For the Sync tab's "Delete server copy": forget local bookkeeping so the
  *  next push recreates from version 0. */
 export async function resetSyncState(): Promise<void> {
+  // The file could not be read at launch: it is kept as is (and the paused notice stays up). The
+  // next launch reads it, and its pull finds the server copy gone like any other device's would.
+  if (stateUnreadable) return;
   supersede();
   // Hold the lock across the keyring delete (up to 10 s on a locked wallet): supersede() freed it,
   // and a push or pull started in that window passed its gate, PUT at base 0 and adopted v1 — which

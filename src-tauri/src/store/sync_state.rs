@@ -18,16 +18,20 @@ fn sync_state_path(dir: &Path) -> PathBuf {
     dir.join("sync-state.json")
 }
 
-/// Load the sync state, or `None` when absent/unparseable/not an object. An unparseable
+/// Load the sync state: `Ok(None)` when absent/unparseable/not an object. An unparseable
 /// (or non-object — `[]`, `null`, a bare scalar) file is treated as "no state": the engine
 /// then re-pulls and rebuilds the snapshot — safe (worst case one spurious conflict
 /// prompt), so no .bak dance here. `device_info` applies the same object check: a non-object
 /// document could not carry the device id, so a fresh one was minted on EVERY call.
-pub fn load(dir: &Path) -> Option<serde_json::Value> {
-    let text = std::fs::read_to_string(sync_state_path(dir)).ok()?;
-    serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
-        .filter(|v| v.is_object())
+///
+/// A file that exists but can't be READ (a Windows AV/indexer lock outlasting the retries of
+/// `config::read_config_text`, an EIO) is an `Err`, never `None` — the same rule as
+/// `device_info`: the engine would start from "no state" and its next save would replace the
+/// merge-base snapshot and version for good.
+pub fn load(dir: &Path) -> std::io::Result<Option<serde_json::Value>> {
+    Ok(crate::config::read_config_text(&sync_state_path(dir))?
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .filter(|v| v.is_object()))
 }
 
 /// Persist atomically (tmp + rename, owner-only) via `config::write_private_atomic`.
@@ -146,7 +150,7 @@ mod tests {
         let a = device_info(&dir).device_id;
         let b = device_info(&dir).device_id;
         assert_eq!(a, b);
-        let saved = load(&dir).expect("the state is an object again");
+        let saved = load(&dir).unwrap().expect("the state is an object again");
         assert_eq!(saved["deviceId"], a);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -166,6 +170,27 @@ mod tests {
         // Root reads a 0o000 file anyway: nothing unreadable to test there.
         if std::fs::read_to_string(&path).is_err() {
             let _ = device_info(&dir);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_state_file_is_an_error_not_no_state() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!("fwf-syncstate-load-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(load(&dir).unwrap().is_none()); // absent: no state yet
+        let path = sync_state_path(&dir);
+        let original = r#"{"deviceId":"old","version":7,"snapshot":{"settings":{}}}"#;
+        std::fs::write(&path, original).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // Root reads a 0o000 file anyway: nothing unreadable to test there.
+        if std::fs::read_to_string(&path).is_err() {
+            assert!(load(&dir).is_err());
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
             assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
         }

@@ -48,11 +48,13 @@ pub async fn sync_delete(
 
 /// Local sync bookkeeping (device id, last server version, merge-base
 /// snapshot) — opaque to Rust, lives in `<config dir>/sync-state.json`.
+/// `Err` when the file exists but can't be read — the webview then must not save over it.
 #[tauri::command]
-pub fn load_sync_state(app: AppHandle) -> Option<serde_json::Value> {
-    config_dir(&app)
-        .ok()
-        .and_then(|d| crate::store::sync_state::load(&d))
+pub fn load_sync_state(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    let Ok(dir) = config_dir(&app) else {
+        return Ok(None);
+    };
+    crate::store::sync_state::load(&dir).map_err(|e| format!("sync state unreadable: {e}"))
 }
 
 #[tauri::command]
