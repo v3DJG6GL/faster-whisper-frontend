@@ -137,6 +137,33 @@ describe("badge clicks (v25, v27, v28)", () => {
     const [i2] = apply(i1, flip(i1, st1, "ex:it"));
     expect(i2.targets).toContain("it");
   });
+  it("a site language named like an Object member (constructor) switches off like any other", () => {
+    // The same clicks on an ordinary code and on "constructor" end the same way: the code is
+    // a key of the panel's target map, where an inherited member must not read as wanted.
+    const run = (code: string) => {
+      const inp = input({ tracks: [...ARTE, tr("x", code)] });
+      const st0 = initialSiteState(inp.targets);
+      const name = (c: string) => (c === code ? "X" : c);
+      const chips = (i: SiteSubsInput, st: SiteSubsState) => derive(i, st).chips.map((c) => name(c.code));
+      const sel = (st: SiteSubsState) =>
+        Object.entries(st.sel ?? {}).map(([k, v]) => [k.replace(code, "X"), v]);
+      // Under a preset: switched off, the language leaves the targets and the chips.
+      const [i1, st1] = apply(inp, toggleTarget(inp, st0, code));
+      // Under Custom, the language dropped from the targets outside the panel: its site track
+      // switched off.
+      const ic = { ...inp, targets: ["en"] };
+      const cu = pickPolicy(ic, initialSiteState(ic.targets), "custom");
+      const [i2, st2] = apply(ic, flip(ic, cu.state, "ex:x"));
+      return {
+        before: chips(inp, st0),
+        off: [chips(i1, st1), st1.off.map(name), i1.targets.map(name)],
+        flipped: [chips(i2, st2), sel(st2), i2.targets.map(name)],
+      };
+    };
+    const plain = run("zz");
+    expect(plain.off).toEqual([["en", "fr", "it"], ["X"], ["en", "fr"]]);
+    expect(run("constructor")).toEqual(plain);
+  });
 });
 
 describe("rows and chips (v30, v34, v37)", () => {

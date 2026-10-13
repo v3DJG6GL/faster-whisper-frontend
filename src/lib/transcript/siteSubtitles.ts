@@ -12,6 +12,7 @@
 
 import type { UrlLanguageCheck } from "../api";
 import { MULTI_LANGUAGE, languageLabel, namedLanguage, primarySubtag, spokenLabel } from "../languages";
+import { hasOwn, ownProp } from "../own";
 import { safeDisplayText } from "../sanitize";
 import type { ImportedText } from "./subtitleImport";
 import type { BatchResult, TimedTrack } from "../types";
@@ -154,11 +155,13 @@ export function siteWord(
   return t.kind === "auto" ? `${site} auto` : t.hoh ? `${site} SDH` : site;
 }
 
-/** The targets as the mockup's map: true = wanted, false = explicitly not wanted. */
+/** The targets as the mockup's map: true = wanted, false = explicitly not wanted. A site
+ *  track's language is any short code (`constructor` included), so the map is read own-only:
+ *  an inherited `Object.prototype` member is neither wanted nor off. */
 function targetMap(input: SiteSubsInput, st: SiteSubsState): Record<string, boolean> {
   const m: Record<string, boolean> = {};
   for (const c of input.targets) m[c] = true;
-  for (const c of st.off) if (!(c in m)) m[c] = false;
+  for (const c of st.off) if (!hasOwn(m, c)) m[c] = false;
   return m;
 }
 
@@ -191,7 +194,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const shown = new Set<string>();
   const siteCodes = uniq(avail.map((t) => t.code)).filter((c) => c !== sp);
   const targets = uniq([...Object.keys(tmap), ...siteCodes]).filter(
-    (c) => c !== sp && (tmap[c] === true || (!custom && siteCodes.includes(c) && tmap[c] !== false)),
+    (c) => c !== sp && (tmap[c] === true || (!custom && siteCodes.includes(c) && ownProp(tmap, c) !== false)),
   );
   // Display order: the starting languages, then what the site brings, then what you added —
   // newest last; a target added elsewhere (the chips' own picker) joins at the bottom.
@@ -525,7 +528,7 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   if (own && next[key] && key.startsWith("mt:") && strands(input, st, m, next, tg, own)) {
     return { state: st, targets: [...input.targets] };
   }
-  if (c && tg[c] && !next[key]) {
+  if (c && ownProp(tg, c) && !next[key]) {
     const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k]);
     if (!left.length) {
       if (key.startsWith("mt:")) tg[c] = false;

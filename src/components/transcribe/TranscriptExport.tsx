@@ -733,6 +733,8 @@ export function TranscriptExport({
       );
     } catch (e) {
       console.error("export save dialog failed:", e);
+      if (mine()) setSaveError(errorText(e));
+      else late(errorText(e));
       return;
     }
     if (!target) return; // cancelled
@@ -1016,7 +1018,13 @@ export function TranscriptExport({
               placeholder={t.defaultTitle}
               maxLength={TRACK_TITLE_MAX}
               disabled={effSubtitleMode === "sidecar"}
-              title={effSubtitleMode === "sidecar" ? "Names go into the video's own tracks — choose embedded or both" : undefined}
+              title={
+                effSubtitleMode !== "sidecar"
+                  ? undefined
+                  : packageOn
+                    ? "Names go into the video's own tracks — choose embedded or both"
+                    : noPackageWhy
+              }
               onChange={(e) => setName(t.id, e.target.value)}
               compact
               className={cn(renamed(t) && "shadow-[inset_0_0_0_1px_var(--c-accent)]")}
