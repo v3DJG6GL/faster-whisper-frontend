@@ -111,16 +111,22 @@ export function pruneLedger(l: Ledger, now: number): Ledger {
   return rows.length === l.rows.length ? l : { v: 1, rows };
 }
 
-/** Append (replacing a row of the same id), prune, keep the newest MAX_ROWS — and within
- *  MAX_LEDGER_BYTES: a row's options carry user text verbatim (the glossary), and Rust refuses
- *  an oversized save whole, which froze the disk copy. The oldest rows go first, never the new one. */
-export function addRow(l: Ledger, row: LedgerRow, now: number): Ledger {
-  let rows = pruneLedger(l, now).rows.filter((r) => r.jobId !== row.jobId);
-  rows.push(row);
+/** Keep the newest MAX_ROWS (rows run oldest first) — and within MAX_LEDGER_BYTES: a row's
+ *  options carry user text verbatim (the glossary), and Rust refuses an oversized save whole,
+ *  which froze the disk copy. The oldest rows go first, never the last one. */
+export function boundLedger(rows: LedgerRow[]): Ledger {
   if (rows.length > MAX_ROWS) rows = rows.slice(rows.length - MAX_ROWS);
   const enc = new TextEncoder();
   while (rows.length > 1 && enc.encode(JSON.stringify({ v: 1, rows })).length > MAX_LEDGER_BYTES) rows = rows.slice(1);
   return { v: 1, rows };
+}
+
+/** Append (replacing a row of the same id), prune, and bound (boundLedger) — never dropping
+ *  the new row. */
+export function addRow(l: Ledger, row: LedgerRow, now: number): Ledger {
+  const rows = pruneLedger(l, now).rows.filter((r) => r.jobId !== row.jobId);
+  rows.push(row);
+  return boundLedger(rows);
 }
 
 export function removeRow(l: Ledger, jobId: string): Ledger {
@@ -175,7 +181,9 @@ export function initLedger(): Promise<void> {
     try {
       const persisted = pruneLedger(parseLedger(await loadJobsLedger()), Date.now());
       const mine = ledger.rows;
-      ledger = { v: 1, rows: [...persisted.rows.filter((r) => !mine.some((m) => m.jobId === r.jobId)), ...mine] };
+      // Bounded like addRow: the disk copy plus this session's rows can pass the caps, and
+      // Rust would refuse every save until the next addRow re-trimmed.
+      ledger = boundLedger([...persisted.rows.filter((r) => !mine.some((m) => m.jobId === r.jobId)), ...mine]);
       loaded = true;
       if (readFailed) onLateLoad?.();
     } catch (e) {

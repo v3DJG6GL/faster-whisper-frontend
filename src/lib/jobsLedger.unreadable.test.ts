@@ -13,7 +13,7 @@ vi.mock("./api", async (importOriginal) => ({
   saveJobsLedger: (l: unknown) => saveJobsLedger(l),
 }));
 
-const { _resetLedgerForTests, initLedger, persistRow } = await import("./jobsLedger");
+const { _resetLedgerForTests, initLedger, persistRow, MAX_LEDGER_BYTES, MAX_ROWS } = await import("./jobsLedger");
 
 const OLD = "a".repeat(32);
 const MINE = "b".repeat(32);
@@ -55,5 +55,33 @@ describe("an unreadable ledger file", () => {
     expect(saveJobsLedger).toHaveBeenCalledTimes(1);
     const saved = saveJobsLedger.mock.calls[0][0] as { rows: LedgerRow[] };
     expect(saved.rows.map((r) => r.jobId)).toEqual([OLD, MINE]);
+  });
+});
+
+describe("a ledger read late (after a failed launch read)", () => {
+  const id = (i: number) => i.toString(16).padStart(8, "0");
+
+  it("is merged within the row bound, the oldest disk rows dropped first", async () => {
+    loadJobsLedger.mockRejectedValueOnce("jobs ledger unreadable: Permission denied");
+    await initLedger();
+    const disk = Array.from({ length: MAX_ROWS }, (_, i) => row(id(i + 1)));
+    loadJobsLedger.mockResolvedValue({ v: 1, rows: disk });
+    await persistRow(row(MINE));
+    const saved = saveJobsLedger.mock.calls[0][0] as { rows: LedgerRow[] };
+    expect(saved.rows).toHaveLength(MAX_ROWS);
+    expect(saved.rows[0].jobId).toBe(id(2));
+    expect(saved.rows[MAX_ROWS - 1].jobId).toBe(MINE);
+  });
+
+  it("is merged within the byte bound, so the save is not refused", async () => {
+    loadJobsLedger.mockRejectedValueOnce("jobs ledger unreadable: Permission denied");
+    await initLedger();
+    // Four disk rows of ~60 KB glossary each: near the cap on disk, over it with this session's.
+    const big = (i: number): LedgerRow => ({ ...row(id(i)), options: { translationGlossary: "x".repeat(60_000) } });
+    loadJobsLedger.mockResolvedValue({ v: 1, rows: [big(1), big(2), big(3), big(4)] });
+    await persistRow(big(5));
+    const saved = saveJobsLedger.mock.calls[0][0] as { rows: LedgerRow[] };
+    expect(new TextEncoder().encode(JSON.stringify(saved)).length).toBeLessThanOrEqual(MAX_LEDGER_BYTES);
+    expect(saved.rows.map((r) => r.jobId)).toEqual([id(2), id(3), id(4), id(5)]);
   });
 });
