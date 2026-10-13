@@ -126,13 +126,17 @@ const CJK_PHRASE_MARK = /[。，｡]/u;
 /** 、 is zh's enumeration mark (kept by the unpunctuated convention) but ja's phrase comma: it
  *  counts in a line with kana, or ending a line. */
 const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
-/** 。， (or a ja 、) with more CJK text after it on the same line. */
-const MARK_INSIDE = new RegExp(`[。，｡].*(?:${UNSPACED.source})`, "u");
-const COMMA_INSIDE = new RegExp(`[、､].*(?:${UNSPACED.source})`, "u");
+/** Whether a line holds a mark of `marks` with more CJK text after it. Only the first mark is
+ *  looked at — if any has CJK text after it, so does the first — so a long line stays linear. */
+function markInside(l: string, marks: RegExp): boolean {
+  const i = l.search(marks);
+  return i >= 0 && UNSPACED.test(l.slice(i + 1));
+}
 /** Whether a text's line breaks between two CJK characters are wraps, not phrase separators,
- *  judged on its lines: at least one, and at least a quarter, of the lines holding CJK text carry
- *  phrase punctuation (。， anywhere, 、 in a ja line or ending one) — sentences may end on ？！」,
- *  and a wrap rarely lands right after a mark — and no line holds a phrase space (unpunctuated
+ *  judged on its lines: at least one in eight of the lines holding CJK text carry a phrase mark
+ *  (。， or a ja 、) with more CJK text after it, or at least a quarter carry one anywhere (、
+ *  ending a line too) — sentences may end on ？！」, and a wrap rarely lands right after a
+ *  mark — and no line holds a phrase space (unpunctuated
  *  subtitles drop 。，、 and separate phrases with the break; Whisper's phrase-spaced text and
  *  our exports of it wrap at a space and drop it). ？！：； do not count: the unpunctuated
  *  convention keeps them. One stray 。 (a credit line) does not flip an unpunctuated file of a
@@ -141,19 +145,19 @@ const COMMA_INSIDE = new RegExp(`[、､].*(?:${UNSPACED.source})`, "u");
 export function cjkWrapsLines(lines: Iterable<string>): boolean {
   let cjk = 0;
   let marked = 0;
-  let inside = false;
+  let inside = 0;
   for (const raw of lines) {
     const l = raw.trimEnd();
     if (!l || !UNSPACED.test(l)) continue;
     if (PHRASE_SPACE.test(l)) return false;
     cjk++;
-    // A mark with more CJK text after it on the same line is decisive on its own: neither the
-    // unpunctuated convention nor a line-final credit ("翻译：小明。") writes one. Line-final
-    // marks only count toward the quarter.
-    if (MARK_INSIDE.test(l) || (KANA.test(l) && COMMA_INSIDE.test(l))) inside = true;
+    // A mark with more CJK text after it on the same line: the unpunctuated convention never
+    // writes one, so one line in eight suffices — not one line in any file, which let a single
+    // two-field credit ("翻译：小明。字幕：小红") or aside flip a whole unpunctuated file.
+    if (markInside(l, /[。，｡]/u) || (KANA.test(l) && markInside(l, /[、､]/u))) inside++;
     if (CJK_PHRASE_MARK.test(l) || /[、､]$/u.test(l) || (/[、､]/u.test(l) && KANA.test(l))) marked++;
   }
-  return inside || (marked > 0 && marked * 4 >= cjk);
+  return (inside > 0 && inside * 8 >= cjk) || (marked > 0 && marked * 4 >= cjk);
 }
 /** `cjkWrapsLines` for one text (an edited segment). */
 export function cjkWraps(s: string): boolean {

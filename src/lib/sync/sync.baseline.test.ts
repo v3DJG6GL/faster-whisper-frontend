@@ -2115,6 +2115,32 @@ describe("a sync edit made during the launch work", () => {
     }
   });
 
+  it("turning sync off and on again keeps a re-enabled category's question, and a gate turned ON while sync was off asks too", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    const setSync = (patch: Partial<NonNullable<AppSettings["sync"]>>) =>
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, ...patch } } }));
+    try {
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
+      // (b) the gate comes on while sync is off, then sync comes back on.
+      setSync({ enabled: false });
+      setSync({ sub: { ...offSub, logLevel: true } });
+      setSync({ enabled: true });
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      // (a) the dialog waits; sync goes off and on again: it is asked again, nothing pushed.
+      setSync({ enabled: false });
+      setSync({ enabled: true });
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      await new Promise((r) => setTimeout(r, 30));
+      expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
   it("sync turned on reconciles against the server instead of pushing over it", async () => {
     const { engine, store, init } = await launchEngine({ enabled: false });
     try {

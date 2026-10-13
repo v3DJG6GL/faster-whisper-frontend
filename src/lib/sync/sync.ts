@@ -2411,6 +2411,9 @@ async function clearSnapshotSecrets(chunks: number | undefined): Promise<void> {
   await dropSnapshotChunks(0, snapshotChunkCount(chunks));
 }
 
+/** The keyring stash of the latest `persistState` while it is in flight (see the stash-free write). */
+let stashing: Promise<void> | null = null;
+
 /** Split the snapshot's secrets out to the keyring (the file gets ids only) — `persistState`'s
  *  stash step. `prevChunks`: the accounts the stash spanned before the patch. */
 async function stashSnapshot(prevChunks: number): Promise<void> {
@@ -2492,7 +2495,20 @@ async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean }
   // A bookkeeping-only write (`persistFresh`) leaves the keyring stash alone: re-deriving it from
   // a snapshot whose keys a locked keyring never restored deleted the stash and dropped its ids,
   // which also lifted the refusal of a keyless backends push.
-  if (opts.stash !== false) await stashSnapshot(prevChunks);
+  if (opts.stash !== false) {
+    const run = stashSnapshot(prevChunks);
+    const mine = run.catch(() => {});
+    stashing = mine;
+    try {
+      await run;
+    } finally {
+      if (stashing === mine) stashing = null;
+    }
+  } else if (stashing) {
+    // A bookkeeping-only write waits out a stash in flight: its ids are recorded before the keys
+    // land, and a file written in between would pair the new ids with the old keyring bundle.
+    await stashing;
+  }
   // `isPlainObject` on BOTH containers, for the reason the `ids` line above already gives — but
   // this is the half that PERSISTS. `state.snapshot?.backends?.secrets` reads `undefined` when
   // `backends` is a server-supplied STRING, so the guarded `ids` path above is silently skipped
@@ -4266,20 +4282,46 @@ export async function initSync(): Promise<void> {
     // without it, switching servers looked dead until a disable/re-enable.
     const prevSync = prev.settings.sync;
     const nowSync = s.settings.sync;
+    // Gates turned ON or OFF on the same server, whether sync is on or not (`freshCats`): the base
+    // survives sync turned off and on again, and so must the mark — a gate turned on while sync
+    // was off is as unreconciled as one turned on while it ran.
+    let turnedOn: SyncCategory[] = [];
+    let pruned: SyncCategory[] = [];
+    let nowCats: Record<SyncCategory, boolean> | null = null;
+    if (prevSync && nowSync && prevSync.backendId === nowSync.backendId) {
+      const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
+      nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
+      const on = nowCats;
+      turnedOn = ALL_CATEGORIES.filter((c) => on[c] && !prevCats[c]);
+      // Turned off again before its reconcile: not synced, so nothing to ask about.
+      pruned = [...freshCats].filter((c) => !on[c]);
+    }
+    const markFresh = (): boolean => {
+      for (const c of pruned) freshCats.delete(c);
+      for (const c of turnedOn) freshCats.add(c);
+      return pruned.length > 0 || turnedOn.length > 0;
+    };
     if (nowSync?.enabled && (!prevSync?.enabled || prevSync.backendId !== nowSync.backendId)) {
       supersede();
-      freshCats.clear(); // the old server's base is not this one's
+      // A server switch: the old server's base is not this one's. The same server turned back
+      // on keeps its base, and with it the categories still to reconcile.
+      if (prevSync?.backendId !== nowSync.backendId) freshCats.clear();
+      else markFresh();
       persistFresh();
       setRuntime({ syncUnsupported: false, syncError: null });
       void pullNow(true);
       return;
     }
-    // Sync switched off: cancel queued/in-flight work and clear stale status.
+    // Sync switched off: cancel queued/in-flight work and clear stale status (the base and the
+    // categories still to reconcile stay for when it comes back on).
     if (prevSync?.enabled && !nowSync?.enabled) {
       supersede();
-      freshCats.clear();
-      persistFresh();
+      if (markFresh()) persistFresh();
       setRuntime({ syncStatus: "idle", syncError: null });
+      return;
+    }
+    if (!nowSync?.enabled) {
+      if (markFresh()) persistFresh();
       return;
     }
     // A category toggled ON (via the per-setting gates) is reconciled with the server before
@@ -4287,23 +4329,18 @@ export async function initSync(): Promise<void> {
     // different one asks. Keyed on the DERIVED cats: `sync.categories` has had no writer since
     // the manifest list replaced the category rows, so comparing the raw map was permanently
     // false and a re-enabled setting pushed this device's value over the peer's.
-    if (nowSync?.enabled && prevSync?.enabled) {
-      const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
-      const nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
-      // Turned off again before its reconcile: not synced, so nothing to ask about — and a
-      // dialog that still asks about it is re-raised without it (or dropped) by a fresh reconcile.
-      const pruned = [...freshCats].filter((c) => !nowCats[c]);
-      for (const c of pruned) freshCats.delete(c);
-      const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
+    if (nowCats) {
+      // A dialog that still asks about a category turned off again is re-raised without it (or
+      // dropped) by a fresh reconcile.
       const stale = pruned.length > 0 && !!pendingConflict?.categories.some((c) => pruned.includes(c));
       if (turnedOn.length > 0 || stale) {
         supersede();
-        for (const c of turnedOn) freshCats.add(c);
+        markFresh();
         persistFresh();
         void pullNow(true);
         return;
       }
-      if (pruned.length > 0) persistFresh();
+      if (markFresh()) persistFresh();
     }
     schedulePush();
   });
@@ -4333,14 +4370,19 @@ export async function initSync(): Promise<void> {
   // pullCore, as pullNow(true) would park on this very launch.
   if (canSync()) {
     const nowSync = useApp.getState().settings.sync;
-    let forced = !launchSync?.enabled || launchSync.backendId !== nowSync?.backendId;
-    if (!forced && launchSync !== nowSync) {
+    const sameServer = !!launchSync && launchSync.backendId === nowSync?.backendId;
+    let forced = !launchSync?.enabled || !sameServer;
+    // Also when sync itself was off at launch: the base stays with the same server (see the
+    // subscriber's gate arm).
+    if (sameServer && launchSync !== nowSync) {
       const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
       const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
       const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
       for (const c of turnedOn) freshCats.add(c); // as the subscriber arm would have
-      forced = turnedOn.length > 0;
-      if (forced) persistFresh();
+      if (turnedOn.length > 0) {
+        forced = true;
+        persistFresh();
+      }
     }
     // A re-enabled category recorded before a restart (its reconcile never landed) is reconciled
     // now, the same forced way.

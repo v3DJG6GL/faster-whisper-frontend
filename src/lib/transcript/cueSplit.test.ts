@@ -1078,6 +1078,15 @@ describe("joinLineBreaks", () => {
     expect(cjkWraps("今日は　ありがとう。")).toBe(false);
     expect(cjkWraps("Hello, world.")).toBe(false);
   });
+  it("cjkWrapsLines: one two-field credit does not flip an unpunctuated file, and a long mark run stays linear", () => {
+    const lines = ["我们走吧", "他们在等我们", "快点", "别迟到了", "好的", "马上来", "你在哪里", "我在门口", "翻译：小明。字幕：小红"];
+    expect(cjkWrapsLines(lines)).toBe(false);
+    expect(cjkWrapsLines(["今日は晴れ。明日は雨", "そうですか", "はい"])).toBe(true);
+    const long = "中" + "，".repeat(60_000);
+    const t0 = performance.now();
+    expect(cjkWrapsLines([long])).toBe(true); // one line, marked anywhere: the quarter holds
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
   it("a long blank run before no line break stays fast", () => {
     const s = "x" + " ".repeat(60_000) + "y\nz";
     const t0 = performance.now();
