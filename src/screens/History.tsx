@@ -703,7 +703,11 @@ export default function History() {
           </Button>
         </div>
         {rec.sourcePath ? (
-          <RecordingPlayer path={rec.sourcePath} />
+          /* Keyed by path: a path re-pointed by the audio-layout migration or
+             heal (History reloads on transcripts://swept) is a new recording,
+             so the player starts clean and an earlier failed read cannot hide
+             a playable file. */
+          <RecordingPlayer key={rec.sourcePath} path={rec.sourcePath} />
         ) : (
           <div className="mt-3 text-[12px] text-faint">
             No recording linked — “Keep audio recordings” was off for this session.
