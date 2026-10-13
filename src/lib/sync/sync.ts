@@ -30,7 +30,7 @@ import {
   syncPull,
   syncPush,
 } from "../api";
-import { configReady, configSaveHeld } from "../persistence";
+import { configReady, configSaveHeld, flushConfigSave, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
 import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
@@ -1366,8 +1366,10 @@ function inboundSecret(secrets: unknown, id: string): string | undefined {
  *  hasApiKey from KEYRING TRUTH (imported key present, or one already stored
  *  on this machine) — so a synced "hasApiKey: true" can't claim a key that
  *  isn't actually available here. `rotated` = backends this device already knew
- *  whose stored key the apply REPLACED with a different one: their caps and
- *  connection state were measured as the old caller, so the caller evicts them. */
+ *  whose stored credential the apply changed — a key replaced with a different one, or one
+ *  added or removed (the keyring now disagrees with the live `hasApiKey`): their caps and
+ *  connection state were measured as the old caller, so the caller evicts them, which also
+ *  moves their credential generation for every reader keyed on it. */
 async function reconcileBackendSecrets(
   list: Backend[],
   secrets: Record<string, string> | undefined,
@@ -1435,7 +1437,17 @@ async function reconcileBackendSecrets(
     const held = present === null ? (localFlag.get(b.id) ?? false) : hasOwn(present, b.id);
     return b.hasApiKey === held ? b : { ...b, hasApiKey: held };
   });
-  return { backends, rotated };
+  // A key added to (or removed from) a backend this device runs is a credential change too: the
+  // generation must move, or the editor's blank-key verdict and every per-caller fetch keyed on
+  // it keep the old caller's answer. A degraded read keeps the local flags, so nothing flips; a
+  // backend new to this device has no old caller.
+  const flipped =
+    present === null
+      ? []
+      : backends
+          .filter((b) => known.has(b.id) && localFlag.has(b.id) && localFlag.get(b.id) !== b.hasApiKey)
+          .map((b) => b.id);
+  return { backends, rotated: [...new Set([...rotated, ...flipped])] };
 }
 
 /**
@@ -1754,7 +1766,9 @@ export async function applyBlob(
       // hydrate's own eviction misses it: drop the caps and connection state measured as the
       // OLD caller NOW, while the keyring write is what changed. Waiting for the hydrate lost
       // the eviction on a STALE restart or a dropped apply: the keyring already holds the new
-      // key, so every later pass reads prior == incoming and finds nothing rotated.
+      // key, so every later pass reads prior == incoming and finds nothing rotated. A key added
+      // or removed counts too: hydrate would evict it, but moves no credential generation, so
+      // the generation-keyed readers (the editor's verdict, decode defaults) kept the old caller.
       for (const id of reconciled.rotated) forgetCredential(id);
       // The ONLY await in this function, and the blob sizes it: `reconcileBackendSecrets`
       // writes each incoming secret sequentially with a 10s timeout apiece, so up to 500
@@ -1997,6 +2011,9 @@ let device: SyncDeviceInfo | null = null;
 let pushTimer: ReturnType<typeof setTimeout> | undefined;
 let lastFocusPull = 0;
 let inFlight = false;
+/** A push the held-save gate refused (see pushNow): re-armed once a save lifts the hold, since
+ *  the save that lifts it may come from a pull-apply the store subscriber ignores. */
+let pushOwed = false;
 /** Sync epoch. Bumped by supersede() when the target server changes (or sync
  *  toggles), so an in-flight pull/push against the OLD server can neither
  *  block the new server's first sync via `inFlight` nor write its late result
@@ -2024,6 +2041,7 @@ function supersede(): void {
   // against a base that has no keys yet.
   endLaunch?.();
   clearTimeout(pushTimer);
+  pushOwed = false; // the new target starts with a pull, which pushes what it needs
   setPendingConflict(null); // a conflict against the old server is unresolvable now
   setPendingReview(null); // ditto for a held-back pull from the old server
   pullParked = false; // ditto a re-pull parked for the old server
@@ -2712,6 +2730,33 @@ async function pullCore(manual: boolean): Promise<void> {
   }
 }
 
+/** The status line of a sync this device's held config save stopped (see `configSaveHeld`): the
+ *  save banner explains the hold, but the user can dismiss it. */
+const HELD_PUSH_ERROR =
+  "This device couldn't save its settings, so nothing was pushed. Fix the problem in the warning at the top (a failed save, or a shortcut used twice), then push again.";
+const HELD_APPLY_ERROR =
+  "This device couldn't save the synced settings, so the sync isn't finished. Fix the problem in the warning at the top (a failed save, or a shortcut used twice), then sync again.";
+
+/** Whether an apply's store changes reached config.json: lands the debounced save its hydrate
+ *  queued (or retries a held one) and reads the hold. A base may be adopted only on true — sync
+ *  ships what config.json holds, so a base adopted over a frozen or failed save made the next
+ *  launch (config.json still pre-pull, base already past it) push the old values over the peer's
+ *  change. On false the caller adopts nothing: the next pull re-merges against the old base,
+ *  where only the remote side changed, and re-applies. False too when superseded meanwhile, and
+ *  when the write has not settled within 10 s: the caller holds the engine lock, and a write still
+ *  in flight has not landed either. */
+async function appliedConfigLanded(myGen: number): Promise<boolean> {
+  const settled = await withTimeout(flushConfigSave().then(() => true), 10_000, false);
+  return settled && myGen === gen && !configSaveHeld();
+}
+
+/** End a sync whose apply did not reach config.json (see `appliedConfigLanded`): a prompt's
+ *  notice keeps the line, else it says why the sync is not finished. */
+function heldSaveStatus(message: string): void {
+  if (pendingConflict || pendingReview) idleStatus();
+  else setRuntime({ syncStatus: "error", syncError: message });
+}
+
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
@@ -2732,12 +2777,28 @@ export async function pushNow(manual = false): Promise<void> {
       if (parkedPushGen === clickGen) parkedPushGen = null;
     }
   }
-  const backend = syncBackend();
+  let backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   // Don't propagate a state the local save-gate froze (hotkey conflict) or
   // couldn't persist — sync ships what config.json holds, not a maybe. Read from persistence,
   // not the save banner: dismissing the banner leaves the change just as unsaved.
-  if (configSaveHeld()) return;
+  if (configSaveHeld()) {
+    // A click retries the held save first: a disk that recovered with no edit since has nothing
+    // else to re-issue it. Still held (a conflict freeze, a disk still failing) — say so, unless a
+    // prompt's notice owns the line; an automatic push stays a silent drop. Either way the push
+    // is owed to the save that lifts the hold. Bounded like `appliedConfigLanded`: a write that
+    // hangs leaves the hold standing, and the click must still answer.
+    if (manual) await withTimeout(retryHeldConfigSave(), 10_000, undefined);
+    if (configSaveHeld()) {
+      pushOwed = true;
+      if (manual && !pendingConflict && !pendingReview) setRuntime({ syncStatus: "error", syncError: HELD_PUSH_ERROR });
+      return;
+    }
+    // The wait let anything change: re-check, with no await between this and the take below.
+    backend = syncBackend();
+    if (!backend || !canSync() || inFlight) return;
+  }
+  pushOwed = false;
   inFlight = true;
   const myGen = gen;
   // The failure a push that contacts no server restores — not a prompt's own notice, which a
@@ -2908,6 +2969,11 @@ export async function pushNow(manual = false): Promise<void> {
           if (useApp.getState().syncStatus === "syncing") idleStatus();
           return;
         }
+        // Never push a merge config.json does not hold, nor adopt its base (`appliedConfigLanded`).
+        if (!(await appliedConfigLanded(myGen))) {
+          if (myGen === gen && useApp.getState().syncStatus === "syncing") heldSaveStatus(HELD_PUSH_ERROR);
+          return;
+        }
         // Applied without the degraded backends category: adopt the base and keep pushing only
         // when the remote left that category alone (see `degradedBaseWithheld`).
         if (degraded && degradedBaseWithheld(remoteBlob)) return;
@@ -2982,6 +3048,11 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // dropSupersededPending either, so a waiting prompt keeps its notice — and a Reject / Later
     // pressed meanwhile keeps its status (pushNow's 409 twin).
     if (useApp.getState().syncStatus === "syncing") idleStatus();
+    return;
+  }
+  // The apply must reach config.json before its base is adopted (`appliedConfigLanded`).
+  if (!(await appliedConfigLanded(myGen))) {
+    if (myGen === gen && useApp.getState().syncStatus === "syncing") heldSaveStatus(HELD_APPLY_ERROR);
     return;
   }
   // Applied without the degraded backends category: the remote becomes the base only when it
@@ -3730,6 +3801,13 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     setPendingReview(r);
     return "prompt";
   }
+  // Not final until config.json holds it (`appliedConfigLanded`): no base, so the next pull
+  // adopts it once the save lands — the store already holds the approved values, so it finds
+  // nothing left to review.
+  if (!(await appliedConfigLanded(myGen))) {
+    if (myGen === gen) heldSaveStatus(HELD_APPLY_ERROR);
+    return "done";
+  }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
   // it left the backends category alone, or the next unlocked push reverts the peer's change.
   // The raise's flag counts only while backends still syncs (`live`: a degraded raise already
@@ -3985,6 +4063,12 @@ async function resolveLocked(
     setPendingConflict(c);
     return "prompt";
   }
+  // Same as approveLocked: no base until config.json holds the resolution; a later pull re-offers
+  // whatever still conflicts once the save lands.
+  if (!(await appliedConfigLanded(myGen))) {
+    if (myGen === gen) heldSaveStatus(HELD_APPLY_ERROR);
+    return "done";
+  }
   if (degraded && degradedBaseWithheld(c.remote)) return "done";
   // Same server-truth rule as reconcileRemote: the server still holds
   // c.remote at remoteVersion — record THAT, so if the follow-up push fails,
@@ -4079,8 +4163,10 @@ export async function initSync(): Promise<void> {
     // Migrate pre-serverBackendId state files: they were only ever written for
     // the currently configured sync server, so stamp that identity instead of
     // letting ensureStateFor() wipe a perfectly good snapshot on first contact.
-    if (state.version && !state.serverBackendId && syncMeta()?.backendId) {
-      await persistState({ serverBackendId: syncMeta()!.backendId });
+    // The server the launch started from (`launchSync`), not the live one: a switch during the
+    // launch work would stamp the old server's state as the new one's base.
+    if (state.version && !state.serverBackendId && launchSync?.backendId) {
+      await persistState({ serverBackendId: launchSync.backendId });
     }
 
     if (state.updatedAt) {
@@ -4154,6 +4240,14 @@ export async function initSync(): Promise<void> {
       }
     }
     schedulePush();
+  });
+
+  // A push the held-save gate refused goes out once a save lifts the hold: that save may come
+  // from a pull-apply (ignored by the subscriber above) or a retry, with no store edit to re-arm it.
+  onConfigSaveHoldCleared(() => {
+    if (!pushOwed) return;
+    pushOwed = false;
+    schedulePush(0);
   });
 
   // Focus pull (throttled): catches "changed it on the other machine".

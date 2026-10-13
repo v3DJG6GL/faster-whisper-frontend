@@ -44,10 +44,28 @@ export function configSaveHeld(): boolean {
 let flushPendingSave: (() => Promise<void>) | null = null;
 
 /** Land the debounced config save now (the quit handshake / session end): a pending 400 ms
- *  timer runs at once, else an in-flight save is awaited. Never rejects — a failed save keeps
- *  its banner. Resolves at once outside Tauri and before initConfig armed the auto-save. */
+ *  timer runs at once, else an in-flight save is awaited, and a held save (failed write) is
+ *  retried once — a disk that recovered with no edit since still gets the store written. A
+ *  conflict freeze stays frozen (the retry re-raises its banner, nothing is written). Never
+ *  rejects — a failed save keeps its banner. Resolves at once outside Tauri and before
+ *  initConfig armed the auto-save. */
 export function flushConfigSave(): Promise<void> {
   return flushPendingSave ? flushPendingSave() : Promise.resolve();
+}
+
+/** Retry a held save now (see `saveHeld`) — the sync engine's manual Push, which otherwise has
+ *  nothing to re-issue it but an unrelated edit. A pending or in-flight save decides the hold
+ *  instead; nothing held, nothing to do. Never rejects. */
+export function retryHeldConfigSave(): Promise<void> {
+  return saveHeld ? flushConfigSave() : Promise.resolve();
+}
+
+/** Told when a successful save lifts a hold — the sync engine re-arms a push its gate refused
+ *  meanwhile (a pull-apply's save clears a hold without any store edit the engine would see).
+ *  One slot: persistence must not import the engine (it imports this module). */
+let holdClearedListener: (() => void) | null = null;
+export function onConfigSaveHoldCleared(cb: (() => void) | null): void {
+  holdClearedListener = cb;
 }
 
 /** What every hotkey backend reads from a profile (evdev / Windows hook `chords_from`, the
@@ -224,7 +242,14 @@ export async function initConfig(): Promise<void> {
           // An earlier save settling after a later attempt neither clears that attempt's banner nor
           // its hold: the newest attempt decides both (see `saveSeq`).
           const newest = mySeq === saveSeq;
-          if (newest) saveHeld = false;
+          if (newest && saveHeld) {
+            saveHeld = false;
+            try {
+              holdClearedListener?.();
+            } catch (e) {
+              console.error("hold-cleared listener failed", e);
+            }
+          }
           // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
           // notice (settings reset from a corrupt file / failed to load) is not a save failure:
           // it stays until the user dismisses it — and comes back once a save error or conflict
@@ -275,7 +300,10 @@ export async function initConfig(): Promise<void> {
       clearTimeout(timer);
       return saveNow();
     }
-    return inFlight ?? Promise.resolve();
+    if (inFlight) return inFlight;
+    // A held save with nothing pending: retry it. A failed write may succeed now; a conflict
+    // freeze returns at once from saveNow (its banner again, nothing written).
+    return saveHeld ? saveNow() : Promise.resolve();
   };
 
   useApp.getState().setConfigLoaded();

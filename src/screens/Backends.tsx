@@ -69,10 +69,12 @@ function Editor({
   const setUrlOverride = useApp((s) => s.setUrlOverride);
   const [b, setB] = useState<Backend>(initial);
   const [key, setKey] = useState(initialKey ?? "");
-  // Whether a key is already in the keyring. A connect-first add carries its typed key in
-  // `initialKey` with `hasApiKey` already set, but that key only reaches the keyring on save —
-  // clearing the field must not leave the "stored" placeholder or flag behind (doSave agrees).
-  const keyStored = initial.hasApiKey && !initialKey;
+  // Whether a key is already in the keyring — the store's live flag, so a sync pull that adds or
+  // removes one shows here at once. A connect-first add carries its typed key in `initialKey`
+  // with `hasApiKey` already set, but that key only reaches the keyring on save — clearing the
+  // field must not leave the "stored" placeholder or flag behind (doSave agrees).
+  const keyStoredNow = useApp((s) => s.backends.find((x) => x.id === b.id)?.hasApiKey ?? false);
+  const keyStored = keyStoredNow && !initialKey;
   // The address this editor's requests ACTUALLY go to — the same rule `effectiveServerUrl`
   // applies, but reactive, so a change to "Address on this device" re-runs the effects below.
   // `runTest`, `liveTarget`, the list card and every transcription already resolve the override;
@@ -172,7 +174,6 @@ function Editor({
   // `resultTarget.gen`): a sync pull that rotates the key moves neither address nor key field, so
   // the reset effect above never fires and the old caller's "Connected", chips and models stayed.
   // Nor may the stored key have come or gone since (`resultTarget.hadKey`).
-  const keyStoredNow = useApp((s) => s.backends.find((x) => x.id === b.id)?.hasApiKey ?? false);
   const resultLive =
     result && (key || (resultTarget.current.gen === credentialGeneration(b.id) && resultTarget.current.hadKey === keyStoredNow))
       ? result
@@ -380,10 +381,15 @@ function Editor({
     const savedUrl = liveTarget.current.url;
     // Before onSave: a NEW key on a backend that already exists is a rotation the store can't see.
     const existed = useApp.getState().backends.some((x) => x.id === cur.id);
+    // The keyring's truth for this backend now (the store re-derives it on every pull), not the
+    // draft's flag, which is the mount-time one: no editor control removes a stored key.
+    const liveHasKey = storedHasKey(cur.id);
     // A blank-key verdict was earned with the STORED key: still valid only if no sync pull has
-    // rotated that key since (taken before the forgetCredential below bumps the generation itself). A
-    // typed-key verdict is exempt — it was tested with the key just saved.
-    const genOk = !!key || resultTarget.current.gen === credentialGeneration(cur.id);
+    // rotated that key since (taken before the forgetCredential below bumps the generation itself),
+    // nor may the stored key have come or gone. A typed-key verdict is exempt — it was tested with
+    // the key just saved.
+    const genOk =
+      !!key || (resultTarget.current.gen === credentialGeneration(cur.id) && resultTarget.current.hadKey === liveHasKey);
     // Normalize on save (mirrors Profiles.save): trim the URL/model, default an empty name, and trim
     // the override-profile name → undefined when blank — so stray whitespace isn't persisted, sent to
     // the server (a padded value never matches a real profile), or shown as a blank card.
@@ -391,8 +397,9 @@ function Editor({
       ...cur,
       // A connect-step key only reaches the keyring on THIS save — if the field
       // was cleared before saving, no key was ever stored, so don't claim one
-      // (an EXISTING backend's blank field still means "keep the stored key").
-      hasApiKey: key.length > 0 || (initialKey ? false : cur.hasApiKey),
+      // (an EXISTING backend's blank field keeps whatever key the keyring holds now; a backend
+      // not in the store yet holds none).
+      hasApiKey: key.length > 0 || (initialKey ? false : liveHasKey),
       name: cur.name.trim() || "Untitled backend",
       serverUrl: storedTypedUrl(cur.serverUrl),
       model: cur.model.trim(),

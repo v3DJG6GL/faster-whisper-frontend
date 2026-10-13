@@ -21,6 +21,7 @@ import {
   securityChanges,
 } from "./sync";
 import { useApp } from "../store";
+import { credentialGeneration } from "../capabilities";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { IS_WINDOWS } from "../platform";
 import type { SyncBlob } from "./syncTypes";
@@ -1358,6 +1359,37 @@ describe("applyBlob evicts a backend whose API key the pull rotated", () => {
     }
     expect(useApp.getState().caps.b1).toBeDefined();
   });
+
+  // A key ADDED to a keyless backend replaces no stored key, yet the backend's caller changed:
+  // without a generation move, the editor's blank-key verdict and the generation-keyed fetches
+  // (decode defaults, override context) kept the anonymous caller's answers.
+  it("a key added to a keyless backend moves its credential generation", async () => {
+    useApp.setState({ backends: [backend({ hasApiKey: false })] });
+    const gen0 = credentialGeneration("b1");
+    keyring.store = new Map();
+    try {
+      expect(await applyBlob({ backends: { list: [backend({ hasApiKey: false })], secrets: { b1: "sk-new" } } }, CATS_ALL)).toBe(true);
+    } finally {
+      keyring.store = null;
+    }
+    expect(credentialGeneration("b1")).toBe(gen0 + 1);
+    expect(useApp.getState().backends[0].hasApiKey).toBe(true);
+    expect(useApp.getState().caps.b1).toBeUndefined();
+  });
+
+  it("a degraded keyring read moves nothing", async () => {
+    useApp.setState({ backends: [backend({ hasApiKey: false })] });
+    const gen0 = credentialGeneration("b1");
+    keyring.park = Promise.resolve(null as unknown as Record<string, string>);
+    try {
+      expect(await applyBlob({ backends: { list: [backend({ hasApiKey: false })], secrets: { b1: "sk-new" } } }, CATS_ALL)).toBe(true);
+    } finally {
+      keyring.park = null;
+    }
+    expect(credentialGeneration("b1")).toBe(gen0);
+    expect(useApp.getState().backends[0].hasApiKey).toBe(false);
+    expect(useApp.getState().caps.b1).toBeDefined();
+  });
 });
 
 // Builds before `persistState` narrowed its writer stashed a blank key as `{id: ""}` and recorded
@@ -1931,34 +1963,43 @@ describe("a sync edit made during the launch work", () => {
 
 // pushNow's "ship only what config.json holds" gate read the save banner, which the user can
 // dismiss: closing "Couldn't save your settings" and pressing Push now then sent the unsaved store.
+// Real persistence under a fresh engine; `io.saveFails` is the disk.
 describe("a push after a failed config save", () => {
-  afterEach(() => {
-    vi.unstubAllGlobals();
-    vi.doUnmock("../api");
-    vi.resetModules();
-  });
+  const io = {
+    saveFails: true,
+    saves: 0,
+    pushes: [] as SyncBlob[],
+    states: [] as number[],
+    pull: { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} as SyncBlob } },
+  };
 
-  it("sends nothing even once the save banner is dismissed", async () => {
-    let saveFails = true;
-    let pushes = 0;
+  async function armEngine() {
+    io.saveFails = true;
+    io.saves = 0;
+    io.pushes = [];
+    io.states = [];
+    io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
     vi.resetModules();
     vi.doMock("../api", async (importOriginal) => ({
       ...(await importOriginal<typeof import("../api")>()),
       isTauri: true,
       loadConfig: async () => null,
       saveConfig: async () => {
-        if (saveFails) throw new Error("read-only file system");
+        io.saves++;
+        if (io.saveFails) throw new Error("read-only file system");
       },
       evdevStatus: async () => ({ permitted: false }),
       loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot: {} }),
-      saveSyncState: async () => {},
+      saveSyncState: async (st: { version?: number }) => {
+        io.states.push(st.version ?? 0);
+      },
       syncDeviceInfo: async () => ({ deviceId: "d1", hostname: "me", platform: "linux" }),
       readBackendKeys: async () => ({ b1: "sk-1" }),
       setBackendKey: async () => {},
       deleteBackendKey: async () => {},
-      syncPull: async () => ({ ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } }),
-      syncPush: async (args: { baseVersion: number }) => {
-        pushes++;
+      syncPull: async () => io.pull,
+      syncPush: async (args: { blob: SyncBlob; baseVersion: number }) => {
+        io.pushes.push(args.blob);
         return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
       },
     }));
@@ -1969,23 +2010,129 @@ describe("a push after a failed config save", () => {
     s.sync = { ...s.sync!, enabled: true, backendId: "b1" };
     store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
     vi.stubGlobal("window", { addEventListener: () => {} });
-    try {
-      await persistence.initConfig();
-      await engine.initSync();
-      await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
+    await persistence.initConfig();
+    await engine.initSync();
+    await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
+    /** A store edit whose save fails, its banner dismissed: config.json is behind the store. */
+    const failedEdit = async () => {
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "debug" } } }));
       await vi.waitFor(() => expect(store.getState().saveErrorKind).toBe("save"));
       store.getState().setSaveError(null); // the banner's dismiss button
+      expect(persistence.configSaveHeld()).toBe(true);
+    };
+    const syncOff = () =>
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    return { persistence, engine, store, failedEdit, syncOff };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("../api");
+    vi.resetModules();
+  });
+
+  it("sends nothing even once the save banner is dismissed", async () => {
+    const { persistence, engine, store, failedEdit, syncOff } = await armEngine();
+    try {
+      await failedEdit();
       await engine.pushNow(true);
-      expect(pushes).toBe(0);
+      expect(io.pushes.length).toBe(0);
       // A save that lands lifts the hold.
-      saveFails = false;
+      io.saveFails = false;
       store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, keepDays: 7 } } }));
       await persistence.flushConfigSave();
       await engine.pushNow(true);
-      expect(pushes).toBe(1);
+      expect(io.pushes.length).toBe(1);
     } finally {
-      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+      syncOff();
+    }
+  });
+
+  it("the quit flush retries a held save once the disk recovered, with no edit since", async () => {
+    const { persistence, failedEdit, syncOff } = await armEngine();
+    try {
+      await failedEdit();
+      io.saveFails = false;
+      const before = io.saves;
+      await persistence.flushConfigSave();
+      expect(io.saves).toBe(before + 1);
+      expect(persistence.configSaveHeld()).toBe(false);
+    } finally {
+      syncOff();
+    }
+  });
+
+  it("Push now retries the held save and pushes once it lands", async () => {
+    const { persistence, engine, failedEdit, syncOff } = await armEngine();
+    try {
+      await failedEdit();
+      io.saveFails = false; // recovered — and no store edit re-issues the save
+      await engine.pushNow(true);
+      expect(persistence.configSaveHeld()).toBe(false);
+      expect(io.pushes.length).toBe(1);
+    } finally {
+      syncOff();
+    }
+  });
+
+  it("Push now says why nothing was pushed while the save still fails; an automatic push stays quiet", async () => {
+    const { engine, store, failedEdit, syncOff } = await armEngine();
+    try {
+      await failedEdit();
+      await engine.pushNow();
+      expect(store.getState().syncStatus).toBe("ok");
+      expect(store.getState().syncError).toBeNull();
+      await engine.pushNow(true);
+      expect(io.pushes.length).toBe(0);
+      expect(store.getState().syncStatus).toBe("error");
+      expect(store.getState().syncError).toMatch(/couldn't save its settings, so nothing was pushed/);
+      expect(store.getState().saveErrorKind).toBe("save"); // the retry failed again: its banner is back
+    } finally {
+      syncOff();
+    }
+  });
+
+  it("a push the hold refused goes out once a save lifts the hold, with no store edit", async () => {
+    const { persistence, engine, failedEdit, syncOff } = await armEngine();
+    try {
+      await failedEdit();
+      await engine.pushNow(); // the debounced push, refused at the gate
+      expect(io.pushes.length).toBe(0);
+      io.saveFails = false;
+      await persistence.flushConfigSave(); // a save the engine's store subscriber never saw
+      await vi.waitFor(() => expect(io.pushes.length).toBe(1));
+    } finally {
+      syncOff();
+    }
+  });
+
+  // A pull applied into the store, then adopted the server's version as its base, while
+  // config.json never got the applied values (the save failed, or a shortcut conflict froze it):
+  // after a restart the base said "already have it" and the next push sent the old values back.
+  it("a pull whose apply could not be saved adopts no base until the save lands", async () => {
+    const { engine, store, syncOff } = await armEngine();
+    try {
+      io.saveFails = false;
+      await engine.pushNow(true); // base = exactly this device's compose, at version 2
+      expect(io.pushes.length).toBe(1);
+      const base = io.pushes[0];
+      expect(io.states[io.states.length - 1]).toBe(2);
+      const remote = { ...base, logging: { ...base.logging!, logLevel: "debug" } } as SyncBlob;
+      io.pull = { ok: true, status: 200, state: { version: 3, updated_ts: 3, device: "peer", blob: remote } };
+      io.saveFails = true;
+      await engine.pullNow(true);
+      expect(store.getState().settings.logging?.logLevel).toBe("debug"); // applied to the store
+      expect(io.states[io.states.length - 1]).toBe(2); // but no base adopted
+      expect(store.getState().syncStatus).toBe("error");
+      expect(store.getState().syncError).toMatch(/sync isn't finished/);
+      expect(io.pushes.length).toBe(1);
+      io.saveFails = false;
+      await engine.pullNow(true);
+      expect(io.states[io.states.length - 1]).toBe(3);
+      expect(store.getState().syncStatus).toBe("ok");
+      expect(io.pushes.length).toBe(1); // nothing of this device's own to send
+    } finally {
+      syncOff();
     }
   });
 });
