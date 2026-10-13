@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, extractorPill, isSourceUrl, linkTooLong, normalizeMediaUrl, urlHost } from "./urlSource";
+import { displayLabel, extractorPill, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, urlHost } from "./urlSource";
 
 describe("linkTooLong", () => {
   it("names the server's limit when the link runs longer", () => {
@@ -172,5 +172,22 @@ describe("rungFacts", () => {
     expect(rungFacts({ kind: "video", height: 1080, label: "1080p", tbr_kbps: 809, bitrate_approx: false,
       approx_bytes: 139e6, bytes_approx: false, container: "mp4" }, fmt)).toBe("1080p · 0.8 Mbit/s · 139 MB · mp4");
     expect(rungFacts({ kind: "video", height: null, label: "Best available", container: "mkv" }, fmt)).toBe("Best available · mkv");
+  });
+});
+
+describe("linkRefusal", () => {
+  it("reads a server link-policy refusal as a sentence", () => {
+    expect(linkRefusal("link_refused:this media runs 5.0 h — over the server's 4.0 h limit for link downloads")).toBe(
+      "This media runs 5.0 h — over the server's 4.0 h limit for link downloads.",
+    );
+    expect(linkRefusal("link_refused:playlists aren't supported — link a single video or track")).toBe(
+      "Playlists aren't supported — link a single video or track.",
+    );
+  });
+
+  it("leaves every other preview failure to the run", () => {
+    expect(linkRefusal("HTTP 400: the site took too long to answer")).toBeNull();
+    expect(linkRefusal("link_refused:   ")).toBeNull();
+    expect(linkRefusal(undefined)).toBeNull();
   });
 });

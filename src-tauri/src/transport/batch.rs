@@ -297,6 +297,38 @@ fn standard_temperature(overrides: &serde_json::Value) -> Option<String> {
 }
 
 #[cfg(test)]
+mod link_refused_tests {
+    use super::link_refused;
+
+    #[test]
+    fn a_policy_refusal_is_marked_final() {
+        let e = anyhow::anyhow!(
+            "HTTP 400: this media runs 5.0 h — over the server's 4.0 h limit for link downloads"
+        );
+        assert_eq!(
+            format!("{:#}", link_refused(e)),
+            "link_refused:this media runs 5.0 h — over the server's 4.0 h limit for link downloads"
+        );
+        let e =
+            anyhow::anyhow!("HTTP 400: playlists aren't supported — link a single video or track");
+        assert!(format!("{:#}", link_refused(e)).starts_with("link_refused:playlists"));
+    }
+
+    /// A site timeout or an unreachable site is a 400 too, but the run may still get through.
+    #[test]
+    fn a_transient_or_non_400_failure_stays_advisory() {
+        for msg in [
+            "HTTP 400: the site took too long to answer",
+            "HTTP 400: the site could not be reached from the server",
+            "HTTP 500: link preview failed",
+            "HTTP 403: this media exceeds the server's size limit",
+        ] {
+            assert_eq!(format!("{:#}", link_refused(anyhow::anyhow!(msg))), msg);
+        }
+    }
+}
+
+#[cfg(test)]
 mod media_tmp_tests {
     use super::media_tmp_pid;
 
@@ -1654,6 +1686,42 @@ const URL_PREVIEW_TIMEOUT: Duration = Duration::from_secs(30);
 /// A 512 KB thumbnail cap server-side; anything bigger here is hostile.
 const MAX_THUMBNAIL_DATA_URI: usize = 1024 * 1024;
 
+/// A link preview the server refused under its link policy, which the run's own probe
+/// applies again — so the refusal is final, unlike a site timeout or an extraction failure
+/// (400s too). A fixed, machine-read shape (`link_refused:<reason>`): the webview keeps
+/// Add link off and shows the reason (`linkRefusal` in urlSource.ts).
+#[derive(Debug, thiserror::Error)]
+#[error("link_refused:{reason}")]
+pub struct LinkRefused {
+    pub reason: String,
+}
+
+/// The server's policy refusals (backend media/download.py: `_policy_check_info`,
+/// `check_url_policy`, `_policy_check_extractor`). Matched on its client-safe wording: the
+/// 400 body carries no class, and an unknown wording stays advisory (Add link stays on).
+const LINK_POLICY_REFUSALS: &[&str] = &[
+    "limit for link downloads",
+    "exceeds the server's size limit",
+    "playlists aren't supported",
+    "live streams aren't supported",
+    "the server's URL policy",
+    "the server's allowed list",
+];
+
+/// Turn a preview's `HTTP 400: <policy refusal>` ([`super::ensure_ok`]'s shape) into
+/// [`LinkRefused`]; every other error passes through unchanged.
+fn link_refused(e: anyhow::Error) -> anyhow::Error {
+    let refusal = e
+        .to_string()
+        .strip_prefix("HTTP 400: ")
+        .filter(|d| LINK_POLICY_REFUSALS.iter().any(|n| d.contains(n)))
+        .map(str::to_owned);
+    match refusal {
+        Some(reason) => LinkRefused { reason }.into(),
+        None => e,
+    }
+}
+
 /// POST a JSON body to a link route, then read the answer under `cap` — the one
 /// request shape every `/v1/audio/url-*` call shares.
 async fn post_url_json<T: serde::de::DeserializeOwned>(
@@ -1687,7 +1755,8 @@ pub async fn url_preview(
         MAX_META_BODY,
         "decoding preview",
     )
-    .await?;
+    .await
+    .map_err(link_refused)?;
     Ok(UrlPreview {
         // Media titles/uploaders are third-party remote text relayed by the
         // server — bound them like every other server string label.
@@ -2142,7 +2211,14 @@ pub async fn download_result_media(
     };
     // Owner-only like every other media folder this app creates (`save_transcript_media`,
     // the layout migration): the base is a user pick that may sit in a shared/synced tree.
-    crate::audio::create_dir_private(dest_dir).context("creating the media folder")?;
+    // Every sync filesystem call below runs on the blocking pool (or is tokio::fs): `links/`
+    // or `video/` on a sleeping disk or an offline share must not park a runtime worker the
+    // run's progress polls share.
+    let dir = dest_dir.to_path_buf();
+    tokio::task::spawn_blocking(move || crate::audio::create_dir_private(&dir))
+        .await
+        .map_err(|e| anyhow::anyhow!("creating the media folder: {e}"))?
+        .context("creating the media folder")?;
     let dest = dest_dir.join(format!("{record_id}.{ext}"));
     remove_stale_media_tmps(dest_dir, record_id, ext).await;
     // Unique per call: two fetches of the same record (the run's background copy and an
@@ -2167,7 +2243,9 @@ pub async fn download_result_media(
             .await
             .context("creating the media file")?;
         // Owner-only like the recordings: `links/` or `video/` may have pre-existed the pick.
-        crate::audio::restrict_file_private(&tmp);
+        let path = tmp.clone();
+        let _ =
+            tokio::task::spawn_blocking(move || crate::audio::restrict_file_private(&path)).await;
         let mut total: u64 = 0;
         while let Some(chunk) = resp
             .chunk()
@@ -2194,7 +2272,7 @@ pub async fn download_result_media(
     }
     .await;
     if let Err(e) = write_result {
-        let _ = std::fs::remove_file(&tmp);
+        let _ = tokio::fs::remove_file(&tmp).await;
         // Over-cap mirrors save_transcript_media's contract: "no copy", not
         // a failed run.
         if over_cap {
@@ -2202,9 +2280,11 @@ pub async fn download_result_media(
         }
         return Err(e);
     }
-    std::fs::rename(&tmp, &dest).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        anyhow::anyhow!("saving the media file: {e}")
-    })?;
+    // Awaited, not raced: fetch_link_media is never cancelled mid-way, so the rename always
+    // completes or fails here (unlike package_to_path's cancel-drop race).
+    if let Err(e) = tokio::fs::rename(&tmp, &dest).await {
+        let _ = tokio::fs::remove_file(&tmp).await;
+        return Err(anyhow::anyhow!("saving the media file: {e}"));
+    }
     Ok(Some(dest.to_string_lossy().to_string()))
 }

@@ -128,6 +128,18 @@ export function linkTooLong(p: Pick<UrlPreview, "duration" | "url_max_duration_s
   return `Longer than this server's ${limit} limit.`;
 }
 
+/** The server's reason, as a sentence, when a link preview failed with a policy refusal
+ *  (too long, over the size limit, a playlist or live stream, a site it doesn't allow) — the
+ *  run's own probe refuses it again, so it is final. Read from the fixed
+ *  `link_refused:<reason>` shape Rust marks it with; null for any other (advisory) failure. */
+export function linkRefusal(e: unknown): string | null {
+  const m = /^link_refused:([\s\S]+)$/.exec(String(e ?? ""));
+  const reason = m?.[1].trim();
+  if (!reason) return null;
+  const text = reason.charAt(0).toUpperCase() + reason.slice(1);
+  return /[.!?]$/.test(text) ? text : `${text}.`;
+}
+
 /** One subtitle track a link offers. `hoh` = hearing-impaired, from its name. */
 export interface SiteTrackInfo {
   id: string;

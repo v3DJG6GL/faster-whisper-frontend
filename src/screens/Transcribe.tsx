@@ -38,7 +38,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -109,14 +109,20 @@ function recentMeta(rec: TranscriptRecord): string {
 }
 
 /** Human label for a server progress stage (absent/unknown ⇒ generic). */
-function stageLabel(p: BatchProgress | null, kind: ReturnType<typeof itemSourceKind> | null = null): string {
+function stageLabel(
+  p: BatchProgress | null,
+  kind: ReturnType<typeof itemSourceKind> | null = null,
+  separates = false,
+): string {
   switch (p?.stage) {
     case "waiting":
       return "Waiting for a server slot…";
     case "resolving":
       return "Resolving link…";
     case "downloading":
-      return "Downloading…";
+      // Only a link has a Download stage: for a file or text source the server's
+      // "downloading" is the machine-translation model fetch.
+      return kind === "url" ? "Downloading…" : "Fetching the translation model…";
     case "separating":
       return "Separating music…";
     case "analyzing":
@@ -132,8 +138,15 @@ function stageLabel(p: BatchProgress | null, kind: ReturnType<typeof itemSourceK
     default:
       // Before the first poll lands (or all along on a never-polled standard
       // server) the word must name the step the run panel marks active: a link
-      // starts on Download, a text (translate-only) run has no transcribing stage.
-      return kind === "url" ? "Downloading…" : kind === "text" ? "Translating…" : "Transcribing…";
+      // starts on Download, a text (translate-only) run has no transcribing stage,
+      // and a file with music separation starts on Separate (the pump's seed).
+      return kind === "url"
+        ? "Downloading…"
+        : kind === "text"
+          ? "Translating…"
+          : separates
+            ? "Separating music…"
+            : "Transcribing…";
   }
 }
 
@@ -308,6 +321,9 @@ export default function Transcribe() {
   const linkTooLongWhy = linkTooLong(urlPreviewData);
   const draftUrl = normalizeMediaUrl(urlDraft);
   const [urlPreviewErr, setUrlPreviewErr] = useState<string | null>(null);
+  // The preview failed with the server's link-policy refusal (linkRefusal): final, since the run's
+  // own probe applies the same policy — Add link stays off, like linkTooLongWhy.
+  const [urlPreviewRefused, setUrlPreviewRefused] = useState(false);
   const [urlPreviewLoading, setUrlPreviewLoading] = useState(false);
   // The link card's per-item video choice, seeded from Settings on every new
   // link (a pick here never writes the setting back — it is this link's).
@@ -577,7 +593,7 @@ export default function Transcribe() {
     // matching track); without them Whisper detects the language while transcribing anyway,
     // and the check would download the whole audio up front for nothing.
     enabled: caps?.url_language_check_enabled === true && caps?.url_subtitles_enabled === true
-      && !!urlPreviewData?.subtitle_tracks?.length,
+      && !!urlPreviewData?.subtitle_tracks?.length && !linkTooLongWhy,
     model: model.trim() || backend?.model?.trim(),
     screen: spoken.value,
   });
@@ -632,7 +648,7 @@ export default function Transcribe() {
   // site track by its result, and Add (a new preview) would cancel it half-way.
   const linkChecking = linkLang.check.state === "running";
   /** One gate for the Add button, Enter and addLink itself. */
-  const canAddLink = !!draftUrl && !busy && !urlPreviewLoading && !linkChecking && !linkTooLongWhy;
+  const canAddLink = !!draftUrl && !busy && !urlPreviewLoading && !linkChecking && !linkTooLongWhy && !urlPreviewRefused;
   const runningOverall = useTranscribeRun(runBadgeFraction);
   const lastRunPath = useTranscribeRun((st) => st.lastRunPath);
 
@@ -703,11 +719,13 @@ export default function Transcribe() {
   // Debounced (500 ms) link preview. Add waits for it (urlPreviewLoading also covers the debounce),
   // so the video options are on screen — defaults preselected — before a link can be queued; a
   // click in that window used to add the link without them. A failed probe shows its reason and
-  // unlocks Add: the run itself is the authority.
+  // unlocks Add (the run itself is the authority) — except the server's link-policy refusal,
+  // which the run's own probe would repeat.
   useEffect(() => {
     const url = draftUrl;
     setUrlPreviewData(null);
     setUrlPreviewErr(null);
+    setUrlPreviewRefused(false);
     setLinkKeepVideo(null);
     setLinkVideoHeight(undefined);
     setLinkVideoFormat(undefined);
@@ -730,7 +748,9 @@ export default function Transcribe() {
         })
         .catch((e) => {
           if (urlPreviewSeq.current !== seq) return;
-          setUrlPreviewErr(safeDisplayText(String(e), 300) || "Link preview failed.");
+          const refused = linkRefusal(e);
+          setUrlPreviewErr(safeDisplayText(refused ?? String(e), 300) || "Link preview failed.");
+          setUrlPreviewRefused(refused !== null);
           setUrlPreviewLoading(false);
         });
     }, 500);
@@ -1371,6 +1391,9 @@ export default function Transcribe() {
               value={urlDraft}
               onChange={(e) => setUrlDraft(e.target.value)}
               onKeyDown={(e) => {
+                // Mid-composition the IME owns Enter (it commits the candidate); WebKit still
+                // reports its `key`, with keyCode 229 (the LangPick rule).
+                if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                 if (e.key === "Enter" && canAddLink) addLink();
               }}
               disabled={busy}
@@ -1389,7 +1412,9 @@ export default function Transcribe() {
                   ? "Waiting for the link preview and its download options"
                   : linkChecking
                     ? "Waiting for the spoken-language check — the run reuses its download"
-                    : (linkTooLongWhy ?? undefined)
+                    : urlPreviewRefused
+                      ? (urlPreviewErr ?? undefined)
+                      : (linkTooLongWhy ?? undefined)
               }
             >
               {urlPreviewLoading ? (
@@ -1420,9 +1445,11 @@ export default function Transcribe() {
           {urlPreviewErr && (
             <Notice className="mt-3">
               <div>{urlPreviewErr}</div>
-              <div className="mt-0.5 text-[12px] text-dim">
-                You can still add the link — the run itself decides.
-              </div>
+              {!urlPreviewRefused && (
+                <div className="mt-0.5 text-[12px] text-dim">
+                  You can still add the link — the run itself decides.
+                </div>
+              )}
             </Notice>
           )}
           {linkTooLongWhy && <div className="mt-2 text-[12px] text-warn">{linkTooLongWhy}</div>}
@@ -3026,6 +3053,8 @@ export default function Transcribe() {
                             // A link ending in .srt/.txt is still downloaded and transcribed:
                             // the same url-first test the pump and the run panel apply.
                             itemSourceKind(it),
+                            // The run's separation flag: the same value the pump seeds from.
+                            lastOptions?.separateBgm === true,
                           ).toLowerCase()}
                     </span>
                   )}

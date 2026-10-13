@@ -296,8 +296,9 @@ export async function transcribeUrl(args: ServerTarget & {
 }
 
 /** Metadata preview of a pasted media link (title/duration/thumbnail) —
- *  debounced from the URL field. Advisory: a failed preview never blocks
- *  adding the link; the run itself is the authority. */
+ *  debounced from the URL field. Advisory, except a server link-policy refusal
+ *  (Rust marks it `link_refused:<reason>`, see linkRefusal), which the run's own
+ *  probe would repeat: that one blocks Add link; any other failure leaves it to the run. */
 export async function urlPreview(args: ServerTarget & {
   url: string;
 }): Promise<UrlPreview> {
