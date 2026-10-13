@@ -924,6 +924,10 @@ export function TranscriptViewer({
   // -Infinity until the player reports a time, like activeSegIdx -1: nothing has
   // started before it, so no cue is lit on a record that has not played (or has no player).
   const liveTimeRef = useRef(-Infinity);
+  // Set by the record-switch reset's own rewind: on an element that keeps its src, `currentTime = 0`
+  // is a real seek and `pause()` queues a pause event, and either echo would report a playhead of 0
+  // (lighting cue/segment 1) on a record that has not played. Cleared by a real play or seek.
+  const parkedRef = useRef(false);
   const playheadSubs = useRef(new Set<() => void>());
   const setLiveTime = useCallback((t: number) => {
     liveTimeRef.current = t;
@@ -1025,6 +1029,7 @@ export function TranscriptViewer({
     // element itself survives a switch that keeps its src (same local file),
     // so it is paused here — setPlaying alone would leave it playing.
     const a = audioRef.current;
+    parkedRef.current = true;
     if (a) {
       try {
         a.pause();
@@ -1256,6 +1261,7 @@ export function TranscriptViewer({
       const a = audioRef.current;
       if (!a || !Number.isFinite(t)) return;
       a.currentTime = Math.max(0, Math.min(audioLen || t, t));
+      parkedRef.current = false; // a user seek (seekTo(0) included) reports its playhead
       syncPlayhead(a.currentTime, true);
     },
     [audioLen, syncPlayhead],
@@ -1872,18 +1878,28 @@ export function TranscriptViewer({
             onDurationChange={(e) => takeDuration(e.currentTarget)}
             // Coarse fallback only — while playing, the rAF loop above owns
             // the playhead (timeupdate ticks every 250-500 ms on WebKitGTK).
+            // The record-switch reset's own rewind/pause echo (parkedRef) reports no playhead.
             onTimeUpdate={(e) => {
-              if (!playing) syncPlayhead(e.currentTarget.currentTime);
+              if (!playing && !(parkedRef.current && e.currentTarget.currentTime === 0)) {
+                syncPlayhead(e.currentTarget.currentTime);
+              }
             }}
-            onPlay={() => setPlaying(true)}
+            onPlay={() => {
+              parkedRef.current = false;
+              setPlaying(true);
+            }}
             // A stop lands where the media really is: the frame loop is parked while the window
             // is hidden, and a stop there tears down its show catch-up with the [playing] effect.
             onPause={(e) => {
-              syncPlayhead(e.currentTarget.currentTime, true);
+              if (!(parkedRef.current && e.currentTarget.currentTime === 0)) {
+                syncPlayhead(e.currentTarget.currentTime, true);
+              }
               setPlaying(false);
             }}
             onEnded={(e) => {
-              syncPlayhead(e.currentTarget.currentTime, true);
+              if (!(parkedRef.current && e.currentTarget.currentTime === 0)) {
+                syncPlayhead(e.currentTarget.currentTime, true);
+              }
               setPlaying(false);
             }}
             onError={(e) => {
