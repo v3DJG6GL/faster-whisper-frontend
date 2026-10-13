@@ -173,6 +173,41 @@ pub fn http_to_ws(server_url: &str) -> String {
     format!("{scheme_swapped}/v1/audio/transcriptions/stream")
 }
 
+/// The `Authorization` values the handshake carries, in the order [`super::with_auth`] gives the
+/// HTTP routes: the server URL's `user:pass@` as `Basic` first, then `Bearer {key}`. reqwest makes
+/// that Basic header for every HTTP request, while tungstenite only strips the userinfo out of
+/// `Host` — so without this a basic-auth proxy that passes Test connection refused every live
+/// dictation with a 401. reqwest builds the Basic value here too (its percent-decoding, base64 and
+/// sensitive flag), from the http(s) twin of the URL. No userinfo and no key → nothing, so such a
+/// handshake is unchanged. The error text never carries the credential: it reaches the log.
+fn handshake_auth_headers(
+    ws_url: &str,
+    api_key: Option<&str>,
+) -> Result<Vec<tokio_tungstenite::tungstenite::http::HeaderValue>, String> {
+    let mut out = Vec::new();
+    let with_login = reqwest::Url::parse(ws_url)
+        .ok()
+        .filter(|u| !u.username().is_empty() || u.password().is_some());
+    if let Some(mut url) = with_login {
+        let bad_login = || "Invalid server login in the stream URL".to_string();
+        let http = if url.scheme() == "wss" {
+            "https"
+        } else {
+            "http"
+        };
+        url.set_scheme(http).map_err(|()| bad_login())?;
+        let req = super::client().get(url).build().map_err(|_| bad_login())?;
+        out.extend(req.headers().get_all(AUTHORIZATION).iter().cloned());
+    }
+    if let Some(k) = api_key.filter(|k| !k.is_empty()) {
+        match format!("Bearer {k}").parse() {
+            Ok(v) => out.push(v),
+            Err(e) => return Err(format!("Invalid API key: {e}")),
+        }
+    }
+    Ok(out)
+}
+
 /// The stream URL as it is safe to PRINT — userinfo stripped and length bounded.
 ///
 /// `friendly_err` gave the reqwest half of the transport exactly this treatment: a `serverUrl` of
@@ -276,15 +311,13 @@ pub async fn run<F>(
             display_url(&params.ws_url)
         )),
     };
-    if let Some(k) = &params.api_key {
-        if !k.is_empty() {
-            match format!("Bearer {k}").parse() {
-                Ok(v) => {
-                    request.headers_mut().insert(AUTHORIZATION, v);
-                }
-                Err(e) => fail!(format!("Invalid API key: {e}")),
+    match handshake_auth_headers(&params.ws_url, params.api_key.as_deref()) {
+        Ok(values) => {
+            for v in values {
+                request.headers_mut().append(AUTHORIZATION, v);
             }
         }
+        Err(m) => fail!(m),
     }
 
     // Connect with a bounded timeout. A Stop may arrive before we've connected — most
@@ -1267,6 +1300,48 @@ mod display_url_tests {
         assert_eq!(display_url("wss://host:8000/v1/x"), "wss://host:8000");
         assert_eq!(display_url("wss://[::1]:8000/v1/x"), "wss://[::1]:8000");
         assert_eq!(display_url("host:8000"), "host:8000");
+    }
+}
+
+#[cfg(test)]
+mod handshake_auth_tests {
+    use super::handshake_auth_headers;
+
+    fn auth(ws_url: &str, key: Option<&str>) -> Vec<String> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        handshake_auth_headers(ws_url, key)
+            .unwrap()
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn the_url_login_goes_first_as_basic_then_the_key() {
+        // Same order `with_auth` gives the HTTP routes: a basic-auth proxy reads the first header.
+        assert_eq!(auth("wss://u:p@h/x", Some("k")), ["Basic dTpw", "Bearer k"]);
+        assert_eq!(auth("ws://u:p@h:8000/x", None), ["Basic dTpw"]);
+        assert_eq!(auth("wss://u:p@h/x", Some("")), ["Basic dTpw"]);
+        // Percent-encoded user and password are decoded before the base64, as reqwest does.
+        assert_eq!(
+            auth("wss://us%40er:p%3Ass@h/x", None),
+            ["Basic dXNAZXI6cDpzcw=="]
+        );
+        assert_eq!(auth("wss://:p@h/x", None), ["Basic OnA="]);
+    }
+
+    #[test]
+    fn without_a_login_the_handshake_headers_are_unchanged() {
+        assert_eq!(auth("wss://h/x", Some("k")), ["Bearer k"]);
+        assert!(auth("wss://h/x", None).is_empty());
+        assert!(auth("wss://h/x", Some("")).is_empty());
+    }
+
+    #[test]
+    fn a_bad_key_is_refused_without_echoing_any_credential() {
+        let e = handshake_auth_headers("wss://u:secret@h/x", Some("k\nx")).unwrap_err();
+        assert!(e.starts_with("Invalid API key"), "{e}");
+        assert!(!e.contains("secret") && !e.contains("k\nx"), "{e}");
     }
 }
 

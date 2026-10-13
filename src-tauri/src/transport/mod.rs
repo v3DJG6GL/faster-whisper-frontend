@@ -786,6 +786,11 @@ pub const MAX_BODY: usize = 32 * 1024 * 1024;
 /// asked to attach to support reports. Same ceiling the streaming parse path uses.
 pub const MAX_ERROR_TEXT: usize = 200;
 
+/// The one model-id rule: the longest server model id the pickers keep and the transport sends
+/// back (`/v1/request-default-settings` refuses longer ones too). An id past it is DROPPED, never
+/// cut with an ellipsis — a cut id names no model.
+pub(crate) const MODEL_ID_MAX: usize = 200;
+
 /// Ceiling on server-supplied notice/override lists (streaming notices, batch overrides).
 pub const MAX_NOTICES: usize = 50;
 

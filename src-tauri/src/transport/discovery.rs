@@ -3,6 +3,7 @@
 use super::{
     base_url, client, friendly_err, get_json, get_json_status, with_auth, with_legacy_path,
     Capabilities, ConnectionInfo, DecodeDefault, DecodeDefaults, ServerModel, UsageStats,
+    MODEL_ID_MAX,
 };
 use serde::Deserialize;
 use std::time::Duration;
@@ -499,8 +500,6 @@ fn nonneg_retention(d: Option<i64>) -> Option<i64> {
 const DEFAULTS_PATH: &str = "/v1/request-default-settings";
 const LEGACY_DEFAULTS_PATH: &str = "/v1/decode-defaults";
 
-/// The longest model id sent to `/v1/request-default-settings` (the server refuses longer ones too).
-const MODEL_ID_MAX: usize = 200;
 /// Prompts and hotwords: the server caps both at 2048 characters.
 const SERVER_TEXT_MAX: usize = 2048;
 
@@ -601,11 +600,17 @@ fn bound_decode_defaults(d: &mut DecodeDefaults) {
     {
         bound_decode_default(entry, MAX_NAME, fold);
     }
-    // Model refs ("org/repo:quant") — the picker matches them by id, so the id cap applies.
+    // Model refs ("org/repo:quant") — the picker matches them by id, so the model-id rule applies:
+    // an over-long ref is dropped (no default named), not cut into an id no server knows.
     for entry in [&mut d.diarization_model, &mut d.separation_model]
         .into_iter()
         .flatten()
     {
+        if let serde_json::Value::String(s) = &entry.value {
+            entry.value = bounded_model_id(s)
+                .map(serde_json::Value::String)
+                .unwrap_or(serde_json::Value::Null);
+        }
         bound_decode_default(entry, MODEL_ID_MAX, fold);
     }
 }
@@ -1075,6 +1080,34 @@ mod tests {
         // Whole, exactly as `bound_models` keeps it, so the Backends chip still finds its entry.
         assert_eq!(model(&long), long);
         assert_eq!(model(&"x".repeat(250)), "");
+    }
+
+    #[test]
+    fn the_default_speaker_and_separation_refs_follow_the_model_list_rule() {
+        let refs = |r: &str| -> (serde_json::Value, serde_json::Value) {
+            let mut d: DecodeDefaults = serde_json::from_value(serde_json::json!({
+                "model": "m",
+                "settings": {},
+                "diarization_model": { "value": r, "source": "server" },
+                "separation_model": { "value": r, "source": "server" },
+            }))
+            .unwrap();
+            bound_decode_defaults(&mut d);
+            (
+                d.diarization_model.unwrap().value,
+                d.separation_model.unwrap().value,
+            )
+        };
+        // Kept whole up to the cap, as `bound_models` keeps the list entry it must match.
+        let long = format!("org/{}", "m".repeat(146));
+        let whole = serde_json::Value::String(long.clone());
+        assert_eq!(refs(&long), (whole.clone(), whole));
+        // Past the cap: no default named, never a cut id the picker would offer as a model.
+        let over = "x".repeat(250);
+        assert_eq!(
+            refs(&over),
+            (serde_json::Value::Null, serde_json::Value::Null)
+        );
     }
 
     #[test]

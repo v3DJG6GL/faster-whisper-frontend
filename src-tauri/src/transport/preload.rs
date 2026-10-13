@@ -12,10 +12,15 @@ use std::time::Duration;
 /// The backend accepts 1..6 entries and rejects anything else with a 422, so
 /// clamp here rather than letting a caller's plan turn into a hard error.
 const MAX_ENTRIES: usize = 6;
-/// Same ceiling `discovery` puts on every server-supplied identifier; applied on
-/// the way OUT too so a model id that came from a hostile server's inventory
-/// can't be echoed back as an unbounded request body.
-const MAX_ID: usize = 120;
+/// Bound on the `family` echoed back: it is one of four short literals (`whisper`,
+/// `diarization`, `separation`, `translation`), so this only keeps a bogus value small.
+const FAMILY_MAX: usize = 120;
+/// The server's own bound on a preload id (`PreloadModel.id`, `Field(min_length=1,
+/// max_length=128)` in the backend's runtime/preload_routes.py). Lower than
+/// [`super::MODEL_ID_MAX`], so an id the pickers keep may still be too long to hint: such an
+/// entry is DROPPED, never cut — a cut id names no model, and one over the bound would 422
+/// the whole plan.
+const PRELOAD_ID_MAX: usize = 128;
 
 /// One `{family, id}` pair. Unknown keys are REJECTED by the backend (422), so
 /// this struct must stay exactly these two fields.
@@ -38,6 +43,28 @@ struct PreloadReq {
 // client re-POSTs the whole plan on each renew tick (preload.ts), and a `plan_id`
 // that nothing could ever supply was dead plumbing across four layers.
 
+/// The request body for a plan, or None when no entry is left to send. Entries with a blank id
+/// or one past [`PRELOAD_ID_MAX`] are dropped BEFORE the [`MAX_ENTRIES`] clamp, so a dropped one
+/// doesn't push a sendable one out.
+fn plan_body(models: Vec<PreloadModel>) -> Option<PreloadReq> {
+    let models: Vec<PreloadModel> = models
+        .into_iter()
+        .filter(|m| !m.id.trim().is_empty() && m.id.chars().count() <= PRELOAD_ID_MAX)
+        .take(MAX_ENTRIES)
+        .map(|m| PreloadModel {
+            family: super::bounded_server_text(&m.family, FAMILY_MAX),
+            // Folds control characters only: within the bound nothing is cut.
+            id: super::bounded_server_text(&m.id, PRELOAD_ID_MAX),
+        })
+        .collect();
+    (!models.is_empty()).then_some(PreloadReq {
+        models,
+        // Server-driven stage-ahead: the backend walks the plan forward on its
+        // own as stages complete, so the client never has to re-POST mid-run.
+        stage_ahead: true,
+    })
+}
+
 /// Ask the server to start warming the models a job is about to need.
 ///
 /// Returns whether the hint was accepted (a 2xx). `false` covers every failure
@@ -48,21 +75,8 @@ pub async fn preload_models(
     api_key: Option<&str>,
     models: Vec<PreloadModel>,
 ) -> bool {
-    if models.is_empty() {
+    let Some(body) = plan_body(models) else {
         return false;
-    }
-    let body = PreloadReq {
-        models: models
-            .into_iter()
-            .take(MAX_ENTRIES)
-            .map(|m| PreloadModel {
-                family: super::bounded_server_text(&m.family, MAX_ID),
-                id: super::bounded_server_text(&m.id, MAX_ID),
-            })
-            .collect(),
-        // Server-driven stage-ahead: the backend walks the plan forward on its
-        // own as stages complete, so the client never has to re-POST mid-run.
-        stage_ahead: true,
     };
     let url = format!("{}/v1/models/preload", base_url(server_url));
     // Per-request 10s ceiling instead of the shared 120s client timeout
@@ -82,5 +96,54 @@ pub async fn preload_models(
             true
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{plan_body, PreloadModel, MAX_ENTRIES};
+
+    fn entry(family: &str, id: &str) -> PreloadModel {
+        PreloadModel {
+            family: family.into(),
+            id: id.into(),
+        }
+    }
+
+    fn ids(models: Vec<PreloadModel>) -> Option<Vec<String>> {
+        plan_body(models).map(|b| b.models.into_iter().map(|m| m.id).collect())
+    }
+
+    #[test]
+    fn an_id_within_the_server_bound_is_sent_whole() {
+        let id = format!("org/{}", "m".repeat(121));
+        assert_eq!(id.chars().count(), 125);
+        assert_eq!(ids(vec![entry("whisper", &id)]), Some(vec![id]));
+    }
+
+    #[test]
+    fn a_too_long_id_is_dropped_and_the_rest_still_go() {
+        // 129..=200 characters: kept by the pickers but over the server's bound; and past 200.
+        for long in ["m".repeat(150), "m".repeat(250)] {
+            let plan = vec![entry("whisper", &long), entry("diarization", "pyannote/x")];
+            assert_eq!(ids(plan), Some(vec!["pyannote/x".to_string()]));
+        }
+    }
+
+    #[test]
+    fn dropped_entries_do_not_count_against_the_entry_clamp() {
+        let mut plan = vec![entry("whisper", "  "), entry("whisper", &"m".repeat(129))];
+        plan.extend((0..MAX_ENTRIES).map(|i| entry("whisper", &format!("m{i}"))));
+        assert_eq!(ids(plan).map(|v| v.len()), Some(MAX_ENTRIES));
+    }
+
+    #[test]
+    fn a_plan_with_nothing_left_is_not_sent() {
+        assert!(plan_body(vec![]).is_none());
+        assert!(plan_body(vec![
+            entry("whisper", &"m".repeat(150)),
+            entry("whisper", " ")
+        ])
+        .is_none());
     }
 }

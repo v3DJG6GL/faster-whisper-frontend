@@ -318,8 +318,24 @@ mod wire_field_tests {
     use super::{
         batch_decode_overrides, bound_language_check, bound_progress, bound_rung, bound_subtitles,
         bound_tracks, is_format_id, is_track_id, standard_temperature, to_batch_result,
-        translate_to_field, BatchProgress, UrlLanguageCheck, UrlSubtitles, VerboseJson, VideoRung,
+        translate_to_field, url_language_body, BatchProgress, UrlLanguageCheck, UrlSubtitles,
+        VerboseJson, VideoRung,
     };
+
+    #[test]
+    fn the_language_check_sends_any_model_id_a_picker_keeps() {
+        let model = |m: &str| {
+            url_language_body("https://x/v", Some(m), None)
+                .get("model")
+                .cloned()
+        };
+        // 121..=200 characters (and over 128 BYTES): sent whole, so the check runs on that model.
+        let long = format!("org/{}", "é".repeat(146));
+        assert_eq!(model(&long), Some(serde_json::json!(long)));
+        // Past the cap, or blank: left out (the server's default), never cut.
+        assert_eq!(model(&"x".repeat(201)), None);
+        assert_eq!(model("  "), None);
+    }
 
     /// A standard server gets the temperature as its own form field: a number as is, a ladder's
     /// first rung, clamped to 0..=1; nothing usable → no field.
@@ -1832,13 +1848,7 @@ pub async fn url_language_check(
     progress_id: Option<&str>,
 ) -> anyhow::Result<UrlLanguageCheck> {
     validate_media_url(url)?;
-    let mut body = serde_json::json!({ "url": url });
-    if let Some(m) = model.filter(|m| !m.is_empty() && m.len() <= 128) {
-        body["model"] = serde_json::json!(m);
-    }
-    if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
-        body["progress_id"] = serde_json::json!(pid);
-    }
+    let body = url_language_body(url, model, progress_id);
     let parsed: UrlLanguageCheck = post_url_json(
         server_url,
         api_key,
@@ -1850,6 +1860,26 @@ pub async fn url_language_check(
     )
     .await?;
     Ok(bound_language_check(parsed))
+}
+
+/// `{url, model?, progress_id?}`. The model follows the model-id rule the pickers keep ids by
+/// (characters, not bytes): the route has no cap of its own, so any id a picker offers is checked
+/// with that model, not the server default; an id past [`super::MODEL_ID_MAX`] is left out.
+fn url_language_body(
+    url: &str,
+    model: Option<&str>,
+    progress_id: Option<&str>,
+) -> serde_json::Value {
+    let mut body = serde_json::json!({ "url": url });
+    if let Some(m) =
+        model.filter(|m| !m.trim().is_empty() && m.chars().count() <= super::MODEL_ID_MAX)
+    {
+        body["model"] = serde_json::json!(m);
+    }
+    if let Some(pid) = progress_id.filter(|p| is_progress_id(p)) {
+        body["progress_id"] = serde_json::json!(pid);
+    }
+    body
 }
 
 fn bound_language_check(parsed: UrlLanguageCheck) -> UrlLanguageCheck {
