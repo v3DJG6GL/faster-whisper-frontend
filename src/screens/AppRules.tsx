@@ -128,6 +128,12 @@ function Editor({
   // `trim()` alone was not enough: an invisible character survives it, and this screen renders the
   // id through a filter that deletes such characters — so the rule read armed and matched nothing.
   const canSave = appRuleKey(r.appId).length > 0;
+  // Saving replaces every other rule with the same key (upsertAppRule: one rule per app, first
+  // match wins), a "never type here" block included — say so before the user saves, not after.
+  const appRules = useApp((s) => s.appRules);
+  const clash = canSave
+    ? appRules.find((x) => x.id !== r.id && appRuleKey(x.appId) === appRuleKey(r.appId))
+    : undefined;
 
   const save = () => {
     if (!canSave) {
@@ -182,6 +188,13 @@ function Editor({
           </Button>
         </div>
         {captureMsg && <div className="mt-1.5 text-[12px] text-warn">{captureMsg}</div>}
+        {clash && (
+          <div className="mt-1.5 text-[12px] text-warn">
+            Saving replaces the existing rule for{" "}
+            {safeIdentityText(clash.name?.trim(), 80) || safeIdentityText(clash.appId, 80)}
+            {clash.block ? " (never type here)" : ""} — one rule per app.
+          </div>
+        )}
       </Labeled>
 
       <Labeled label="Label (optional)" className="mt-4">
