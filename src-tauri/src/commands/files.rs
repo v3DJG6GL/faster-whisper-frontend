@@ -115,14 +115,87 @@ fn rewrite_media_paths(app: &AppHandle, map: &[(String, String)]) -> bool {
     crate::store::transcripts::rewrite_media_paths(app, &lookup)
 }
 
+/// A one-way latch: closed until `open`, then every `wait` returns at once.
+pub(crate) struct Gate {
+    open: std::sync::Mutex<bool>,
+    cv: std::sync::Condvar,
+}
+
+impl Gate {
+    pub(crate) const fn new() -> Self {
+        Self {
+            open: std::sync::Mutex::new(false),
+            cv: std::sync::Condvar::new(),
+        }
+    }
+
+    pub(crate) fn open(&self) {
+        *self.open.lock().unwrap_or_else(|e| e.into_inner()) = true;
+        self.cv.notify_all();
+    }
+
+    pub(crate) fn wait(&self) {
+        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        while !*open {
+            open = self.cv.wait(open).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+}
+
+/// Opens once this launch's `ensure_audio_layout` is over (done, panicked, or never started).
+static AUDIO_LAYOUT: Gate = Gate::new();
+
+/// Run this launch's `ensure_audio_layout` on its own thread. setup() runs on the main thread
+/// before the event loop, and the base can sit on a stalled mount (an offline network share, a
+/// sleeping disk) whose mkdir/read_dir blocks without limit: launch must not wait on it (the
+/// log folder's open is queued for the same reason). What must not overlap a half-done move
+/// waits on [`wait_audio_layout`] instead: the retention sweeps (they look in the new layout)
+/// and `move_audio_base` (it moves the same subfolders). Every writer creates its own folder,
+/// and the records live in app data, so nothing else depends on the layout being in place; a
+/// History listing taken before a migration moved something is told to reload when it is done.
+pub(crate) fn queue_audio_layout(app: &AppHandle, config: Config) {
+    let app = app.clone();
+    let started = std::thread::Builder::new()
+        .name("audio-layout".into())
+        .spawn(move || {
+            // A panic must not leave the sweeps and a base move waiting on a gate nobody opens.
+            let changed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                ensure_audio_layout(&app, &config)
+            }))
+            .unwrap_or(true);
+            AUDIO_LAYOUT.open();
+            // A History listing taken while this ran may hold the pre-move paths: have it
+            // reload, or it plays (and an edit re-saves) them. Nothing went, so `removed: 0`
+            // and `dictationsWiped: false`.
+            if changed {
+                use tauri::Emitter;
+                let _ = app.emit(
+                    "transcripts://swept",
+                    serde_json::json!({ "removed": 0, "dictationsWiped": false }),
+                );
+            }
+        });
+    // Nor may a thread that never started: the migration is idempotent and retried next launch.
+    if let Err(e) = started {
+        tracing::warn!("[audio] could not start the audio-layout worker: {e}");
+        AUDIO_LAYOUT.open();
+    }
+}
+
+/// Block until this launch's audio-layout job is over (see [`queue_audio_layout`]).
+pub(crate) fn wait_audio_layout() {
+    AUDIO_LAYOUT.wait();
+}
+
 /// One-time (idempotent) migration into the single-base layout: legacy saved
 /// recordings move into `<base>/dictations`, the old app-data media store
-/// splits into `<base>/files` + `<base>/links` by record kind. Called once
-/// per launch, before the retention sweeps.
-pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
+/// splits into `<base>/files` + `<base>/links` by record kind. Run once per
+/// launch, off the main thread (`queue_audio_layout`); the retention sweeps
+/// wait for it. True when it rewrote or healed records' media paths.
+fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     let pref = audio_base_pref(&config.settings);
     let Some(base) = resolve_audio_base(app, pref.clone()) else {
-        return;
+        return false;
     };
     let _ = crate::audio::create_dir_private(&base);
     for sub in AUDIO_SUBDIRS {
@@ -136,7 +209,7 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         Some(p) => PathBuf::from(p),
         None => match app.path().app_data_dir() {
             Ok(d) => d.join("recordings"),
-            Err(_) => return,
+            Err(_) => return false,
         },
     };
     let dict = base.join("dictations");
@@ -218,9 +291,8 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
     // full read+parse of every record, so NOT every launch: after a migration that
     // moved something, and once per install (the stamp); `move_audio_base` heals
     // directly through its own rewrite.
-    // This runs synchronously inside setup(), before the event loop, so a fresh install with
-    // no records skips the scan entirely and only stamps; the expensive read+parse is reserved
-    // for a base that actually has history to heal.
+    // A fresh install with no records skips the scan entirely and only stamps; the expensive
+    // read+parse is reserved for a base that actually has history to heal.
     // The stamp is written only once the heal reached every record (and dropped when it did
     // not, even if a past heal left one), so a record a sync client or antivirus held, or an
     // unlistable history folder, is retried on the next launch; a permanently unreadable
@@ -235,7 +307,7 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
             "[audio] audio folder {} unavailable; media-path repair left for a later launch",
             base.display()
         );
-        return;
+        return !map.is_empty();
     }
     let stamp = base.join(HEAL_STAMP);
     if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
@@ -246,7 +318,9 @@ pub fn ensure_audio_layout(app: &AppHandle, config: &Config) {
         } else {
             let _ = std::fs::remove_file(&stamp);
         }
+        return true;
     }
+    !map.is_empty()
 }
 
 /// Relocate the whole audio store: move every media subfolder (`AUDIO_SUBDIRS`:
@@ -270,6 +344,8 @@ pub async fn move_audio_base(
         return Err("the new folder can't be inside the current one".into());
     }
     tauri::async_runtime::spawn_blocking(move || {
+        // Not under a launch layout migration still moving files into these same subfolders.
+        wait_audio_layout();
         crate::audio::create_dir_private(&to)
             .map_err(|e| format!("could not create the folder: {e}"))?;
         let mut map: Vec<(String, String)> = Vec::new();
@@ -530,6 +606,27 @@ fn decode_text_source(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::move_dir_contents;
+
+    #[test]
+    fn the_layout_gate_holds_waiters_until_it_opens_then_lets_every_one_through() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+        static GATE: super::Gate = super::Gate::new();
+        static PASSED: AtomicBool = AtomicBool::new(false);
+        let waiter = std::thread::spawn(|| {
+            GATE.wait();
+            PASSED.store(true, Ordering::SeqCst);
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(
+            !PASSED.load(Ordering::SeqCst),
+            "a waiter got through a closed gate"
+        );
+        GATE.open();
+        waiter.join().unwrap();
+        assert!(PASSED.load(Ordering::SeqCst));
+        GATE.wait(); // open for good: a later wait returns at once
+    }
 
     #[test]
     fn reveal_target_takes_only_an_existing_absolute_clean_path() {

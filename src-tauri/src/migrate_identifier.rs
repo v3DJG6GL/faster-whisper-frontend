@@ -245,7 +245,7 @@ fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
 /// inside it are re-pointed once all roots moved, in `run`.)
 fn after_move(new: &Path) {
     // Transcript records store absolute media paths. Removing the heal stamp makes
-    // `commands::ensure_audio_layout` (setup) run `store::transcripts::heal_media_paths`, which
+    // `commands::ensure_audio_layout` (queued from setup, `queue_audio_layout`) run `store::transcripts::heal_media_paths`, which
     // re-finds every no-longer-existing path by file name under the audio base — the same
     // repair an audio-folder move uses. A custom audio folder elsewhere never moved, so its
     // paths are still valid and heal leaves them alone.

@@ -328,9 +328,10 @@ pub fn run() {
             #[cfg(target_os = "linux")]
             aux_windows::overlay::prewarm_chip_rule(&cfg);
             // Consolidate all stored audio under the single base folder
-            // (dictations/, files/, links/) — idempotent, runs before the
-            // sweeps so they look in the right place.
-            commands::ensure_audio_layout(app.handle(), &cfg);
+            // (dictations/, files/, links/) — idempotent, off the main thread like the log
+            // folder's open: the base can sit on a stalled mount. The sweeps wait for it, so
+            // they look in the right place.
+            commands::queue_audio_layout(app.handle(), cfg.clone());
             // Enforce the saved-recording retention window once per launch, so it also applies
             // to a machine that dictated for months and only just enabled it. Skipped while the
             // config is a reset nobody has saved over (this launch, or an earlier one): the
@@ -341,10 +342,10 @@ pub fn run() {
                     "[config] settings were reset and not saved since; retention sweeps skipped"
                 );
             } else {
-                // The transcription history first (as in `save_config`): its records are local,
-                // the recordings sweep walks the (possibly slow) audio base.
-                store::transcripts::apply_transcripts_retention(app.handle(), &cfg);
-                commands::apply_recordings_retention(app.handle(), &cfg);
+                // On save_config's newest-wins worker (history first, as there): both sweeps
+                // walk the (possibly slow) audio base — the history one for orphaned media — and
+                // a save arriving meanwhile replaces this run instead of overlapping it.
+                commands::queue_retention_sweeps(app.handle(), cfg.clone());
             }
             // Start hidden to the tray if requested (reachable via the tray menu) —
             // but only on login launches (--autostart), never on a manual start. Known to have

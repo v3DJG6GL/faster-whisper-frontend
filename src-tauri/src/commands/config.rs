@@ -93,11 +93,7 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     config::save(&dir, &config).map_err(|e| e.to_string())?;
     sync_autostart_if_changed(&app, config.settings.general.open_at_login);
     // The retention sweeps are O(history) filesystem work; a sync command runs on the main
-    // thread, so they go to a background worker. A newest-wins slot (`drain_newest`) runs them
-    // one save at a time, so two quick saves never prune or wipe at the same time, a superseded
-    // save's sweep is dropped (an older, shorter window never runs last), and saves made while
-    // a sweep is stuck on a dead audio share replace the pending one instead of parking a thread
-    // each. (The launch sweep in setup() runs before any save can arrive.)
+    // thread, so they go to a background worker (`queue_retention_sweeps`).
     if reset {
         // The hold is sticky for the session and every debounced autosave lands here, so the line
         // is logged once per session (like the log-prune hold in logging.rs), not once per save.
@@ -107,19 +103,7 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
             tracing::info!("[config] settings were reset; post-save retention sweeps skipped");
         }
     } else {
-        static SWEEP_NEXT: crate::NewestSlot<(AppHandle, Config)> =
-            std::sync::Mutex::new((None, false));
-        crate::drain_newest(
-            &SWEEP_NEXT,
-            (app.clone(), config.clone()),
-            |(app, config)| {
-                // History first: its records are local and its swept event lets the History
-                // mirror reload before either sweep walks a (possibly slow) audio base.
-                // Order-free otherwise.
-                crate::store::transcripts::apply_transcripts_retention(&app, &config);
-                apply_recordings_retention(&app, &config);
-            },
-        );
+        queue_retention_sweeps(&app, config.clone());
     }
     // Session-file move / prune (written saves only; the level went with the live switches
     // above) — so Settings changes apply live, not at the next restart. Queued off the main
@@ -128,9 +112,27 @@ pub fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     Ok(())
 }
 
-/// Enforce the dictation clock on saved recordings. Called on startup (synchronously) and after
-/// every config save, so shortening the window takes effect immediately rather than at the next
-/// restart. The post-save sweep runs off the main thread, on `save_config`'s newest-wins worker.
+/// The launch and post-save retention sweeps, both `config`'s windows, on one newest-wins
+/// worker (`drain_newest`): sweeps run one at a time, so the launch sweep and two quick saves
+/// never prune or wipe at the same time, a superseded config's sweep is dropped (an older,
+/// shorter window never runs last), and calls made while a sweep is stuck on a dead audio share
+/// replace the pending one instead of parking a thread each. Each run first waits for this
+/// launch's audio-layout migration, so the sweeps look in the moved folders.
+pub(crate) fn queue_retention_sweeps(app: &AppHandle, config: Config) {
+    static SWEEP_NEXT: crate::NewestSlot<(AppHandle, Config)> =
+        std::sync::Mutex::new((None, false));
+    crate::drain_newest(&SWEEP_NEXT, (app.clone(), config), |(app, config)| {
+        super::wait_audio_layout();
+        // History first: its records are local and its swept event lets the History mirror
+        // reload before either sweep walks a (possibly slow) audio base. Order-free otherwise.
+        crate::store::transcripts::apply_transcripts_retention(&app, &config);
+        apply_recordings_retention(&app, &config);
+    });
+}
+
+/// Enforce the dictation clock on saved recordings. Queued at startup and after every config
+/// save (`queue_retention_sweeps`), so shortening the window takes effect immediately rather
+/// than at the next restart.
 ///
 /// The window is `effective_dictation_days` — the same value Settings' "Delete dictations
 /// after" row shows and the record sweep (store/transcripts.rs) uses, so a dictation's text and

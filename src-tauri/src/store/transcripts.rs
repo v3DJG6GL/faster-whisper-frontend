@@ -806,6 +806,9 @@ pub async fn delete_all_dictations(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+        // Not under this launch's audio-layout migration: a file it moves in after the wipe
+        // listed the folder would be left behind.
+        crate::commands::wait_audio_layout();
         // Both steps always run, so a readable folder is still wiped when the other is not.
         let records = wipe_records(&dictations_dir(&app)?);
         let recordings = match crate::commands::resolve_recordings_dir(&app, audio_base) {
@@ -849,6 +852,8 @@ pub async fn clear_file_transcriptions(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
+        // As delete_all_dictations: the orphan sweep must see the migrated layout.
+        crate::commands::wait_audio_layout();
         let removed = wipe_records(&transcripts_dir(&app)?)? as u32;
         sweep_orphan_media(&app, audio_base);
         Ok(removed)
