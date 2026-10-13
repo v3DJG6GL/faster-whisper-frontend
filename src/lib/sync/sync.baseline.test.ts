@@ -26,6 +26,7 @@ import { IS_WINDOWS } from "../platform";
 import type { SyncBlob } from "./syncTypes";
 import type { AppSettings, Backend, Profile, SyncSubSettings } from "../types";
 import { backend } from "./syncTestFixtures";
+import { DEFAULT_SETTING_SYNC } from "../settingsManifest";
 
 /** Test seam for the ONE await inside applyBlob (the keyring reconciliation): while it is
  *  parked, the store is live and the user can keep editing. Default is passthrough; `keys`
@@ -35,7 +36,7 @@ import { backend } from "./syncTestFixtures";
  *  U+FFFD as the IPC hop does. `writes` records every account a write was issued for, and a write
  *  to an account in `parkWrites` waits on that promise before it lands. A delete waits on every
  *  `parkWrites` promise first, as Rust's FIFO keyring lock holds it behind a parked write, and
- *  `deletes` records every account one landed for. */
+ *  `deletes` records every account one landed for, and `reads` counts the key reads issued. */
 const keyring = vi.hoisted(() => ({
   park: null as null | Promise<Record<string, string>>,
   keys: null as null | Record<string, string>,
@@ -44,18 +45,23 @@ const keyring = vi.hoisted(() => ({
   writes: [] as string[],
   parkWrites: new Map<string, Promise<void>>(),
   deletes: [] as string[],
+  reads: 0,
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
   return {
     ...orig,
-    readBackendKeys: (ids: string[]) =>
-      keyring.park ??
-      (keyring.keys
-        ? Promise.resolve(keyring.keys)
-        : keyring.store
-          ? Promise.resolve(Object.fromEntries(ids.flatMap((id) => (keyring.store!.has(id) ? [[id, keyring.store!.get(id)!]] : []))))
-          : orig.readBackendKeys(ids)),
+    readBackendKeys: (ids: string[]) => {
+      keyring.reads++;
+      return (
+        keyring.park ??
+        (keyring.keys
+          ? Promise.resolve(keyring.keys)
+          : keyring.store
+            ? Promise.resolve(Object.fromEntries(ids.flatMap((id) => (keyring.store!.has(id) ? [[id, keyring.store!.get(id)!]] : []))))
+            : orig.readBackendKeys(ids))
+      );
+    },
     setBackendKey: async (id: string, key: string) => {
       if (!keyring.store) return orig.setBackendKey(id, key);
       keyring.writes.push(id);
@@ -196,6 +202,30 @@ describe("composeBlob passthrough (baseline)", () => {
       { includeSecrets: false, sub: LEGACY_SUB },
     );
     expect("appRules" in blob).toBe(false);
+  });
+
+  it("API-keys gate off: no keyring read, so a locked wallet cannot hold back the live backend list", async () => {
+    // The gate pass carries the snapshot's keys whatever the read returns, yet a locked wallet's
+    // empty read diverted the whole list to the snapshot's copy (a local edit never pushed) and
+    // marked the compose degraded, holding every incoming backend change behind a keyring error.
+    const allOn = Object.fromEntries(Object.keys(DEFAULT_SETTING_SYNC).map((k) => [k, true]));
+    const gates = { ...(allOn as typeof DEFAULT_SETTING_SYNC), apiKeys: false };
+    const snapshot: SyncBlob = { backends: { list: [backend({ hasApiKey: true })], secrets: { b1: "sk-peer" } } };
+    const live = [backend({ hasApiKey: true, name: "renamed" }), backend({ id: "b2", hasApiKey: true })];
+    keyring.keys = {}; // the locked wallet's degraded read
+    keyring.reads = 0;
+    try {
+      const blob = await composeBlob(slice({ backends: live }), CATS_ALL, snapshot, {
+        includeSecrets: true,
+        sub: LEGACY_SUB,
+        gates,
+      });
+      expect(blob.backends?.list).toEqual(live);
+      expect(blob.backends?.secrets).toEqual({ b1: "sk-peer" });
+      expect(keyring.reads).toBe(0);
+    } finally {
+      keyring.keys = null;
+    }
   });
 });
 

@@ -524,7 +524,9 @@ export async function composeBlob(
     blob.backends = {
       list: cfg.backends,
     };
-    if (opts.includeSecrets) {
+    // "API keys" gate off: the gate pass below carries the snapshot's keys whatever is read here,
+    // so skip the live read — a locked wallet must not divert the list to the degraded pass-through.
+    if (opts.includeSecrets && (!opts.gates || opts.gates.apiKeys)) {
       const secrets = await withTimeout(
         readBackendKeys(cfg.backends.map((b) => b.id)),
         10_000,
@@ -3957,37 +3959,47 @@ function schedulePush(delayMs = 3000): void {
 export async function initSync(): Promise<void> {
   if (!isTauri || started) return;
   started = true;
-  await configReady;
-  state = (await loadSyncState()) ?? {};
-  // Normalize a pre-split snapshot to the current category layout. Without this the 3-way
-  // base stays old-shape while fresh composes are new-shape, so the first sync after an
-  // upgrade would read EVERY category as changed-on-both-sides and raise spurious conflicts.
-  if (state.snapshot) state.snapshot = migrateBlob(state.snapshot); // non-object snapshot → {}
-  await restoreSnapshotSecrets();
-  // Migrate a pre-split state file: it still holds the keys in cleartext and records no ids.
-  // Rewriting now moves them to the keyring and strips the file, rather than waiting for
-  // whenever the next sync happens to persist.
-  if (!state.snapshotSecretIds && state.snapshot?.backends?.secrets) {
-    await persistState({});
-  }
-  device = await syncDeviceInfo();
-  // Rust seeds `deviceId` into sync-state.json, but persistState writes
-  // `{...state, ...patch}` — carry the id into the in-memory state or the very
-  // next save strips it and every launch regenerates (and re-writes) a new one.
-  if (device?.deviceId && state.deviceId !== device.deviceId) state.deviceId = device.deviceId;
+  // Hold the engine lock across the launch work: until loadSyncState and the keyring restore
+  // (up to 10 s on a locked wallet) land, the base has no keys, so a "Push now" clicked meanwhile
+  // composed a pass-through push against it and shipped a keyless backends list over the server's
+  // keys. A trigger dropped at the gate loses nothing — the startup pull below runs after release.
+  const myGen = gen;
+  inFlight = true;
+  try {
+    await configReady;
+    state = (await loadSyncState()) ?? {};
+    // Normalize a pre-split snapshot to the current category layout. Without this the 3-way
+    // base stays old-shape while fresh composes are new-shape, so the first sync after an
+    // upgrade would read EVERY category as changed-on-both-sides and raise spurious conflicts.
+    if (state.snapshot) state.snapshot = migrateBlob(state.snapshot); // non-object snapshot → {}
+    await restoreSnapshotSecrets();
+    // Migrate a pre-split state file: it still holds the keys in cleartext and records no ids.
+    // Rewriting now moves them to the keyring and strips the file, rather than waiting for
+    // whenever the next sync happens to persist.
+    if (!state.snapshotSecretIds && state.snapshot?.backends?.secrets) {
+      await persistState({});
+    }
+    device = await syncDeviceInfo();
+    // Rust seeds `deviceId` into sync-state.json, but persistState writes
+    // `{...state, ...patch}` — carry the id into the in-memory state or the very
+    // next save strips it and every launch regenerates (and re-writes) a new one.
+    if (device?.deviceId && state.deviceId !== device.deviceId) state.deviceId = device.deviceId;
 
-  // Migrate pre-serverBackendId state files: they were only ever written for
-  // the currently configured sync server, so stamp that identity instead of
-  // letting ensureStateFor() wipe a perfectly good snapshot on first contact.
-  if (state.version && !state.serverBackendId && syncMeta()?.backendId) {
-    await persistState({ serverBackendId: syncMeta()!.backendId });
-  }
+    // Migrate pre-serverBackendId state files: they were only ever written for
+    // the currently configured sync server, so stamp that identity instead of
+    // letting ensureStateFor() wipe a perfectly good snapshot on first contact.
+    if (state.version && !state.serverBackendId && syncMeta()?.backendId) {
+      await persistState({ serverBackendId: syncMeta()!.backendId });
+    }
 
-  if (state.updatedAt) {
-    setRuntime({
-      lastSyncedAt: Math.round((state.updatedAt as number) * 1000),
-      lastSyncDevice: state.device ?? null,
-    });
+    if (state.updatedAt) {
+      setRuntime({
+        lastSyncedAt: Math.round((state.updatedAt as number) * 1000),
+        lastSyncDevice: state.device ?? null,
+      });
+    }
+  } finally {
+    if (myGen === gen) inFlight = false; // a resetSyncState mid-launch superseded and took its own
   }
 
   // Debounced push on any sync-relevant store change. Mirrors the persistence
