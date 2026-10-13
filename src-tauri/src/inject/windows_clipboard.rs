@@ -105,11 +105,10 @@ pub enum OfferError {
 /// What `await_target_fetch` saw.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchWait {
-    /// The target fetched after our chord — or before it (`after_chord_ms` 0), which is then the
-    /// fetch the paste reads (see [`ChordReport::prior_fetch`]).
+    /// The target fetched after our chord (see [`RenderReport::ends_wait`]).
     Fetched {
         after_chord_ms: u64,
-        /// A re-announce was scheduled for this fetch (enforce).
+        /// A re-announce was scheduled for this offer (enforce).
         reannounced: bool,
     },
     /// No target fetch within the bound (or the offer was superseded / ownership lost).
@@ -162,6 +161,9 @@ pub struct RenderReport {
     pub since_offer_ms: u64,
     pub since_chord_ms: Option<u64>,
     pub verdict: RenderVerdict,
+    /// A target render after our chord: (ms after the chord, re-announce scheduled for this
+    /// offer), published to `await_target_fetch` — the fetch the forwarded paste reads.
+    pub ends_wait: Option<(u64, bool)>,
 }
 
 /// What noting our chord found.
@@ -170,9 +172,16 @@ pub struct ChordReport {
     pub since_offer_ms: u64,
     /// The target already fetched this offer BEFORE the chord (a remote clipboard history or
     /// manager pulling every announced item in the settle), and nobody blinded us. Windows sends
-    /// no second `WM_RENDERFORMAT` for one announce, so that fetch is the one this paste reads:
-    /// `Reannounce` in enforce (once per offer), `Plain` otherwise. `None` without such a fetch.
+    /// no second `WM_RENDERFORMAT` for one announce, so the paste reads that fetch unless a
+    /// re-announce drops it first: `Reannounce` in enforce (once per offer), `Plain` otherwise.
+    /// `None` without such a fetch.
     pub prior_fetch: Option<RenderVerdict>,
+    /// What the chord itself publishes to `await_target_fetch`. Diag only (nobody waits there):
+    /// the prior fetch, at 0 ms. Enforce never ends the wait at chord time — this message is
+    /// posted BEFORE the key goes out, and the re-announce the prior fetch arms drops the
+    /// remote's cached copy, so the forwarded paste needs a fresh fetch: the wait ends on that
+    /// post-chord render (`EagerRefetch` included), or at its bound.
+    pub ends_wait: Option<(u64, bool)>,
 }
 
 /// The previous offer, replaced by a new one.
@@ -268,9 +277,13 @@ impl OfferLedger {
                 RenderVerdict::Plain
             }
         });
+        let ends_wait = prior_fetch
+            .filter(|_| mode != Mode::Enforce)
+            .map(|_| (0, false));
         Some(ChordReport {
             since_offer_ms: now.saturating_sub(c.at),
             prior_fetch,
+            ends_wait,
         })
     }
 
@@ -300,11 +313,15 @@ impl OfferLedger {
                 RenderVerdict::Blind
             }
         };
+        let ends_wait = since_chord_ms
+            .filter(|_| who == Requester::Target)
+            .map(|ms| (ms, c.reannounced));
         Some(RenderReport {
             id: c.id,
             since_offer_ms: now.saturating_sub(c.at),
             since_chord_ms,
             verdict,
+            ends_wait,
         })
     }
 
@@ -929,19 +946,21 @@ mod imp {
             r.since_offer_ms
         );
         unsafe { SetTimer(hwnd, T_NOFETCH, NOFETCH_MS, None) };
-        // The target fetched before the chord, and no second render will come for this offer:
-        // end the caller's wait now and, in enforce, drop the remote's cache as a post-chord
-        // fetch would.
+        // The target fetched before the chord: in enforce, drop the remote's cache as a
+        // post-chord fetch would, so the paste fetches live from us. The caller's wait ends on
+        // that render, not here (see `ChordReport::ends_wait`).
         if let Some(v) = r.prior_fetch {
             let reannounce = v == RenderVerdict::Reannounce;
             tracing::info!(
                 "[winclip] #{id}: the target fetched before our chord (re-announce scheduled={reannounce})"
             );
-            publish_fetch(|f| {
-                if f.id == id && f.fetched.is_none() {
-                    f.fetched = Some((0, reannounce));
-                }
-            });
+            if let Some(fetched) = r.ends_wait {
+                publish_fetch(|f| {
+                    if f.id == id && f.fetched.is_none() {
+                        f.fetched = Some(fetched);
+                    }
+                });
+            }
             if reannounce {
                 unsafe { SetTimer(hwnd, T_REANNOUNCE, REANNOUNCE_DELAY_MS, None) };
             }
@@ -1013,15 +1032,12 @@ mod imp {
                 rep.since_offer_ms
             ),
         }
-        if who == Requester::Target {
-            if let Some(after_chord) = rep.since_chord_ms {
-                let reannounce = rep.verdict == RenderVerdict::Reannounce;
-                publish_fetch(|f| {
-                    if f.id == id && f.fetched.is_none() {
-                        f.fetched = Some((after_chord, reannounce));
-                    }
-                });
-            }
+        if let Some(fetched) = rep.ends_wait {
+            publish_fetch(|f| {
+                if f.id == id && f.fetched.is_none() {
+                    f.fetched = Some(fetched);
+                }
+            });
         }
         if rep.verdict == RenderVerdict::Reannounce {
             unsafe { SetTimer(hwnd, T_REANNOUNCE, REANNOUNCE_DELAY_MS, None) };
@@ -1284,7 +1300,8 @@ mod tests {
             l.on_chord(1, 4312, 300),
             Some(ChordReport {
                 since_offer_ms: 300,
-                prior_fetch: None
+                prior_fetch: None,
+                ends_wait: None
             })
         );
         assert_eq!(l.chord_pid(), Some(4312));
@@ -1292,6 +1309,7 @@ mod tests {
         assert_eq!(r.verdict, RenderVerdict::Reannounce);
         assert_eq!(r.since_offer_ms, 348);
         assert_eq!(r.since_chord_ms, Some(48));
+        assert_eq!(r.ends_wait, Some((48, true)));
         assert_eq!(l.on_reannounced(1, 379), Some(31));
         // The loop guard: a second target fetch never schedules another re-announce.
         let r = l.on_render(Requester::Target, 400).unwrap();
@@ -1323,31 +1341,37 @@ mod tests {
     }
 
     #[test]
-    fn a_target_fetch_before_the_chord_counts_as_its_fetch() {
-        // Enforce: the chord arms the one-shot re-announce at once, and only once.
+    fn a_target_fetch_before_the_chord_arms_the_reannounce_but_not_the_wait() {
+        // Enforce: the chord arms the one-shot re-announce at once, and only once — but it does
+        // not end the caller's wait: the chord message goes out before the key, and the
+        // re-announce drops the remote's cache, so the paste needs a fresh fetch.
         let mut l = OfferLedger::new(Mode::Enforce);
         l.on_offer(1, 0);
-        l.on_render(Requester::Target, 10);
+        assert_eq!(l.on_render(Requester::Target, 10).unwrap().ends_wait, None);
         let c = l.on_chord(1, 7, 300).unwrap();
         assert_eq!(c.prior_fetch, Some(RenderVerdict::Reannounce));
-        assert_eq!(
-            l.on_render(Requester::Target, 400).unwrap().verdict,
-            RenderVerdict::EagerRefetch
-        );
+        assert_eq!(c.ends_wait, None, "the wait must not end at chord time");
+        // The post-chord fetch after the re-announce is what ends the wait.
+        let r = l.on_render(Requester::Target, 400).unwrap();
+        assert_eq!(r.verdict, RenderVerdict::EagerRefetch);
+        assert_eq!(r.ends_wait, Some((100, true)));
         assert_eq!(l.on_nofetch_timer(1), NoFetchVerdict::Fetched);
 
-        // Diag: the fetch is reported, nothing is re-announced.
+        // Diag: the fetch is reported at chord time (nobody waits), nothing is re-announced.
         let mut l = OfferLedger::new(Mode::Diag);
         l.on_offer(1, 0);
         l.on_render(Requester::Target, 10);
         let c = l.on_chord(1, 7, 300).unwrap();
         assert_eq!(c.prior_fetch, Some(RenderVerdict::Plain));
+        assert_eq!(c.ends_wait, Some((0, false)));
 
         // Blind before the chord: no fetch of ours is known, so nothing changes.
         let mut l = OfferLedger::new(Mode::Enforce);
         l.on_offer(1, 0);
         l.on_render(Requester::Other, 10);
         assert_eq!(l.on_chord(1, 7, 300).unwrap().prior_fetch, None);
+        // ...and a non-target render after the chord ends no wait.
+        assert_eq!(l.on_render(Requester::Other, 350).unwrap().ends_wait, None);
     }
 
     #[test]
