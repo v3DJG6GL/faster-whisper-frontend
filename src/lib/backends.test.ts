@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
+import { backendForAddress, backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, missingAfterSuppliedKey, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 
@@ -293,5 +293,24 @@ describe("stripUrlNoise trims the edges the Rust transport trims (str::trim)", (
     const synced = "http://localhost:8000@evil.tld\u00a0";
     expect(authorityOf(synced)).toEqual({ host: "evil.tld", hasUserinfo: true });
     expect(insecureUrlWarning(synced)).not.toBeNull();
+  });
+});
+
+// Run #75 F10-1: the connect-first restore writes the key the user just typed into the restored
+// backend for the server it connected to, so the dialog must not tell them that backend needs one.
+describe("missingAfterSuppliedKey — the restore dialog's keyless list", () => {
+  const home = backend({ id: "home", name: "Home server", serverUrl: "home.lan:8000/", hasApiKey: true });
+  const work = backend({ id: "work", name: "Work", serverUrl: "https://work.example", hasApiKey: true });
+  it("drops the backend the supplied key lands on (normalized address match), keeps the others", () => {
+    expect(missingAfterSuppliedKey([home, work], [home, work], " http://home.lan:8000")).toEqual([work]);
+  });
+  it("no supplied address, or one no installed backend serves → unchanged", () => {
+    expect(missingAfterSuppliedKey([home, work], [home, work], undefined)).toEqual([home, work]);
+    expect(missingAfterSuppliedKey([home, work], [home, work], "http://elsewhere:8000")).toEqual([home, work]);
+  });
+  it("only the backend finishRestore picks (the first match) loses the warning", () => {
+    const twin = backend({ id: "twin", name: "Twin", serverUrl: "http://home.lan:8000", hasApiKey: true });
+    expect(missingAfterSuppliedKey([home, twin], [home, twin], "home.lan:8000")).toEqual([twin]);
+    expect(backendForAddress([home, twin], "home.lan:8000")?.id).toBe("home");
   });
 });

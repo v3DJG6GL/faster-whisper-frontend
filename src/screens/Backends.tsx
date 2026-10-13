@@ -28,7 +28,7 @@ import type { Backend, ConnectionInfo } from "@/lib/types";
 import type { SyncRemoteState } from "@/lib/sync/syncTypes";
 import { restorableCategories } from "@/lib/sync/sync";
 import { classifyConnection, effectiveServerKind } from "@/lib/serverKind";
-import { authorityOf, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
+import { authorityOf, backendForAddress, backendPrompt, backendPromptFields, effectiveLanguage, effectiveServerUrl, insecureUrlWarning, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl } from "@/lib/backends";
 import { backendDisplayName, peerDeviceName, safeDisplayText, safeIdentityText } from "@/lib/sanitize";
 import { hasOwn, ownProp } from "@/lib/own";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -1057,7 +1057,7 @@ function RestoreOffer({
   const finishRestore = async () => {
     const s = useApp.getState();
     const target = normalizeUrl(draft.serverUrl);
-    let match = s.backends.find((b) => normalizeUrl(b.serverUrl) === target);
+    let match = backendForAddress(s.backends, draft.serverUrl);
     if (!match) {
       s.upsertBackend(draft);
       match = draft;
@@ -1137,6 +1137,7 @@ function RestoreOffer({
           state={remote}
           onCancel={() => setRestoring(false)}
           onApplied={finishRestore}
+          keyFor={keyTyped ? draft.serverUrl : undefined}
         />
       )}
     </Card>

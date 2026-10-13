@@ -49,7 +49,7 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning } from "@/lib/backends";
+import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, missingAfterSuppliedKey } from "@/lib/backends";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -397,10 +397,14 @@ export function RestoreFromServer({
   state,
   onCancel,
   onApplied,
+  keyFor,
 }: {
   state: SyncRemoteState;
   onCancel: () => void;
   onApplied: () => void | Promise<void>;
+  /** The server address `onApplied` writes a just-typed API key for (the Backends connect-first
+   *  flow): the restored backend it lands on is not one that "needs an API key re-entered". */
+  keyFor?: string;
 }) {
   const dictating = useApp((st) => st.status !== "idle");
   // Normalize a pre-split server blob for the preview AND the apply below.
@@ -448,7 +452,8 @@ export function RestoreFromServer({
   const replaced = replacedNames(sel, blob, st);
   // The apply bypasses the review gate (ignoreGates), so this is the only place a moved key or
   // the account's stored keys replacing this device's is disclosed — ImportPreview's notices.
-  const keyFates = backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings);
+  const fates = backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings);
+  const keyFates = { ...fates, missing: missingAfterSuppliedKey(fates.missing, sel.backends ? installBackends : [], keyFor) };
 
   const apply = async () => {
     // Re-check right before applying: applyBlob refuses while dictating, and

@@ -78,6 +78,22 @@ export function typedServerUrl(raw: string): string {
   return normalizeUrl(storedTypedUrl(raw));
 }
 
+/** The backend the Backends connect-first restore hands the just-typed API key to: the first one
+ *  whose stored address normalizes to the server it connected to. ONE rule for the restore that
+ *  writes the key and the consent dialog that must not call that backend keyless. */
+export function backendForAddress(list: Backend[], address: string): Backend | undefined {
+  const target = normalizeUrl(address);
+  return list.find((b) => normalizeUrl(b.serverUrl) === target);
+}
+
+/** The restore dialog's "needs an API key re-entered" list once the caller supplies a key for
+ *  `keyFor`: the backend that key lands on (`backendForAddress` over the list the restore
+ *  installs) is not missing one. No address → unchanged. */
+export function missingAfterSuppliedKey(missing: Backend[], installed: Backend[], keyFor?: string): Backend[] {
+  const supplied = keyFor ? backendForAddress(installed, keyFor) : undefined;
+  return supplied ? missing.filter((b) => b.id !== supplied.id) : missing;
+}
+
 /** Does this string carry NO scheme, so that prefixing `http://` is honest?
  *
  *  The two-slash test above is not the same rule the parsers use. WHATWG (the browser's `URL`,
