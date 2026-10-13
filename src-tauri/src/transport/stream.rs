@@ -461,7 +461,13 @@ pub async fn run<F>(
     let mut transcript_cur = String::new();
     let save_dir = params.save_dir.as_deref();
     let detached = params.detached.clone();
-    let mut clips = (saving && params.per_utterance_clips).then(ClipCutter::new);
+    let (mut clips, mut clip_rx) = match save_dir.filter(|_| params.per_utterance_clips) {
+        Some(dir) => {
+            let (c, rx) = ClipCutter::new(dir);
+            (Some(c), Some(rx))
+        }
+        None => (None, None),
+    };
     // Speech-gate for the SAVED recording (NOT what's streamed to the server): keep only the spans
     // the chip shows as "speaking" + a short lead-in, so a long hands-free session doesn't store hours
     // of silence. The detector itself lives in `crate::audio::SpeechGate` (shared with the batch
@@ -624,6 +630,7 @@ pub async fn run<F>(
                     }
                 }
             }
+            Some(clip) = recv_clip(&mut clip_rx) => on_event(clip),
             _ = keepalive.tick() => {
                 match tokio::time::timeout(SEND_TIMEOUT, write.send(Message::Ping(Vec::<u8>::new().into()))).await {
                     Ok(Ok(())) => {}
@@ -732,7 +739,18 @@ pub async fn run<F>(
             } else {
                 Duration::from_secs(30)
             };
-            match tokio::time::timeout(idle, evt_rx.recv()).await {
+            // Clips the writer saves meanwhile go straight out, and are no server frame: they
+            // don't reset the idle window.
+            let next = tokio::time::timeout(idle, async {
+                loop {
+                    tokio::select! {
+                        from = evt_rx.recv() => break from,
+                        Some(clip) = recv_clip(&mut clip_rx) => on_event(clip),
+                    }
+                }
+            })
+            .await;
+            match next {
                 Err(_) => break true, // silence — dead or half-open
                 Ok(None) | Ok(Some(FromReader::Closed)) => break false,
                 Ok(Some(FromReader::Event(e))) => {
@@ -843,6 +861,14 @@ pub async fn run<F>(
                 pcm_duration_ms(saved.len())
             );
         }
+        // Let the writer finish (that last `.txt` included) and forward every clip it saved, so
+        // the UI's close tail sees them all before `Closed`. Awaited: a slow disk parks no worker.
+        drop(clips);
+        if let Some(rx) = clip_rx.as_mut() {
+            while let Some(clip) = rx.recv().await {
+                on_event(clip);
+            }
+        }
     } else if discarded {
         if save_dir.is_some() && !saved.is_empty() {
             tracing::info!(
@@ -910,13 +936,14 @@ fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
     }
 }
 
-/// Fold one server event into the saved recording (when saving), then forward it — followed by
-/// the per-utterance clip it cut, so the client already holds the utterance's record when the
-/// clip's path arrives. The clip cutter sees the transcript BEFORE the event is folded in.
+/// Fold one server event into the saved recording (when saving), then forward it. The clip
+/// cutter sees the transcript BEFORE the event is folded in.
 ///
-/// The clip's disk work (the `.wav` and the previous clip's `.txt`) runs only AFTER the event is
-/// forwarded: a recordings folder on a sleeping disk or an offline share held the utterance's own
-/// `Final` — the phrase shown and typed — behind the spin-up or the share timeout.
+/// The clip's disk work (the `.wav` and the previous clip's `.txt`) is queued to the
+/// [`ClipWriter`] only AFTER the event is forwarded, so the client already holds the utterance's
+/// record when the clip's path arrives; a recordings folder on a sleeping disk or an offline share
+/// held the utterance's own `Final` — the phrase shown and typed — behind the spin-up or the share
+/// timeout, and, written inline, every later phrase too.
 #[allow(clippy::too_many_arguments)]
 fn forward_saved<F: Fn(StreamEvent)>(
     e: StreamEvent,
@@ -942,10 +969,8 @@ fn forward_saved<F: Fn(StreamEvent)>(
         accumulate_transcript(&e, docs, current);
     }
     on_event(e);
-    if let (Some(dir), Some(c)) = (save_dir, clips.as_mut()) {
-        if let Some(clip) = c.write(io, dir) {
-            on_event(clip);
-        }
+    if let Some(c) = clips.as_ref() {
+        c.queue(io);
     }
 }
 
@@ -982,41 +1007,98 @@ fn clip_stem(stamp: &str, utterance: u32) -> String {
 ///
 /// A clip's `.txt` is written once its text is complete — at the next ordinal `final`, a hard
 /// break, or close — because a release `final` (no ordinal) can still append held-back words.
+///
+/// The cutting is in memory and synchronous; the files are written by the session's
+/// [`ClipWriter`] thread, in order, so a recordings folder on a sleeping disk or an offline share
+/// never holds the session loop (the next phrase, the audio upload, the keepalive, the Stop).
 struct ClipCutter {
-    stamp: String,
     /// Session offset of `saved[0]`: the bytes already written out or dropped.
     taken: usize,
     /// Decode marks: (utterance, session offset where its audio ends).
     marks: Vec<(u32, usize)>,
     /// An ordinal `final` cut a clip this session (decides the close-time fallback).
     cut_any: bool,
-    /// The last clip and the document offset its text starts at, awaiting its `.txt`.
-    pending_txt: Option<(PathBuf, usize)>,
+    /// The document offset the last clip's text starts at, awaiting its `.txt`.
+    pending_txt: Option<usize>,
+    /// The writer's queue. Dropping the cutter closes it: the writer finishes what is queued,
+    /// then exits and closes the clip channel [`Self::new`] returned.
+    jobs: std::sync::mpsc::Sender<ClipIo>,
 }
 
 /// The disk work one event leaves for after it is forwarded (see [`forward_saved`]).
 #[derive(Default)]
 struct ClipIo {
-    /// The previous clip's finished `.txt`: its `.wav` path and the text.
-    txt: Option<(PathBuf, String)>,
-    /// This utterance's clip: its ordinal, the cut PCM, and the document offset its text starts at.
-    clip: Option<(u32, Vec<u8>, usize)>,
+    /// The previous clip's finished text, for the `.txt` beside its `.wav`.
+    txt: Option<String>,
+    /// This utterance's clip: its ordinal and the cut PCM.
+    clip: Option<(u32, Vec<u8>)>,
+}
+
+/// Writes one session's clips on its own thread, in queue order, and sends each clip's
+/// `RecordingSaved` back to the session loop. It owns the clip paths: a `.txt` belongs to the last
+/// `.wav` actually written, so a failed `.wav` takes its text with it, as before the move.
+struct ClipWriter {
+    dir: PathBuf,
+    stamp: String,
+    /// The last clip written, awaiting its `.txt`.
+    pending: Option<PathBuf>,
+    saved: mpsc::UnboundedSender<StreamEvent>,
+}
+
+impl ClipWriter {
+    /// The previous clip's `.txt`, then this utterance's `.wav`.
+    fn write(&mut self, io: ClipIo) {
+        if let Some(text) = io.txt {
+            if let Some(path) = self.pending.take() {
+                crate::audio::save_transcript_sidecar(&path, &text);
+            }
+        }
+        let Some((n, pcm)) = io.clip else { return };
+        self.pending =
+            crate::audio::save_recording_as(&self.dir, &clip_stem(&self.stamp, n), &pcm, 16_000);
+        if let Some(path) = &self.pending {
+            let _ = self.saved.send(StreamEvent::RecordingSaved {
+                path: path.to_string_lossy().into_owned(),
+                utterance: Some(n),
+                duration_ms: pcm_duration_ms(pcm.len()),
+            });
+        }
+    }
 }
 
 impl ClipCutter {
-    fn new() -> Self {
-        Self {
+    /// A cutter and its writer thread for clips in `dir`. The receiver yields each clip's
+    /// `RecordingSaved`, in order, and closes once the cutter is dropped and every queued write
+    /// (the close-time `.txt` included) is done.
+    fn new(dir: &std::path::Path) -> (Self, mpsc::UnboundedReceiver<StreamEvent>) {
+        let (jobs, queue) = std::sync::mpsc::channel::<ClipIo>();
+        let (saved, saved_rx) = mpsc::unbounded_channel();
+        let mut writer = ClipWriter {
+            dir: dir.to_path_buf(),
             stamp: crate::audio::recording_stamp(),
+            pending: None,
+            saved,
+        };
+        // A plain thread, not the blocking pool: it lives as long as the session (hours, hands-free).
+        if let Err(e) = std::thread::Builder::new()
+            .name("clip-writer".into())
+            .spawn(move || queue.iter().for_each(|io| writer.write(io)))
+        {
+            tracing::warn!("[stream] could not start the clip writer — no clips are kept: {e}");
+        }
+        let cutter = Self {
             taken: 0,
             marks: Vec::new(),
             cut_any: false,
             pending_txt: None,
-        }
+            jobs,
+        };
+        (cutter, saved_rx)
     }
 
     /// Act on one event; `doc` is the transcript BEFORE the event is folded in. Cuts the buffer
-    /// in memory and returns the files to write — [`Self::write`] does that once the event is
-    /// forwarded.
+    /// in memory and returns the files to write — [`Self::queue`] hands them to the writer once
+    /// the event is forwarded.
     fn observe(&mut self, e: &StreamEvent, saved: &mut Vec<u8>, doc: &str) -> ClipIo {
         let mut io = ClipIo::default();
         match e {
@@ -1057,7 +1139,8 @@ impl ClipCutter {
                     .map_or(saved.len(), |end| end.saturating_sub(self.taken));
                 let pcm = split_at_cut(saved, cut);
                 self.taken += pcm.len();
-                io.clip = Some((*n, pcm, doc.len()));
+                self.pending_txt = Some(doc.len());
+                io.clip = Some((*n, pcm));
             }
             StreamEvent::Boundary { .. } => io.txt = self.take_txt(doc),
             _ => {}
@@ -1065,21 +1148,11 @@ impl ClipCutter {
         io
     }
 
-    /// Write what [`Self::observe`] planned: the previous clip's `.txt`, then this utterance's
-    /// `.wav`. Returns the clip event for a `.wav` written.
-    fn write(&mut self, io: ClipIo, dir: &std::path::Path) -> Option<StreamEvent> {
-        if let Some((path, text)) = io.txt {
-            crate::audio::save_transcript_sidecar(&path, &text);
+    /// Hand what [`Self::observe`] planned to the writer thread.
+    fn queue(&self, io: ClipIo) {
+        if io.txt.is_some() || io.clip.is_some() {
+            let _ = self.jobs.send(io);
         }
-        let (n, pcm, start) = io.clip?;
-        let stem = clip_stem(&self.stamp, n);
-        let path = crate::audio::save_recording_as(dir, &stem, &pcm, 16_000)?;
-        self.pending_txt = Some((path.clone(), start));
-        Some(StreamEvent::RecordingSaved {
-            path: path.to_string_lossy().into_owned(),
-            utterance: Some(n),
-            duration_ms: pcm_duration_ms(pcm.len()),
-        })
     }
 
     /// [`Self::observe`] for a drain a Cancel after stop discarded: no clip is cut, but the kept
@@ -1107,18 +1180,25 @@ impl ClipCutter {
         end
     }
 
-    /// The pending clip's `.txt`, retired: everything the document gained since its `final` began.
-    fn take_txt(&mut self, doc: &str) -> Option<(PathBuf, String)> {
+    /// The pending clip's text, retired: everything the document gained since its `final` began.
+    fn take_txt(&mut self, doc: &str) -> Option<String> {
         self.pending_txt
             .take()
-            .map(|(path, start)| (path, doc.get(start..).unwrap_or("").to_string()))
+            .map(|start| doc.get(start..).unwrap_or("").to_string())
     }
 
-    /// Write the pending clip's `.txt` now (at close).
+    /// Queue the pending clip's `.txt` now (at close).
     fn flush_txt(&mut self, doc: &str) {
-        if let Some((path, text)) = self.take_txt(doc) {
-            crate::audio::save_transcript_sidecar(&path, &text);
-        }
+        let txt = self.take_txt(doc);
+        self.queue(ClipIo { txt, clip: None });
+    }
+}
+
+/// The next clip the writer saved; never resolves for a session that keeps no clips.
+async fn recv_clip(rx: &mut Option<mpsc::UnboundedReceiver<StreamEvent>>) -> Option<StreamEvent> {
+    match rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -1496,6 +1576,7 @@ mod clip_tests {
     use super::{clip_stem, forward_saved, split_at_cut, ClipCutter, StreamEvent, UtteranceState};
     use std::cell::RefCell;
     use std::sync::atomic::AtomicBool;
+    use tokio::sync::mpsc::UnboundedReceiver;
 
     #[test]
     fn a_cut_is_clamped_and_sample_aligned() {
@@ -1530,25 +1611,36 @@ mod clip_tests {
         }
     }
 
-    /// One clip per ordinal final, cut at the decode mark; a release final's words reach the
-    /// previous clip's `.txt`; a dropped utterance's audio goes nowhere.
-    #[test]
-    fn each_utterance_gets_its_own_clip_and_text() {
-        let dir = std::env::temp_dir().join(format!("fwf-clips-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        let seen: RefCell<Vec<(String, Option<u32>, u64)>> = RefCell::new(Vec::new());
-        let on_event = |e: StreamEvent| {
+    /// Close the cutter and collect every clip its writer saved, in order — what the end of `run`
+    /// forwards before `Closed`. Returns once the writer is done, the close-time `.txt` included.
+    fn finish(
+        clips: Option<ClipCutter>,
+        mut rx: UnboundedReceiver<StreamEvent>,
+    ) -> Vec<(String, Option<u32>, u64)> {
+        drop(clips);
+        let mut out = Vec::new();
+        while let Some(e) = rx.blocking_recv() {
             if let StreamEvent::RecordingSaved {
                 path,
                 utterance,
                 duration_ms,
             } = e
             {
-                seen.borrow_mut().push((path, utterance, duration_ms));
+                out.push((path, utterance, duration_ms));
             }
-        };
+        }
+        out
+    }
+
+    /// One clip per ordinal final, cut at the decode mark; a release final's words reach the
+    /// previous clip's `.txt`; a dropped utterance's audio goes nowhere.
+    #[test]
+    fn each_utterance_gets_its_own_clip_and_text() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         let mut saved = vec![0u8; 64_000]; // 2 s
-        let mut clips = Some(ClipCutter::new());
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
         let (mut docs, mut cur) = (Vec::new(), String::new());
         let keep = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
@@ -1560,7 +1652,7 @@ mod clip_tests {
                 clips,
                 &mut docs,
                 &mut cur,
-                &on_event,
+                &|_| {},
             );
         };
         feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
@@ -1580,9 +1672,9 @@ mod clip_tests {
         feed(state(UtteranceState::Decoding, 3), &mut saved, &mut clips);
         feed(state(UtteranceState::Dropped, 3), &mut saved, &mut clips);
         assert!(saved.is_empty());
-        clips.unwrap().flush_txt(&cur);
+        clips.as_mut().unwrap().flush_txt(&cur);
 
-        let seen = seen.into_inner();
+        let seen = finish(clips, rx);
         assert_eq!(seen.len(), 2);
         assert_eq!((seen[0].1, seen[0].2), (Some(1), 2_000));
         assert_eq!((seen[1].1, seen[1].2), (Some(2), 1_000));
@@ -1618,13 +1710,13 @@ mod clip_tests {
             let tag = match e {
                 StreamEvent::Final { .. } => format!("final wav={}", files_with("wav")),
                 StreamEvent::Boundary { .. } => format!("boundary txt={}", files_with("txt")),
-                StreamEvent::RecordingSaved { .. } => format!("saved wav={}", files_with("wav")),
                 _ => return,
             };
             seen.borrow_mut().push(tag);
         };
         let mut saved = vec![0u8; 32_000];
-        let mut clips = Some(ClipCutter::new());
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
         let (mut docs, mut cur) = (Vec::new(), String::new());
         let keep = AtomicBool::new(false);
         for e in [
@@ -1644,15 +1736,70 @@ mod clip_tests {
                 &on_event,
             );
         }
-        assert_eq!(
-            seen.into_inner(),
-            ["final wav=0", "saved wav=1", "boundary txt=0"]
-        );
+        assert_eq!(seen.into_inner(), ["final wav=0", "boundary txt=0"]);
+        assert_eq!(finish(clips, rx).len(), 1);
+        assert_eq!(files_with("wav"), 1);
         assert_eq!(
             files_with("txt"),
             1,
             "the hard break still ends the clip's text"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The clip writes leave the session loop: `forward_saved` hands them to the writer thread and
+    /// forwards no clip itself (a recordings folder on a sleeping disk or an offline share held
+    /// every later phrase, the audio upload and the keepalive behind each write). The writer saves
+    /// the clips in order, ends each `.txt` where the next utterance begins, and writes the
+    /// close-time `.txt` before its channel closes — so `run` forwards them all before `Closed`.
+    #[test]
+    fn clip_writes_leave_the_session_loop_and_arrive_in_order() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-writer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let forwarded = RefCell::new(Vec::new());
+        let on_event = |e: StreamEvent| {
+            forwarded.borrow_mut().push(match e {
+                StreamEvent::Final { utterance, .. } => format!("final {utterance:?}"),
+                StreamEvent::RecordingSaved { .. } => "saved".into(),
+                _ => return,
+            });
+        };
+        let mut saved = Vec::new();
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let keep = AtomicBool::new(false);
+        let words = [" eins", " eins zwei", " eins zwei drei"];
+        for (i, doc) in words.iter().enumerate() {
+            saved.extend(vec![0u8; 3_200 * (i + 1)]);
+            forward_saved(
+                fin(doc, Some(i as u32 + 1)),
+                Some(&dir),
+                &keep,
+                &mut saved,
+                &mut clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
+        }
+        assert_eq!(
+            forwarded.into_inner(),
+            ["final Some(1)", "final Some(2)", "final Some(3)"],
+            "no clip is written or forwarded inline"
+        );
+        clips.as_mut().unwrap().flush_txt(&cur);
+
+        let seen = finish(clips, rx);
+        let order: Vec<_> = seen.iter().map(|s| (s.1, s.2)).collect();
+        assert_eq!(order, [(Some(1), 100), (Some(2), 200), (Some(3), 300)]);
+        let texts: Vec<_> = seen
+            .iter()
+            .map(|s| {
+                std::fs::read_to_string(std::path::Path::new(&s.0).with_extension("txt")).unwrap()
+            })
+            .collect();
+        assert_eq!(texts, ["eins\n", "zwei\n", "drei\n"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1663,14 +1810,9 @@ mod clip_tests {
     fn a_discarded_drain_cuts_no_clip() {
         let dir = std::env::temp_dir().join(format!("fwf-discard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let clips_seen = RefCell::new(Vec::new());
-        let on_event = |e: StreamEvent| {
-            if let StreamEvent::RecordingSaved { path, .. } = e {
-                clips_seen.borrow_mut().push(path);
-            }
-        };
         let mut saved = vec![0u8; 64_000];
-        let mut clips = Some(ClipCutter::new());
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
         let (mut docs, mut cur) = (Vec::new(), String::new());
         let discard = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
@@ -1682,12 +1824,12 @@ mod clip_tests {
                 clips,
                 &mut docs,
                 &mut cur,
-                &on_event,
+                &|_| {},
             );
         };
         // Utterance 1 is cut and kept before the Cancel.
         feed(fin(" Hallo Welt", Some(1)), &mut saved, &mut clips);
-        assert_eq!(clips_seen.borrow().len(), 1);
+        assert!(clips.as_ref().unwrap().cut_any);
         discard.store(true, std::sync::atomic::Ordering::SeqCst);
         saved.extend(vec![0u8; 32_000]);
         // The drain's release final still belongs to utterance 1…
@@ -1703,9 +1845,9 @@ mod clip_tests {
             cur, " Hallo Welt Komma und weiter",
             "the transcript still folds in"
         );
-        let seen = clips_seen.into_inner();
+        let seen = finish(clips, rx);
         assert_eq!(seen.len(), 1, "no clip after the Cancel");
-        let wav = std::path::Path::new(&seen[0]);
+        let wav = std::path::Path::new(&seen[0].0);
         assert_eq!(
             std::fs::read_to_string(wav.with_extension("txt")).unwrap(),
             "Hallo Welt Komma\n"
@@ -1727,14 +1869,9 @@ mod clip_tests {
     fn a_drain_discarded_before_any_clip_writes_nothing() {
         let dir = std::env::temp_dir().join(format!("fwf-discard-early-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let clips_seen = RefCell::new(Vec::new());
-        let on_event = |e: StreamEvent| {
-            if let StreamEvent::RecordingSaved { path, .. } = e {
-                clips_seen.borrow_mut().push(path);
-            }
-        };
         let mut saved = vec![0u8; 64_000];
-        let mut clips = Some(ClipCutter::new());
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
         let (mut docs, mut cur) = (Vec::new(), String::new());
         let discard = AtomicBool::new(true);
         for e in [
@@ -1749,12 +1886,12 @@ mod clip_tests {
                 &mut clips,
                 &mut docs,
                 &mut cur,
-                &on_event,
+                &|_| {},
             );
         }
-        assert!(clips_seen.into_inner().is_empty(), "no clip is saved");
         assert!(!clips.as_ref().unwrap().cut_any, "nothing was cut");
         assert_eq!(saved.len(), 64_000, "no audio was split off");
+        assert!(finish(clips, rx).is_empty(), "no clip is saved");
         assert!(!dir.exists(), "no file was written");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1765,19 +1902,9 @@ mod clip_tests {
     fn a_markless_drop_discards_its_burst() {
         let dir = std::env::temp_dir().join(format!("fwf-clips-drop-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let seen: RefCell<Vec<(Option<u32>, u64)>> = RefCell::new(Vec::new());
-        let on_event = |e: StreamEvent| {
-            if let StreamEvent::RecordingSaved {
-                utterance,
-                duration_ms,
-                ..
-            } = e
-            {
-                seen.borrow_mut().push((utterance, duration_ms));
-            }
-        };
         let mut saved = vec![0u8; 32_000]; // 1 s of noise the gate ignores
-        let mut clips = Some(ClipCutter::new());
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
         let (mut docs, mut cur) = (Vec::new(), String::new());
         let keep = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
@@ -1789,7 +1916,7 @@ mod clip_tests {
                 clips,
                 &mut docs,
                 &mut cur,
-                &on_event,
+                &|_| {},
             );
         };
         feed(state(UtteranceState::Dropped, 1), &mut saved, &mut clips);
@@ -1797,7 +1924,8 @@ mod clip_tests {
         saved.extend(vec![0u8; 16_000]); // 0.5 s
         feed(state(UtteranceState::Decoding, 2), &mut saved, &mut clips);
         feed(fin(" Hallo", Some(2)), &mut saved, &mut clips);
-        assert_eq!(seen.into_inner(), vec![(Some(2), 500)]);
+        let seen: Vec<_> = finish(clips, rx).into_iter().map(|s| (s.1, s.2)).collect();
+        assert_eq!(seen, vec![(Some(2), 500)]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1807,14 +1935,9 @@ mod clip_tests {
     fn the_closing_final_cuts_no_clip() {
         let dir = std::env::temp_dir().join(format!("fwf-clips-last-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        let seen: RefCell<Vec<Option<u32>>> = RefCell::new(Vec::new());
-        let on_event = |e: StreamEvent| {
-            if let StreamEvent::RecordingSaved { utterance, .. } = e {
-                seen.borrow_mut().push(utterance);
-            }
-        };
         let mut saved = vec![0u8; 32_000];
-        let mut clips = Some(ClipCutter::new());
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
         let (mut docs, mut cur) = (Vec::new(), String::new());
         let keep = AtomicBool::new(false);
         let mut feed = |e: StreamEvent, saved: &mut Vec<u8>, clips: &mut Option<ClipCutter>| {
@@ -1826,7 +1949,7 @@ mod clip_tests {
                 clips,
                 &mut docs,
                 &mut cur,
-                &on_event,
+                &|_| {},
             );
         };
         feed(state(UtteranceState::Decoding, 1), &mut saved, &mut clips);
@@ -1843,11 +1966,11 @@ mod clip_tests {
             &mut saved,
             &mut clips,
         );
-        let mut clips = clips.unwrap();
-        assert!(clips.cut_any);
-        clips.flush_txt(&cur);
+        assert!(clips.as_ref().unwrap().cut_any);
+        clips.as_mut().unwrap().flush_txt(&cur);
 
-        assert_eq!(seen.into_inner(), vec![Some(1)]);
+        let seen: Vec<_> = finish(clips, rx).into_iter().map(|s| s.1).collect();
+        assert_eq!(seen, vec![Some(1)]);
         let names: Vec<String> = std::fs::read_dir(&dir)
             .unwrap()
             .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
