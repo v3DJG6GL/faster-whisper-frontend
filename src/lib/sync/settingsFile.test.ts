@@ -91,6 +91,34 @@ describe("exportToFile", () => {
       useApp.setState({ backends: prev });
     }
   });
+
+  // The verdict follows the list the file was built from, not the store after the write: a sync
+  // pull landing during the export can add or drop a key in between.
+  it("judges keysMissing on the exported list, not on a store a pull changed meanwhile", async () => {
+    const { useApp } = await import("../store");
+    const api = await import("../api");
+    const { exportToFile } = await import("./settingsFile");
+    const prev = useApp.getState().backends;
+    const b0 = { ...(prev[0] ?? {}), id: "b1", hasApiKey: true } as (typeof prev)[number];
+    try {
+      // Keyed list, keyring read failed, and the key is gone by the time the file is written.
+      useApp.setState({ backends: [b0] });
+      vi.mocked(api.readBackendKeys).mockResolvedValueOnce({});
+      vi.mocked(api.exportSettingsFile).mockImplementationOnce(async () => {
+        useApp.setState({ backends: [{ ...b0, hasApiKey: false }] });
+      });
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
+
+      // Keyless list (nothing to carry), and a key arrives while the file is written.
+      useApp.setState({ backends: [{ ...b0, hasApiKey: false }] });
+      vi.mocked(api.exportSettingsFile).mockImplementationOnce(async () => {
+        useApp.setState({ backends: [b0] });
+      });
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+    } finally {
+      useApp.setState({ backends: prev });
+    }
+  });
 });
 
 // ── stripMachineFolders ─────────────────────────────────────────────────────
