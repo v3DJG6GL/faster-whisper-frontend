@@ -203,6 +203,9 @@ export default function Logs() {
     window.clearTimeout(openTimerRef.current);
   }, [logDir]);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
+  // Why the live log could not be attached (set_log_stream / get_log_tail failed): nothing will
+  // arrive, so the page must not claim "Streaming" over an empty session.
+  const [attachError, setAttachError] = useState<string | null>(null);
 
   // Attach the stream for the screen's lifetime; badge clears on open & close.
   useEffect(() => {
@@ -223,7 +226,11 @@ export default function Logs() {
         if (cancelled) d();
         else detach = d;
       })
-      .catch(() => {}); // attach rolled itself back; nothing to detach
+      // attach rolled itself back; nothing to detach — but say so.
+      .catch((e: unknown) => {
+        console.error("attach log stream:", e);
+        if (!cancelled) setAttachError(safeDisplayText(errorText(e), 160));
+      });
     return () => {
       cancelled = true;
       detach?.();
@@ -413,9 +420,15 @@ export default function Logs() {
       <h1 className="mt-2 flex items-center gap-2.5 font-display text-[30px] font-bold tracking-tight text-text"><ScrollText className="size-7 text-accent" aria-hidden />{screenTitle("logs")}</h1>
       {/* The live status line under the title, like a lede: streaming state left, the session count right. */}
       <div className="mt-2 flex items-center gap-3">
-        <span className="flex items-center gap-1.5 text-[12px] font-medium text-live">
-          <StatusDot tone="live" pulse title="Streaming" /> Streaming
-        </span>
+        {attachError ? (
+          <span className="flex items-center gap-1.5 text-[12px] font-medium text-warn" title={attachError}>
+            <StatusDot tone="warn" title="Not streaming" /> Not streaming
+          </span>
+        ) : (
+          <span className="flex items-center gap-1.5 text-[12px] font-medium text-live">
+            <StatusDot tone="live" pulse title="Streaming" /> Streaming
+          </span>
+        )}
         <span className="ml-auto font-mono text-[12px] tabular-nums text-faint">
           {plural(sessionLineCount(sessionSeq), "line")} this session
         </span>
@@ -487,14 +500,18 @@ export default function Logs() {
                   ? "No lines match the filters"
                   : emptyKind === "cleared"
                     ? "View cleared"
-                    : "Nothing logged yet this session"}
+                    : attachError
+                      ? "The live log could not be attached"
+                      : "Nothing logged yet this session"}
               </span>
               <span className="max-w-[380px] text-[12.5px] text-faint">
                 {emptyKind === "filtered"
                   ? "Loosen the level, tags, or text filter to see more."
                   : emptyKind === "cleared"
                     ? `${plural(cleared, "earlier line")} hidden. New lines will appear as they arrive.`
-                    : "Lines appear here as you dictate or transcribe. Earlier sessions live in the log folder."}
+                    : attachError
+                      ? `${attachError.replace(/[.\s]+$/, "")}. This session's log is still written to the log folder — open it below.`
+                      : "Lines appear here as you dictate or transcribe. Earlier sessions live in the log folder."}
               </span>
             </div>
           ) : (
