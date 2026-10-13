@@ -49,11 +49,47 @@ describe("sessionShape", () => {
   });
 
   it("a padded or blank Profile translation model is the Backend's model as sent", () => {
-    const b = backend({ translationOverrides: { model: "gemma" } } as Partial<Backend>);
+    const b = backend({ translationOverrides: { model: "gemma", translateTo: ["fr"] } } as Partial<Backend>);
     const base = sessionShape(profile(), b);
     expect(sessionShape(profile({ translationOverrides: { model: " gemma " } } as Partial<Profile>), b)).toBe(base);
     expect(sessionShape(profile({ translationOverrides: { model: "  " } } as Partial<Profile>), b)).toBe(base);
     expect(sessionShape(profile({ translationOverrides: { model: "other" } } as Partial<Profile>), b)).not.toBe(base);
+  });
+
+  it("a session that translates nothing ignores the translation fields it never sends", () => {
+    const base = sessionShape(profile(), backend());
+    for (const translationOverrides of [
+      { includeOriginal: false },
+      { includeOriginal: true },
+      { translateTo: [] },
+      { glossary: "a = b" },
+      { glossary: "" },
+      { model: "gemma" },
+      { mode: "faithful" },
+      { translateTo: ["x!"] },
+    ]) {
+      const p = profile({ translationOverrides } as Partial<Profile>);
+      expect(sessionShape(p, backend()), JSON.stringify(translationOverrides)).toBe(base);
+    }
+    // a Profile clearing an inherited list translates nothing either
+    const b = backend({ translationOverrides: { translateTo: ["fr"] } } as Partial<Backend>);
+    expect(sessionShape(profile({ translationOverrides: { translateTo: [] } } as Partial<Profile>), b)).toBe(base);
+  });
+
+  it("with targets, compares the translation as sent", () => {
+    const tr = (over: object) => sessionShape(profile({ translationOverrides: { translateTo: ["fr"], ...over } } as Partial<Profile>), backend());
+    const base = tr({});
+    // "Include original" Off is the absent default; a refused code takes no slot
+    expect(tr({ includeOriginal: false })).toBe(base);
+    expect(tr({ translateTo: ["fr", "x!"] })).toBe(base);
+    expect(tr({ includeOriginal: true })).not.toBe(base);
+    expect(tr({ translateTo: ["fr", "de"] })).not.toBe(base);
+    expect(tr({ glossary: "" })).not.toBe(base);
+    expect(tr({ model: "gemma" })).not.toBe(base);
+    expect(tr({ mode: "faithful" })).not.toBe(base);
+    // an asking Profile keeps its fields with no targets: a pick builds the translation from them
+    const ask = (over: object) => sessionShape(profile({ askTranslationTargets: true, translationOverrides: over } as Partial<Profile>), backend());
+    expect(ask({ model: "gemma" })).not.toBe(ask({}));
   });
 
   it("a padded synced Backend Whisper model is the trimmed model as sent", () => {
