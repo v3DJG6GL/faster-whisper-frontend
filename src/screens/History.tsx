@@ -47,24 +47,11 @@ import { cueOptionsOf } from "@/lib/transcript/cueSplit";
 import { displayToggles, patchTranscribe } from "@/lib/useDisplayToggles";
 import { cn } from "@/lib/cn";
 import { releaseDetachedMedia } from "@/lib/mediaElement";
+import { dayBuckets, startOfDay } from "@/lib/historyBuckets";
 
-// Hoisted formatters: toLocale*String with options builds a fresh
-// Intl.DateTimeFormat per call, and these run per record on every keystroke.
-const DAY_FMT = new Intl.DateTimeFormat(undefined, { year: "numeric", month: "long", day: "numeric" });
+// Hoisted formatter: toLocale*String with options builds a fresh
+// Intl.DateTimeFormat per call, and this runs per record on every keystroke.
 const TIME_FMT = new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" });
-
-const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-
-/** "Today" / "Yesterday" / a local date — the bucket a record sorts under.
- *  `todayStart` is `startOfDay(new Date())`, refreshed at local midnight. */
-function dayBucket(iso: string, todayStart: number): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "Earlier";
-  const diffDays = Math.round((todayStart - startOfDay(d)) / 86_400_000);
-  if (diffDays <= 0) return "Today";
-  if (diffDays === 1) return "Yesterday";
-  return DAY_FMT.format(d);
-}
 
 function timeOf(iso: string): string {
   const d = new Date(iso);
@@ -443,16 +430,8 @@ export default function History() {
   // `searched.length`.
   const hiddenMatches = query.trim() ? searched.length - visible.length : 0;
 
-  const buckets = useMemo(() => {
-    const out: { label: string; items: TranscriptRecord[] }[] = [];
-    for (const rec of visible) {
-      const label = dayBucket(rec.createdAt, todayStart);
-      const last = out[out.length - 1];
-      if (last && last.label === label) last.items.push(rec);
-      else out.push({ label, items: [rec] });
-    }
-    return out;
-  }, [visible, todayStart]);
+  // One group per label (dayBuckets), so the label is a unique key.
+  const buckets = useMemo(() => dayBuckets(visible, todayStart), [visible, todayStart]);
 
   const dictationOff = settings.transcribe?.keepDictationHistory === false;
 
