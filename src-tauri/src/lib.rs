@@ -187,7 +187,11 @@ pub fn run() {
     // The identifier was renamed (to org.fasterwhisper.frontend) and every app folder is named after it. Move an existing install's folders across BEFORE the
     // builder: before single-instance, before the webview opens a profile, before any path
     // is resolved. A no-op on every launch after the first. See migrate_identifier.rs.
-    migrate_identifier::run();
+    if let migrate_identifier::Verdict::Stop(msg) = migrate_identifier::run() {
+        tracing::error!("[migrate] not starting: {msg}");
+        migrate_identifier::tell_user(&msg);
+        std::process::exit(1);
+    }
 
     // reqwest 0.13's `rustls-no-provider` ships no TLS crypto provider; install
     // ring as the process-wide default (the same provider tokio-tungstenite's

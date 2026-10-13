@@ -18,6 +18,10 @@
 //!     audio. If that fails (AppData redirected to another volume, a locked file), copy into
 //!     a staging sibling, swap it in, and delete the old folder only after the copy succeeded.
 //!
+//! A move that cannot happen now (an old build still running, a failed move) quits the
+//! launch with a message BEFORE the builder creates the new folders — see `Verdict` — so
+//! the next launch retries it.
+//!
 //! The move is one-way: an older build started afterwards finds empty folders and shows
 //! onboarding (backend keys survive — the keyring is not identifier-scoped).
 
@@ -128,13 +132,50 @@ fn legacy_instance_running() -> bool {
     false
 }
 
-pub fn run() {
+/// Whether this launch may go on into the Tauri builder.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Verdict {
+    Proceed,
+    /// Quit before the builder runs, showing the user this text. Going on would create the
+    /// new folders (webview profile, logs, a seeded config.json), and from then on every
+    /// launch sees `Conflict` and never moves the old data: the user would start empty with
+    /// their settings, history and recordings stranded in the old folder for good.
+    Stop(String),
+}
+
+/// The launch's verdict from what the migration saw. `failed` = the old folders whose move
+/// failed (nothing is lost: a failed move leaves the old folder whole and the new one absent).
+fn verdict(legacy_running: bool, failed: &[PathBuf]) -> Verdict {
+    if legacy_running {
+        return Verdict::Stop(
+            "An older version of faster-whisper-frontend is still running.\n\n\
+             Close it (also from the system tray), then start this version again so it can \
+             move your settings, history and recordings over."
+                .into(),
+        );
+    }
+    if failed.is_empty() {
+        return Verdict::Proceed;
+    }
+    let paths: Vec<String> = failed.iter().map(|p| p.display().to_string()).collect();
+    Verdict::Stop(format!(
+        "The data of the previous version could not be moved to this version's folder. \
+         Nothing was lost — it is still in:\n\n{}\n\n\
+         Close every window of the app (also from the system tray), then start it again.",
+        paths.join("\n")
+    ))
+}
+
+pub fn run() -> Verdict {
     if legacy_instance_running() {
-        tracing::warn!("[migrate] a build with the old identifier is running; moving its data on a later launch");
-        return;
+        tracing::warn!(
+            "[migrate] a build with the old identifier is running; not starting until it is closed"
+        );
+        return verdict(true, &[]);
     }
     let roots = roots();
     let mut moved: Vec<(PathBuf, PathBuf)> = Vec::new();
+    let mut failed: Vec<PathBuf> = Vec::new();
     for root in &roots {
         let old = root.base.join(LEGACY_ID);
         let new = root.base.join(NEW_ID);
@@ -151,16 +192,82 @@ pub fn run() {
                 new.display(),
                 old.display()
             ),
-            Outcome::Failed => tracing::warn!("[migrate] could not move {}", old.display()),
+            Outcome::Failed => {
+                tracing::warn!("[migrate] could not move {}", old.display());
+                failed.push(old);
+            }
         }
     }
-    if moved.is_empty() {
-        return;
+    // The fix-ups still run when another root failed: the roots that moved now carry the
+    // marker and are never looked at again, so it is now or never for them.
+    if !moved.is_empty() {
+        rewrite_moved_paths(&roots, moved);
+    }
+    verdict(false, &failed)
+}
+
+/// Show a `Verdict::Stop` text natively — the webview never opens on that path. Windows: a
+/// message box. Elsewhere best effort through whichever desktop tool exists (KDE, GNOME, a
+/// notification); the text also goes to stderr.
+pub fn tell_user(msg: &str) {
+    const TITLE: &str = "faster-whisper-frontend";
+    eprintln!("{TITLE}: {msg}");
+    #[cfg(windows)]
+    {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONWARNING, MB_OK};
+        let wide = |s: &str| -> Vec<u16> { s.encode_utf16().chain(std::iter::once(0)).collect() };
+        let (text, title) = (wide(msg), wide(TITLE));
+        // SAFETY: both strings are NUL-terminated and outlive the (modal, blocking) call.
+        unsafe {
+            MessageBoxW(
+                std::ptr::null_mut(),
+                text.as_ptr(),
+                title.as_ptr(),
+                MB_OK | MB_ICONWARNING,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        use std::process::{Command, Stdio};
+        let attempts: [(&str, Vec<&str>); 3] = [
+            ("kdialog", vec!["--title", TITLE, "--sorry", msg]),
+            // --no-markup: a path with `&` or `<` must not break Pango's parse of the text.
+            (
+                "zenity",
+                vec!["--warning", "--no-markup", "--title", TITLE, "--text", msg],
+            ),
+            ("notify-send", vec!["--urgency=critical", TITLE, msg]),
+        ];
+        for (tool, args) in attempts {
+            let shown = Command::new(tool)
+                .args(&args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success());
+            if shown {
+                return;
+            }
+        }
+    }
+}
+
+/// Re-point config paths into every moved folder. A root that moved on an EARLIER launch
+/// (one that then stopped on another root's failed move) counts too: the config.json naming a
+/// folder inside it may only arrive now, with the root that failed then.
+fn rewrite_moved_paths(roots: &[Root], mut moved: Vec<(PathBuf, PathBuf)>) {
+    for root in roots.iter().filter(|r| !r.disposable) {
+        let pair = (root.base.join(LEGACY_ID), root.base.join(NEW_ID));
+        if pair.1.join(MARKER).exists() && !moved.contains(&pair) {
+            moved.push(pair);
+        }
     }
     // config.json lives in ONE root (config dir) while a custom audio/log folder may sit inside
     // ANOTHER (Linux data dir, Windows LocalAppData) — so every config.json is checked against
     // every move, not just its own root's.
-    for root in &roots {
+    for root in roots {
         let config = root.base.join(NEW_ID).join("config.json");
         if !config.is_file() {
             continue;
@@ -317,6 +424,75 @@ mod tests {
         let conf: serde_json::Value =
             serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         assert_eq!(conf["identifier"], NEW_ID);
+    }
+
+    #[test]
+    fn a_launch_that_cannot_move_the_old_data_stops_instead_of_starting_empty() {
+        assert!(matches!(verdict(true, &[]), Verdict::Stop(m) if m.contains("still running")));
+        let old = PathBuf::from("/home/u/.local/share").join(LEGACY_ID);
+        match verdict(false, std::slice::from_ref(&old)) {
+            Verdict::Stop(m) => assert!(m.contains(&old.display().to_string()), "{m}"),
+            Verdict::Proceed => panic!("a failed move must stop the launch"),
+        }
+        // Absent / AlreadyDone / Moved / Conflict leave nothing in `failed`.
+        assert_eq!(verdict(false, &[]), Verdict::Proceed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_move_leaves_the_old_folder_whole_and_creates_no_new_one() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = scratch("failed");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("config.json"), "old").unwrap();
+        // A read-only parent: neither the rename nor the staging copy can create anything.
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let writable = std::fs::write(base.join("probe"), b"").is_ok(); // root ignores modes
+        let outcome = migrate_dir(&old, &new, false);
+        std::fs::set_permissions(&base, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if writable {
+            return;
+        }
+        assert_eq!(outcome, Outcome::Failed);
+        assert!(!new.exists());
+        assert_eq!(
+            std::fs::read_to_string(old.join("config.json")).unwrap(),
+            "old"
+        );
+    }
+
+    #[test]
+    fn a_root_moved_on_an_earlier_launch_is_re_pointed_when_the_config_arrives() {
+        // Launch 1 moved the data root and stopped on the config root; launch 2 moves the config.
+        let (cfg_root, data_root) = (scratch("retry-cfg"), scratch("retry-data"));
+        let (cfg_old, cfg_new) = (cfg_root.join(LEGACY_ID), cfg_root.join(NEW_ID));
+        let (data_old, data_new) = (data_root.join(LEGACY_ID), data_root.join(NEW_ID));
+        std::fs::create_dir_all(&data_new).unwrap();
+        std::fs::write(data_new.join(MARKER), b"").unwrap();
+        std::fs::create_dir_all(&cfg_new).unwrap();
+        let cfg = serde_json::json!({ "settings": {
+            "recording": { "audioBaseDir": data_old.join("audio-x") },
+        }});
+        std::fs::write(cfg_new.join("config.json"), cfg.to_string()).unwrap();
+        let roots = [
+            Root {
+                base: cfg_root,
+                disposable: false,
+            },
+            Root {
+                base: data_root,
+                disposable: false,
+            },
+        ];
+        rewrite_moved_paths(&roots, vec![(cfg_old, cfg_new.clone())]);
+        let out: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(cfg_new.join("config.json")).unwrap())
+                .unwrap();
+        assert_eq!(
+            out["settings"]["recording"]["audioBaseDir"],
+            serde_json::json!(data_new.join("audio-x"))
+        );
     }
 
     #[test]
