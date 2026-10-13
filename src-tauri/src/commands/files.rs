@@ -340,12 +340,14 @@ fn ensure_audio_layout(app: &AppHandle, config: &Config) -> bool {
     if !stamp.exists() && map.is_empty() && !crate::store::transcripts::has_any_records(app) {
         let _ = std::fs::write(&stamp, b"");
     } else if !map.is_empty() || !stamp.exists() {
-        if crate::store::transcripts::heal_media_paths(app, &base) {
+        let (complete, fixed) = crate::store::transcripts::heal_media_paths(app, &base);
+        if complete {
             let _ = std::fs::write(&stamp, b"");
         } else {
             let _ = std::fs::remove_file(&stamp);
         }
-        return true;
+        // A heal that re-pointed nothing changed no path a History listing holds.
+        return !map.is_empty() || fixed > 0;
     }
     !map.is_empty()
 }

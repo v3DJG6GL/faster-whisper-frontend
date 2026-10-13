@@ -42,8 +42,17 @@ fn record_io_lock() -> std::sync::MutexGuard<'static, ()> {
 /// for good, since the heal stamp is then written. The save re-points through this map instead.
 /// Noted under the record's `RECORD_IO` hold (see `fix_records_in`), so a save that waited on
 /// it sees the move; locked after `RECORD_IO`, never before.
-static MOVED: std::sync::Mutex<Option<std::collections::HashMap<String, String>>> =
-    std::sync::Mutex::new(None);
+static MOVED: std::sync::Mutex<Option<Moved>> = std::sync::Mutex::new(None);
+
+/// The session's moved paths: `fwd` (old → new, what a save re-points through) and its reverse
+/// index `rev` (new → every old mapped onto it), so chaining a note touches only the entries
+/// that pointed at the moved path: a move or heal notes once per re-pointed field, and a scan of
+/// the whole map per note made a large history's move quadratic.
+#[derive(Default)]
+struct Moved {
+    fwd: std::collections::HashMap<String, String>,
+    rev: std::collections::HashMap<String, Vec<String>>,
+}
 
 fn note_moved(old: String, new: String) {
     let mut moved = MOVED.lock().unwrap_or_else(|e| e.into_inner());
@@ -53,16 +62,29 @@ fn note_moved(old: String, new: String) {
 /// Add `old → new` to `moved`, chaining: an entry that pointed at `old` now points at `new`, so
 /// a path moved twice (layout migration, then a base move) still maps to where it is now. An
 /// entry moved back onto itself is dropped.
-fn note_moved_in(moved: &mut std::collections::HashMap<String, String>, old: String, new: String) {
-    for target in moved.values_mut() {
-        if *target == old {
-            target.clone_from(&new);
+fn note_moved_in(moved: &mut Moved, old: String, new: String) {
+    if old == new {
+        return;
+    }
+    // `old` is re-noted: its earlier target no longer has it as a source.
+    if let Some(prev) = moved.fwd.get(&old) {
+        if let Some(sources) = moved.rev.get_mut(prev) {
+            sources.retain(|s| *s != old);
+            if sources.is_empty() {
+                moved.rev.remove(prev);
+            }
         }
     }
-    moved.retain(|from, to| from != to);
-    if old != new {
-        moved.insert(old, new);
+    for source in moved.rev.remove(&old).unwrap_or_default() {
+        if source == new {
+            moved.fwd.remove(&source);
+        } else {
+            moved.fwd.insert(source.clone(), new.clone());
+            moved.rev.entry(new.clone()).or_default().push(source);
+        }
     }
+    moved.rev.entry(new.clone()).or_default().push(old.clone());
+    moved.fwd.insert(old, new);
 }
 
 /// The three [`MEDIA_KEYS`] fields of a record, and nothing else: serde skips every other field
@@ -450,13 +472,15 @@ fn heal_candidates<'a>(key: &str, old_path: &Path, subs: &[&'a str]) -> Vec<&'a 
 /// layout migration moved the files into `<base>/dictations`. Idempotent, but
 /// NOT cheap — it reads and parses every record — so the caller runs it after a
 /// migration that moved something and once per install, not every launch.
-/// Returns false when a record could not be read or rewritten or a history folder could
-/// not be listed: the caller must then keep the heal armed, or that record stays broken.
-pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) -> bool {
+/// Returns `(complete, fixed)`. `complete` is false when a record could not be read or
+/// rewritten or a history folder could not be listed: the caller must then keep the heal armed,
+/// or that record stays broken. `fixed` counts the records re-pointed: none means a History
+/// listing has nothing to reload for.
+pub(crate) fn heal_media_paths(app: &AppHandle, base: &std::path::Path) -> (bool, usize) {
     heal_media_paths_in(&record_dirs(app), base)
 }
 
-fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> bool {
+fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> (bool, usize) {
     let subs = crate::commands::AUDIO_SUBDIRS;
     // Same size guard as `read_records_into`: an oversized record is skipped
     // there too, so parsing it here would be work for a record nobody loads.
@@ -486,7 +510,7 @@ fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> bool {
             tally.failed
         );
     }
-    tally.complete()
+    (tally.complete(), tally.fixed)
 }
 
 /// Copy cap — beyond this the copy is silently skipped (the record keeps
@@ -659,7 +683,7 @@ pub fn save_transcript_record(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .as_ref()
-        .and_then(|moved| repoint_moved(&record, moved));
+        .and_then(|moved| repoint_moved(&record, &moved.fwd));
     crate::config::write_private_atomic(&path, repointed.as_deref().unwrap_or(&record))
         .map_err(|e| e.to_string())
 }
@@ -757,7 +781,7 @@ pub async fn delete_transcript_record(
             let res = std::fs::remove_file(file_path).map_err(|e| e.to_string());
             drop(io);
             if res.is_ok() {
-                spawn_delete_media(app, id, audio_base, true, None);
+                spawn_delete_media(app, id, audio_base, None);
             }
             return res;
         }
@@ -778,14 +802,14 @@ pub async fn delete_transcript_record(
         // (main-thread) save hostage.
         drop(io);
         if !existed {
-            spawn_delete_media(app, id, audio_base, true, None);
+            spawn_delete_media(app, id, audio_base, None);
             return Ok(());
         }
         // The audio goes only once the record is gone: a failed unlink (locked file) keeps the
         // History entry, and it must keep its recording too. A dictation without audio stores
         // `sourcePath: ""` and has nothing to drop.
         if let (Ok(()), Some(src)) = (&res, src.filter(|s| !s.trim().is_empty())) {
-            spawn_delete_media(app, id, audio_base, false, Some(src));
+            spawn_delete_media(app, id, audio_base, Some(src));
         }
         res
     })
@@ -800,7 +824,6 @@ fn spawn_delete_media(
     app: AppHandle,
     id: String,
     audio_base: Option<String>,
-    media_copies: bool,
     dictation_src: Option<String>,
 ) {
     // A spawn error consumes the closure, so the inline fallback keeps its own copy.
@@ -812,49 +835,54 @@ fn spawn_delete_media(
     );
     let spawned = std::thread::Builder::new()
         .name("history-delete-audio".into())
-        .spawn(move || delete_record_media(&app, &id, audio_base, media_copies, dictation_src));
+        .spawn(move || delete_record_media(&app, &id, audio_base, dictation_src));
     if let Err(e) = spawned {
         tracing::warn!("[transcripts] could not start the delete-audio worker: {e}");
         let (app, id, audio_base, dictation_src) = fallback;
-        delete_record_media(&app, &id, audio_base, media_copies, dictation_src);
+        delete_record_media(&app, &id, audio_base, dictation_src);
     }
 }
 
 /// The media half of `delete_transcript_record`, run once the record is gone and never under
 /// `RECORD_IO` (the migration's rewrite takes it per record, so waiting under it would
-/// deadlock). Every media unlink first waits out this launch's audio-layout migration, which can
-/// move a file in after the delete looked (see delete_all_dictations). `media_copies` drops the
-/// record's `files/`/`links/`/video copies; `dictation_src` is a dictation's stored recording.
-/// The record is already gone, so no rewrite re-points that recording: if the stored path went
-/// away while this waited (the migration moved it), the file is looked for under its migrated
-/// name in the recordings folder.
+/// deadlock). `dictation_src` None: the record's `files/`/`links/`/video copies, unlinked once
+/// this launch's audio-layout migration is over, since it can move a file in after the delete
+/// looked (see delete_all_dictations). Some: a dictation's stored recording, unlinked once
+/// before that wait too, so a quit mid-wait leaves at most the one file the migration is moving
+/// at that moment. The record is already gone, so no rewrite re-points that recording: after the
+/// wait the stored path is tried again and, if it is gone (normally: the first unlink took it;
+/// or the migration moved it), the file is looked for under its migrated name in the recordings
+/// folder too.
 fn delete_record_media(
     app: &AppHandle,
     id: &str,
     audio_base: Option<String>,
-    media_copies: bool,
     dictation_src: Option<String>,
 ) {
-    crate::commands::wait_audio_layout();
-    if media_copies {
-        if let Ok(dirs) = all_media_dirs(app, audio_base.clone()) {
-            for dir in dirs {
-                remove_media_for(&dir, id);
+    match dictation_src {
+        None => {
+            crate::commands::wait_audio_layout();
+            if let Ok(dirs) = all_media_dirs(app, audio_base) {
+                for dir in dirs {
+                    remove_media_for(&dir, id);
+                }
             }
         }
-    }
-    if let Some(src) = dictation_src {
-        let stored = Path::new(&src);
-        let moved = !stored.exists();
-        remove_dictation_audio(&src);
-        if moved {
-            if let (Some(dir), Some(file)) = (
-                crate::commands::resolve_recordings_dir(app, audio_base),
-                stored.file_name(),
-            ) {
-                let twin = dir.join(file);
-                if twin != stored {
-                    remove_dictation_audio(&twin.to_string_lossy());
+        Some(src) => {
+            remove_dictation_audio(&src);
+            crate::commands::wait_audio_layout();
+            let stored = Path::new(&src);
+            let moved = !stored.exists();
+            remove_dictation_audio(&src);
+            if moved {
+                if let (Some(dir), Some(file)) = (
+                    crate::commands::resolve_recordings_dir(app, audio_base),
+                    stored.file_name(),
+                ) {
+                    let twin = dir.join(file);
+                    if twin != stored {
+                        remove_dictation_audio(&twin.to_string_lossy());
+                    }
                 }
             }
         }
@@ -1580,7 +1608,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .as_ref()
-            .and_then(|m| m.get(old).cloned())
+            .and_then(|m| m.fwd.get(old).cloned())
     }
 
     #[test]
@@ -1633,7 +1661,7 @@ mod tests {
 
     #[test]
     fn a_save_from_a_pre_move_listing_is_re_pointed() {
-        let mut moved = std::collections::HashMap::new();
+        let mut moved = Moved::default();
         note_moved_in(
             &mut moved,
             "/old/files/a.m4a".into(),
@@ -1646,7 +1674,7 @@ mod tests {
         );
         let out = repoint_moved(
             r#"{"id":"x","mediaPath":"/old/files/a.m4a","sourcePath":"/old/dictations/d.wav","text":"/old/files/a.m4a"}"#,
-            &moved,
+            &moved.fwd,
         )
         .unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
@@ -1656,20 +1684,20 @@ mod tests {
         assert_eq!(v["text"], "/old/files/a.m4a");
         // A record naming no moved path is written as sent.
         assert_eq!(
-            repoint_moved(r#"{"mediaPath":"/elsewhere/b.m4a"}"#, &moved),
+            repoint_moved(r#"{"mediaPath":"/elsewhere/b.m4a"}"#, &moved.fwd),
             None
         );
         // A moved path that is not a media field's value changes nothing either.
         assert_eq!(
-            repoint_moved(r#"{"title":"/old/files/a.m4a"}"#, &moved),
+            repoint_moved(r#"{"title":"/old/files/a.m4a"}"#, &moved.fwd),
             None
         );
-        assert_eq!(repoint_moved("not json /old/files/a.m4a", &moved), None);
+        assert_eq!(repoint_moved("not json /old/files/a.m4a", &moved.fwd), None);
     }
 
     #[test]
     fn a_save_whose_media_paths_did_not_move_is_written_as_sent() {
-        let mut moved = std::collections::HashMap::new();
+        let mut moved = Moved::default();
         for i in 0..2000 {
             note_moved_in(
                 &mut moved,
@@ -1680,10 +1708,10 @@ mod tests {
         // Moved paths elsewhere in the record (the user's text, a nested copy) are not media
         // fields; the media fields themselves name unmoved paths, or are null.
         let record = r#"{"id":"x","mediaPath":"/kept/files/7.m4a","videoPath":null,"sourcePath":"","text":"/old/files/7.m4a","result":{"mediaPath":"/old/files/8.m4a"}}"#;
-        assert_eq!(repoint_moved(record, &moved), None);
+        assert_eq!(repoint_moved(record, &moved.fwd), None);
         // An array never parses as a record, even though the media struct reads one by position.
         assert_eq!(
-            repoint_moved(r#"["/old/files/1.m4a",null,null]"#, &moved),
+            repoint_moved(r#"["/old/files/1.m4a",null,null]"#, &moved.fwd),
             None
         );
         // Nothing moved this session (or everything moved back): no parse at all.
@@ -1698,18 +1726,117 @@ mod tests {
 
     #[test]
     fn a_path_moved_twice_maps_to_where_it_is_now() {
-        let mut moved = std::collections::HashMap::new();
+        let mut moved = Moved::default();
         note_moved_in(&mut moved, "/a/x.wav".into(), "/b/x.wav".into());
         note_moved_in(&mut moved, "/b/x.wav".into(), "/c/x.wav".into());
-        assert_eq!(moved.get("/a/x.wav").map(String::as_str), Some("/c/x.wav"));
-        assert_eq!(moved.get("/b/x.wav").map(String::as_str), Some("/c/x.wav"));
-        let out = repoint_moved(r#"{"videoPath":"/a/x.wav"}"#, &moved).unwrap();
+        assert_eq!(
+            moved.fwd.get("/a/x.wav").map(String::as_str),
+            Some("/c/x.wav")
+        );
+        assert_eq!(
+            moved.fwd.get("/b/x.wav").map(String::as_str),
+            Some("/c/x.wav")
+        );
+        let out = repoint_moved(r#"{"videoPath":"/a/x.wav"}"#, &moved.fwd).unwrap();
         assert!(out.contains("/c/x.wav"));
         // Moved back: no entry maps a path onto itself.
         note_moved_in(&mut moved, "/c/x.wav".into(), "/a/x.wav".into());
-        assert_eq!(moved.get("/a/x.wav"), None);
-        assert_eq!(moved.get("/b/x.wav").map(String::as_str), Some("/a/x.wav"));
-        assert_eq!(moved.get("/c/x.wav").map(String::as_str), Some("/a/x.wav"));
+        assert_eq!(moved.fwd.get("/a/x.wav"), None);
+        assert_eq!(
+            moved.fwd.get("/b/x.wav").map(String::as_str),
+            Some("/a/x.wav")
+        );
+        assert_eq!(
+            moved.fwd.get("/c/x.wav").map(String::as_str),
+            Some("/a/x.wav")
+        );
+    }
+
+    /// The whole-map scan `note_moved_in` used before its reverse index: the reference answers.
+    fn note_moved_by_scan(
+        moved: &mut std::collections::HashMap<String, String>,
+        old: &str,
+        new: &str,
+    ) {
+        for target in moved.values_mut() {
+            if target == old {
+                *target = new.to_owned();
+            }
+        }
+        moved.retain(|from, to| from != to);
+        if old != new {
+            moved.insert(old.to_owned(), new.to_owned());
+        }
+    }
+
+    /// `rev` is exactly `fwd` inverted: every source once, under its one target, no empty list.
+    fn assert_rev_inverts_fwd(moved: &Moved) {
+        let mut inverted: std::collections::HashMap<&str, Vec<&str>> = Default::default();
+        for (from, to) in &moved.fwd {
+            inverted.entry(to).or_default().push(from);
+        }
+        let mut rev: std::collections::HashMap<&str, Vec<&str>> = Default::default();
+        for (to, froms) in &moved.rev {
+            assert!(!froms.is_empty(), "empty reverse entry for {to}");
+            rev.insert(to, froms.iter().map(String::as_str).collect());
+        }
+        for v in inverted.values_mut().chain(rev.values_mut()) {
+            v.sort_unstable();
+        }
+        assert_eq!(rev, inverted);
+    }
+
+    #[test]
+    fn a_moved_chain_collapses_like_the_whole_map_scan() {
+        // A→B, B→C, C→A: A moved back onto itself is dropped, B and C both lead to A.
+        let mut moved = Moved::default();
+        let mut scan = std::collections::HashMap::new();
+        for (old, new) in [("A", "B"), ("B", "C"), ("C", "A")] {
+            note_moved_in(&mut moved, old.into(), new.into());
+            note_moved_by_scan(&mut scan, old, new);
+            assert_eq!(moved.fwd, scan);
+            assert_rev_inverts_fwd(&moved);
+        }
+        assert_eq!(moved.fwd.get("A"), None);
+        assert_eq!(moved.fwd.get("B").map(String::as_str), Some("A"));
+        assert_eq!(moved.fwd.get("C").map(String::as_str), Some("A"));
+        // Every sequence over a few paths (self-moves, re-notes, cycles) answers like the scan.
+        let paths = ["p", "q", "r", "s"];
+        let mut seed: u64 = 0x9e37_79b9_7f4a_7c15;
+        for _ in 0..200 {
+            let mut moved = Moved::default();
+            let mut scan = std::collections::HashMap::new();
+            for _ in 0..12 {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                let old = paths[(seed % 4) as usize];
+                let new = paths[((seed >> 8) % 4) as usize];
+                note_moved_in(&mut moved, old.into(), new.into());
+                note_moved_by_scan(&mut scan, old, new);
+                assert_eq!(moved.fwd, scan, "after {old} → {new}");
+                assert_rev_inverts_fwd(&moved);
+            }
+        }
+    }
+
+    #[test]
+    fn a_re_noted_path_leaves_its_old_target_chain() {
+        // old → X, then old → Y: a later move of X must not drag old along with it.
+        let mut moved = Moved::default();
+        note_moved_in(&mut moved, "/old/a.wav".into(), "/x/a.wav".into());
+        note_moved_in(&mut moved, "/old/a.wav".into(), "/y/a.wav".into());
+        assert_eq!(moved.rev.get("/x/a.wav"), None);
+        note_moved_in(&mut moved, "/x/a.wav".into(), "/z/a.wav".into());
+        assert_eq!(
+            moved.fwd.get("/old/a.wav").map(String::as_str),
+            Some("/y/a.wav")
+        );
+        assert_eq!(
+            moved.fwd.get("/x/a.wav").map(String::as_str),
+            Some("/z/a.wav")
+        );
+        assert_rev_inverts_fwd(&moved);
     }
 
     #[cfg(unix)]
@@ -1728,7 +1855,7 @@ mod tests {
         std::fs::write(dir.join("bin.json"), [0xff, 0xfe, 0x00]).unwrap();
         // A missing folder has no record to heal.
         let dirs = [dir.clone(), dir.join("missing")];
-        assert!(heal_media_paths_in(&dirs, &base));
+        assert_eq!(heal_media_paths_in(&dirs, &base), (true, 1));
         let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
         assert!(ok.contains(&*base.join("files").join("a.wav").to_string_lossy()));
         // A locked record may still point at the gone path: the caller must not stamp the heal.
@@ -1737,7 +1864,7 @@ mod tests {
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
         // Root reads through 0o000, so there is nothing to assert there.
         if std::fs::read_to_string(&locked).is_err() {
-            assert!(!heal_media_paths_in(&dirs, &base));
+            assert!(!heal_media_paths_in(&dirs, &base).0);
         }
         let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600));
         let _ = std::fs::remove_dir_all(&root);
@@ -1756,7 +1883,7 @@ mod tests {
         // Root lists through 0o000, so there is nothing to assert there.
         if std::fs::read_dir(&dir).is_err() {
             // A folder that exists but cannot be listed may hide any number of records.
-            assert!(!heal_media_paths_in(std::slice::from_ref(&dir), &base));
+            assert!(!heal_media_paths_in(std::slice::from_ref(&dir), &base).0);
             let lookup = std::collections::HashMap::new();
             assert!(!rewrite_media_paths_in(std::slice::from_ref(&dir), &lookup));
         }
@@ -1778,7 +1905,9 @@ mod tests {
         std::os::unix::fs::symlink(dir.join("x.json"), dir.join("link.json")).unwrap();
         // Reading a folder fails on every pass: counting it would re-run the heal forever.
         let dirs = std::slice::from_ref(&dir);
-        assert!(heal_media_paths_in(dirs, &base));
+        assert_eq!(heal_media_paths_in(dirs, &base), (true, 1));
+        // Nothing left to re-point: complete, and nothing for a History listing to reload.
+        assert_eq!(heal_media_paths_in(dirs, &base), (true, 0));
         let ok = std::fs::read_to_string(dir.join("ok.json")).unwrap();
         assert!(ok.contains(&*base.join("files").join("a.wav").to_string_lossy()));
         let lookup: std::collections::HashMap<&str, &str> =
