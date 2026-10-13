@@ -212,6 +212,15 @@ describe("rows and chips (v30, v34, v37)", () => {
     const es = v.chips.find((c) => c.code === "es")!;
     expect(es.parts.map((p) => p.text)).toEqual(["Machine translation"]);
   });
+  it("a chip's site part shows the track the run uses when two tracks fold into one language", () => {
+    const inp = input({ tracks: [tr("t0", "en"), tr("t1", "en-GB")], targets: [], site: "YouTube" });
+    const [i1, st1] = apply(inp, flip(inp, initialSiteState(inp.targets), "ex:t0"));
+    const v = derive(i1, st1);
+    expect(v.run!.fetch).toEqual(["t1"]);
+    const en = v.chips.find((c) => c.code === "en")!;
+    expect(en.parts.map((p) => [p.key, p.on])).toEqual([["mt:en", false], ["ex:t1", true]]);
+    expect(en.parts[1].title).toBe("Leave out the YouTube English subtitles");
+  });
 });
 
 describe("tracks and switches", () => {

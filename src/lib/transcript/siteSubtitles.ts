@@ -399,7 +399,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const chips = codes.filter((c) => wanted.includes(c)).map((code) => {
     const name = languageLabel(code);
     const [mtB, ...exBs] = langSources(code).badges;
-    const exB = exBs.find((b) => !b.hoh) ?? exBs[0];
+    // The part shows the track the run uses: two tracks fold into one language (en, en-GB), and
+    // with the first left out the second still serves it.
+    const exB = exBs.find((b) => b.state === "active" && !b.hoh) ?? exBs.find((b) => b.state === "active")
+      ?? exBs.find((b) => !b.hoh) ?? exBs[0];
     const mtOn = mtB.state === "active";
     // Fixed order — machine translation, the site's — so nothing jumps; off parts only go faint (no "+", which resized the chip).
     const parts: ChipPart[] = [{
