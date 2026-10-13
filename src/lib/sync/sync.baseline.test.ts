@@ -259,6 +259,40 @@ describe("composeBlob forward-compat inside a category", () => {
     expect(merged.general).toEqual(remote.general);
   });
 
+  it("a newer peer's per-profile and per-backend field survives this device's restart", async () => {
+    // Rust's typed Profile / Backend drop the field on save/load, so after a restart the live
+    // element lacks it: that read as a local edit, and the push erased it from the server.
+    const cfg = slice({
+      profiles: [profile(), profile({ id: "p2", name: "Live only" })],
+      backends: [backend(), backend({ id: "b2" })],
+    });
+    const mine = await composeBlob(cfg, CATS_ALL, undefined, opts());
+    const base: SyncBlob = {
+      ...mine,
+      profiles: { ...mine.profiles!, list: [{ ...mine.profiles!.list[0], newerProfileField: 1 } as Profile, mine.profiles!.list[1]] },
+      backends: { ...mine.backends!, list: [{ ...mine.backends!.list[0], newerBackendField: "x" } as Backend, mine.backends!.list[1]] },
+    };
+    const before = structuredClone(cfg.profiles);
+    const local = await composeBlob(cfg, CATS_ALL, base, opts());
+    expect((local.profiles!.list[0] as unknown as Record<string, unknown>).newerProfileField).toBe(1);
+    expect((local.backends!.list[0] as unknown as Record<string, unknown>).newerBackendField).toBe("x");
+    // Only a same-id element is echoed into; the live store objects are not touched.
+    expect("newerProfileField" in local.profiles!.list[1]).toBe(false);
+    expect("newerBackendField" in local.backends!.list[1]).toBe(false);
+    expect(cfg.profiles).toEqual(before);
+    // Remote unchanged: nothing reads as a local edit, so nothing is pushed or conflicts.
+    const { conflicts, merged } = mergeBlobs(base, local, base);
+    expect(conflicts).toEqual([]);
+    expect(merged.profiles).toEqual(base.profiles);
+    expect(merged.backends).toEqual(base.backends);
+    // A peer's change to the same category merges cleanly and keeps the newer field.
+    const remote: SyncBlob = {
+      ...base,
+      profiles: { ...base.profiles!, list: [{ ...base.profiles!.list[0], name: "Renamed" }, base.profiles!.list[1]] },
+    };
+    expect(mergeBlobs(base, local, remote).conflicts).toEqual([]);
+  });
+
   it("a known field keeps the live value, and a deliberately local one is not echoed", async () => {
     const cfg = slice();
     cfg.settings.general.soundEffects = false;

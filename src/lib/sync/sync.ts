@@ -530,6 +530,43 @@ function knownKeysOf(c: SyncCategory): ReadonlySet<string> {
   return knownScalarKeys.get(c) ?? new Set();
 }
 
+/** Per typed list, every element key this version knows: what its sanitizer emits (it sets each
+ *  field Rust's `Profile` / `Backend` struct has). Built on first use, like `knownKeysOf`. */
+let knownElementKeySets: { profiles: ReadonlySet<string>; backends: ReadonlySet<string> } | undefined;
+function knownElementKeys(): { profiles: ReadonlySet<string>; backends: ReadonlySet<string> } {
+  return (knownElementKeySets ??= {
+    profiles: new Set(Object.keys(sanitizeProfiles([{ id: "p", name: "", hotkey: [] }])[0] ?? {})),
+    backends: new Set(Object.keys(sanitizeBackends([{ id: "b", serverUrl: "" }])[0] ?? {})),
+  });
+}
+
+/** `list` with each element given the keys its same-id snapshot element has that this version
+ *  does not know and the element lacks (the scalar echo, per element). Copies only the elements
+ *  it adds to — the live ones are the store's — and returns `list` itself when nothing moved. */
+function echoElementKeys<T extends { id: string }>(list: T[], snapList: unknown, known: ReadonlySet<string>): T[] {
+  if (!Array.isArray(list) || !Array.isArray(snapList)) return list;
+  const snapById = new Map<string, Record<string, unknown>>();
+  for (const e of snapList) {
+    if (isPlainObject(e) && typeof e.id === "string" && !snapById.has(e.id)) snapById.set(e.id, e);
+  }
+  let changed = false;
+  const out = list.map((el) => {
+    const snap = isPlainObject(el) ? snapById.get(el.id) : undefined;
+    if (!snap) return el;
+    let copy: T | undefined;
+    for (const [k, v] of Object.entries(snap)) {
+      if (v === undefined || known.has(k) || hasOwn(el, k)) continue;
+      copy ??= { ...el };
+      // defineProperty: the snapshot is parsed server JSON, so `__proto__` can be an own key.
+      Object.defineProperty(copy, k, { value: v, writable: true, enumerable: true, configurable: true });
+    }
+    if (!copy) return el;
+    changed = true;
+    return copy;
+  });
+  return changed ? out : list;
+}
+
 type StoreSlice = Pick<Config, "settings" | "backends" | "profiles"> & { appRules: AppRule[] };
 
 /** Blobs `composeBlob` built through its degraded-keyring pass-through (see `backendsDegraded`). */
@@ -646,6 +683,19 @@ export async function composeBlob(
         if (v === undefined || known.has(k) || hasOwn(out, k)) continue;
         Object.defineProperty(out, k, { value: v, writable: true, enumerable: true, configurable: true });
       }
+    }
+    // …and per element of the two typed lists: Rust's `Profile` / `Backend` have no catch-all,
+    // so a newer peer's per-element field lasts only until this device restarts, after which the
+    // live list reads as a local edit (a push erasing it, or a conflict nobody made). appRules
+    // needs none: Rust keeps them as untyped JSON.
+    const known = knownElementKeys();
+    if (cats.profiles && blob.profiles && Array.isArray(blob.profiles.list)) {
+      const list = echoElementKeys(blob.profiles.list, snapshot.profiles?.list, known.profiles);
+      if (list !== blob.profiles.list) blob.profiles = { ...blob.profiles, list };
+    }
+    if (cats.backends && isPlainObject(blob.backends) && Array.isArray(blob.backends.list)) {
+      const list = echoElementKeys(blob.backends.list, snapshot.backends?.list, known.backends);
+      if (list !== blob.backends.list) blob.backends = { ...blob.backends, list };
     }
   }
   // Per-setting gates (the granular "What this device syncs" switches). The
