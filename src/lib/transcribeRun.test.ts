@@ -1136,6 +1136,22 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
   });
 });
 
+describe("startRun releases the open record", () => {
+  it("drops openRecordId with the selection", async () => {
+    transcribeFile.mockImplementation((async () => { throw new Error("offline"); }) as never);
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    useTranscribeRun.setState({
+      files: ["/next.mp3"], queue: [], running: false, stageMeta: {}, stageTimes: {},
+      selectedPath: "/open.mp3", openRecordId: "A",
+    });
+    startRun(undefined, {}, { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false });
+    expect(useTranscribeRun.getState().selectedPath).toBeNull();
+    expect(useTranscribeRun.getState().openRecordId).toBeNull();
+    await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+    vi.unstubAllGlobals();
+  });
+});
+
 describe("runBadgeFraction (the sidebar badge)", () => {
   const state = (over: Partial<ReturnType<typeof useTranscribeRun.getState>>) => {
     useTranscribeRun.setState({

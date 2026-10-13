@@ -2469,7 +2469,10 @@ export function startRun(options: TranscribeOptions | undefined,
   const epoch = s.epoch + 1;
   set({
     epoch,
+    // The open record goes with the selection, as on every other selection drop: the
+    // Recent strip, the translating-elsewhere strip and the idle check read it.
     selectedPath: null,
+    openRecordId: null,
     queue: s.files.map((path): QueueItem => ({
       path,
       status: "queued",
