@@ -354,6 +354,18 @@ export function Select<T extends string>({
 }
 
 /* ── Stepper (numeric spinner) ────────────────────────────────────────── */
+/** What a Stepper keeps of typed text: digits — a leading minus when the range goes below zero,
+ *  and, when decimals are allowed, a single dot. A comma counts as the dot there (the numpad
+ *  decimal key types "," on de/fr/ch layouts), so "1,5" is 1.5, not 15; an integer Stepper still
+ *  drops it (a thousands separator). */
+export function filterStepperText(raw: string, min: number, decimals: number): string {
+  const neg = min < 0 && raw.trimStart().startsWith("-") ? "-" : "";
+  if (decimals <= 0) return neg + raw.replace(/[^0-9]/g, "");
+  const v = raw.replace(/,/g, ".").replace(/[^0-9.]/g, "");
+  const i = v.indexOf(".");
+  return neg + (i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""));
+}
+
 /** A −/+ numeric field for granular timeout-style settings. The value is typeable
  *  (clamped to [min,max] on blur/Enter, and Esc reverts uncommitted typing; decimals
  *  allowed when `decimals` > 0) and
@@ -512,15 +524,7 @@ export function Stepper({
     onChange(next);
     setText(String(next));
   };
-  // Keep only digits — a leading minus when the range goes below zero, and, when decimals are
-  // allowed, a single dot.
-  const filter = (raw: string) => {
-    const neg = min < 0 && raw.trimStart().startsWith("-") ? "-" : "";
-    if (decimals <= 0) return neg + raw.replace(/[^0-9]/g, "");
-    const v = raw.replace(/[^0-9.]/g, "");
-    const i = v.indexOf(".");
-    return neg + (i === -1 ? v : v.slice(0, i + 1) + v.slice(i + 1).replace(/\./g, ""));
-  };
+  const filter = (raw: string) => filterStepperText(raw, min, decimals);
 
   // −/+ step from the typed text while focused (stepBy), so their bounds must too.
   const cur = stepBase(text, focused, value);
