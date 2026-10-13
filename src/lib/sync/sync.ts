@@ -2588,9 +2588,11 @@ async function rePullAfterSession(): Promise<void> {
  *  parked on one launch wake together, the first taking it. False when a supersede (sync
  *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
  *  the lock one await hop later, so it loops on `inFlight` (the `manual && launchDone` block at the top of pullNow / pushNow). */
-// A manual Pull / Push already parked on launch (see the top of pullNow / pushNow).
-let parkedPull = false;
-let parkedPush = false;
+// The epoch of a manual Pull / Push already parked on launch (see the top of pullNow / pushNow):
+// a later click of the same epoch folds into it; one after a supersede parks on its own, since the
+// parked one will be voided.
+let parkedPullGen: number | null = null;
+let parkedPushGen: number | null = null;
 
 async function waitForLaunch(myGen: number): Promise<boolean> {
   if (launchDone) await launchDone;
@@ -2610,15 +2612,15 @@ export async function pullNow(manual = false): Promise<void> {
   // each wait has no await before the take below: a twin parked on the same launch may have
   // taken the lock in the hop since waitForLaunch saw it free.
   if (manual && launchDone) {
-    if (parkedPull) return;
-    parkedPull = true;
     const clickGen = gen;
+    if (parkedPullGen === clickGen) return;
+    parkedPullGen = clickGen;
     try {
       do {
         if (!(await waitForLaunch(clickGen))) return;
       } while (inFlight);
     } finally {
-      parkedPull = false;
+      if (parkedPullGen === clickGen) parkedPullGen = null;
     }
   }
   const backend = syncBackend();
@@ -2713,15 +2715,15 @@ export async function pushNow(manual = false): Promise<void> {
   // each wait has no await before the take below: a twin parked on the same launch may have
   // taken the lock in the hop since waitForLaunch saw it free.
   if (manual && launchDone) {
-    if (parkedPush) return;
-    parkedPush = true;
     const clickGen = gen;
+    if (parkedPushGen === clickGen) return;
+    parkedPushGen = clickGen;
     try {
       do {
         if (!(await waitForLaunch(clickGen))) return;
       } while (inFlight);
     } finally {
-      parkedPush = false;
+      if (parkedPushGen === clickGen) parkedPushGen = null;
     }
   }
   const backend = syncBackend();
