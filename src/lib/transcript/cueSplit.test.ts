@@ -1206,6 +1206,14 @@ describe("skin tones and flags stay whole", () => {
 });
 
 describe("cutByShare", () => {
+  it("a stop inside a closing quote or bracket is a sentence end: the cut goes after the closer", () => {
+    expect(cutByShare('He said, "Go home now." Then we all left the place quickly.', [1, 1]))
+      .toEqual(['He said, "Go home now."', "Then we all left the place quickly."]);
+    expect(cutByShare("他说：「我们走吧。」然后大家一起离开了这个地方好吗", [1, 1]))
+      .toEqual(["他说：「我们走吧。」", "然后大家一起离开了这个地方好吗"]);
+    // A Japanese quote the sentence goes on from (」と言った) is no sentence end.
+    expect(cutByShare("彼は『行こう！』と言ったそれから皆で一緒に離れました", [1, 1])[0]).not.toMatch(/』$/);
+  });
   it("prefers punctuation near the share target", () => {
     expect(cutByShare("Erstens das hier, zweitens das dort.", [1, 1])).toEqual(["Erstens das hier,", "zweitens das dort."]);
   });
@@ -1369,8 +1377,9 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     c3: { length: "custom", custom: { cpl: 42, lines: 3, maxDur: 7, cps: 17 }, timing: "same" },
     c1: { length: "custom", custom: { cpl: 42, lines: 1, maxDur: 7, cps: 17 }, timing: "same" },
   } satisfies Record<string, CueOptions>;
-  const split = (lang: string, text: string, spw: number, preset: keyof typeof OPTS, cjk: boolean) => {
-    const ws = cjk ? (text.match(/.{1,2}/gu) ?? []) : text.split(/\s+/);
+  const split = (lang: string, text: string, spw: number, preset: keyof typeof OPTS, cjk: boolean, tok = false) => {
+    const ws = tok ? text.split("|") : cjk ? (text.match(/.{1,2}/gu) ?? []) : text.split(/\s+/);
+    if (tok) text = ws.join("");
     const words = ws.map((w, i) => ({ word: (cjk ? "" : " ") + w, start: i * spw, end: i * spw + spw * 0.9 }));
     const r: BatchResult = { text, language: lang, words, segments: [{ start: 0, end: ws.length * spw, text: (cjk ? "" : " ") + text }] };
     const L = limitsFor(OPTS[preset], lang);
@@ -1404,11 +1413,19 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["en short preset quotes", "en", "He said, \"Go home now.\" Then we all left the place quickly.", 0.3, "short", "He said, \"Go home now.\" ⟨1⟩ | Then we all left the place quickly. ⟨1⟩"],
   ];
   const SPLIT_CJK: [label: string, lang: string, text: string, secPerWord: number, preset: keyof typeof OPTS, want: string][] = [
-    ["zh 。」", "zh", "他说：「我们走吧。」然后大家一起离开了这个地方，好吗？我们明天再见面吧。", 0.3, "std", "他说：「我们走吧。」然后大家一起离开了这个地方， ⟨2⟩ | 好吗？我们明天再见面吧。 ⟨1⟩"],
+    ["zh 。」", "zh", "他说：「我们走吧。」然后大家一起离开了这个地方，好吗？我们明天再见面吧。", 0.3, "std", "他说：「我们走吧。」 ⟨1⟩ | 然后大家一起离开了这个地方，好吗？我们明天再见面吧。 ⟨2⟩"],
     ["zh 、", "zh", "今天我们去了商店、市场、还有公园，然后在河边吃了午饭，最后坐公交车回家了。", 0.3, "std", "今天我们去了商店、市场、 ⟨1⟩ | 还有公园，然后在河边吃了午饭，最后坐公交车回家了。 ⟨2⟩"],
     ["ja 「」", "ja", "彼は「もう帰ろう。」と言った。それから私たちは皆で一緒にその場所を離れました。", 0.3, "std", "彼は「もう帰ろう。」と言った。それから私 ⟨2⟩ | たちは皆で一緒にその場所を離れました。 ⟨2⟩"],
     ["ja short", "ja", "今日はとても良い天気ですね。散歩に行きましょう。", 0.3, "short", "今日はとても良い ⟨1⟩ | 天気ですね。 ⟨1⟩ | 散歩に行きましょう。 ⟨1⟩"],
     ["zh numbers", "zh", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。", 0.3, "std", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。 ⟨2⟩"],
+  ];
+  // Whisper-like CJK words ("|" between them, punctuation riding with the word before).
+  const SPLIT_TOK: [label: string, lang: string, words: string, secPerWord: number, preset: keyof typeof OPTS, want: string][] = [
+    ["ja 「」と言った", "ja", "彼は|「もう|帰ろう。」|と|言った。|それから|私たちは|皆で|一緒に|その|場所を|離れました。", 0.4, "std", "彼は「もう帰ろう。」と言った。 ⟨2⟩ | それから私たちは皆で一緒にその場所を離れました。 ⟨2⟩"],
+    ["ja 『！』", "ja", "彼女は|『絶対に|行かない！』|と|叫んだ。|でも|結局|一緒に|来てくれた。", 0.4, "std", "彼女は『絶対に行かない！』と叫んだ。 ⟨2⟩ | でも結局一緒に来てくれた。 ⟨1⟩"],
+    ["zh 。」然后", "zh", "他说：|「我们|走吧。」|然后|大家|一起|离开了|这个|地方，|好吗？|我们|明天|再|见面吧。", 0.4, "std", "他说：「我们走吧。」 ⟨1⟩ | 然后大家一起离开了这个地方，好吗？我们明天再见面吧。 ⟨2⟩"],
+    ["zh （）", "zh", "这个|问题|（我们|昨天|讨论过。）|今天|还|需要|再|讨论|一次|才能|决定。", 0.4, "std", "这个问题（我们昨天讨论过。）今天还需要再讨论一次才能决定。 ⟨2⟩"],
+    ["ja 、", "ja", "今日は|天気が|良いので、|公園に|行って、|それから|買い物を|しましょう。", 0.4, "std", "今日は天気が良いので、公園に行って、 ⟨2⟩ | それから買い物をしましょう。 ⟨2⟩"],
   ];
   const WRAP: [label: string, text: string, cpl: number, lines: number, reserve: number, want: string][] = [
     ["w lights on", "how to turn the lights on, and then we can start", 42, 2, 0, "how to turn the lights on, / and then we can start"],
@@ -1422,12 +1439,12 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["w prefix", "the lights on, and then we can finally start", 42, 2, 8, "the lights on, / and then we can finally start"],
   ];
   const CUT: [label: string, text: string, shares: number[], want: string][] = [
-    ["c quote.", "He said, \"Go home now.\" Then we all left the place quickly.", [1, 1], "He said, \"Go home now.\" Then | we all left the place quickly."],
-    ["c quote?", "She asked, \"Are you coming?\" Then we all left the place quickly.", [1, 1], "She asked, \"Are you coming?\" Then | we all left the place quickly."],
-    ["c curly", "He said, “Go home now.” Then we all left the place quickly.", [1, 1], "He said, “Go home now.” Then | we all left the place quickly."],
-    ["c paren", "We bought it (all of it.) Then we went home together quickly.", [1, 1], "We bought it (all of it.) Then | we went home together quickly."],
-    ["c zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方好吗", [1, 1], "他说：「我们走吧。」然后 | 大家一起离开了这个地方好吗"],
-    ["c ja 。）", "彼は帰った（もう遅い。）それから皆で一緒に離れました", [1, 1], "彼は帰った（もう遅い。）そ | れから皆で一緒に離れました"],
+    ["c quote.", "He said, \"Go home now.\" Then we all left the place quickly.", [1, 1], "He said, \"Go home now.\" | Then we all left the place quickly."],
+    ["c quote?", "She asked, \"Are you coming?\" Then we all left the place quickly.", [1, 1], "She asked, \"Are you coming?\" | Then we all left the place quickly."],
+    ["c curly", "He said, “Go home now.” Then we all left the place quickly.", [1, 1], "He said, “Go home now.” | Then we all left the place quickly."],
+    ["c paren", "We bought it (all of it.) Then we went home together quickly.", [1, 1], "We bought it (all of it.) | Then we went home together quickly."],
+    ["c zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方好吗", [1, 1], "他说：「我们走吧。」 | 然后大家一起离开了这个地方好吗"],
+    ["c ja 。）", "彼は帰った（もう遅い。）それから皆で一緒に離れました", [1, 1], "彼は帰った（もう遅い。） | それから皆で一緒に離れました"],
     ["c ja ！』", "彼は『行こう！』と言ったそれから皆で一緒に離れました", [1, 1], "彼は『行こう！』と言ったそ | れから皆で一緒に離れました"],
     ["c plain .", "We went home. Then we all left the place quickly and quietly.", [1, 1], "We went home. Then we all left | the place quickly and quietly."],
     ["c plain ,", "We went home, then we all left the place quickly and quietly.", [1, 1], "We went home, then we all left | the place quickly and quietly."],
@@ -1437,9 +1454,13 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["c de „“", "Er sagte: „Geh jetzt nach Hause.“ Dann gingen wir alle schnell.", [1, 1], "Er sagte: „Geh jetzt nach Hause.“ | Dann gingen wir alle schnell."],
     ["c fr »", "Il a dit : « Rentre maintenant. » Puis nous sommes tous partis vite.", [1, 1], "Il a dit : « Rentre maintenant. » | Puis nous sommes tous partis vite."],
     ["c number", "It costs 3.99 dollars. That is cheaper than the 4.50 last year.", [1, 1], "It costs 3.99 dollars. | That is cheaper than the 4.50 last year."],
+    ["c ja 』と real", "彼は『行こう！』と言った。それから皆で一緒に離れました。", [1, 1], "彼は『行こう！』と言った。 | それから皆で一緒に離れました。"],
+    ["c ja 」ところで", "「もう帰ろう。」ところで明日の予定はどうなっていますか。", [1, 1], "「もう帰ろう。」ところで明日 | の予定はどうなっていますか。"],
+    ["c zh 」他说", "「我们走吧。」他说完就离开了这个地方，大家都很安静。", [1, 1], "「我们走吧。」 | 他说完就离开了这个地方，大家都很安静。"],
   ];
   it.each(SPLIT)("split %s", (_, lang, text, spw, preset, want) => expect(split(lang, text, spw, preset, false)).toBe(want));
   it.each(SPLIT_CJK)("split %s", (_, lang, text, spw, preset, want) => expect(split(lang, text, spw, preset, true)).toBe(want));
+  it.each(SPLIT_TOK)("split %s", (_, lang, words, spw, preset, want) => expect(split(lang, words, spw, preset, true, true)).toBe(want));
   it.each(WRAP)("wrap %s", (_, text, cpl, lines, reserve, want) => expect(wrapLines(text, cpl, lines, reserve).join(" / ")).toBe(want));
   it.each(CUT)("cut %s", (_, text, shares, want) => expect(cutByShare(text, shares).join(" | ")).toBe(want));
 });

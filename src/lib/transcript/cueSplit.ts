@@ -320,8 +320,16 @@ const ABBREV = new Set([
   "z.b.", "usw.", "bzw.", "ca.", "d.h.", "u.a.", "evtl.", "ggf.", "inkl.", "mme.", "m.",
 ]);
 
-const SENT_END = /[.?!…。？！](["'»”’)\]]*)$/;
-const CLAUSE = /[,;:–—、，；：]["'»”’)\]]*$/;
+const SENT_END = /[.?!…。？！](["'»”’)\]」』）】〉》]*)$/;
+const CLAUSE = /[,;:–—、，；：]["'»”’)\]」』）】〉》]*$/;
+/** cutByShare's stop and clause bonus: the mark may sit inside closing quotes or brackets
+ *  ('now." Then', '。」然后'), as in SENT_END / CLAUSE. */
+const CUT_SENT = /[.?!。？！]["'»”’)\]」』）】〉》]*$/;
+const CUT_CLAUSE = /[,;:，；、]["'»”’)\]」』）】〉》]*$/;
+/** A Japanese quote the sentence goes on from (「帰ろう。」と言った): the mark inside the
+ *  bracket ends the quote, not the sentence — no seam bonus there, as before the brackets counted. */
+const quoteGoesOn = (before: string, after: string): boolean =>
+  /[」』）】〉》]$/u.test(before) && /^(?:と|って)/u.test(after);
 
 function isSentenceEnd(word: string): boolean {
   const w = word.toLowerCase();
@@ -335,8 +343,9 @@ const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N
 /** Score of breaking between `prev` and `next` (words as written). */
 function breakScore(prev: string, next: string): number {
   let s = 0;
-  if (isSentenceEnd(prev)) s += 100;
-  else if (CLAUSE.test(prev)) s += 40;
+  const quoted = quoteGoesOn(prev, next);
+  if (!quoted && isSentenceEnd(prev)) s += 100;
+  else if (!quoted && CLAUSE.test(prev)) s += 40;
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
   else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev))) s -= 80;
@@ -759,7 +768,6 @@ export function cutByShare(text: string, shares: number[]): string[] {
     for (let j = 0; j < cand.length - (nCuts - 1 - k); j++) {
       const i = cand[j];
       if (i <= prev) continue;
-      const ch = text[i - 1];
       // Bounded look-back (NOBREAK words are under 9 chars): unspaced CJK text
       // used to slice and fold the whole prefix per candidate.
       const back = text.slice(Math.max(0, i - 9), i);
@@ -767,7 +775,7 @@ export function cutByShare(text: string, shares: number[]): string[] {
       const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase() : "";
       const s =
         -Math.abs(i - target) +
-        (/[.?!。？！]/.test(ch) ? 16 : /[,;:，；、]/.test(ch) ? 9 : 0) +
+        (quoteGoesOn(back, text.slice(i, i + 2)) ? 0 : CUT_SENT.test(back) ? 16 : CUT_CLAUSE.test(back) ? 9 : 0) +
         (sylSpaced && /\s/.test(text[i]) ? 9 : 0) -
         // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
         (spaced && !sylSpaced && !/\s/.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
