@@ -81,7 +81,7 @@ import {
   linkPrefetchFor, linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, lostContact, translateParsed, reconcileRetryOptions, refreshRowMediaPaths, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, clearWipedRowMediaPaths, lostContact, translateParsed, reconcileRetryOptions, refreshRowMediaPaths, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
   SITE_TRANSCRIPT_FALLBACK,
 } from "./transcribeRun";
 import { MULTI_LANGUAGE } from "./languages";
@@ -903,6 +903,37 @@ describe("refreshRowMediaPaths after a storage move", () => {
     }));
     refreshRowMediaPaths();
     expect(row()?.mediaPath).toBe("/new/links/moved-1.m4a");
+  });
+});
+
+// Run #75 F12-2: the links wipe stripped the record's copy but the open transcript's queue row
+// kept the deleted path, and the row's path wins in the viewer and the export.
+describe("clearWipedRowMediaPaths after 'Delete audio from link transcriptions'", () => {
+  it("drops the wiped copy from the open link's row; a path the wipe did not delete stays", async () => {
+    const rec: TranscriptRecord = {
+      schemaVersion: 1, kind: "url", id: "wiped-1", createdAt: "2026-10-14T12:00:00Z",
+      sourcePath: "https://host/wiped", sourceName: "wiped", status: "done", mediaPath: "/links/wiped-1.m4a",
+      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
+    };
+    openHistoryRecord(rec);
+    const row = () => useTranscribeRun.getState().queue.find((q) => q.path === "https://host/wiped");
+    expect(row()?.mediaPath).toBe("/links/wiped-1.m4a");
+    // The wipe stripped the record's copy (stripWipedCopyPath).
+    patchRecord("wiped-1", (r) => ({ ...r, mediaPath: undefined }));
+    clearWipedRowMediaPaths(new Set(["/links/other-1.m4a"]));
+    expect(row()?.mediaPath).toBe("/links/wiped-1.m4a");
+    clearWipedRowMediaPaths(new Set(["/links/wiped-1.m4a"]));
+    expect(row()?.mediaPath).toBeUndefined();
+  });
+  it("a record that kept its copy (re-stamped during the wipe) keeps the row's path", async () => {
+    const rec: TranscriptRecord = {
+      schemaVersion: 1, kind: "url", id: "fresh-1", createdAt: "2026-10-14T12:00:00Z",
+      sourcePath: "https://host/fresh", sourceName: "fresh", status: "done", mediaPath: "/links/fresh-1.m4a",
+      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
+    };
+    openHistoryRecord(rec);
+    clearWipedRowMediaPaths(new Set(["/links/fresh-1.m4a"]));
+    expect(useTranscribeRun.getState().queue.find((q) => q.path === "https://host/fresh")?.mediaPath).toBe("/links/fresh-1.m4a");
   });
 });
 

@@ -27,7 +27,7 @@ import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
   TranscriptSegment, VideoProgress,
 } from "./types";
-import { isVideoSourcePath, siteDisplayName, stampCopyPath } from "./transcript/mediaExport";
+import { isVideoSourcePath, siteDisplayName, stampCopyPath, withoutCopyPath } from "./transcript/mediaExport";
 import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage, translateSourceCode } from "./languages";
 import { trText } from "./transcript/cueSplit";
@@ -888,6 +888,26 @@ export function refreshRowMediaPaths(): void {
     if (!rec?.mediaPath || rec.mediaPath === it.mediaPath) return it;
     changed = true;
     return { ...it, mediaPath: rec.mediaPath };
+  });
+  if (changed) set({ queue });
+}
+
+/** After "Delete audio from link transcriptions" (`wiped`: the copy paths the wipe deleted,
+ *  already stripped from their records): drop a queue row's copy that is one of them while its
+ *  record no longer holds one. The row's path wins over the record's in the viewer and the
+ *  export, so an open link transcript went on playing and exporting the deleted file, and
+ *  refreshRowMediaPaths only re-points a row, never clears it. A record that still holds a copy
+ *  (one stamped during the wipe) or a row not resolving to a record keeps its path. */
+export function clearWipedRowMediaPaths(wiped: ReadonlySet<string>): void {
+  const s = get();
+  const open = s.openRecordId ? registered(s.openRecordId) : undefined;
+  let changed = false;
+  const queue = s.queue.map((it) => {
+    if (!it.mediaPath || !wiped.has(it.mediaPath)) return it;
+    const rec = open && open.sourcePath === it.path ? open : registered(it.path);
+    if (!rec || rec.mediaPath) return it;
+    changed = true;
+    return withoutCopyPath(it, "mediaPath");
   });
   if (changed) set({ queue });
 }

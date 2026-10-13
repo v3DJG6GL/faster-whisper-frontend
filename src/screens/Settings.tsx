@@ -17,7 +17,7 @@ import {
   type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
 import { copyPathsBeforeWipe, stripWipedCopyPath } from "@/lib/transcript/mediaExport";
-import { forgetRecord, refreshRowMediaPaths } from "@/lib/transcribeRun";
+import { clearWipedRowMediaPaths, forgetRecord, refreshRowMediaPaths } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
   deleteAllDictations,
@@ -312,6 +312,8 @@ export default function Settings() {
                   const before = copyPathsBeforeWipe(links, "mediaPath");
                   return removeTranscriptMedia("url", basePref).then(async (n) => {
                     for (const [id, p] of before) patchRecord(id, (r) => stripWipedCopyPath(r, "mediaPath", p));
+                    // An open link transcript's queue row carries the same path, and it wins.
+                    clearWipedRowMediaPaths(new Set([...before.values()].map((c) => c.path)));
                     await flushRecordWrites();
                     return n;
                   });
