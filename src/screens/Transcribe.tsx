@@ -109,7 +109,7 @@ function recentMeta(rec: TranscriptRecord): string {
 }
 
 /** Human label for a server progress stage (absent/unknown ⇒ generic). */
-function stageLabel(p: BatchProgress | null, forText = false): string {
+function stageLabel(p: BatchProgress | null, kind: ReturnType<typeof itemSourceKind> | null = null): string {
   switch (p?.stage) {
     case "waiting":
       return "Waiting for a server slot…";
@@ -130,9 +130,10 @@ function stageLabel(p: BatchProgress | null, forText = false): string {
     case "translating":
       return "Translating…";
     default:
-      // A text (translate-only) run has no transcribing stage, so before the
-      // first poll lands the generic word would be the wrong one.
-      return forText ? "Translating…" : "Transcribing…";
+      // Before the first poll lands (or all along on a never-polled standard
+      // server) the word must name the step the run panel marks active: a link
+      // starts on Download, a text (translate-only) run has no transcribing stage.
+      return kind === "url" ? "Downloading…" : kind === "text" ? "Translating…" : "Transcribing…";
   }
 }
 
@@ -3024,7 +3025,7 @@ export default function Transcribe() {
                             progress,
                             // A link ending in .srt/.txt is still downloaded and transcribed:
                             // the same url-first test the pump and the run panel apply.
-                            itemSourceKind(it) === "text",
+                            itemSourceKind(it),
                           ).toLowerCase()}
                     </span>
                   )}
