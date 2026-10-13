@@ -67,7 +67,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { chipStyle, renameToCommit, type EffSegment } from "@/components/transcribe/viewerKit";
+import { chipStyle, playRejectionBreaks, renameToCommit, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -1272,8 +1272,11 @@ export function TranscriptViewer({
   const togglePlay = () => {
     const a = audioRef.current;
     if (!a) return;
-    if (a.paused) void a.play().catch((e) => { if (e.name !== "AbortError") setAudioBroken(true); });
-    else a.pause();
+    if (a.paused) {
+      void a.play().catch((e) => {
+        if (playRejectionBreaks(e.name, decodePendingRef.current || bufferPendingRef.current)) setAudioBroken(true);
+      });
+    } else a.pause();
   };
 
   const cycleRate = () => {

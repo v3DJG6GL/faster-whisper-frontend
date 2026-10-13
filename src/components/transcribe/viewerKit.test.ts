@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { renameToCommit, speakerRenameValue } from "./viewerKit";
+import { playRejectionBreaks, renameToCommit, speakerRenameValue } from "./viewerKit";
 
 describe("speakerRenameValue", () => {
   it("drops the colon a subtitle re-import would end the name at", () => {
@@ -26,5 +26,20 @@ describe("renameToCommit", () => {
     expect(renameToCommit(long + "!", long)).toBe(long.slice(0, 40).trim());
     expect(renameToCommit("Host: Anna", undefined)).toBe("Host Anna");
     expect(renameToCommit("", "Anna")).toBe("");
+  });
+});
+
+describe("playRejectionBreaks", () => {
+  it("a failed source's NotSupportedError leaves the verdict to the fallback chain", () => {
+    expect(playRejectionBreaks("NotSupportedError", false)).toBe(false);
+    expect(playRejectionBreaks("AbortError", false)).toBe(false);
+  });
+  it("no rejection counts while a buffer read or a decode is still in flight", () => {
+    expect(playRejectionBreaks("NotSupportedError", true)).toBe(false);
+    expect(playRejectionBreaks("NotAllowedError", true)).toBe(false);
+  });
+  it("another rejection with nothing pending still marks playback broken", () => {
+    expect(playRejectionBreaks("NotAllowedError", false)).toBe(true);
+    expect(playRejectionBreaks("Error", false)).toBe(true);
   });
 });

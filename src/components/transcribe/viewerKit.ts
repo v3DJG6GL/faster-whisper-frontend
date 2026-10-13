@@ -30,3 +30,12 @@ export function speakerRenameValue(draft: string): string {
 export function renameToCommit(draft: string, stored: string | undefined): string | null {
   return draft.trim() === (stored ?? "").trim() ? null : speakerRenameValue(draft);
 }
+
+/** Whether a rejected play() means playback is broken. The error-event fallback chain (buffer →
+ *  blob → decoded WAV) decides that, not a Play press: WebKitGTK rejects play() at once with
+ *  NotSupportedError on an element whose source just failed, and any press while a buffer read
+ *  or a decode is in flight hits the element being replaced. AbortError = a pause or a new
+ *  source cut the play short. */
+export function playRejectionBreaks(name: string, fallbackPending: boolean): boolean {
+  return !fallbackPending && name !== "AbortError" && name !== "NotSupportedError";
+}
