@@ -596,7 +596,9 @@ describe("work that must wait for the queue or the cancel", () => {
     const call = final.search(/injectText\(\{ text: typeOut, clipboardText,/);
     expect(call, "the live insert must pass the bare block as its clipboard form").toBeGreaterThanOrEqual(0);
     // Hoisted above the try, so the catch's recovery copy reads the same form.
-    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : typeOut;\s*const clipboardText = clipForm !== typeOut \? clipForm : undefined;\s*try \{\s*\(\{ landed, diverted \} = await $/);
+    // An untranslated phrase's clipboard form drops its seam space, except for the clipboard-only
+    // method (the user pastes phrase after phrase there); a whitespace-only form falls back to text.
+    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : t\.method === +\? typeOut : typeOut\.trim\(\);\s*const clipboardText = clipForm && clipForm !== typeOut \? clipForm : undefined;\s*try \{\s*\(\{ landed, diverted \} = await $/);
     // …and nothing after it copies the phrase a second time. A JS re-copy after the await never
     // ran for an error-abort recovery (the teardown nulls insertCfg first) and, for a divert,
     // left a gapped duplicate in the clipboard history. The failed-insert catch's recovery copy

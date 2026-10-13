@@ -2428,9 +2428,12 @@ async function ensureListeners(): Promise<void> {
             // pasted text with three blank lines (three empty submits in a chat box). It has to be
             // Rust's write: a recovery's outcome arrives after the teardown nulled insertCfg, so a
             // JS re-copy after the await never ran for it, and one that did ran a second, gapped
-            // clipboard write into the user's clipboard history.
-            const clipForm = sessionTranslation ? block : typeOut;
-            const clipboardText = clipForm !== typeOut ? clipForm : undefined;
+            // clipboard write into the user's clipboard history. An untranslated phrase's form
+            // drops the seam space it is typed with (" Second phrase."): diverted or recovered,
+            // it is pasted somewhere new. The clipboard-only method keeps it — there the user
+            // pastes phrase after phrase into one text, and the space joins them.
+            const clipForm = sessionTranslation ? block : t.method === "clipboard" ? typeOut : typeOut.trim();
+            const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
             try {
               ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop }));
             } catch (e) {
