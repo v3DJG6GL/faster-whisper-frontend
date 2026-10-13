@@ -396,6 +396,16 @@ fn inside_app_storage(
     dirs.iter().any(|d| under(d, path))
 }
 
+/// Is `dest` the source file itself (through any symlink or `..`)? An export over its own
+/// source would replace the user's original with the export. A `dest` that does not exist yet
+/// is never the source.
+fn is_source_itself(src: &Path, dest: &Path) -> bool {
+    match (src.canonicalize(), dest.canonicalize()) {
+        (Ok(src), Ok(dest)) => src == dest,
+        _ => false,
+    }
+}
+
 /// Package a retained (or local) video with subtitle tracks to `dest_path`.
 /// Exactly one of `source_media_id` (the server already holds it) or
 /// `source_path` (a local file, uploaded first) names the video. Progress
@@ -483,6 +493,9 @@ pub async fn package_media(
                         .map_err(|e| format!("reading the video file: {e}"))?;
                     if !meta.is_file() {
                         return Err("the video is not a file".into());
+                    }
+                    if is_source_itself(&p, &checks_dest) {
+                        return Err("that is the file itself".into());
                     }
                     if meta.len() > max_upload {
                         return Ok(Err(PackageOutcome::err(
@@ -748,11 +761,7 @@ pub async fn copy_media_to(
         if inside_app_storage(&app, audio_base, parent) {
             return Err("choose a folder outside the app's own storage".into());
         }
-        if dest_path
-            .canonicalize()
-            .map(|c| c == src_real)
-            .unwrap_or(false)
-        {
+        if is_source_itself(&src_real, &dest_path) {
             return Err("that is the file itself".into());
         }
         let tmp = transport::media::tmp_sibling(&dest_path);
@@ -831,6 +840,30 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// The export-over-its-own-source guard (copy_media_to and package_media): the same
+    /// file through its own path, a symlink or a `..` detour is the source; another file
+    /// or a not-yet-existing destination is not.
+    #[test]
+    fn an_export_onto_its_own_source_is_recognised() {
+        let dir = scratch("self");
+        let src = dir.join("talk.mp4");
+        let other = dir.join("other.mp4");
+        std::fs::write(&src, b"video").unwrap();
+        std::fs::write(&other, b"video").unwrap();
+        assert!(is_source_itself(&src, &src));
+        std::fs::create_dir_all(dir.join("sub")).unwrap();
+        assert!(is_source_itself(&src, &dir.join("sub/../talk.mp4")));
+        #[cfg(unix)]
+        {
+            let link = dir.join("link.mp4");
+            std::os::unix::fs::symlink(&src, &link).unwrap();
+            assert!(is_source_itself(&src, &link));
+        }
+        assert!(!is_source_itself(&src, &other));
+        assert!(!is_source_itself(&src, &dir.join("new.mp4")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
