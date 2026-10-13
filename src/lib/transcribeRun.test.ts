@@ -750,6 +750,23 @@ describe("dropping a correction a re-translate was made from", () => {
     setSegmentEdit("fromedit-6", 0, "I read the books");
     expect(stale("fromedit-6")).toEqual({ 0: true });
   });
+  it("clicking into an uncorrected line and out again keeps its stale mark (revert, Discard)", () => {
+    openHistoryRecord(recOf("fromedit-7"));
+    setSegmentEdit("fromedit-7", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-7", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    setSegmentEdit("fromedit-7", 0, null);
+    expect(stale("fromedit-7")).toEqual({ 0: true });
+    // The bare focus + blur on the now uncorrected line commits null again.
+    setSegmentEdit("fromedit-7", 0, null);
+    expect(stale("fromedit-7")).toEqual({ 0: true });
+
+    openHistoryRecord(recOf("fromedit-8"));
+    setSegmentEdit("fromedit-8", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-8", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    clearEdits("fromedit-8");
+    setSegmentEdit("fromedit-8", 0, null);
+    expect(stale("fromedit-8")).toEqual({ 0: true });
+  });
 });
 
 describe("mergeSegmentTranslations keeps a known translation source", () => {

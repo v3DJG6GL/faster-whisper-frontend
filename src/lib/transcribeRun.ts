@@ -1337,9 +1337,10 @@ export function setSpeakerColor(key: string, label: string, idx: number) {
 
 /** Record (or with null, drop) a text correction for one segment. */
 export function setSegmentEdit(key: string, index: number, text: string | null) {
-  // Re-committing the same correction (a bare focus + blur on the row) changes nothing —
-  // above all not the stale mark of a translation that was made from it.
-  if (text !== null && get().edits[key]?.[index] === text) return;
+  // Re-committing what the line already holds (a bare focus + blur on the row: the same
+  // correction, or null on an uncorrected line) changes nothing — above all not the stale
+  // mark of a translation, which a revert or a Discard may have set.
+  if (get().edits[key]?.[index] === (text ?? undefined)) return;
   set((s) => {
     const file = { ...s.edits[key] };
     if (text === null) delete file[index];
