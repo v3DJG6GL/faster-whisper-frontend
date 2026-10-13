@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import { generateExport } from "./transcriptFormats";
 import {
   ACCEPTED_EXTS,
+  AUDIO_SOURCE_EXTS,
   TEXT_SOURCE_EXTS,
   dedupeRollingCues,
+  dialogFilterExts,
   fixBroadcasterText,
   isAcceptedSourcePath,
   isTextSourcePath,
@@ -452,6 +454,19 @@ describe("isAcceptedSourcePath", () => {
   });
   it("accepts every text source the parser handles", () => {
     for (const ext of TEXT_SOURCE_EXTS) expect(ACCEPTED_EXTS).toContain(ext);
+  });
+});
+
+describe("dialogFilterExts", () => {
+  // The Linux GTK3 dialog matches `*.mov` case-sensitively: an upper-case camera file
+  // (MVI_0042.MOV) must still be listed, as a drop of it is accepted.
+  it("lists every accepted extension in upper case too", () => {
+    const exts = [...dialogFilterExts(AUDIO_SOURCE_EXTS), ...dialogFilterExts(TEXT_SOURCE_EXTS)];
+    for (const ext of ACCEPTED_EXTS) {
+      expect(exts).toContain(ext);
+      expect(exts).toContain(ext.toUpperCase());
+    }
+    expect(dialogFilterExts(["json"])).toEqual(["json", "JSON"]);
   });
 });
 

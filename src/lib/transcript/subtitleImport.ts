@@ -19,6 +19,13 @@ export const TEXT_SOURCE_EXTS = ["srt", "vtt", "lrc", "txt", "json"] as const;
 export const AUDIO_SOURCE_EXTS = ["wav", "mp3", "m4a", "mp4", "aac", "ogg", "opus", "webm", "flac", "mkv", "mov", "m4v"] as const;
 export const ACCEPTED_EXTS: readonly string[] = [...AUDIO_SOURCE_EXTS, ...TEXT_SOURCE_EXTS];
 
+/** A native dialog filter's extensions in both spellings: the Linux GTK3 dialog matches
+ *  `*.mp4` case-sensitively, so a camera's `MVI_0042.MOV` would be hidden from the picker
+ *  while a drop of the same file is accepted. Windows and the portal ignore case anyway. */
+export function dialogFilterExts(exts: readonly string[]): string[] {
+  return exts.flatMap((e) => [e, e.toUpperCase()]);
+}
+
 /** Is this something the Transcribe screen accepts (dropped or picked)? */
 export function isAcceptedSourcePath(path: string): boolean {
   const m = /\.([A-Za-z0-9]+)$/.exec(path);

@@ -1,7 +1,7 @@
 // Bridge to the Rust core. Every call is guarded so the UI still runs in a plain
 // browser (`pnpm dev`) — outside Tauri the calls no-op or return safe defaults.
 
-import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS } from "./transcript/subtitleImport";
+import { AUDIO_SOURCE_EXTS, TEXT_SOURCE_EXTS, dialogFilterExts } from "./transcript/subtitleImport";
 import { invoke } from "@tauri-apps/api/core";
 import { safeDisplayText } from "./sanitize";
 import { languageCodeOf } from "./languages";
@@ -1480,10 +1480,10 @@ export async function pickAudioFiles(): Promise<string[]> {
     filters: [
       {
         name: "Audio / Video",
-        extensions: [...AUDIO_SOURCE_EXTS],
+        extensions: dialogFilterExts(AUDIO_SOURCE_EXTS),
       },
       // Text sources: translate-only runs (no audio ever exists for these).
-      { name: "Subtitles / Text", extensions: [...TEXT_SOURCE_EXTS] },
+      { name: "Subtitles / Text", extensions: dialogFilterExts(TEXT_SOURCE_EXTS) },
     ],
   });
   if (Array.isArray(selected)) return selected.filter((p): p is string => typeof p === "string");
@@ -1749,7 +1749,7 @@ async function pickImportFile(): Promise<string | null> {
   const selected = await open({
     multiple: false,
     directory: false,
-    filters: [{ name: "Settings export", extensions: ["json"] }],
+    filters: [{ name: "Settings export", extensions: dialogFilterExts(["json"]) }],
   });
   return typeof selected === "string" ? selected : null;
 }
