@@ -107,6 +107,13 @@ describe("translateStallMs", () => {
   it("is impatient once the model is known resident", () => {
     expect(translateStallMs(true)).toBe(STALL_WARM_MS);
   });
+
+  it("gives a warm long text twice one target's priced pass, within the ceiling", () => {
+    expect(translateStallMs(true, 20)).toBe(STALL_WARM_MS);
+    expect(translateStallMs(true, 1_600)).toBe(pricedMs(1_600, 1) * 2);
+    expect(translateStallMs(true, 100_000, 60_000)).toBe(60_000);
+    expect(translateStallMs(false, 100_000)).toBe(STALL_COLD_MS);
+  });
 });
 
 describe("translateModeFor", () => {
@@ -313,6 +320,45 @@ describe("runDictationTranslate", () => {
       expect(r).toMatchObject({ text: "Hallo", ok: false, cause: "timeout" });
       expect(String(r.error)).toContain("no progress");
       expect(d.cancel).toHaveBeenCalledTimes(1);
+    });
+
+    it("a warm one-shot over a long text is given one priced pass of silence, not 8 s", async () => {
+      // The text route ticks only when a target FINISHES: a ~1600-char hold one-shot is one
+      // completion, silent for its whole pass — progressing, not wedged.
+      const text = "x".repeat(1_600);
+      const d = {
+        ...deps(
+          (a) =>
+            new Promise<TextTranslationResult>((res) =>
+              setTimeout(() => res(answer(a.texts)), 12_000),
+            ),
+        ),
+        pollProgress: async () => ({ stage: "translating", progress: 0 }),
+      };
+      const p = runDictationTranslate(req({ text, warm: true, oneShot: true }), d);
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(d.cancel).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(await p).toMatchObject({ ok: true });
+      expect(d.cancel).not.toHaveBeenCalled();
+    });
+
+    it("a per-target tick (step/target change) counts as progress", async () => {
+      let polls = 0;
+      const d = {
+        ...deps(
+          (a) =>
+            new Promise<TextTranslationResult>((res) =>
+              setTimeout(() => res(answer(a.texts, ["en", "fr"])), 13_000),
+            ),
+        ),
+        // Frozen fraction; only the target moves on, after 6 s.
+        pollProgress: async () => ({ stage: "translating", progress: 0, target: ++polls <= 6 ? "en" : "fr" }),
+      };
+      const p = runDictationTranslate(req({ text: "Hallo", targets: ["en", "fr"], warm: true, oneShot: true }), d);
+      await vi.advanceTimersByTimeAsync(13_000);
+      expect(await p).toMatchObject({ ok: true });
+      expect(d.cancel).not.toHaveBeenCalled();
     });
 
     it("a progress endpoint that ERRORS is not a stall — the ceiling still applies", async () => {

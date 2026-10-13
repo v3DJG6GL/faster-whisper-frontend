@@ -205,11 +205,14 @@ export function translateCeilingMs(
  *  GGUF produces no measurable progress for tens of seconds, and treating that
  *  silence as a hang is precisely the mistake the old budget made. Once the
  *  session has seen one translation land, the model is resident and a long
- *  silence really is a wedge. */
+ *  silence really is a wedge — but the text route only ticks when a whole
+ *  target FINISHES, so one target's pass over `chars` is silent by design: the
+ *  warm allowance is at least twice its priced cost (never past `ceilingMs`). */
 export const STALL_WARM_MS = 8_000;
 export const STALL_COLD_MS = 45_000;
-export function translateStallMs(warm: boolean | null): number {
-  return warm === true ? STALL_WARM_MS : STALL_COLD_MS;
+export function translateStallMs(warm: boolean | null, chars = 0, ceilingMs = Infinity): number {
+  if (warm !== true) return STALL_COLD_MS;
+  return Math.min(ceilingMs, Math.max(STALL_WARM_MS, Math.round(pricedMs(chars, 1) * 2)));
 }
 
 /** Distinguishable rejections: the `finally` must cancel server-side for a race
@@ -264,7 +267,7 @@ export async function runDictationTranslate(
     oneShot: req.oneShot,
     queued: req.queued,
   });
-  const stallMs = translateStallMs(req.warm);
+  const stallMs = translateStallMs(req.warm, submittedChars, ceilingMs);
   const clock = deps.now ?? (() => Date.now());
   const pollMs = deps.pollMs ?? 1_000;
   // Only a race WE abandoned owes the server a cancel; set at the catch.
@@ -311,8 +314,11 @@ export async function runDictationTranslate(
               if (p) req.onProgress?.(p);
               // `position` moves within a stage that reports no fraction, so it
               // belongs in the signature: without it a long single-target pass
-              // reads as frozen.
-              const sig = p ? `${p.stage ?? ""}|${p.progress ?? ""}|${p.position ?? ""}` : "";
+              // reads as frozen. So do the step and the target: a multi-target
+              // run's per-target tick is its only sign of life.
+              const sig = p
+                ? `${p.stage ?? ""}|${p.progress ?? ""}|${p.position ?? ""}|${p.step ?? ""}|${p.target ?? ""}|${p.targetProgress ?? ""}`
+                : "";
               if (sig !== lastSig) {
                 lastSig = sig;
                 lastAdvance = clock();
