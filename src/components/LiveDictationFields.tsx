@@ -148,6 +148,14 @@ export function LiveDictationFields({
       ...(!partnerLocked && which === "outer" && pair.innerMs !== t.innerMs ? { streaming_vad_inner_silence_ms: pair.innerMs } : {}),
     });
   };
+  /** One key's ↺, shared by its control and its row: a pause moves its partner along, any other
+   *  key just inherits again. */
+  const resetOf = (k: DecodeKey) =>
+    k === "streaming_vad_inner_silence_ms"
+      ? resetPause("inner")
+      : k === "streaming_vad_outer_silence_ms"
+        ? resetPause("outer")
+        : patch({ [k]: undefined });
 
   // A disabled control shows the value the server applies (eff): a locked key's ignored own value
   // is not what runs, so it would read as the setting in force.
@@ -163,7 +171,7 @@ export function LiveDictationFields({
             value={num(eff(k))}
             inherited={num(inh(k)) ?? (k === "streaming_vad_inner_silence_ms" ? LIVE_FALLBACK.innerMs : LIVE_FALLBACK.outerMs)}
             inheritNote={noteOf(k)}
-            onReset={() => resetPause(k === "streaming_vad_inner_silence_ms" ? "inner" : "outer")}
+            onReset={() => resetOf(k)}
             onChange={(n) => setPause(k === "streaming_vad_inner_silence_ms" ? "inner" : "outer", n)}
             min={c.min}
             max={c.max}
@@ -180,7 +188,7 @@ export function LiveDictationFields({
             value={ms === undefined ? undefined : ms / 1000}
             inherited={(num(inh(k)) ?? LIVE_FALLBACK.hardMs) / 1000}
             inheritNote={noteOf(k)}
-            onReset={() => patch({ [k]: undefined })}
+            onReset={() => resetOf(k)}
             onChange={(s) => patch({ [k]: Math.round(s * 1000) })}
             min={c.min}
             max={c.max}
@@ -226,7 +234,7 @@ export function LiveDictationFields({
             step={c.step}
             defaultValue={base}
             onChange={(n) => patch({ [k]: Math.round(n * 100) / 100 })}
-            onReset={() => patch({ [k]: undefined })}
+            onReset={() => resetOf(k)}
             disabled={off}
           />
         );
@@ -250,11 +258,7 @@ export function LiveDictationFields({
           k === "streaming_hard_break_separator" || isLocked
             ? () => patch({ [k]: undefined })
             : why
-              ? k === "streaming_vad_inner_silence_ms"
-                ? () => resetPause("inner")
-                : k === "streaming_vad_outer_silence_ms"
-                  ? () => resetPause("outer")
-                  : () => patch({ [k]: undefined })
+              ? () => resetOf(k)
               : undefined;
         return (
           <OverrideHeader

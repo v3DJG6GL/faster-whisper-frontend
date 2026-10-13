@@ -350,8 +350,9 @@ function Editor({
         <Info className="mt-0.5 size-3.5 shrink-0" />
         {IS_LINUX ? (
           <>
-            On Wayland, push-to-talk (and modifier-only / AltGr chords) need the evdev backend (Settings →
-            Permissions). Hands-free works everywhere; you can also bind it in your desktop’s shortcut settings.
+            On Wayland, push-to-talk needs the evdev backend (Settings → Permissions). On any Linux desktop,
+            modifier-only chords (like Ctrl + Shift), AltGr and left/right-specific modifiers need it too.
+            Hands-free works everywhere; you can also bind it in your desktop’s shortcut settings.
           </>
         ) : (
           <>
