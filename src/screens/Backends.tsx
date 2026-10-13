@@ -274,11 +274,16 @@ function Editor({
     // Whether this run's answer still describes the target on screen. A blank-key run also needs
     // the stored key unrotated: once a pull rotates it, a new-caller run may already be out, and
     // this old-caller verdict landing after it must not replace its answer with one `resultLive`
-    // hides (nor bump testGen). A typed key is gen 0 on both sides.
+    // hides (nor bump testGen). A typed key is gen 0 on both sides. Nor may the stored key
+    // have come or gone: a pull that ADDS a key to a keyless backend moves no generation (the
+    // list card's handleTest and useBackendModels guard the same flip).
+    const storedHasKey = () => useApp.getState().backends.find((x) => x.id === b.id)?.hasApiKey ?? false;
+    const hadKey = storedHasKey();
     const stillLive = () =>
       liveTarget.current.url === testedUrl &&
       liveTarget.current.key === testedKey &&
-      requestCredentialGen(b.id, testedKey) === runGen;
+      requestCredentialGen(b.id, testedKey) === runGen &&
+      (!!testedKey || storedHasKey() === hadKey);
     inFlightTests.current.add(run);
     setTestingTargets((ts) => [...ts, run]);
     try {
@@ -301,8 +306,8 @@ function Editor({
         // The one case the store may take it now: the tested target is exactly the persisted
         // one (stored keyring key, same effective address, backend already saved), so the
         // verdict describes what the list card routes to — a Test-then-Cancel on an unedited
-        // backend still refreshes "server came back / went away". The stored key is unrotated:
-        // stillLive() above checked it, and nothing between here and there awaits.
+        // backend still refreshes "server came back / went away". The stored key is unrotated,
+        // neither added nor removed: stillLive() above checked it, and nothing since awaits.
         const live = useApp.getState();
         const stored = live.backends.find((x) => x.id === b.id);
         if (
