@@ -21,7 +21,8 @@ export const configReady: Promise<void> = new Promise((r) => {
 
 /** The startup "load" notice (settings reset / load failed), remembered so a later save
  *  failure (or a hotkey-conflict freeze) that takes the banner slot can't erase it for good:
- *  the next successful save puts it back. Dismissing the banner forgets it. */
+ *  the next successful save puts it back. Dismissing the load notice itself forgets it;
+ *  dismissing a save-failure or conflict banner shown over it keeps it remembered. */
 let loadNotice: string | null = null;
 
 /** Set once initConfig has armed the auto-save: lands the debounced save now. */
@@ -108,10 +109,12 @@ export async function initConfig(): Promise<void> {
     })
     .catch(() => {});
 
-  // The banner went away (the user dismissed it; the save path below never clears it while a
-  // load notice is remembered — it restores it instead) ⇒ forget the load notice.
+  // The load notice's banner went away (the user dismissed it; the save path below never clears
+  // it while a load notice is remembered — it restores it instead) ⇒ forget the load notice.
+  // Dismissing a save failure or a conflict freeze that took the slot does not: the next
+  // successful save puts the load notice back.
   useApp.subscribe((state, prev) => {
-    if (prev.saveError && !state.saveError) loadNotice = null;
+    if (prev.saveError && !state.saveError && prev.saveErrorKind === "load") loadNotice = null;
   });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
