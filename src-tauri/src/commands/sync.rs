@@ -181,8 +181,10 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
     }
     let text =
         std::fs::read_to_string(path).map_err(|e| format!("Could not read the file: {e}"))?;
+    // An export re-saved by an editor as "UTF-8 with BOM" is still valid JSON to the user.
+    let text = text.strip_prefix('\u{feff}').unwrap_or(&text);
     let mut doc: serde_json::Value =
-        serde_json::from_str(&text).map_err(|_| "That file isn't valid JSON.".to_string())?;
+        serde_json::from_str(text).map_err(|_| "That file isn't valid JSON.".to_string())?;
 
     let format_version = doc
         .get("formatVersion")
@@ -347,4 +349,22 @@ fn import_settings_file_inner(path: &str) -> Result<ImportResult, String> {
         has_secrets,
         warnings,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn an_export_saved_with_a_byte_order_mark_is_read_as_json() {
+        let dir = std::env::temp_dir().join(format!("fwf-import-bom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        std::fs::write(&path, "\u{feff}{}").unwrap();
+        let err = super::import_settings_file_inner(path.to_str().unwrap())
+            .err()
+            .unwrap();
+        // Past the JSON parse: it fails on the missing formatVersion, not as invalid JSON.
+        assert!(err.contains("formatVersion"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

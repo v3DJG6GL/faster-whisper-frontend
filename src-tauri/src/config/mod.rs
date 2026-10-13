@@ -1014,7 +1014,12 @@ pub(crate) fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     let mut attempt = 0;
     loop {
         match std::fs::read(path) {
-            Ok(bytes) => return Ok(Some(String::from_utf8_lossy(&bytes).into_owned())),
+            Ok(bytes) => {
+                // A leading byte-order mark (an editor's "UTF-8 with BOM") is not JSON to serde,
+                // and would reset a valid file to defaults.
+                let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+                return Ok(Some(String::from_utf8_lossy(bytes).into_owned()));
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => {
                 attempt += 1;
@@ -1370,6 +1375,18 @@ pub mod keys {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_config_saved_with_a_byte_order_mark_parses() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-bom-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("config.json");
+        std::fs::write(&path, b"\xEF\xBB\xBF{\"version\": 2}").unwrap();
+        let text = read_config_text(&path).unwrap().unwrap();
+        assert!(serde_json::from_str::<serde_json::Value>(&text).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn an_unusable_config_is_stashed_or_reported_unbacked() {
