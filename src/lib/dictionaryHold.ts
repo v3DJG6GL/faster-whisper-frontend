@@ -8,14 +8,23 @@
  *  - "clear": no backend is selected and nothing is unsaved — empty the document.
  *  - "keep-moved": the SAME backend's address changed under unsaved edits — keep them and warn.
  *  - "keep-gone": the backend whose rules are on screen is no longer a candidate, under unsaved
- *    edits — keep them and warn. */
-export type DictionaryLoadAction = "reload" | "clear" | "keep-moved" | "keep-gone";
+ *    edits — keep them and warn.
+ *  - "keep": the SAME backend at the SAME address under unsaved edits (it came back after
+ *    vanishing — a kind flipped back, a sync restore — or its address moved back): the document
+ *    is still its rules; keep the edits and end any hold. */
+export type DictionaryLoadAction = "reload" | "clear" | "keep-moved" | "keep-gone" | "keep";
 
 /** What the load-on-change effect does. `backendId` is the backend it is running for (null when
- *  the selection no longer resolves), `loadedId` the backend whose rules are on screen. */
-export function dictionaryLoadAction(backendId: string | null, loadedId: string | null, dirty: boolean): DictionaryLoadAction {
+ *  the selection no longer resolves), `loadedId` the backend whose rules are on screen, and
+ *  `sameAddress` whether the backend's address is the one those rules were fetched from. */
+export function dictionaryLoadAction(
+  backendId: string | null,
+  loadedId: string | null,
+  dirty: boolean,
+  sameAddress: boolean,
+): DictionaryLoadAction {
   if (backendId === null) return dirty && loadedId !== null ? "keep-gone" : "clear";
-  if (dirty && backendId === loadedId) return "keep-moved";
+  if (dirty && backendId === loadedId) return sameAddress ? "keep" : "keep-moved";
   return "reload";
 }
 

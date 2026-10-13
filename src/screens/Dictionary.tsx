@@ -793,9 +793,14 @@ export default function Dictionary() {
   }, []);
 
   useEffect(() => {
-    const action = dictionaryLoadAction(backend?.id ?? null, loadedIdRef.current, dirtyRef.current);
+    const sameAddress = !!backend && effectiveServerUrl(backend, useApp.getState().settings) === loadedUrlRef.current;
+    const action = dictionaryLoadAction(backend?.id ?? null, loadedIdRef.current, dirtyRef.current, sameAddress);
     if (action === "keep-moved" || action === "keep-gone") {
       setHeld(action);
+      return;
+    }
+    if (action === "keep") {
+      setHeld(null);
       return;
     }
     setHeld(null);
@@ -1124,11 +1129,20 @@ export default function Dictionary() {
           onStay={guard.stay}
         />
       )}
-      {held && candidates.length > 0 && (
+      {/* Also with no compatible server left: the rule list and its Discard bar are hidden then, but
+          the edits are still unsaved — the leave guard would ask about changes nobody can see. */}
+      {held && (
         <Notice>
           {held === "keep-moved"
             ? "This backend's address changed — your unsaved changes are kept. Save or discard them to load its rules again."
-            : "The backend these rules came from is no longer available — discard your changes to continue."}
+            : candidates.length > 0
+              ? "The backend these rules came from is no longer available — discard your changes to continue."
+              : (
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  The server these unsaved changes belong to is gone — discard them to leave.
+                  <Button variant="ghost" size="sm" onClick={discardAll} disabled={saving}>Discard</Button>
+                </span>
+              )}
         </Notice>
       )}
       {/* States */}

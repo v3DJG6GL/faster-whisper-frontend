@@ -5,27 +5,37 @@ import { dictionaryHeldResolution, dictionaryLoadAction, dictionarySelection } f
 
 describe("dictionaryLoadAction", () => {
   it("keeps unsaved edits when the same backend's address changes", () => {
-    expect(dictionaryLoadAction("a", "a", true)).toBe("keep-moved");
+    expect(dictionaryLoadAction("a", "a", true, false)).toBe("keep-moved");
+  });
+
+  it("ends the hold, without a reload, when the same backend is back at the same address", () => {
+    expect(dictionaryLoadAction("a", "a", true, true)).toBe("keep");
+  });
+
+  it("only a reload for the loaded backend at a NEW address while dirty is a move", () => {
+    expect(dictionaryLoadAction("a", "a", true, false)).toBe("keep-moved");
+    expect(dictionaryLoadAction("a", "a", false, true)).toBe("reload");
+    expect(dictionaryLoadAction("b", "a", true, true)).toBe("reload");
   });
 
   it("keeps unsaved edits when the loaded backend is no longer a candidate", () => {
-    expect(dictionaryLoadAction(null, "a", true)).toBe("keep-gone");
+    expect(dictionaryLoadAction(null, "a", true, false)).toBe("keep-gone");
   });
 
   it("reloads when nothing is unsaved", () => {
-    expect(dictionaryLoadAction("a", "a", false)).toBe("reload");
-    expect(dictionaryLoadAction("b", "a", false)).toBe("reload");
-    expect(dictionaryLoadAction("a", null, false)).toBe("reload");
+    expect(dictionaryLoadAction("a", "a", false, false)).toBe("reload");
+    expect(dictionaryLoadAction("b", "a", false, false)).toBe("reload");
+    expect(dictionaryLoadAction("a", null, false, false)).toBe("reload");
   });
 
   it("reloads a different backend (only a re-run for the loaded one keeps the document)", () => {
-    expect(dictionaryLoadAction("b", "a", true)).toBe("reload");
+    expect(dictionaryLoadAction("b", "a", true, false)).toBe("reload");
   });
 
   it("clears when no backend is selected and nothing is held", () => {
-    expect(dictionaryLoadAction(null, "a", false)).toBe("clear");
-    expect(dictionaryLoadAction(null, null, false)).toBe("clear");
-    expect(dictionaryLoadAction(null, null, true)).toBe("clear");
+    expect(dictionaryLoadAction(null, "a", false, false)).toBe("clear");
+    expect(dictionaryLoadAction(null, null, false, false)).toBe("clear");
+    expect(dictionaryLoadAction(null, null, true, false)).toBe("clear");
   });
 });
 
