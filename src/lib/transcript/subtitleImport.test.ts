@@ -253,6 +253,19 @@ describe("plain text + errors", () => {
       ...Array.from({ length: 10 }, (_, i) => `我们今天去公园\n然后回家吃饭${i}`),
     ]);
     expect(credits[12].text).toBe("我们今天去公园 然后回家吃饭9");
+    // A one-field credit with text after its mark is no speaker either (its name opens one cue).
+    expect(srt(["翻译: 小明。谢谢观看", ...Array.from({ length: 3 }, (_, i) => `我们今天去公园\n然后回家${i}`)])[3].text)
+      .toBe("我们今天去公园 然后回家2");
+    // A recurring speaker is stripped whatever the text holds: a quotation, a colon, a time, and
+    // a spaced Japanese name never reaches the phrase-space check.
+    const said = srt(Array.from({ length: 6 }, (_, i) => `Alice: 他说：“你好，今天我们\n去哪里${i}？”`));
+    expect(said[5]).toMatchObject({ speaker: "Alice", text: "他说：“你好，今天我们去哪里5？”" });
+    expect(srt(Array.from({ length: 6 }, (_, i) => `Alice: 你好，现在是10:30我们\n走吧${i}`))[5].text).toBe("你好，现在是10:30我们走吧5");
+    const yamada = srt([
+      ...Array.from({ length: 8 }, (_, i) => `山田 太郎: 今日はいい天気ですね、\nそうですね${i}`),
+      "山田 太郎: 彼は言った：「行こう」",
+    ]);
+    expect(yamada[0]).toMatchObject({ speaker: "山田 太郎", text: "今日はいい天気ですね、そうですね0" });
     const alice = srt([...Array<string>(6).fill("Alice: 好的。"), "Alice: 今天天气很好，我们\n去公园吧。"]);
     expect(alice[6]).toMatchObject({ speaker: "Alice", text: "今天天气很好，我们去公园吧。" });
     // A quotation after a colon carries its marks.

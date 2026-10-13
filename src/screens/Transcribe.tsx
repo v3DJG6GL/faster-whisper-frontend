@@ -311,9 +311,12 @@ export default function Transcribe() {
   // Per-run server override-profile pick; "" = inherit the Backend's. Same
   // not-persisted contract as runOverrides.
   const [runOverrideProfile, setRunOverrideProfile] = useState("");
-  // The pre-warm reads the name once typing settles: a custom name typed in the picker would
+  // The pre-warm reads a name once typing settles: a custom name typed in the picker would
   // otherwise send a preload per keystroke, each judged against a profile that does not exist.
-  const warmOverrideProfile = useDebounced(runOverrideProfile, 400);
+  // Back to inherit (a pick cleared, a backend switch's reset) applies at once — the debounced
+  // copy would send the old server's name to the new one.
+  const debouncedOverrideProfile = useDebounced(runOverrideProfile, 400);
+  const warmOverrideProfile = runOverrideProfile === "" ? "" : debouncedOverrideProfile;
   // Per-run TRANSLATION_CONTEXT_SEGMENTS; undefined = the backend's, else the server's. Same
   // not-persisted contract as runOverrides (it is not a synced setting).
   const [runContextSegments, setRunContextSegments] = useState<number | undefined>(undefined);

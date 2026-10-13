@@ -136,8 +136,20 @@ function bareLine(s: string): string {
  *  segments keep: each voice span is a line of its own (the blank between two spans is no
  *  phrase space), and a cue's first line goes without the "Name: " prefix cueText splits off as
  *  the speaker (our export writes one on every cue; its colon would hide the line's marks) —
- *  unless another colon field follows, as on a credit line. */
+ *  when that name opens at least two cues. A speaker recurs; a credit field ("翻译: 小明。",
+ *  "校对: 小刚") is written once, so it is judged whole and its colon keeps discounting its
+ *  marks. Colons inside the text (a quotation, a time) do not decide it. */
 function cuesOf(cues: RawCue[]): ImportedText {
+  const lead = (c: RawCue): string | undefined => {
+    const first = c.lines[0];
+    if (first === undefined || /^\s*<v[\s.]/.test(first)) return undefined;
+    return speakerPrefix(bareLine(first).trimStart())?.[1].trim();
+  };
+  const seen = new Map<string, number>();
+  for (const c of cues) {
+    const n = lead(c);
+    if (n !== undefined) seen.set(n, (seen.get(n) ?? 0) + 1);
+  }
   const judged = cues.flatMap((c) =>
     c.lines.flatMap((l, i) =>
       // Split at a blank run's first character only, so a long run is scanned once.
@@ -145,10 +157,7 @@ function cuesOf(cues: RawCue[]): ImportedText {
         const b = bareLine(part);
         if (i > 0 || k > 0 || /^\s*<v[\s.]/.test(part)) return b;
         const m = speakerPrefix(b.trimStart());
-        const rest = m ? b.trimStart().slice(m[0].length) : b;
-        // A further "X: " field is a credit line ("翻译: 小明。校对: 小刚"), not a speaker's text:
-        // judged whole, so its colons keep discounting its marks.
-        return m && !/[：:]/.test(rest) ? rest : b;
+        return m && (seen.get(m[1].trim()) ?? 0) >= 2 ? b.trimStart().slice(m[0].length) : b;
       }),
     ),
   );
