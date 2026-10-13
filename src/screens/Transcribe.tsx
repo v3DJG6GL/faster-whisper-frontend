@@ -39,7 +39,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -47,7 +47,7 @@ import {
   closeRecord, linkTranslateTo, linkUsesSiteTranscript, openHistoryRecord, retryRunVideo, SITE_TRANSCRIPT_FALLBACK,
 } from "@/lib/transcribeRun";
 import { clampJobsTtl } from "@/lib/jobsLedger";
-import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, stripUrlNoise } from "@/lib/backends";
+import { backendOptions, backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "@/lib/backends";
 import { ownModelName, withBackendChips } from "@/lib/backendChipLabels";
 import { effectiveServerKind } from "@/lib/serverKind";
 import { isAcceptedSourcePath, isTextSourcePath } from "@/lib/transcript/subtitleImport";
@@ -1461,7 +1461,7 @@ export default function Transcribe() {
                   (over 2,048 characters, unparsable host) — don't tell those to add it. */}
               {pastesSeveralLinks(urlDraft)
                 ? "Paste one link at a time."
-                : isSourceUrl(stripUrlNoise(urlDraft))
+                : isSourceUrl(stripMediaUrlNoise(urlDraft))
                 ? "This isn't a valid web address (links over 2,048 characters aren't supported)."
                 : "Include http:// or https:// at the start of the link."}
             </div>

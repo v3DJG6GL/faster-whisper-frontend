@@ -18,19 +18,33 @@ export function isSourceUrl(s: string): boolean {
   return /^https?:\/\//i.test(s);
 }
 
-/** Does this pasted text hold more than one link — a link, then horizontal whitespace and a
- *  second scheme, as a pasted "linkA linkB" chat line or two tab-separated spreadsheet cells
- *  read? `new URL` would percent-encode the space and quietly merge the two into one queue key.
- *  A second scheme WITHOUT whitespace before it stays a link: archive and redirect links embed
- *  one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…). Judged on the RAW
- *  text: stripUrlNoise deletes inner tabs, which would glue the two cells into one link. Line
- *  breaks go first, as the parsers drop them (a soft-wrapped single link stays one), and the
- *  edges are trimmed of any whitespace (a rich-text copy's U+00A0, an IME's U+3000, a BOM). Text
- *  that does not start with a link is not "several links" — it is text before a link. */
+/** A pasted MEDIA link's edges, cleared of whitespace and of the invisible format characters
+ *  web pages and chat clients add to copied text (U+200B, U+FEFF, U+2060, U+00AD — Unicode Cf),
+ *  then stripUrlNoise. Only the edges: inside the link nothing changes. A SERVER address keeps
+ *  stripUrlNoise alone (exactly the Rust transport's trim, which keeps U+FEFF). */
+export function stripMediaUrlNoise(raw: string): string {
+  // eslint-disable-next-line no-control-regex
+  return stripUrlNoise(raw.replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, ""));
+}
+
+/** Does this pasted text hold more than one link — a link, then whitespace or an invisible
+ *  separator and a second scheme, as a pasted "linkA linkB" chat line or two tab-separated
+ *  spreadsheet cells read? `new URL` would percent-encode the space and quietly merge the two
+ *  into one queue key. A second scheme WITHOUT a separator before it stays a link: archive and
+ *  redirect links embed one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…).
+ *  Judged on the RAW text: stripUrlNoise deletes inner tabs, which would glue the two cells into
+ *  one link. Line breaks (CR, LF) go first, as the parsers drop them (a soft-wrapped single link
+ *  stays one); the separators the parsers keep — U+2028/U+2029/U+0085, VT, FF, and a format
+ *  character such as U+200B — part two links. The edges are trimmed as stripMediaUrlNoise trims
+ *  them (a rich-text copy's U+00A0, an IME's U+3000, a BOM, a zero-width space). Text that does
+ *  not start with a link is not "several links" — it is text before a link. */
 export function pastesSeveralLinks(raw: string): boolean {
   // eslint-disable-next-line no-control-regex
-  const t = raw.replace(/[\n\r]/g, "").replace(/^[\x00-\x20\s]+|[\x00-\x20\s]+$/g, "");
-  return /^https?:\/\//i.test(t) && /[\t \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]https?:\/\//i.test(t);
+  const t = raw.replace(/[\n\r]/g, "").replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, "");
+  return (
+    /^https?:\/\//i.test(t) &&
+    /[\t\v\f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\p{Cf}]https?:\/\//iu.test(t)
+  );
 }
 
 /** Loose pasted text → a normalized media URL, or null when it isn't one.
@@ -48,7 +62,7 @@ export function pastesSeveralLinks(raw: string): boolean {
  *  doubles as the queue key, and rewriting it would split history identity
  *  from what the user pasted. */
 export function normalizeMediaUrl(raw: string): string | null {
-  const t = stripUrlNoise(raw);
+  const t = stripMediaUrlNoise(raw);
   if (t.length === 0 || t.length > 2048) return null;
   if (!/^https?:\/\//i.test(t)) return null;
   // One link per Add: a single space inside a path ("https://host/My File.mp3") stays accepted.

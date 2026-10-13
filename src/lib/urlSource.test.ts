@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, extractorPill, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, urlHost } from "./urlSource";
+import { displayLabel, extractorPill, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, stripMediaUrlNoise, urlHost } from "./urlSource";
+import { stripUrlNoise } from "./backends";
 
 describe("linkTooLong", () => {
   it("names the server's limit when the link runs longer", () => {
@@ -75,7 +76,18 @@ describe("normalizeMediaUrl", () => {
       // Edge U+00A0/U+3000 are trimmed as the Rust transport trims a server address (stripUrlNoise).
       ["\u00a0https://a/x", false, "https://a/x"],
       ["\u3000https://a/x", false, "https://a/x"],
-      ["\ufeffhttps://a/x", false, null],
+      // An edge BOM or zero-width space (a web page's or chat client's copy) is dropped from a
+      // media link — not from a server address (stripUrlNoise keeps U+FEFF, as Rust's trim does).
+      ["\ufeffhttps://a/x", false, "https://a/x"],
+      ["https://a/x\u200b", false, "https://a/x"],
+      ["\u200b https://a/x\u2060\u00ad", false, "https://a/x"],
+      // Separators the URL parsers keep (only CR/LF/tab are dropped) part two links.
+      ["https://a/x\u2028https://b/y", true, null],
+      ["https://a/x\u2029https://b/y", true, null],
+      ["https://a/x\u0085https://b/y", true, null],
+      ["https://a/x\vhttps://b/y", true, null],
+      ["https://a/x\fhttps://b/y", true, null],
+      ["https://a/x\u200bhttps://b/y", true, null],
       ["Watch this: https://youtu.be/abc", false, null],
       ["https://web.archive.org/web/2020/https://h/v.mp4", false, "https://web.archive.org/web/2020/https://h/v.mp4"],
       ["https://web.archive.org/web/2020/\nhttps://h/v.mp4", false, "https://web.archive.org/web/2020/https://h/v.mp4"],
@@ -89,6 +101,20 @@ describe("normalizeMediaUrl", () => {
       expect([raw, pastesSeveralLinks(raw)]).toEqual([raw, several]);
       expect([raw, normalizeMediaUrl(raw)]).toEqual([raw, url]);
     }
+  });
+  it("drops an invisible zero-width space or BOM at a media link's edges, not a server address's", () => {
+    expect(normalizeMediaUrl("https://youtu.be/abc\u200b")).toBe("https://youtu.be/abc");
+    expect(normalizeMediaUrl("\ufeffhttps://youtu.be/abc")).toBe("https://youtu.be/abc");
+    expect(pastesSeveralLinks("https://youtu.be/abc\u200b")).toBe(false);
+    expect(stripMediaUrlNoise("\u200bhttps://youtu.be/abc\ufeff")).toBe("https://youtu.be/abc");
+    // Inside the link nothing is touched.
+    expect(stripMediaUrlNoise("https://a/x\u200by")).toBe("https://a/x\u200by");
+    expect(stripUrlNoise("\ufeffhttp://srv:8000")).toBe("\ufeffhttp://srv:8000");
+  });
+  it("hears two links parted by a line/paragraph separator or a zero-width space", () => {
+    expect(pastesSeveralLinks("https://a.com/x\u2028https://b.com/y")).toBe(true);
+    expect(pastesSeveralLinks("https://a.com/x\u200bhttps://b.com/y")).toBe(true);
+    expect(normalizeMediaUrl("https://a.com/x\u2029https://b.com/y")).toBeNull();
   });
   it("keeps a link with an embedded scheme and a path with a space", () => {
     const archived = "https://web.archive.org/web/2020/https://example.com/v.mp4";
