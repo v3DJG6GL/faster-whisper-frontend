@@ -10,12 +10,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // the disk listing, which we drive here to exercise the malformed-record filter.
 const listTranscriptRecords = vi.fn<() => Promise<unknown[]>>();
 const saveTranscriptRecord = vi.fn((_id: string, _json: string, _dictation: boolean) => Promise.resolve());
+const deleteTranscriptRecord = vi.fn((_id: string, _audioBase: string | null) => Promise.resolve());
 // Event subscriptions are captured so a test can fire one (the real one no-ops outside Tauri).
 const listeners = new Map<string, (payload: unknown) => void>();
 vi.mock("../api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../api")>()),
   listTranscriptRecords: () => listTranscriptRecords(),
   saveTranscriptRecord: (id: string, json: string, d: boolean) => saveTranscriptRecord(id, json, d),
+  deleteTranscriptRecord: (id: string, audioBase: string | null) => deleteTranscriptRecord(id, audioBase),
   subscribe: (event: string, cb: (payload: unknown) => void) => {
     listeners.set(event, cb);
     return Promise.resolve(() => listeners.delete(event));
@@ -1159,6 +1161,29 @@ describe("deleteRecord", () => {
       expect(useTranscriptHistory.getState().records.find((r) => r.id === "del-1")).toBeUndefined();
     } finally {
       vi.useRealTimers();
+    }
+  });
+
+  it("brings the entry back when the disk delete fails", async () => {
+    const rec: TranscriptRecord = {
+      schemaVersion: 1, kind: "file", id: "del-2", createdAt: "2026-08-30T12:00:00Z",
+      sourcePath: "/y.mp3", sourceName: "y.mp3", status: "done", result: { text: "kept" },
+    };
+    listTranscriptRecords.mockResolvedValue([rec]);
+    await loadHistory();
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["del-2"]);
+    // Rust refuses the unlink (a locked file) and keeps the record on disk.
+    deleteTranscriptRecord.mockRejectedValueOnce("The process cannot access the file");
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      deleteRecord("del-2");
+      expect(useTranscriptHistory.getState().records.find((r) => r.id === "del-2")).toBeUndefined();
+      await flushRecordWrites();
+      await vi.waitFor(() =>
+        expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["del-2"]),
+      );
+    } finally {
+      err.mockRestore();
     }
   });
 });

@@ -6,7 +6,7 @@
 
 import { create } from "zustand";
 import {
-  audioBasePref, deleteTranscriptRecord, listTranscriptRecords, saveTranscriptRecord, subscribe,
+  audioBasePref, deleteTranscriptRecord, listTranscriptRecords, logLine, saveTranscriptRecord, subscribe,
 } from "../api";
 import { langText, languageCodeOf } from "../languages";
 import { useApp } from "../store";
@@ -696,7 +696,14 @@ export function deleteRecord(id: string): void {
     records: s.records.filter((r) => r.id !== id),
   }));
   void track(deleteTranscriptRecord(id, audioBasePref(useApp.getState().settings.recording)).catch(
-    (e) => console.error("history delete failed:", e),
+    (e) => {
+      console.error("history delete failed:", e);
+      logLine("warn", "history", "could not delete a History entry");
+      // Rust keeps the record (and its media) when the unlink fails, e.g. Windows briefly
+      // locking the file: re-list so the entry comes back instead of hiding until the next
+      // launch while the user believes it is gone from disk.
+      void loadHistory(true).catch(() => {});
+    },
   ));
 }
 
