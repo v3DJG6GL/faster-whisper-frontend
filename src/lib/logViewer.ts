@@ -88,9 +88,12 @@ export function clearedCount(): number {
 
 /** Every line logged this session: the ring's dense seq count (`status.seq`, Rust's next_seq), or
  *  the newest line this view has seen when a status lags it. Not the buffer: that keeps only the
- *  last LOG_BUFFER_CAP lines (and misses what the ring dropped while the screen was closed). */
-export function sessionLineCount(statusSeq: number): number {
-  return Math.max(statusSeq, nextSeq);
+ *  last LOG_BUFFER_CAP lines (and misses what the ring dropped while the screen was closed).
+ *  null while the live stream is not attached: `status.seq` only moves when the error/warn
+ *  totals change and `nextSeq` only on streamed lines, so either would show a frozen, understated
+ *  count as if it were live. */
+export function sessionLineCount(statusSeq: number, attached: boolean): number | null {
+  return attached ? Math.max(statusSeq, nextSeq) : null;
 }
 
 export function clearView() {

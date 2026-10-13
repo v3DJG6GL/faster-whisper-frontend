@@ -174,11 +174,18 @@ describe("sessionLineCount", () => {
     const many = Array.from({ length: LOG_BUFFER_CAP + 50 }, (_, i) => line(i + 2));
     emit?.({ lines: many });
     expect(visibleLines()).toHaveLength(LOG_BUFFER_CAP);
-    expect(sessionLineCount(0)).toBe(LOG_BUFFER_CAP + 52);
+    expect(sessionLineCount(0, true)).toBe(LOG_BUFFER_CAP + 52);
     // The ring's own count wins once known (lines it dropped while the screen was closed).
-    expect(sessionLineCount(25_000)).toBe(25_000);
+    expect(sessionLineCount(25_000, true)).toBe(25_000);
     clearView();
-    expect(sessionLineCount(useLogs.getState().status.seq)).toBe(LOG_BUFFER_CAP + 52);
+    expect(sessionLineCount(useLogs.getState().status.seq, true)).toBe(LOG_BUFFER_CAP + 52);
     detach();
+  });
+
+  // Run #75 F10-2: with the live stream not attached neither source moves, so the header showed a
+  // frozen, understated count as if it were live.
+  it("has no count while the live log could not be attached", () => {
+    expect(sessionLineCount(0, false)).toBeNull();
+    expect(sessionLineCount(25_000, false)).toBeNull();
   });
 });

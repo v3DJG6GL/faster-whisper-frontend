@@ -417,6 +417,7 @@ export default function Logs() {
       .finally(() => setOpeningFor((cur) => (cur === asked ? undefined : cur)));
   }
 
+  const sessionCount = sessionLineCount(sessionSeq, !attachError);
   return (
     <div className="flex h-full flex-col px-[var(--page-pad)] pt-6">
       <div className="font-mono text-[11px] uppercase tracking-label text-accent">{screenEyebrow("logs")}</div>
@@ -432,9 +433,11 @@ export default function Logs() {
             <StatusDot tone="live" pulse title="Streaming" /> Streaming
           </span>
         )}
-        <span className="ml-auto font-mono text-[12px] tabular-nums text-faint">
-          {plural(sessionLineCount(sessionSeq), "line")} this session
-        </span>
+        {sessionCount !== null && (
+          <span className="ml-auto font-mono text-[12px] tabular-nums text-faint">
+            {plural(sessionCount, "line")} this session
+          </span>
+        )}
       </div>
 
       <div className="page-content flex flex-wrap items-center gap-2 border-b border-line pb-3">
