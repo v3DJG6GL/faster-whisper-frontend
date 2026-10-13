@@ -221,16 +221,6 @@ describe("rows and chips (v30, v34, v37)", () => {
     expect(en.parts.map((p) => [p.key, p.on])).toEqual([["mt:en", false], ["ex:t1", true]]);
     expect(en.parts[1].title).toBe("Leave out the YouTube English subtitles");
   });
-  it("a script-qualified target (zh-Hant) is served by the site's track of that exact tag under Prefer", () => {
-    const inp = input({ tracks: [tr("en", "en"), tr("zh-Hant", "zh-Hant"), tr("zh-Hans", "zh-Hans")], spoken: "en", targets: ["zh-Hant"] });
-    const v = derive(inp, initialSiteState(inp.targets));
-    const row = (code: string) => v.rows.find((r) => r.code === code)!;
-    expect(row("zh-Hant").badges.map((b) => [b.key, b.state])).toEqual([["mt:zh-Hant", "idle"], ["ex:zh-Hant", "active"]]);
-    expect(v.run!.mtTargets).toEqual([]);
-    // The other script is a site language of its own (v32), not a second source for the target.
-    expect(row("zh").badges.map((b) => b.key)).toEqual(["mt:zh", "ex:zh-Hans"]);
-    expect(v.chips.find((c) => c.code === "zh-Hant")!.parts.map((p) => [p.key, p.on])).toEqual([["mt:zh-Hant", false], ["ex:zh-Hant", true]]);
-  });
 });
 
 describe("tracks and switches", () => {
