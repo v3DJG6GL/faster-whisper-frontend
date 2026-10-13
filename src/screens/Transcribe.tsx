@@ -3122,8 +3122,10 @@ export default function Transcribe() {
     </>
   );
 
+  /** The viewer is on screen: the strip below hides only the runs it shows itself. */
+  const viewerShown = result !== null && !!selectedPath;
   const viewer =
-    result && selectedPath ? (
+    viewerShown ? (
       <TranscriptViewer
         result={result}
         path={selectedPath}
@@ -3329,8 +3331,9 @@ export default function Transcribe() {
             </Card>
           ) : null)}
         {/* The viewer surfaces runs under openRecordId OR selectedPath —
-            everything else is "elsewhere". */}
-        <OtherTranslateRuns excludeKeys={[openRecordId, selectedPath]} />
+            everything else is "elsewhere", and so is every run while no viewer shows (a
+            new run started under an open record unmounts it). */}
+        <OtherTranslateRuns excludeKeys={viewerShown ? [openRecordId, selectedPath] : []} />
         {resultNotices}
       </div>
     </div>
