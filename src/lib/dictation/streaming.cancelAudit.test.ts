@@ -282,7 +282,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const enter = mask(fns.enqueueAutoEnter);
     const skip = enter.indexOf("if (lastPhraseDiverted) return;");
     expect(skip, "auto-Enter task must stand down after a diverted phrase").toBeGreaterThanOrEqual(0);
-    expect(skip).toBeLessThan(enter.indexOf("injectText("));
+    expect(skip).toBeLessThan(enter.indexOf("pressReturn("));
     // The boundary task stands down before BOTH its Enter and its separator (a newline
     // separator presses a real Return too).
     const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
@@ -311,15 +311,17 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwedApps\.add\(t\.appId\);/);
     expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwedApps");
     // Paid by a Return that landed: the quiet-timer Enter, and the hard break's Enter or newline
-    // separator — each after its own injectText, under the session token, and only when it landed
-    // in that app (a Return in app B does not end A's phrase).
+    // separator — all through pressReturn, which pays after its injectText, under the session
+    // token, and only when it landed in that app (a Return in app B does not end A's phrase).
     const settled = /if \(insertCfg === cfg && landed && !diverted\) gapOwedApps\.delete\(t\.appId\);/;
-    expect(mask(streamingSrc).match(/gapOwedApps\.(?:delete|clear)\(/g) ?? [], "every pay site is per app, or the reset").toHaveLength(4);
-    const enter = mask(fns.enqueueAutoEnter);
-    expect(enter).toMatch(settled);
-    expect(enter.search(settled)).toBeGreaterThan(enter.indexOf("injectText("));
+    expect(mask(streamingSrc).match(/gapOwedApps\.(?:delete|clear)\(/g) ?? [], "the one pay site, or the reset").toHaveLength(2);
+    const press = mask(fns.pressReturn);
+    expect(press.match(new RegExp(settled.source, "g")) ?? []).toHaveLength(1);
+    expect(press.search(settled)).toBeGreaterThan(press.indexOf("injectText("));
+    expect(mask(fns.enqueueAutoEnter)).toContain("pressReturn(t, cfg)");
     const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
-    expect(boundary.match(new RegExp(settled.source, "g")) ?? []).toHaveLength(2);
+    expect(boundary.match(/pressReturn\(t, cfg\)/g) ?? []).toHaveLength(2);
+    expect(boundary).not.toContain("autoEnter: true");
     // Never before a session's first phrase: every start and abandon resets it.
     expect(mask(fns.clearPhraseEnd)).toContain("gapOwedApps.clear();");
   });
@@ -769,6 +771,25 @@ describe("work that must wait for the queue or the cancel", () => {
     // The write may not have happened: never claim the clipboard holds our text, never re-send.
     expect(catchBody).not.toContain("clipHoldsOurs");
     expect(catchBody).not.toContain("injectText(");
+  });
+
+  it("a separator paste takes its own snapshot, like each phrase", () => {
+    // The separator used to restore the snapshot taken before the LAST phrase: after the quiet
+    // timer gave the clipboard back, a copy the user made before the hard break was replaced by
+    // that older content — on a landed separator and from the catch alike.
+    const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
+    const task = mask(bodyAfter(boundary, "enqueueInject(async () =>"));
+    const call = task.indexOf("injectText({ text: sep,");
+    expect(call, "the separator's injectText moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const begin = task.lastIndexOf("beginInjection(", call);
+    expect(begin, "the separator must snapshot the clipboard before its paste").toBeGreaterThanOrEqual(0);
+    // The phrase task's gate: never snapshot our own text as the user's original.
+    const gate = task.slice(task.lastIndexOf("if (", begin), begin);
+    expect(gate).toMatch(/t\.method ===\s+&& t\.restoreClipboard && !clipHoldsOurs && !t\.isSelf/);
+    // The awaited snapshot is a gap a cancel can land in: re-check the session token before pasting.
+    const between = task.slice(begin, call);
+    expect(between).toContain("beganInjection = true;");
+    expect(between, "a session-token check between the snapshot and the separator paste").toContain("if (insertCfg !== cfg) return;");
   });
 
   it("every clipboard restore goes through giveClipboardBack", () => {
