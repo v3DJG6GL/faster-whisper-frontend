@@ -249,6 +249,18 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(stop.slice(0, stop.indexOf("try {"))).not.toMatch(/clearPhraseEnd\(|phraseDirty =|clipDirty =/);
   });
 
+  it("a final that lands after the stop marks the phrase dirty but does not re-arm the phrase-end timer", () => {
+    // Re-armed during the drain, the timer skips its capture-gated deferral and presses Enter
+    // while the stopped utterance is still decoding — the split stopLive's timer clear prevents.
+    const grew = mask(bodyAfter(finalBody, "if (grew)"));
+    expect(grew, "a growing final still marks the phrase for the closed tail's Enter").toMatch(
+      /^\{\s*phraseDirty = true;/,
+    );
+    const bumps = grew.split("\n").filter((l) => l.includes("bumpPhraseEnd("));
+    expect(bumps.length, "while capturing a growing final still (re)arms the quiet timer").toBeGreaterThan(0);
+    for (const line of bumps) expect(line, "the final's bump must be gated on capturing").toMatch(/\bcapturing\b/);
+  });
+
   it("a chord-family upgrade/restart leaves a finalizing session alone", () => {
     // After stopLive the mic is closed but insertCfg is intact: flipping `live` would drop the
     // stop-mode insert, and cancelling would discard the draining transcript unsaved.

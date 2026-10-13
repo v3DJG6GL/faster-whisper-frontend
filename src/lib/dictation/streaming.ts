@@ -2600,12 +2600,15 @@ async function ensureListeners(): Promise<void> {
       // for text that was already typed + Entered; doing so is what fired a second Enter at hands-free
       // end). (Re)start the quiet timer so the per-phrase Enter + clipboard restore fire
       // ~PHRASE_END_QUIET_MS after you stop speaking (not at the ~20s hard break). Ongoing speech
-      // keeps bumping the timer via stream://partial.
+      // keeps bumping the timer via stream://partial. Only while capturing, like the partial's
+      // bump: after stopLive the timer's wait-for-the-server deferral is off, so a drain final
+      // re-arming it pressed Enter 1.2 s later while the stopped utterance was still decoding —
+      // the `closed` tail enters the drained text instead, off phraseDirty.
       if (grew) {
         // Unconditional: this flag means "text landed since the last Enter", not "Enter is
         // armed" — whether an Enter is actually wanted is resolved per target, later.
         phraseDirty = true;
-        bumpPhraseEnd();
+        if (capturing) bumpPhraseEnd();
       }
     }
   });
@@ -4149,8 +4152,9 @@ export async function stopLive(): Promise<void> {
   clearWarmTimer(); // drop the warm-up gate if we stop before the mic went live
   // The quiet timer's wait-for-the-server deferral is gated on capturing, so a timer left armed
   // here would press Enter after the previous phrase while the stopped utterance is still being
-  // decoded — splitting one sentence into two messages. The drain's final re-arms it and the
-  // `closed` tail enters the last phrase; the dirty flags stay for that tail.
+  // decoded — splitting one sentence into two messages. The drain's finals only set phraseDirty
+  // (no re-arm once capture ended) and the `closed` tail enters the last phrase; the dirty flags
+  // stay for that tail.
   clearPhraseEndTimer();
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
