@@ -253,6 +253,9 @@ export function ListPicker<R>({
   };
 
   const onListKey = (e: KeyboardEvent<HTMLElement>) => {
+    // Mid-composition the IME owns Esc (cancel the half-typed text), Enter (commit it) and the
+    // arrows (candidate list); WebKit still reports their `key`, with keyCode 229.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     const next = navKey(e.key, act, flat.length);
     if (next !== null) {
       e.preventDefault();

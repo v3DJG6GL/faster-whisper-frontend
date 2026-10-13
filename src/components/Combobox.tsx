@@ -147,6 +147,9 @@ export function Combobox({
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (disabled) return;
+    // Mid-composition the IME owns Esc (cancel), Enter (commit) and the arrows (candidate list);
+    // WebKit still reports their `key`, with keyCode 229.
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     switch (e.key) {
       case "ArrowDown":
         e.preventDefault();

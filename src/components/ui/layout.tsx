@@ -1,4 +1,4 @@
-import { type ReactNode, type ReactElement, cloneElement, isValidElement, useEffect, useId } from "react";
+import { type ReactNode, type ReactElement, cloneElement, isValidElement, useEffect, useId, useRef } from "react";
 import type { LucideIcon } from "lucide-react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronDown, Plus } from "lucide-react";
@@ -188,12 +188,34 @@ export function ConfirmLeave({
   onDiscard: () => void;
   onStay: () => void;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  // A modal takes the focus: left in the editor field behind the backdrop, keystrokes would keep
+  // editing the draft the dialog calls frozen (and Enter re-fire the button that opened it). The
+  // safe answer gets it; on close it goes back to where it was if that is still there (Keep
+  // editing), not after Discard / Save and leave unmounted the editor.
+  useEffect(() => {
+    const saved = document.activeElement as HTMLElement | null;
+    panelRef.current?.querySelector("button")?.focus({ preventScroll: true });
+    return () => {
+      if (saved?.isConnected) saved.focus({ preventScroll: true });
+    };
+  }, []);
   // Esc keeps you here: the destructive answer is never the reflex one.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.stopPropagation();
         onStay();
+      } else if (e.key === "Tab" && panelRef.current) {
+        // Tab cycles the three answers: it never walks out into the editor behind the backdrop.
+        const btns = Array.from(panelRef.current.querySelectorAll("button"));
+        if (!btns.length) return;
+        const i = btns.indexOf(document.activeElement as HTMLButtonElement);
+        const to = e.shiftKey ? (i <= 0 ? btns[btns.length - 1] : null) : i === -1 || i === btns.length - 1 ? btns[0] : null;
+        if (to) {
+          e.preventDefault();
+          to.focus();
+        }
       }
     };
     window.addEventListener("keydown", onKey, true);
@@ -208,7 +230,7 @@ export function ConfirmLeave({
       aria-modal="true"
       aria-label="Unsaved changes"
     >
-      <div className="w-full max-w-[420px]" onClick={(e) => e.stopPropagation()}>
+      <div ref={panelRef} className="w-full max-w-[420px]" onClick={(e) => e.stopPropagation()}>
         <Card className="px-6 py-5">
           <div className="text-[14px] font-semibold text-text">
             This {what} has unsaved changes

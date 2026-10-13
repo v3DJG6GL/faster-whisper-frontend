@@ -354,7 +354,8 @@ export function Select<T extends string>({
 
 /* ── Stepper (numeric spinner) ────────────────────────────────────────── */
 /** A −/+ numeric field for granular timeout-style settings. The value is typeable
- *  (clamped to [min,max] on blur/Enter; decimals allowed when `decimals` > 0) and
+ *  (clamped to [min,max] on blur/Enter, and Esc reverts uncommitted typing; decimals
+ *  allowed when `decimals` > 0) and
  *  steppable via the buttons (press-and-hold to repeat) or the Arrow keys. `zeroLabel`
  *  shows a word in place of 0 (e.g. "Never" / "Instant").
  *
@@ -585,6 +586,17 @@ export function Stepper({
             commit();
           }}
           onKeyDown={(e) => {
+            // Esc drops the uncommitted typing and stays here: the text only commits on blur/Enter,
+            // so an editor's window Esc would read its dirty state without it and leave unguarded,
+            // losing the number in silence. An untouched field lets Esc through (to leave).
+            if (e.key === "Escape" && editedRef.current) {
+              e.preventDefault();
+              e.stopPropagation();
+              editedRef.current = false;
+              textRef.current = String(value);
+              setText(String(value));
+              return;
+            }
             if (e.key === "Enter") e.currentTarget.blur();
             else if (e.key === "ArrowUp") {
               e.preventDefault();

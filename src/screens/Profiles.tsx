@@ -233,6 +233,8 @@ function Editor({
   const guard = useUnsavedGuard(dirty);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Mid-composition Esc cancels the IME's half-typed text, not the editor.
+      if (e.isComposing || e.keyCode === 229) return;
       // Not while capturing a chord — Esc cancels the capture there.
       if (e.key === "Escape" && !capturing && !guard.asking) guard.guardExit(onCancel);
     };

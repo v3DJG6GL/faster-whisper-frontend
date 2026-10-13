@@ -428,6 +428,8 @@ function Editor({
   const guard = useUnsavedGuard(dirty);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Mid-composition the IME owns Esc (it cancels the candidate), not the editor.
+      if (e.isComposing || e.keyCode === 229) return;
       if (e.key === "Escape" && !guard.asking && !savingKey) guard.guardExit(onCancel);
     };
     window.addEventListener("keydown", onKey);
