@@ -298,6 +298,19 @@ describe("sanitisation", () => {
     expect(out).not.toContain("‬");
     expect(out).toContain("BadName: pay 005$ now");
   });
+  it("a line break inside segment text flattens by the seam rule: none inside CJK, one space elsewhere", () => {
+    const r: BatchResult = {
+      text: "",
+      language: "ja",
+      segments: [{ start: 0, end: 1, text: "今日は\nいい天気" }, { start: 1, end: 2, text: "a \n b" }],
+    };
+    for (const format of ["srt", "vtt", "lrc"] as const) {
+      const out = generateExport(r, { format });
+      expect(out).toContain("今日はいい天気");
+      expect(out).toContain("a b");
+      expect(out).not.toContain("今日は いい天気");
+    }
+  });
 });
 
 describe("display-toggle model (speakerNames / timestamps)", () => {
@@ -1219,7 +1232,7 @@ describe("cueGrid / tracksOf", () => {
 
 describe("speakerName (viewer, panel and exports)", () => {
   it("the rename, else the prettified label — a bidi-only rename never blanks it", () => {
-    expect(speakerName({ SPEAKER_00: "  Ann\n Lee " }, "SPEAKER_00")).toBe("Ann  Lee");
+    expect(speakerName({ SPEAKER_00: "  Ann\n Lee " }, "SPEAKER_00")).toBe("Ann Lee");
     expect(speakerName({ SPEAKER_00: "\u202e\u200f" }, "SPEAKER_00")).toBe("Speaker 1");
     expect(speakerName(undefined, "SPEAKER_01")).toBe("Speaker 2");
   });

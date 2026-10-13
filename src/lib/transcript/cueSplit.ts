@@ -110,9 +110,20 @@ const BREAKS_ANYWHERE =
  *  base character judges the seam. */
 export function edgeChar(s: string, end: boolean): string {
   if (!end) return s ? String.fromCodePoint(s.codePointAt(0)!) : "";
-  const t = s.replace(/\p{M}+$/u, "");
+  // Anchored to a run's first mark: unanchored, every mark of a long run restarted the scan.
+  const t = s.replace(/(?<!\p{M})\p{M}+$/u, "");
   const lo = t.charCodeAt(t.length - 1);
   return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
+}
+/** Text with every line break (and the blanks around it) folded the way the seam rule says:
+ *  nothing between two unspaced characters (a CJK cue wrapped over two lines), one space
+ *  otherwise — the subtitle import, the edit commit and every export flatten alike. A
+ *  match starts only at a blank run's first character, so a long run is scanned once. */
+export function joinLineBreaks(s: string): string {
+  if (!s.includes("\n")) return s;
+  return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
+    unspacedChar(edgeChar(str.slice(Math.max(0, off - 8), off), true))
+      && unspacedChar(edgeChar(str.slice(off + m.length, off + m.length + 2), false)) ? "" : " ");
 }
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 
@@ -236,6 +247,8 @@ interface Tok {
   /** Cached breakScore of the gap before this token — it depends only on the two
    *  adjacent tokens, which every recursion level of splitTokens shares. */
   bs?: number;
+  /** An opening quote split off the word it was glued to (tokensOf): no cue ends on it. */
+  opens?: boolean;
 }
 
 /** Word timings mapped onto char spans of `text`; null when the words don't
@@ -245,6 +258,7 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
   if (!words.length) return null;
   const out: Tok[] = [];
   let cur = 0;
+  let flags: boolean[] | undefined;
   for (const w of words) {
     const tw = w.word.trim();
     if (!tw) continue;
@@ -252,8 +266,24 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     // Only whitespace/punctuation may sit between consecutive words.
     if (at < 0 || !/^[\s\p{P}]*$/u.test(text.slice(cur, at))) return null;
     if (out.length) out[out.length - 1].to = at;
-    out.push({ from: at, to: at + tw.length, s: w.start, e: Math.max(w.start, w.end) });
+    const tok: Tok = { from: at, to: at + tw.length, s: w.start, e: Math.max(w.start, w.end) };
+    out.push(tok);
     cur = at + tw.length;
+    // Whisper glues a quote to the word before it (」" ”"): when it opens the next quotation
+    // (an even count of its kind so far, a later partner, a letter right after it), it is a
+    // token of its own on the same clock, so the cut never lands right after it.
+    const qm = /[\p{Pe}\p{Pf}](["'])$/u.exec(tw);
+    if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
+      flags ??= quoteFlags(text);
+      const j = cur - 1;
+      let n = 0;
+      let later = false;
+      for (let x = 0; x < text.length; x++) if (flags[x] && text[x] === qm[1]) { if (x < j) n++; else if (x > j) later = true; }
+      if (flags[j] && n % 2 === 0 && later) {
+        tok.to = j;
+        out.push({ from: j, to: cur, s: tok.s, e: tok.e, opens: true });
+      }
+    }
   }
   // Text the words don't reach (a word timed past the segment) = mismatch.
   if (!out.length || !/^[\s\p{P}]*$/u.test(text.slice(cur))) return null;
@@ -452,8 +482,14 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     // Never right after an opening bracket or right before a closing one or a stop, as cutByShare
     // and wrapLines: a 「 or 」 Whisper times as a word of its own ended or started a cue. Below
     // every other seam's score (a pause included), so it is taken only when there is no other.
-    if (OPENER.test(edgeChar(text.slice(ts[i - 1].from, ts[i - 1].to).trimEnd(), true))
-      || CLOSE_PUNCT.includes(text[at] || "\0")) s -= 1000;
+    // Western marks too: a lone opening mark after a space or a closer (" «", " „", ”“), a quote
+    // tokensOf split off as an opener, a word of closers and stops alone (" »", " !", ’'), and
+    // an English clitic after a closing quote (‘Tokyo’' | s).
+    const left = text.slice(ts[i - 1].from, ts[i - 1].to).trimEnd();
+    const right = text.slice(at, ts[i].to).trim();
+    if (ts[i - 1].opens || OPENER.test(edgeChar(left, true)) || /(?:^|[\s\p{Pe}\p{Pf}])[\p{Ps}\p{Pi}]+$/u.test(left)
+      || CLOSE_PUNCT.includes(text[at] || "\0") || /^(?:(?!["'])[\p{Pe}\p{Pf}\p{Po}])+["']*$/u.test(right)
+      || (/[\p{Pe}\p{Pf}]'$/u.test(left) && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])/iu.test(right))) s -= 1000;
     // Both sides read by index: slicing the token array per candidate made every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
     const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
@@ -761,6 +797,39 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
   });
 }
 
+/** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
+ *  quotation: a typographic opener (”“ ’‘ »«, also after a closing ASCII quote) anywhere in
+ *  the match, an ASCII quote only as the match's last character ("Hello""再见, “OK”"再见)
+ *  and only when it opens (an even count of its kind so far and a later partner). Either
+ *  needs a letter, digit or opener glued after it. Uncut, the opener rode on the text
+ *  before it and a line or part ended on it. */
+function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
+  const n: Record<string, number> = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
+  let pos = 0;
+  for (const m of t.matchAll(MIXED_TOKEN)) {
+    const idx = m.index!;
+    const end = idx + m[0].length;
+    for (; pos < idx; pos++) if (flags[pos]) n[t[pos]]++;
+    let s = idx;
+    for (let j = idx; j < end; j++) {
+      if (j > idx) {
+        const p = t[j - 1];
+        const closer = /[\p{Pe}\p{Pf}]/u.test(p) || (flags[j - 1] && n[p] % 2 === 0);
+        let e = -1;
+        if (closer && /\p{Pi}/u.test(t[j])) for (e = j; e < end && /\p{Pi}/u.test(t[e]); ) e++;
+        else if (closer && j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1) e = end;
+        if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
+          yield [t.slice(s, j), s];
+          s = j;
+        }
+      }
+      if (flags[j]) n[t[j]]++;
+    }
+    pos = end;
+    yield [t.slice(s, end), s];
+  }
+}
+
 /** Tokens of text with a CJK/Thai-like run (MIXED_TOKEN; spaced or not — spreadTokens and
  *  wrapLines tokenize unspaced text by them too), per token whether whitespace stood
  *  before it, and where in `t` it starts. Punctuation glued to its neighbour (an ASCII
@@ -775,7 +844,9 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
  *  letters or digits (it's) and an inch or foot mark after a digit (6.1") are no quotes
  *  (quoteFlags). The last unpaired one joins the text before it: a single unpaired quote,
  *  including a closer whose opener was in the previous segment, is ambiguous and stays
- *  joined backward. */
+ *  joined backward. A match where a closing quote is glued to the next quotation's opener
+ *  (他说：“你好。”“我很好。”, "Hello""再见) is first cut between the two (quoteSeams), so the
+ *  closer stays with what it closes and the opener rides forward with what it opens. */
 function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]; at: number[] } {
   const toks: string[] = [];
   const gaps: boolean[] = [];
@@ -790,9 +861,9 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
   for (let j = 0; j < t.length; j++) if (flags[j]) total[t[j]]++;
   /** The token that ends on an opening ASCII quote: the next one joins it. */
   let quoted = -1;
-  for (const m of t.matchAll(MIXED_TOKEN)) {
-    let w = m[0];
-    let idx = m.index!;
+  for (const [w0, idx0] of quoteSeams(t, flags, q, total)) {
+    let w = w0;
+    let idx = idx0;
     const gap = idx > end;
     end = idx + w.length;
     const k = toks.length - 1;

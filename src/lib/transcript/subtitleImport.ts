@@ -5,7 +5,7 @@
 
 import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
-import { edgeChar, unspacedChar } from "./cueSplit";
+import { edgeChar, joinLineBreaks, unspacedChar } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -84,10 +84,12 @@ function decodeEntities(s: string): string {
 
 /** Cue text without markup: tags (`<font>`, `<c.x>`, `<i>`, inline word tags) and ASS
  *  override blocks go, then character references decode (after, so `&lt;i&gt;` stays text),
- *  whitespace collapses. The decode runs after parseImportedText's control-char pass, so
- *  `&#x202E;` / `&#27;` would mint the very characters that pass dropped — strip again. */
+ *  line breaks join by the seam rule (none inside a CJK cue the export wrapped over two
+ *  lines) and whitespace collapses. The decode runs after parseImportedText's control-char
+ *  pass, so `&#x202E;` / `&#27;` would mint the very characters that pass dropped — strip
+ *  again. */
 function stripMarkup(s: string): string {
-  return stripControlChars(decodeEntities(s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "")))
+  return joinLineBreaks(stripControlChars(decodeEntities(s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, ""))))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -100,7 +102,7 @@ function voiceName(raw: string): string {
 
 /** Strip markup a cue line may carry and split a leading "Name:" speaker. */
 function cueText(lines: string[]): { text: string; speaker?: string } {
-  const joined = stripMarkup(lines.join(" "));
+  const joined = stripMarkup(lines.join("\n"));
   const m = /^([^:\n]{1,40}):\s+(.*)$/.exec(joined);
   // A leading "Name: " prefix becomes the speaker — but never a clock-like
   // token ("12:30 lunch") or a URL scheme.
@@ -230,8 +232,10 @@ export function fixBroadcasterText(lines: string[]): string[] {
   );
 }
 
-/** The "start --> end [settings]" line of an SRT/VTT cue. */
-const CUE_TIMES = /^(.+?)\s+--&?>\s+(.+?)(?:\s+.*)?$/;
+/** The "start --> end [settings]" line of an SRT/VTT cue. The start ends only where a blank
+ *  run starts (`\s` alone covers a line that opens with one): a lazy `.+?` could stop inside
+ *  the run at every character, and a long run of spaces took quadratic time. */
+const CUE_TIMES = /^(\s|.*?\S)\s+--&?>\s+(.+?)(?:\s+.*)?$/;
 
 /** Raw cues → segments, after the rolling-caption and broadcaster cleanup every SRT/VTT
  *  import gets. `<v Name>` voice tags (VTT) carry the speaker; cueText handles the rest. */
@@ -239,7 +243,7 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
   const segments: ImportedText["segments"] = [];
   for (const { start, end, lines: raw } of dedupeRollingCues(cues)) {
     const lines = fixBroadcasterText(raw);
-    const joined = lines.join(" ").trim();
+    const joined = lines.join("\n").trim();
     // One cue may carry a two-person exchange ("<v Alice>Hi</v> <v Bob>Hello</v>"): one
     // segment per voice span, all on the cue's clock — the single-span regex below would
     // run the lazy group to the end and credit both lines to the first voice.
@@ -388,7 +392,7 @@ function parsePlainText(body: string): ImportedText {
   // files fall back to one segment per line.
   const paras = body
     .split(BLANK_LINE)
-    .map((p) => p.replace(/\s+/g, " ").trim())
+    .map((p) => joinLineBreaks(p).replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const parts =
     paras.length > 1

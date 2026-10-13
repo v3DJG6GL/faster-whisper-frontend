@@ -86,6 +86,21 @@ describe("round-trips against generateExport", () => {
     // Tags with no space between Latin words still separate them.
     expect(parseImportedText("lrc", "[00:01.00]<00:01.00>Hello<00:01.50>there\n").segments[0].text).toBe("Hello there");
   });
+  it("srt/vtt: a CJK cue the export wrapped over two lines reads back without a space at the break", () => {
+    const text = "今日はとてもいい天気ですね。明日も晴れるでしょう。";
+    const ja: BatchResult = {
+      text,
+      language: "ja",
+      segments: [{ start: 0, end: 4, text }],
+      words: [...text].map((word, i) => ({ word, start: i * 0.15, end: i * 0.15 + 0.15 })),
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      const out = generateExport(ja, { format, cues: { length: "standard", timing: "same" } });
+      expect(out).toMatch(/[\u3040-\u9fff]\n[\u3040-\u9fff]/); // the export did wrap a cue
+      expect(parseImportedText(format, out).segments.map((s) => s.text).join("")).toBe(text);
+      expect(parseImportedText(format, out).segments.every((s) => !/\s/.test(s.text))).toBe(true);
+    }
+  });
   it("lrc: a tag beside CJK punctuation round-trips without a space (same seam rule as the export)", () => {
     const tagged = (text: string, ws: string[]): BatchResult => ({
       text,
@@ -179,6 +194,30 @@ describe("plain text + errors", () => {
     expect([seg("tagalog"), seg("myanmar"), seg("Maori"), seg("cantonese")]).toEqual(["tl", "my", "mi", "yue"]);
     // A code stays as the file wrote it; a word no language goes by stays too.
     expect([seg("EN"), seg("pt-BR"), seg("klingon")]).toEqual(["EN", "pt-BR", "klingon"]);
+  });
+  it("a cue's or paragraph's line break joins by the seam rule: none inside CJK, one space elsewhere", () => {
+    const srt = (body: string) => parseImportedText("srt", `1\n00:00:01,000 --> 00:00:02,000\n${body}\n`).segments[0];
+    expect(srt("今日はとても\n良い天気ですね").text).toBe("今日はとても良い天気ですね");
+    expect(srt("<i>今日は</i>\n<i>晴れです</i>").text).toBe("今日は晴れです");
+    expect(srt("Hello there\nmy friend").text).toBe("Hello there my friend");
+    expect(srt("我喜欢\niPhone").text).toBe("我喜欢 iPhone");
+    expect(srt("Alice: 我们\n去了")).toMatchObject({ speaker: "Alice", text: "我们去了" });
+    const vtt = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v 田中>今日は天気が\nいいですね\n").segments[0];
+    expect(vtt).toMatchObject({ speaker: "田中", text: "今日は天気がいいですね" });
+    // Two voices in one cue still split per voice.
+    const two = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n- <v Alice>你好\n- <v Bob>再见\n").segments;
+    expect(two.map((s) => [s.speaker, s.text])).toEqual([["Alice", "你好"], ["Bob", "再见"]]);
+    // A hard-wrapped CJK paragraph of a .txt file.
+    expect(parseImportedText("txt", "我们今天去公园\n散步然后回家\n\nSecond\npara").segments.map((s) => s.text))
+      .toEqual(["我们今天去公园散步然后回家", "Second para"]);
+  });
+  it("a times line holding a long blank run parses in linear time, to the same cues", () => {
+    const ws = " ".repeat(100_000);
+    const srt = `1\n00:00:01,000 --> 00:00:02,000\nHello\n \nx${ws}y\n\n2\n00:00:03,000${ws}-->${ws}00:00:04,000\nWorld\n`;
+    const t0 = performance.now();
+    const segs = parseImportedText("srt", srt).segments;
+    expect(performance.now() - t0).toBeLessThan(1000);
+    expect(segs.map((s) => [s.start, s.end, s.text])).toEqual([[1, 2, "Hello x y"], [3, 4, "World"]]);
   });
   it("a whitespace-only line separates paragraphs", () => {
     expect(parseImportedText("txt", "One para.\n \t\nTwo para.").segments.map((s) => s.text))

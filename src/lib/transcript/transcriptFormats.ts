@@ -5,7 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueQuoteCtx, cueResult, edgeChar, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
+  buildCues, cueQuoteCtx, cueResult, edgeChar, joinLineBreaks, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
   type Cue, type CueGrid, type CueLimits, type CueOptions, type QuoteCtx,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
@@ -161,10 +161,12 @@ export function exportOptionsFor(a: {
   };
 }
 
-function clean(s: string): string {
+/** Segment text as every export writes it (and the Subtitles view shows it). */
+export function clean(s: string): string {
   // Exports are single-logical-line records; a newline inside segment text
-  // would corrupt SRT/LRC framing, so collapse it.
-  return stripControlChars(s).replace(/\n/g, " ").trim();
+  // would corrupt SRT/LRC framing, so collapse it — by the seam rule, so two lines of
+  // CJK text join without a space, as the edit commit joins them.
+  return joinLineBreaks(stripControlChars(s)).trim();
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0");

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, edgeChar, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "../types";
@@ -606,6 +606,32 @@ describe("wrapLines", () => {
       for (let k = 1; k < 20; k++) expect(cutByShare(m, [k, 20 - k]).some((p) => /^'s/.test(p))).toBe(false);
     }
   });
+  it("a closing quote glued to the next quotation's typographic opener: the opener rides with what it opens", () => {
+    // ”“ (or "“, »«, ’‘) was one glued match judged as one: it joined the text before it, and a
+    // line or part ended on the next quotation's opening mark.
+    const endsOnOpener = (l: string) => /[“‘«]$/.test(l) || /[\p{Pe}\p{Pf}"']["']$/u.test(l);
+    for (const m of ["他说：“你好。”“我很好。”然后他们走了回家吧", "坚持“四个全面”“五位一体”的总体布局", "他说“Hello”“再见”然后回家吃饭了",
+      '他说"Hello""再见朋友"然后走了很远', '他说“你好朋友”"再见朋友"然后走了', '他说"你好朋友"“再见朋友”然后走了', "他说«东京»«你好»的然后走了",
+      "他说‘东京’‘你好’的然后走了"]) {
+      for (let cpl = 4; cpl <= 16; cpl++) {
+        const lines = wrapLines(m, cpl, 2);
+        expect(lines.slice(0, -1).some(endsOnOpener), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+        expect(lines.join("")).toBe(m);
+      }
+      for (let k = 1; k < 20; k++) {
+        const parts = cutByShare(m, [k, 20 - k]);
+        expect(parts.slice(0, -1).some(endsOnOpener), `[${k}]: ${parts.join(" | ")}`).toBe(false);
+        expect(parts.join("")).toBe(m);
+      }
+    }
+    expect(cutByShare("他说：“你好。”“我很好。”然后我们一起回家了", [1, 2])[0]).toBe("他说：“你好。”");
+    // A quoted brand name is no longer torn to keep the opener off the line end.
+    expect(wrapLines("我们看到了“Microsoft”“Google”两个牌子", 16, 2)).toEqual(["我们看到了“Microsoft”", "“Google”两个牌子"]);
+    // A German or Scandinavian closer is no opener of the next quotation: those stay as they were.
+    expect(wrapLines("„Hallo“東京です", 8, 2)).toEqual(["„Hallo“", "東京です"]);
+    expect(wrapLines("”Ja””Nej”東京", 6, 2)).toEqual(["”Ja””", "Nej”東京"]);
+    expect(wrapLines("»Ja«»Nej«東京", 10, 2)).toEqual(["»Ja«»Nej«", "東京"]);
+  });
   it("a cue right after an inch mark counts its quotes as its segment does", () => {
     // The cue starts on the " after the 6 of the cue before: an inch mark in the segment, but
     // counted alone the cue took it for a quote and the opening one of "很好" ended a line.
@@ -946,12 +972,96 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
   });
 });
 
+describe("buildCues keeps quotation marks with what they open and close", () => {
+  /** Whisper-style words (no space before a CJK word; a quote glued to the word before it). */
+  const resOf = (ws: string[], language: string, pauses: Record<number, number> = {}): BatchResult => {
+    let t = 0;
+    const words = ws.map((word, i) => {
+      const w = { word, start: t, end: t + 0.3 };
+      t = w.end + 0.05 + (pauses[i] ?? 0);
+      return w;
+    });
+    const text = ws.join("");
+    return { text, language, words, segments: [{ start: 0, end: t, text }] };
+  };
+  it("a quote Whisper glued to a closing bracket (」\") opens the next quotation: no cue ends on it", () => {
+    const r = resOf(["他说", "今天", "天气", "「two", " words", '」"', '再见"', "然后", "我们", "一起", "走了", "很远", "很远", "的路"], "zh");
+    for (const length of ["short", "standard"] as const) {
+      const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+      expect(texts.slice(0, -1).some((c) => /」"$/.test(c)), texts.join(" | ")).toBe(false);
+      expect(texts.some((c) => /^」/.test(c)), texts.join(" | ")).toBe(false);
+      expect(texts.join("")).toBe(r.text);
+    }
+  });
+  it("a spaced guillemet or „ timed as a word of its own neither ends nor starts a cue", () => {
+    const fr = resOf([" Alors", " il", " a", " crié", " «", " attention !", " »", " avant", " de", " partir", " vers", " la", " gare",
+      " du", " nord", " ce", " soir"], "fr");
+    const de = (p: number) => resOf([" Er", " sagte", " dann", " ganz", " leise", " „", "Hallo", " Welt“", " und", " ging", " nach",
+      " Hause", " zurück"], "de", { [p]: 0.3 });
+    for (const cpl of [32, 42]) for (const lines of [1, 2]) {
+      for (const maxDur of [1.5, 2, 3]) {
+        const texts = buildCues(fr, { length: "custom", custom: { cpl, lines, maxDur, cps: 17 }, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+        expect(texts.some((c, k) => (k > 0 && /^»/.test(c)) || (k < texts.length - 1 && /«$/.test(c))), texts.join(" | ")).toBe(false);
+      }
+      // Beside a pause on either side of it.
+      for (const p of [4, 5]) {
+        const texts = buildCues(de(p), { length: "custom", custom: { cpl, lines, maxDur: 3, cps: 17 }, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+        expect(texts.slice(0, -1).some((c) => /„$/.test(c)), texts.join(" | ")).toBe(false);
+      }
+    }
+  });
+  it("a closing quote and an ASCII quote timed as one word start no cue, and the 's after them stays", () => {
+    // Words on an even 0.35 s grid, as Whisper times them.
+    const even = (ws: string[], language: string): BatchResult => {
+      const text = ws.join("");
+      const words = ws.map((word, k) => ({ word, start: k * 0.35, end: k * 0.35 + 0.3 }));
+      return { text, language, words, segments: [{ start: 0, end: ws.length * 0.35, text }] };
+    };
+    const tail = ["と", "言", "っ", "て", "か", "ら", "遠", "く", "ま", "で", "歩", "い", "て", "行", "き", "ま", "し", "た"];
+    for (const [o, c] of [["‘", "’'"], ["«", "»'"]]) {
+      for (const r of [even(["彼", "は", "今", "日", "東", "京", o, "S", c, "s", ...tail], "ja"),
+        even(["he", " said", " that", " 東", "京", o, "S", c, "s", " to", " them", " today", " and", " then", " left"], "en")]) {
+        const texts = buildCues(r, { length: "short", timing: "same" }, ["orig"]).cues.map((x) => x.text);
+        expect(texts.some((x, k) => k > 0 && /^[’»']/.test(x)), texts.join(" | ")).toBe(false);
+        expect(texts.some((x, k) => k < texts.length - 1 && /'$/.test(x) && /^s/.test(texts[k + 1])), texts.join(" | ")).toBe(false);
+      }
+    }
+  });
+});
+
+describe("joinLineBreaks", () => {
+  it("joins two lines of unspaced text with nothing, anything else with one space", () => {
+    expect(joinLineBreaks("你好\n世界")).toBe("你好世界");
+    expect(joinLineBreaks("東京は\n\n大阪より")).toBe("東京は大阪より");
+    expect(joinLineBreaks("今日は \n いい天気")).toBe("今日はいい天気");
+    expect(joinLineBreaks("Hello\nworld")).toBe("Hello world");
+    expect(joinLineBreaks("Hello \n world")).toBe("Hello world");
+    expect(joinLineBreaks("東京\nTokyo")).toBe("東京 Tokyo");
+    expect(joinLineBreaks("我喜欢\niPhone")).toBe("我喜欢 iPhone");
+    expect(joinLineBreaks("no  break ")).toBe("no  break ");
+  });
+  it("a long blank run before no line break stays fast", () => {
+    const s = "x" + " ".repeat(60_000) + "y\nz";
+    const t0 = performance.now();
+    expect(joinLineBreaks(s)).toBe("x" + " ".repeat(60_000) + "y z");
+    expect(performance.now() - t0).toBeLessThan(500);
+  });
+});
+
 describe("edgeChar", () => {
   it("skips trailing combining marks and variation selectors at the end", () => {
     expect(edgeChar("か\u3099", true)).toBe("か");
     expect(edgeChar("葛\u{E0100}", true)).toBe("葛");
     expect(edgeChar("𠀋", true)).toBe("𠀋");
     expect(edgeChar("\u3099", true)).toBe("");
+  });
+  it("a long run of combining marks anywhere in the text is scanned once", () => {
+    const s = "x" + "\u0e48".repeat(30_000) + " rest";
+    const t0 = performance.now();
+    expect(edgeChar(s, true)).toBe("t");
+    expect(edgeChar("x" + "\u0e48".repeat(30_000), true)).toBe("x");
+    expect(performance.now() - t0).toBeLessThan(500);
+    expect(edgeChar("が\u3099", true)).toBe("が");
   });
 });
 

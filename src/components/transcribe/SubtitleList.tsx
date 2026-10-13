@@ -25,7 +25,7 @@ import {
   type CueGrid, type CueLimits, type CueOptions, type QuoteCtx,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
-import { writesCue, writtenTrackCues } from "@/lib/transcript/transcriptFormats";
+import { clean, writesCue, writtenTrackCues } from "@/lib/transcript/transcriptFormats";
 import type { BatchResult } from "@/lib/types";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 
@@ -262,7 +262,8 @@ export function SubtitleList({
     /** One track's text of a cue: name prefix, wrapped to its limits (`q` = the quotes of its
      *  segment around it, as the export wraps it). */
     const lineOf = (track: string, text: string, speaker: string | undefined, main: boolean, q?: QuoteCtx): Line => {
-      const body = stripControlChars(text);
+      // Cleaned as the export cleans it: a line break inside the text is one line there too.
+      const body = clean(text);
       // No name on an empty cell: the export writes none there either.
       const prefix = showNames && speaker && body.trim() ? `${displayName(speaker)}: ` : "";
       const L = limitOf(track);
