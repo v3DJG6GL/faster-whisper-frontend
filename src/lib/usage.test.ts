@@ -832,6 +832,27 @@ describe("usage poll gates", () => {
       useApp.setState({ usageViewQuery: { range: "90", with: [] } });
     }
   });
+
+  it("a backend set to Standard clears its kept numbers once, instead of freezing them", async () => {
+    await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
+    await settle();
+    const doc = { today: { words: 12 }, total: {}, series: [] } as never;
+    useApp.setState((s) => ({ usage: { ...s.usage, b1: doc } }));
+    const before = useApp.getState().backends;
+    try {
+      useApp.setState({ backends: before.map((b) => ({ ...b, kind: "standard" as const })) }); // a server-type edit: a pass now
+      await settle();
+      expect(useApp.getState().usage.b1).toBeNull();
+      const setUsage = vi.spyOn(useApp.getState(), "setUsage");
+      await vi.advanceTimersByTimeAsync(30_000);
+      await settle();
+      expect(setUsage).not.toHaveBeenCalled(); // already null: no per-poll churn
+      setUsage.mockRestore();
+    } finally {
+      useApp.setState({ backends: before });
+      await settle();
+    }
+  });
 });
 
 describe("the Statistics page document on a failed fetch", () => {

@@ -243,14 +243,14 @@ async function refreshOne(backend: Backend): Promise<void> {
   const { connections, usage, setUsage } = useApp.getState();
   // Skip a server we KNOW is standard (no /v1/usage); "unknown" ⇒ try anyway.
   if (effectiveServerKind(backend, ownProp(connections, backend.id)) === "standard") {
-    // Don't clobber a backend that has been serving usage just because the
-    // connection probe hasn't run yet — only seed null if we've never recorded a
-    // value. Test key-presence (not truthiness): `!usage[id]` is true for the null
-    // we just wrote, so it would re-set null every poll, and setUsage always spreads
-    // a fresh `usage` object — churning a cross-window dictation://update each tick.
-    // Own-property test: `in` is true for `constructor`/`toString`/… via the prototype, so the
-    // seed that would shadow the inherited member never ran and the map stayed poisoned.
-    if (!hasOwn(usage, backend.id)) setUsage(backend.id, null);
+    // "standard" is a positive answer (an explicit Server type, or a probe that found no boot_id;
+    // an untested or failed probe is "unknown" and fetches below): this server has no usage, so
+    // numbers kept from before would read as current forever on Home and the chip — and keep
+    // the backend viewable on Statistics, which fetches live. Clear them, once: an entry already
+    // null is left alone, or every poll would spread a fresh `usage` object and churn a
+    // cross-window dictation://update. Own-property test: `in` is true for
+    // `constructor`/`toString`/… via the prototype, so that write would never run.
+    if (!hasOwn(usage, backend.id) || usage[backend.id] !== null) setUsage(backend.id, null);
     return;
   }
   const target = effectiveServerUrl(backend, useApp.getState().settings);
