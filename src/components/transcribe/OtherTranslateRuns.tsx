@@ -5,11 +5,15 @@ import { useTranscriptHistory } from "@/lib/transcript/transcriptHistory";
 import { openHistoryRecord } from "@/lib/transcribeRun";
 import { langText, langTexts } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
+import { cancelTextTranslation } from "@/lib/api";
+import { cancelTranslateRun, translateCtls } from "@/lib/retroTranslate";
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
  *  strip in the Processing-card design language, so a run started on another
  *  record (same-URL siblings, or a record since closed) stays visible and
- *  reachable instead of silently running headless. */
+ *  reachable instead of silently running headless. Its Cancel is the viewer
+ *  card's own (cancelTranslateRun): during a new transcription Open is refused,
+ *  so a run whose viewer is closed is stopped from here. */
 export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | null)[] }) {
   const trRuns = useApp((s) => s.trRuns);
   const records = useTranscriptHistory((s) => s.records);
@@ -40,6 +44,11 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
               {run.phase === "done" ? "done" : `${Math.round(run.pct * 100)}%`}
             </span>
             <span className="flex-1" />
+            {run.phase !== "done" && translateCtls.has(key) && (
+              <Button variant="ghost" size="sm" onClick={() => cancelTranslateRun(key, cancelTextTranslation)}>
+                Cancel
+              </Button>
+            )}
             {rec && (
               <Button variant="ghost" size="sm" disabled={running} onClick={() => openHistoryRecord(rec)}>
                 Open

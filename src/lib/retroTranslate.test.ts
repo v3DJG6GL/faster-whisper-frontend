@@ -3,11 +3,12 @@
 // (TranscriptViewer) only wires these to translateText + the store.
 import { describe, expect, it, vi } from "vitest";
 import {
-  beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
+  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, newTranslateRun,
   runChunkedTranslate, TRANSLATE_CHUNK, type TranslateRunUi,
-  translateOptsFrom, untranslatedIndexes,
+  translateCtls, translateOptsFrom, untranslatedIndexes,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
+import otherRunsSrc from "../components/transcribe/OtherTranslateRuns.tsx?raw";
 
 const answer = (texts: string[], lang = "en"): TextTranslationResult => ({
   results: texts.map((t) => ({ [lang]: `${lang}:${t}` })),
@@ -409,3 +410,42 @@ describe("per-target ticks", () => {
     expect(derived.target).toBeUndefined();
   });
 });
+
+describe("cancelTranslateRun", () => {
+  it("stops the listed run's loop and aborts its request on the server, once", async () => {
+    const ctl = { pid: "p1", cancelled: false, serverUrl: "http://srv", backendId: "b1" };
+    translateCtls.set("rec-1", ctl);
+    const abort = vi.fn(() => Promise.resolve());
+    try {
+      expect(cancelTranslateRun("rec-1", abort)).toBe(true);
+      expect(ctl.cancelled).toBe(true);
+      expect(abort).toHaveBeenCalledWith({ serverUrl: "http://srv", backendId: "b1", progressId: "p1" });
+      // The chunk loop reads this flag (isCancelled): the run ends after its in-flight chunk.
+      const r = await runChunkedTranslate({
+        indexes: [0, 1], chunk: 1, textOf: (i) => `t${i}`,
+        translate: (texts) => Promise.resolve(answer(texts)), onMerge: () => {}, isCancelled: () => ctl.cancelled,
+      });
+      expect(r.cancelled).toBe(true);
+      // A second press, or a key with no live run, does nothing.
+      expect(cancelTranslateRun("rec-1", abort)).toBe(false);
+      expect(cancelTranslateRun("rec-2", abort)).toBe(false);
+      expect(abort).toHaveBeenCalledTimes(1);
+    } finally {
+      translateCtls.delete("rec-1");
+    }
+  });
+  it("a failed server abort is swallowed", async () => {
+    translateCtls.set("rec-3", { pid: "p3", cancelled: false, serverUrl: "http://srv", backendId: "b1" });
+    try {
+      expect(cancelTranslateRun("rec-3", () => Promise.reject(new Error("offline")))).toBe(true);
+      await Promise.resolve();
+    } finally {
+      translateCtls.delete("rec-3");
+    }
+  });
+  it("the other-runs strip offers that Cancel on each live row", () => {
+    expect(otherRunsSrc).toMatch(/cancelTranslateRun\(key, cancelTextTranslation\)/);
+    expect(otherRunsSrc).toMatch(/>\s*Cancel\s*</);
+  });
+});
+

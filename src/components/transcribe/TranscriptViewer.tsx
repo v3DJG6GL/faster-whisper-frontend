@@ -27,8 +27,8 @@ import {
   type TextTranslationResult,
 } from "@/lib/api";
 import {
-  beginChunk, foldPollFailure, foldTranslatePoll, newTranslateRun,
-  runChunkedTranslate, translateOptsFrom, untranslatedIndexes, type TranslateRunUi,
+  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, newTranslateRun,
+  runChunkedTranslate, translateCtls as trCtls, translateOptsFrom, untranslatedIndexes, type TranslateRunUi,
 } from "@/lib/retroTranslate";
 import { isAnsweredError, transportErrorDoorway } from "@/lib/errors";
 import { useOverrideContext } from "@/lib/useOverrideContext";
@@ -70,14 +70,6 @@ import { TranslateProgressCard } from "@/components/transcribe/TranslateProgress
 import { chipStyle, playRejectionBreaks, renameToCommit, speakerRenameDraft, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
-/** Live retro-translate controls, keyed by record. MODULE scope on purpose:
- *  the chunk loop + its 1 s poller must keep running (and keep the store's
- *  card state fresh) while the viewer is unmounted, and a remounted viewer
- *  must find the same ctl to gate re-entry and serve Cancel. */
-const trCtls = new Map<
-  string,
-  { pid: string; cancelled: boolean; serverUrl: string; backendId: string }
->();
 const trDoneTimers = new Map<string, number>();
 
 /** Best-effort MIME for the playback blob (helps WebKitGTK pick a decoder). */
@@ -819,22 +811,16 @@ export function TranscriptViewer({
   /** Cancel = server-side abort by progress id + stop the chunk loop. The
    *  in-flight chunk's results are lost; completed chunks stay merged.
    *
-   *  This is the ONLY thing that cancels a retro-translate run, and that is
-   *  deliberate: unmounting this component must NOT. The run, its poller and
+   *  A user's Cancel (this card's, or the other-runs strip's — both through
+   *  cancelTranslateRun) is the ONLY thing that cancels a retro-translate run,
+   *  and that is deliberate: unmounting this component must NOT. The run, its poller and
    *  its card state all live in the app store keyed by record (see the chunked
    *  run block above) precisely so navigating away and back re-attaches to the
    *  live card — cancelling on unmount would kill a long translate every time
    *  the user looked at another screen. A future "cancel everything on
    *  teardown" audit must leave this one alone. */
   const cancelTranslate = () => {
-    const ctl = trCtls.get(trKey);
-    if (!ctl || ctl.cancelled) return;
-    ctl.cancelled = true;
-    void cancelTextTranslation({
-      serverUrl: ctl.serverUrl,
-      backendId: ctl.backendId,
-      progressId: ctl.pid,
-    }).catch(() => {});
+    cancelTranslateRun(trKey, cancelTextTranslation);
   };
 
   // A clock-less text source's clocks are placeholders (start = row index),

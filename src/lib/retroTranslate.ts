@@ -363,3 +363,33 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   }
   return { model, source, cancelled: false, mergedChunks, warnings };
 }
+
+/** A live run's controls: the chunk loop's cancel flag and the server request to abort. */
+export interface TranslateCtl {
+  pid: string;
+  cancelled: boolean;
+  serverUrl: string;
+  backendId: string;
+}
+
+/** Live retro-translate controls, keyed by record. MODULE scope on purpose:
+ *  the chunk loop + its 1 s poller must keep running (and keep the store's
+ *  card state fresh) while the viewer is unmounted, and a remounted viewer
+ *  must find the same ctl to gate re-entry and serve Cancel. */
+export const translateCtls = new Map<string, TranslateCtl>();
+
+/** Cancel the live run under `key`: stop the chunk loop and abort its request on the server
+ *  by progress id (`abort` = api's cancelTextTranslation, passed in: this module stays free
+ *  of IPC). The one cancel the viewer's card and the other-runs strip share — a run whose
+ *  viewer is closed during a new transcription is cancelled from the strip. False = no live
+ *  run under `key`, or it is already cancelled. */
+export function cancelTranslateRun(
+  key: string,
+  abort: (t: { serverUrl: string; backendId: string; progressId: string }) => Promise<unknown>,
+): boolean {
+  const ctl = translateCtls.get(key);
+  if (!ctl || ctl.cancelled) return false;
+  ctl.cancelled = true;
+  void abort({ serverUrl: ctl.serverUrl, backendId: ctl.backendId, progressId: ctl.pid }).catch(() => {});
+  return true;
+}
