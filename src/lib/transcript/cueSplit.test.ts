@@ -1228,6 +1228,18 @@ describe("cutByShare", () => {
     // A Japanese quote the sentence goes on from (」と言った) is no sentence end.
     expect(cutByShare("彼は『行こう！』と言ったそれから皆で一緒に離れました", [1, 1])[0]).not.toMatch(/』$/);
   });
+  it("judges a sentence or clause end by the original splitter's rules", () => {
+    // No sentence ends after an abbreviation or a German ordinal: the real stop nearby wins.
+    expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1]))
+      .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
+    expect(cutByShare("Am 3. Mai kaufen wir Obst und Birnen. Dann gehen wir alle nach Hause zurück.", [1, 3])[0]).not.toBe("Am 3.");
+    // An ellipsis ends a sentence; a fullwidth colon and a dash end a clause.
+    expect(cutByShare("Nun ja… dann gehen wir eben morgen wieder nach Hause zurück", [1, 2]))
+      .toEqual(["Nun ja…", "dann gehen wir eben morgen wieder nach Hause zurück"]);
+    expect(cutByShare("他说：「我们今天一起去公园散步吧」", [1, 3])).toEqual(["他说：", "「我们今天一起去公园散步吧」"]);
+    expect(cutByShare("Er kam zu spät – und ging dann gleich wieder nach Hause", [1, 1]))
+      .toEqual(["Er kam zu spät –", "und ging dann gleich wieder nach Hause"]);
+  });
   it("prefers punctuation near the share target", () => {
     expect(cutByShare("Erstens das hier, zweitens das dort.", [1, 1])).toEqual(["Erstens das hier,", "zweitens das dort."]);
   });

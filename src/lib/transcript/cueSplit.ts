@@ -320,12 +320,11 @@ const ABBREV = new Set([
   "z.b.", "usw.", "bzw.", "ca.", "d.h.", "u.a.", "evtl.", "ggf.", "inkl.", "mme.", "m.",
 ]);
 
+/** A sentence or clause end, for the original's splitter (breakScore) and the cut of a translation
+ *  onto its cues (cutByShare) alike: the mark may sit inside closing quotes or brackets
+ *  ('now." Then', '。」然后'). */
 const SENT_END = /[.?!…。？！](["'»”’)\]」』）】〉》]*)$/;
 const CLAUSE = /[,;:–—、，；：]["'»”’)\]」』）】〉》]*$/;
-/** cutByShare's stop and clause bonus: the mark may sit inside closing quotes or brackets
- *  ('now." Then', '。」然后'), as in SENT_END / CLAUSE. */
-const CUT_SENT = /[.?!。？！]["'»”’)\]」』）】〉》]*$/;
-const CUT_CLAUSE = /[,;:，；、]["'»”’)\]」』）】〉》]*$/;
 /** A Japanese quote the sentence goes on from (「帰ろう。」と言った): the mark inside the
  *  bracket ends the quote, not the sentence — no seam bonus there, as before the brackets counted. */
 const quoteGoesOn = (before: string, after: string): boolean =>
@@ -782,7 +781,11 @@ export function cutByShare(text: string, shares: number[]): string[] {
       const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase() : "";
       const s =
         -Math.abs(i - target) +
-        (quoteGoesOn(back, text.slice(i, i + 2)) ? 0 : CUT_SENT.test(back) ? 16 : CUT_CLAUSE.test(back) ? 9 : 0) +
+        // A stop after an abbreviation or a German ordinal ("z.B.", "3.") ends no sentence, as
+        // in breakScore — judged on the word before the cut when there is one.
+        (quoteGoesOn(back, text.slice(i, i + 2))
+          ? 0
+          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevWord)) ? 16 : CLAUSE.test(back) ? 9 : 0) +
         (sylSpaced && /\s/.test(text[i]) ? 9 : 0) -
         // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
         (spaced && !sylSpaced && !/\s/.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
