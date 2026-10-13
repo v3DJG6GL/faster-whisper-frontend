@@ -90,7 +90,7 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 
-/** The save gate's evdev-permitted bit, as applyBlob reads it. */
+/** The evdev-permitted bit as applyBlob reads it (`evdevPermittedNow`, the apply side). */
 const evdev = vi.hoisted(() => ({ permitted: false }));
 vi.mock("../persistence", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../persistence")>()),

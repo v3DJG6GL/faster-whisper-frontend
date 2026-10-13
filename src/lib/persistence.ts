@@ -42,14 +42,28 @@ export function configSaveHeld(): boolean {
 
 /** Whether the evdev backend is actually PERMITTED. evdev is the live hotkey backend only when
  *  enabled AND permitted; otherwise the plugin is live and collapses L/R modifier sides, so the
- *  save gate in initConfig must mirror Rust's !(enabled && permitted) collapse decision. Default
- *  false is conservative (collapse until known, so a real side-only conflict is never missed);
- *  refreshed at load and on the evdev toggle. */
-let evdevPermitted = false;
-/** The save gate's permitted bit, for a sync apply that must decide side-collapse the same way. */
-export function evdevPermittedNow(): boolean {
-  return evdevPermitted;
+ *  save gate in initConfig must mirror Rust's !(enabled && permitted) collapse decision. `null`
+ *  until `evdevStatus` answers (and after it failed); refreshed at load and on the evdev toggle.
+ *  How "unknown" reads depends on who asks — see `evdevPermittedFor`. */
+let evdevPermitted: boolean | null = null;
+
+/** The permitted bit as `use` must read it while it is unknown. The SAVE gate collapses until
+ *  known (not permitted): a collapse there only holds a save, and a real side-only conflict is
+ *  never missed. A sync APPLY / import preview treats unknown as permitted: a collapse there
+ *  switches the later of a working LCtrl / RCtrl profile pair OFF, and that is saved and pushed
+ *  to every device — while the save gate's own check still holds a genuine conflict. */
+export function evdevPermittedFor(use: "save" | "apply"): boolean {
+  return evdevPermitted ?? use === "apply";
 }
+
+/** The permitted bit for a sync apply or import preview deciding side-collapse (see `evdevPermittedFor`). */
+export function evdevPermittedNow(): boolean {
+  return evdevPermittedFor("apply");
+}
+
+/** How long startup waits for `evdevStatus` before `configReady` resolves without it: a hung IPC
+ *  must not hold the sync engine off for good (unknown then reads as above). */
+const EVDEV_STATUS_WAIT_MS = 2_000;
 
 /** Set once initConfig has armed the auto-save: lands the debounced save now. */
 let flushPendingSave: (() => Promise<void>) | null = null;
@@ -142,7 +156,9 @@ export async function initConfig(): Promise<void> {
   }
 
   // evdevPermitted (module scope, see there): read now, refreshed on the evdev toggle below.
-  void evdevStatus()
+  // configReady waits for it (bounded) below, so the startup pull decides side-collapse on the
+  // real bit rather than on "unknown".
+  const evdevKnown = evdevStatus()
     .then((st) => {
       evdevPermitted = st.permitted;
     })
@@ -223,7 +239,9 @@ export async function initConfig(): Promise<void> {
     // two side-only-different chords pass here yet one silently never registers). Mirrors Rust's
     // apply_bindings branch and the capture-time + per-card checks. On Windows the hook backend
     // always distinguishes sides — never collapse.
-    if (conflicts(conflictPeers, !IS_WINDOWS && !(s.settings.general.evdevEnabled && evdevPermitted)).length > 0) {
+    if (
+      conflicts(conflictPeers, !IS_WINDOWS && !(s.settings.general.evdevEnabled && evdevPermittedFor("save"))).length > 0
+    ) {
       useApp
         .getState()
         .setSaveError("A shortcut is used by two bindings — resolve the conflict to resume saving.");
@@ -313,5 +331,8 @@ export async function initConfig(): Promise<void> {
   };
 
   useApp.getState().setConfigLoaded();
+  let capTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([evdevKnown, new Promise<void>((r) => (capTimer = setTimeout(r, EVDEV_STATUS_WAIT_MS)))]);
+  clearTimeout(capTimer);
   resolveConfigReady();
 }
