@@ -126,27 +126,110 @@ mod imp {
         }
     }
 
-    /// The machine's active XKB layout (rules, model, layout, variant), via
-    /// `setxkbmap -query` (KWin keeps XWayland in sync with the Wayland layout).
-    fn query_layout() -> (String, String, String, String) {
-        let mut rules = "evdev".to_string();
-        let mut model = "pc105".to_string();
-        let mut layout = "us".to_string();
-        let mut variant = String::new();
-        if let Ok(out) = Command::new("setxkbmap").arg("-query").output() {
-            for line in String::from_utf8_lossy(&out.stdout).lines() {
-                if let Some(v) = line.strip_prefix("rules:") {
-                    rules = v.trim().to_string();
-                } else if let Some(v) = line.strip_prefix("model:") {
-                    model = v.trim().to_string();
-                } else if let Some(v) = line.strip_prefix("layout:") {
-                    layout = v.trim().to_string();
-                } else if let Some(v) = line.strip_prefix("variant:") {
-                    variant = v.trim().to_string();
-                }
+    /// The XKB names one layout query reported; `None` where its line was absent, empty or unset.
+    #[derive(Debug, Default, PartialEq)]
+    struct LayoutNames {
+        rules: Option<String>,
+        model: Option<String>,
+        layout: Option<String>,
+        variant: Option<String>,
+    }
+
+    fn layout_value(v: &str) -> Option<String> {
+        let v = v.trim();
+        (!v.is_empty() && v != "(unset)" && v != "n/a").then(|| v.to_string())
+    }
+
+    /// `setxkbmap -query` output (`layout:     de`).
+    fn parse_setxkbmap(out: &str) -> LayoutNames {
+        let mut names = LayoutNames::default();
+        for line in out.lines() {
+            if let Some(v) = line.strip_prefix("rules:") {
+                names.rules = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("model:") {
+                names.model = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("layout:") {
+                names.layout = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("variant:") {
+                names.variant = layout_value(v);
             }
         }
-        (rules, model, layout, variant)
+        names
+    }
+
+    /// `localectl status` output (`   X11 Layout: de`); it names no rules.
+    fn parse_localectl(out: &str) -> LayoutNames {
+        let mut names = LayoutNames::default();
+        for line in out.lines().map(str::trim_start) {
+            if let Some(v) = line.strip_prefix("X11 Model:") {
+                names.model = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("X11 Layout:") {
+                names.layout = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("X11 Variant:") {
+                names.variant = layout_value(v);
+            }
+        }
+        names
+    }
+
+    /// (rules, model, layout, variant) from the first query that named a layout — setxkbmap, else
+    /// localectl (asked only when setxkbmap named none) — or `None` when neither did.
+    fn resolve_layout(
+        setxkbmap: LayoutNames,
+        localectl: impl FnOnce() -> LayoutNames,
+    ) -> Option<(String, String, String, String)> {
+        let names = if setxkbmap.layout.is_some() {
+            setxkbmap
+        } else {
+            let lc = localectl();
+            LayoutNames {
+                rules: setxkbmap.rules,
+                ..lc
+            }
+        };
+        let layout = names.layout?;
+        Some((
+            names.rules.unwrap_or_else(|| "evdev".to_string()),
+            names.model.unwrap_or_else(|| "pc105".to_string()),
+            layout,
+            names.variant.unwrap_or_default(),
+        ))
+    }
+
+    fn query_text(cmd: &str, args: &[&str]) -> String {
+        Command::new(cmd)
+            .args(args)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+            .unwrap_or_default()
+    }
+
+    /// The machine's active XKB layout (rules, model, layout, variant), via
+    /// `setxkbmap -query` (KWin keeps XWayland in sync with the Wayland layout), else the
+    /// configured one from `localectl status` — setxkbmap is optional on several distros. US only
+    /// when neither names a layout, and that is logged: a US charmap on a de/ch/fr machine types
+    /// y↔z and wrong symbols while every job reports success.
+    fn query_layout() -> (String, String, String, String) {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        let setxkbmap = parse_setxkbmap(&query_text("setxkbmap", &["-query"]));
+        resolve_layout(setxkbmap, || {
+            parse_localectl(&query_text("localectl", &["status"]))
+        })
+        .unwrap_or_else(|| {
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!(
+                    "[inject] keyboard layout unknown (neither setxkbmap nor localectl named one) — typing assumes US"
+                );
+            }
+            (
+                "evdev".to_string(),
+                "pc105".to_string(),
+                "us".to_string(),
+                String::new(),
+            )
+        })
     }
 
     /// The compositor's currently-ACTIVE XKB group index — 0 for a single layout, 1+ for the Nth
@@ -1308,6 +1391,49 @@ mod imp {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn localectl_layout_and_variant_are_parsed() {
+            let out = "   System Locale: LANG=de_CH.UTF-8\n       VC Keymap: (unset)\n      X11 Layout: de\n       X11 Model: pc105\n     X11 Variant: nodeadkeys\n";
+            let names = parse_localectl(out);
+            assert_eq!(names.layout.as_deref(), Some("de"));
+            assert_eq!(names.model.as_deref(), Some("pc105"));
+            assert_eq!(names.variant.as_deref(), Some("nodeadkeys"));
+        }
+
+        #[test]
+        fn localectl_without_x11_lines_names_no_layout() {
+            let out =
+                "   System Locale: LANG=C.UTF-8\n       VC Keymap: us\n      X11 Layout: (unset)\n";
+            assert_eq!(parse_localectl(out), LayoutNames::default());
+        }
+
+        #[test]
+        fn empty_setxkbmap_output_names_no_layout_and_falls_back_to_localectl() {
+            assert_eq!(parse_setxkbmap("").layout, None);
+            let lc = || parse_localectl("X11 Layout: ch\nX11 Variant: de_nodeadkeys\n");
+            assert_eq!(
+                resolve_layout(parse_setxkbmap(""), lc),
+                Some((
+                    "evdev".to_string(),
+                    "pc105".to_string(),
+                    "ch".to_string(),
+                    "de_nodeadkeys".to_string()
+                ))
+            );
+            // Neither names a layout: no silent US — the caller warns.
+            assert_eq!(
+                resolve_layout(parse_setxkbmap(""), LayoutNames::default),
+                None
+            );
+        }
+
+        #[test]
+        fn setxkbmap_layout_wins_and_localectl_is_not_asked() {
+            let sx = parse_setxkbmap("rules:      evdev\nmodel:      pc105\nlayout:     fr\n");
+            let picked = resolve_layout(sx, || panic!("localectl asked"));
+            assert_eq!(picked.map(|t| t.2), Some("fr".to_string()));
+        }
 
         fn us_letters() -> HashMap<char, KeySpec> {
             ('a'..='z')
