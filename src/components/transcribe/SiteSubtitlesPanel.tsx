@@ -2,7 +2,8 @@
 // the Existing-subtitles presets, and the "Subtitles" table — one row per language with its
 // source badges (Whisper / the site's / machine translation; active, idle = greyed, off =
 // struck), a trash button for languages the site lacks, and "Add language" last. Every rule
-// lives in lib/transcript/siteSubtitles; this file only draws derive() and routes clicks back.
+// lives in lib/transcript/siteSubtitles; this file only draws derive() (the caller's, `view`) and
+// routes clicks back.
 
 import { Loader2, Trash2 } from "lucide-react";
 import { TargetLanguagePicker } from "@/components/LanguagePicker";
@@ -10,8 +11,8 @@ import { FieldTrigger, IconButton, Segmented, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
 import { sourceTone } from "@/lib/sourceTone";
 import {
-  SITE_POLICIES, addLanguage, derive, flip, listedLanguages, mtUsed, pickPolicy, removeLanguage,
-  type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState,
+  SITE_POLICIES, addLanguage, flip, listedLanguages, mtUsed, pickPolicy, removeLanguage,
+  type SiteBadge, type SiteChange, type SiteSubsInput, type SiteSubsState, type SiteSubsView,
 } from "@/lib/transcript/siteSubtitles";
 
 /** A table row: language, its source badges, the remove button. */
@@ -25,6 +26,7 @@ const stateTone = (state: SiteBadge["state"]) =>
 export function SiteSubtitlesPanel({
   input,
   state,
+  view: v,
   onChange,
   detecting,
   mt,
@@ -37,6 +39,8 @@ export function SiteSubtitlesPanel({
   maxTargets: number;
   input: SiteSubsInput;
   state: SiteSubsState;
+  /** derive(input, state) — the caller's, memoized: derive is costly at the translation limit. */
+  view: SiteSubsView;
   onChange: (ch: SiteChange) => void;
   /** The spoken-language check is running: the table waits for it. */
   detecting: boolean;
@@ -47,7 +51,6 @@ export function SiteSubtitlesPanel({
   modelName?: string;
   disabled?: boolean;
 }) {
-  const v = derive(input, state);
   const keep = (ch: Partial<SiteSubsState>): SiteChange => ({ state: { ...state, ...ch }, targets: [...input.targets] });
   const hasAuto = input.tracks.some((t) => t.kind === "auto");
   const listed = listedLanguages(input, state);

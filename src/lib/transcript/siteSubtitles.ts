@@ -450,14 +450,16 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
   // At a full translation limit flip refuses to switch machine translation on where it would
   // be greyed or strand another language (strands) — a dead click: its badge and chip part say
   // why instead of offering it. flip returns the very same state only when it refuses; it
-  // calls model, not derive. Below the limit nothing is refused, so only then is it asked.
+  // calls model, not derive. Below the limit nothing is refused, so only then is it asked —
+  // through flipWith on this very model, so a probe costs one trial model, not two (a link with
+  // ~100 auto tracks snapshotted into Custom probes ~90 rows on every render).
   const maxMt = input.maxTargets;
   if (maxMt !== undefined && mtUsed(m.view) >= maxMt) {
     const title = `At the ${maxMt}-language translation limit — switch another translation off first`;
     for (const r of m.view.rows) {
       const mtB = r.badges[0];
       if (!r.code || mtB?.kind !== "mt" || mtB.state === "active" || m.mtCapped.has(r.code)) continue;
-      if (flip(input, st, "mt:" + r.code).state !== st) continue;
+      if (flipWith(input, st, m, "mt:" + r.code).state !== st) continue;
       mtB.title = title;
       const part = m.view.chips.find((c) => c.code === r.code)?.parts[0];
       if (part?.kind === "mt") part.title = title;
@@ -517,7 +519,13 @@ function strands(
  *  take over (an existing subtitle went, unless the translation limit greys it) or drops the
  *  language (machine translation went, or cannot take over; v28). */
 export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): SiteChange {
-  const m = model(input, st);
+  return flipWith(input, st, model(input, st), key);
+}
+
+/** flip on an already-built `model(input, st)`. Only READS `m` (snap, codeOf, capped, mtCapped,
+ *  tmap, targets, view.run) — derive's limit pass, which only retitles badges and chip parts,
+ *  hands it its own model. */
+function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof model>, key: string): SiteChange {
   // A greyed over-cap badge (the download or the translation limit): switching it on would be
   // greyed again by the same cap, so the click would only flip a preset to Custom with nothing
   // visible changed. Free a slot first.

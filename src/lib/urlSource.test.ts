@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, extractorPill, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, urlHost } from "./urlSource";
+import { displayLabel, extractorPill, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, urlHost } from "./urlSource";
 
 describe("linkTooLong", () => {
   it("names the server's limit when the link runs longer", () => {
@@ -47,6 +47,19 @@ describe("normalizeMediaUrl", () => {
   it("strips WHATWG noise (tabs/newlines) before judging", () => {
     expect(normalizeMediaUrl("  https://example.com/a.mp3\n")).toBe("https://example.com/a.mp3");
     expect(normalizeMediaUrl("ht\ttps://example.com/x")).toBe("https://example.com/x");
+  });
+  it("rejects two links pasted on one line instead of merging them into one key", () => {
+    expect(
+      normalizeMediaUrl("https://www.youtube.com/watch?v=AAAAAAAAAAA https://www.youtube.com/watch?v=BBBBBBBBBBB"),
+    ).toBeNull();
+    expect(normalizeMediaUrl("https://a.tld/x.mp3 \n  http://b.tld/y.mp3")).toBeNull();
+    expect(pastesSeveralLinks("https://a.tld/x https://b.tld/y")).toBe(true);
+  });
+  it("keeps a link with an embedded scheme and a path with a space", () => {
+    const archived = "https://web.archive.org/web/2020/https://example.com/v.mp4";
+    expect(normalizeMediaUrl(archived)).toBe(archived);
+    expect(normalizeMediaUrl("https://host/My File.mp3")).toBe("https://host/My%20File.mp3");
+    expect(pastesSeveralLinks(archived)).toBe(false);
   });
   it("requires an explicit scheme — never defaults http://", () => {
     expect(normalizeMediaUrl("youtube.com/watch?v=x")).toBeNull();

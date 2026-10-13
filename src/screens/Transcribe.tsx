@@ -38,7 +38,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -604,18 +604,30 @@ export default function Transcribe() {
   const previewUploader = safeDisplayText(urlPreviewData?.uploader, 60).trim();
   const previewFormat = safeDisplayText(formatLabel(urlPreviewData?.ext, urlPreviewData?.abr), 32).trim();
   const previewExtractor = extractorPill(urlPreviewData?.extractor);
-  const siteInput = siteState && caps?.url_subtitles_enabled === true && urlPreviewData?.subtitle_tracks?.length
-    ? {
-        tracks: urlPreviewData.subtitle_tracks,
-        spoken: linkLang.sp.spoken,
-        multi: linkLang.sp.multi,
-        targets: translationAvailable ? translateTo : [],
-        site: previewSite,
-        // No machine translation, nothing to cap: the rows keep the download-cap wording.
-        maxTargets: translationAvailable ? maxTranslationTargets(caps) : undefined,
-      }
-    : null;
-  const siteView = siteInput && siteState ? derive(siteInput, siteState) : null;
+  // Memoized on its sources, and the view derived ONCE per change (the panel draws this view):
+  // at the translation limit derive probes every idle MT row, and freeAdds trials every site
+  // language — on a link with ~100 auto tracks, hundreds of model passes per unrelated re-render
+  // (a keystroke in the link field, a progress tick).
+  const hasSiteState = siteState !== null;
+  const siteTracks = urlPreviewData?.subtitle_tracks;
+  const siteSubsOn = caps?.url_subtitles_enabled === true;
+  const siteMaxTargets = translationAvailable ? maxTranslationTargets(caps) : undefined;
+  const siteInput = useMemo(
+    () =>
+      hasSiteState && siteSubsOn && siteTracks?.length
+        ? {
+            tracks: siteTracks,
+            spoken: linkLang.sp.spoken,
+            multi: linkLang.sp.multi,
+            targets: translationAvailable ? translateTo : [],
+            site: previewSite,
+            // No machine translation, nothing to cap: the rows keep the download-cap wording.
+            maxTargets: siteMaxTargets,
+          }
+        : null,
+    [hasSiteState, siteSubsOn, siteTracks, linkLang.sp.spoken, linkLang.sp.multi, translationAvailable, translateTo, previewSite, siteMaxTargets],
+  );
+  const siteView = useMemo(() => (siteInput && siteState ? derive(siteInput, siteState) : null), [siteInput, siteState]);
   /** One door for every panel or chip change: the panel's state, and the Processing card's
    *  targets when the change wrote them. */
   const applySite = (ch: SiteChange) => {
@@ -626,6 +638,12 @@ export default function Transcribe() {
     }
   };
   const siteMtUsed = siteView ? mtUsed(siteView) : 0;
+  const siteMtLimit = maxTranslationTargets(caps);
+  // Asked only at the limit (one trial model per site language).
+  const siteFree = useMemo(
+    () => (siteInput && siteState && siteView && siteMtUsed >= siteMtLimit ? freeAdds(siteInput, siteState, siteView) : undefined),
+    [siteInput, siteState, siteView, siteMtUsed, siteMtLimit],
+  );
   /** The translation chips while the panel is in charge: the wanted languages, each with its
    *  sources as compound parts. */
   const siteChips = siteInput && siteState?.subs && siteView
@@ -638,8 +656,7 @@ export default function Transcribe() {
         // the site's subtitles alone serve is free, and so is adding a language a site track would
         // serve (freeAdds). Counted from the parts, so it holds while the panel has no run too.
         used: siteMtUsed,
-        // Asked only at the limit (one trial derive per site language).
-        free: siteMtUsed >= maxTranslationTargets(caps) ? freeAdds(siteInput, siteState, siteView) : undefined,
+        free: siteFree,
       }
     : null;
 
@@ -1435,7 +1452,9 @@ export default function Transcribe() {
             <div className="mt-2 text-[12px] text-warn">
               {/* normalizeMediaUrl also rejects links that DO carry the scheme
                   (over 2,048 characters, unparsable host) — don't tell those to add it. */}
-              {isSourceUrl(stripUrlNoise(urlDraft))
+              {pastesSeveralLinks(stripUrlNoise(urlDraft))
+                ? "Paste one link at a time."
+                : isSourceUrl(stripUrlNoise(urlDraft))
                 ? "This isn't a valid web address (links over 2,048 characters aren't supported)."
                 : "Include http:// or https:// at the start of the link."}
             </div>
@@ -1543,11 +1562,12 @@ export default function Transcribe() {
                       </div>
                     );
                   })()}
-                {siteInput && siteState && (
+                {siteInput && siteState && siteView && (
                   <div className="mt-3">
                     <SiteSubtitlesPanel
                       input={siteInput}
                       state={siteState}
+                      view={siteView}
                       onChange={applySite}
                       detecting={linkLang.check.state === "running"}
                       mt={translationAvailable}
