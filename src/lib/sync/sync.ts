@@ -2003,6 +2003,11 @@ let inFlight = false;
  *  over the new server's bookkeeping. Stale calls compare their captured epoch
  *  after every transport await and bail silently. */
 let gen = 0;
+/** Settles once launch is over: initSync's launch work (which holds `inFlight`) AND the startup
+ *  pull it starts right after releasing the lock. Null outside that window. A manual Push / Pull
+ *  clicked meanwhile awaits it instead of dropping at the `inFlight` gate; awaiting the launch
+ *  work alone would wake with the startup pull holding the lock and drop all the same. */
+let launchDone: Promise<void> | null = null;
 
 /** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
  *  work against a different server (or after disabling sync). */
@@ -2568,9 +2573,20 @@ async function rePullAfterSession(): Promise<void> {
   if (myGen === gen && canSync()) await pullNow(true);
 }
 
+/** A manual Push / Pull clicked during launch: wait it out (see `launchDone`), then run. False when
+ *  a supersede (sync switched, server copy deleted) happened meanwhile — the click is void then.
+ *  Outside launch it returns at once, without an await. */
+async function waitForLaunch(): Promise<boolean> {
+  if (!launchDone) return true;
+  const myGen = gen;
+  await launchDone;
+  return myGen === gen;
+}
+
 /** Pull the server blob and reconcile it into the running app. `manual` also
  *  re-applies when the version hasn't moved (a "make it so" button press). */
 export async function pullNow(manual = false): Promise<void> {
+  if (manual && !(await waitForLaunch())) return;
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   inFlight = true;
@@ -2657,6 +2673,7 @@ export async function pullNow(manual = false): Promise<void> {
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
+  if (manual && !(await waitForLaunch())) return;
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   // Don't propagate a state the local save-gate froze (hotkey conflict) or
@@ -3962,9 +3979,17 @@ export async function initSync(): Promise<void> {
   // Hold the engine lock across the launch work: until loadSyncState and the keyring restore
   // (up to 10 s on a locked wallet) land, the base has no keys, so a "Push now" clicked meanwhile
   // composed a pass-through push against it and shipped a keyless backends list over the server's
-  // keys. A trigger dropped at the gate loses nothing — the startup pull below runs after release.
+  // keys. An automatic trigger dropped at the gate loses nothing — the startup pull below runs
+  // after release; a manual Push / Pull clicked meanwhile waits for launch and that pull, then runs.
   const myGen = gen;
   inFlight = true;
+  let launchEnded!: () => void;
+  launchDone = new Promise<void>((r) => {
+    launchEnded = () => {
+      launchDone = null;
+      r();
+    };
+  });
   try {
     await configReady;
     state = (await loadSyncState()) ?? {};
@@ -3998,6 +4023,9 @@ export async function initSync(): Promise<void> {
         lastSyncDevice: state.device ?? null,
       });
     }
+  } catch (e) {
+    launchEnded(); // no startup pull follows: release a waiting click (it finds the gate open)
+    throw e;
   } finally {
     if (myGen === gen) inFlight = false; // a resetSyncState mid-launch superseded and took its own
   }
@@ -4070,7 +4098,10 @@ export async function initSync(): Promise<void> {
     void pullNow();
   });
 
-  if (canSync()) void pullNow();
+  // Launch ends with the startup pull (pullNow takes the lock before its first await, so no click
+  // released below can slip in ahead of it), or here when there is none.
+  if (canSync()) void pullNow().then(launchEnded, launchEnded);
+  else launchEnded();
 }
 
 /** Plain-language failure line for "Delete server copy" — the one server call on

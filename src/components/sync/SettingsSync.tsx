@@ -505,7 +505,9 @@ export function RestoreFromServer({
       <div className="mt-3 flex flex-col gap-2">
         <Notice>
           Never restored: the microphone, &ldquo;{SETTING.pressEnterAfter.label}&rdquo;, this
-          device&apos;s audio and log folders, and the Linux input backend.
+          device&apos;s audio and log folders, and the Linux input backend. Other machine-specific
+          settings in the server copy (chip position, paste shortcuts, server addresses) come in
+          with their category.
         </Notice>
         {replaced.length > 0 && (
           <Notice tone="warn">

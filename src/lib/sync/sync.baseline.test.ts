@@ -1574,3 +1574,110 @@ describe("sanitizers trim overrideProfile", () => {
     expect(blank.overrideProfile).toBeUndefined();
   });
 });
+
+// initSync holds the engine lock across the launch work (the keyring restore parks up to 10 s on a
+// locked wallet), and a manual Push / Pull clicked then used to drop at the gate without a word —
+// the startup pull that followed is an automatic one, so the forced push never happened. A fresh
+// engine per case (initSync runs once per module), "in Tauri", with the launch keyring read parked.
+describe("a manual Push / Pull clicked during launch", () => {
+  const io = {
+    release: (_v: Record<string, string>) => {},
+    launchRead: false,
+    released: false,
+    pushes: [] as { blob: SyncBlob; afterRelease: boolean }[],
+    pull: null as unknown,
+  };
+
+  async function launchEngine() {
+    io.launchRead = false;
+    io.released = false;
+    io.pushes = [];
+    const parked = new Promise<Record<string, string>>((r) => {
+      io.release = (v) => {
+        io.released = true;
+        r(v);
+      };
+    });
+    vi.resetModules();
+    vi.doMock("../persistence", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../persistence")>()),
+      configReady: Promise.resolve(),
+    }));
+    vi.doMock("../api", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../api")>()),
+      isTauri: true,
+      // Version 1, synced from this server, with a stashed snapshot key to restore at launch.
+      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot: {}, snapshotSecretIds: ["b1"] }),
+      saveSyncState: async () => {},
+      syncDeviceInfo: async () => ({ deviceId: "d1", hostname: "me", platform: "linux" }),
+      readBackendKeys: (ids: string[]) => {
+        if (ids.includes("__sync_snapshot_secrets__")) {
+          io.launchRead = true;
+          return parked;
+        }
+        return Promise.resolve({ b1: "sk-1" });
+      },
+      setBackendKey: async () => {},
+      deleteBackendKey: async () => {},
+      syncPull: async () => io.pull,
+      syncPush: async (args: { blob: SyncBlob; baseVersion: number }) => {
+        io.pushes.push({ blob: args.blob, afterRelease: io.released });
+        return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
+      },
+    }));
+    const engine = await import("./sync");
+    const store = (await import("../store")).useApp;
+    const s = settings();
+    s.sync = { ...s.sync!, enabled: true, backendId: "b1" };
+    store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+    vi.stubGlobal("window", { addEventListener: () => {} }); // the focus-pull listener
+    const init = engine.initSync();
+    await vi.waitFor(() => expect(io.launchRead).toBe(true));
+    return { engine, store, init };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("../api");
+    vi.doUnmock("../persistence");
+    vi.resetModules();
+  });
+
+  it("runs once launch and the startup pull are done, even with nothing changed since the last sync", async () => {
+    // The server still holds this device's version: the startup pull has nothing new to apply.
+    io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
+    const { engine, store, init } = await launchEngine();
+    try {
+      await engine.pushNow(); // an automatic push still drops at the gate during launch
+      const click = engine.pushNow(true);
+      await Promise.resolve();
+      expect(io.pushes).toEqual([]);
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await click;
+      expect(io.pushes.length).toBe(1); // forced: the hash check would have skipped an automatic one
+      expect(io.pushes[0].afterRelease).toBe(true);
+      expect(io.pushes[0].blob.backends?.secrets).toEqual({ b1: "sk-1" });
+    } finally {
+      io.release({});
+      // Sync off: cancels the startup pull's scheduled push.
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a server-copy delete made while it waits voids the click", async () => {
+    io.pull = { ok: false, status: 0, error: "unreachable" };
+    const { engine, store, init } = await launchEngine();
+    try {
+      const click = engine.pushNow(true);
+      await engine.resetSyncState(); // supersedes the launch epoch
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await click;
+      expect(io.pushes).toEqual([]);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+});
