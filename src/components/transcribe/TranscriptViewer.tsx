@@ -67,7 +67,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { chipStyle, speakerRenameValue, type EffSegment } from "@/components/transcribe/viewerKit";
+import { chipStyle, renameToCommit, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -373,7 +373,8 @@ export function TranscriptViewer({
 
   const commitRename = () => {
     if (editingSpeaker) {
-      setRename(okey, editingSpeaker, speakerRenameValue(renameDraft));
+      const name = renameToCommit(renameDraft, ownProp(fileRenames, editingSpeaker));
+      if (name !== null) setRename(okey, editingSpeaker, name);
     }
     setEditingSpeaker(null);
   };

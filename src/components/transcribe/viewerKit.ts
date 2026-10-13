@@ -23,3 +23,10 @@ export function speakerRenameValue(draft: string): string {
   const name = stripControlChars(draft).replace(/\s*:\s*/g, " ").trim();
   return capCodePoints(name, 40).trim();
 }
+
+/** What committing the speaker rename editor writes: null = nothing, when the draft is the
+ *  stored name it was seeded with (opening the editor and leaving it must not re-cap a name
+ *  stored before the cap, or by another device); otherwise the cleaned name. */
+export function renameToCommit(draft: string, stored: string | undefined): string | null {
+  return draft.trim() === (stored ?? "").trim() ? null : speakerRenameValue(draft);
+}
