@@ -7,7 +7,7 @@ import {
   applyBlob, backendsBlobIncomplete, carriesQuickAddPin, categorySelection, composeBlob, mergeBlobs,
 } from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "../settingsManifest";
-import { catsFromGates, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
+import { catsFromGates, catsWithGateTurnedOn, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
 import { stableStringify } from "../stable";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
@@ -289,6 +289,35 @@ describe("catsFromGates", () => {
     const none = Object.fromEntries(Object.keys(GATES_ALL).map((k) => [k, false])) as typeof GATES_ALL;
     const catsNone = catsFromGates(none);
     for (const v of Object.values(catsNone)) expect(v).toBe(false);
+  });
+});
+
+describe("catsWithGateTurnedOn", () => {
+  it("a second setting switched on in a category that already syncs marks it", () => {
+    const prev = { ...GATES_ALL, logRetention: false };
+    expect(catsWithGateTurnedOn(prev, GATES_ALL)).toEqual(["logging"]);
+    // The derived categories did not move: keyed on them, the switch marked nothing.
+    expect(catsFromGates(prev).logging).toBe(true);
+  });
+
+  it("a category coming on whole is marked by its first gate", () => {
+    const prev = { ...GATES_ALL, logLevel: false, logRetention: false, logsInSidebar: false, logFolder: false };
+    expect(catsWithGateTurnedOn(prev, { ...prev, logLevel: true })).toEqual(["logging"]);
+  });
+
+  it("a gate turned on inside a category that does not sync marks nothing", () => {
+    const prev = { ...GATES_ALL, backendList: false, modelDecodeDefaults: false };
+    expect(catsWithGateTurnedOn(prev, { ...prev, modelDecodeDefaults: true })).toEqual([]);
+  });
+
+  it("a list field switch turned on with its list switch on marks the list category", () => {
+    const prev = { ...GATES_ALL, modelDecodeDefaults: false };
+    expect(catsWithGateTurnedOn(prev, GATES_ALL)).toEqual(["backends"]);
+  });
+
+  it("gates turned off, or left alone, mark nothing", () => {
+    expect(catsWithGateTurnedOn(GATES_ALL, GATES_ALL)).toEqual([]);
+    expect(catsWithGateTurnedOn(GATES_ALL, { ...GATES_ALL, logRetention: false })).toEqual([]);
   });
 });
 

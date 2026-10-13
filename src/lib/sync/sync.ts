@@ -96,6 +96,7 @@ import {
   substituteElementFields,
   type Gates,
   catsFromGates,
+  catsWithGateTurnedOn,
   isPlainObject,
   SCALAR_CATS,
 } from "./syncGates";
@@ -145,6 +146,17 @@ function settingGates(): Gates {
  *  list & settings", "Rules for this OS" — inert. */
 function syncCats(): Record<SyncCategory, boolean> {
   return catsFromGates(settingGates()) as Record<SyncCategory, boolean>;
+}
+
+/** The categories to mark fresh (`freshCats`) for a change of the sync settings: every synced one
+ *  a setting's gate came ON in, per setting (`catsWithGateTurnedOn`) — the store subscriber and
+ *  the launch work's twin both read it, so the two never disagree on what "turned on" means. */
+function catsTurnedOn(prevSync: AppSettings["sync"], nowSync: AppSettings["sync"]): SyncCategory[] {
+  const turned = catsWithGateTurnedOn(
+    completeGates(prevSync?.sub, prevSync?.categories),
+    completeGates(nowSync?.sub, nowSync?.categories),
+  );
+  return ALL_CATEGORIES.filter((c) => turned.includes(c));
 }
 
 /** applyBlob strips gated-off scalar fields, so the security review must judge what
@@ -2029,14 +2041,13 @@ let launchDone: Promise<void> | null = null;
  *  supersede may cut short; null during the launch work and outside launch. */
 let endLaunch: (() => void) | null = null;
 
-/** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
- *  work against a different server (or after disabling sync). */
 /** Categories turned ON (their gates) since the last adopted base. While a category is off its
  *  base is the server's copy passed through, so a 3-way merge would read this device's value as
  *  "changed here only" and push it over the peer's. Merged against a base without them instead
  *  (first contact for those categories): equal values merge, different ones raise the conflict
  *  dialog. Cleared when a base is adopted (`persistState` with a snapshot) and by a server
- *  switch / sync turned off. */
+ *  switch; kept, and recorded in sync-state.json, across sync turned off and on and across a
+ *  restart. */
 const freshCats = new Set<SyncCategory>();
 
 /** Record `freshCats` in sync-state.json: a re-enabled category whose reconcile has not landed
@@ -2075,6 +2086,8 @@ function passThroughFor(remote: SyncBlob): SyncBlob {
   return out;
 }
 
+/** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
+ *  work against a different server (or after disabling sync). */
 function supersede(): void {
   gen++;
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
@@ -2411,7 +2424,7 @@ async function clearSnapshotSecrets(chunks: number | undefined): Promise<void> {
   await dropSnapshotChunks(0, snapshotChunkCount(chunks));
 }
 
-/** The keyring stash of the latest `persistState` while it is in flight (see the stash-free write). */
+/** The keyring stash of the latest `persistState` while it is in flight (every write waits it out). */
 let stashing: Promise<void> | null = null;
 
 /** Split the snapshot's secrets out to the keyring (the file gets ids only) — `persistState`'s
@@ -2504,11 +2517,12 @@ async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean }
     } finally {
       if (stashing === mine) stashing = null;
     }
-  } else if (stashing) {
-    // A bookkeeping-only write waits out a stash in flight: its ids are recorded before the keys
-    // land, and a file written in between would pair the new ids with the old keyring bundle.
-    await stashing;
   }
+  // A write waits out every stash in flight, not just its own or the one seen on entry: a newer
+  // adoption records its ids before its keys land (a supersede frees the lock while the old stash
+  // still runs), and a file written in between would pair the new ids with the old keyring
+  // bundle. Each run clears the slot only while it is still its own, and the slot never rejects.
+  while (stashing) await stashing;
   // `isPlainObject` on BOTH containers, for the reason the `ids` line above already gives — but
   // this is the half that PERSISTS. `state.snapshot?.backends?.secrets` reads `undefined` when
   // `backends` is a server-supplied STRING, so the guarded `ids` path above is silently skipped
@@ -2805,10 +2819,17 @@ async function pullCore(manual: boolean): Promise<void> {
     // version number while a prompt from the deleted one still waits above it. The base is then
     // version 0, so this falls through to a first-contact reconcile against the new document.
     if (serverRecreated(remote.version, remote.updated_ts) && !(await forgetDeadDocument(myGen))) return;
-    if (!manual && remote.version === state.version) {
+    if (
+      !manual &&
+      remote.version === state.version &&
+      !(freshCats.size > 0 && state.snapshot !== undefined && !pendingConflict && !pendingReview)
+    ) {
       // Nothing new; a local drift (edits while offline) still pushes via the
       // hash check on the next push tick. idleStatus, not "ok": a conflict or review can wait at
       // this very version (a re-enabled category's, see `freshCats`) and keeps its notice.
+      // A re-enabled category still to reconcile with no prompt waiting (pushNow's gate) is
+      // reconciled against this very result instead: the shortcut's push would only start a
+      // second, forced pull, with a false "Synced" in between.
       idleStatus();
       schedulePush();
       return;
@@ -4289,10 +4310,9 @@ export async function initSync(): Promise<void> {
     let pruned: SyncCategory[] = [];
     let nowCats: Record<SyncCategory, boolean> | null = null;
     if (prevSync && nowSync && prevSync.backendId === nowSync.backendId) {
-      const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
       nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
       const on = nowCats;
-      turnedOn = ALL_CATEGORIES.filter((c) => on[c] && !prevCats[c]);
+      turnedOn = catsTurnedOn(prevSync, nowSync);
       // Turned off again before its reconcile: not synced, so nothing to ask about.
       pruned = [...freshCats].filter((c) => !on[c]);
     }
@@ -4326,9 +4346,11 @@ export async function initSync(): Promise<void> {
     }
     // A category toggled ON (via the per-setting gates) is reconciled with the server before
     // anything is pushed, against a base without it (`freshCats`): the same value merges, a
-    // different one asks. Keyed on the DERIVED cats: `sync.categories` has had no writer since
-    // the manifest list replaced the category rows, so comparing the raw map was permanently
-    // false and a re-enabled setting pushed this device's value over the peer's.
+    // different one asks. Keyed on the per-setting gates within a synced category
+    // (`catsTurnedOn`), not the raw `sync.categories` map (no writer since the manifest list
+    // replaced the category rows) nor the derived cats (a second setting switched on in a
+    // category that already syncs left them unchanged): either pushed this device's value of a
+    // re-enabled setting over the peer's.
     if (nowCats) {
       // A dialog that still asks about a category turned off again is re-raised without it (or
       // dropped) by a fresh reconcile.
@@ -4380,9 +4402,8 @@ export async function initSync(): Promise<void> {
       persistFresh();
     }
   } else if (launchSync !== nowSync) {
-    const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
     const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
-    const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
+    const turnedOn = catsTurnedOn(launchSync, nowSync);
     const pruned = [...freshCats].filter((c) => !nowCats[c]);
     for (const c of pruned) freshCats.delete(c);
     for (const c of turnedOn) freshCats.add(c);

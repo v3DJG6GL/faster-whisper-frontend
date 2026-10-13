@@ -173,6 +173,23 @@ export function catsFromGates(gates: Gates): Record<string, boolean> {
   return cats;
 }
 
+/** The synced categories a setting's gate turned ON in between `prev` and `now` — not only the
+ *  categories that came on whole: a setting switched on inside a category that already syncs
+ *  (through another of its gates) was passed through from the server's copy until now, so its
+ *  base equals the server's and a 3-way merge would push this device's value over the peer's.
+ *  A gate turned on inside a category that does not sync (a list's field switch with the list
+ *  off) marks nothing. The ONE rule for what counts as "turned on" (see sync.ts's `freshCats`). */
+export function catsWithGateTurnedOn(prev: Gates, now: Gates): string[] {
+  const on = catsFromGates(now);
+  const out = new Set<string>();
+  for (const d of DEFS) {
+    if (d.localOnly || !on[d.category]) continue;
+    const id = d.id as SettingId;
+    if (now[id] && !prev[id]) out.add(d.category);
+  }
+  return [...out];
+}
+
 /** The per-backend fields the "Model & decode defaults" switch governs. */
 export const BACKEND_DEFAULTS_FIELDS = [
   "model",
