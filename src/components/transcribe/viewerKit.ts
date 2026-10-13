@@ -16,12 +16,20 @@ export type EffSegment = {
   edited: boolean;
 };
 
+const SPEAKER_NAME_MAX = 40;
+
 /** A speaker rename as stored: 40 code points, the longest name a subtitle re-import reads back
  *  as the speaker (subtitleImport's "Name: " prefix and voice-tag display bound), and no colon —
  *  SRT/LRC write "Name: text", and the importer ends the name at its first colon. */
 export function speakerRenameValue(draft: string): string {
   const name = stripControlChars(draft).replace(/\s*:\s*/g, " ").trim();
-  return capCodePoints(name, 40).trim();
+  return capCodePoints(name, SPEAKER_NAME_MAX).trim();
+}
+
+/** The rename field's value as typed or pasted: cut at the stored cap in code points. An
+ *  input's maxLength counts UTF-16 units, which stopped an emoji or CJK Ext-B name at 20. */
+export function speakerRenameDraft(typed: string): string {
+  return capCodePoints(typed, SPEAKER_NAME_MAX);
 }
 
 /** What committing the speaker rename editor writes: null = nothing, when the draft is the

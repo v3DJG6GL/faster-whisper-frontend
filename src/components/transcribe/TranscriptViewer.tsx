@@ -67,7 +67,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { chipStyle, playRejectionBreaks, renameToCommit, type EffSegment } from "@/components/transcribe/viewerKit";
+import { chipStyle, playRejectionBreaks, renameToCommit, speakerRenameDraft, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -2193,8 +2193,7 @@ export function TranscriptViewer({
                   <input
                     autoFocus
                     value={renameDraft}
-                    maxLength={40}
-                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onChange={(e) => setRenameDraft(speakerRenameDraft(e.target.value))}
                     onBlur={commitRename}
                     onKeyDown={(e) => {
                       // Mid-composition the IME owns Esc and Enter.
