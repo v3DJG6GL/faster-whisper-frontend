@@ -344,6 +344,9 @@ export async function packageMedia(args: ServerTarget & {
   jobId: string;
   sourceMediaId?: string | null;
   sourcePath?: string | null;
+  /** With `sourceMediaId`: the local copy that id stands for, so Rust refuses a
+   *  `destPath` that is that file (the remux would replace the original). */
+  localSource?: string | null;
   container: "mkv" | "mp4";
   subtitles: SubtitleTrackIn[];
   defaultTrack: number | null;
@@ -363,6 +366,7 @@ export async function packageMedia(args: ServerTarget & {
     jobId: args.jobId,
     sourceMediaId: args.sourceMediaId ?? null,
     sourcePath: args.sourcePath ?? null,
+    localSource: args.localSource ?? null,
     container: args.container,
     subtitles: args.subtitles,
     defaultTrack: args.defaultTrack,

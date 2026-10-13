@@ -39,8 +39,8 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, stampCopyPath, tracksAtWrite,
-  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
+  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, stampCopyPath, tracksAtWrite,
+  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
@@ -553,7 +553,7 @@ export function TranscriptExport({
           : { sourceMediaId: id, sourceMediaExpiresAt: exp, sourceMediaBackendId: issuer }),
       },
     }));
-    let source: { sourceMediaId?: string; sourcePath?: string };
+    let source: PackageSource;
     // A stored server id is only good on the server that issued it (serverVideoIssuer).
     // trBackend falls back to the first backend for a record whose own one is missing or
     // unrecorded: there the local copy or an on-demand fetch is the reliable source, and
@@ -562,8 +562,8 @@ export function TranscriptExport({
     const storedId = serverVideoId && (serverVideoIssuer === issuer || (!localVideo && !urlVideoOnDemand))
       ? serverVideoId
       : null;
-    if (storedId) source = { sourceMediaId: storedId };
-    else if (localVideo) source = { sourcePath: localVideo };
+    const picked = packageSource(storedId, localVideo);
+    if (picked) source = picked;
     else if (urlVideoOnDemand) {
       setMediaJob({ jobId: "", phase: "fetching", done: 0, total: null });
       try {
@@ -652,7 +652,7 @@ export function TranscriptExport({
               uploadedExpiry = out.expiresAt;
               rememberUpload(out.mediaId, out.expiresAt ?? undefined);
             }
-            source = { sourceMediaId: out.mediaId };
+            source = { sourceMediaId: out.mediaId, localSource: localVideo };
           }
           return out;
         } finally {

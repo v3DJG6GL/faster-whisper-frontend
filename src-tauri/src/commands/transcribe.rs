@@ -406,9 +406,19 @@ fn is_source_itself(src: &Path, dest: &Path) -> bool {
     }
 }
 
+/// package_media's guard for a video packaged by server id: the local copy that id stands
+/// for (if any) must not be `dest`, or the remux replaces the user's original.
+fn refuse_local_source_as_dest(local: Option<&str>, dest: &Path) -> Result<(), String> {
+    match local {
+        Some(l) if is_source_itself(Path::new(l), dest) => Err("that is the file itself".into()),
+        _ => Ok(()),
+    }
+}
+
 /// Package a retained (or local) video with subtitle tracks to `dest_path`.
 /// Exactly one of `source_media_id` (the server already holds it) or
-/// `source_path` (a local file, uploaded first) names the video. Progress
+/// `source_path` (a local file, uploaded first) names the video. `local_source` is the
+/// local copy of a video packaged by id, only so `dest_path` is never that file. Progress
 /// lands on `media://export-progress` tagged with `job_id`.
 #[allow(clippy::too_many_arguments)]
 #[tauri::command]
@@ -420,6 +430,7 @@ pub async fn package_media(
     job_id: String,
     source_media_id: Option<String>,
     source_path: Option<String>,
+    local_source: Option<String>,
     container: String,
     subtitles: Vec<transport::media::SubtitleTrack>,
     default_track: Option<u32>,
@@ -483,6 +494,9 @@ pub async fn package_media(
             match (source_media_id, source_path) {
                 (Some(id), None) => {
                     transport::gate_media_id(&id).map_err(|e| e.to_string())?;
+                    // Packaged by id, the server remux streams over `dest` all the same:
+                    // the local copy it stands for must not be the destination either.
+                    refuse_local_source_as_dest(local_source.as_deref(), &checks_dest)?;
                     Ok(Ok((Some(id), None)))
                 }
                 (None, Some(p)) => {
@@ -863,6 +877,27 @@ mod tests {
         }
         assert!(!is_source_itself(&src, &other));
         assert!(!is_source_itself(&src, &dir.join("new.mp4")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// package_media by a stored server id: the local copy it stands for is still guarded,
+    /// so confirming the OS overwrite prompt on the source's own name cannot stream the
+    /// remux over the user's original.
+    #[test]
+    fn packaging_by_id_refuses_its_local_source_as_the_destination() {
+        let dir = scratch("by-id");
+        let src = dir.join("talk.mkv");
+        std::fs::write(&src, b"video").unwrap();
+        let local = src.to_str().unwrap();
+        assert_eq!(
+            refuse_local_source_as_dest(Some(local), &src),
+            Err("that is the file itself".to_string())
+        );
+        assert_eq!(
+            refuse_local_source_as_dest(Some(local), &dir.join("talk.subs.mkv")),
+            Ok(())
+        );
+        assert_eq!(refuse_local_source_as_dest(None, &src), Ok(()));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

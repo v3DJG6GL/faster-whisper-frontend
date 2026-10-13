@@ -225,6 +225,23 @@ export function exportOutcomeShowsHere(mounted: boolean, open: boolean, onScreen
   return mounted && open && onScreen === started;
 }
 
+/** The video package_media is told to package. */
+export interface PackageSource {
+  sourceMediaId?: string;
+  sourcePath?: string;
+  /** With `sourceMediaId`: the local copy that id stands for. Rust refuses a destination
+   *  that IS that file — the server remux would stream over the user's original. */
+  localSource?: string | null;
+}
+
+/** A usable stored server id wins (no upload), still naming the local copy for the
+ *  overwrite guard; else the local file is uploaded. Null = neither (fetch or give up). */
+export function packageSource(storedId: string | null, localVideo: string | null): PackageSource | null {
+  if (storedId) return { sourceMediaId: storedId, localSource: localVideo };
+  if (localVideo) return { sourcePath: localVideo };
+  return null;
+}
+
 export interface PlannedFile {
   name: (stem: string) => string;
   kind: "text" | "audio" | "video";

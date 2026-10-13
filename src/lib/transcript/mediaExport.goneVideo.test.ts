@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copyPathsBeforeWipe, goneVideoRetryRefusal, isGoneSourceError, stampCopyPath, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
+import { copyPathsBeforeWipe, goneVideoRetryRefusal, isGoneSourceError, packageSource, stampCopyPath, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
 
 describe("withoutVideoPath", () => {
   it("drops the deleted local video copy and keeps every other field", () => {
@@ -153,5 +153,17 @@ describe("a copy downloaded again to the same path during the wipe", () => {
   it("stamps a new path onto the record", () => {
     const rec: { id: string; mediaPath?: string } = { id: "s4" };
     expect(stampCopyPath("s4", "mediaPath", "/base/links/s4.opus")(rec)).toEqual({ id: "s4", mediaPath: "/base/links/s4.opus" });
+  });
+});
+
+describe("packageSource", () => {
+  it("packages a stored server id and still names the local copy, so Rust can refuse saving over it", () => {
+    expect(packageSource("m1", "/v/talk.mkv")).toEqual({ sourceMediaId: "m1", localSource: "/v/talk.mkv" });
+    expect(packageSource("m1", null)).toEqual({ sourceMediaId: "m1", localSource: null });
+  });
+
+  it("uploads the local file when no stored id is usable, and has nothing without either", () => {
+    expect(packageSource(null, "/v/talk.mkv")).toEqual({ sourcePath: "/v/talk.mkv" });
+    expect(packageSource(null, null)).toBeNull();
   });
 });
