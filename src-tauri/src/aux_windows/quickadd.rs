@@ -744,7 +744,13 @@ pub(crate) mod win_seed {
             use crate::inject::windows_clipboard::{reannounce_pending, REANNOUNCE_MAX_WAIT};
             let deadline = Instant::now() + REANNOUNCE_MAX_WAIT;
             while reannounce_pending() {
-                if Instant::now() >= deadline || superseded() {
+                if superseded() {
+                    tracing::info!(
+                        "[quickadd-seed] summon superseded while a clipboard re-announce was pending; abandoning the grab"
+                    );
+                    return None;
+                }
+                if Instant::now() >= deadline {
                     tracing::info!(
                         "[quickadd-seed] a clipboard re-announce is pending; skipping the copy grab"
                     );

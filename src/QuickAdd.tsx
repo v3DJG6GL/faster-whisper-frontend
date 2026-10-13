@@ -104,6 +104,9 @@ export default function QuickAdd() {
   const findRef = useRef("");
   findRef.current = find;
   const saveTimer = useRef<number | null>(null);
+  // flushSave's newest-attempt counter and its one-at-a-time PATCH chain.
+  const saveSeq = useRef(0);
+  const saveFlight = useRef<Promise<unknown>>(Promise.resolve());
   // Mirror saveState into a ref so the summon listener (a stale-closure-prone callback) reads the
   // latest value. A fired-but-failed save leaves saveTimer null yet the local rows are still unsaved.
   const saveStateRef = useRef<SaveState>("idle");
@@ -267,8 +270,7 @@ export default function QuickAdd() {
   // ── autosave: whole-map PATCH, no fingerprint (backend = last-writer-wins) ──
   // Returns whether the PATCH landed, so the summon auto-retry can chain a re-sync on success.
   const flushSave = useCallback(async (): Promise<boolean> => {
-    const t = target.current;
-    if (!t) return false;
+    if (!target.current) return false;
     // A retry (badge click / summon auto-retry) can run while the 600ms debounce is still
     // armed — CANCEL it, don't just null the handle: an orphaned timeout would fire a second,
     // concurrent PATCH of the same rows (and closeNow flushes only while a timer is armed, so it
@@ -278,12 +280,31 @@ export default function QuickAdd() {
     // Mark in flight: the badge shows progress, and the summon auto-retry / a badge
     // double-click are suppressed by the "saving" guards instead of double-PATCHing.
     setSaveState("saving");
-    try {
-      const res = await savePipelineRules({
+    // The newest attempt decides the badge, as persistence.ts does (saveSeq). Flights run one at
+    // a time: two concurrent whole-map PATCHes could land on the server out of order, and an
+    // older one landing late repainted "saved" over the newer one's "error" — the next summon
+    // then re-synced over the refused rows. A flight superseded while it queued sends nothing:
+    // the newer one sends the newest rows (both read when the flight starts, as one pair).
+    const mySeq = ++saveSeq.current;
+    const run = saveFlight.current.then(() => {
+      const t = target.current;
+      if (!t || mySeq !== saveSeq.current) return null;
+      return savePipelineRules({
         serverUrl: t.serverUrl,
         backendId: t.backendId,
         patch: { rules_patch: { [t.slug]: mapBodyFromRows(rowsRef.current) } },
       });
+    });
+    saveFlight.current = run.catch(() => {});
+    try {
+      const res = await run;
+      if (res === null) {
+        // Superseded: the newer flight owns the badge. Still the newest: the pin went away while
+        // this queued (refresh → "nopin"), so nothing is unsaved — don't leave "saving" stuck.
+        if (mySeq === saveSeq.current && saveTimer.current === null) setSaveState("idle");
+        return false;
+      }
+      const newest = mySeq === saveSeq.current;
       // A 2xx can still change nothing: the server's environment pins the whole rule list, so the
       // next summon's refresh drops this mapping. Say so ("pinned", like Dictionary's notice) — but
       // not as "error": that state skips the summon re-sync and auto-retries, and against a pin
@@ -296,14 +317,16 @@ export default function QuickAdd() {
       // An edit landed DURING the PATCH (scheduleSave re-armed the timer): this flight's rows
       // are stale — its own flush will report the newer outcome, so don't repaint the badge
       // (a stale "saved" over a pending edit is how "error"+armed-timer states arise).
-      if (saveTimer.current === null) setSaveState(pinned ? "pinned" : landed ? "saved" : "error");
-      return landed && !pinned;
+      // A newer flight queued behind this one likewise reports its own, newer outcome; and only
+      // the newest may tell the summon auto-retry to re-sync (refresh) over the local rows.
+      if (saveTimer.current === null && newest) setSaveState(pinned ? "pinned" : landed ? "saved" : "error");
+      return landed && !pinned && newest;
     } catch (e) {
       // savePipelineRules is a bare invoke that can reject on an IPC failure — without this saveState
       // stays stuck at "saving" (no retry button + unhandled rejection), AND the re-summon guard reads
       // it as not-"error" and lets refresh() clobber the unsaved edit. Treat a reject as a save error.
       console.error("quick-add save failed:", e);
-      if (saveTimer.current === null) setSaveState("error");
+      if (saveTimer.current === null && mySeq === saveSeq.current) setSaveState("error");
       return false;
     }
   }, []);
