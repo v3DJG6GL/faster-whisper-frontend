@@ -1180,9 +1180,35 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
     }
 }
 
-/// Convenience wrapper for callers that don't need the `recovered` flag.
+/// Convenience wrapper for callers that don't need the `recovered` flag. Recovers like
+/// `load_outcome` — for the launch load only; a mid-session reader uses `try_load`.
 pub fn load(dir: &Path) -> Config {
     load_outcome(dir).0
+}
+
+/// Side-effect-free read for mid-session callers (hotkey re-registration, the evdev rescan and
+/// status, CLI triggers). By then a webview holds the live settings, so an unreadable or
+/// unparseable file must never be renamed to `.bak`, flip the session's reset flags or be
+/// re-saved: `None` on a read or parse error (the caller keeps what it has / skips), the
+/// defaults when the file is absent (first run, or this session's reset already moved it —
+/// the defaults are then what is live), and a legacy config migrated in memory only.
+pub fn try_load(dir: &Path) -> Option<Config> {
+    let text = match read_config_text(&config_path(dir)) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Some(Config::default()),
+        Err(e) => {
+            tracing::warn!("[config] read failed ({e}); leaving the file as is");
+            return None;
+        }
+    };
+    if let Ok(cfg) = serde_json::from_str::<Config>(&text) {
+        return Some(cfg);
+    }
+    let cfg = migrate_legacy(&text);
+    if cfg.is_none() {
+        tracing::warn!("[config] parse failed; leaving the file as is");
+    }
+    cfg
 }
 
 /// Persist config atomically to `<dir>/config.json`.
@@ -1368,6 +1394,43 @@ mod tests {
         assert!(reset_unconfirmed(&dir));
         save(&dir, &Config::default()).unwrap();
         assert!(!reset_unconfirmed(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_mid_session_read_never_recovers() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-try-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Absent: the defaults (first run, or this session's reset already moved the file).
+        assert!(try_load(&dir).is_some_and(|c| c.profiles.is_empty()));
+        // Held so a parallel test's `load_outcome` can't flip the sticky flag under us; a
+        // `try_load` that took it (i.e. recovered) times out instead of passing.
+        let recovered = RECOVERED_THIS_SESSION
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let was_recovered = *recovered;
+        let was_backup_failed = backup_failed();
+        let path = dir.join("config.json");
+        let try_in_thread = |dir: PathBuf| {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(try_load(&dir).is_none());
+            });
+            rx.recv_timeout(std::time::Duration::from_secs(5))
+        };
+        // Unparseable, then unreadable (a directory where the file should be).
+        std::fs::write(&path, b"{not json").unwrap();
+        assert_eq!(try_in_thread(dir.clone()), Ok(true));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not json");
+        std::fs::remove_file(&path).unwrap();
+        std::fs::create_dir(&path).unwrap();
+        assert_eq!(try_in_thread(dir.clone()), Ok(true));
+        assert!(path.is_dir());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1, "no .bak made");
+        assert_eq!(*recovered, was_recovered);
+        assert_eq!(backup_failed(), was_backup_failed);
+        drop(recovered);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -116,7 +116,7 @@ fn emit_trigger(app: &AppHandle, profile_id: String, action: &str, released_at: 
 /// Load the persisted config (for resolving CLI flags → a Profile id).
 fn load_config(app: &AppHandle) -> Option<crate::config::Config> {
     let dir = app.path().app_config_dir().ok()?;
-    Some(crate::config::load(&dir))
+    crate::config::try_load(&dir)
 }
 
 /// Resolve a legacy / zero-arg flag to the first enabled Profile with `want`

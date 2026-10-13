@@ -94,7 +94,12 @@ pub fn apply_bindings(app: &AppHandle) {
 /// The apply step itself; the caller holds APPLY_LOCK.
 fn apply_bindings_locked(app: &AppHandle) {
     let Ok(dir) = config_dir(app) else { return };
-    let cfg = config::load(&dir);
+    // Never the recovering `load`: a read error here must not move the user's config aside, and
+    // must not unregister every hotkey either (the defaults have no profiles) — keep what is live.
+    let Some(cfg) = config::try_load(&dir) else {
+        tracing::warn!("[bindings] config unreadable; keeping current registrations");
+        return;
+    };
     // The quick-add chord stays INERT until a word-mapping list is designated
     // (settings.quickAddList) — the window would have nothing to add to. This
     // keeps the Super+Alt factory default harmless out of the box;
@@ -311,9 +316,11 @@ fn rescan_input_devices(app: &AppHandle, nodes: &mut InputNodeWatch) {
     let Some(reader_lost) = nodes.observe(now, crate::hotkeys::evdev::reader_lost()) else {
         return;
     };
-    let wanted = config_dir(app)
-        .map(|dir| config::load(&dir).settings.general.evdev_enabled)
-        .unwrap_or(false);
+    // An unreadable config skips this tick (pending kept) rather than reading as "evdev off".
+    let Some(cfg) = config_dir(app).ok().and_then(|dir| config::try_load(&dir)) else {
+        return;
+    };
+    let wanted = cfg.settings.general.evdev_enabled;
     let step = rescan_step(
         wanted,
         crate::hotkeys::evdev::any_hold_active() || crate::hotkeys::triggers::any_hold_active(),
@@ -594,7 +601,9 @@ pub struct EvdevStatus {
 pub async fn evdev_status(app: AppHandle) -> Result<EvdevStatus, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let enabled = config_dir(&app)
-            .map(|d| config::load(&d).settings.general.evdev_enabled)
+            .ok()
+            .and_then(|d| config::try_load(&d))
+            .map(|c| c.settings.general.evdev_enabled)
             .unwrap_or(false);
         EvdevStatus {
             available: cfg!(target_os = "linux"),
