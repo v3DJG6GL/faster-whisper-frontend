@@ -1329,8 +1329,15 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             );
             // Label the saved recording with its transcript (sibling .txt), same as streaming —
             // and tell the client where it landed so its history record can link the audio.
+            // On the blocking pool, like the WAV save above and the streaming drain's sidecar:
+            // open + write + fsync into the same folder can hang on a disk or share that went
+            // away during the POST, and must not park a runtime worker (the 27d8bdd rule).
             if let Some(p) = &saved_path {
-                crate::audio::save_transcript_sidecar(p, &text);
+                let (sidecar_path, sidecar_text) = (p.clone(), text.clone());
+                let _ = tauri::async_runtime::spawn_blocking(move || {
+                    crate::audio::save_transcript_sidecar(&sidecar_path, &sidecar_text)
+                })
+                .await;
                 emit_if_active(
                     &app,
                     epoch,
