@@ -165,12 +165,14 @@ export const SegmentRow = memo(function SegmentRow({
           key={editRev}
           onBlur={(e) => {
             const el = e.currentTarget;
-            const typed = el.textContent ?? "";
+            // innerText, not textContent: a pasted line break lands as <br> or a
+            // <div>, which textContent drops — gluing the words on either side.
+            const typed = el.innerText ?? el.textContent ?? "";
             const shown = onCommitEdit(i, typed);
             // Remount from props: React never rewrites text the user typed into a
             // contentEditable, so an emptied line (committed as "no edit") would
             // stay blank on screen while Copy and the exports keep its text, and
-            // pasted markup (bold, a link, an image — none of it in textContent)
+            // pasted markup (bold, a link, an image — none of it in the plain text)
             // would stay on screen though only the plain text is stored. Only
             // then, though: a bare blur (Alt-Tab mid-correction) must keep the span,
             // so the caret comes back when the window regains focus. The stored

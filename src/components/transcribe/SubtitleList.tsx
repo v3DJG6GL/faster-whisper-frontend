@@ -7,7 +7,9 @@
 // transcript box: a long video's ~2000 cue rows cost WebKitGTK its frame rate
 // in style/layout/paint alone, even with React idle.
 
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import {
+  memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type RefObject,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { Pencil } from "lucide-react";
 import { LangTag } from "@/components/ui";
@@ -207,11 +209,17 @@ const widths = (n: number, fixed: string) => ({
   maxWidth: `calc(${fixed} + ${n} * 60ch)`,
 });
 
+/** The cue under the playhead at `t` (binary search; a short grace after its end). */
+const activeIn = (rows: Row[], t: number) => {
+  const i = lastStartedAt(rows, t);
+  return i >= 0 && t < rows[i].end + 0.3 ? i : -1;
+};
+
 /** The id the time-pinned cue carries when only site tracks show (see `onTimeAnchor`). */
 export const TIME_ANCHOR_ID = "sub-time-anchor";
 
 export function SubtitleList({
-  result, grid, tracks, cues, curTime, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg, showNames, colorize, displayName, colorOf,
+  result, grid, tracks, cues, subscribePlayhead, getPlayhead, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg, showNames, colorize, displayName, colorOf,
   onTimeAnchor,
 }: {
   result: BatchResult;
@@ -221,7 +229,10 @@ export function SubtitleList({
   tracks: string[];
   /** Undefined = as transcribed (one cue per segment, unwrapped). */
   cues: CueOptions | undefined;
-  curTime: number;
+  /** The viewer's per-frame playhead (not its ~4 Hz curTime): a listener per
+   *  sample, and the current media time. */
+  subscribePlayhead: (cb: () => void) => () => void;
+  getPlayhead: () => number;
   /** The viewer's active segment: its first cue's row stays in the page. */
   activeSeg: number;
   /** The viewer's transcript box — the rows' scroll container. */
@@ -345,19 +356,21 @@ export function SubtitleList({
   // the one before it), and the viewer follows it cue by cue — a segment can
   // span several site cues, and the playhead can sit between segments.
   const segKeyed = !lanes || tracks.some((t) => t === "orig" || !timedTrack(result, t));
-  const pin = segKeyed
-    ? (firstOf.get(activeSeg) ?? -1)
-    : lastStartedAt(layout.lanes[layout.idLane]?.rows ?? [], curTime);
+  // The playhead's cue state — the time pin and each list's active row — read from
+  // the per-frame clock as a key that changes only when a cue boundary is crossed,
+  // so this list re-renders at cue changes, not every frame.
+  const lists = useMemo(() => (lanes ? layout.lanes.map((ln) => ln.rows) : [layout.rows]), [layout, lanes]);
+  const playKey = useCallback(() => {
+    const t = getPlayhead();
+    const timeRow = segKeyed ? -1 : lastStartedAt(layout.lanes[layout.idLane]?.rows ?? [], t);
+    return `${timeRow}:${lists.map((rows) => activeIn(rows, t)).join(",")}`;
+  }, [getPlayhead, segKeyed, layout, lists]);
+  const [timeRow, ...actives] = useSyncExternalStore(subscribePlayhead, playKey).split(/[:,]/).map(Number);
+  const pin = segKeyed ? (firstOf.get(activeSeg) ?? -1) : timeRow;
   const anchorId = segKeyed ? undefined : TIME_ANCHOR_ID;
   const timePin = segKeyed || pin < 0 ? null : pin;
   useEffect(() => { onTimeAnchor?.(timePin); }, [onTimeAnchor, timePin]);
   useEffect(() => () => onTimeAnchor?.(null), [onTimeAnchor]);
-
-  /** The cue under the playhead (binary search; a short grace after its end). */
-  const activeIn = (rows: Row[]) => {
-    const i = lastStartedAt(rows, curTime);
-    return i >= 0 && curTime < rows[i].end + 0.3 ? i : -1;
-  };
 
   const columns = `2.25rem 7.5rem ${layout.heads.map(() => "minmax(0,1fr)").join(" ")}`;
   const n = lanes ? layout.lanes.length : layout.heads.length;
@@ -376,7 +389,7 @@ export function SubtitleList({
             <span>time</span>
             {layout.heads.map((h, i) => <span key={i}>{h}</span>)}
           </div>
-          <VirtualCues rows={layout.rows} active={activeIn(layout.rows)} pin={pin} columns={columns} scrollRef={scrollRef}
+          <VirtualCues rows={layout.rows} active={actives[0]} pin={pin} columns={columns} scrollRef={scrollRef}
             canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
         </div>
       ) : (
@@ -389,7 +402,7 @@ export function SubtitleList({
                   {plural(ln.rows.length, "subtitle")}
                 </span>
               </div>
-              <VirtualCues rows={ln.rows} active={activeIn(ln.rows)} pin={li === layout.idLane ? pin : -1}
+              <VirtualCues rows={ln.rows} active={actives[li]} pin={li === layout.idLane ? pin : -1}
                 anchorId={li === layout.idLane ? anchorId : undefined} lane scrollRef={scrollRef}
                 canSeek={canSeek} seekTo={seekTo} onEditSegment={onEditSegment} maxEditSeg={maxEditSeg} />
             </div>

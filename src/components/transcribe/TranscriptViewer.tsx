@@ -917,6 +917,23 @@ export function TranscriptViewer({
   });
   dataRef.current = { segs: result.segments ?? [], words: effWords };
   const shownTimeRef = useRef(0);
+  // The per-frame playhead for the Subtitles view, outside React state: SubtitleList
+  // subscribes and re-renders only when a cue boundary is crossed, where a state
+  // clock would re-render this whole viewer every frame (and curTime is too
+  // coarse — a highlight ~240 ms late, a cue shorter than a step never lit).
+  const liveTimeRef = useRef(0);
+  const playheadSubs = useRef(new Set<() => void>());
+  const setLiveTime = useCallback((t: number) => {
+    liveTimeRef.current = t;
+    playheadSubs.current.forEach((cb) => cb());
+  }, []);
+  const subscribePlayhead = useCallback((cb: () => void) => {
+    playheadSubs.current.add(cb);
+    return () => {
+      playheadSubs.current.delete(cb);
+    };
+  }, []);
+  const getPlayhead = useCallback(() => liveTimeRef.current, []);
 
   /** Fold one playhead sample into state. Word/segment indices update whenever
    *  they change (React bails out on same-value sets); the visible clock only
@@ -933,11 +950,12 @@ export function TranscriptViewer({
     const best = lastStartedAt(words, t);
     setActiveWordIdx(best >= 0 && t < (words[best].end ?? 0) + 0.4 ? best : -1);
     setPassedWordIdx(best >= 0 && t >= (words[best].end ?? 0) ? best : best - 1);
+    setLiveTime(t);
     if (force || Math.abs(t - shownTimeRef.current) >= 0.24) {
       shownTimeRef.current = t;
       setCurTime(t);
     }
-  }, []);
+  }, [setLiveTime]);
 
   // The highlight clock: while playing, sample audio.currentTime every frame.
   // The <audio> timeupdate event alone ticks every 250-500 ms on WebKitGTK —
@@ -1015,6 +1033,7 @@ export function TranscriptViewer({
     }
     setPlaying(false);
     shownTimeRef.current = 0;
+    setLiveTime(0);
     setCurTime(0);
     setActiveSegIdx(-1);
     setActiveWordIdx(-1);
@@ -1646,7 +1665,12 @@ export function TranscriptViewer({
       // Same cleaning as the typed text, or a line with bidi marks (imported RTL
       // subtitles) never compares equal and a bare focus/blur stores a phantom edit.
       const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
-      const edit = t && t !== orig ? t : null;
+      // A correction is one logical line, as every export writes it (clean()): a
+      // pasted line break would otherwise show in Read but turn into a space in
+      // the files. Compare flattened, so a bare blur on an imported multi-line
+      // line is still "no edit" (and returns `orig` itself, keeping the caret).
+      const flat = (s: string) => s.replace(/\s*\n\s*/g, " ");
+      const edit = t && flat(t) !== flat(orig) ? flat(t) : null;
       setSegmentEdit(okey, i, edit);
       // What the row renders from now on (`fileEdits[i] ?? seg.text`, stripped and
       // trimmed) — the raw server text would never match the stripped display, so
@@ -2278,7 +2302,8 @@ export function TranscriptViewer({
                 grid={subGrid}
                 tracks={visibleTracks}
                 cues={cueOpts}
-                curTime={curTime}
+                subscribePlayhead={subscribePlayhead}
+                getPlayhead={getPlayhead}
                 activeSeg={activeSegIdx}
                 onTimeAnchor={setTimeAnchor}
                 scrollRef={transcriptBoxRef}
