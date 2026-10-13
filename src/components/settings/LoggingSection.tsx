@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useApp } from "@/lib/store";
 import { Button, Segmented, SectionLabel, Select, SettingRow, Toggle } from "@/components/ui";
 import { safeDisplayText } from "@/lib/sanitize";
-import { pickRecordingsDir, logFolderPath, logLine, openLogFolder } from "@/lib/api";
+import { pickRecordingsDir, logFolderPath, openLogFolder } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { SETTING } from "@/lib/settingsManifest";
 import { LOG_RETENTION_OPTIONS, withCurrentDay } from "@/lib/retentionOptions";
@@ -46,7 +46,6 @@ export function LoggingSection() {
     void openLogFolder(asked)
       .catch((e: unknown) => {
         console.error("open log folder:", e);
-        logLine("warn", "logs", "could not open the log folder");
         // A late answer for a folder Change…/Reset has since replaced must not label the new one.
         if ((useApp.getState().settings.logging?.logDir ?? null) !== asked) return;
         setOpenError(safeDisplayText(errorText(e), 160));

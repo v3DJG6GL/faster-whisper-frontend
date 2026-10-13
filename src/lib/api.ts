@@ -863,18 +863,27 @@ export async function logFolderPath(custom: string | null): Promise<string | nul
 // pops a second file-manager window when the mount answers. A later click joins the pending
 // call (and hears its answer); a different folder still gets its own call, the way out of a hung
 // share. Keyed by the preference as passed (null and blank both mean the default folder).
+// `onFail` logs the failure here, once per real call: every joined click hears the same
+// rejection, and a warn line per caller would read as several failed attempts.
 const openLogInFlight = new Map<string, Promise<void>>();
 const openAudioInFlight = new Map<string, Promise<void>>();
 function openOnce(
   inFlight: Map<string, Promise<void>>,
   custom: string | null,
   run: () => Promise<unknown>,
+  onFail: () => void,
 ): Promise<void> {
   const k = custom ?? "";
   const pending = inFlight.get(k);
   if (pending) return pending;
   const p: Promise<void> = run()
-    .then(() => {})
+    .then(
+      () => {},
+      (e: unknown) => {
+        onFail();
+        throw e;
+      },
+    )
     .finally(() => {
       if (inFlight.get(k) === p) inFlight.delete(k);
     });
@@ -884,7 +893,13 @@ function openOnce(
 
 export async function openLogFolder(custom: string | null): Promise<void> {
   if (!isTauri) return;
-  return openOnce(openLogInFlight, custom, () => invoke("open_log_folder", { custom }));
+  // Path-free: the log is pasted into bug reports.
+  return openOnce(
+    openLogInFlight,
+    custom,
+    () => invoke("open_log_folder", { custom }),
+    () => logLine("warn", "logs", "could not open the log folder"),
+  );
 }
 
 /** Batched new log lines — emitted only while the stream is active. */
@@ -1747,6 +1762,12 @@ export async function audioDirPath(custom: string | null): Promise<string | null
  *  subfolders, if absent). */
 export async function openAudioDir(custom: string | null): Promise<void> {
   if (!isTauri) return;
-  await openOnce(openAudioInFlight, custom, () => invoke("open_audio_dir", { custom }));
+  // Path-free: the log is pasted into bug reports.
+  await openOnce(
+    openAudioInFlight,
+    custom,
+    () => invoke("open_audio_dir", { custom }),
+    () => logLine("warn", "files", "could not open the audio folder"),
+  );
 }
 

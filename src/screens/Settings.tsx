@@ -32,7 +32,6 @@ import {
   pickRecordingsDir,
   type EvdevStatus,
   subscribe,
-  logLine,
 } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import { PASTE_PRESETS, pasteKey, pasteCodes } from "@/lib/paste";
@@ -380,8 +379,6 @@ export default function Settings() {
     void openAudioDir(clicked)
       .catch((e: unknown) => {
         console.error("open audio dir:", e);
-        // Path-free: the log is pasted into bug reports.
-        logLine("warn", "files", "could not open the audio folder");
         if (
           tabRef.current === "Recording & history" &&
           audioBasePref(useApp.getState().settings.recording) === clicked

@@ -13,7 +13,7 @@ import { ArrowDown, Check, ChevronRight, Copy, Eraser, FolderOpen, ScrollText } 
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { cn } from "@/lib/cn";
 import { useApp } from "@/lib/store";
-import { appVersion, logLine, openLogFolder, type LogLine } from "@/lib/api";
+import { appVersion, openLogFolder, type LogLine } from "@/lib/api";
 import { errorText } from "@/lib/errors";
 import {
   LOG_BUFFER_CAP,
@@ -193,6 +193,12 @@ export default function Logs() {
   const [openError, setOpenError] = useState<string | null>(null);
   const openTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   useEffect(() => () => window.clearTimeout(openTimerRef.current), []);
+  const logDir = useApp((s) => s.settings.logging?.logDir ?? null);
+  useEffect(() => {
+    // An open failure is about the folder it was asked for: a new folder starts clean.
+    setOpenError(null);
+    window.clearTimeout(openTimerRef.current);
+  }, [logDir]);
   const [follow, setFollow] = useState<FollowState>({ follow: true, pendingNew: 0 });
 
   // Attach the stream for the screen's lifetime; badge clears on open & close.
@@ -378,12 +384,10 @@ export default function Logs() {
     if (opening) return;
     setOpening(true);
     setOpenError(null);
-    const asked = useApp.getState().settings.logging?.logDir ?? null;
+    const asked = logDir;
     void openLogFolder(asked)
       .catch((e: unknown) => {
         console.error("open log folder:", e);
-        // Path-free: the log is pasted into bug reports.
-        logLine("warn", "logs", "could not open the log folder");
         // A late answer for a folder a sync or Settings has since replaced must not label the new one.
         if ((useApp.getState().settings.logging?.logDir ?? null) !== asked) return;
         setOpenError(safeDisplayText(errorText(e), 160));
