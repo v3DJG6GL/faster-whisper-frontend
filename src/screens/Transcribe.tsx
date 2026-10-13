@@ -2089,6 +2089,10 @@ export default function Transcribe() {
         if (!busy && !complete) return null;
         const runningItem = queue.find((it) => it.status === "running") ?? null;
         const panelItem = runningItem ?? (complete ? lastSettled : null);
+        // The result the panel may describe: a SETTLED item's. A re-run (Retry without
+        // skipping) keeps its previous result while it runs, whose receipt, warnings,
+        // duration and speakers belong to the run before.
+        const panelResult = panelItem?.status === "running" ? undefined : panelItem?.result;
         // URL items prepend a Download stage to the rail (per-item, so file
         // items in the same run never show it).
         const panelKind = panelItem ? itemSourceKind(panelItem) : null;
@@ -2112,12 +2116,12 @@ export default function Transcribe() {
           forUrl &&
           linkUsesSiteTranscript(panelUrlMeta) &&
           !panelItem?.siteFallback &&
-          !(panelItem?.result?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
+          !(panelResult?.warnings ?? []).includes(SITE_TRANSCRIPT_FALLBACK);
         const stages = railStages(panelOptions, forUrl, forText, siteT);
         // The server-owned plan behind this file (live poll while it runs,
         // the response's receipt once settled) and the numbers it derives:
         // the overall fraction and the ETA are the server's, verbatim.
-        const plan = planOf(progress, panelItem?.result);
+        const plan = planOf(progress, panelResult);
         // Requested stages the server jumped over (feature disabled there) —
         // shown as "skipped", never as done, and worth no progress credit.
         // Read from the same plan as the rail rows and the strip: a stage the
@@ -2149,7 +2153,7 @@ export default function Transcribe() {
           : 0;
         const audioDur =
           progress?.duration ??
-          panelItem?.result?.duration ??
+          panelResult?.duration ??
           (panelItem ? urlMeta[panelItem.path]?.durationSec : undefined) ??
           null;
         // Whole-run figures for the completed footer: sum the finished items when the run
@@ -2164,7 +2168,7 @@ export default function Transcribe() {
         const panelFormat = safeDisplayText(panelUrlMeta?.format, 32).trim();
         // Through speakersOf, which falls back to the segments' labels when a backend omits
         // the top-level list — the queue row counts the same way.
-        const speakerCount = panelItem?.result ? speakersOf(panelItem.result).length : 0;
+        const speakerCount = panelResult ? speakersOf(panelResult).length : 0;
         const doneItems = queue.filter((it) => it.status === "done");
         const queuedCount = queue.filter((it) => it.status === "queued").length;
         // Whole-run estimate: the current file's projection plus the average

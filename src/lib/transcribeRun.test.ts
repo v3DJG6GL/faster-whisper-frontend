@@ -439,11 +439,19 @@ describe("planOf", () => {
     { stage: "transcribing", state: "done", tookS: 10 },
     { stage: "translating", state: "done", tookS: 33 },
   ];
-  it("prefers the live poll, the receipt once a stage is still active in the last snapshot", () => {
+  it("a running item (no settled result) shows the live poll, a settled one its receipt", () => {
     expect(planOf({ plan: live }, undefined)).toBe(live);
     expect(planOf({ plan: live }, { text: "", plan: receipt })).toBe(receipt);
     expect(planOf(null, { text: "", plan: receipt })).toBe(receipt);
     expect(planOf({ stage: "transcribing" }, { text: "" })).toBeNull();
+  });
+  it("a finished run whose last snapshot had no active stage still shows its receipt", () => {
+    // Between stage_done and the next tick: the last stage still "pending ~est".
+    const between: PlanStage[] = [
+      { stage: "transcribing", state: "done", tookS: 10 },
+      { stage: "translating", state: "pending", estS: 30 },
+    ];
+    expect(planOf({ plan: between }, { text: "", plan: receipt })).toBe(receipt);
   });
 });
 

@@ -299,18 +299,14 @@ export function etaSecOf(progress: BatchProgress | null): number | null {
   return typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : null;
 }
 
-/** The plan that describes the panel's file: the live poll's while it runs,
- *  the response's receipt once it settled (the progress entry is popped
- *  before the response leaves, so the last poll never sees the final stage
- *  close), null before the first poll answers or on a server without one. */
+/** The plan that describes the panel's file: the response's receipt once it settled (the
+ *  progress entry is popped before the response leaves, so the last poll never sees the final
+ *  stage close; the receipt is the only copy where every stage and unit carries its took_s),
+ *  else the live poll's; null before the first poll answers or on a server without one.
+ *  `result` = a SETTLED item's only: a re-run still holds its previous result. */
 export function planOf(progress: BatchProgress | null, result?: BatchResult | null): PlanStage[] | null {
-  if (progress?.plan?.length) {
-    // A settled run's receipt wins over the last live snapshot: it is the
-    // only copy where every stage and unit carries its took_s.
-    if (result?.plan?.length && progress.plan.some((p) => p.state === "active")) return result.plan;
-    return progress.plan;
-  }
-  return result?.plan?.length ? result.plan : null;
+  if (result?.plan?.length) return result.plan;
+  return progress?.plan?.length ? progress.plan : null;
 }
 
 /** One lane of the translate segment on the timeline strip. */
