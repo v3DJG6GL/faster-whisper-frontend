@@ -145,15 +145,19 @@ const TONE_BG: Record<DictationTone, string> = {
 // The dot's glow, keyed off the SAME tone as its fill. These used to be an if-chain
 // hand-rolled from `vis.state`, which meant a new tone got the fill from the map above
 // and a glow from whichever branch happened to catch it — teal dot, blue halo. Keyed
-// off `vis.tone`, the two cannot disagree. Alphas match the old chain's.
+// off `vis.tone`, the two cannot disagree. Alphas match the old chain's. The halo mixes the
+// per-theme state token itself, as the fill does: a dark-theme rgba literal would wear a lighter
+// hue around the light theme's darker dot (a #bf6f12 armed dot in a #ff9e2c halo).
+const glow = (blur: number, token: string, pct: number) =>
+  `0 0 ${blur}px color-mix(in srgb, var(--c-${token}) ${pct}%, transparent)`;
 const TONE_GLOW: Record<DictationTone, string> = {
   faint: "none",
-  armed: "0 0 12px rgba(255,158,44,0.6)", // --c-armed amber: fixed, so the literal alpha halo stays truthful
-  live: "0 0 12px rgba(54,208,122,0.5)",
-  dim: "0 0 10px rgba(168,159,147,0.5)",
-  rec: "0 0 10px rgba(255,92,70,0.5)",
-  think: "0 0 10px rgba(111,174,217,0.45)", // finishing/warm-up: cool "working" blue
-  translate: "0 0 10px rgba(77,208,196,0.45)", // T2T stage: --c-translate teal, think's alpha
+  armed: glow(12, "armed", 60),
+  live: glow(12, "live", 50),
+  dim: glow(10, "dim", 50),
+  rec: glow(10, "rec", 50),
+  think: glow(10, "think", 45), // finishing/warm-up: cool "working" blue
+  translate: glow(10, "translate", 45), // T2T stage: --c-translate teal, think's alpha
 };
 
 // After speech stops, the pill stays expanded this long before collapsing back to
@@ -1022,13 +1026,13 @@ export default function Overlay() {
       ? TONE_GLOW[vis.tone]
       : peeked
         ? standby
-          ? "0 0 10px rgba(168,159,147,0.5)" // tucked idle: soft neutral halo
-          : "0 0 12px rgba(255,158,44,0.6)" // tucked armed: amber halo
+          ? TONE_GLOW.dim // tucked idle: soft neutral halo
+          : TONE_GLOW.armed // tucked armed: amber halo
         : standby
           ? "none"
           : !expanded
-            ? "0 0 12px rgba(255,158,44,0.55)" // calm breathing ember
-            : "0 0 8px rgba(255,158,44,0.4)";
+            ? glow(12, "armed", 55) // calm breathing ember
+            : glow(8, "armed", 40);
   // The halo radius follows the dot: a 30px dot inside a 12px glow reads as no glow at all.
   const dotGlow =
     dotK === 1 ? baseDotGlow : baseDotGlow.replace(/(\d+)px/g, (_, n: string) => `${Number(n) * dotK}px`);

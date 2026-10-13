@@ -8,7 +8,8 @@ import { isWindowHidden, onWindowHiddenChange } from "@/lib/windowVisibility";
 /**
  * The signature motif — a live level meter rendered on canvas. Used both as the
  * dictation chip's voice indicator and as ambient instrument readouts across the
- * app. Reacts to `level` (0..1 RMS); idles with a gentle breathing baseline.
+ * app. Reacts to `level` (0..1 RMS); at idle it settles on a static silhouette and parks
+ * its draw loop.
  *
  * `pride`: a quiet solidarity touch — while you are SPEAKING (the green "live" tone) and
  * you HOVER the meter, the bars flicker between their normal colour and the rainbow Pride
@@ -207,7 +208,7 @@ export function Waveform({
       // driven (ignores `level`), so it reads unmistakably as "machine working" — a
       // distinct gait from the audio-reactive listening bars.
       const span = bars + 2;
-      const sweep = ((t * 1.0) % (span * 2));
+      const sweep = t % (span * 2);
       const center = (sweep < span ? sweep : span * 2 - sweep) - 1; // bounce -1 … bars
 
       let maxStep = 0; // largest bar movement this frame → lets the loop detect "settled"
