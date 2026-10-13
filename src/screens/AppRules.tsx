@@ -127,12 +127,12 @@ function Editor({
   // Same normalizer the two inbound floors use, so all three agree on what the stored key is.
   // `trim()` alone was not enough: an invisible character survives it, and this screen renders the
   // id through a filter that deletes such characters — so the rule read armed and matched nothing.
-  const canSave = appRuleKey(r.appId).length > 0;
+  const canSave = detectId.length > 0;
   // Saving replaces every other rule with the same key (upsertAppRule: one rule per app, first
   // match wins), a "never type here" block included — say so before the user saves, not after.
   const appRules = useApp((s) => s.appRules);
   const clash = canSave
-    ? appRules.find((x) => x.id !== r.id && appRuleKey(x.appId) === appRuleKey(r.appId))
+    ? appRules.find((x) => x.id !== r.id && appRuleKey(x.appId) === detectId)
     : undefined;
 
   const save = () => {
