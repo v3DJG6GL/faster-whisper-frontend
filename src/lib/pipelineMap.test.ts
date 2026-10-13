@@ -2,8 +2,11 @@
 // of a `callback:map` rule are coerced at the boundary: an entry whose value is not the
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
-import { applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleCountOf, ruleListOf, saveLanded } from "./pipelineMap";
-import type { PipelineFetch, PipelineRule, PipelineSaveResult } from "./types";
+import {
+  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleCountOf, ruleListOf, ruleLockedFor,
+  ruleMapWritable, saveLanded,
+} from "./pipelineMap";
+import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
 
 function fetchWith(rules: unknown): PipelineFetch {
   return { ok: true, state: { rules } } as unknown as PipelineFetch;
@@ -157,5 +160,32 @@ describe("saveLanded", () => {
     expect(saveLanded(save(false, 422))).toBe(false);
     expect(saveLanded(save(false, 500))).toBe(false);
     expect(saveLanded(save(false, 300))).toBe(false);
+  });
+});
+
+describe("ruleMapWritable", () => {
+  const rule = (locked?: boolean): PipelineRule =>
+    ({ name: "sym", label: "Symbols", type: "callback:map", enabled: true, locked, map: {} }) as PipelineRule;
+  const state = (role: "admin" | "user", ef: unknown = { "callback:map": ["enabled", "map"] }) =>
+    ({ rules: [], role, editable_fields: ef }) as PipelineRulesState;
+
+  it("refuses a locked list for a non-admin, as the server's PATCH does", () => {
+    expect(ruleMapWritable(rule(true), state("user"))).toBe(false);
+    expect(ruleLockedFor(rule(true), "user")).toBe(true);
+    expect(ruleLockedFor(rule(true), undefined)).toBe(true);
+  });
+
+  it("lets an admin write a locked list, and anyone an unlocked one", () => {
+    expect(ruleMapWritable(rule(true), state("admin"))).toBe(true);
+    expect(ruleMapWritable(rule(false), state("user"))).toBe(true);
+    expect(ruleMapWritable(rule(), state("user"))).toBe(true);
+  });
+
+  it("refuses when editable_fields does not list map for the type, or is malformed", () => {
+    expect(ruleMapWritable(rule(), state("user", { "callback:map": ["enabled"] }))).toBe(false);
+    expect(ruleMapWritable(rule(), state("user", {}))).toBe(false);
+    expect(ruleMapWritable(rule(), state("user", ["map"]))).toBe(false);
+    expect(ruleMapWritable(rule(), state("user", { "callback:map": "map" }))).toBe(false);
+    expect(ruleMapWritable(rule(), undefined)).toBe(false);
   });
 });

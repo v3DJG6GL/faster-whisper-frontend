@@ -28,7 +28,7 @@ import { Combobox } from "@/components/Combobox";
 import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { IS_LINUX } from "@/lib/platform";
 import {
-  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, envPinnedOf, saveLanded, RULE_LIST_SETTING,
+  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, ruleLockedFor, envPinnedOf, saveLanded, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
@@ -296,7 +296,10 @@ function RuleCard({
             type="button"
             onClick={onTogglePin}
             aria-pressed={pinned}
-            title={pinned ? "Pinned as the quick-add list — click to unpin" : "Set as the quick-add list"}
+            title={
+              (pinned ? "Pinned as the quick-add list — click to unpin" : "Set as the quick-add list") +
+              (readOnlyLock ? " (locked — quick-add can't add to it)" : "")
+            }
             className={cn(
               "ring-signal grid size-7 shrink-0 place-items-center rounded-md transition-colors",
               pinned ? "bg-accent-soft text-accent" : "text-faint hover:text-text",
@@ -706,10 +709,10 @@ export default function Dictionary() {
     efRaw && typeof efRaw === "object" && !Array.isArray(efRaw) ? (efRaw as Record<string, string[]>) : {};
   const role = fetchRes?.state?.role;
   // A locked rule is read-only only for a non-admin: the server lets an admin patch it (they own
-  // the flag), and so does the web /quick-config editor.
+  // the flag), and so does the web /quick-config editor. Quick-add shares the test (ruleLockedFor).
   const editableFor = useCallback(
     (r: PipelineRule) => {
-      if (r.locked && role !== "admin") return [];
+      if (ruleLockedFor(r, role)) return [];
       const f = editableFields[r.type];
       return Array.isArray(f) ? f : [];
     },
@@ -1124,7 +1127,7 @@ export default function Dictionary() {
               rule={r}
               edit={edits[r.name]}
               editable={editableFor(r)}
-              readOnlyLock={!!r.locked && role !== "admin"}
+              readOnlyLock={ruleLockedFor(r, role)}
               dirty={dirtyNames.has(r.name)}
               expanded={expanded.has(r.name)}
               mapCollapseAfter={fetchRes?.state?.map_collapse_after ?? 15}

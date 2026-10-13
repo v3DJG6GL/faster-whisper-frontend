@@ -19,7 +19,7 @@ import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import {
-  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, envPinnedOf, saveLanded, RULE_LIST_SETTING,
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, ruleLockedFor, ruleMapWritable, envPinnedOf, saveLanded, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
@@ -238,6 +238,26 @@ export default function QuickAdd() {
       if (!rule) {
         // status -2: a LOCAL sentinel (like -1) — a real server 404 means the rules endpoint itself is missing.
         setFetchErr({ ok: false, status: -2, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
+        setPhase("error");
+        return;
+      }
+      // The Dictionary's write gate: a list an admin locked (or whose map this caller may not
+      // edit) refuses every PATCH with a 403. Offering it would show added rows that never reach
+      // the server, and the failed save then re-PATCHes on every summon. status -3/-4: LOCAL too.
+      if (!ruleMapWritable(rule, res.state)) {
+        setFetchErr(
+          ruleLockedFor(rule, res.state?.role)
+            ? {
+                ok: false,
+                status: -3,
+                error: "An admin locked this list on the server — ask them to unlock it, or pin another list in the Dictionary.",
+              }
+            : {
+                ok: false,
+                status: -4,
+                error: "This server doesn't let your account edit this list's mappings — pin another list in the Dictionary.",
+              },
+        );
         setPhase("error");
         return;
       }
@@ -779,6 +799,10 @@ function errTitle(f: PipelineFetch | null): string {
       return "Your account can't edit this list";
     case -2:
       return "List unavailable";
+    case -3:
+      return "List locked";
+    case -4:
+      return "List is read-only";
     case 404:
       return "This server doesn't support editable rules";
     default:

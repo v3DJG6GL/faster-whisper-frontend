@@ -2,7 +2,7 @@
 // used by both the full Dictionary screen and the minimal QuickAdd window so the
 // newest-first ordering and the canonical (key-sorted) PATCH body stay identical.
 
-import type { PipelineFetch, PipelineRule, PipelineSaveResult } from "./types";
+import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
 import { ownProp } from "./own";
 
 /** The setting names the server's environment pinned, so the save did not change them. `env_pinned_ignored`
@@ -70,6 +70,25 @@ const MAX_RULES = 500;
 export function ruleCountOf(res: PipelineFetch): number {
   const r = res.ok ? res.state?.rules : undefined;
   return Array.isArray(r) ? r.filter((x) => !!x && typeof x === "object").length : 0;
+}
+
+/** A locked rule is read-only for a non-admin: the server refuses their PATCH of it with a 403
+ *  (an admin owns the flag and may patch it, as the web /quick-config editor does). The ONE
+ *  lock test the Dictionary and quick-add share. */
+export function ruleLockedFor(rule: PipelineRule, role: PipelineRulesState["role"] | undefined): boolean {
+  return !!rule.locked && role !== "admin";
+}
+
+/** May this caller PATCH the rule's `map`? Not when it is locked for them (`ruleLockedFor`), nor
+ *  when the server's `editable_fields` for its type omits "map". `editable_fields` is forwarded
+ *  as an opaque server value, so it is coerced like the Dictionary does (a plain object, an
+ *  array per type) before anything is read from it. */
+export function ruleMapWritable(rule: PipelineRule, state: PipelineRulesState | undefined): boolean {
+  if (ruleLockedFor(rule, state?.role)) return false;
+  const ef = state?.editable_fields as unknown;
+  if (!ef || typeof ef !== "object" || Array.isArray(ef)) return false;
+  const f = ownProp(ef as Record<string, unknown>, rule.type);
+  return Array.isArray(f) && f.includes("map");
 }
 
 /** A server-supplied field that the editors treat as a plain string→value record.
