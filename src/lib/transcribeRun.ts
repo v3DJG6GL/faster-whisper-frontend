@@ -728,6 +728,12 @@ export function setUrlMeta(url: string, meta: TranscribeRunState["urlMeta"][stri
 
 export function addFiles(paths: string[]) {
   resetForInputChange();
+  stageFiles(paths);
+}
+
+/** Adds inputs for the NEXT run without touching the current one: no reset, no abandon. Safe
+ *  mid-run because startRun snapshots `files` into the queue once and the pump never reads it. */
+export function stageFiles(paths: string[]) {
   // URL entries normalize BEFORE the dedupe, so a re-pasted variant of a
   // link already in the list collapses onto it (and History's re-transcribe,
   // which replays rec.sourcePath verbatim, hits the same key).

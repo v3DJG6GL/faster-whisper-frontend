@@ -1069,6 +1069,27 @@ describe("one current copy per record (the registries hold ids, never copies)", 
   });
 });
 
+describe("stageFiles: a pick that lands while a run is live waits for the next run", () => {
+  it("appends to the list without touching the running queue", async () => {
+    const { addFiles, stageFiles } = await import("./transcribeRun");
+    const queue: QueueItem[] = [{ path: "/a.wav", status: "running", kind: "file" }];
+    useTranscribeRun.setState({ files: ["/a.wav", "https://youtu.be/q"], queue, running: true, progress: null, stageTimes: {}, stageMeta: {} });
+    const before = useTranscribeRun.getState();
+    stageFiles(["/b.wav", "/a.wav", "HTTPS://YouTu.be/q"]);
+    const s = useTranscribeRun.getState();
+    expect(s.files).toEqual(["/a.wav", "https://youtu.be/q", "/b.wav"]);
+    expect(s.queue).toBe(before.queue);
+    expect(s.epoch).toBe(before.epoch);
+    expect(s.running).toBe(true);
+    // addFiles still resets: a changed input abandons the unsettled queue.
+    addFiles(["/c.wav"]);
+    expect(useTranscribeRun.getState().epoch).toBe(before.epoch + 1);
+    expect(useTranscribeRun.getState().queue).toEqual([]);
+    expect(useTranscribeRun.getState().files).toEqual(["/a.wav", "https://youtu.be/q", "/b.wav", "/c.wav"]);
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+  });
+});
+
 describe("reattachRun: a run found in the ledger takes the rail back", () => {
   it("seeds the first stage clock from the row's start and routes Cancel to the job id", async () => {
     const { reattachRun } = await import("./transcribeRun");

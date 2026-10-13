@@ -36,7 +36,7 @@ import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
   activeRailIndex, addFiles, axisLayout, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
-  setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stagePick, startRun, useTranscribeRun,
+  setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
 import { displayLabel, extractorPill, formatLabel, isSourceUrl, linkTooLong, normalizeMediaUrl, pickRung, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
@@ -938,14 +938,14 @@ export default function Transcribe() {
     } finally {
       picking.current = false;
     }
+    if (!paths.length) return;
     // Re-read the live queue: on Linux the open dialog has no parent window, so a run can
-    // start while it is open, and addFiles would abandon it.
+    // start while it is open, and addFiles would abandon it — the picks wait for the next run.
     const running = useTranscribeRun
       .getState()
       .queue.some((it) => it.status === "running" || it.status === "queued");
-    if (paths.length && !running) {
-      addFiles(paths); // changed inputs abandon any settled results
-    }
+    if (running) stageFiles(paths); // kept for the next run, the live run is untouched
+    else addFiles(paths); // changed inputs abandon any settled results
   };
 
   const removeFile = (path: string) => {
