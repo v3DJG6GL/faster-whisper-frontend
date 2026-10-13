@@ -1805,3 +1805,187 @@ describe("a manual Push / Pull clicked during launch", () => {
     }
   });
 });
+
+// The store subscriber is armed only after the launch work, so a sync edit made during it never
+// reached the arms that force a pull. The startup pull then found the server version unchanged,
+// skipped the reconcile and queued a push of this device's value. The base here holds no
+// `logging` category while the server's carries one, so a reconcile raises the conflict instead.
+describe("a sync edit made during the launch work", () => {
+  const io = {
+    release: (_v: Record<string, string>) => {},
+    launchRead: false,
+    pushes: 0,
+    pulls: 0,
+  };
+  const REMOTE = {
+    ok: true,
+    status: 200,
+    // The version this device last synced: nothing new by version.
+    state: { version: 1, updated_ts: 1, device: "peer", blob: { logging: { logLevel: "debug", keepDays: 30, showInSidebar: true } } },
+  };
+
+  async function launchEngine(syncAtLaunch: Partial<NonNullable<AppSettings["sync"]>>) {
+    io.launchRead = false;
+    io.pushes = 0;
+    io.pulls = 0;
+    const parked = new Promise<Record<string, string>>((r) => (io.release = r));
+    vi.resetModules();
+    vi.doMock("../persistence", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../persistence")>()),
+      configReady: Promise.resolve(),
+    }));
+    vi.doMock("../api", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../api")>()),
+      isTauri: true,
+      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot: {}, snapshotSecretIds: ["b1"] }),
+      saveSyncState: async () => {},
+      syncDeviceInfo: async () => ({ deviceId: "d1", hostname: "me", platform: "linux" }),
+      readBackendKeys: (ids: string[]) => {
+        if (ids.includes("__sync_snapshot_secrets__")) {
+          io.launchRead = true;
+          return parked;
+        }
+        return Promise.resolve({ b1: "sk-1" });
+      },
+      setBackendKey: async () => {},
+      deleteBackendKey: async () => {},
+      syncPull: async () => {
+        io.pulls++;
+        return REMOTE;
+      },
+      syncPush: async (args: { baseVersion: number }) => {
+        io.pushes++;
+        return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
+      },
+    }));
+    const engine = await import("./sync");
+    const store = (await import("../store")).useApp;
+    const s = settings();
+    s.sync = { ...s.sync!, enabled: true, backendId: "b1", ...syncAtLaunch };
+    store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+    vi.stubGlobal("window", { addEventListener: () => {} });
+    const init = engine.initSync();
+    await vi.waitFor(() => expect(io.launchRead).toBe(true));
+    return { engine, store, init };
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("../api");
+    vi.doUnmock("../persistence");
+    vi.resetModules();
+  });
+
+  it("a gate turned ON reconciles against the server instead of pushing over it", async () => {
+    // Every `logging` gate off at launch: the category is off until "Log level" comes on.
+    const sub = { ...DEFAULT_SETTINGS.sync!.sub, logLevel: false, logRetention: false, logsInSidebar: false, logFolder: false } as SyncSubSettings;
+    const { engine, store, init } = await launchEngine({ sub });
+    try {
+      store.setState((st) => ({
+        settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...sub, logLevel: true } } },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      expect(io.pulls).toBe(1);
+      expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
+      expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("sync turned on reconciles against the server instead of pushing over it", async () => {
+    const { engine, store, init } = await launchEngine({ enabled: false });
+    try {
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      expect(io.pulls).toBe(1);
+      expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
+      expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("with the sync settings unchanged the startup pull stays automatic", async () => {
+    // Same gate set as above, ON from launch: an unchanged version is "nothing new", as before.
+    const { engine, store, init } = await launchEngine({});
+    try {
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
+      expect(io.pulls).toBe(1);
+      expect(engine.getPendingConflict()).toBeNull();
+      expect(io.pushes).toBe(0); // the automatic push is still 3 s out
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+});
+
+// pushNow's "ship only what config.json holds" gate read the save banner, which the user can
+// dismiss: closing "Couldn't save your settings" and pressing Push now then sent the unsaved store.
+describe("a push after a failed config save", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.doUnmock("../api");
+    vi.resetModules();
+  });
+
+  it("sends nothing even once the save banner is dismissed", async () => {
+    let saveFails = true;
+    let pushes = 0;
+    vi.resetModules();
+    vi.doMock("../api", async (importOriginal) => ({
+      ...(await importOriginal<typeof import("../api")>()),
+      isTauri: true,
+      loadConfig: async () => null,
+      saveConfig: async () => {
+        if (saveFails) throw new Error("read-only file system");
+      },
+      evdevStatus: async () => ({ permitted: false }),
+      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot: {} }),
+      saveSyncState: async () => {},
+      syncDeviceInfo: async () => ({ deviceId: "d1", hostname: "me", platform: "linux" }),
+      readBackendKeys: async () => ({ b1: "sk-1" }),
+      setBackendKey: async () => {},
+      deleteBackendKey: async () => {},
+      syncPull: async () => ({ ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } }),
+      syncPush: async (args: { baseVersion: number }) => {
+        pushes++;
+        return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
+      },
+    }));
+    const persistence = await import("../persistence");
+    const engine = await import("./sync");
+    const store = (await import("../store")).useApp;
+    const s = settings();
+    s.sync = { ...s.sync!, enabled: true, backendId: "b1" };
+    store.setState({ settings: s, backends: [backend({ hasApiKey: true })], profiles: [], appRules: [], status: "idle" });
+    vi.stubGlobal("window", { addEventListener: () => {} });
+    try {
+      await persistence.initConfig();
+      await engine.initSync();
+      await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
+      store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "debug" } } }));
+      await vi.waitFor(() => expect(store.getState().saveErrorKind).toBe("save"));
+      store.getState().setSaveError(null); // the banner's dismiss button
+      await engine.pushNow(true);
+      expect(pushes).toBe(0);
+      // A save that lands lifts the hold.
+      saveFails = false;
+      store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, keepDays: 7 } } }));
+      await persistence.flushConfigSave();
+      await engine.pushNow(true);
+      expect(pushes).toBe(1);
+    } finally {
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+});

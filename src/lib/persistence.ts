@@ -25,6 +25,17 @@ export const configReady: Promise<void> = new Promise((r) => {
  *  dismissing a save-failure or conflict banner shown over it keeps it remembered. */
 let loadNotice: string | null = null;
 
+/** The last save was held back (hotkey-conflict freeze) or failed to write: config.json lacks
+ *  what the store shows until a later save lands. Unlike the save banner, which the user can
+ *  dismiss, this only clears on a successful save. */
+let saveHeld = false;
+
+/** Whether config.json is behind the store (see `saveHeld`): the sync push gate reads this, as
+ *  sync ships what config.json holds, not a maybe. */
+export function configSaveHeld(): boolean {
+  return saveHeld;
+}
+
 /** Set once initConfig has armed the auto-save: lands the debounced save now. */
 let flushPendingSave: (() => Promise<void>) | null = null;
 
@@ -197,6 +208,7 @@ export async function initConfig(): Promise<void> {
         // `logging` is optional on a config that predates it: Rust's default, as Settings shows.
         s.settings.logging?.logLevel ?? "info",
       ).catch(() => {});
+      saveHeld = true;
       return Promise.resolve();
     }
     const reReg = pendingBindingChange;
@@ -204,6 +216,7 @@ export async function initConfig(): Promise<void> {
     const saving = saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: CONFIG_VERSION })
       .then(
         () => {
+          saveHeld = false;
           // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
           // notice (settings reset from a corrupt file / failed to load) is not a save failure:
           // it stays until the user dismisses it — and comes back once a save error or conflict
@@ -225,6 +238,7 @@ export async function initConfig(): Promise<void> {
           // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
           // shows the change, but it wasn't written, so warn the user it may be lost on restart.
           console.error("saveConfig failed", e);
+          saveHeld = true;
           useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
           // The write didn't land, so the re-register never ran — restore the intent (like the
           // conflict early-return does) so the NEXT successful save re-registers the bindings.

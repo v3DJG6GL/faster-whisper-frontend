@@ -30,7 +30,7 @@ import {
   syncPull,
   syncPush,
 } from "../api";
-import { configReady } from "../persistence";
+import { configReady, configSaveHeld } from "../persistence";
 import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
@@ -1020,7 +1020,7 @@ const MAX_SYNCED_ENTRIES = 500;
 
 /** Closed-vocabulary settings arrive as raw JSON. `save_config` takes a typed `Config` whose
  *  enums have no serde fallback, so one unknown variant makes EVERY later save fail — the store
- *  keeps the bad value, the save banner sticks, and `pushNow` short-circuits on it. Keep the
+ *  keeps the bad value, the save stays held, and `pushNow` short-circuits on it. Keep the
  *  device's current value when the incoming one is not a known variant. */
 function oneOf<T extends string>(v: unknown, allowed: readonly T[], fallback: T): T {
   return typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : fallback;
@@ -1119,7 +1119,7 @@ function sanitizeTranscription(v: Record<string, unknown>): Partial<TranscribeSe
  *  fallback either. `#[serde(default)]` covers an ABSENT key, not a present one of the wrong
  *  type — so `soundEffects: "yes"` or `hoverRevealMs: -1` makes Tauri reject the invoke, and
  *  because nothing reverts the store, every later debounced save fails the same way for the rest
- *  of the session (the save banner sticks, `pushNow` short-circuits, and shortcut
+ *  of the session (the save stays held, `pushNow` short-circuits, and shortcut
  *  re-registration — which only runs on the success path — stops happening).
  *
  *  Drop only KNOWN keys whose type disagrees with what this device holds. Unknown keys are
@@ -1910,7 +1910,7 @@ export async function applyBlob(
     // persist a conflicting set, and that gate was written for a local editing mistake the user
     // can see and undo. Applied from a pull it freezes config persistence for the whole session:
     // later edits are dropped behind a banner blaming "a shortcut", `pushNow` short-circuits on
-    // the save error so the device can never push a correction, shortcut re-registration (which
+    // the held save so the device can never push a correction, shortcut re-registration (which
     // only runs on the save-success path) stops, and because `settings.sync` is itself part of
     // `settings`, the user cannot even persist turning sync OFF — so the same blob returns on the
     // next launch. Disable the later member of each colliding pair instead: the profile stays
@@ -2582,18 +2582,18 @@ async function rePullAfterSession(): Promise<void> {
   if (myGen === gen && canSync()) await pullNow(true);
 }
 
-/** A manual Push / Pull clicked during launch: wait it out (see `launchDone`), then wait out the
- *  lock as well, as rePullAfterSession does — a "Delete server copy" made during the launch work
- *  can still hold it (its keyring delete queues behind launch's keyring read), and two clicks
- *  parked on one launch wake together, the first taking it. False when a supersede (sync
- *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
- *  the lock one await hop later, so it loops on `inFlight` (the `manual && launchDone` block at the top of pullNow / pushNow). */
 // The epoch of a manual Pull / Push already parked on launch (see the top of pullNow / pushNow):
 // a later click of the same epoch folds into it; one after a supersede parks on its own, since the
 // parked one will be voided.
 let parkedPullGen: number | null = null;
 let parkedPushGen: number | null = null;
 
+/** A manual Push / Pull clicked during launch: wait it out (see `launchDone`), then wait out the
+ *  lock as well, as rePullAfterSession does — a "Delete server copy" made during the launch work
+ *  can still hold it (its keyring delete queues behind launch's keyring read), and two clicks
+ *  parked on one launch wake together, the first taking it. False when a supersede (sync
+ *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
+ *  the lock one await hop later, so it loops on `inFlight` (the `manual && launchDone` block at the top of pullNow / pushNow). */
 async function waitForLaunch(myGen: number): Promise<boolean> {
   if (launchDone) await launchDone;
   while (inFlight) {
@@ -2623,6 +2623,12 @@ export async function pullNow(manual = false): Promise<void> {
       if (parkedPullGen === clickGen) parkedPullGen = null;
     }
   }
+  return pullCore(manual);
+}
+
+/** pullNow past its launch park: takes the lock before its first await. initSync's startup pull
+ *  calls it directly, as a forced pull may not park on the launch it ends itself. */
+async function pullCore(manual: boolean): Promise<void> {
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   inFlight = true;
@@ -2729,8 +2735,9 @@ export async function pushNow(manual = false): Promise<void> {
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   // Don't propagate a state the local save-gate froze (hotkey conflict) or
-  // couldn't persist — sync ships what config.json holds, not a maybe.
-  if (useApp.getState().saveErrorKind === "save") return;
+  // couldn't persist — sync ships what config.json holds, not a maybe. Read from persistence,
+  // not the save banner: dismissing the banner leaves the change just as unsaved.
+  if (configSaveHeld()) return;
   inFlight = true;
   const myGen = gen;
   // The failure a push that contacts no server restores — not a prompt's own notice, which a
@@ -4045,8 +4052,12 @@ export async function initSync(): Promise<void> {
     };
   });
   launchDone = thisLaunch;
+  // The sync settings the launch work started from: the store subscriber is armed only after it,
+  // so the startup pull below compares against these to catch an edit made meanwhile.
+  let launchSync: AppSettings["sync"];
   try {
     await configReady;
+    launchSync = useApp.getState().settings.sync;
     state = (await loadSyncState()) ?? {};
     // Normalize a pre-split snapshot to the current category layout. Without this the 3-way
     // base stays old-shape while fresh composes are new-shape, so the first sync after an
@@ -4153,12 +4164,23 @@ export async function initSync(): Promise<void> {
     void pullNow();
   });
 
-  // Launch ends with the startup pull (pullNow takes the lock before its first await, so no click
+  // Launch ends with the startup pull (pullCore takes the lock before its first await, so no click
   // released below can slip in ahead of it), or here when there is none. Only this pull may be cut
-  // short by a supersede (a server switch must not wait it out).
+  // short by a supersede (a server switch must not wait it out). Sync turned on, the server
+  // switched or a gate turned ON during the launch work never reached the subscriber, so the pull
+  // is forced as its arms would have made it: an automatic one finding the server version
+  // unchanged skips the reconcile and pushes this device's value over the peer's. It goes through
+  // pullCore, as pullNow(true) would park on this very launch.
   if (canSync()) {
+    const nowSync = useApp.getState().settings.sync;
+    let forced = !launchSync?.enabled || launchSync.backendId !== nowSync?.backendId;
+    if (!forced && launchSync !== nowSync) {
+      const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
+      const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
+      forced = ALL_CATEGORIES.some((c) => nowCats[c] && !prevCats[c]);
+    }
     endLaunch = launchEnded;
-    void pullNow().then(launchEnded, launchEnded);
+    void pullCore(forced).then(launchEnded, launchEnded);
   } else launchEnded();
 }
 
