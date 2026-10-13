@@ -18,12 +18,14 @@ export function isSourceUrl(s: string): boolean {
   return /^https?:\/\//i.test(s);
 }
 
-/** Does this (noise-stripped) text hold more than one link — whitespace then a second scheme, as a
- *  pasted "linkA linkB" chat line reads? `new URL` would percent-encode the space and quietly merge
- *  the two into one queue key. A second scheme WITHOUT whitespace before it stays a link: archive
- *  and redirect links embed one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…). */
-export function pastesSeveralLinks(t: string): boolean {
-  return /\s+https?:\/\//i.test(t);
+/** Does this pasted text hold more than one link — whitespace then a second scheme, as a pasted
+ *  "linkA linkB" chat line reads? `new URL` would percent-encode the space and quietly merge the two
+ *  into one queue key. A second scheme WITHOUT whitespace before it stays a link: archive and
+ *  redirect links embed one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…).
+ *  Takes the RAW text and trims only its edges: stripUrlNoise deletes inner tabs, so judging its
+ *  output would glue two tab-separated spreadsheet cells ("linkA<TAB>linkB") into one link. */
+export function pastesSeveralLinks(raw: string): boolean {
+  return /\s+https?:\/\//i.test(raw.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, ""));
 }
 
 /** Loose pasted text → a normalized media URL, or null when it isn't one.
@@ -45,7 +47,8 @@ export function normalizeMediaUrl(raw: string): string | null {
   if (t.length === 0 || t.length > 2048) return null;
   if (!/^https?:\/\//i.test(t)) return null;
   // One link per Add: a single space inside a path ("https://host/My File.mp3") stays accepted.
-  if (pastesSeveralLinks(t)) return null;
+  // Judged on the raw text — the tab between two pasted cells is gone from `t`.
+  if (pastesSeveralLinks(raw)) return null;
   let url: URL;
   try {
     url = new URL(t);

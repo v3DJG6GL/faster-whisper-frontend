@@ -55,6 +55,13 @@ describe("normalizeMediaUrl", () => {
     expect(normalizeMediaUrl("https://a.tld/x.mp3 \n  http://b.tld/y.mp3")).toBeNull();
     expect(pastesSeveralLinks("https://a.tld/x https://b.tld/y")).toBe(true);
   });
+  it("rejects two links from adjacent spreadsheet cells (tab-separated) but keeps a tab inside one scheme", () => {
+    // An <input type=text> keeps tabs; stripUrlNoise would delete this one and glue the links together.
+    expect(normalizeMediaUrl("https://a.com/x\thttps://b.com/y")).toBeNull();
+    expect(pastesSeveralLinks("https://a.com/x\thttps://b.com/y")).toBe(true);
+    expect(normalizeMediaUrl("ht\ttps://x.com/a")).toBe("https://x.com/a");
+    expect(pastesSeveralLinks("\t https://x.com/a \t")).toBe(false);
+  });
   it("keeps a link with an embedded scheme and a path with a space", () => {
     const archived = "https://web.archive.org/web/2020/https://example.com/v.mp4";
     expect(normalizeMediaUrl(archived)).toBe(archived);

@@ -1459,7 +1459,7 @@ export default function Transcribe() {
             <div className="mt-2 text-[12px] text-warn">
               {/* normalizeMediaUrl also rejects links that DO carry the scheme
                   (over 2,048 characters, unparsable host) — don't tell those to add it. */}
-              {pastesSeveralLinks(stripUrlNoise(urlDraft))
+              {pastesSeveralLinks(urlDraft)
                 ? "Paste one link at a time."
                 : isSourceUrl(stripUrlNoise(urlDraft))
                 ? "This isn't a valid web address (links over 2,048 characters aren't supported)."
