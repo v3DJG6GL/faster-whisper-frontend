@@ -802,11 +802,11 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     // A glued run whose first quote closes the quotation before it (他说"你好""再见", or of the
     // other kind: 他说'你好'"再见"): that quote joins the text it closes and the rest of the run
     // is judged on its own. Judged as one, the quote opening the next quotation joined backward
-    // too, and a line or part ended on it. A closer followed by an English clitic stays whole:
-    // "東京"'s is a possessive, not a second quotation ('你好'"OK" still is one).
+    // too, and a line or part ended on it. A " followed by an English clitic stays whole:
+    // "東京"'s is a possessive, not a second quotation ('你好'"OK" and "你好"'S' still are).
     const runEnd = idx + (qr?.[0].length ?? 0);
     if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].length > 1 && flags[idx] && quotes[c] % 2 === 1
-      && !(qr[1].slice(1) === "'" && /^(?:s|t|d|m|ll|re|ve)(?![A-Za-z])/i.test(t.slice(runEnd)))) {
+      && !(c === '"' && qr[1].slice(1) === "'" && /^(?:s|t|d|m|ll|re|ve)(?![A-Za-z])(?!'(?![A-Za-z]))/i.test(t.slice(runEnd)))) {
       toks[k] += c;
       quotes[c]++;
       idx++;
