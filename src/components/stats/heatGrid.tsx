@@ -35,8 +35,8 @@ export function CellTip({ tip, boundsRef, children }: { tip: CellTipState | null
     </div>
   );
 }
-/** The five labelled steps: swatch, value range, count. Shared by both grids. */
-export function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string]; metric: ChartMetric }) {
+/** The legend's five labels for a grid's breaks, step counts and measure. */
+export function levelLegendLabels(breaks: [number, number, number], counts: readonly number[], metric: ChartMetric): string[] {
   // Duration quartiles can sit under ten seconds (processing time per day); the axis
   // formatter rounds those to "0s", which read as "1s–0s". Sub-ten-second bounds keep a
   // decimal, and the first active step opens at 0.1 s instead of 1 s when its break is below it
@@ -44,7 +44,12 @@ export function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: stri
   const dur = isDurationMetric(metric);
   const fmt = (v: number) => (dur && v > 0 && v < 10 ? `${Math.round(v * 10) / 10}s` : metricTick(metric, v));
   const firstBreak = breaks.find((v) => v > 0) ?? 0;
-  const ranges = legendRanges(breaks, fmt, dur && firstBreak < 1 ? 0.1 : 1);
+  return legendRanges(breaks, fmt, dur && firstBreak < 1 ? 0.1 : 1, counts[4]);
+}
+
+/** The five labelled steps: swatch, value range, count. Shared by both grids. */
+export function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string]; metric: ChartMetric }) {
+  const ranges = levelLegendLabels(breaks, counts, metric);
   return (
     <div className="mt-2.5 flex flex-wrap items-end gap-3.5 text-[11.5px] text-faint">
       <span>{lead}</span>

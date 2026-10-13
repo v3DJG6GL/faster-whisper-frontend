@@ -143,6 +143,22 @@ describe("usageDerive", () => {
     expect(legendRanges([5, 50, 500], String)).toEqual(["0", "1–5", "5–50", "50–500", "500+"]);
   });
 
+  it("legendRanges: an empty top step reads '—', and bounds are compared as printed", () => {
+    // Four days of 5 words: every break ties at 5, all four days sit in step 1, none above it.
+    const b = quantileBreaks([5, 5, 5, 5]);
+    expect(b).toEqual([5, 5, 5]);
+    expect(legendRanges(b, String, 1, 0)).toEqual(["0", "1–5", "—", "—", "—"]);
+    // A value above the tie still fills the top step.
+    expect(legendRanges(b, String, 1, 1)).toEqual(["0", "1–5", "—", "—", "5+"]);
+    // No active value at all: the top step keeps its open label.
+    expect(legendRanges([0, 0, 0], String, 1, 0)).toEqual(["0", "—", "—", "—", "1+"]);
+    // Ends that print alike read as one value.
+    const round = (v: number) => String(Math.round(v));
+    expect(legendRanges([3.2, 3.4, 9], round, 1, 2)).toEqual(["0", "1–3", "3", "3–9", "9+"]);
+    // An ordinary spread is unchanged.
+    expect(legendRanges([60, 400, 2100], String, 1, 3)).toEqual(["0", "1–60", "60–400", "400–2100", "2100+"]);
+  });
+
   it("calendarModel: one cell per window day for the scoped kind and measure, quantile-levelled, per-kind split kept", () => {
     const today = 20_000;
     const cal = [pt(today, 1000, 5), pt(today - 1, 100), pt(today - 2, 400, 50), pt(today - 3, 600), pt(today - 4, 800), pt(today - 90, 5)];

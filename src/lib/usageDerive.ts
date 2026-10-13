@@ -451,8 +451,17 @@ export function levelOf(v: number, b: Breaks): Level {
 /** Legend copy for the five steps: `0 · 1–b1 · b1–b2 · b2–b3 · b3+` (`fmt(lo)` opens the
  *  first active step, so a duration legend reads `1s–33m`). With few active values the lower
  *  breaks sit at 0 or repeat (quantileBreaks' small-n levelling): a step no value can land in
- *  reads `—`, and the next one opens at the last real bound — never `1–0` or `0–0`. */
-export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1): string[] {
+ *  reads `—`, and the next one opens at the last real bound — never `1–0` or `0–0`. `top` is
+ *  how many values sit in the top step: ties can leave it empty too (four days of 5 words
+ *  are all ≤ b3), and then it reads `—` rather than `5+`. Bounds are compared as PRINTED: a
+ *  range whose ends print alike reads as one value, and a first step that lies wholly below
+ *  `lo` (a 0.03 s break under a 0.1 s floor) reads `<lo`, not `0.1s–0s`. */
+export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1, top?: number): string[] {
+  const range = (from: number, upper: number) => {
+    const a = fmt(from);
+    const z = fmt(upper);
+    return a === z ? z : from > upper ? `<${a}` : `${a}–${z}`;
+  };
   const out = ["0"];
   let below = 0; // values in a step are above this
   for (const upper of b) {
@@ -460,10 +469,10 @@ export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1): str
       out.push("—");
       continue;
     }
-    out.push(`${fmt(below > 0 ? below : lo)}–${fmt(upper)}`);
+    out.push(range(below > 0 ? below : lo, upper));
     below = upper;
   }
-  out.push(`${fmt(Math.max(lo, b[2]))}+`);
+  out.push(top === 0 && b[2] > 0 ? "—" : `${fmt(Math.max(lo, b[2]))}+`);
   return out;
 }
 
