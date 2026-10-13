@@ -739,6 +739,17 @@ describe("dropping a correction a re-translate was made from", () => {
     setSegmentEdit("fromedit-5", 0, null);
     expect(stale("fromedit-5")).toEqual({});
   });
+
+  it("re-committing the same correction (focus + blur) leaves its translation fresh", () => {
+    openHistoryRecord(recOf("fromedit-6"));
+    setSegmentEdit("fromedit-6", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-6", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    setSegmentEdit("fromedit-6", 0, "I read the book");
+    expect(stale("fromedit-6")).toEqual({});
+    // A real change still flags it.
+    setSegmentEdit("fromedit-6", 0, "I read the books");
+    expect(stale("fromedit-6")).toEqual({ 0: true });
+  });
 });
 
 describe("mergeSegmentTranslations keeps a known translation source", () => {
