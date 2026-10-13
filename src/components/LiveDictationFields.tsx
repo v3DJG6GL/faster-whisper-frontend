@@ -149,6 +149,8 @@ export function LiveDictationFields({
     });
   };
 
+  // A disabled control shows the value the server applies (eff): a locked key's ignored own value
+  // is not what runs, so it would read as the setting in force.
   const control = (k: DecodeKey, off: boolean) => {
     const spec = keySpec(k);
     const c = CONTROL[k]!;
@@ -158,7 +160,7 @@ export function LiveDictationFields({
       case "streaming_vad_outer_silence_ms":
         return (
           <Stepper
-            value={num(own(k))}
+            value={num(eff(k))}
             inherited={num(inh(k)) ?? (k === "streaming_vad_inner_silence_ms" ? LIVE_FALLBACK.innerMs : LIVE_FALLBACK.outerMs)}
             inheritNote={noteOf(k)}
             onReset={() => resetPause(k === "streaming_vad_inner_silence_ms" ? "inner" : "outer")}
@@ -172,7 +174,7 @@ export function LiveDictationFields({
           />
         );
       case "streaming_hard_break_silence_ms": {
-        const ms = num(own(k));
+        const ms = num(eff(k));
         return (
           <Stepper
             value={ms === undefined ? undefined : ms / 1000}
@@ -199,7 +201,7 @@ export function LiveDictationFields({
               ariaLabel={label}
               escape
               maxLength={spec.maxLen}
-              value={str(own(k))}
+              value={str(eff(k))}
               onChange={(s) => patch({ [k]: s })}
               // The server's "" is a real value: nothing is typed at a hard break.
               inherited={i === "" ? "nothing" : str(i) ?? (known ? "nothing" : undefined)}
@@ -211,7 +213,7 @@ export function LiveDictationFields({
       }
       default: {
         // STREAMING_VAD_THRESHOLD: a slider, ↺ back to the inherited value.
-        const v = num(own(k));
+        const v = num(eff(k));
         const base = num(inh(k)) ?? 0.5;
         return (
           <RangeField
@@ -239,24 +241,40 @@ export function LiveDictationFields({
         const isLocked = !!locked?.has(k);
         const why = disabledReason ?? (known && !known.has(k) ? NOT_ON_SERVER_REASON : undefined);
         const dot = preview ? CONTROL[k]?.dot : undefined;
+        const hasOwn = value[k] !== undefined;
+        // The control is disabled (locked, or `why`) and its own ↺ with it, so the row's reset takes
+        // over while the key still holds a value: the stored value is ignored, and clearing it is the
+        // only thing left to do with it (DecodeFields does the same). The text field always takes
+        // the row's reset; an enabled stepper or slider carries its own.
+        const onReset =
+          k === "streaming_hard_break_separator" || isLocked
+            ? () => patch({ [k]: undefined })
+            : why
+              ? k === "streaming_vad_inner_silence_ms"
+                ? () => resetPause("inner")
+                : k === "streaming_vad_outer_silence_ms"
+                  ? () => resetPause("outer")
+                  : () => patch({ [k]: undefined })
+              : undefined;
         return (
           <OverrideHeader
             key={k}
             title={spec.env}
             desc={envDesc(spec.env)}
-            overridden={value[k] !== undefined}
+            overridden={hasOwn && !isLocked}
+            resettable={hasOwn}
             lockReason={isLocked ? LOCKED_REASON : undefined}
             describedById={isLocked ? `${uid}-${k}` : undefined}
-            onClear={k === "streaming_hard_break_separator" && !isLocked ? () => patch({ [k]: "" }) : undefined}
+            onClear={k === "streaming_hard_break_separator" && !isLocked && !why ? () => patch({ [k]: "" }) : undefined}
             canClear={value[k] !== ""}
             clearTitle="Override with empty (type nothing at a hard break)"
-            // Steppers and the slider carry their own ↺; the text field takes the row's reset.
-            onReset={k === "streaming_hard_break_separator" ? () => patch({ [k]: undefined }) : undefined}
-            disabled={!!why}
+            onReset={onReset}
+            disabled={!!why && !hasOwn}
             disabledTitle={why}
             dot={dot ? PAUSE_COLOR[dot] : undefined}
             dotTitle={dot ? "Its colour in the preview" : undefined}
-            note={isLocked && value[k] !== undefined ? "Ignored · locked by the server" : undefined}
+            // A row kept live for its reset loses the disabled tooltip: say why its value does nothing.
+            note={isLocked && hasOwn ? "Ignored · locked by the server" : why && hasOwn ? "Ignored here" : undefined}
             last={i === keys.length - 1 && !preview}
           >
             {control(k, !!why || isLocked)}
