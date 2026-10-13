@@ -227,6 +227,7 @@ function LogsDoorwayBanner() {
   const doorway = useApp((s) => s.logsDoorway);
   const setLogsDoorway = useApp((s) => s.setLogsDoorway);
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   if (!doorway) return null;
   return (
     <div
@@ -246,7 +247,9 @@ function LogsDoorwayBanner() {
             const go = () => {
               setLogsDoorway(null);
               openLogsPrefiltered("warn");
-              navigate("/logs");
+              // Already on Logs (the prefilter applies in place): skip the push like the sidebar
+              // and the overlay bridge do, or a duplicate /logs entry makes the next Back a no-op.
+              if (pathname !== "/logs") navigate("/logs");
             };
             if (tryNavigate(go)) go();
           }}
