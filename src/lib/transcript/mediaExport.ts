@@ -495,30 +495,54 @@ export function withoutVideoPath<T extends { videoPath?: string }>(r: T): T {
   return withoutCopyPath(r, "videoPath");
 }
 
-/** Every record's local copy in `field` as a wipe of that copy's folder begins: id → path.
- *  Taken BEFORE the wipe, so a copy that lands during it (a download's `.tmp`, which the wipe
- *  skips, renamed into place) is not in it. */
+/** How often this session stamped each record's local copy (key: field + id). A link's copy is
+ *  always `<folder>/<record id>.<ext>`, so a copy downloaded again during a wipe carries the very
+ *  path the wipe deleted; only the count tells them apart. In memory: that race spans one session. */
+const copyStamps = new Map<string, number>();
+const stampKey = (id: string, field: KeptCopyField) => `${field}:${id}`;
+
+/** The patchRecord updater that stamps a fresh local copy's `path` in `field`, counted for
+ *  stripWipedCopyPath. Every write of a newly fetched or copied file's path goes through it —
+ *  even one equal to the stored path (the record then stays the same object). */
+export function stampCopyPath(id: string, field: KeptCopyField, path: string) {
+  const k = stampKey(id, field);
+  copyStamps.set(k, (copyStamps.get(k) ?? 0) + 1);
+  return <T extends { [K in KeptCopyField]?: string }>(r: T): T => (r[field] === path ? r : { ...r, [field]: path });
+}
+
+/** A record's local copy as a wipe began: its path and how often it had been stamped. */
+export interface WipedCopy {
+  path: string;
+  stamp: number;
+}
+
+/** Every record's local copy in `field` as a wipe of that copy's folder begins: id → path and
+ *  stamp count. Taken BEFORE the wipe, so a copy that lands during it (a download's `.tmp`,
+ *  which the wipe skips, renamed into place) is not in it. */
 export function copyPathsBeforeWipe(
   records: readonly ({ id: string } & { [K in KeptCopyField]?: string })[],
   field: KeptCopyField,
-): Map<string, string> {
-  const m = new Map<string, string>();
+): Map<string, WipedCopy> {
+  const m = new Map<string, WipedCopy>();
   for (const r of records) {
-    const p = r[field];
-    if (p !== undefined) m.set(r.id, p);
+    const path = r[field];
+    if (path !== undefined) m.set(r.id, { path, stamp: copyStamps.get(stampKey(r.id, field)) ?? 0 });
   }
   return m;
 }
 
-/** After the wipe: drop the record's `field` only while it is still the path it had when the
- *  wipe began (`wiped`, from copyPathsBeforeWipe). A path stamped during the wipe names a
- *  file that survived it; no copy before (`wiped` undefined) = nothing was deleted for it. */
-export function stripWipedCopyPath<T extends { [K in KeptCopyField]?: string }>(
+/** After the wipe: drop the record's `field` only while it is still the copy it had when the
+ *  wipe began (`wiped`, from copyPathsBeforeWipe) — the same path, not stamped since. A copy
+ *  stamped during the wipe names a file that survived it, even under the same name; no copy
+ *  before (`wiped` undefined) = nothing was deleted for it. */
+export function stripWipedCopyPath<T extends { id: string } & { [K in KeptCopyField]?: string }>(
   r: T,
   field: KeptCopyField,
-  wiped: string | undefined,
+  wiped: WipedCopy | undefined,
 ): T {
-  return wiped !== undefined && r[field] === wiped ? withoutCopyPath(r, field) : r;
+  return wiped !== undefined && r[field] === wiped.path && (copyStamps.get(stampKey(r.id, field)) ?? 0) === wiped.stamp
+    ? withoutCopyPath(r, field)
+    : r;
 }
 
 /** A Save's local source file is gone from disk: copy_media_to's or package_media's read of it

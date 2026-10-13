@@ -27,7 +27,7 @@ import type {
   BatchProgress, BatchResult, DecodeOverrides, PlanStage, PlanUnit, TranscribeOptions,
   TranscriptSegment, VideoProgress,
 } from "./types";
-import { isVideoSourcePath, siteDisplayName } from "./transcript/mediaExport";
+import { isVideoSourcePath, siteDisplayName, stampCopyPath } from "./transcript/mediaExport";
 import { forgetRow, ledgerRows, persistRow, type LedgerRow } from "./jobsLedger";
 import { applyMultilingual, primarySubtag, spokenLanguage, translateSourceCode } from "./languages";
 import { trText } from "./transcript/cueSplit";
@@ -975,7 +975,7 @@ function copyRunMedia(path: string, rec: TranscriptRecord) {
       patchOwnRow(rec, { mediaPath });
       // Merge onto the record's LATEST copy, by id — and only while it is still ours: a
       // record deleted (or wiped) during the copy stays gone.
-      if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, mediaPath }));
+      if (registeredIds.has(rec.id)) patchRecord(rec.id, stampCopyPath(rec.id, "mediaPath", mediaPath));
     })
     .catch((e) => console.error("audio copy failed:", e));
 }
@@ -1000,7 +1000,7 @@ function fetchRunUrlMedia(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
       patchOwnRow(rec, { mediaPath });
       // Merge onto the record's LATEST copy, by id — and only while it is still ours: a
       // record deleted (or wiped) during the copy stays gone.
-      if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, mediaPath }));
+      if (registeredIds.has(rec.id)) patchRecord(rec.id, stampCopyPath(rec.id, "mediaPath", mediaPath));
     })
     .catch((e) => console.error("url media fetch failed:", e));
 }
@@ -1022,7 +1022,7 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
   })
     .then((videoPath) => {
       if (!videoPath) return;
-      if (registeredIds.has(rec.id)) patchRecord(rec.id, (cur) => ({ ...cur, videoPath }));
+      if (registeredIds.has(rec.id)) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", videoPath));
     })
     .catch((e) => console.error("url video fetch failed:", e));
 }

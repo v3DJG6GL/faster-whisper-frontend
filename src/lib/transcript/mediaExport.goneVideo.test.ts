@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { copyPathsBeforeWipe, goneVideoRetryRefusal, isGoneSourceError, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
+import { copyPathsBeforeWipe, goneVideoRetryRefusal, isGoneSourceError, stampCopyPath, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
 
 describe("withoutVideoPath", () => {
   it("drops the deleted local video copy and keeps every other field", () => {
@@ -46,8 +46,8 @@ describe("stripWipedCopyPath after the Delete-videos wipe", () => {
 
   it("snapshots only the records that had a copy", () => {
     expect([...before]).toEqual([
-      ["r1", "/base/video/r1.mkv"],
-      ["r2", "/base/video/r2.mp4"],
+      ["r1", { path: "/base/video/r1.mkv", stamp: 0 }],
+      ["r2", { path: "/base/video/r2.mp4", stamp: 0 }],
     ]);
   });
 
@@ -78,7 +78,7 @@ describe("stripWipedCopyPath after the Delete-audio-from-links wipe", () => {
   const before = copyPathsBeforeWipe(records, "mediaPath");
 
   it("snapshots each record's audio copy, not its video", () => {
-    expect([...before]).toEqual([
+    expect([...before].map(([id, w]) => [id, w.path])).toEqual([
       ["r1", "/base/links/r1.m4a"],
       ["r2", "/base/links/r2.webm"],
     ]);
@@ -122,5 +122,36 @@ describe("goneVideoRetryRefusal", () => {
   it("refuses on a server that can't fetch from the link, and a plain copy whose name has another container", () => {
     expect(goneVideoRetryRefusal({ ...can, urlVideoOnDemand: false })).toMatch(/can't fetch it again/);
     expect(goneVideoRetryRefusal({ ...can, embeds: false, destExt: "webm" })).toMatch(/save again/);
+  });
+});
+
+describe("a copy downloaded again to the same path during the wipe", () => {
+  // A link's copy is always <folder>/<record id>.<ext>: the re-download carries the wiped path.
+  it("survives the wipe: the stamp moved since the snapshot", () => {
+    const rec = { id: "s1", videoPath: "/base/video/s1.mkv" };
+    const before = copyPathsBeforeWipe([rec], "videoPath");
+    // The export's gone-copy retry fetched the video again while the wipe ran.
+    const restamped = stampCopyPath("s1", "videoPath", "/base/video/s1.mkv")(rec);
+    expect(restamped).toBe(rec);
+    expect(stripWipedCopyPath(restamped, "videoPath", before.get("s1"))).toBe(rec);
+  });
+
+  it("a record not stamped meanwhile is stripped, as before", () => {
+    stampCopyPath("s2", "videoPath", "/base/video/s2.mkv");
+    const rec = { id: "s2", videoPath: "/base/video/s2.mkv" };
+    const before = copyPathsBeforeWipe([rec], "videoPath");
+    expect("videoPath" in stripWipedCopyPath(rec, "videoPath", before.get("s2"))).toBe(false);
+  });
+
+  it("counts each field apart: a fresh audio copy does not shield the wiped video", () => {
+    const rec = { id: "s3", mediaPath: "/base/links/s3.m4a", videoPath: "/base/video/s3.mkv" };
+    const before = copyPathsBeforeWipe([rec], "videoPath");
+    stampCopyPath("s3", "mediaPath", "/base/links/s3.m4a");
+    expect(stripWipedCopyPath(rec, "videoPath", before.get("s3"))).toEqual({ id: "s3", mediaPath: "/base/links/s3.m4a" });
+  });
+
+  it("stamps a new path onto the record", () => {
+    const rec: { id: string; mediaPath?: string } = { id: "s4" };
+    expect(stampCopyPath("s4", "mediaPath", "/base/links/s4.opus")(rec)).toEqual({ id: "s4", mediaPath: "/base/links/s4.opus" });
   });
 });

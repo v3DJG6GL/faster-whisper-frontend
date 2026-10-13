@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, tracksAtWrite,
+  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, stampCopyPath, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -461,7 +461,7 @@ export function TranscriptExport({
         // The fetched copy is the record's local copy now: playback has a file, and the
         // next Save copies it instead of downloading again.
         const fetched = got;
-        patchRecord(rec.id, (r) => (r.mediaPath === fetched ? r : { ...r, mediaPath: fetched }));
+        patchRecord(rec.id, stampCopyPath(rec.id, "mediaPath", fetched));
         // The viewer's queue row too (as a run's own copy does), but only while it
         // still shows this record — a re-run of the link may own the row by now.
         if (useTranscribeRun.getState().openRecordId === rec.id) patchItem(path, { mediaPath: fetched });
@@ -582,7 +582,7 @@ export function TranscriptExport({
         rememberUpload(got.mediaId, got.expiresAt ?? undefined);
         // Keep a local copy too (the Settings' video store), best effort.
         void fetchUrlVideo({ serverUrl, backendId: trBackend.id, mediaId: got.mediaId, recordId: rec.id, audioBase })
-          .then((vp) => { if (vp) patchRecord(rec.id, (r) => ({ ...r, videoPath: vp })); })
+          .then((vp) => { if (vp) patchRecord(rec.id, stampCopyPath(rec.id, "videoPath", vp)); })
           .catch(() => {});
       } catch (e) {
         setMediaJob(null);
