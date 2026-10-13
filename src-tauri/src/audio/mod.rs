@@ -249,6 +249,21 @@ pub fn prune_older_than(
 /// caller's PCM without first copying a recording (up to the multi-hundred-MB cap) into one buffer.
 fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
     use std::io::Write;
+    let mut f = create_new_private(path)?;
+    if let Err(e) = parts
+        .iter()
+        .try_for_each(|p| f.write_all(p))
+        .and_then(|_| f.sync_all())
+    {
+        let _ = std::fs::remove_file(path);
+        return Err(e);
+    }
+    Ok(())
+}
+
+/// The open half of `write_new_private`: a NEW owner-only file (never an existing name, symlink
+/// included), handed back open — for a writer that keeps it, like the session log.
+pub(crate) fn create_new_private(path: &Path) -> std::io::Result<std::fs::File> {
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
     #[cfg(unix)]
@@ -256,7 +271,7 @@ fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let mut f = opts.open(path)?;
+    let f = opts.open(path)?;
     // The Windows half of "owner-only": a file inherits the DACL of its folder, and a folder
     // that already existed when the user picked it (a synced tree, a restore from backup) kept
     // whatever permissions it had — nothing on the file itself compensated. Best-effort, like
@@ -268,15 +283,7 @@ fn write_new_private(path: &Path, parts: &[&[u8]]) -> std::io::Result<()> {
             path.display()
         );
     }
-    if let Err(e) = parts
-        .iter()
-        .try_for_each(|p| f.write_all(p))
-        .and_then(|_| f.sync_all())
-    {
-        let _ = std::fs::remove_file(path);
-        return Err(e);
-    }
-    Ok(())
+    Ok(f)
 }
 
 /// Make an already-written file owner-only — 0600 on Unix, the owner-only DACL on Windows.

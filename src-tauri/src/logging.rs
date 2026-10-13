@@ -364,6 +364,28 @@ fn format_line(l: &LogLine) -> String {
     }
 }
 
+/// Create a NEW owner-only `fwf-<stamp>.log` in `dir` — never an existing name, so never through
+/// a symlink planted in a shared folder, and created owner-only rather than chmod'ed after the
+/// fact. A second launch (or folder change) in the same second takes `fwf-<stamp>-2.log` and so on
+/// instead of truncating the first session's log; `prune_log_files` matches those names too.
+fn create_session_file(dir: &Path, stamp: &str) -> std::io::Result<(std::fs::File, PathBuf)> {
+    let mut last = None;
+    for n in 1..=20u32 {
+        let name = if n == 1 {
+            format!("fwf-{stamp}.log")
+        } else {
+            format!("fwf-{stamp}-{n}.log")
+        };
+        let path = dir.join(name);
+        match crate::audio::create_new_private(&path) {
+            Ok(f) => return Ok((f, path)),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => last = Some(e),
+            Err(e) => return Err(e),
+        }
+    }
+    Err(last.unwrap_or_else(|| std::io::ErrorKind::AlreadyExists.into()))
+}
+
 /// Open this session's log file in `dir` (creating it), replaying the ring's
 /// current contents first so the file is complete from launch. Reused for a
 /// live folder change — the new file again starts with the full history.
@@ -372,20 +394,17 @@ pub fn open_session_file(writer: &SwapWriter, ring: &LogRing, dir: &Path) {
         tracing::warn!("[log] cannot create session log dir {}: {e}", dir.display());
         return;
     }
-    let name = format!(
-        "fwf-{}.log",
-        chrono::Local::now().format("%Y-%m-%d_%H-%M-%S")
-    );
-    let path = dir.join(name);
-    let Ok(mut file) = std::fs::File::create(&path) else {
-        tracing::warn!("[log] cannot create session log file {}", path.display());
-        return;
+    let stamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S").to_string();
+    let (mut file, path) = match create_session_file(dir, &stamp) {
+        Ok(created) => created,
+        Err(e) => {
+            tracing::warn!(
+                "[log] cannot create session log file fwf-{stamp}.log in {}: {e}",
+                dir.display()
+            );
+            return;
+        }
     };
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
-    }
     if let Ok(mut inner) = writer.0.lock() {
         // Snapshot under the writer lock, so no line falls between the replay and the swap, and
         // one write: every logging thread waits on this lock, and the folder may be a slow share.
@@ -787,6 +806,42 @@ mod tests {
         assert_eq!(t.lines[0].msg, "m k=1 locale=\"xx_YY\"");
         assert_eq!(t.lines[1].tag, None);
         assert_eq!(t.lines[1].msg, "only=true");
+    }
+
+    #[test]
+    fn a_session_file_is_new_owner_only_and_never_reuses_a_name() {
+        let dir = std::env::temp_dir().join(format!("fwf-session-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let stamp = "2026-10-13_12-00-00";
+        let (mut first, first_path) = super::create_session_file(&dir, stamp).unwrap();
+        first.write_all(b"first session\n").unwrap();
+        let (_second, second_path) = super::create_session_file(&dir, stamp).unwrap();
+        assert_ne!(first_path, second_path);
+        assert_eq!(
+            std::fs::read_to_string(&first_path).unwrap(),
+            "first session\n"
+        );
+        assert!(second_path.ends_with(format!("fwf-{stamp}-2.log")));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&second_path)
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+            // A planted symlink at the next name is skipped, its target untouched.
+            let victim = dir.join("victim.txt");
+            std::fs::write(&victim, "keep").unwrap();
+            let next = "2026-10-13_12-00-01";
+            std::os::unix::fs::symlink(&victim, dir.join(format!("fwf-{next}.log"))).unwrap();
+            let (mut f, p) = super::create_session_file(&dir, next).unwrap();
+            f.write_all(b"log").unwrap();
+            assert!(p.ends_with(format!("fwf-{next}-2.log")));
+            assert_eq!(std::fs::read_to_string(&victim).unwrap(), "keep");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
