@@ -40,7 +40,7 @@ import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
 } from "@/lib/transcribeRun";
-import { capCodePoints, stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, joinSegmentTexts, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
@@ -67,7 +67,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { chipStyle, type EffSegment } from "@/components/transcribe/viewerKit";
+import { chipStyle, speakerRenameValue, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 /** Live retro-translate controls, keyed by record. MODULE scope on purpose:
@@ -373,9 +373,7 @@ export function TranscriptViewer({
 
   const commitRename = () => {
     if (editingSpeaker) {
-      // 40 code points: the longest name a subtitle re-import reads back as the speaker
-      // (subtitleImport's "Name: " prefix and voice-tag display bound).
-      setRename(okey, editingSpeaker, capCodePoints(stripControlChars(renameDraft).trim(), 40).trim());
+      setRename(okey, editingSpeaker, speakerRenameValue(renameDraft));
     }
     setEditingSpeaker(null);
   };
