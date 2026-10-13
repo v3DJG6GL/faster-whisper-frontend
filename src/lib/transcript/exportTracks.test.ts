@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  cleanTrackTitle, defaultTrackOrder, defaultViewTracks, languageGroups, mergeOrder, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
+  cleanTrackTitle, defaultTrackOrder, dropSlotAt, defaultViewTracks, languageGroups, mergeOrder, moveItem, moveLanguage, moveTrack, planTracks, sourceWord, stepSlot,
   readTrackPrefs, toggleLanguage, toggleTrack, trackChipLabel, trackCode, trackFileSuffixes, trackInfo, trackOrder, transcriptTracks,
   translationTracks,
 } from "./exportTracks";
@@ -172,5 +172,36 @@ describe("a transcript's tracks", () => {
     expect(translationTracks(r)).toEqual(["fr", "en", "it"]);
     expect(transcriptTracks(r)).toEqual(["orig", "fr", "en", "it", "de-x-site"]);
     expect(transcriptTracks({})).toEqual(["orig"]);
+  });
+});
+
+describe("dropSlotAt", () => {
+  // Three 28-px chips on one row: [0..40] [50..90] [100..140].
+  const row = [0, 50, 100].map((left) => ({ top: 100, bottom: 128, left, width: 40 }));
+
+  it("on the row: before the first item whose middle is right of the pointer, else the end", () => {
+    expect(dropSlotAt(row, 45, 114)).toBe(1);
+    expect(dropSlotAt(row, 10, 114)).toBe(0);
+    expect(dropSlotAt(row, 200, 114)).toBe(3);
+  });
+
+  it("a pointer drifting a little above or below a one-row strip still drops along the row", () => {
+    expect(dropSlotAt(row, 45, 98)).toBe(1);
+    expect(dropSlotAt(row, 45, 130)).toBe(1);
+    expect(dropSlotAt(row, 200, 60)).toBe(3);
+  });
+
+  it("wrapped rows: a pointer above a lower row's item still means before it", () => {
+    // Two rows: [0..40] [50..90] on top, [0..40] below.
+    const rows = [
+      { top: 100, bottom: 128, left: 0, width: 40 },
+      { top: 100, bottom: 128, left: 50, width: 40 },
+      { top: 136, bottom: 164, left: 0, width: 40 },
+    ];
+    expect(dropSlotAt(rows, 200, 132)).toBe(2);
+    expect(dropSlotAt(rows, 10, 150)).toBe(2);
+    expect(dropSlotAt(rows, 200, 170)).toBe(3);
+    // A missing rect (an unmounted chip) is skipped.
+    expect(dropSlotAt([undefined, ...rows], 200, 132)).toBe(3);
   });
 });

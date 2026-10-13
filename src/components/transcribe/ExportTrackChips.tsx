@@ -8,7 +8,7 @@ import { useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEven
 import { CompoundChip } from "@/components/CompoundChip";
 import { cn } from "@/lib/cn";
 import {
-  languageGroups, moveLanguage, moveTrack, sourceKind, sourceWord, stepSlot, toggleLanguage, toggleTrack,
+  dropSlotAt, languageGroups, moveLanguage, moveTrack, sourceKind, sourceWord, stepSlot, toggleLanguage, toggleTrack,
   trackInfo,
 } from "@/lib/transcript/exportTracks";
 import { langCode, trackLanguageName } from "@/lib/languages";
@@ -25,16 +25,6 @@ interface Drag {
   active: boolean;
   /** The drop slot (moveItem) under the pointer. */
   slot: number | null;
-}
-
-/** The drop slot under the pointer among `els` (wrapping rows): before the first item on a
- *  lower row, or on the pointer's row with its middle right of the pointer; else the end. */
-function slotAt(els: (HTMLElement | null | undefined)[], x: number, y: number): number {
-  for (let i = 0; i < els.length; i++) {
-    const r = els[i]?.getBoundingClientRect();
-    if (r && (y < r.top || (y <= r.bottom && x < r.left + r.width / 2))) return i;
-  }
-  return els.length;
 }
 
 /** A slot that moves nothing (right before or after the dragged item) shows no indicator. */
@@ -89,7 +79,7 @@ export function ExportTrackChips({
     const els = d.kind === "lang"
       ? groups.map((g) => chipEls.current.get(g.lang))
       : (groups.find((g) => g.tracks.includes(d.id))?.tracks ?? []).map((t) => partEls.current.get(t));
-    const slot = slotAt(els, e.clientX, e.clientY);
+    const slot = dropSlotAt(els.map((el) => el?.getBoundingClientRect()), e.clientX, e.clientY);
     d.slot = slot;
     const { kind, id } = d;
     // Same slot: keep the state object, so the row doesn't re-render at pointer rate.

@@ -143,6 +143,25 @@ export function moveItem<T>(xs: readonly T[], from: number, slot: number): T[] {
   return out;
 }
 
+/** The drop slot (moveItem) under the pointer among items laid out in wrapping rows (their
+ *  client rects; a missing one is skipped): before the first item on a lower row, or on the
+ *  pointer's row with its middle right of the pointer; else the end. A pointer above the first
+ *  row or below the last counts as on it — a drag drifting off a one-row strip still drops
+ *  where the pointer is along the row. */
+export function dropSlotAt(
+  rects: readonly ({ top: number; bottom: number; left: number; width: number } | undefined)[],
+  x: number,
+  y: number,
+): number {
+  const laid = rects.filter((r) => r !== undefined);
+  if (laid.length) y = Math.min(Math.max(y, laid[0].top), laid[laid.length - 1].bottom);
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (r && (y < r.top || (y <= r.bottom && x < r.left + r.width / 2))) return i;
+  }
+  return rects.length;
+}
+
 /** The slot one step left (-1) or right (+1) of the item at `from` — Alt+←/→. */
 export const stepSlot = (from: number, dir: -1 | 1) => (dir < 0 ? from - 1 : from + 2);
 
