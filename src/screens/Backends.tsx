@@ -38,7 +38,7 @@ import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
 import { plural, relTime } from "@/lib/format";
 import { imeComposing } from "@/lib/keys";
-import { keyWriteOutcome } from "@/lib/backendKeyWrite";
+import { adoptWrittenKey, keyWriteOutcome } from "@/lib/backendKeyWrite";
 
 function Editor({
   initial,
@@ -383,7 +383,8 @@ function Editor({
       // Retyped during the write: the keyring holds the OLD key, so persisting now would claim
       // the new one. Keep the editor open; the next Save stores what is typed. Either way a backend
       // not in the store yet owns no keyring entry, so drop the one just written (as Onboarding
-      // does); a saved one routes with it already, and the retype message says so.
+      // does); a saved one routes with it already — the store learns the key changed (its key
+      // badge, the old caller's verdict and caps), and the retype message says so.
       const outcome = keyWriteOutcome({
         left: left.current,
         retyped: liveTarget.current.key !== key,
@@ -391,6 +392,7 @@ function Editor({
       });
       if (outcome.kind !== "save") {
         if (outcome.rollBack) void deleteBackendKey(b.id).catch(() => {});
+        if (outcome.keptInStore) adoptWrittenKey(b.id, useApp.getState(), forgetCredential);
         if (outcome.kind === "retyped") {
           setKeyError(
             outcome.rollBack
