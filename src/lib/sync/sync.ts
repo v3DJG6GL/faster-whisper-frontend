@@ -30,7 +30,7 @@ import {
   syncPull,
   syncPush,
 } from "../api";
-import { configReady, configSaveHeld, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
+import { configReady, configSaveHeld, evdevPermittedNow, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
 import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
@@ -1077,18 +1077,19 @@ export function disableConflictingProfiles(
   /** Did the PROFILES in this call arrive in the same blob as the chord? When they did not,
    *  the chord is remote-authored and the list is this device's own — see below. */
   profilesAreInbound: boolean,
+  /** evdev is this device's live hotkey backend (enabled in the settings being applied AND
+   *  permitted): it registers side-distinct chords, like the Windows hook. */
+  evdevLive = false,
 ): { profiles: Profile[]; rejectQuickAddHotkey: boolean } {
   const peers = withQuickAddPeer(profiles, quickAddHotkey);
   const order = new Map(peers.map((p, i) => [p.id, i]));
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
-  // Collapse modifier SIDES only where the registrar does (the plugin / evdev-off platforms):
-  // the Windows low-level hook registers side-distinct chords (hotkeys/windows.rs, VK_LCONTROL ≠
-  // VK_RCONTROL), the save gate (persistence.ts) knows that (the Sync tab's import/restore
-  // previews call this very function), and collapsing here anyway disabled a working
-  // LCtrl+Space / RCtrl+Space pair on every pull — persisted, and pushed back out. On Linux the over-detection is kept on purpose:
-  // the sanitizer runs before the live backend is known and must be a superset of the gate.
-  for (const c of conflicts(peers, !IS_WINDOWS)) {
+  // Collapse modifier SIDES only where the registrar does — the save gate's own rule
+  // (persistence.ts): the Windows low-level hook (hotkeys/windows.rs, VK_LCONTROL ≠ VK_RCONTROL)
+  // and a live evdev backend register side-distinct chords, and collapsing anyway disabled a
+  // working LCtrl+Space / RCtrl+Space pair on every pull — persisted, and pushed back out.
+  for (const c of conflicts(peers, !IS_WINDOWS && !evdevLive)) {
     // Keep whichever came first — the quick-add peer always wins, since it is a single global
     // chord the user may have bound locally, not one of many list entries.
     //
@@ -1104,7 +1105,9 @@ export function disableConflictingProfiles(
     if (c.otherId === QUICK_ADD_PEER_ID) {
       if (profilesAreInbound) disable.add(c.profileId);
       else rejectQuickAddHotkey = true;
-    } else if (self > other) {
+    } else if (profilesAreInbound && self > other) {
+      // Profile against profile only for an inbound list: this device's own list already passed
+      // its save gate, so a pull that brings no profiles has nothing new to collide there.
       disable.add(c.profileId);
     }
   }
@@ -2058,6 +2061,7 @@ export async function applyBlob(
       nextProfiles,
       nextSettings.general.quickAddHotkey,
       inboundProfiles !== null,
+      nextSettings.general.evdevEnabled === true && evdevPermittedNow(),
     );
     nextProfiles = resolved.profiles;
     if (resolved.rejectQuickAddHotkey) {

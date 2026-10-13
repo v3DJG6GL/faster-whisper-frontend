@@ -40,6 +40,17 @@ export function configSaveHeld(): boolean {
   return saveHeld;
 }
 
+/** Whether the evdev backend is actually PERMITTED. evdev is the live hotkey backend only when
+ *  enabled AND permitted; otherwise the plugin is live and collapses L/R modifier sides, so the
+ *  save gate in initConfig must mirror Rust's !(enabled && permitted) collapse decision. Default
+ *  false is conservative (collapse until known, so a real side-only conflict is never missed);
+ *  refreshed at load and on the evdev toggle. */
+let evdevPermitted = false;
+/** The save gate's permitted bit, for a sync apply that must decide side-collapse the same way. */
+export function evdevPermittedNow(): boolean {
+  return evdevPermitted;
+}
+
 /** Set once initConfig has armed the auto-save: lands the debounced save now. */
 let flushPendingSave: (() => Promise<void>) | null = null;
 
@@ -130,12 +141,7 @@ export async function initConfig(): Promise<void> {
     hydrated = true;
   }
 
-  // Whether the evdev backend is actually PERMITTED. evdev is the live hotkey backend only when
-  // enabled AND permitted; otherwise the plugin is live and collapses L/R modifier sides, so the
-  // save-gate below must mirror Rust's !(enabled && permitted) collapse decision. Default false is
-  // conservative (collapse until known, so a real side-only conflict is never missed); refreshed on
-  // the evdev toggle below.
-  let evdevPermitted = false;
+  // evdevPermitted (module scope, see there): read now, refreshed on the evdev toggle below.
   void evdevStatus()
     .then((st) => {
       evdevPermitted = st.permitted;

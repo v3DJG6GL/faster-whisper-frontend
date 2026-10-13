@@ -19,6 +19,7 @@ import {
   Toggle,
 } from "@/components/ui";
 import { pickAndImportSettings, pickSavePath, syncDelete } from "@/lib/api";
+import { evdevPermittedNow } from "@/lib/persistence";
 import { applyImport, exportToFile, stripMachineFolders } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/sync/SyncSettingsList";
 import { syncServerOptions } from "@/components/sync/syncServerOptions";
@@ -655,9 +656,8 @@ const MAX_PREVIEW_PEERS = 500;
  *  `undefined`. An absent or malformed chord keeps this device's chord, as `applyBlob` does —
  *  predicting an EMPTY chord there hid the conflict the apply then resolves by switching the
  *  colliding imported profiles off. `qaKept` needs a chord that actually arrives and differs:
- *  the collision pass also "rejects" this device's OWN chord when it is the fallback (and always
- *  collapses L/R sides off Windows, where the evdev save gate does not), and the apply then just
- *  re-pins the identical chord — blaming the file or backup for that warned about nothing. */
+ *  the collision pass also "rejects" this device's OWN chord when it is the fallback, and the
+ *  apply then just re-pins the identical chord — blaming the file or backup for that warned about nothing. */
 export function predictChordFix(
   wouldProfiles: Profile[],
   incomingQa: unknown,
@@ -668,7 +668,9 @@ export function predictChordFix(
   const wouldQa = inbound ? incomingQa : localQa;
   const qaDiffers = inbound && !sameCodes(canonicalizeCodes(incomingQa), canonicalizeCodes(localQa));
   const before = wouldProfiles.slice(0, MAX_PREVIEW_PEERS);
-  const resolved = disableConflictingProfiles(before, wouldQa, profilesAreInbound);
+  // evdevEnabled is machine-local (never synced), so the apply decides side-collapse on this.
+  const evdevLive = useApp.getState().settings.general.evdevEnabled === true && evdevPermittedNow();
+  const resolved = disableConflictingProfiles(before, wouldQa, profilesAreInbound, evdevLive);
   return {
     switchedOff: resolved.profiles
       .filter((p, i) => p.enabled === false && before[i]?.enabled !== false)

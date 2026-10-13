@@ -82,6 +82,13 @@ vi.mock("../api", async (importOriginal) => {
   };
 });
 
+/** The save gate's evdev-permitted bit, as applyBlob reads it. */
+const evdev = vi.hoisted(() => ({ permitted: false }));
+vi.mock("../persistence", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../persistence")>()),
+  evdevPermittedNow: () => evdev.permitted,
+}));
+
 const CATS_ALL = categorySelection(true);
 const LEGACY_SUB: SyncSubSettings = {
   recordingsDir: false,
@@ -977,6 +984,46 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(chord.profiles[0].enabled).toBe(true);
     await applyBlob({ dictionary: { quickAddHotkey: ["ControlLeft"] } } as never, CATS_ALL);
     expect(useApp.getState().settings.general.quickAddHotkey).toEqual(local.settings.general.quickAddHotkey);
+  });
+
+  it.runIf(!IS_WINDOWS)("Linux with evdev live: a pull leaves a working LCtrl/RCtrl profile pair enabled", async () => {
+    // The apply collapsed modifier sides off Windows and disabled the later profile of the pair
+    // even when the pull brought no profiles — persisted, and pushed to every peer.
+    const pair = () => [
+      profile({ id: "p1", hotkey: ["ControlLeft", "Space"], activation: "hold" }),
+      profile({ id: "p2", hotkey: ["ControlRight", "Space"], activation: "handsfree" }),
+    ];
+    const enabled = () => useApp.getState().profiles.map((p) => p.enabled);
+    const withEvdev = (on: boolean) => {
+      const s = settings();
+      s.general.evdevEnabled = on;
+      return s;
+    };
+    evdev.permitted = true;
+    try {
+      // A pull without profiles: this device's own list is never re-judged against itself.
+      useApp.setState({ settings: withEvdev(true), profiles: pair() });
+      await applyBlob({ general: { theme: "dark" } as never }, CATS_ALL);
+      expect(enabled()).toEqual([true, true]);
+      useApp.setState({ settings: withEvdev(false), profiles: pair() });
+      await applyBlob({ general: { theme: "light" } as never }, { ...CATS_ALL, profiles: false });
+      expect(enabled()).toEqual([true, true]);
+      // The same pair INBOUND, evdev on + permitted: side-distinct chords, both stay on.
+      useApp.setState({ settings: withEvdev(true), profiles: [] });
+      await applyBlob({ profiles: { list: pair(), homeProfileId: null } }, CATS_ALL);
+      expect(enabled()).toEqual([true, true]);
+      // Inbound with evdev off: the plugin collapses sides, so the later one is switched off.
+      useApp.setState({ settings: withEvdev(false), profiles: [] });
+      await applyBlob({ profiles: { list: pair(), homeProfileId: null } }, CATS_ALL);
+      expect(enabled()).toEqual([true, false]);
+      // …and evdev on but not permitted is the plugin too.
+      evdev.permitted = false;
+      useApp.setState({ settings: withEvdev(true), profiles: [] });
+      await applyBlob({ profiles: { list: pair(), homeProfileId: null } }, CATS_ALL);
+      expect(enabled()).toEqual([true, false]);
+    } finally {
+      evdev.permitted = false;
+    }
   });
 
   it("a store edit made while the keyring wait is parked is not hydrated away", async () => {
