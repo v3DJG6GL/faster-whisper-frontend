@@ -218,7 +218,7 @@ const activeIn = (rows: Row[], t: number) => {
 /** The id the time-pinned cue carries when only site tracks show (see `onTimeAnchor`). */
 export const TIME_ANCHOR_ID = "sub-time-anchor";
 
-export function SubtitleList({
+export const SubtitleList = memo(function SubtitleList({
   result, grid, tracks, cues, subscribePlayhead, getPlayhead, activeSeg, scrollRef, canSeek, seekTo, onEditSegment, maxEditSeg, showNames, colorize, displayName, colorOf,
   onTimeAnchor,
 }: {
@@ -412,4 +412,4 @@ export function SubtitleList({
       )}
     </div>
   );
-}
+});

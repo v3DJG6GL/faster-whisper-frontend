@@ -921,7 +921,9 @@ export function TranscriptViewer({
   // subscribes and re-renders only when a cue boundary is crossed, where a state
   // clock would re-render this whole viewer every frame (and curTime is too
   // coarse — a highlight ~240 ms late, a cue shorter than a step never lit).
-  const liveTimeRef = useRef(0);
+  // -Infinity until the player reports a time, like activeSegIdx -1: nothing has
+  // started before it, so no cue is lit on a record that has not played (or has no player).
+  const liveTimeRef = useRef(-Infinity);
   const playheadSubs = useRef(new Set<() => void>());
   const setLiveTime = useCallback((t: number) => {
     liveTimeRef.current = t;
@@ -1033,7 +1035,7 @@ export function TranscriptViewer({
     }
     setPlaying(false);
     shownTimeRef.current = 0;
-    setLiveTime(0);
+    setLiveTime(-Infinity); // no playhead until the new record's player reports one
     setCurTime(0);
     setActiveSegIdx(-1);
     setActiveWordIdx(-1);
