@@ -70,6 +70,14 @@ fn bounded_name(s: &str) -> String {
     super::bounded_server_text(s, MAX_NAME)
 }
 
+/// A server model id for a picker: dropped when empty or longer than [`MODEL_ID_MAX`] rather
+/// than cut with an ellipsis — a truncated id names no model, and the picker matches the
+/// decode-default model refs (same cap) against these ids whole.
+fn bounded_model_id(s: &str) -> Option<String> {
+    (!s.trim().is_empty() && s.chars().count() <= MODEL_ID_MAX)
+        .then(|| super::bounded_server_text(s, MODEL_ID_MAX))
+}
+
 /// The one shape every failed `test_connection` probe returns: no models, no server identity,
 /// just the whoami readout and why the probe failed.
 fn failed_probe(open_mode: bool, username: Option<String>, error: String) -> ConnectionInfo {
@@ -139,11 +147,13 @@ pub async fn test_connection(server_url: &str, api_key: Option<&str>) -> Connect
                         .data
                         .into_iter()
                         .take(MAX_MODELS)
-                        .map(|m| ServerModel {
-                            id: bounded_name(&m.id),
-                            loaded: m.loaded,
-                            languages: None,
-                            device: bound_device(m.device),
+                        .filter_map(|m| {
+                            Some(ServerModel {
+                                id: bounded_model_id(&m.id)?,
+                                loaded: m.loaded,
+                                languages: None,
+                                device: bound_device(m.device),
+                            })
                         })
                         .collect(),
                     boot_id: parsed.boot_id.map(|s| bounded_name(&s)),
@@ -286,11 +296,13 @@ fn bound_models(list: Option<Vec<ServerModel>>) -> Option<Vec<ServerModel>> {
     list.map(|mut v| {
         v.truncate(MAX_MODELS);
         v.into_iter()
-            .map(|m| ServerModel {
-                id: bounded_name(&m.id),
-                loaded: m.loaded,
-                languages: m.languages.map(|v| bound_codes(v, MAX_MODELS)),
-                device: bound_device(m.device),
+            .filter_map(|m| {
+                Some(ServerModel {
+                    id: bounded_model_id(&m.id)?,
+                    loaded: m.loaded,
+                    languages: m.languages.map(|v| bound_codes(v, MAX_MODELS)),
+                    device: bound_device(m.device),
+                })
             })
             .collect()
     })
@@ -1028,6 +1040,25 @@ mod tests {
         let out = serde_json::to_value(&models).unwrap();
         assert_eq!(out[0]["languages"][0], "de");
         assert!(out[1].get("languages").is_none());
+    }
+
+    /// A long model id reaches the picker whole (the server accepts translation refs up to 160
+    /// characters); one past the id cap is dropped, never cut into an id no server knows.
+    #[test]
+    fn model_lists_keep_long_ids_whole_and_drop_over_long_ones() {
+        let long = format!("org/{}", "m".repeat(146));
+        let caps: super::super::Capabilities = serde_json::from_value(serde_json::json!({
+            "translation_models": [
+                {"id": long}, {"id": "x".repeat(250)}, {"id": " "}, {"id": "hy-mt"}
+            ]
+        }))
+        .unwrap();
+        let ids: Vec<String> = super::bound_models(caps.translation_models)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, [long, "hy-mt".to_string()]);
     }
 
     #[test]

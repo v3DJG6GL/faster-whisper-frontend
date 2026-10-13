@@ -763,9 +763,27 @@ pub fn detail_from(body: &str) -> String {
 }
 
 /// Attach a bearer token if one is provided.
+///
+/// A key REPLACES any `Authorization` already on the request rather than adding a second one:
+/// reqwest turns a server URL's `user:pass@` into a `Basic` header when the builder is made, and
+/// `bearer_auth` appends, so a backend with both sent two headers — the server reads the first
+/// (Basic) and never saw the key, and a proxy may refuse the duplicate outright. A key therefore
+/// wins over URL userinfo, one `Authorization` header per request, matching the stream socket.
+/// Without a key the request is untouched (the userinfo Basic header still goes out).
 pub fn with_auth(req: reqwest::RequestBuilder, api_key: Option<&str>) -> reqwest::RequestBuilder {
+    use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
     match api_key {
-        Some(k) if !k.is_empty() => req.bearer_auth(k),
+        Some(k) if !k.is_empty() => match HeaderValue::from_str(&format!("Bearer {k}")) {
+            Ok(mut v) => {
+                v.set_sensitive(true);
+                let mut m = HeaderMap::new();
+                m.insert(AUTHORIZATION, v);
+                // `headers` replaces every existing value of each name it carries.
+                req.headers(m)
+            }
+            // An invalid key keeps reqwest's own builder-error path.
+            Err(_) => req.bearer_auth(k),
+        },
         _ => req,
     }
 }
@@ -1194,6 +1212,37 @@ where
         set_legacy_memo(base, new, path);
     }
     out
+}
+
+#[cfg(test)]
+mod with_auth_tests {
+    use super::{client, with_auth};
+    use reqwest::header::AUTHORIZATION;
+
+    fn auth_values(api_key: Option<&str>) -> Vec<String> {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let req = with_auth(client().get("http://u:p@h/x"), api_key)
+            .build()
+            .unwrap();
+        req.headers()
+            .get_all(AUTHORIZATION)
+            .iter()
+            .map(|v| v.to_str().unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_key_replaces_the_url_userinfo_basic_header() {
+        assert_eq!(auth_values(Some("k")), ["Bearer k"]);
+    }
+
+    #[test]
+    fn without_a_key_the_url_userinfo_basic_header_stays_alone() {
+        let v = auth_values(None);
+        assert_eq!(v.len(), 1);
+        assert!(v[0].starts_with("Basic "), "{v:?}");
+        assert_eq!(auth_values(Some("")), v);
+    }
 }
 
 #[cfg(test)]
