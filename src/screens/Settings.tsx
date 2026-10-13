@@ -17,7 +17,7 @@ import {
   type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
 import { copyPathsBeforeWipe, stripWipedCopyPath } from "@/lib/transcript/mediaExport";
-import { forgetRecord } from "@/lib/transcribeRun";
+import { forgetRecord, refreshRowMediaPaths } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
   deleteAllDictations,
@@ -489,7 +489,7 @@ export default function Settings() {
           } catch (e) {
             // A partial move already rewrote the records that did move: reload either way.
             forgetRecord(null);
-            void loadHistory(true).catch(() => {});
+            void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
             throw e;
           }
           updateRecording({ audioBaseDir: picked });
@@ -499,7 +499,7 @@ export default function Settings() {
           // A pending overlay write would too: forgetRecord drops those timers (the
           // registry keeps the ids and re-reads the reloaded mirror).
           forgetRecord(null);
-          void loadHistory(true).catch(() => {});
+          void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
         } finally {
           setBusy("dir", false);
         }
@@ -516,12 +516,12 @@ export default function Settings() {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
         setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
         forgetRecord(null);
-        void loadHistory(true).catch(() => {});
+        void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
       })
       .catch((e) => {
         // A partial move already rewrote the records that did move: reload either way.
         forgetRecord(null);
-        void loadHistory(true).catch(() => {});
+        void loadHistory(true).then(refreshRowMediaPaths).catch(() => {});
         reportMoveError(e);
       })
       .finally(() => setBusy("dir", false));

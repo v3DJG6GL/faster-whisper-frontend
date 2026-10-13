@@ -81,7 +81,7 @@ import {
   linkPrefetchFor, linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
-  cancelRun, lostContact, translateParsed, reconcileRetryOptions, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
+  cancelRun, lostContact, translateParsed, reconcileRetryOptions, refreshRowMediaPaths, retryFile, retryRunVideo, withSiteTracks, runBadgeFraction, runTotals, settledPanelItem,
   SITE_TRANSCRIPT_FALLBACK,
 } from "./transcribeRun";
 import { MULTI_LANGUAGE } from "./languages";
@@ -805,6 +805,26 @@ describe("dropping a correction a re-translate was made from", () => {
     mergeSegmentTranslations("sent-2", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] }, undefined, { 0: "I read the book" });
     expect(stale("sent-2")).toEqual({ 0: true });
     expect(fromEdit("sent-2")).toEqual({ 0: true });
+  });
+});
+
+describe("refreshRowMediaPaths after a storage move", () => {
+  it("points the open link's queue row at its record's moved copy", async () => {
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    const rec: TranscriptRecord = {
+      schemaVersion: 1, kind: "url", id: "moved-1", createdAt: "2026-10-13T12:00:00Z",
+      sourcePath: "https://host/v", sourceName: "v", status: "done", mediaPath: "/old/links/moved-1.m4a",
+      result: { text: "x", segments: [{ start: 0, end: 1, text: "x" }] },
+    };
+    openHistoryRecord(rec);
+    const row = () => useTranscribeRun.getState().queue.find((q) => q.path === "https://host/v");
+    expect(row()?.mediaPath).toBe("/old/links/moved-1.m4a");
+    // Rust rewrote the record on disk; loadHistory(true) brought the moved copy into the mirror.
+    useTranscriptHistory.setState((h) => ({
+      records: [...h.records.filter((r) => r.id !== "moved-1"), { ...rec, mediaPath: "/new/links/moved-1.m4a" }],
+    }));
+    refreshRowMediaPaths();
+    expect(row()?.mediaPath).toBe("/new/links/moved-1.m4a");
   });
 });
 

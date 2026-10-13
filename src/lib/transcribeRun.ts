@@ -861,6 +861,24 @@ export function forgetRecord(id: string | null, opts?: { deleted?: boolean }): v
 }
 setRecordForgetHook(forgetRecord);
 
+/** After a storage move (Rust rewrote every record's media paths; loadHistory(true) reloaded
+ *  them): point each queue row at its record's moved copy. A row keeps the path its run or the
+ *  opened record stamped, and the viewer and the export prefer it over the record's, so they
+ *  went on playing and exporting a file no longer there. A row follows the open record when it
+ *  shows it, else its path's latest registered record. */
+export function refreshRowMediaPaths(): void {
+  const s = get();
+  const open = s.openRecordId ? registered(s.openRecordId) : undefined;
+  let changed = false;
+  const queue = s.queue.map((it) => {
+    const rec = open && open.sourcePath === it.path ? open : registered(it.path);
+    if (!rec?.mediaPath || rec.mediaPath === it.mediaPath) return it;
+    changed = true;
+    return { ...it, mediaPath: rec.mediaPath };
+  });
+  if (changed) set({ queue });
+}
+
 /** Re-save a record with the CURRENT overlays, debounced — every
  *  rename/recolor/correction lands in the history within a second, without a
  *  disk write per keystroke. `key` is the overlay key: the record id
