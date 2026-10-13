@@ -1004,8 +1004,8 @@ fn migrate_legacy(text: &str) -> Option<Config> {
 
 /// Read `config.json`, retrying briefly on a transient read error (a Windows AV/indexer lock usually
 /// clears within tens of ms) so a momentary glitch isn't mistaken for a corrupt config. Returns
-/// `Ok(None)` when the file genuinely doesn't exist yet (first run).
-fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
+/// `Ok(None)` when the file genuinely doesn't exist yet (first run). Also reads sync-state.json.
+pub(crate) fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
     let mut attempt = 0;
     loop {
         match std::fs::read_to_string(path) {

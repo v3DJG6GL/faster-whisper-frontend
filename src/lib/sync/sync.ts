@@ -4361,8 +4361,9 @@ export async function initSync(): Promise<void> {
     device = await syncDeviceInfo();
     // Rust seeds `deviceId` into sync-state.json, but persistState writes
     // `{...state, ...patch}` — carry the id into the in-memory state or the very
-    // next save strips it and every launch regenerates (and re-writes) a new one.
-    if (device?.deviceId && state.deviceId !== device.deviceId) state.deviceId = device.deviceId;
+    // next save strips it and every launch regenerates (and re-writes) a new one. An id already
+    // loaded wins: Rust hands out an unsaved fresh one when its own read of the file failed.
+    if (device?.deviceId && !state.deviceId) state.deviceId = device.deviceId;
 
     // Migrate pre-serverBackendId state files: they were only ever written for
     // the currently configured sync server, so stamp that identity instead of
