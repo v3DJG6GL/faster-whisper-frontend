@@ -740,6 +740,9 @@ async function maybeTranslate(
   // an unconditional clear here nulled the NEXT session's handle — leaving that translate
   // un-cancellable on the server and wiping its progress card.
   let myProgressId: string | null = null;
+  // Read before the first await: a translate a cancel abandoned can resume after the NEXT
+  // session opened, and reading `sessionMeta` late stamped that session's job on this receipt.
+  const clientJob = sessionMeta?.clientJob ?? null;
   try {
     // Pair this phrase with ITS OWN capture row before the request goes out.
     // The one-shot claims nothing: it translates the whole transcript in one
@@ -754,6 +757,9 @@ async function maybeTranslate(
     const capturedId = await captureIds.take(
       oneShot || !sessionPerUtteranceDeclared ? null : (opts?.utterance ?? null),
     );
+    // The wait above can span a cancel and the next session's start: don't send a request
+    // for a session that no longer exists (it would run under the new session's cancel handle).
+    if (insertCfg !== cfg) return { text, translated: false };
     const r = await runDictationTranslate(
       {
         text,
@@ -784,7 +790,7 @@ async function maybeTranslate(
         capturedId,
         // Names the session on the server's receipt either way — the one-shot
         // claims no capture, so without this its receipt links to nothing.
-        clientJob: sessionMeta?.clientJob ?? null,
+        clientJob,
         warm: tr.warm ?? null,
         oneShot,
         queued: opts?.queued ?? 0,
@@ -869,7 +875,10 @@ async function maybeTranslate(
  *  the live path runs while the mic is open, the tail path while injecting. And
  *  it restores ONLY if nothing else moved us on — a stop, cancel or error landing
  *  during the wait owns the status from then on, and re-stamping "listening" over
- *  a teardown would wedge the chip on a session that no longer exists. */
+ *  a teardown would wedge the chip on a session that no longer exists. "Nothing
+ *  else" includes a NEXT session: a cancelled session's translate can resolve
+ *  seconds later while the next one is itself "translating", so the restore is
+ *  session-token checked like every other post-await write here. */
 async function translatePhrase(
   text: string,
   cfg: InsertCfg | null,
@@ -881,7 +890,7 @@ async function translatePhrase(
   try {
     return await maybeTranslate(text, cfg, opts);
   } finally {
-    if (useApp.getState().status === "translating" && isActiveDictation(before)) {
+    if (insertCfg === cfg && useApp.getState().status === "translating" && isActiveDictation(before)) {
       useApp.getState().setDictation({ status: before });
     }
   }

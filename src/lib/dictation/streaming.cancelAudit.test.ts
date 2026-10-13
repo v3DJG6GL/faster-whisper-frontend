@@ -997,3 +997,45 @@ describe("a cancelled translating session's usage outcome", () => {
     expect(asked).toContain("(bankedDoc + committedDoc).trim()");
   });
 });
+
+describe("a translate a cancel abandoned stays out of the next session", () => {
+  // cancelLive only asks the SERVER to stop the translate; our end of the race keeps waiting
+  // for the answer, the live ceiling or the cold stall (20–45 s). A next session started in
+  // that window must not be touched when the old promise finally resolves — none of this is
+  // reachable without Tauri, so pin the session-token checks around the translate awaits.
+  // Up to the column-0 close: both signatures carry an `opts?: { … }` type literal, which
+  // topLevelFunctions would take for the body.
+  const whole = (name: string) => {
+    const at = streamingSrc.indexOf(`async function ${name}(`);
+    expect(at, `${name} not found`).toBeGreaterThanOrEqual(0);
+    return streamingSrc.slice(at, streamingSrc.indexOf("\n}\n", at) + 2);
+  };
+  const fns = { translatePhrase: whole("translatePhrase"), maybeTranslate: whole("maybeTranslate") };
+
+  it("translatePhrase restores the displaced status only for its own session", () => {
+    // Without the token, session A's late finally saw session B's "translating" and stamped
+    // A's "listening" over B's tail — B never settled (it needs "injecting" to).
+    const fin = mask(bodyAfter(fns.translatePhrase, "} finally"));
+    expect(fin).toMatch(/if \(insertCfg === cfg && useApp\.getState\(\)\.status ===\s+&& isActiveDictation\(before\)\)/);
+  });
+
+  it("maybeTranslate names the session's job before the first await", () => {
+    // Read after the captureIds wait, `sessionMeta` may already be the NEXT session's.
+    const body = mask(fns.maybeTranslate);
+    const firstAwait = body.indexOf("await ");
+    const decl = body.indexOf("const clientJob = sessionMeta?.clientJob ?? null;");
+    expect(decl, "clientJob is read synchronously").toBeGreaterThanOrEqual(0);
+    expect(decl).toBeLessThan(firstAwait);
+    expect(body.slice(firstAwait)).not.toContain("sessionMeta");
+    expect(body).toMatch(/\bclientJob,/);
+  });
+
+  it("maybeTranslate sends no request for a session the captureIds wait outlived", () => {
+    const body = mask(fns.maybeTranslate);
+    const take = body.indexOf("await captureIds.take(");
+    const send = body.indexOf("await runDictationTranslate(");
+    expect(take, "the capture wait moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    expect(send).toBeGreaterThan(take);
+    expect(body.slice(take, send)).toContain("if (insertCfg !== cfg) return {");
+  });
+});
