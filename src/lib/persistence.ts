@@ -242,7 +242,11 @@ export async function initConfig(): Promise<void> {
           // would re-arm the hotkeys mid-capture (the next keypress would both rebind AND fire
           // dictation). When no capture is active it re-arms normally; the capture's own teardown
           // re-arms when it ends. Mirrors cancelLive's use of the same variant.
-          if (reReg) void reregisterShortcutsUnlessCapturing().catch((e) => console.error("reregister failed", e));
+          // The newest write also carries a chord change whose own (older) save failed after this
+          // one was issued: that failure handed the intent back too late for this save to take it.
+          // The flag stays set — a chord changed after this save was issued needs its own save's
+          // re-register; a second one is harmless.
+          if (reReg || (newest && pendingBindingChange)) void reregisterShortcutsUnlessCapturing().catch((e) => console.error("reregister failed", e));
         },
         (e) => {
           // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
