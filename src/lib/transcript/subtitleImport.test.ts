@@ -736,3 +736,53 @@ describe("site subtitle cleanup", () => {
     ]);
   });
 });
+
+describe("markup shape matrix", () => {
+  // Real subtitle markup strips; a literal comparison or an unknown <word> is the line's own
+  // text. Only b/i/u/s/c/ruby/rt/… with a space after the name were tags before — and a voice
+  // tag past the 64th character leaked when it was not the cue's first.
+  const N70 = "N".repeat(70);
+  const cue = (fmt: "srt" | "vtt", text: string) =>
+    fmt === "srt" ? `1\n00:00:01,000 --> 00:00:02,000\n${text}\n` : `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}\n`;
+  const rows: [fmt: "srt" | "vtt", input: string, speaker: string | null, text: string][] = [
+    ["srt", "<b>bold</b> text", null, "bold text"],
+    ["srt", "<B>Bold</B> <I>it</I>", null, "Bold it"],
+    ["srt", "<i>x</i> y", null, "x y"],
+    ["srt", "<u>under</u> line", null, "under line"],
+    ["srt", "<s>gone</s> here", null, "gone here"],
+    ["srt", "end </b> tag", null, "end tag"],
+    ["srt", "one<br>two", null, "onetwo"],
+    ["srt", "one<br/>two", null, "onetwo"],
+    ["srt", "one<br />two", null, "onetwo"],
+    ["vtt", "<c.yellow>x</c> y", null, "x y"],
+    ["vtt", "<c.a.b>multi</c> class", null, "multi class"],
+    ["vtt", "<c>plain</c> c", null, "plain c"],
+    ["vtt", "<v Bob>hi</v>", "Bob", "hi"],
+    ["vtt", "<v.loud Bob>hi", "Bob", "hi"],
+    ["vtt", `<v ${N70}>hello</v>`, "N".repeat(40), "hello"],
+    ["vtt", `- <v ${N70}>hello</v>`, null, "- hello"],
+    ["vtt", "<lang en>x</lang> y", null, "x y"],
+    ["srt", '<font color="red">x</font> y', null, "x y"],
+    ["srt", '<font face="Arial Unicode MS" color="#ffffff" size="22">long attr</font>', null, "long attr"],
+    ["srt", '<span class="a">x</span> y', null, "x y"],
+    ["vtt", "<ruby>漢<rt>かん</rt></ruby>字", null, "漢かん字"],
+    ["srt", "<em>em</em> and <strong>strong</strong>", null, "em and strong"],
+    ["srt", "H<sub>2</sub>O and x<sup>2</sup>", null, "H2O and x2"],
+    ["vtt", "<00:00:01.200>one <00:00:01.500>two", null, "one two"],
+    ["srt", "{\\an8}top line", null, "top line"],
+    ["srt", "if a<b and c>d then", null, "if a<b and c>d then"],
+    ["srt", "if a<b and b>c then", null, "if a<b and b>c then"],
+    ["srt", "set s <s and s> t", null, "set s <s and s> t"],
+    ["srt", "x <i and y> z", null, "x <i and y> z"],
+    ["srt", "x<5 and y>3", null, "x<5 and y>3"],
+    ["srt", "I <3 you", null, "I <3 you"],
+    ["srt", "a < b", null, "a < b"],
+    ["srt", "Use the <Enter> key.", null, "Use the <Enter> key."],
+    ["srt", "<unknown tag> here", null, "<unknown tag> here"],
+    ["srt", "<i>Anna: hallo</i>", "Anna", "hallo"],
+  ];
+  it.each(rows)("%s %j", (fmt, input, speaker, text) => {
+    const segs = parseImportedText(fmt, cue(fmt, input)).segments;
+    expect(segs.map((s) => [s.speaker ?? null, s.text])).toEqual([[speaker, text]]);
+  });
+});
