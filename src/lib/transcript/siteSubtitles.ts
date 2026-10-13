@@ -463,6 +463,19 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
       if (part?.kind === "mt") part.title = title;
     }
   }
+  // The same at a full download: flip refuses a site track it would push past the 8-track cap.
+  if (m.view.run && m.view.run.fetch.length >= 8) {
+    const title = "At the 8-subtitle download limit — switch another subtitle off first";
+    for (const r of m.view.rows) {
+      for (const b of r.badges) {
+        const mm = b.key ? /^(ex|cand):(.+)$/.exec(b.key) : null;
+        if (!mm || b.state === "active" || m.capped.has(mm[2])) continue;
+        if (flip(input, st, b.key!).state !== st) continue;
+        b.title = title;
+        for (const c of m.view.chips) for (const part of c.parts) if (part.key === b.key) part.title = title;
+      }
+    }
+  }
   return m.view;
 }
 
@@ -522,6 +535,15 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   const own = m.codeOf[key];
   const c = own ?? (sib ? m.codeOf[sib] : undefined);
   if (own && next[key]) tg[own] = true; // switching any source on makes the language wanted
+  // A site track switched on while the download is full would land past the 8-track cap and
+  // grey again — and the language it made wanted would get machine translation instead of the
+  // subtitle asked for. Ask the cap with the change (and the twin) in place; free a slot first.
+  if (mm && next[key]) {
+    const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+    if (model({ ...input, targets: trial.targets }, trial.state).capped.has(mm[2])) {
+      return { state: st, targets: [...input.targets] };
+    }
+  }
   // Machine translation switched on past a full translation limit would be greyed by it (or
   // grey another language's only source): the click would only flip to Custom and leave the
   // language wanted with nothing translating it. Free a slot first, as above.

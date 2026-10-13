@@ -287,6 +287,26 @@ describe("tracks and switches", () => {
     // The site-only overflow languages still drop out.
     expect(v.chips.map((c) => c.code)).not.toContain("fi");
   });
+  it("switching a site track on at a full download changes nothing — no machine translation in its place", () => {
+    const langs = ["de", "fr", "es", "it", "pt", "nl", "ru", "pl", "ja"];
+    const inp = input({ tracks: langs.map((l) => tr(l, l)), spoken: "en", targets: [], maxTargets: 3 });
+    // German off (Custom: the cut Japanese is written as not wanted), German back on: 8 kept again.
+    const [i1, s1] = apply(inp, flip(inp, initialSiteState(inp.targets), "ex:de"));
+    const [i2, s2] = apply(i1, flip(i1, s1, "ex:de"));
+    expect(derive(i2, s2).run!.fetch).toHaveLength(8);
+    // Japanese's struck site track would land past the cap: refused, nothing translated instead.
+    expect(flip(i2, s2, "ex:ja")).toEqual({ state: s2, targets: i2.targets });
+    const v = derive(i2, s2);
+    expect(v.run!.mtTargets).not.toContain("ja");
+    const ja = v.rows.find((r) => r.code === "ja")!.badges.find((b) => b.key === "ex:ja")!;
+    expect(ja.title).toBe("At the 8-subtitle download limit — switch another subtitle off first");
+    // Below the cap the same click works.
+    const [i3, s3] = apply(i2, flip(i2, s2, "ex:fr"));
+    expect(derive(i3, s3).rows.find((r) => r.code === "ja")!.badges.find((b) => b.key === "ex:ja")!.title)
+      .toBe("Click to switch it on");
+    const [i4, s4] = apply(i3, flip(i3, s3, "ex:ja"));
+    expect(derive(i4, s4).run!.fetch).toContain("ja");
+  });
   it("a preset machine-translates into at most the server's limit, your targets first", () => {
     const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da", "nb", "cs"];
     const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: ["ja", "fi"], maxTargets: 5 });
