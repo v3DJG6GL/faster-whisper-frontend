@@ -256,8 +256,26 @@ describe("exportStem", () => {
     const prefix = "2026.10.04_19.34_rtve___";
     const stem = exportStem(`${"é".repeat(150)} a/b`, "https://www.rtve.es/x", { createdAt: new Date(2026, 9, 4, 19, 34) });
     expect(stem.startsWith(prefix)).toBe(true);
-    expect(stem).toHaveLength(prefix.length + 120);
+    // 2-byte letters: the UTF-8 budget (140 B) binds before the 120-unit cap.
+    expect(stem).toHaveLength(prefix.length + 70);
     expect(stem).not.toMatch(/[\\/:*?"<>|\s]/);
+  });
+
+  it("links: a CJK title fits a 255-byte file name with the longest suffix and .tmp", () => {
+    const createdAt = new Date(2026, 9, 4, 19, 34);
+    const title = "【公式】" + "日本語のタイトル".repeat(12); // 100 characters, 300 bytes
+    const stem = exportStem(title, "https://www.youtube.com/watch?v=abc", { createdAt, extractor: "Youtube" });
+    expect(stem.startsWith("2026.10.04_19.34_youtube___【公式】日本語")).toBe(true);
+    const bytes = new TextEncoder().encode(stem + ".YouTube-auto.zh-Hant.sdh.srt.tmp").length;
+    expect(bytes).toBeLessThanOrEqual(255);
+    // Cut at a code point, never inside a character.
+    expect(stem).not.toContain("\uFFFD");
+    expect(stem).not.toMatch(/[\uD800-\uDFFF]/);
+    // An ASCII title under both caps is unchanged.
+    expect(exportStem("A plain talk title", "https://www.youtube.com/watch?v=abc", { createdAt }))
+      .toBe("2026.10.04_19.34_youtube___A_plain_talk_title");
+    // A cut that ends on a space or dot leaves neither behind.
+    expect(exportStem("日".repeat(46) + " .x", "/a.mp4")).toBe("日".repeat(46));
   });
 });
 

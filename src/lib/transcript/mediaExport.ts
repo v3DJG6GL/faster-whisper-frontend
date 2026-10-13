@@ -269,20 +269,41 @@ export function mediaExportPlan(a: {
   };
 }
 
+/** A stem segment's UTF-8 budget. Linux and macOS cap a file NAME at 255 bytes, not units: a
+ *  CJK title is 3 bytes a character, so 120 units could reach 360 bytes. 140 leaves room for
+ *  a link's prefix (≤ ~60 B), the longest track suffix (`.YouTube-auto.zh-Hant.sdh.srt`) and the
+ *  writers' `.tmp`. */
+const STEM_PART_MAX_BYTES = 140;
+
+/** `s` cut to at most `maxBytes` of UTF-8, at a code-point boundary. */
+function capUtf8(s: string, maxBytes: number): string {
+  const enc = new TextEncoder();
+  if (s.length * 3 <= maxBytes || enc.encode(s).length <= maxBytes) return s;
+  let out = "";
+  let bytes = 0;
+  for (const ch of s) {
+    bytes += enc.encode(ch).length;
+    if (bytes > maxBytes) break;
+    out += ch;
+  }
+  return out;
+}
+
 /** Cleans a title (or a file name) into one path-safe stem segment: control
  *  and reserved characters become spaces, whitespace collapses, trailing
- *  dots/spaces go (Windows strips them), and the result is bounded. Letters
- *  of any script — é, ü, ñ — are kept. */
+ *  dots/spaces go (Windows strips them), and the result is bounded — 120
+ *  UTF-16 units (Windows) and STEM_PART_MAX_BYTES of UTF-8 (Linux, macOS).
+ *  Letters of any script — é, ü, ñ — are kept. */
 function cleanStemPart(s: string | null | undefined, max = 120): string {
-  return (s ?? "")
+  const cut = (s ?? "")
     .replace(/[\u0000-\u001f\u007f/\\:*?"<>|]/g, " ")
     .replace(/\s+/g, " ")
     .trim()
     .replace(/[. ]+$/, "")
     .slice(0, max)
     // A cut through an emoji leaves half of it, which no file name may carry.
-    .replace(/[\uD800-\uDBFF]$/, "")
-    .replace(/[. ]+$/, "");
+    .replace(/[\uD800-\uDBFF]$/, "");
+  return capUtf8(cut, STEM_PART_MAX_BYTES).replace(/[. ]+$/, "");
 }
 
 /** Two-part public suffixes under which the site's name is the THIRD label
