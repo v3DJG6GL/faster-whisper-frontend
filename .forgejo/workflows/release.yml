@@ -169,7 +169,7 @@ jobs:
         run: |
           if [ -n "${{ needs.version.outputs.tag }}" ]; then
             echo "tag=${{ needs.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* ]]; then
             echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
             echo "tag=" >> "$GITHUB_OUTPUT"
@@ -353,7 +353,7 @@ jobs:
         run: |
           if [ -n "${{ needs.version.outputs.tag }}" ]; then
             echo "tag=${{ needs.version.outputs.tag }}" >> "$GITHUB_OUTPUT"
-          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$GITHUB_REF" == refs/tags/* ]]; then
             echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
           else
             echo "tag=" >> "$GITHUB_OUTPUT"
@@ -475,7 +475,7 @@ jobs:
   # a separate job keeps the release invisible until it is complete.
   publish:
     needs: [version, build, windows]
-    if: ${{ !cancelled() && needs.build.result == 'success' && needs.windows.result == 'success' && (needs.version.outputs.tag != '' || startsWith(github.ref, 'refs/tags/')) }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.windows.result == 'success' && (needs.version.outputs.tag != '' || (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/'))) }}
     runs-on: ubuntu-latest
     steps:
       - name: Publish the release
