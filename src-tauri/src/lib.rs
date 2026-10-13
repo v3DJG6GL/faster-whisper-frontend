@@ -128,8 +128,12 @@ pub(crate) fn drain_newest<T: Send + 'static>(slot: &'static NewestSlot<T>, valu
         s.0 = Some(value);
         !std::mem::replace(&mut s.1, true)
     };
-    if spawn {
-        std::thread::spawn(move || loop {
+    if !spawn {
+        return;
+    }
+    let started = std::thread::Builder::new()
+        .name("drain-newest".into())
+        .spawn(move || loop {
             let next = {
                 let mut s = slot.lock().unwrap_or_else(|e| e.into_inner());
                 match s.0.take() {
@@ -143,6 +147,11 @@ pub(crate) fn drain_newest<T: Send + 'static>(slot: &'static NewestSlot<T>, valu
             // A panic must not leave the slot marked as drained by a worker that is gone.
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(next)));
         });
+    // Nor may a worker that never started (the OS refused a thread): the value stays pending
+    // and the next call tries again.
+    if let Err(e) = started {
+        slot.lock().unwrap_or_else(|e| e.into_inner()).1 = false;
+        tracing::warn!("[queue] could not start a background worker: {e}");
     }
 }
 
