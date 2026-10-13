@@ -599,20 +599,23 @@ pub fn trim_silence_16k(pcm: &[u8]) -> Vec<u8> {
 
 /// Write the dictation transcript next to its `.wav` as a sibling `.txt` (same stem), so the
 /// recordings folder is browsable/searchable. Best-effort: logs and returns on any error.
-pub fn save_transcript_sidecar(wav_path: &Path, text: &str) {
+/// True when the `.txt` was written — so a discard removes only a sidecar this call created.
+pub fn save_transcript_sidecar(wav_path: &Path, text: &str) -> bool {
     // Sanitize like the injection + Copy paths so the saved .txt matches what was actually typed
     // (drops control chars, keeps tab/LF) — the server text arrives here raw. A no-op for normal
     // natural-language transcripts; only strips stray control chars if the server ever emits them.
     let cleaned = crate::inject::sanitize_injected(text);
     let trimmed = cleaned.trim();
     if trimmed.is_empty() {
-        return;
+        return false;
     }
     let txt_path = wav_path.with_extension("txt");
     if let Err(e) = write_new_private(&txt_path, &[format!("{trimmed}\n").as_bytes()]) {
         tracing::warn!("[record] could not write transcript sidecar: {e}");
+        false
     } else {
         tracing::info!("[record] transcript saved {}", txt_path.display());
+        true
     }
 }
 

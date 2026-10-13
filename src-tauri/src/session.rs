@@ -1205,6 +1205,21 @@ pub fn start_record(app: AppHandle, p: RecordParams) -> Result<RecordSession, St
     })
 }
 
+/// Remove a discarded batch recording — and its `.txt` sidecar when this session wrote one — on
+/// the blocking pool: an unlink on a sleeping disk or an offline share must not park a runtime
+/// worker (the 27d8bdd rule).
+async fn discard_recording(wav: PathBuf, with_sidecar: bool) {
+    let _ =
+        tauri::async_runtime::spawn_blocking(move || remove_recording(&wav, with_sidecar)).await;
+}
+
+fn remove_recording(wav: &std::path::Path, with_sidecar: bool) {
+    let _ = std::fs::remove_file(wav);
+    if with_sidecar {
+        let _ = std::fs::remove_file(wav.with_extension("txt"));
+    }
+}
+
 async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, pcm: Vec<u8>) {
     // Cancelled between the stop and this task getting scheduled: archive nothing, send nothing.
     // "Cancel" has to mean discard here too, not just for a session still held in state.
@@ -1273,8 +1288,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         tracing::info!(
             "[record] session {epoch} cancelled while saving — discarding before upload"
         );
-        if let Some(p) = &saved_path {
-            let _ = std::fs::remove_file(p);
+        if let Some(p) = saved_path {
+            discard_recording(p, false).await;
         }
         return;
     }
@@ -1307,8 +1322,8 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         // user's own expressed discard.
         _ if batch_cancelled(epoch) => {
             tracing::info!("[record] session {epoch} cancelled during transcription — discarding");
-            if let Some(p) = &saved_path {
-                let _ = std::fs::remove_file(p);
+            if let Some(p) = saved_path {
+                discard_recording(p, false).await;
             }
         }
         Ok(res) => {
@@ -1334,10 +1349,21 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
             // away during the POST, and must not park a runtime worker (the 27d8bdd rule).
             if let Some(p) = &saved_path {
                 let (sidecar_path, sidecar_text) = (p.clone(), text.clone());
-                let _ = tauri::async_runtime::spawn_blocking(move || {
+                let wrote = tauri::async_runtime::spawn_blocking(move || {
                     crate::audio::save_transcript_sidecar(&sidecar_path, &sidecar_text)
                 })
-                .await;
+                .await
+                .unwrap_or(false);
+                // Cancelled while the sidecar was written — slow exactly when the disk or share
+                // stalls: the user discarded this dictation, so neither file stays and nothing is
+                // emitted, as in the in-flight arm above.
+                if batch_cancelled(epoch) {
+                    tracing::info!(
+                        "[record] session {epoch} cancelled while saving its transcript — discarding"
+                    );
+                    discard_recording(p.clone(), wrote).await;
+                    return;
+                }
                 emit_if_active(
                     &app,
                     epoch,
@@ -1837,6 +1863,29 @@ fn run_record_capture(
 #[cfg(test)]
 mod tests {
     use super::{streams_to_mute, MuteCmd, MuteSlot};
+
+    #[test]
+    fn a_discarded_recording_takes_its_sidecar_along() {
+        let dir = std::env::temp_dir().join(format!("fwf-discard-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wav = dir.join("dictation-1.wav");
+        std::fs::write(&wav, b"RIFF").unwrap();
+        std::fs::write(wav.with_extension("txt"), b"text\n").unwrap();
+        super::remove_recording(&wav, true);
+        assert!(!wav.exists());
+        assert!(!wav.with_extension("txt").exists());
+        // No sidecar written: only the clip goes, and a missing .txt is fine.
+        std::fs::write(&wav, b"RIFF").unwrap();
+        super::remove_recording(&wav, true);
+        assert!(!wav.exists());
+        // A .txt this session did not write stays.
+        std::fs::write(&wav, b"RIFF").unwrap();
+        std::fs::write(wav.with_extension("txt"), b"other\n").unwrap();
+        super::remove_recording(&wav, false);
+        assert!(!wav.exists());
+        assert!(wav.with_extension("txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     use std::cell::RefCell;
 
     // stop/cancel drop the old session outside the state lock, so the next session's Mute can reach
