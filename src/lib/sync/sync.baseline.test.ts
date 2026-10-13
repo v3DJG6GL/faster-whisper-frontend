@@ -319,6 +319,31 @@ describe("composeBlob forward-compat inside a category", () => {
 });
 
 describe("migrateBlob (baseline)", () => {
+  it("drops the legacy auto-stop key when the new one is present too, on a copy", () => {
+    // Both keys in settings.recording made every later save_config fail ("duplicate field
+    // handsFreeAutoStopMin" through the serde alias): a session-long save freeze.
+    const input: SyncBlob = { recording: { handsFreeAutoStopMin: 5, latchAutoStopMin: 3 } as never };
+    const out = migrateBlob(input);
+    expect(out.recording).toEqual({ handsFreeAutoStopMin: 5 });
+    expect(input.recording).toEqual({ handsFreeAutoStopMin: 5, latchAutoStopMin: 3 });
+    // Only the legacy key: renamed, and the caller's object is still untouched.
+    const legacy: SyncBlob = { recording: { latchAutoStopMin: 3 } as never };
+    expect(migrateBlob(legacy).recording).toEqual({ handsFreeAutoStopMin: 3 });
+    expect(legacy.recording).toEqual({ latchAutoStopMin: 3 });
+  });
+
+  it("applying a blob that carried both auto-stop keys stores only the new one", async () => {
+    useApp.setState({ settings: settings() });
+    const blob = migrateBlob({ recording: { handsFreeAutoStopMin: 5, latchAutoStopMin: 3 } as never });
+    expect(await applyBlob(blob, CATS_ALL)).toBe(true);
+    const rec = useApp.getState().settings.recording as unknown as Record<string, unknown>;
+    expect(rec.handsFreeAutoStopMin).toBe(5);
+    expect("latchAutoStopMin" in rec).toBe(false);
+    // …and the arm itself drops it from a blob that skipped migration.
+    expect(await applyBlob({ recording: { handsFreeAutoStopMin: 4, latchAutoStopMin: 3 } as never }, CATS_ALL)).toBe(true);
+    expect("latchAutoStopMin" in (useApp.getState().settings.recording as object)).toBe(false);
+  });
+
   it("splits a pre-split recording payload into recording + chip", () => {
     const old: SyncBlob = {
       recording: { saveRecordings: true, indicatorPosition: "top", persistentDock: false } as never,

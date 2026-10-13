@@ -291,12 +291,13 @@ export function migrateBlob(blob: SyncBlob): SyncBlob {
       }
     }
   }
-  if (isPlainObject(out.recording)) {
-    const rec = out.recording as Record<string, unknown>;
-    if (hasOwn(rec, "latchAutoStopMin") && !hasOwn(rec, "handsFreeAutoStopMin")) {
-      rec.handsFreeAutoStopMin = rec.latchAutoStopMin;
-      delete rec.latchAutoStopMin;
-    }
+  // The legacy name is ALWAYS removed: renamed when the new key is absent, dropped when both
+  // arrive — Rust's alias then reads two values for one field ("duplicate field") and rejects the
+  // whole Config on every later save. On a copy: the caller's blob is not ours to edit.
+  if (isPlainObject(out.recording) && hasOwn(out.recording, "latchAutoStopMin")) {
+    const { latchAutoStopMin, ...rec } = out.recording as Record<string, unknown>;
+    if (!hasOwn(rec, "handsFreeAutoStopMin")) rec.handsFreeAutoStopMin = latchAutoStopMin;
+    out.recording = rec as SyncRecording;
   }
   const b = out.backends as (SyncBackends & { quickAddList?: unknown }) | undefined;
   if (isPlainObject(b) && hasOwn(b, "quickAddList")) {
@@ -1733,6 +1734,9 @@ export async function applyBlob(
         };
       }
       for (const k of DICTATION_HISTORY_FIELDS) delete rec[k];
+      // migrateBlob renamed or dropped the legacy auto-stop key already; never let it reach the
+      // store beside the new one — Rust's serde alias rejects the whole Config on every save then.
+      delete rec.latchAutoStopMin;
       nextSettings = {
         ...nextSettings,
         recording: {
