@@ -116,6 +116,14 @@ fn fill<T: SizedSample + FromSample<f32>>(
 ) -> bool {
     for frame in out.chunks_mut(channels.max(1)) {
         let v = cursor.next(pcm).unwrap_or(0.0);
+        // A glitching F32 mic can leave NaN/Inf or overs in a mic-test take, and a float output
+        // passes them straight to the device: same NaN-to-0 and clamp rule as `push_i16le`.
+        // After interpolation, so a NaN spread into the neighbouring sample is caught too.
+        let v = if v.is_finite() {
+            v.clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
         frame.fill(T::from_sample(v));
     }
     cursor.finished(pcm)
@@ -197,6 +205,15 @@ mod tests {
         let mut out = [0i16; 1];
         fill(&mut out, 1, &mut c, &pcm);
         assert_eq!(out[0], i16::MAX);
+    }
+
+    #[test]
+    fn non_finite_and_over_range_samples_play_as_silence_or_full_scale() {
+        let pcm = [f32::NAN, f32::INFINITY, 2.0];
+        let mut c = Cursor::new(48_000, 48_000);
+        let mut out = [9.0f32; 3];
+        fill(&mut out, 1, &mut c, &pcm);
+        assert_eq!(out, [0.0, 0.0, 1.0]);
     }
 
     #[test]
