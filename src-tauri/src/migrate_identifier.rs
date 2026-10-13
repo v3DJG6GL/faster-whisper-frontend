@@ -366,7 +366,8 @@ fn after_move(new: &Path) {
 /// (`audioBaseDir` / `recordingsDir`, not `logDir`).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
     let mut audio_bases = Vec::new();
-    let Ok(text) = std::fs::read_to_string(config) else {
+    // The config loader's own read: a "UTF-8 with BOM" file is not JSON to serde.
+    let Ok(Some(text)) = crate::config::read_config_text(config) else {
         return audio_bases;
     };
     let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else {
@@ -604,6 +605,29 @@ mod tests {
         assert_eq!(
             out["settings"]["recording"]["recordingsDir"],
             serde_json::json!(elsewhere)
+        );
+    }
+
+    #[test]
+    fn a_config_saved_with_a_bom_still_follows_the_move() {
+        let base = scratch("bom");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(&new).unwrap();
+        let cfg = serde_json::json!({ "settings": {
+            "recording": { "audioBaseDir": old.join("my-audio") },
+        }});
+        let mut bytes = b"\xEF\xBB\xBF".to_vec();
+        bytes.extend_from_slice(cfg.to_string().as_bytes());
+        std::fs::write(new.join("config.json"), bytes).unwrap();
+        let rebased = rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]);
+        assert_eq!(rebased, vec![new.join("my-audio")]);
+        let text = crate::config::read_config_text(&new.join("config.json"))
+            .unwrap()
+            .unwrap();
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            out["settings"]["recording"]["audioBaseDir"],
+            serde_json::json!(new.join("my-audio"))
         );
     }
 
