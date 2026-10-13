@@ -1221,13 +1221,42 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
     // "Trim silence" affects ONLY the saved file — the full clip is still sent for transcription
     // below — and trim_silence_16k can reduce an all-silence clip to nothing, which save_recording
     // skips (empty buffer).
-    let saved_path = params.save_dir.as_ref().and_then(|dir| {
-        if params.trim_silence {
-            crate::audio::save_recording(dir, &crate::audio::trim_silence_16k(&pcm), 16_000)
-        } else {
-            crate::audio::save_recording(dir, &pcm, 16_000)
+    // On the blocking pool, like the streaming drain's save: trim + write + fsync of a long clip
+    // on a sleeping disk or an offline share must not park a runtime worker (the 27d8bdd rule).
+    // The clip moves in and comes back out, so it is never copied.
+    let (pcm, saved_path) = match params.save_dir.clone() {
+        Some(dir) => {
+            let trim = params.trim_silence;
+            let saving = tauri::async_runtime::spawn_blocking(move || {
+                let path = if trim {
+                    crate::audio::save_recording(
+                        &dir,
+                        &crate::audio::trim_silence_16k(&pcm),
+                        16_000,
+                    )
+                } else {
+                    crate::audio::save_recording(&dir, &pcm, 16_000)
+                };
+                (pcm, path)
+            });
+            match saving.await {
+                Ok(done) => done,
+                Err(e) => {
+                    // The clip went down with the save (a panic): nothing left to transcribe.
+                    tracing::warn!("[record] saving session {epoch}'s recording failed: {e}");
+                    emit_if_active(
+                        &app,
+                        epoch,
+                        "stream://error",
+                        "Saving the recording failed".to_string(),
+                    );
+                    emit_if_active(&app, epoch, "stream://status", "closed");
+                    return;
+                }
+            }
         }
-    });
+        None => (pcm, None),
+    };
     if pcm.is_empty() {
         // Nothing captured at all (an instant tap / misfire) — there's no audio to transcribe, and
         // the streaming path likewise closes an empty session without sending anything. We do NOT

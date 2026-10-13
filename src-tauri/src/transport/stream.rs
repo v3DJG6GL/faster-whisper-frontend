@@ -846,7 +846,12 @@ pub async fn run<F>(
         // Skip empties (a quick tap that drained without audio, or a session the silence-trim
         // reduced to nothing). Emit the saved path so the client can label it with the transcript.
         if !saved.is_empty() {
-            if let Some(path) = crate::audio::save_recording(dir, &saved, 16_000) {
+            // On the blocking pool: up to MAX_RECORD_PCM_BYTES plus an fsync and the sidecar, and
+            // a recordings folder on a sleeping disk or an offline share must not park a runtime
+            // worker (the rule 27d8bdd applied to the batch path's media copy).
+            let dir = dir.to_path_buf();
+            let wrote = tokio::task::spawn_blocking(move || {
+                let path = crate::audio::save_recording(&dir, &saved, 16_000)?;
                 // Label the .wav with the session transcript IN RUST (ungated), so a superseded
                 // recording still gets its sibling .txt (a Cancel after stop discards it above,
                 // matching the batch path).
@@ -856,10 +861,18 @@ pub async fn run<F>(
                 if !transcript.is_empty() {
                     crate::audio::save_transcript_sidecar(&path, &transcript);
                 }
+                Some((path, pcm_duration_ms(saved.len())))
+            })
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!("[stream] saving the recording failed: {e}");
+                None
+            });
+            if let Some((path, duration_ms)) = wrote {
                 on_event(StreamEvent::RecordingSaved {
                     path: path.to_string_lossy().into_owned(),
                     utterance: None,
-                    duration_ms: pcm_duration_ms(saved.len()),
+                    duration_ms,
                 });
             }
         }
