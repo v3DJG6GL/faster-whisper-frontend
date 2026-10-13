@@ -5,7 +5,7 @@
 
 import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
-import { edgeChar, unspacedChar } from "./cueSplit";
+import { cjkWraps, edgeChar, unspacedChar } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -36,13 +36,15 @@ export function isTextSourcePath(path: string): boolean {
  *  file yields no segments. */
 export function parseImportedText(ext: string, content: string): ImportedText {
   const body = stripControlChars(content); // drops a BOM too (isDeceptiveFormatChar)
+  // One decision per file: whether its line breaks between two CJK characters are wraps.
+  const wraps = cjkWraps(body);
   let out: ImportedText;
   switch (ext.toLowerCase()) {
     case "srt":
-      out = parseSrt(body);
+      out = parseSrt(body, wraps);
       break;
     case "vtt":
-      out = parseVtt(body);
+      out = parseVtt(body, wraps);
       break;
     case "lrc":
       out = parseLrc(body);
@@ -51,7 +53,7 @@ export function parseImportedText(ext: string, content: string): ImportedText {
       out = parseJsonExport(body);
       break;
     default:
-      out = parsePlainText(body);
+      out = parsePlainText(body, wraps);
   }
   if (!out.segments.length) {
     throw new Error("No text found in this file — is it empty or a different format?");
@@ -98,9 +100,24 @@ function voiceName(raw: string): string {
   return safeDisplayText(decodeEntities(raw), 40).replace(/\s+/g, " ").trim();
 }
 
+/** A cue's (or paragraph's) lines as one: one space between two lines, or none between two
+ *  unspaced characters when the file wraps its CJK lines (`cjkWraps`). Joined before the
+ *  markup goes, so a tag split over two lines still strips; its edges are judged without tags. */
+function joinLines(lines: string[], wraps: boolean): string {
+  if (!wraps) return lines.join(" ");
+  const bare = (s: string) => s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "");
+  let out = "";
+  for (const l of lines) {
+    const glue =
+      out !== "" && unspacedChar(edgeChar(bare(out).trimEnd(), true)) && unspacedChar(edgeChar(bare(l).trimStart(), false));
+    out = out === "" ? l : glue ? out.trimEnd() + l.trimStart() : `${out} ${l}`;
+  }
+  return out;
+}
+
 /** Strip markup a cue line may carry and split a leading "Name:" speaker. */
-function cueText(lines: string[]): { text: string; speaker?: string } {
-  const joined = stripMarkup(lines.join(" "));
+function cueText(lines: string[], wraps = false): { text: string; speaker?: string } {
+  const joined = stripMarkup(joinLines(lines, wraps));
   const m = /^([^:\n]{1,40}):\s+(.*)$/.exec(joined);
   // A leading "Name: " prefix becomes the speaker — but never a clock-like
   // token ("12:30 lunch") or a URL scheme.
@@ -237,11 +254,11 @@ const CUE_TIMES = /^(\s|.*?\S)\s+--&?>\s+(.+?)(?:\s+.*)?$/;
 
 /** Raw cues → segments, after the rolling-caption and broadcaster cleanup every SRT/VTT
  *  import gets. `<v Name>` voice tags (VTT) carry the speaker; cueText handles the rest. */
-function cuesToSegments(cues: RawCue[]): ImportedText {
+function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
   const segments: ImportedText["segments"] = [];
   for (const { start, end, lines: raw } of dedupeRollingCues(cues)) {
     const lines = fixBroadcasterText(raw);
-    const joined = lines.join(" ").trim();
+    const joined = joinLines(lines, wraps).trim();
     // One cue may carry a two-person exchange ("<v Alice>Hi</v> <v Bob>Hello</v>"): one
     // segment per voice span, all on the cue's clock — the single-span regex below would
     // run the lazy group to the end and credit both lines to the first voice.
@@ -270,7 +287,7 @@ function cuesToSegments(cues: RawCue[]): ImportedText {
       const text = stripMarkup(v[2]);
       if (text) segments.push({ start, end, text, speaker: voiceName(v[1]) });
     } else {
-      const { text, speaker } = cueText(lines);
+      const { text, speaker } = cueText(lines, wraps);
       if (text) segments.push({ start, end, text, speaker });
     }
   }
@@ -313,18 +330,18 @@ function blocksToCues(body: string, timesAt: (lines: string[]) => number): RawCu
   return cues;
 }
 
-function parseSrt(body: string): ImportedText {
+function parseSrt(body: string, wraps: boolean): ImportedText {
   // The times follow an optional cue number.
-  return cuesToSegments(blocksToCues(body, (lines) => (/^\d+$/.test(lines[0].trim()) ? 1 : 0)));
+  return cuesToSegments(blocksToCues(body, (lines) => (/^\d+$/.test(lines[0].trim()) ? 1 : 0)), wraps);
 }
 
-function parseVtt(body: string): ImportedText {
+function parseVtt(body: string, wraps: boolean): ImportedText {
   // STYLE, NOTE and REGION blocks are not cues; the WEBVTT header block has no times.
   return cuesToSegments(blocksToCues(body, (lines) => {
     const first = lines[0].trim();
     if (first === "STYLE" || first === "NOTE" || first === "REGION") return -1;
     return lines.findIndex((l) => l.includes("-->"));
-  }));
+  }), wraps);
 }
 
 function parseLrc(body: string): ImportedText {
@@ -385,12 +402,12 @@ function parseLrc(body: string): ImportedText {
   return { segments };
 }
 
-function parsePlainText(body: string): ImportedText {
+function parsePlainText(body: string, wraps: boolean): ImportedText {
   // Paragraphs (blank-line separated) become segments; single-paragraph
   // files fall back to one segment per line.
   const paras = body
     .split(BLANK_LINE)
-    .map((p) => p.replace(/\s+/g, " ").trim())
+    .map((p) => joinLines(p.split("\n"), wraps).replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const parts =
     paras.length > 1
@@ -452,7 +469,8 @@ function parseJsonExport(body: string): ImportedText {
   const language = shown ? languageCodeOf(shown) : undefined;
   if (segments.length === 0 && typeof obj.text === "string" && obj.text.trim()) {
     // Decoded by JSON.parse after the control-char pass, like the segment text above.
-    return { ...parsePlainText(stripControlChars(obj.text)), language };
+    const text = stripControlChars(obj.text);
+    return { ...parsePlainText(text, cjkWraps(text)), language };
   }
   return { segments, language };
 }

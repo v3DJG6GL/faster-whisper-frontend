@@ -62,7 +62,7 @@ import { patchTranscribe, useDisplayToggles } from "@/lib/useDisplayToggles";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 import { TranscriptExport } from "@/components/transcribe/TranscriptExport";
 import { SubtitleList, TIME_ANCHOR_ID } from "@/components/transcribe/SubtitleList";
-import { cueOptionsOf, joinLineBreaks, limitsTitle, trackLimits, trText } from "@/lib/transcript/cueSplit";
+import { cjkWraps, cueOptionsOf, joinLineBreaks, limitsTitle, trackLimits, trText } from "@/lib/transcript/cueSplit";
 import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
@@ -1669,9 +1669,10 @@ export function TranscriptViewer({
       const orig = stripControlChars(result.segments?.[i]?.text ?? "").trim();
       // A correction is one logical line, as every export writes it (clean()): a
       // pasted line break would otherwise show in Read but turn into a space in
-      // the files. Flattened as clean() flattens it (joinLineBreaks), and compared flattened, so a bare blur on an imported multi-line
+      // the files. Flattened like the subtitle import (no space between two CJK characters when
+      // the text wraps its CJK lines, see cjkWraps; else one space), and compared flattened, so a bare blur on an imported multi-line
       // line is still "no edit" (and returns `orig` itself, keeping the caret).
-      const flat = joinLineBreaks;
+      const flat = (s: string) => joinLineBreaks(s, cjkWraps(s));
       const edit = t && flat(t) !== flat(orig) ? flat(t) : null;
       setSegmentEdit(okey, i, edit);
       // What the row renders from now on (`fileEdits[i] ?? seg.text`, stripped and

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
+  CUE_PRESETS, TRANSCRIBED_CPS, buildCues, cjkWraps, cueOptionsOf, cueResult, cutByShare, edgeChar, joinLineBreaks, limitsFor, limitsTitle, trackCps, trackLimits, sanitizeCueLimits, timedTrack, trText, trackCues, trackLang, wrapLines,
   type CueOptions,
 } from "./cueSplit";
 import type { BatchResult, TranscriptWord } from "../types";
@@ -1057,6 +1057,22 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("東京\nTokyo")).toBe("東京 Tokyo");
     expect(joinLineBreaks("我喜欢\niPhone")).toBe("我喜欢 iPhone");
     expect(joinLineBreaks("no  break ")).toBe("no  break ");
+  });
+  it("with wraps, joins two unspaced characters with nothing and everything else with one space", () => {
+    expect(joinLineBreaks("你好\n世界。", true)).toBe("你好世界。");
+    expect(joinLineBreaks("東京は \n\n 大阪より、", true)).toBe("東京は大阪より、");
+    expect(joinLineBreaks("東京\nTokyo", true)).toBe("東京 Tokyo");
+    expect(joinLineBreaks("Hello\nworld", true)).toBe("Hello world");
+  });
+  it("cjkWraps: 。，、 without a phrase space; ？！： alone and phrase-spaced text do not wrap", () => {
+    expect(cjkWraps("今日はとても\n良い天気ですね。")).toBe(true);
+    expect(cjkWraps("我们今天去公园\n散步､然后")).toBe(true);
+    expect(cjkWraps("我们走吧\n他们在等我们")).toBe(false);
+    expect(cjkWraps("我不知道他去哪儿了\n你知道吗？")).toBe(false);
+    expect(cjkWraps("张三：我们走吧！")).toBe(false);
+    expect(cjkWraps("你好。 我们走吧。")).toBe(false);
+    expect(cjkWraps("今日は　ありがとう。")).toBe(false);
+    expect(cjkWraps("Hello, world.")).toBe(false);
   });
   it("a long blank run before no line break stays fast", () => {
     const s = "x" + " ".repeat(60_000) + "y\nz";

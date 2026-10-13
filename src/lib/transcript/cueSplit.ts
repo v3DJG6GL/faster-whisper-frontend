@@ -115,14 +115,33 @@ export function edgeChar(s: string, end: boolean): string {
   const lo = t.charCodeAt(t.length - 1);
   return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
 }
+/** A blank (not a line break) between two unspaced characters: a phrase space. */
+const PHRASE_SPACE = new RegExp(
+  `(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})[^\\S\\n]+(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})`,
+  "u",
+);
+/** Whether a text's line breaks between two CJK characters are wraps, not phrase separators:
+ *  it ends its phrases with 。，、 (halfwidth ｡､ too), so a break mid-phrase only wraps it, and
+ *  it has no phrase space (unpunctuated subtitles drop 。，、 at line ends and separate phrases
+ *  with the break; Whisper's phrase-spaced text and our exports of it wrap at a space and drop
+ *  it). ？！：； do not count: the unpunctuated convention keeps them. Judged on the whole
+ *  file (import) or the whole edited segment — a rule per line would read one file both ways. */
+export function cjkWraps(s: string): boolean {
+  return /[。，、｡､]/u.test(s) && !PHRASE_SPACE.test(s);
+}
 /** Text with every line break (and the blanks around it) folded into one space — the
- *  subtitle import, the edit commit and every export flatten alike. Between two CJK
- *  characters too: such a break is a wrap in one file and the phrase separator in another
- *  (unpunctuated subtitles drop 。， at line ends), and no rule tells them apart reliably, so
- *  a space keeps both readable. A match starts only at a blank run's first character, so a
- *  long run is scanned once. */
-export function joinLineBreaks(s: string): string {
-  return s.includes("\n") ? s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, " ") : s;
+ *  subtitle import, the edit commit and every export flatten alike — or, with `wraps` (see
+ *  `cjkWraps`), into nothing between two unspaced characters. A match starts only at a blank
+ *  run's first character, so a long run is scanned once. */
+export function joinLineBreaks(s: string, wraps = false): string {
+  if (!s.includes("\n")) return s;
+  return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
+    wraps &&
+    unspacedChar(edgeChar(str.slice(Math.max(0, off - 8), off), true)) &&
+    unspacedChar(edgeChar(str.slice(off + m.length, off + m.length + 2), false))
+      ? ""
+      : " ",
+  );
 }
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
 

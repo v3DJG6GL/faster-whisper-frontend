@@ -194,23 +194,49 @@ describe("plain text + errors", () => {
     // A code stays as the file wrote it; a word no language goes by stays too.
     expect([seg("EN"), seg("pt-BR"), seg("klingon")]).toEqual(["EN", "pt-BR", "klingon"]);
   });
-  it("a cue's or paragraph's line break joins with one space, in CJK text too", () => {
+  it("a CJK line break joins without a space only in a file that wraps its CJK lines (。，、 and no phrase space)", () => {
     const srt = (body: string) => parseImportedText("srt", `1\n00:00:01,000 --> 00:00:02,000\n${body}\n`).segments[0];
-    expect(srt("今日はとても\n良い天気ですね。").text).toBe("今日はとても 良い天気ですね。");
-    expect(srt("<i>今日は</i>\n<i>晴れです。</i>").text).toBe("今日は 晴れです。");
-    expect(srt("Hello there\nmy friend").text).toBe("Hello there my friend");
-    expect(srt("我喜欢\niPhone").text).toBe("我喜欢 iPhone");
-    expect(srt("Alice: 我们\n去了。")).toMatchObject({ speaker: "Alice", text: "我们 去了。" });
+    // Punctuated: the break only wraps the phrase.
+    expect(srt("今日はとても\n良い天気ですね。").text).toBe("今日はとても良い天気ですね。");
+    expect(srt("<i>今日は</i>\n<i>晴れです。</i>").text).toBe("今日は晴れです。");
+    expect(srt("Alice: 我们\n去了。")).toMatchObject({ speaker: "Alice", text: "我们去了。" });
+    // A tag split over two lines still strips.
+    expect(srt('<font color="#fff"\nface="Arial">今日は</font>\n晴れです。').text).toBe("今日は晴れです。");
+    // The unpunctuated convention: the break separates phrases, and ？！： do not count.
+    expect(srt("我们走吧\n他们在等我们").text).toBe("我们走吧 他们在等我们");
+    expect(srt("我不知道他去哪儿了\n你知道吗？").text).toBe("我不知道他去哪儿了 你知道吗？");
+    expect(srt("张三：我们走吧\n他们在等我们").text).toBe("张三：我们走吧 他们在等我们");
     const vtt = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v 田中>今日は天気が\nいいですね！\n").segments[0];
     expect(vtt).toMatchObject({ speaker: "田中", text: "今日は天気が いいですね！" });
-    expect(srt("我们走吧\n他们在等我们").text).toBe("我们走吧 他们在等我们");
+    // Phrase-spaced text (Whisper's, and our exports of it) keeps its separator.
+    expect(srt("你好。 我们\n走吧。").text).toBe("你好。 我们 走吧。");
     expect(srt("今日は　ありがとう\nまた明日ね").text).toBe("今日は ありがとう また明日ね");
+    // Latin and mixed seams keep one space either way.
+    expect(srt("Hello there\nmy friend").text).toBe("Hello there my friend");
+    expect(srt("我喜欢\niPhone。").text).toBe("我喜欢 iPhone。");
     // Two voices in one cue still split per voice.
     const two = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n- <v Alice>你好\n- <v Bob>再见\n").segments;
     expect(two.map((s) => [s.speaker, s.text])).toEqual([["Alice", "你好"], ["Bob", "再见"]]);
-    // A hard-wrapped CJK paragraph of a .txt file.
+    // A .txt file decides once for the whole file: punctuated, every CJK wrap joins.
     expect(parseImportedText("txt", "我们今天去公园\n散步，然后回家\n\n我爱你\n你爱我\n\nSecond\npara").segments.map((s) => s.text))
-      .toEqual(["我们今天去公园 散步，然后回家", "我爱你 你爱我", "Second para"]);
+      .toEqual(["我们今天去公园散步，然后回家", "我爱你你爱我", "Second para"]);
+    expect(parseImportedText("txt", "我们今天去公园\n散步\n\n我爱你\n你爱我").segments.map((s) => s.text))
+      .toEqual(["我们今天去公园 散步", "我爱你 你爱我"]);
+  });
+  it("srt/vtt: a punctuated CJK cue the export wrapped over two lines reads back without a space at the break", () => {
+    const text = "今日はとてもいい天気ですね。明日も晴れるでしょう。";
+    const ja: BatchResult = {
+      text,
+      language: "ja",
+      segments: [{ start: 0, end: 4, text }],
+      words: [...text].map((word, i) => ({ word, start: i * 0.15, end: i * 0.15 + 0.15 })),
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      const out = generateExport(ja, { format, cues: { length: "standard", timing: "same" } });
+      expect(out).toMatch(/[\u3040-\u9fff]\n[\u3040-\u9fff]/); // the export did wrap a cue
+      expect(parseImportedText(format, out).segments.map((s) => s.text).join("")).toBe(text);
+      expect(parseImportedText(format, out).segments.every((s) => !/\s/.test(s.text))).toBe(true);
+    }
   });
   it("a times line holding a long blank run parses in linear time, to the same cues", () => {
     const ws = " ".repeat(100_000);
