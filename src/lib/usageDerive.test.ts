@@ -130,6 +130,19 @@ describe("usageDerive", () => {
     expect(legendRanges([60, 400, 2100], String)).toEqual(["0", "1–60", "60–400", "400–2100", "2100+"]);
   });
 
+  it("legendRanges: a step no value can land in reads '—', never an impossible range", () => {
+    // One active day (500 words): its breaks are [0, 0, 0] and it sits in the top step.
+    expect(legendRanges(quantileBreaks([500]), String)).toEqual(["0", "—", "—", "—", "1+"]);
+    expect(legendRanges([0, 0, 0], String)).toEqual(["0", "—", "—", "—", "1+"]);
+    // Two active days.
+    expect(legendRanges([0, 3, 3], String)).toEqual(["0", "—", "1–3", "—", "3+"]);
+    expect(legendRanges([0, 5, 50], String)).toEqual(["0", "—", "1–5", "5–50", "50+"]);
+    // Durations under a second open at the caller's lo.
+    expect(legendRanges([0, 0.4, 0.4], (v) => `${v}s`, 0.1)).toEqual(["0", "—", "0.1s–0.4s", "—", "0.4s+"]);
+    // Enough values: unchanged.
+    expect(legendRanges([5, 50, 500], String)).toEqual(["0", "1–5", "5–50", "50–500", "500+"]);
+  });
+
   it("calendarModel: one cell per window day for the scoped kind and measure, quantile-levelled, per-kind split kept", () => {
     const today = 20_000;
     const cal = [pt(today, 1000, 5), pt(today - 1, 100), pt(today - 2, 400, 50), pt(today - 3, 600), pt(today - 4, 800), pt(today - 90, 5)];

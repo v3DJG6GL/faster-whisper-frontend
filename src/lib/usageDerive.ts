@@ -448,10 +448,23 @@ export function levelOf(v: number, b: Breaks): Level {
   return !(v > 0) ? 0 : v <= b[0] ? 1 : v <= b[1] ? 2 : v <= b[2] ? 3 : 4;
 }
 
-/** Legend copy for the five steps: `0 · 1–b1 · b1–b2 · b2–b3 · b3+` (`fmt(1)` opens the
- *  first active step, so a duration legend reads `1s–33m`). */
+/** Legend copy for the five steps: `0 · 1–b1 · b1–b2 · b2–b3 · b3+` (`fmt(lo)` opens the
+ *  first active step, so a duration legend reads `1s–33m`). With few active values the lower
+ *  breaks sit at 0 or repeat (quantileBreaks' small-n levelling): a step no value can land in
+ *  reads `—`, and the next one opens at the last real bound — never `1–0` or `0–0`. */
 export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1): string[] {
-  return ["0", `${fmt(lo)}–${fmt(b[0])}`, `${fmt(b[0])}–${fmt(b[1])}`, `${fmt(b[1])}–${fmt(b[2])}`, `${fmt(b[2])}+`];
+  const out = ["0"];
+  let below = 0; // values in a step are above this
+  for (const upper of b) {
+    if (upper <= below) {
+      out.push("—");
+      continue;
+    }
+    out.push(`${fmt(below > 0 ? below : lo)}–${fmt(upper)}`);
+    below = upper;
+  }
+  out.push(`${fmt(Math.max(lo, b[2]))}+`);
+  return out;
 }
 
 /* ── per-kind cells (D31/D33): what a grid cell's tooltip lists ──────────── */
