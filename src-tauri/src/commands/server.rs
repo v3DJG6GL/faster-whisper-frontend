@@ -50,9 +50,16 @@ pub async fn preload_models(
     backend_id: Option<String>,
     api_key: Option<String>,
     models: Vec<transport::preload::PreloadModel>,
+    override_profile: Option<String>,
 ) -> bool {
     let key = resolve_key_async(api_key, backend_id).await;
-    transport::preload::preload_models(&server_url, key.as_deref(), models).await
+    transport::preload::preload_models(
+        &server_url,
+        key.as_deref(),
+        models,
+        override_profile.as_deref(),
+    )
+    .await
 }
 
 /// The decode values the caller inherits from the server for one model and override profile

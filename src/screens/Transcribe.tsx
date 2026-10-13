@@ -698,10 +698,13 @@ export default function Transcribe() {
       serverUrl: effectiveServerUrl(backend, settings),
       backendId: backend.id,
       models: plan,
+      // The run's rule (buildCtx), so the server judges the plan against the profile the run sends.
+      overrideProfile: effectiveOverrideProfile(runOverrideProfile, backend.overrideProfile),
     });
     return () => lease.release();
   }, [
     files,
+    runOverrideProfile,
     busy,
     backend,
     settings,

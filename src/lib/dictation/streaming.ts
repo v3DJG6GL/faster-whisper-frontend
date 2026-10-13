@@ -3710,6 +3710,7 @@ async function startLiveInner(
         serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
         backendId: backend.id,
         models: plan,
+        overrideProfile,
       });
     }
     // Ask the server what is already resident, so the FIRST phrase can take the

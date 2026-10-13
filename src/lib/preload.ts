@@ -22,6 +22,9 @@ export interface PreloadSpec {
   serverUrl: string;
   backendId: string;
   models: { family: Family; id: string }[];
+  /** The override profile the run will send — the server judges the plan's allowlist and
+   *  model locks against it. Part of the debounce key, so a profile change re-sends. */
+  overrideProfile?: string;
 }
 
 export interface WarmLease {
@@ -39,6 +42,7 @@ type Transport = (args: {
   serverUrl: string;
   backendId?: string | null;
   models: { family: Family; id: string }[];
+  overrideProfile?: string | null;
 }) => Promise<boolean>;
 
 const defaultTransport: Transport = (args) => (isTauri ? preloadModels(args) : Promise.resolve(false));
@@ -144,6 +148,7 @@ function fire(entry: Entry, force: boolean): void {
     serverUrl: entry.spec.serverUrl,
     backendId: entry.spec.backendId,
     models,
+    overrideProfile: entry.spec.overrideProfile,
   }).catch(() => {});
 }
 

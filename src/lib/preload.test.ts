@@ -181,6 +181,21 @@ describe("acquireWarm", () => {
     b.release();
   });
 
+  it("hands the run's override profile to the transport, and re-sends when it changes", () => {
+    const profiles: (string | null | undefined)[] = [];
+    setPreloadTransport(async (args) => {
+      calls += 1;
+      profiles.push(args.overrideProfile);
+      return true;
+    });
+    const a = acquireWarm("k", { ...spec, overrideProfile: "meeting" });
+    const b = acquireWarm("k", { ...spec, overrideProfile: "lecture" });
+    expect(calls).toBe(2);
+    expect(profiles).toEqual(["meeting", "lecture"]);
+    a.release();
+    b.release();
+  });
+
   it("keeps renewing after a rejecting transport, and never throws", () => {
     setPreloadTransport(() => {
       calls += 1;

@@ -583,9 +583,17 @@ export type PreloadFamily = "whisper" | "diarization" | "separation" | "translat
  *  beyond deciding not to retry. Never throws. */
 export async function preloadModels(args: ServerTarget & {
   models: { family: PreloadFamily; id: string }[];
+  /** The override profile the run will send (NO_OVERRIDE_PROFILE included), so the server
+   *  judges the plan against the same ident; blank = none. */
+  overrideProfile?: string | null;
 }): Promise<boolean> {
   try {
-    return await invokeServer<boolean>("preload_models", args, { models: args.models }, false);
+    return await invokeServer<boolean>(
+      "preload_models",
+      args,
+      { models: args.models, overrideProfile: args.overrideProfile?.trim() || null },
+      false,
+    );
   } catch {
     return false;
   }

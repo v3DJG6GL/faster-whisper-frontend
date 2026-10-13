@@ -21,6 +21,10 @@ const FAMILY_MAX: usize = 120;
 /// entry is DROPPED, never cut — a cut id names no model, and one over the bound would 422
 /// the whole plan.
 const PRELOAD_ID_MAX: usize = 128;
+/// The server's bound on `override_profile` (`Field(max_length=64)`, backend runtime/preload_routes.py).
+/// A longer name is OMITTED, never cut: a cut name would judge the plan against a profile that
+/// doesn't exist, and one over the bound would 422 the whole plan.
+const OVERRIDE_PROFILE_MAX: usize = 64;
 
 /// One `{family, id}` pair. Unknown keys are REJECTED by the backend (422), so
 /// this struct must stay exactly these two fields.
@@ -34,6 +38,11 @@ pub struct PreloadModel {
 struct PreloadReq {
     models: Vec<PreloadModel>,
     stage_ahead: bool,
+    /// The override profile the run will send, so the server judges the allowlist and the
+    /// profile's model locks against the same ident the job's handler builds (backend v0.1.178+).
+    /// Omitted when unset: an older server forbids unknown keys (422).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    override_profile: Option<String>,
 }
 
 // Nothing in the response is surfaced. The per-model `state`/`reason` fields are
@@ -47,7 +56,8 @@ struct PreloadReq {
 /// [`PRELOAD_ID_MAX`], or one that is blank once folded (an id of invisible characters only folds
 /// to "", which the server's `min_length=1` would answer with a 422 for the whole plan), are
 /// dropped BEFORE the [`MAX_ENTRIES`] clamp, so a dropped one doesn't push a sendable one out.
-fn plan_body(models: Vec<PreloadModel>) -> Option<PreloadReq> {
+/// `override_profile` is trimmed; a blank one, or one past [`OVERRIDE_PROFILE_MAX`], is omitted.
+fn plan_body(models: Vec<PreloadModel>, override_profile: Option<&str>) -> Option<PreloadReq> {
     let models: Vec<PreloadModel> = models
         .into_iter()
         .filter_map(|m| {
@@ -64,6 +74,10 @@ fn plan_body(models: Vec<PreloadModel>) -> Option<PreloadReq> {
         // Server-driven stage-ahead: the backend walks the plan forward on its
         // own as stages complete, so the client never has to re-POST mid-run.
         stage_ahead: true,
+        override_profile: override_profile
+            .map(str::trim)
+            .filter(|p| !p.is_empty() && p.chars().count() <= OVERRIDE_PROFILE_MAX)
+            .map(str::to_string),
     })
 }
 
@@ -76,28 +90,40 @@ pub async fn preload_models(
     server_url: &str,
     api_key: Option<&str>,
     models: Vec<PreloadModel>,
+    override_profile: Option<&str>,
 ) -> bool {
-    let Some(body) = plan_body(models) else {
+    let Some(mut body) = plan_body(models, override_profile) else {
         return false;
     };
     let url = format!("{}/v1/models/preload", base_url(server_url));
-    // Per-request 10s ceiling instead of the shared 120s client timeout
-    // (transport/mod.rs): a preload is a hint fired on a 2-minute renew timer,
-    // so a black-holed server would otherwise hold a task open across several
-    // renews, stacking one live request per tick for as long as it stays dark.
-    let resp = with_auth(client().post(url), api_key)
-        .timeout(Duration::from_secs(10))
-        .json(&body)
-        .send()
-        .await;
-    match resp {
-        Ok(r) if r.status().is_success() => {
-            // Drained (capped) rather than dropped so the connection returns to
-            // the pool. The hint landed whatever the body says, so it isn't parsed.
-            let _ = super::body_capped_to(r, super::MAX_META_BODY).await;
-            true
+    loop {
+        // Per-request 10s ceiling instead of the shared 120s client timeout
+        // (transport/mod.rs): a preload is a hint fired on a 2-minute renew timer,
+        // so a black-holed server would otherwise hold a task open across several
+        // renews, stacking one live request per tick for as long as it stays dark.
+        let resp = with_auth(client().post(&url), api_key)
+            .timeout(Duration::from_secs(10))
+            .json(&body)
+            .send()
+            .await;
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                // Drained (capped) rather than dropped so the connection returns to
+                // the pool. The hint landed whatever the body says, so it isn't parsed.
+                let _ = super::body_capped_to(r, super::MAX_META_BODY).await;
+                return true;
+            }
+            // A server older than the `override_profile` field forbids unknown keys: re-send
+            // once without it, so it still gets the hint (judged against the plain ident).
+            Ok(r)
+                if r.status() == reqwest::StatusCode::UNPROCESSABLE_ENTITY
+                    && body.override_profile.is_some() =>
+            {
+                let _ = super::body_capped_to(r, super::MAX_META_BODY).await;
+                body.override_profile = None;
+            }
+            _ => return false,
         }
-        _ => false,
     }
 }
 
@@ -113,7 +139,7 @@ mod tests {
     }
 
     fn ids(models: Vec<PreloadModel>) -> Option<Vec<String>> {
-        plan_body(models).map(|b| b.models.into_iter().map(|m| m.id).collect())
+        plan_body(models, None).map(|b| b.models.into_iter().map(|m| m.id).collect())
     }
 
     #[test]
@@ -152,11 +178,38 @@ mod tests {
 
     #[test]
     fn a_plan_with_nothing_left_is_not_sent() {
-        assert!(plan_body(vec![]).is_none());
-        assert!(plan_body(vec![
-            entry("whisper", &"m".repeat(150)),
-            entry("whisper", " ")
-        ])
+        assert!(plan_body(vec![], None).is_none());
+        assert!(plan_body(
+            vec![entry("whisper", &"m".repeat(150)), entry("whisper", " ")],
+            None
+        )
         .is_none());
+    }
+
+    fn sent_profile(profile: Option<&str>) -> Option<serde_json::Value> {
+        let body = plan_body(vec![entry("whisper", "m1")], profile).unwrap();
+        serde_json::to_value(body)
+            .unwrap()
+            .get("override_profile")
+            .cloned()
+    }
+
+    #[test]
+    fn the_run_override_profile_is_sent_trimmed() {
+        assert_eq!(sent_profile(Some("  meeting ")), Some("meeting".into()));
+        let at_bound = "p".repeat(64);
+        assert_eq!(
+            sent_profile(Some(&at_bound)),
+            Some(at_bound.as_str().into())
+        );
+    }
+
+    #[test]
+    fn an_unset_blank_or_too_long_override_profile_omits_the_key() {
+        // An older server forbids unknown keys, so the key must be absent, not null.
+        for p in [None, Some(""), Some("   ")] {
+            assert_eq!(sent_profile(p), None);
+        }
+        assert_eq!(sent_profile(Some(&"p".repeat(65))), None);
     }
 }
