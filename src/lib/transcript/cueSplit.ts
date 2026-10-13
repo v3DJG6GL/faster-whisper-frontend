@@ -134,12 +134,13 @@ function markInside(l: string, marks: RegExp): boolean {
 }
 /** Where a line's first mark of `marks` sits, or -1 when there is none or it is no evidence: the
  *  credit, note and title shapes an unpunctuated file still writes ("翻译：小明。字幕：小红",
- *  "（注：……。）", "《三体。黑暗森林》") — a mark after a colon or inside brackets. */
+ *  "（注：……。）", "《三体。黑暗森林》") — a mark after a colon or inside brackets. A colon that
+ *  opens a quotation (他问：“你好，…”) is no credit field: its marks count. */
 function evidenceMark(l: string, marks: RegExp): number {
   const i = l.search(marks);
   if (i < 0) return -1;
   const before = l.slice(0, i);
-  if (/[：:]/u.test(before)) return -1;
+  if (/[：:](?!\s*[“「『"‘«„])/u.test(before)) return -1;
   const open = (o: string, c: string) => before.lastIndexOf(o) > before.lastIndexOf(c);
   return open("（", "）") || open("(", ")") || open("《", "》") || open("〈", "〉") ? -1 : i;
 }
@@ -166,7 +167,7 @@ export function cjkWrapsLines(lines: Iterable<string>): boolean {
     // A mark with more CJK text after it on the same line: the unpunctuated convention never
     // writes one, so one line in eight suffices — not one line in any file, which let a single
     // two-field credit ("翻译：小明。字幕：小红") or aside flip a whole unpunctuated file.
-    if (markInside(l, /[。，｡]/u) || (KANA.test(l) && markInside(l, /[、､]/u))) inside++;
+    if (markInside(l, CJK_PHRASE_MARK) || (KANA.test(l) && markInside(l, /[、､]/u))) inside++;
     if (
       evidenceMark(l, CJK_PHRASE_MARK) >= 0 ||
       evidenceMark(l, /[、､]$/u) >= 0 ||
@@ -180,16 +181,31 @@ export function cjkWrapsLines(lines: Iterable<string>): boolean {
 export function cjkWraps(s: string): boolean {
   return cjkWrapsLines(s.split("\n"));
 }
+/** Opening and closing quotation marks (“ ” ‘ ’ « »): General Punctuation, so not unspaced
+ *  themselves, but Chinese text sets “ ” with no space around them. */
+const QUOTE_MARK = /[\p{Pi}\p{Pf}]/u;
+/** Whether a wrapped line's end (`end`) or the next line's start is unspaced at a seam: its edge
+ *  character, or — past a run of quotation marks there — the character beyond the run, so
+ *  "他说：" / "“我们走吧。”" and "…。”" / "然后…" join like any CJK seam while "“hi”" / "然后"
+ *  keeps its space. A line of quotes only is not. */
+export function seamUnspaced(s: string, end: boolean): boolean {
+  const c = edgeChar(s, end);
+  if (!QUOTE_MARK.test(c)) return unspacedChar(c);
+  // Anchored to the run's first quote at the end, so a long run is scanned once.
+  const rest = end ? s.replace(/(?<![\p{Pi}\p{Pf}])[\p{Pi}\p{Pf}]+$/u, "") : s.replace(/^[\p{Pi}\p{Pf}]+/u, "");
+  const n = edgeChar(rest, end);
+  return !QUOTE_MARK.test(n) && unspacedChar(n);
+}
 /** Text with every line break (and the blanks around it) folded into one space — the
  *  subtitle import, the edit commit and every export flatten alike — or, with `wraps` (see
- *  `cjkWraps`), into nothing between two unspaced characters. A match starts only at a blank
- *  run's first character, so a long run is scanned once. */
+ *  `cjkWraps`), into nothing at an unspaced seam (`seamUnspaced`). A match starts only at a
+ *  blank run's first character, so a long run is scanned once. */
 export function joinLineBreaks(s: string, wraps = false): string {
   if (!s.includes("\n")) return s;
   return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
     wraps &&
-    unspacedChar(edgeChar(str.slice(Math.max(0, off - 8), off), true)) &&
-    unspacedChar(edgeChar(str.slice(off + m.length, off + m.length + 2), false))
+    seamUnspaced(str.slice(Math.max(0, off - 10), off), true) &&
+    seamUnspaced(str.slice(off + m.length, off + m.length + 4), false)
       ? ""
       : " ",
   );

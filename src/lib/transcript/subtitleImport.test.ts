@@ -236,6 +236,42 @@ describe("plain text + errors", () => {
     const vtt = "WEBVTT\n\nNOTE 字幕制作。完成。\n\n00:00:01.000 --> 00:00:02.000\n我们走吧\n他们在等我们\n";
     expect(parseImportedText("vtt", vtt).segments[0].text).toBe("我们走吧 他们在等我们");
   });
+  it("a CJK file is judged on the text its cues keep: without the speaker prefix, per voice span", () => {
+    const cue = (n: number, body: string) => `${n}\n00:00:0${n},000 --> 00:00:0${n},900\n${body}\n`;
+    const srt = (bodies: string[]) => parseImportedText("srt", bodies.map((b, i) => cue(i + 1, b)).join("\n")).segments;
+    // Our export with speaker names: a ？！ dialogue whose only marks follow the "Name: " prefix.
+    expect(srt(["SPEAKER_00: 你好，你今天要\n去哪里？", "SPEAKER_01: 我想去公园，\n你要一起来吗？", "SPEAKER_00: 当然，我们什么\n时候出发？", "SPEAKER_01: 现在就走吧！"])
+      .map((s) => [s.speaker, s.text])).toEqual([
+      ["SPEAKER_00", "你好，你今天要去哪里？"],
+      ["SPEAKER_01", "我想去公园，你要一起来吗？"],
+      ["SPEAKER_00", "当然，我们什么时候出发？"],
+      ["SPEAKER_01", "现在就走吧！"],
+    ]);
+    const alice = srt([...Array<string>(6).fill("Alice: 好的。"), "Alice: 今天天气很好，我们\n去公园吧。"]);
+    expect(alice[6]).toMatchObject({ speaker: "Alice", text: "今天天气很好，我们去公园吧。" });
+    // A quotation after a colon carries its marks.
+    expect(srt(["他问：“你好，你今天要\n去哪里？”"])[0].text).toBe("他问：“你好，你今天要去哪里？”");
+    // One cue holding two voices on one line: the blank between the spans is no phrase space.
+    const vtt = "WEBVTT\n\n" + ["我今天去了商店，买了很多\n东西。", "他说这个地方很好，我们\n明天再来。", "天气很好，我们\n出去玩吧。", "<v 甲>你好。</v> <v 乙>你好。</v>"]
+      .map((b, i) => `00:00:0${i}.000 --> 00:00:0${i}.900\n${b}\n`).join("\n");
+    expect(parseImportedText("vtt", vtt).segments.map((s) => [s.speaker, s.text])).toEqual([
+      [undefined, "我今天去了商店，买了很多东西。"],
+      [undefined, "他说这个地方很好，我们明天再来。"],
+      [undefined, "天气很好，我们出去玩吧。"],
+      ["甲", "你好。"],
+      ["乙", "你好。"],
+    ]);
+  });
+  it("a tag-only line and a curly quote at a seam join like any other CJK wrap", () => {
+    const srt = (bodies: string[]) =>
+      parseImportedText("srt", bodies.map((b, i) => `${i + 1}\n00:00:0${i},000 --> 00:00:0${i},900\n${b}\n`).join("\n")).segments.map((s) => s.text);
+    expect(srt(["我今天去了，商店\n<i>\n东西。</i>"])).toEqual(["我今天去了，商店东西。"]);
+    expect(srt(["Hello\n<i>\nworld</i>"])).toEqual(["Hello world"]);
+    expect(srt(["今天天气很好，\n我们去公园吧。", "他说：\n“我们走吧。”", "他说：“我们走吧。”\n然后他就走了。"]))
+      .toEqual(["今天天气很好，我们去公园吧。", "他说：“我们走吧。”", "他说：“我们走吧。”然后他就走了。"]);
+    // An unpunctuated file keeps its phrase break at a quote too.
+    expect(srt(["我们走吧\n他们在等我们", "他说\n“走吧”"])).toEqual(["我们走吧 他们在等我们", "他说 “走吧”"]);
+  });
   it("a JSON segment's line break folds by the file's decision, so every later view agrees", () => {
     const json = (texts: string[]) => JSON.stringify({ segments: texts.map((text, i) => ({ start: i, end: i + 1, text })) });
     expect(parseImportedText("json", json(["今日は\nいい天気ですね。", "明日も\n晴れるでしょう。"])).segments.map((s) => s.text))

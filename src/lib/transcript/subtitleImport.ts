@@ -5,7 +5,7 @@
 
 import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
-import { cjkWrapsLines, edgeChar, joinLineBreaks, unspacedChar } from "./cueSplit";
+import { cjkWrapsLines, edgeChar, joinLineBreaks, seamUnspaced, unspacedChar } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -87,7 +87,7 @@ function decodeEntities(s: string): string {
  *  whitespace collapses. The decode runs after parseImportedText's control-char pass, so
  *  `&#x202E;` / `&#27;` would mint the very characters that pass dropped — strip again. */
 function stripMarkup(s: string): string {
-  return stripControlChars(decodeEntities(s.replace(/<[^>\n]{0,64}>/g, "").replace(/\{\\[^}]{0,64}\}/g, "")))
+  return stripControlChars(decodeEntities(bareLine(s)))
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -98,24 +98,29 @@ function voiceName(raw: string): string {
   return safeDisplayText(decodeEntities(raw), 40).replace(/\s+/g, " ").trim();
 }
 
-/** A cue's (or paragraph's) lines as one: one space between two lines, or none between two
- *  unspaced characters when the file wraps its CJK lines (`cjkWrapsLines`). Joined before the
+/** A cue's (or paragraph's) lines as one: one space between two lines, or none at an unspaced
+ *  seam (`seamUnspaced`) when the file wraps its CJK lines (`cjkWrapsLines`). Joined before the
  *  markup goes, so a tag split over two lines still strips; its edges are judged without tags. */
 function joinLines(lines: string[], wraps: boolean): string {
   if (!wraps) return lines.join(" ");
-  // Each seam judged from the previous line's own edge (its last line with text, tags aside),
+  // Each seam judged from the previous line's own end (its last line with text, tags aside),
   // never by re-scanning what is joined so far: a paragraph of every line in a file stays linear.
   const parts: string[] = [];
-  let prevEdge = "";
+  let prev = "";
   for (const l of lines) {
     const b = bareLine(l);
     if (parts.length === 0) parts.push(l);
-    else if (unspacedChar(prevEdge) && unspacedChar(edgeChar(b.trimStart(), false))) {
+    else if (!b.trim()) {
+      // A tag-only line ("<i>" alone) is no seam: the next line with text decides it.
+      parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
+      parts.push(l.trim());
+      continue;
+    } else if (seamUnspaced(prev, true) && seamUnspaced(b.trimStart(), false)) {
       parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
       parts.push(l.trimStart());
     } else parts.push(" ", l);
     const t = b.trimEnd();
-    if (t) prevEdge = edgeChar(t, true);
+    if (t) prev = t;
   }
   return parts.join("");
 }
@@ -127,21 +132,37 @@ function bareLine(s: string): string {
 }
 
 /** Raw cues → segments, deciding once for the file whether its CJK line breaks are wraps
- *  (judged on the cue text only: no cue numbers, times, NOTE or STYLE blocks). */
+ *  (judged on the cue text only: no cue numbers, times, NOTE or STYLE blocks), on the text the
+ *  segments keep: each voice span is a line of its own (the blank between two spans is no
+ *  phrase space), and a cue's first line goes without the "Name: " prefix cueText splits off as
+ *  the speaker (our export writes one on every cue; its colon would hide the line's marks). */
 function cuesOf(cues: RawCue[]): ImportedText {
-  return cuesToSegments(cues, cjkWrapsLines(cues.flatMap((c) => c.lines.map(bareLine))));
+  const judged = cues.flatMap((c) =>
+    c.lines.flatMap((l, i) =>
+      // Split at a blank run's first character only, so a long run is scanned once.
+      l.split(/(?<!\s)\s*(?=<v[\s.])/).map((part, k) => {
+        const b = bareLine(part);
+        if (i > 0 || k > 0 || /^\s*<v[\s.]/.test(part)) return b;
+        const m = speakerPrefix(b.trimStart());
+        return m ? b.trimStart().slice(m[0].length) : b;
+      }),
+    ),
+  );
+  return cuesToSegments(cues, cjkWrapsLines(judged));
 }
 
-/** Strip markup a cue line may carry and split a leading "Name:" speaker. */
-function cueText(lines: string[], wraps = false): { text: string; speaker?: string } {
-  const joined = stripMarkup(joinLines(lines, wraps));
-  const m = /^([^:\n]{1,40}):\s+(.*)$/.exec(joined);
-  // A leading "Name: " prefix becomes the speaker — but never a clock-like
-  // token ("12:30 lunch") or a URL scheme.
-  if (m && !/^\d+$/.test(m[1].trim()) && !/^(https?|file)$/i.test(m[1].trim())) {
-    return { text: m[2], speaker: m[1].trim() };
-  }
-  return { text: joined };
+/** A leading "Name: " prefix — the speaker cueText splits off — but never a clock-like token
+ *  ("12: 30 lunch") or a URL scheme. */
+function speakerPrefix(s: string): RegExpExecArray | null {
+  const m = /^([^:\n]{1,40}):\s+/.exec(s);
+  return m && !/^\d+$/.test(m[1].trim()) && !/^(https?|file)$/i.test(m[1].trim()) ? m : null;
+}
+
+/** Strip markup a cue's (already joined) text may carry and split a leading "Name:" speaker. */
+function cueText(text: string): { text: string; speaker?: string } {
+  const joined = stripMarkup(text);
+  const m = speakerPrefix(joined);
+  return m ? { text: joined.slice(m[0].length), speaker: m[1].trim() } : { text: joined };
 }
 
 /** One subtitle cue before cleanup: its clock and its raw text lines (markup intact). */
@@ -290,7 +311,7 @@ function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
       // A tag the span regex rejects (a name over 40 characters) would drop its text: take
       // the whole cue as plain text instead, as the single-voice path does.
       if (spans.length === tags) {
-        const lead = cueText([dj.slice(0, first)]);
+        const lead = cueText(dj.slice(0, first));
         if (lead.text) segments.push({ start, end, text: lead.text, speaker: lead.speaker });
         for (const m of spans) {
           const text = stripMarkup(m[2]);
@@ -304,7 +325,7 @@ function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
       const text = stripMarkup(v[2]);
       if (text) segments.push({ start, end, text, speaker: voiceName(v[1]) });
     } else {
-      const { text, speaker } = cueText(lines, wraps);
+      const { text, speaker } = cueText(joined);
       if (text) segments.push({ start, end, text, speaker });
     }
   }
@@ -394,11 +415,11 @@ function parseLrc(body: string): ImportedText {
     const body = trimmed.slice(lastTagEnd);
     const firstTag = body.search(/<\d+:\d+(?:\.\d+)?>/);
     const ownSpaces = firstTag >= 0 && /\s<\d+:\d+(?:\.\d+)?>/.test(body.slice(firstTag + 1));
-    const { text, speaker } = cueText([
+    const { text, speaker } = cueText(
       body.replace(/<\d+:\d+(?:\.\d+)?>/g, (m: string, off: number, s: string) =>
         ownSpaces || (unspacedChar(edgeChar(s.slice(Math.max(0, off - 8), off), true)) &&
         unspacedChar(edgeChar(s.slice(off + m.length, off + m.length + 2), false))) ? "" : " "),
-    ]);
+    );
     if (text) {
       for (const start of starts) segments.push({ start, text, speaker });
     } else stops.push(...starts);

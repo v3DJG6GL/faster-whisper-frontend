@@ -1091,6 +1091,23 @@ describe("joinLineBreaks", () => {
     expect(cjkWrapsLines([long])).toBe(true); // one line, marked anywhere: the quarter holds
     expect(performance.now() - t0).toBeLessThan(500);
   });
+  it("cjkWraps: a colon opening a quotation is no credit field, so the quote's marks count", () => {
+    expect(cjkWraps("他问：“你好，你今天要\n去哪里？”")).toBe(true);
+    expect(cjkWrapsLines(["他问：“你好，你今天要", "去哪里？”"])).toBe(true);
+    expect(cjkWraps("彼は言った：「今日は、とても\nいい天気だ」")).toBe(true);
+    // The credit shapes stay no evidence.
+    expect(cjkWrapsLines(["我们走吧", "他们在等我们", "快点", "好的", "翻译：小明。"])).toBe(false);
+  });
+  it("with wraps, a seam on a curly quote is judged by the character past the quotes", () => {
+    expect(joinLineBreaks("他说：\n“我们走吧。”", true)).toBe("他说：“我们走吧。”");
+    expect(joinLineBreaks("他说：“我们走吧。”\n然后他就走了。", true)).toBe("他说：“我们走吧。”然后他就走了。");
+    expect(joinLineBreaks("他说：\n“我们走吧。”")).toBe("他说： “我们走吧。”");
+    expect(joinLineBreaks("他说：“我们走吧。”\n然后他就走了。")).toBe("他说：“我们走吧。” 然后他就走了。");
+    // Latin inside the quotes keeps its space; a line of quotes only is no unspaced seam.
+    expect(joinLineBreaks("he said “hi”\n然后", true)).toBe("he said “hi” 然后");
+    expect(joinLineBreaks("然后\n“hi”", true)).toBe("然后 “hi”");
+    expect(joinLineBreaks("你好，\n“”\n世界。", true)).toBe("你好， “” 世界。");
+  });
   it("a long blank run before no line break stays fast", () => {
     const s = "x" + " ".repeat(60_000) + "y\nz";
     const t0 = performance.now();
