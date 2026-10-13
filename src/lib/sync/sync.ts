@@ -2031,6 +2031,23 @@ let endLaunch: (() => void) | null = null;
 
 /** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
  *  work against a different server (or after disabling sync). */
+/** Categories turned ON (their gates) since the last adopted base. While a category is off its
+ *  base is the server's copy passed through, so a 3-way merge would read this device's value as
+ *  "changed here only" and push it over the peer's. Merged against a base without them instead
+ *  (first contact for those categories): equal values merge, different ones raise the conflict
+ *  dialog. Cleared when a base is adopted (`persistState` with a snapshot) and by a server
+ *  switch / sync turned off. */
+const freshCats = new Set<SyncCategory>();
+
+/** The 3-way base every merge uses: the adopted snapshot, minus the `freshCats`. */
+function mergeBase(): SyncBlob | undefined {
+  const b = state.snapshot;
+  if (!b || freshCats.size === 0) return b;
+  const out: SyncBlob = { ...b };
+  for (const c of freshCats) delete (out as Record<string, unknown>)[c];
+  return out;
+}
+
 function supersede(): void {
   gen++;
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
@@ -2365,6 +2382,8 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
   // written below must delete the tail a larger one left.
   const prevChunks = snapshotChunkCount(state.snapshotSecretChunks);
   state = { ...state, ...patch };
+  // A new base (or none): the categories turned on since are reconciled in it.
+  if ("snapshot" in patch) freshCats.clear();
   // Split the snapshot's secrets out to the keyring; the file gets ids only.
   const secrets = state.snapshot?.backends?.secrets;
   // Same reason as `reconcileBackendSecrets`: `Object.keys` on a server-supplied STRING yields one
@@ -2781,6 +2800,14 @@ export async function pushNow(manual = false): Promise<void> {
     backend = syncBackend();
     if (!backend || !canSync() || inFlight) return;
   }
+  // A category turned on since the last base (`freshCats`) is reconciled with the server first —
+  // equal values merge, different ones ask — instead of this device's value going up over the
+  // peer's; that pull pushes what it needs once it adopts a base. While its conflict or review
+  // waits, nothing goes up (no base was adopted, so the server may still be at this one).
+  if (freshCats.size > 0) {
+    if (!pendingConflict && !pendingReview) void pullNow(true);
+    return;
+  }
   pushOwed = false;
   inFlight = true;
   const myGen = gen;
@@ -2910,7 +2937,7 @@ export async function pushNow(manual = false): Promise<void> {
           blob = await composeLive(syncCats(), remoteBlob);
           if (myGen !== gen) return;
         }
-        const { merged, conflicts } = mergeBlobs(state.snapshot, blob, remoteBlob);
+        const { merged, conflicts } = mergeBlobs(mergeBase(), blob, remoteBlob);
         if (conflicts.length > 0) {
           raiseConflict({ categories: conflicts, merged, local: blob, remote: remoteBlob,
             remoteVersion: remote.version, remoteDevice: remote.device ?? null,
@@ -2982,7 +3009,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // With no base, the remote fills what this device does not sync (see `composeLive`).
   const local = await composeLive(cats, state.snapshot ?? remoteBlob);
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
-  const { merged, conflicts } = mergeBlobs(state.snapshot, local, remoteBlob);
+  const { merged, conflicts } = mergeBlobs(mergeBase(), local, remoteBlob);
   if (conflicts.length > 0) {
     raiseConflict({ categories: conflicts, merged, local, remote: remoteBlob,
       remoteVersion: remote.version, remoteDevice: remote.device ?? null,
@@ -3726,7 +3753,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   //    discard the edit, keeping it would push this device's values over the peer's change.
   //    Ask, as a conflict at the review's version (its resolve re-runs the security check, so
   //    nothing lands unreviewed).
-  const re = mergeBlobs(state.snapshot, localNow, r.remote);
+  const re = mergeBlobs(mergeBase(), localNow, r.remote);
   const appliedAtRaise = r.applied;
   const gatesNow = gatesSignature();
   const blobNow: SyncBlob = { ...re.merged };
@@ -3967,7 +3994,7 @@ async function resolveLocked(
   // `c.merged` was merged against the raise-time local: an edit made here since (to a category
   // only this device changed) would be hydrated back to its old value. Re-merge against the live
   // compose, and if that conflicts on a category the user was never asked about, ask again.
-  const re = mergeBlobs(state.snapshot, localNow, c.remote);
+  const re = mergeBlobs(mergeBase(), localNow, c.remote);
   if (re.conflicts.some((cat) => !c.categories.includes(cat))) {
     raiseConflict({ ...c, categories: re.conflicts, merged: re.merged, local: localNow });
     return "prompt";
@@ -4176,6 +4203,7 @@ export async function initSync(): Promise<void> {
     const nowSync = s.settings.sync;
     if (nowSync?.enabled && (!prevSync?.enabled || prevSync.backendId !== nowSync.backendId)) {
       supersede();
+      freshCats.clear(); // the old server's base is not this one's
       setRuntime({ syncUnsupported: false, syncError: null });
       void pullNow(true);
       return;
@@ -4183,19 +4211,22 @@ export async function initSync(): Promise<void> {
     // Sync switched off: cancel queued/in-flight work and clear stale status.
     if (prevSync?.enabled && !nowSync?.enabled) {
       supersede();
+      freshCats.clear();
       setRuntime({ syncStatus: "idle", syncError: null });
       return;
     }
-    // A category toggled ON (via the per-setting gates) adopts the server's
-    // state for it before pushing. Keyed on the DERIVED cats: `sync.categories`
-    // has had no writer since the manifest list replaced the category rows, so
-    // comparing the raw map was permanently false and a re-enabled setting
-    // pushed this device's value over the peer's.
+    // A category toggled ON (via the per-setting gates) is reconciled with the server before
+    // anything is pushed, against a base without it (`freshCats`): the same value merges, a
+    // different one asks. Keyed on the DERIVED cats: `sync.categories` has had no writer since
+    // the manifest list replaced the category rows, so comparing the raw map was permanently
+    // false and a re-enabled setting pushed this device's value over the peer's.
     if (nowSync?.enabled && prevSync?.enabled) {
       const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
       const nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
-      if (ALL_CATEGORIES.some((c) => nowCats[c] && !prevCats[c])) {
+      const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
+      if (turnedOn.length > 0) {
         supersede();
+        for (const c of turnedOn) freshCats.add(c);
         void pullNow(true);
         return;
       }
@@ -4232,7 +4263,9 @@ export async function initSync(): Promise<void> {
     if (!forced && launchSync !== nowSync) {
       const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
       const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
-      forced = ALL_CATEGORIES.some((c) => nowCats[c] && !prevCats[c]);
+      const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
+      for (const c of turnedOn) freshCats.add(c); // as the subscriber arm would have
+      forced = turnedOn.length > 0;
     }
     endLaunch = launchEnded;
     void pullCore(forced).then(launchEnded, launchEnded);

@@ -1856,7 +1856,7 @@ describe("a sync edit made during the launch work", () => {
     state: { version: 1, updated_ts: 1, device: "peer", blob: { logging: { logLevel: "debug", keepDays: 30, showInSidebar: true } } },
   };
 
-  async function launchEngine(syncAtLaunch: Partial<NonNullable<AppSettings["sync"]>>) {
+  async function launchEngine(syncAtLaunch: Partial<NonNullable<AppSettings["sync"]>>, snapshot: SyncBlob = {}) {
     io.launchRead = false;
     io.pushes = 0;
     io.pulls = 0;
@@ -1869,7 +1869,7 @@ describe("a sync edit made during the launch work", () => {
     vi.doMock("../api", async (importOriginal) => ({
       ...(await importOriginal<typeof import("../api")>()),
       isTauri: true,
-      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot: {}, snapshotSecretIds: ["b1"] }),
+      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot, snapshotSecretIds: ["b1"] }),
       saveSyncState: async () => {},
       syncDeviceInfo: async () => ({ deviceId: "d1", hostname: "me", platform: "linux" }),
       readBackendKeys: (ids: string[]) => {
@@ -1921,6 +1921,74 @@ describe("a sync edit made during the launch work", () => {
       await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
+      expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  // The real shape of a re-enabled category: while its gates were off, every adopted base
+  // passed the server's copy through, so the base EQUALS the server for it. Merged against that
+  // base, this device's different value read as "changed here only" and was pushed over the peer's.
+  const offSub = { ...DEFAULT_SETTINGS.sync!.sub, logLevel: false, logRetention: false, logsInSidebar: false, logFolder: false } as SyncSubSettings;
+  const serverCopy = REMOTE.state.blob as SyncBlob;
+
+  it("a category turned ON with a value different from the server's asks instead of pushing over it", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "warn" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      await new Promise((r) => setTimeout(r, 30)); // a push the reconcile queued would land now
+      expect(engine.getPendingConflict()?.categories).toEqual(["logging"]);
+      expect(io.pushes).toBe(0);
+      expect(store.getState().settings.logging?.logLevel).toBe("warn"); // nothing decided for the user
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a category turned ON with the server's own value merges without asking", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "debug" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
+      expect(engine.getPendingConflict()).toBeNull();
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a category turned ON after launch asks too, and nothing is pushed while the dialog waits", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    try {
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      const pullsBefore = io.pulls;
+      store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } } } }));
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      expect(io.pulls).toBe(pullsBefore + 1);
+      await engine.pushNow(true); // the dialog waits: no push goes up meanwhile
       expect(io.pushes).toBe(0);
     } finally {
       io.release({});
