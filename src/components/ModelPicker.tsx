@@ -68,6 +68,8 @@ export function ModelPicker({
         if (!e.currentTarget.contains(e.relatedTarget as Node | null)) commit(draft);
       }}
       onKeyDown={(e) => {
+        // Mid-composition the IME owns Esc and Enter; WebKit reports keyCode 229 (the LangPick rule).
+        if (e.nativeEvent.isComposing || e.keyCode === 229) return;
         // Enter on a highlighted suggestion is handled (and preventDefault'ed)
         // by the Combobox; a plain Enter commits the typed text.
         if (e.key === "Enter" && !e.defaultPrevented) commit(draft);

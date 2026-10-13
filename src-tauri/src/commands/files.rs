@@ -168,8 +168,10 @@ static AUDIO_LAYOUT: Gate = Gate::new();
 /// log folder's open is queued for the same reason). What must not overlap a half-done move
 /// waits on [`wait_audio_layout`] instead: the retention sweeps' audio-base halves (they look in
 /// the new layout), `move_audio_base` (it moves the same subfolders) and the History deletes'
-/// audio-folder steps (a file moved in after they looked would stay behind). Their record steps
-/// do not wait: the records live in app data, and a rewrite skips a record already gone. Every
+/// audio-folder steps (a file moved in after they looked would stay behind). The single-record
+/// delete and the retention sweeps' record halves do not wait: the records live in app data, and
+/// a rewrite skips a record already gone. The two wipe-all commands wait before their record wipe,
+/// so it lands with the IPC settle that reloads History (they emit no swept event). Every
 /// writer creates its own folder, so nothing else depends on the layout being in place; a
 /// History listing taken before a migration moved something is told to reload when it is done.
 pub(crate) fn queue_audio_layout(app: &AppHandle, config: Config) {

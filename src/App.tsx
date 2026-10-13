@@ -21,7 +21,7 @@ import { initLogStatus, openLogsPrefiltered } from "@/lib/logViewer";
 import { flushRecordWrites, listenRetentionSweeps } from "@/lib/transcript/transcriptHistory";
 import { flushPersistEdits } from "@/lib/transcribeRun";
 import { flushOutcomeSave } from "@/lib/usageOutcome";
-import { navGuardDirty, tryNavigate } from "@/lib/navGuard";
+import { tryNavigate } from "@/lib/navGuard";
 import { Onboarding } from "@/screens/Onboarding";
 import Logs from "@/screens/Logs";
 import Dashboard from "@/screens/Dashboard";
@@ -127,13 +127,21 @@ function NavigationBridge() {
 // a router child (child layout effects run before HashRouter's own listen()), so either ordering
 // rule puts it ahead. On a refused traversal it re-pushes the editor's location, synchronously,
 // before the router reads `window.location`: the router then sees the editor's location popped
-// (delta 0), the route never changes and the editor never unmounts; the guard's "Discard" / "Save
-// and leave" then navigates to the popped location. (The re-push drops the forward entry the user
-// just left, which the app has no affordance for anyway.)
+// (delta 0), the route never changes and the editor never unmounts. (The re-push drops the forward
+// entry the user just left, which the app has no affordance for anyway.)
 //
-// Belt and braces: a back/forward MOUSE button or Browser Back/Forward key is cancelled outright
-// while a draft is dirty, so the restore is rarely needed. Alt+Left/Right is left to the popstate
-// layer: on macOS Option+Arrow is word navigation inside the very fields being edited.
+// The guard's "Discard" / "Save and leave" then STEPS BACK onto the popped entry instead of pushing
+// it again: the re-push was made from that entry, so it always sits right before the re-pushed
+// editor copy — `go(-1)` for a refused Back and a refused Forward alike — and the stack keeps the
+// shape a plain traversal would have left (a push would stack the target on top, and the next Back
+// would land on the editor's screen again). That pop arrives while the draft is still dirty (leave()
+// does not clean it before the unmount), so it is let through once by `bypassPopTo`.
+//
+// Every traversal source — the mouse back/forward buttons and the Browser Back/Forward keys
+// included — goes through this one popstate layer, so each of them refuses, restores and asks
+// alike. (Cancelling those presses at mouseup/keydown instead dropped them with no prompt at all.)
+let bypassPopTo: string | null = null;
+
 function HistoryTraversalGuard() {
   const navigate = useNavigate();
   const navRef = useRef(navigate);
@@ -147,28 +155,22 @@ function HistoryTraversalGuard() {
     const onPop = () => {
       const target = window.location.hash.replace(/^#/, "") || "/";
       const last = lastRef.current;
+      // The step back a "Discard" / "Save and leave" asked for: let it through without asking
+      // again. Matched on the target so a step that never popped can't wave a later one through.
+      const bypass = bypassPopTo;
+      bypassPopTo = null;
+      if (bypass !== null && bypass === target) return;
       // Same location (forward onto the re-pushed copy): nothing unmounts, nothing to ask.
       if (target === last) return;
-      if (tryNavigate(() => navRef.current(target))) return;
+      const proceed = () => {
+        bypassPopTo = target;
+        window.history.go(-1);
+      };
+      if (tryNavigate(proceed)) return;
       navRef.current(last);
     };
-    const isNavButton = (e: MouseEvent) => e.button === 3 || e.button === 4;
-    const onMouse = (e: MouseEvent) => {
-      if (isNavButton(e) && navGuardDirty()) e.preventDefault();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.key === "BrowserBack" || e.key === "BrowserForward") && navGuardDirty()) e.preventDefault();
-    };
     window.addEventListener("popstate", onPop, true);
-    window.addEventListener("mouseup", onMouse, true);
-    window.addEventListener("auxclick", onMouse, true);
-    window.addEventListener("keydown", onKey, true);
-    return () => {
-      window.removeEventListener("popstate", onPop, true);
-      window.removeEventListener("mouseup", onMouse, true);
-      window.removeEventListener("auxclick", onMouse, true);
-      window.removeEventListener("keydown", onKey, true);
-    };
+    return () => window.removeEventListener("popstate", onPop, true);
   }, []);
   return null;
 }

@@ -588,8 +588,14 @@ export function Stepper({
           onKeyDown={(e) => {
             // Esc drops the uncommitted typing and stays here: the text only commits on blur/Enter,
             // so an editor's window Esc would read its dirty state without it and leave unguarded,
-            // losing the number in silence. An untouched field lets Esc through (to leave).
-            if (e.key === "Escape" && editedRef.current) {
+            // losing the number in silence. An untouched field lets Esc through (to leave), and so
+            // does one whose typing a step (Arrow / −/+) already committed: the text then equals
+            // the value, nothing is left to drop, and swallowing that Esc made the user press it
+            // twice. Typing `min` over the placeholder of a field with no numeric inherited value
+            // still counts as uncommitted — its blur would pin an override.
+            const uncommitted =
+              textRef.current !== String(value) || (inheriting && inherited === undefined);
+            if (e.key === "Escape" && editedRef.current && uncommitted) {
               e.preventDefault();
               e.stopPropagation();
               editedRef.current = false;

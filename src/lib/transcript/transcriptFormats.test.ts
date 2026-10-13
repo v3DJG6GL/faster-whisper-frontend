@@ -298,17 +298,23 @@ describe("sanitisation", () => {
     expect(out).not.toContain("‬");
     expect(out).toContain("BadName: pay 005$ now");
   });
-  it("a line break inside segment text flattens by the seam rule: none inside CJK, one space elsewhere", () => {
+  it("a line break inside segment text flattens by the seam rule: none inside punctuated CJK, one space elsewhere", () => {
     const r: BatchResult = {
       text: "",
       language: "ja",
-      segments: [{ start: 0, end: 1, text: "今日は\nいい天気" }, { start: 1, end: 2, text: "a \n b" }],
+      segments: [
+        { start: 0, end: 1, text: "今日は\nいい天気。" },
+        { start: 1, end: 2, text: "a \n b" },
+        { start: 2, end: 3, text: "我们走吧\n他们在等我们" },
+      ],
     };
     for (const format of ["srt", "vtt", "lrc"] as const) {
       const out = generateExport(r, { format });
-      expect(out).toContain("今日はいい天気");
+      expect(out).toContain("今日はいい天気。");
       expect(out).toContain("a b");
       expect(out).not.toContain("今日は いい天気");
+      // Unpunctuated CJK: the line break was a phrase separator and stays one space.
+      expect(out).toContain("我们走吧 他们在等我们");
     }
   });
 });

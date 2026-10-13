@@ -1027,13 +1027,32 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
       }
     }
   });
+  it("a cue starting with a quote split off a glued word starts once that word ends; the cue before keeps its time", () => {
+    const words = [
+      { word: " We", start: 0, end: 0.45 }, { word: ' “Okay”"', start: 0.5, end: 1.7 },
+      { word: "再", start: 2.2, end: 2.65 }, { word: "见", start: 2.7, end: 3.15 },
+      { word: "你", start: 3.2, end: 3.65 }, { word: "好", start: 3.7, end: 4.15 }, { word: '"', start: 4.2, end: 4.65 },
+    ];
+    const text = words.map((w) => w.word).join("").trim();
+    for (const language of ["en", "zh", "ja"]) {
+      const r: BatchResult = { text, language, words, segments: [{ start: 0, end: 4.65, text }] };
+      const cues = buildCues(r, { length: "short", timing: "same" }, ["orig"]).cues;
+      const k = cues.findIndex((c) => c.text.startsWith('"'));
+      expect(k, JSON.stringify(cues)).toBeGreaterThan(0);
+      expect(cues[k].start, JSON.stringify(cues)).toBeGreaterThanOrEqual(1.7);
+      expect(cues[k - 1].end, JSON.stringify(cues)).toBeGreaterThanOrEqual(1.7);
+    }
+  });
 });
 
 describe("joinLineBreaks", () => {
-  it("joins two lines of unspaced text with nothing, anything else with one space", () => {
-    expect(joinLineBreaks("你好\n世界")).toBe("你好世界");
-    expect(joinLineBreaks("東京は\n\n大阪より")).toBe("東京は大阪より");
-    expect(joinLineBreaks("今日は \n いい天気")).toBe("今日はいい天気");
+  it("joins two lines of unspaced text with nothing when the text uses CJK sentence punctuation, anything else with one space", () => {
+    expect(joinLineBreaks("你好\n世界。")).toBe("你好世界。");
+    expect(joinLineBreaks("東京は\n\n大阪より、")).toBe("東京は大阪より、");
+    expect(joinLineBreaks("今日は \n いい天気｡")).toBe("今日はいい天気｡");
+    // Unpunctuated CJK subtitles separate phrases with the line break: it stays a space.
+    expect(joinLineBreaks("我们走吧\n他们在等我们")).toBe("我们走吧 他们在等我们");
+    expect(joinLineBreaks("東京は\n\n大阪より")).toBe("東京は 大阪より");
     expect(joinLineBreaks("Hello\nworld")).toBe("Hello world");
     expect(joinLineBreaks("Hello \n world")).toBe("Hello world");
     expect(joinLineBreaks("東京\nTokyo")).toBe("東京 Tokyo");

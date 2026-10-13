@@ -115,14 +115,21 @@ export function edgeChar(s: string, end: boolean): string {
   const lo = t.charCodeAt(t.length - 1);
   return t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
 }
+/** CJK sentence punctuation (fullwidth 。，、！？；： and the halfwidth ｡､): text using it
+ *  marks its phrase ends, so a line break inside it is a wrap. Unpunctuated CJK subtitles
+ *  (the convention drops 。， at line ends) separate phrases with the line break itself. */
+const CJK_SENTENCE_PUNCT = /[。，、！？；：｡､]/u;
 /** Text with every line break (and the blanks around it) folded the way the seam rule says:
- *  nothing between two unspaced characters (a CJK cue wrapped over two lines), one space
- *  otherwise — the subtitle import, the edit commit and every export flatten alike. A
- *  match starts only at a blank run's first character, so a long run is scanned once. */
+ *  nothing between two unspaced characters (a CJK cue wrapped over two lines) when the
+ *  text — the whole cue, paragraph or segment the caller passes — uses CJK sentence
+ *  punctuation, one space otherwise (an unpunctuated CJK break is a phrase separator) —
+ *  the subtitle import, the edit commit and every export flatten alike. A match starts
+ *  only at a blank run's first character, so a long run is scanned once. */
 export function joinLineBreaks(s: string): string {
   if (!s.includes("\n")) return s;
+  const wraps = CJK_SENTENCE_PUNCT.test(s);
   return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
-    unspacedChar(edgeChar(str.slice(Math.max(0, off - 8), off), true))
+    wraps && unspacedChar(edgeChar(str.slice(Math.max(0, off - 8), off), true))
       && unspacedChar(edgeChar(str.slice(off + m.length, off + m.length + 2), false)) ? "" : " ");
 }
 const CJK_CPL: Record<string, number> = { ja: 13, zh: 16, yue: 16, ko: 16 };
@@ -271,7 +278,8 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     cur = at + tw.length;
     // Whisper glues a quote to the word before it (」" ”"): when it opens the next quotation
     // (an even count of its kind so far, a later partner, a letter right after it), it is a
-    // token of its own on the same clock, so the cut never lands right after it.
+    // token of its own, so the cut never lands right after it. Its clock is a zero-length one
+    // at the word's end: a cue starting with it starts once that word is spoken.
     const qm = /[\p{Pe}\p{Pf}](["'])$/u.exec(tw);
     if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
       flags ??= quoteFlags(text);
@@ -281,7 +289,7 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
       for (let x = 0; x < text.length; x++) if (flags[x] && text[x] === qm[1]) { if (x < j) n++; else if (x > j) later = true; }
       if (flags[j] && n % 2 === 0 && later) {
         tok.to = j;
-        out.push({ from: j, to: cur, s: tok.s, e: tok.e, opens: true });
+        out.push({ from: j, to: cur, s: tok.e, e: tok.e, opens: true });
       }
     }
   }

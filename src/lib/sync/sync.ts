@@ -30,7 +30,7 @@ import {
   syncPull,
   syncPush,
 } from "../api";
-import { configReady, configSaveHeld, flushConfigSave, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
+import { configReady, configSaveHeld, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
 import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
@@ -2654,9 +2654,14 @@ async function pullCore(manual: boolean): Promise<void> {
   // The failure a pull that contacts no server restores (pushNow's twin). Only one with a message:
   // a server switch clears syncError but leaves the old server's "error", and restoring that
   // would show a warn dot with no notice, carried over from the old server.
+  // The held-save line only while the save it blamed is still held.
   const prior = useApp.getState();
   const priorError =
-    prior.syncStatus === "error" && prior.syncError && !pendingConflict && !pendingReview
+    prior.syncStatus === "error" &&
+    prior.syncError &&
+    !(prior.syncError === HELD_PUSH_ERROR && !configSaveHeld()) &&
+    !pendingConflict &&
+    !pendingReview
       ? prior.syncError
       : undefined;
   setRuntime({ syncStatus: "syncing", syncError: null });
@@ -2734,28 +2739,6 @@ async function pullCore(manual: boolean): Promise<void> {
  *  save banner explains the hold, but the user can dismiss it. */
 const HELD_PUSH_ERROR =
   "This device couldn't save its settings, so nothing was pushed. Fix the problem in the warning at the top (a failed save, or a shortcut used twice), then push again.";
-const HELD_APPLY_ERROR =
-  "This device couldn't save the synced settings, so the sync isn't finished. Fix the problem in the warning at the top (a failed save, or a shortcut used twice), then sync again.";
-
-/** Whether an apply's store changes reached config.json: lands the debounced save its hydrate
- *  queued (or retries a held one) and reads the hold. A base may be adopted only on true — sync
- *  ships what config.json holds, so a base adopted over a frozen or failed save made the next
- *  launch (config.json still pre-pull, base already past it) push the old values over the peer's
- *  change. On false the caller adopts nothing: the next pull re-merges against the old base,
- *  where only the remote side changed, and re-applies. False too when superseded meanwhile, and
- *  when the write has not settled within 10 s: the caller holds the engine lock, and a write still
- *  in flight has not landed either. */
-async function appliedConfigLanded(myGen: number): Promise<boolean> {
-  const settled = await withTimeout(flushConfigSave().then(() => true), 10_000, false);
-  return settled && myGen === gen && !configSaveHeld();
-}
-
-/** End a sync whose apply did not reach config.json (see `appliedConfigLanded`): a prompt's
- *  notice keeps the line, else it says why the sync is not finished. */
-function heldSaveStatus(message: string): void {
-  if (pendingConflict || pendingReview) idleStatus();
-  else setRuntime({ syncStatus: "error", syncError: message });
-}
 
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
@@ -2786,8 +2769,8 @@ export async function pushNow(manual = false): Promise<void> {
     // A click retries the held save first: a disk that recovered with no edit since has nothing
     // else to re-issue it. Still held (a conflict freeze, a disk still failing) — say so, unless a
     // prompt's notice owns the line; an automatic push stays a silent drop. Either way the push
-    // is owed to the save that lifts the hold. Bounded like `appliedConfigLanded`: a write that
-    // hangs leaves the hold standing, and the click must still answer.
+    // is owed to the save that lifts the hold. Bounded (10 s): a write that hangs leaves the hold
+    // standing, and the click must still answer.
     if (manual) await withTimeout(retryHeldConfigSave(), 10_000, undefined);
     if (configSaveHeld()) {
       pushOwed = true;
@@ -2804,8 +2787,9 @@ export async function pushNow(manual = false): Promise<void> {
   // The failure a push that contacts no server restores — not a prompt's own notice, which a
   // Reject / Later meanwhile may have dismissed.
   const prior = useApp.getState();
+  // The held-save line is not restored: past the gate, the save it blamed has landed.
   const priorError =
-    prior.syncStatus === "error" && prior.syncError && !pendingConflict && !pendingReview
+    prior.syncStatus === "error" && prior.syncError && prior.syncError !== HELD_PUSH_ERROR && !pendingConflict && !pendingReview
       ? prior.syncError
       : undefined;
   /** End a push that contacted no server: a status another writer set meanwhile (a Reject /
@@ -2969,11 +2953,6 @@ export async function pushNow(manual = false): Promise<void> {
           if (useApp.getState().syncStatus === "syncing") idleStatus();
           return;
         }
-        // Never push a merge config.json does not hold, nor adopt its base (`appliedConfigLanded`).
-        if (!(await appliedConfigLanded(myGen))) {
-          if (myGen === gen && useApp.getState().syncStatus === "syncing") heldSaveStatus(HELD_PUSH_ERROR);
-          return;
-        }
         // Applied without the degraded backends category: adopt the base and keep pushing only
         // when the remote left that category alone (see `degradedBaseWithheld`).
         if (degraded && degradedBaseWithheld(remoteBlob)) return;
@@ -3048,11 +3027,6 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
     // dropSupersededPending either, so a waiting prompt keeps its notice — and a Reject / Later
     // pressed meanwhile keeps its status (pushNow's 409 twin).
     if (useApp.getState().syncStatus === "syncing") idleStatus();
-    return;
-  }
-  // The apply must reach config.json before its base is adopted (`appliedConfigLanded`).
-  if (!(await appliedConfigLanded(myGen))) {
-    if (myGen === gen && useApp.getState().syncStatus === "syncing") heldSaveStatus(HELD_APPLY_ERROR);
     return;
   }
   // Applied without the degraded backends category: the remote becomes the base only when it
@@ -3801,13 +3775,6 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     setPendingReview(r);
     return "prompt";
   }
-  // Not final until config.json holds it (`appliedConfigLanded`): no base, so the next pull
-  // adopts it once the save lands — the store already holds the approved values, so it finds
-  // nothing left to review.
-  if (!(await appliedConfigLanded(myGen))) {
-    if (myGen === gen) heldSaveStatus(HELD_APPLY_ERROR);
-    return "done";
-  }
   // Same degraded-keyring rule as the paths that raised it: the remote becomes the base only when
   // it left the backends category alone, or the next unlocked push reverts the peer's change.
   // The raise's flag counts only while backends still syncs (`live`: a degraded raise already
@@ -4062,12 +4029,6 @@ async function resolveLocked(
     // restore the conflict so the picks are re-offered, not a base that never landed.
     setPendingConflict(c);
     return "prompt";
-  }
-  // Same as approveLocked: no base until config.json holds the resolution; a later pull re-offers
-  // whatever still conflicts once the save lands.
-  if (!(await appliedConfigLanded(myGen))) {
-    if (myGen === gen) heldSaveStatus(HELD_APPLY_ERROR);
-    return "done";
   }
   if (degraded && degradedBaseWithheld(c.remote)) return "done";
   // Same server-truth rule as reconcileRemote: the server still holds

@@ -463,14 +463,17 @@ export function derive(input: SiteSubsInput, st: SiteSubsState): SiteSubsView {
       if (part?.kind === "mt") part.title = title;
     }
   }
-  // The same at a full download: flip refuses a site track it would push past the 8-track cap.
-  if (m.view.run && m.view.run.fetch.length >= 8) {
+  // The same at a full download: flip refuses switching on a site track the run doesn't
+  // already fetch (through its twin) — the same O(1) test, not a flip (two model passes) per
+  // badge, which a link listing ~100 auto tracks paid on every render.
+  const run = m.view.run;
+  if (run && run.fetch.length >= 8) {
     const title = "At the 8-subtitle download limit — switch another subtitle off first";
     for (const r of m.view.rows) {
       for (const b of r.badges) {
         const mm = b.key ? /^(ex|cand):(.+)$/.exec(b.key) : null;
         if (!mm || b.state === "active" || m.capped.has(mm[2])) continue;
-        if (flip(input, st, b.key!).state !== st) continue;
+        if (run.fetch.includes(mm[2])) continue;
         b.title = title;
         for (const c of m.view.chips) for (const part of c.parts) if (part.key === b.key) part.title = title;
       }
@@ -537,7 +540,14 @@ export function flip(input: SiteSubsInput, st: SiteSubsState, key: string): Site
   if (own && next[key]) tg[own] = true; // switching any source on makes the language wanted
   // A site track switched on while the download is full would land past the 8-track cap and
   // grey again — and the language it made wanted would get machine translation instead of the
-  // subtitle asked for. Ask the cap with the change (and the twin) in place; free a slot first.
+  // subtitle asked for. At a full download any track not already fetched (a twin already
+  // fetched stays allowed) caps one: itself or, earlier in site order, the last fetched one,
+  // whose language silently falls back to machine translation. Refuse it; free a slot first.
+  const run = m.view.run;
+  if (mm && next[key] && run && run.fetch.length >= 8 && !run.fetch.includes(mm[2])) {
+    return { state: st, targets: [...input.targets] };
+  }
+  // Below a full download, ask the cap with the change (and the twin) in place.
   if (mm && next[key]) {
     const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
     if (model({ ...input, targets: trial.targets }, trial.state).capped.has(mm[2])) {

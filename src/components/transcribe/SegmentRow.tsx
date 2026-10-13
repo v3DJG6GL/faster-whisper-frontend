@@ -181,6 +181,8 @@ export const SegmentRow = memo(function SegmentRow({
             if (shown !== typed.trim() || el.childNodes.length > 1 || el.firstElementChild) setEditRev((r) => r + 1);
           }}
           onKeyDown={(e) => {
+            // Mid-composition the IME owns Esc and Enter; WebKit reports keyCode 229 (the LangPick rule).
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") {
               e.preventDefault();
               e.currentTarget.blur();

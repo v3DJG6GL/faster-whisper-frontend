@@ -322,6 +322,8 @@ mod link_refused_tests {
             "HTTP 400: the site could not be reached from the server",
             "HTTP 500: link preview failed",
             "HTTP 403: this media exceeds the server's size limit",
+            // Temporary by its own text: once the stream ends the same link is a recording.
+            "HTTP 400: live streams aren't supported — try again after the stream ends",
         ] {
             assert_eq!(format!("{:#}", link_refused(anyhow::anyhow!(msg))), msg);
         }
@@ -1699,11 +1701,13 @@ pub struct LinkRefused {
 /// The server's policy refusals (backend media/download.py: `_policy_check_info`,
 /// `check_url_policy`, `_policy_check_extractor`). Matched on its client-safe wording: the
 /// 400 body carries no class, and an unknown wording stays advisory (Add link stays on).
+/// Not the live-stream refusal: it is temporary by its own text ("try again after the stream
+/// ends"), and the preview is not re-run once the stream ends, so a final refusal would keep
+/// Add link off for a link the run would then accept.
 const LINK_POLICY_REFUSALS: &[&str] = &[
     "limit for link downloads",
     "exceeds the server's size limit",
     "playlists aren't supported",
-    "live streams aren't supported",
     "the server's URL policy",
     "the server's allowed list",
 ];

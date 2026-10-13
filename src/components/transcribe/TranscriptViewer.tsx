@@ -2174,6 +2174,8 @@ export function TranscriptViewer({
                     onChange={(e) => setRenameDraft(e.target.value)}
                     onBlur={commitRename}
                     onKeyDown={(e) => {
+                      // Mid-composition the IME owns Esc and Enter; WebKit reports keyCode 229 (the LangPick rule).
+                      if (e.nativeEvent.isComposing || e.keyCode === 229) return;
                       if (e.key === "Enter") commitRename();
                       else if (e.key === "Escape") setEditingSpeaker(null);
                     }}

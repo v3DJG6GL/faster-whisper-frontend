@@ -101,6 +101,20 @@ describe("round-trips against generateExport", () => {
       expect(parseImportedText(format, out).segments.every((s) => !/\s/.test(s.text))).toBe(true);
     }
   });
+  it("srt/vtt: an unpunctuated CJK cue the export wrapped at a phrase space reads back with that space", () => {
+    const text = "我们今天去公园散步了 然后回家吃饭再看一会儿电视吧";
+    const zh: BatchResult = {
+      text,
+      language: "zh",
+      segments: [{ start: 0, end: 4, text }],
+      words: [...text].filter((c) => c !== " ").map((word, i) => ({ word, start: i * 0.15, end: i * 0.15 + 0.15 })),
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      const out = generateExport(zh, { format, cues: { length: "standard", timing: "same" } });
+      expect(out).toContain("我们今天去公园散步了\n然后回家吃饭再看一会儿电视吧"); // wrapped at the phrase space
+      expect(parseImportedText(format, out).segments.map((s) => s.text)).toEqual([text]);
+    }
+  });
   it("lrc: a tag beside CJK punctuation round-trips without a space (same seam rule as the export)", () => {
     const tagged = (text: string, ws: string[]): BatchResult => ({
       text,
@@ -195,21 +209,24 @@ describe("plain text + errors", () => {
     // A code stays as the file wrote it; a word no language goes by stays too.
     expect([seg("EN"), seg("pt-BR"), seg("klingon")]).toEqual(["EN", "pt-BR", "klingon"]);
   });
-  it("a cue's or paragraph's line break joins by the seam rule: none inside CJK, one space elsewhere", () => {
+  it("a cue's or paragraph's line break joins by the seam rule: none inside punctuated CJK, one space elsewhere", () => {
     const srt = (body: string) => parseImportedText("srt", `1\n00:00:01,000 --> 00:00:02,000\n${body}\n`).segments[0];
-    expect(srt("今日はとても\n良い天気ですね").text).toBe("今日はとても良い天気ですね");
-    expect(srt("<i>今日は</i>\n<i>晴れです</i>").text).toBe("今日は晴れです");
+    expect(srt("今日はとても\n良い天気ですね。").text).toBe("今日はとても良い天気ですね。");
+    expect(srt("<i>今日は</i>\n<i>晴れです。</i>").text).toBe("今日は晴れです。");
     expect(srt("Hello there\nmy friend").text).toBe("Hello there my friend");
     expect(srt("我喜欢\niPhone").text).toBe("我喜欢 iPhone");
-    expect(srt("Alice: 我们\n去了")).toMatchObject({ speaker: "Alice", text: "我们去了" });
-    const vtt = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v 田中>今日は天気が\nいいですね\n").segments[0];
-    expect(vtt).toMatchObject({ speaker: "田中", text: "今日は天気がいいですね" });
+    expect(srt("Alice: 我们\n去了。")).toMatchObject({ speaker: "Alice", text: "我们去了。" });
+    const vtt = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v 田中>今日は天気が\nいいですね！\n").segments[0];
+    expect(vtt).toMatchObject({ speaker: "田中", text: "今日は天気がいいですね！" });
+    // Unpunctuated CJK subtitles separate phrases with the line break: it stays a space.
+    expect(srt("我们走吧\n他们在等我们").text).toBe("我们走吧 他们在等我们");
+    expect(srt("今日は　ありがとう\nまた明日ね").text).toBe("今日は ありがとう また明日ね");
     // Two voices in one cue still split per voice.
     const two = parseImportedText("vtt", "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n- <v Alice>你好\n- <v Bob>再见\n").segments;
     expect(two.map((s) => [s.speaker, s.text])).toEqual([["Alice", "你好"], ["Bob", "再见"]]);
     // A hard-wrapped CJK paragraph of a .txt file.
-    expect(parseImportedText("txt", "我们今天去公园\n散步然后回家\n\nSecond\npara").segments.map((s) => s.text))
-      .toEqual(["我们今天去公园散步然后回家", "Second para"]);
+    expect(parseImportedText("txt", "我们今天去公园\n散步，然后回家\n\n我爱你\n你爱我\n\nSecond\npara").segments.map((s) => s.text))
+      .toEqual(["我们今天去公园散步，然后回家", "我爱你 你爱我", "Second para"]);
   });
   it("a times line holding a long blank run parses in linear time, to the same cues", () => {
     const ws = " ".repeat(100_000);

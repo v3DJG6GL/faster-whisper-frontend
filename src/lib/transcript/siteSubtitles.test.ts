@@ -307,6 +307,25 @@ describe("tracks and switches", () => {
     const [i4, s4] = apply(i3, flip(i3, s3, "ex:ja"));
     expect(derive(i4, s4).run!.fetch).toContain("ja");
   });
+  it("at a full download a site track earlier in site order than the last fetched one is refused and displaces nothing", () => {
+    const langs = ["de", "fr", "es", "it", "pt", "nl", "ru", "pl", "ja"];
+    const inp = input({ tracks: langs.map((l) => tr(l, l)), spoken: "en", targets: [], maxTargets: 3 });
+    // French off, Japanese on, French's machine translation off: Japanese is the eighth track.
+    const [i1, s1] = apply(inp, flip(inp, initialSiteState(inp.targets), "ex:fr"));
+    const [i2, s2] = apply(i1, flip(i1, s1, "ex:ja"));
+    const [i3, s3] = derive(i2, s2).rows.find((r) => r.code === "fr")!.badges.find((b) => b.key === "mt:fr")!.state === "active"
+      ? apply(i2, flip(i2, s2, "mt:fr")) : [i2, s2];
+    const v = derive(i3, s3);
+    expect(v.run!.fetch).toEqual(["de", "es", "it", "pt", "nl", "ru", "pl", "ja"]);
+    // French back on would push Japanese past the cap (machine translation in its place): refused.
+    expect(flip(i3, s3, "ex:fr")).toEqual({ state: s3, targets: i3.targets });
+    const fr = v.rows.find((r) => r.code === "fr")!.badges.find((b) => b.key === "ex:fr")!;
+    expect(fr.title).toBe("At the 8-subtitle download limit — switch another subtitle off first");
+    expect(v.run!.mtTargets).not.toContain("ja");
+    // A fetched track's own badge (switching it off) is never titled with the limit.
+    const ja = v.rows.find((r) => r.code === "ja")!.badges.find((b) => b.key === "ex:ja")!;
+    expect(ja.title).not.toMatch(/download limit/);
+  });
   it("a preset machine-translates into at most the server's limit, your targets first", () => {
     const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da", "nb", "cs"];
     const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: ["ja", "fi"], maxTargets: 5 });

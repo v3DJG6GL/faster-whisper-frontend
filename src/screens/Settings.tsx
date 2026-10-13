@@ -183,7 +183,9 @@ export default function Settings() {
   const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
   // Read with the flag: runningStore is set before and cleared before setBusy("store", …) notifies.
   const deletingKind = useSyncExternalStore(subscribeBusy, () => runningStore);
-  // Every Delete… / confirm button: a click during a wipe or a move would only be refused.
+  // Every Delete… / confirm button: a click during a wipe or a move would only be refused. The
+  // running wipe's own arm button reads "Deleting…" from `deletingKind` (module scope), so a mount
+  // opened while it runs (the confirm state is per mount) still shows why the buttons wait.
   const storeLocked = storeBusy || dirBusy;
   // Re-read on the busy true->false edge too: a wipe or move outlives the screen, so the mount
   // that started it may be gone when it settles — this effect refreshes whichever mount is live
@@ -886,7 +888,7 @@ export default function Settings() {
                     setConfirming("dict");
                   }}
                 >
-                  Delete…
+                  {deletingKind === "dict" ? "Deleting…" : "Delete…"}
                 </Button>
               )}
             </SettingRow>
@@ -970,7 +972,7 @@ export default function Settings() {
                     setConfirming("files");
                   }}
                 >
-                  Delete…
+                  {deletingKind === "files" ? "Deleting…" : "Delete…"}
                 </Button>
               )}
             </SettingRow>
@@ -997,7 +999,7 @@ export default function Settings() {
                     setConfirming("links");
                   }}
                 >
-                  Delete…
+                  {deletingKind === "links" ? "Deleting…" : "Delete…"}
                 </Button>
               )}
             </SettingRow>
@@ -1024,7 +1026,7 @@ export default function Settings() {
                     setConfirming("video");
                   }}
                 >
-                  Delete…
+                  {deletingKind === "video" ? "Deleting…" : "Delete…"}
                 </Button>
               )}
             </SettingRow>
@@ -1052,7 +1054,7 @@ export default function Settings() {
                     setConfirming("clear");
                   }}
                 >
-                  Delete…
+                  {deletingKind === "clear" ? "Deleting…" : "Delete…"}
                 </Button>
               )}
             </SettingRow>

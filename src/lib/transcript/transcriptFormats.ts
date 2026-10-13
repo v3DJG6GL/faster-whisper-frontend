@@ -165,7 +165,7 @@ export function exportOptionsFor(a: {
 export function clean(s: string): string {
   // Exports are single-logical-line records; a newline inside segment text
   // would corrupt SRT/LRC framing, so collapse it — by the seam rule, so two lines of
-  // CJK text join without a space, as the edit commit joins them.
+  // punctuated CJK text join without a space, as the edit commit joins them.
   return joinLineBreaks(stripControlChars(s)).trim();
 }
 

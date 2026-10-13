@@ -75,6 +75,11 @@ function Editor({
   // field must not leave the "stored" placeholder or flag behind (doSave agrees).
   const keyStoredNow = useApp((s) => s.backends.find((x) => x.id === b.id)?.hasApiKey ?? false);
   const keyStored = keyStoredNow && !initialKey;
+  // The draft's own key flag mirrors the flag the editor OPENED with, not the live one: `initial`
+  // is mount-time, so typing a key and clearing it again must land back on it — with the live flag
+  // a sync pull that added or removed the key meanwhile read as unsaved work. Display uses the
+  // live `keyStored`; doSave derives the saved flag from the field and the live store itself.
+  const keyStoredAtOpen = initial.hasApiKey && !initialKey;
   // The address this editor's requests ACTUALLY go to — the same rule `effectiveServerUrl`
   // applies, but reactive, so a change to "Address on this device" re-runs the effects below.
   // `runTest`, `liveTarget`, the list card and every transcription already resolve the override;
@@ -564,7 +569,7 @@ function Editor({
                 value={key}
                 onChange={(e) => {
                   setKey(e.target.value);
-                  set({ hasApiKey: e.target.value.length > 0 || keyStored });
+                  set({ hasApiKey: e.target.value.length > 0 || keyStoredAtOpen });
                 }}
                 placeholder={keyStored ? "•••••••••• (stored — leave blank to keep)" : "wk_… (optional)"}
               />

@@ -2106,31 +2106,25 @@ describe("a push after a failed config save", () => {
     }
   });
 
-  // A pull applied into the store, then adopted the server's version as its base, while
-  // config.json never got the applied values (the save failed, or a shortcut conflict froze it):
-  // after a restart the base said "already have it" and the next push sent the old values back.
-  it("a pull whose apply could not be saved adopts no base until the save lands", async () => {
-    const { engine, store, syncOff } = await armEngine();
+  it("the held-save line goes once the save lands, even when the owed push has nothing to send", async () => {
+    const { persistence, engine, store, failedEdit, syncOff } = await armEngine();
     try {
       io.saveFails = false;
-      await engine.pushNow(true); // base = exactly this device's compose, at version 2
+      await engine.pushNow(true); // the base: this device's compose as it is now
       expect(io.pushes.length).toBe(1);
-      const base = io.pushes[0];
-      expect(io.states[io.states.length - 1]).toBe(2);
-      const remote = { ...base, logging: { ...base.logging!, logLevel: "debug" } } as SyncBlob;
-      io.pull = { ok: true, status: 200, state: { version: 3, updated_ts: 3, device: "peer", blob: remote } };
+      const level = store.getState().settings.logging?.logLevel;
       io.saveFails = true;
-      await engine.pullNow(true);
-      expect(store.getState().settings.logging?.logLevel).toBe("debug"); // applied to the store
-      expect(io.states[io.states.length - 1]).toBe(2); // but no base adopted
-      expect(store.getState().syncStatus).toBe("error");
-      expect(store.getState().syncError).toMatch(/sync isn't finished/);
-      expect(io.pushes.length).toBe(1);
+      await failedEdit();
+      await engine.pushNow(true);
+      expect(store.getState().syncError).toMatch(/couldn't save its settings, so nothing was pushed/);
+      // The edit is undone and that save lands: the owed push finds nothing new to send.
       io.saveFails = false;
-      await engine.pullNow(true);
-      expect(io.states[io.states.length - 1]).toBe(3);
-      expect(store.getState().syncStatus).toBe("ok");
-      expect(io.pushes.length).toBe(1); // nothing of this device's own to send
+      store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: level! } } }));
+      await persistence.flushConfigSave();
+      await vi.waitFor(() => expect(store.getState().syncError).toBeNull());
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      expect(store.getState().syncStatus).not.toBe("error");
+      expect(io.pushes.length).toBe(1);
     } finally {
       syncOff();
     }

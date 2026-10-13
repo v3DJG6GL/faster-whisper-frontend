@@ -65,37 +65,45 @@ fn note_moved_in(moved: &mut std::collections::HashMap<String, String>, old: Str
     }
 }
 
+/// The three [`MEDIA_KEYS`] fields of a record, and nothing else: serde skips every other field
+/// without building it, so a multi-MB record with word timestamps costs one linear pass.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaFields {
+    media_path: Option<String>,
+    video_path: Option<String>,
+    source_path: Option<String>,
+}
+
 /// `record` with every media field ([`MEDIA_KEYS`]) that names a moved path re-pointed, or
 /// `None` when nothing in it moved (or it does not parse) — then it is written as sent. No stat:
-/// the save is a main-thread command and the base may be stalled.
+/// the save is a main-thread command and the base may be stalled. Every save after a move or
+/// heal comes through here for the rest of the session, and `moved` may then hold thousands of
+/// paths: so one typed parse of the three media fields and three lookups decide, and the full
+/// parse + re-serialize runs only for a record that really names a moved path.
 fn repoint_moved(
     record: &str,
     moved: &std::collections::HashMap<String, String>,
 ) -> Option<String> {
-    // Cheap prefilter: no parse unless the raw text holds some moved path, JSON-escaped.
-    if !moved
-        .keys()
-        .any(|k| serde_json::to_string(k).is_ok_and(|e| record.contains(e.as_str())))
-    {
+    if moved.is_empty() {
+        return None;
+    }
+    let media = serde_json::from_str::<MediaFields>(record).ok()?;
+    let hits: Vec<(&str, &String)> = MEDIA_KEYS
+        .into_iter()
+        .zip([media.media_path, media.video_path, media.source_path])
+        .filter_map(|(key, path)| moved.get(path?.as_str()).map(|new| (key, new)))
+        .collect();
+    if hits.is_empty() {
         return None;
     }
     let mut v = serde_json::from_str::<serde_json::Value>(record).ok()?;
-    let mut changed = false;
-    for key in MEDIA_KEYS {
-        if let Some(new) = v
-            .get(key)
-            .and_then(|m| m.as_str())
-            .and_then(|p| moved.get(p))
-        {
-            v[key] = serde_json::Value::String(new.clone());
-            changed = true;
-        }
+    // A derived struct also reads a JSON array positionally: only an object is re-pointed.
+    let obj = v.as_object_mut()?;
+    for (key, new) in hits {
+        obj.insert(key.to_owned(), serde_json::Value::String(new.clone()));
     }
-    if changed {
-        serde_json::to_string(&v).ok()
-    } else {
-        None
-    }
+    serde_json::to_string(&v).ok()
 }
 
 /// Sanity cap per record — a transcript with word timestamps of an hours-long
@@ -711,8 +719,12 @@ fn read_records_into(dir: &Path, out: &mut Vec<serde_json::Value>) -> Result<(),
 /// Delete one record's file. The user-facing "Delete" — actually removes data.
 /// Tries both stores: ids are UUIDs, so the same id can only exist in one.
 /// The record's audio copy (if any) goes with it, only once the record is gone.
-/// async + spawn_blocking like the other destructive store commands: it walks the media folders
-/// under a user-picked base (possibly a slow or offline share), which must not freeze every window.
+/// async + spawn_blocking like the other destructive store commands. The command settles as soon
+/// as the record unlink ran: the media unlinks wait out this launch's audio-layout migration,
+/// which may sit on a stalled base (a sleeping disk, an offline share), so they run on a detached
+/// thread ([`spawn_delete_media`]). The webview tracks this IPC in its pending-writes set, and a
+/// `transcripts://swept` reload or a Settings cleanup waits on that set: a hung delete would keep
+/// History listing records a sweep already removed.
 #[tauri::command]
 pub async fn delete_transcript_record(
     app: AppHandle,
@@ -725,19 +737,10 @@ pub async fn delete_transcript_record(
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         // The `files/`/`links/`/video copies go only once the record is gone: a failed unlink
         // (Windows briefly locking the file) keeps the History entry, and it must keep its
-        // playable media too. Runs after the lock is released, like the recordings unlink.
-        // Every media unlink first waits out this launch's audio-layout migration, which can move
-        // a file in after the delete looked (see delete_all_dictations). The record unlink never
-        // does: the record lives in app data, and a delete must not hang behind a stalled audio
-        // base (nor leave the record to come back after a quit while it waits).
-        let drop_media = || {
-            crate::commands::wait_audio_layout();
-            if let Ok(dirs) = all_media_dirs(&app, audio_base.clone()) {
-                for dir in dirs {
-                    remove_media_for(&dir, &id);
-                }
-            }
-        };
+        // playable media too. They go after the lock is released, like the recordings unlink.
+        // The record unlink never waits for the audio-layout migration: the record lives in app
+        // data, and a delete must not hang behind a stalled audio base (nor leave the record to
+        // come back after a quit while it waits).
         let name = format!("{id}.json");
         let file_path = transcripts_dir(&app)?.join(&name);
         let source_of = |p: &Path| -> Option<String> {
@@ -754,7 +757,7 @@ pub async fn delete_transcript_record(
             let res = std::fs::remove_file(file_path).map_err(|e| e.to_string());
             drop(io);
             if res.is_ok() {
-                drop_media();
+                spawn_delete_media(app, id, audio_base, true, None);
             }
             return res;
         }
@@ -774,38 +777,88 @@ pub async fn delete_transcript_record(
         // re-point it: release the lock first, or a slow recordings share would hold every
         // (main-thread) save hostage.
         drop(io);
+        if !existed {
+            spawn_delete_media(app, id, audio_base, true, None);
+            return Ok(());
+        }
         // The audio goes only once the record is gone: a failed unlink (locked file) keeps the
         // History entry, and it must keep its recording too. A dictation without audio stores
-        // `sourcePath: ""` and waits for nothing. One with audio waits out the migration (never
-        // under the lock: its rewrite takes it per record), which may be moving that very file;
-        // the record is already gone, so no rewrite re-points it — if the stored path went
-        // away meanwhile, the file is looked for under its migrated name in the recordings
-        // folder.
+        // `sourcePath: ""` and has nothing to drop.
         if let (Ok(()), Some(src)) = (&res, src.filter(|s| !s.trim().is_empty())) {
-            crate::commands::wait_audio_layout();
-            let stored = Path::new(&src);
-            let moved = !stored.exists();
-            remove_dictation_audio(&src);
-            if moved {
-                if let (Some(dir), Some(file)) = (
-                    crate::commands::resolve_recordings_dir(&app, audio_base.clone()),
-                    stored.file_name(),
-                ) {
-                    let twin = dir.join(file);
-                    if twin != stored {
-                        remove_dictation_audio(&twin.to_string_lossy());
-                    }
-                }
-            }
-        }
-        if !existed {
-            drop_media();
-            return Ok(());
+            spawn_delete_media(app, id, audio_base, false, Some(src));
         }
         res
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Run [`delete_record_media`] on a detached thread, so `delete_transcript_record` settles
+/// without waiting for the audio-layout migration; inline when the thread cannot start (the
+/// delete then waits, as it did before, rather than leave the audio behind).
+fn spawn_delete_media(
+    app: AppHandle,
+    id: String,
+    audio_base: Option<String>,
+    media_copies: bool,
+    dictation_src: Option<String>,
+) {
+    // A spawn error consumes the closure, so the inline fallback keeps its own copy.
+    let fallback = (
+        app.clone(),
+        id.clone(),
+        audio_base.clone(),
+        dictation_src.clone(),
+    );
+    let spawned = std::thread::Builder::new()
+        .name("history-delete-audio".into())
+        .spawn(move || delete_record_media(&app, &id, audio_base, media_copies, dictation_src));
+    if let Err(e) = spawned {
+        tracing::warn!("[transcripts] could not start the delete-audio worker: {e}");
+        let (app, id, audio_base, dictation_src) = fallback;
+        delete_record_media(&app, &id, audio_base, media_copies, dictation_src);
+    }
+}
+
+/// The media half of `delete_transcript_record`, run once the record is gone and never under
+/// `RECORD_IO` (the migration's rewrite takes it per record, so waiting under it would
+/// deadlock). Every media unlink first waits out this launch's audio-layout migration, which can
+/// move a file in after the delete looked (see delete_all_dictations). `media_copies` drops the
+/// record's `files/`/`links/`/video copies; `dictation_src` is a dictation's stored recording.
+/// The record is already gone, so no rewrite re-points that recording: if the stored path went
+/// away while this waited (the migration moved it), the file is looked for under its migrated
+/// name in the recordings folder.
+fn delete_record_media(
+    app: &AppHandle,
+    id: &str,
+    audio_base: Option<String>,
+    media_copies: bool,
+    dictation_src: Option<String>,
+) {
+    crate::commands::wait_audio_layout();
+    if media_copies {
+        if let Ok(dirs) = all_media_dirs(app, audio_base.clone()) {
+            for dir in dirs {
+                remove_media_for(&dir, id);
+            }
+        }
+    }
+    if let Some(src) = dictation_src {
+        let stored = Path::new(&src);
+        let moved = !stored.exists();
+        remove_dictation_audio(&src);
+        if moved {
+            if let (Some(dir), Some(file)) = (
+                crate::commands::resolve_recordings_dir(app, audio_base),
+                stored.file_name(),
+            ) {
+                let twin = dir.join(file);
+                if twin != stored {
+                    remove_dictation_audio(&twin.to_string_lossy());
+                }
+            }
+        }
+    }
 }
 
 /// Copy a run's input audio into `<base>/files/<id>.<ext>`, so the
@@ -922,12 +975,14 @@ pub async fn delete_all_dictations(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
-        // Both steps always run, so a readable folder is still wiped when the other is not.
-        // The records live in app data and go at once.
-        let records = wipe_records(&dictations_dir(&app)?);
-        // The recordings folder is listed only after this launch's audio-layout migration: a
-        // file it moves in after the wipe listed the folder would be left behind.
+        // Waits out this launch's audio-layout migration FIRST: a file it moves in after the
+        // wipe listed the recordings folder would be left behind. The record wipe waits with it,
+        // not ahead of it: this command emits no `transcripts://swept`, so the webview reloads
+        // its History mirror only when the IPC settles. Wiped early, the records would stay
+        // listed (and editable, so a save could write one back) for as long as the wait lasts.
         crate::commands::wait_audio_layout();
+        // Both steps always run, so a readable folder is still wiped when the other is not.
+        let records = wipe_records(&dictations_dir(&app)?);
         let recordings = match crate::commands::resolve_recordings_dir(&app, audio_base) {
             Some(dir) => remove_own_recordings(&dir),
             None => Ok(0),
@@ -969,10 +1024,11 @@ pub async fn clear_file_transcriptions(
     audio_base: Option<String>,
 ) -> Result<u32, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<u32, String> {
-        // The records (app data) go at once; as delete_all_dictations, only the orphan sweep
-        // waits, since it must see the migrated layout.
-        let removed = wipe_records(&transcripts_dir(&app)?)? as u32;
+        // As delete_all_dictations: the wait comes first, since the orphan sweep must see the
+        // migrated layout, and the record wipe waits with it so it lands together with the IPC
+        // settle that reloads the History mirror (no `transcripts://swept` here).
         crate::commands::wait_audio_layout();
+        let removed = wipe_records(&transcripts_dir(&app)?)? as u32;
         sweep_orphan_media(&app, audio_base);
         Ok(removed)
     })
@@ -1609,6 +1665,35 @@ mod tests {
             None
         );
         assert_eq!(repoint_moved("not json /old/files/a.m4a", &moved), None);
+    }
+
+    #[test]
+    fn a_save_whose_media_paths_did_not_move_is_written_as_sent() {
+        let mut moved = std::collections::HashMap::new();
+        for i in 0..2000 {
+            note_moved_in(
+                &mut moved,
+                format!("/old/files/{i}.m4a"),
+                format!("/new/files/{i}.m4a"),
+            );
+        }
+        // Moved paths elsewhere in the record (the user's text, a nested copy) are not media
+        // fields; the media fields themselves name unmoved paths, or are null.
+        let record = r#"{"id":"x","mediaPath":"/kept/files/7.m4a","videoPath":null,"sourcePath":"","text":"/old/files/7.m4a","result":{"mediaPath":"/old/files/8.m4a"}}"#;
+        assert_eq!(repoint_moved(record, &moved), None);
+        // An array never parses as a record, even though the media struct reads one by position.
+        assert_eq!(
+            repoint_moved(r#"["/old/files/1.m4a",null,null]"#, &moved),
+            None
+        );
+        // Nothing moved this session (or everything moved back): no parse at all.
+        assert_eq!(
+            repoint_moved(
+                r#"{"mediaPath":"/old/files/1.m4a"}"#,
+                &std::collections::HashMap::new()
+            ),
+            None
+        );
     }
 
     #[test]
