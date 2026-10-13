@@ -2498,7 +2498,7 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
  *  frozen targets. A missing slice stays missing: filled in as an explicit empty list it would
  *  turn a site plan's frozen targets back on (`linkTranslateTo`) while the rail, which reads
- *  the un-reconciled `lastOptions`, shows no Translating stage. `translationAvailable` unset =
+ *  `lastOptions` (retryFile stores these), shows no Translating stage. `translationAvailable` unset =
  *  unknown (caps not loaded): only a standard server is assumed to lack it. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
@@ -2542,11 +2542,11 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // the old job lands a second record (and transcribes the file twice).
   stopOrphans([path]);
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
-  void pump(
-    s.epoch,
-    reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable),
-    ctx,
-  );
+  // The options the retry really runs with are the store's too: the rail (railStages) reads
+  // lastOptions, and a Translating row the retry skips would otherwise be painted done.
+  const options = reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable);
+  set({ lastOptions: options });
+  void pump(s.epoch, options, ctx);
 }
 
 export function cancelRun() {

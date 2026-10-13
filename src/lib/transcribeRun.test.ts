@@ -1036,6 +1036,18 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
   });
 
+  it("the store's lastOptions become the reconciled ones, so the rail shows only the stages the retry runs", async () => {
+    useTranscribeRun.setState({
+      queue: [{ path: "/s.srt", status: "failed", kind: "text" }] as QueueItem[],
+      lastOptions: { translateTo: ["de"], translationMode: "faithful" },
+      running: false,
+    });
+    retryFile("/s.srt", { serverUrl: "http://x", backendId: "b", standard: false, translationAvailable: false } as never);
+    expect(useTranscribeRun.getState().lastOptions?.translateTo).toBeUndefined();
+    expect(useTranscribeRun.getState().lastOptions?.translationMode).toBeUndefined();
+    await vi.waitFor(() => expect(useTranscribeRun.getState().queue[0].status).toBe("failed"));
+  });
+
   it("a text source retried on a full server with translation off names the server, not a hidden switch", async () => {
     useTranscribeRun.setState({
       queue: [{ path: "/s.srt", status: "failed", kind: "text" }] as QueueItem[],
