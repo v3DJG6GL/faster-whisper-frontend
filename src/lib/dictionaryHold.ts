@@ -19,6 +19,20 @@ export function dictionaryLoadAction(backendId: string | null, loadedId: string 
   return "reload";
 }
 
+/** What ends a hold once its unsaved edits are gone — however they went: Discard, a rule's own
+ *  reset, or typing a value back. "reload": the moved backend's rules from its new address (the
+ *  document on screen is the old address's, and a Save would send the old server's slugs and
+ *  fingerprints to the new one). "release": a vanished backend's hold lets the selection move on.
+ *  null: nothing held, or the edits are still unsaved. */
+export function dictionaryHeldResolution(
+  held: "keep-moved" | "keep-gone" | null,
+  dirty: boolean,
+  hasBackend: boolean,
+): "reload" | "release" | null {
+  if (held === null || dirty) return null;
+  return held === "keep-moved" && hasBackend ? "reload" : "release";
+}
+
 /** The backend to select. A selection that is still a candidate stays; one that vanished stays
  *  too while there are unsaved edits (falling back to the first candidate would load its rules
  *  over them); otherwise the first candidate, or none. */

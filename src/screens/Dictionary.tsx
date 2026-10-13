@@ -33,7 +33,7 @@ import {
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { dictionaryLoadAction, dictionarySelection } from "@/lib/dictionaryHold";
+import { dictionaryHeldResolution, dictionaryLoadAction, dictionarySelection } from "@/lib/dictionaryHold";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
   Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,
@@ -881,6 +881,14 @@ export default function Dictionary() {
     const next = dictionarySelection(selectedId, candidates.map((c) => c.id), hasDirty);
     if (next !== selectedId) setSelectedId(next);
   }, [candidates, selectedId, hasDirty]);
+  // A hold ends with its edits, however they went (Discard, a rule's own reset, typing a value
+  // back): otherwise the notice keeps asking for a Save or Discard that no longer shows, and the
+  // old address's rules stay on screen for the next Save to send to the new one.
+  useEffect(() => {
+    const next = dictionaryHeldResolution(held, hasDirty, backend !== null);
+    if (next === "reload" && backend) void load(backend);
+    else if (next === "release") setHeld(null);
+  }, [held, hasDirty, backend?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // The same unsaved-work guard the three list editors register: the sticky bar and the
   // backend pills already refuse to lose edits, but a sidebar click or the chip's
   // app://navigate unmounted this screen and threw them away in silence.
@@ -968,10 +976,7 @@ export default function Dictionary() {
     // A full discard is a fresh slate — clear any lingering save banner (esp. a 422 rejection whose
     // edits no longer exist; the banner persists independent of `dirty` until the next load).
     setResult(null);
-    // Rules held over an address change are the OLD address's: discarding is the moment to load
-    // the backend's rules again. A held-over vanished backend instead lets the selection move on.
-    if (held === "keep-moved" && backend) void load(backend);
-    else setHeld(null);
+    // A hold (address changed, backend gone) ends in the held-resolution effect once nothing is unsaved.
   }
 
   return (

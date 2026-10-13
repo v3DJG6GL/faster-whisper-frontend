@@ -1,7 +1,7 @@
 // A synced change to the selected backend (new address, kind flipped to standard, deleted) must not
 // replace the Dictionary's unsaved edits in silence — every manual path already refuses to.
 import { describe, expect, it } from "vitest";
-import { dictionaryLoadAction, dictionarySelection } from "./dictionaryHold";
+import { dictionaryHeldResolution, dictionaryLoadAction, dictionarySelection } from "./dictionaryHold";
 
 describe("dictionaryLoadAction", () => {
   it("keeps unsaved edits when the same backend's address changes", () => {
@@ -44,5 +44,22 @@ describe("dictionarySelection", () => {
   it("keeps a selection that is still a candidate", () => {
     expect(dictionarySelection("c", ["b", "c"], false)).toBe("c");
     expect(dictionarySelection("c", ["b", "c"], true)).toBe("c");
+  });
+});
+
+describe("dictionaryHeldResolution", () => {
+  it("reloads a moved backend once its kept edits are gone (a rule reset, typed back, Discard)", () => {
+    expect(dictionaryHeldResolution("keep-moved", false, true)).toBe("reload");
+  });
+
+  it("releases a vanished backend's hold once its kept edits are gone", () => {
+    expect(dictionaryHeldResolution("keep-gone", false, false)).toBe("release");
+    expect(dictionaryHeldResolution("keep-moved", false, false)).toBe("release");
+  });
+
+  it("keeps the hold while edits are unsaved, and does nothing with no hold", () => {
+    expect(dictionaryHeldResolution("keep-moved", true, true)).toBeNull();
+    expect(dictionaryHeldResolution("keep-gone", true, false)).toBeNull();
+    expect(dictionaryHeldResolution(null, false, true)).toBeNull();
   });
 });
