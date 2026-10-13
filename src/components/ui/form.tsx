@@ -1,6 +1,6 @@
 import {
   type ReactNode, type ReactElement, type InputHTMLAttributes, type TextareaHTMLAttributes, cloneElement,
-  forwardRef, isValidElement, useEffect, useId, useRef, useState,
+  forwardRef, isValidElement, useEffect, useId, useLayoutEffect, useRef, useState,
 } from "react";
 import type { LucideIcon } from "lucide-react";
 import { Check, Minus, Plus, RotateCcw } from "lucide-react";
@@ -499,6 +499,18 @@ export function Stepper({
   }, [value, focused]);
   useEffect(() => stopRepeat, []); // stop any running repeat on unmount
 
+  // ↺ unmounts itself (it shows only while a value is set), which dropped keyboard focus to <body>:
+  // after the reset re-renders, focus goes to the field instead — then its onFocus reads the reset
+  // value, not the one it replaced.
+  const inputRef = useRef<HTMLInputElement>(null);
+  const resetPressed = useRef(false);
+  useLayoutEffect(() => {
+    if (!resetPressed.current) return;
+    resetPressed.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body) inputRef.current?.focus();
+  });
+
   const commit = () => {
     const n = parse(text);
     // Focusing and leaving an inheriting field changes nothing, nor does emptying it or leaving
@@ -534,6 +546,12 @@ export function Stepper({
   const showZero = !focused && zeroLabel != null && value === 0 && !showInheritedText;
   const btn =
     "ring-signal grid h-full shrink-0 place-items-center text-dim transition-colors hover:bg-line/40 hover:text-text disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-dim";
+  // −/+ at a bound are aria-disabled, not disabled: a keyboard step that reaches the bound would
+  // otherwise disable the FOCUSED button and drop focus to <body> (the next Enter does nothing,
+  // Tab restarts at the top). Native `disabled` stays for a disabled Stepper, out of the tab order.
+  const boundBtn = "aria-disabled:opacity-30 aria-disabled:hover:bg-transparent aria-disabled:hover:text-dim";
+  const atMin = cur <= min;
+  const atMax = cur >= max;
 
   return (
     <div
@@ -546,9 +564,10 @@ export function Stepper({
       <button
         type="button"
         aria-label={`Decrease${ariaLabel ? ` ${ariaLabel}` : ""}`}
-        disabled={disabled || cur <= min}
+        disabled={disabled}
+        aria-disabled={atMin || undefined}
         onPointerDown={(e) => {
-          if (e.button === 0) press(-step);
+          if (e.button === 0 && !atMin) press(-step);
         }}
         onPointerUp={stopRepeat}
         onPointerLeave={stopRepeat}
@@ -556,15 +575,16 @@ export function Stepper({
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            stepBy(-step);
+            if (!atMin) stepBy(-step);
           }
         }}
-        className={cn(btn, "w-9")}
+        className={cn(btn, boundBtn, "w-9")}
       >
         <Minus className="size-4" />
       </button>
       <div className="flex flex-1 items-center justify-center gap-1 border-x border-line px-2">
         <input
+          ref={inputRef}
           value={showZero ? zeroLabel : showInheritedText ? inheritedText : text}
           inputMode={decimals > 0 ? "decimal" : "numeric"}
           aria-label={ariaLabel}
@@ -637,9 +657,10 @@ export function Stepper({
       <button
         type="button"
         aria-label={`Increase${ariaLabel ? ` ${ariaLabel}` : ""}`}
-        disabled={disabled || cur >= max}
+        disabled={disabled}
+        aria-disabled={atMax || undefined}
         onPointerDown={(e) => {
-          if (e.button === 0) press(step);
+          if (e.button === 0 && !atMax) press(step);
         }}
         onPointerUp={stopRepeat}
         onPointerLeave={stopRepeat}
@@ -647,10 +668,10 @@ export function Stepper({
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            stepBy(step);
+            if (!atMax) stepBy(step);
           }
         }}
-        className={cn(btn, "w-9")}
+        className={cn(btn, boundBtn, "w-9")}
       >
         <Plus className="size-4" />
       </button>
@@ -660,7 +681,10 @@ export function Stepper({
           title={inheritNote ? `Back to the ${inheritNote} value` : "Reset to inherited"}
           aria-label={`Reset${ariaLabel ? ` ${ariaLabel}` : ""}`}
           disabled={disabled}
-          onClick={onReset}
+          onClick={() => {
+            resetPressed.current = true;
+            onReset();
+          }}
           className={cn(btn, "w-8 border-l border-line text-faint")}
         >
           <RotateCcw className="size-3.5" />
