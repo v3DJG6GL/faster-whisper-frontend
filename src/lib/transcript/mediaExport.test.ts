@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
+  BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
   isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn,
   siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
 } from "./mediaExport";
@@ -117,6 +117,30 @@ describe("embeddedSubtitleTracks", () => {
     expect(legacyTrackIndices([])).toEqual({ defaultTrack: null, originalTrack: null });
     expect(sidecarFiles(site, { format: "srt" }, order, "srt").map((f) => f.name("s")))
       .toEqual(["s.de.srt", "s.YouTube.de.sdh.srt", "s.en.srt", "s.YouTube-auto.en.srt"]);
+  });
+  it("a language whose first track has no cue: the next one is its plain track (name, default, file)", () => {
+    // French is a translation target with no French text yet; the YouTube French track has cues.
+    const site: BatchResult = {
+      text: "Hallo",
+      language: "de",
+      segments: [{ start: 0, end: 1, text: "Hallo" }],
+      timedTracks: [
+        { id: "fr-x-site", lang: "fr", source: "site", kind: "manual", site: "YouTube", cues: [{ start: 0, end: 1, text: "Salut" }] },
+      ],
+    };
+    const chosen = ["orig", "fr", "fr-x-site"];
+    const tracks = embeddedSubtitleTracks(site, { format: "srt" }, chosen);
+    expect(tracks.map((t) => [t.lang, t.label, t.default])).toEqual([["de", "German", true], ["fr", "French", true]]);
+    expect(tracks[1].srt).toContain("Salut");
+    expect(sidecarFiles(site, { format: "srt" }, chosen, "srt").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt"]);
+    // The panel plans over the same cue-bearing tracks, so its names match what is written.
+    const kept = cueTracks(site, { format: "srt" }, chosen);
+    expect(kept).toEqual(["orig", "fr-x-site"]);
+    const plan = mediaExportPlan({
+      choice: "video", container: "mkv", subtitleMode: "both", format: "srt", textFileNames: [],
+      audioExt: null, tracks: kept, result: site, hasVideoSource: true,
+    });
+    expect(plan.files.filter((f) => f.kind === "text").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt"]);
   });
   it("a site track's looser language tag embeds as one the packager accepts", () => {
     const site: BatchResult = {

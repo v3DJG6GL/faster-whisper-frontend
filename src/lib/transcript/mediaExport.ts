@@ -121,22 +121,31 @@ export function audioPackageLang(result: Pick<BatchResult, "language">): { lang:
   return lang !== "und" ? { lang, spoken } : null;
 }
 
+/** The chosen tracks that hold at least one cue, in order — the ones a video export writes (a
+ *  translation not in yet, or every line kept as the source, renders none). The panel plans
+ *  its sidecar names over these, as sidecarFiles and embeddedSubtitleTracks do. */
+export function cueTracks(result: BatchResult, opts: ExportOptions, tracks: string[]): string[] {
+  return tracks.filter((t) => hasCue(trackSubtitle(result, opts, t, "srt")));
+}
+
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for
- *  byte. `names` = the user's track titles by track id. */
+ *  byte. `names` = the user's track titles by track id. A cue-less track is
+ *  dropped BEFORE planning: its language's next track is then the plain one
+ *  (default flag, bare title). */
 export function embeddedSubtitleTracks(
   result: BatchResult,
   opts: ExportOptions,
   tracks: string[],
   names?: Record<string, string>,
 ): EmbeddedTrack[] {
-  return planTracks(result, tracks, names).flatMap((t) => {
-    const srt = trackSubtitle(result, opts, t.id, "srt");
-    return hasCue(srt)
-      ? [{ lang: packageLang(t.lang), label: t.title, srt, original: t.original, default: t.plain, hearingImpaired: t.hoh }]
-      : [];
-  });
+  const srts = new Map(tracks.map((t) => [t, trackSubtitle(result, opts, t, "srt")]));
+  const kept = tracks.filter((t) => hasCue(srts.get(t) ?? ""));
+  return planTracks(result, kept, names).map((t) => ({
+    lang: packageLang(t.lang), label: t.title, srt: srts.get(t.id) ?? "",
+    original: t.original, default: t.plain, hearingImpaired: t.hoh,
+  }));
 }
 
 /** The largest embedded SRT the packager takes, in UTF-8 bytes: mirrors src-tauri
@@ -176,18 +185,19 @@ export function sidecarNames(
 /** One sidecar file per chosen track, in track order, in the panel's
  *  subtitle format — the same per-language content the embedded tracks
  *  carry, so "both" writes the same subtitles twice, once inside and once
- *  beside the video. */
+ *  beside the video. Named over the cue-bearing tracks only (cueTracks): a
+ *  language whose first track is empty still gets its plain `stem.fr.srt`. */
 export function sidecarFiles(
   result: BatchResult,
   opts: ExportOptions,
   tracks: string[],
   format: SubtitleFormat,
 ): SidecarFile[] {
-  const names = sidecarNames(result, tracks, format);
-  return tracks.flatMap((t, i) => {
-    const content = trackSubtitle(result, opts, t, format);
-    return hasCue(content) ? [{ name: names[i], content }] : [];
-  });
+  const kept = tracks
+    .map((t) => ({ t, content: trackSubtitle(result, opts, t, format) }))
+    .filter((k) => hasCue(k.content));
+  const names = sidecarNames(result, kept.map((k) => k.t), format);
+  return kept.map((k, i) => ({ name: names[i], content: k.content }));
 }
 
 /** Whether a Save's outcome (an error, "Saved") may land on the export panel: only while

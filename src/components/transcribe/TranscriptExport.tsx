@@ -38,7 +38,7 @@ import {
   type TrackPrefs,
 } from "@/lib/transcript/exportTracks";
 import {
-  audioPackageLang, basename, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isGoneSourceError, isVideoSourcePath,
+  audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isGoneSourceError, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
   subscribeExportQueue, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
@@ -332,8 +332,15 @@ export function TranscriptExport({
     colors: () => setColorize(!colorize),
     words: () => setWordTs(!wordTs),
   };
-  /** The tracks a video carries, inside or beside it. */
-  const videoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
+  /** The tracks a video carries, inside or beside it: with Video on (and the panel open — a
+   *  closed one plans nothing) only those with a cue, so the plan names the sidecars exactly as
+   *  sidecarFiles writes them (a language's empty first track never takes its plain name). */
+  const videoTracks = useMemo(() => {
+    const all = effTracks.length ? effTracks : ["orig"];
+    if (!open || effMedia !== "video") return all;
+    const kept = cueTracks(editedResult, exportOptions, all);
+    return kept.length ? kept : all;
+  }, [effTracks, open, effMedia, editedResult, exportOptions]);
   /** The files one Save writes (the media file first, then the text files),
    *  from the panel's current choices — Save, the preview tabs and the names
    *  all read this one plan. */
