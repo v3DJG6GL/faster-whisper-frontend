@@ -62,6 +62,33 @@ describe("normalizeMediaUrl", () => {
     expect(normalizeMediaUrl("ht\ttps://x.com/a")).toBe("https://x.com/a");
     expect(pastesSeveralLinks("\t https://x.com/a \t")).toBe(false);
   });
+  it("says 'several links' only for a link followed by horizontal whitespace and another link (shape matrix)", () => {
+    // [pasted text, several links?, normalizeMediaUrl]. Changed vs 68f08787 / HEAD, with intent:
+    // edge U+00A0/U+3000/U+FEFF and text before a link no longer read as several links (the
+    // hint then names the real problem); a line break inside the text is dropped first, as the
+    // parsers drop it — a soft-wrapped archive link is one link again, "a ht\ntps://b" is two.
+    const matrix: [string, boolean, string | null][] = [
+      ["https://a/x", false, "https://a/x"],
+      ["https://a/x https://b/y", true, null],
+      ["https://a/x\thttps://b/y", true, null],
+      ["https://a/x\u00a0https://b/y", true, null],
+      ["\u00a0https://a/x", false, null],
+      ["\u3000https://a/x", false, null],
+      ["\ufeffhttps://a/x", false, null],
+      ["Watch this: https://youtu.be/abc", false, null],
+      ["https://web.archive.org/web/2020/https://h/v.mp4", false, "https://web.archive.org/web/2020/https://h/v.mp4"],
+      ["https://web.archive.org/web/2020/\nhttps://h/v.mp4", false, "https://web.archive.org/web/2020/https://h/v.mp4"],
+      ["  https://a/x  ", false, "https://a/x"],
+      ["https://a/x ht\ntps://b/y", true, null],
+      ["youtu.be/abc", false, null],
+      ["", false, null],
+      ["https://a.tld/x.mp3 \n  http://b.tld/y.mp3", true, null],
+    ];
+    for (const [raw, several, url] of matrix) {
+      expect([raw, pastesSeveralLinks(raw)]).toEqual([raw, several]);
+      expect([raw, normalizeMediaUrl(raw)]).toEqual([raw, url]);
+    }
+  });
   it("keeps a link with an embedded scheme and a path with a space", () => {
     const archived = "https://web.archive.org/web/2020/https://example.com/v.mp4";
     expect(normalizeMediaUrl(archived)).toBe(archived);

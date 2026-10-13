@@ -18,14 +18,19 @@ export function isSourceUrl(s: string): boolean {
   return /^https?:\/\//i.test(s);
 }
 
-/** Does this pasted text hold more than one link — whitespace then a second scheme, as a pasted
- *  "linkA linkB" chat line reads? `new URL` would percent-encode the space and quietly merge the two
- *  into one queue key. A second scheme WITHOUT whitespace before it stays a link: archive and
- *  redirect links embed one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…).
- *  Takes the RAW text and trims only its edges: stripUrlNoise deletes inner tabs, so judging its
- *  output would glue two tab-separated spreadsheet cells ("linkA<TAB>linkB") into one link. */
+/** Does this pasted text hold more than one link — a link, then horizontal whitespace and a
+ *  second scheme, as a pasted "linkA linkB" chat line or two tab-separated spreadsheet cells
+ *  read? `new URL` would percent-encode the space and quietly merge the two into one queue key.
+ *  A second scheme WITHOUT whitespace before it stays a link: archive and redirect links embed
+ *  one (https://web.archive.org/web/2020/https://host/v.mp4, ?url=https://…). Judged on the RAW
+ *  text: stripUrlNoise deletes inner tabs, which would glue the two cells into one link. Line
+ *  breaks go first, as the parsers drop them (a soft-wrapped single link stays one), and the
+ *  edges are trimmed of any whitespace (a rich-text copy's U+00A0, an IME's U+3000, a BOM). Text
+ *  that does not start with a link is not "several links" — it is text before a link. */
 export function pastesSeveralLinks(raw: string): boolean {
-  return /\s+https?:\/\//i.test(raw.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, ""));
+  // eslint-disable-next-line no-control-regex
+  const t = raw.replace(/[\n\r]/g, "").replace(/^[\x00-\x20\s]+|[\x00-\x20\s]+$/g, "");
+  return /^https?:\/\//i.test(t) && /[\t \u00a0\u1680\u2000-\u200a\u202f\u205f\u3000]https?:\/\//i.test(t);
 }
 
 /** Loose pasted text → a normalized media URL, or null when it isn't one.
