@@ -458,30 +458,50 @@ export function revealAfterSaveOn(t: Pick<TranscribeSettings, "revealAfterSave">
   return t?.revealAfterSave !== false;
 }
 
-/** A record without its local video copy (`videoPath`) — the same object when it has none, so
- *  patchRecord writes nothing. For when the copy is gone: Settings' "Delete videos from link
- *  transcriptions" removes the files, and a stale path would outrank the fetch from the link. */
-export function withoutVideoPath<T extends { videoPath?: string }>(r: T): T {
-  if (r.videoPath === undefined) return r;
+/** The record fields that name a local copy a Settings wipe can delete: a link's audio
+ *  (`mediaPath`, links/) and its video (`videoPath`, video/). */
+export type KeptCopyField = "mediaPath" | "videoPath";
+
+/** A record without its local copy in `field` — the same object when it has none, so
+ *  patchRecord writes nothing. For when the copy is gone: Settings' "Delete … from link
+ *  transcriptions" removes the files, and a stale path would outrank the server's copy or the
+ *  fetch from the link. */
+export function withoutCopyPath<T extends { [K in KeptCopyField]?: string }>(r: T, field: KeptCopyField): T {
+  if (r[field] === undefined) return r;
   const n = { ...r };
-  delete n.videoPath;
+  delete n[field];
   return n;
 }
 
-/** Every record's local video copy as the "Delete videos" wipe begins: id → `videoPath`.
+/** withoutCopyPath for the video copy. */
+export function withoutVideoPath<T extends { videoPath?: string }>(r: T): T {
+  return withoutCopyPath(r, "videoPath");
+}
+
+/** Every record's local copy in `field` as a wipe of that copy's folder begins: id → path.
  *  Taken BEFORE the wipe, so a copy that lands during it (a download's `.tmp`, which the wipe
  *  skips, renamed into place) is not in it. */
-export function videoPathsBeforeWipe(records: readonly { id: string; videoPath?: string }[]): Map<string, string> {
+export function copyPathsBeforeWipe(
+  records: readonly ({ id: string } & { [K in KeptCopyField]?: string })[],
+  field: KeptCopyField,
+): Map<string, string> {
   const m = new Map<string, string>();
-  for (const r of records) if (r.videoPath !== undefined) m.set(r.id, r.videoPath);
+  for (const r of records) {
+    const p = r[field];
+    if (p !== undefined) m.set(r.id, p);
+  }
   return m;
 }
 
-/** After the wipe: drop the record's `videoPath` only while it is still the path it had when
- *  the wipe began (`wiped`, from videoPathsBeforeWipe). A path stamped during the wipe names a
+/** After the wipe: drop the record's `field` only while it is still the path it had when the
+ *  wipe began (`wiped`, from copyPathsBeforeWipe). A path stamped during the wipe names a
  *  file that survived it; no copy before (`wiped` undefined) = nothing was deleted for it. */
-export function stripWipedVideoPath<T extends { videoPath?: string }>(r: T, wiped: string | undefined): T {
-  return wiped !== undefined && r.videoPath === wiped ? withoutVideoPath(r) : r;
+export function stripWipedCopyPath<T extends { [K in KeptCopyField]?: string }>(
+  r: T,
+  field: KeptCopyField,
+  wiped: string | undefined,
+): T {
+  return wiped !== undefined && r[field] === wiped ? withoutCopyPath(r, field) : r;
 }
 
 /** A Save's local source file is gone from disk: copy_media_to's or package_media's read of it

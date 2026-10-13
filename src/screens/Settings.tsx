@@ -16,7 +16,7 @@ import {
   useTranscriptHistory,
   type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
-import { stripWipedVideoPath, videoPathsBeforeWipe } from "@/lib/transcript/mediaExport";
+import { copyPathsBeforeWipe, stripWipedCopyPath } from "@/lib/transcript/mediaExport";
 import { forgetRecord } from "@/lib/transcribeRun";
 import {
   transcriptStoreStats,
@@ -304,7 +304,20 @@ export default function Settings() {
         : kind === "files"
           ? [removeTranscriptMedia("file", basePref), ["audio copy", "audio copies"]]
           : kind === "links"
-            ? [removeTranscriptMedia("url", basePref), ["downloaded file", "downloaded files"]]
+            ? [
+                // As "video" below, for each link record's audio copy (`mediaPath`): a kept
+                // path to a deleted file outranks the server's copy in the export panel.
+                loadHistory().then(() => {
+                  const links = useTranscriptHistory.getState().records.filter((r) => r.kind === "url");
+                  const before = copyPathsBeforeWipe(links, "mediaPath");
+                  return removeTranscriptMedia("url", basePref).then(async (n) => {
+                    for (const [id, p] of before) patchRecord(id, (r) => stripWipedCopyPath(r, "mediaPath", p));
+                    await flushRecordWrites();
+                    return n;
+                  });
+                }),
+                ["downloaded file", "downloaded files"],
+              ]
             : kind === "video"
               ? [
                   // The files are gone: forget each record's path to them, or the export panel
@@ -318,9 +331,9 @@ export default function Settings() {
                   // Windows lock) loses its path too: the export then fetches from the link,
                   // which is what the confirm promised.
                   loadHistory().then(() => {
-                    const before = videoPathsBeforeWipe(useTranscriptHistory.getState().records);
+                    const before = copyPathsBeforeWipe(useTranscriptHistory.getState().records, "videoPath");
                     return removeTranscriptMedia("video", basePref).then(async (n) => {
-                      for (const [id, vp] of before) patchRecord(id, (r) => stripWipedVideoPath(r, vp));
+                      for (const [id, vp] of before) patchRecord(id, (r) => stripWipedCopyPath(r, "videoPath", vp));
                       await flushRecordWrites();
                       return n;
                     });

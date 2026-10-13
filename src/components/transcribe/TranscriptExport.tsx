@@ -40,7 +40,7 @@ import {
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isGoneSourceError, isVideoSourcePath,
   legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
-  subscribeExportQueue, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
+  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
@@ -435,57 +435,79 @@ export function TranscriptExport({
    *  (the dialog approved overwriting `dest`, never that other name);
    *  otherwise to exactly `dest`, the path the user confirmed. */
   const exportAudioTo = async (dest: string): Promise<string> => {
-    let src = localAudio;
-    if (!src && serverAudioId && !trBackend) throw new Error("No backend is selected.");
-    if (!src && serverAudioId && rec && trBackend) {
+    /** The server's copy, fetched into the app's copy (null without a live server id). */
+    const fetchServerAudio = async (): Promise<string | null> => {
+      if (!serverAudioId) return null;
+      if (!trBackend) throw new Error("No backend is selected.");
+      if (!rec) return null;
       // The id actually sent: a re-run may stamp a newer one meanwhile.
       const sentId = serverAudioId;
       setMediaJob({ jobId: "", phase: "fetching-audio", done: 0, total: null });
+      let got: string | null;
       try {
-        src = await fetchUrlMedia({
+        got = await fetchUrlMedia({
           serverUrl: effectiveServerUrl(trBackend, settings), backendId: trBackend.id,
           mediaId: serverAudioId, recordId: rec.id, audioBase: audioBasePref(settings.recording),
         });
       } finally {
         setMediaJob(null);
       }
-      if (src) {
+      if (got) {
         // The fetched copy is the record's local copy now: playback has a file, and the
         // next Save copies it instead of downloading again.
-        const got = src;
-        patchRecord(rec.id, (r) => (r.mediaPath === got ? r : { ...r, mediaPath: got }));
+        const fetched = got;
+        patchRecord(rec.id, (r) => (r.mediaPath === fetched ? r : { ...r, mediaPath: fetched }));
         // The viewer's queue row too (as a run's own copy does), but only while it
         // still shows this record — a re-run of the link may own the row by now.
-        if (useTranscribeRun.getState().openRecordId === rec.id) patchItem(path, { mediaPath: got });
-      } else {
-        // Nothing back = the server lost the file (a restart): forget the id, as the
-        // video's "expired" does, so the panel stops offering a save that can only fail.
-        // Only when the asked server is the one that issued it: trBackend falls back to
-        // the first backend for a record whose own one is gone (or unrecorded), and that
-        // server's 404 says nothing about an id restoring the backend would make good again.
-        if (serverAudioIssuer !== trBackend.id) {
-          throw new Error("The selected server doesn't have this link's audio.");
-        }
-        patchRecord(rec.id, (r) => {
-          if (r.result?.sourceMediaId !== sentId) return r;
-          const res = { ...r.result };
-          delete res.sourceMediaId; delete res.sourceMediaExpiresAt; delete res.sourceMediaBackendId;
-          return { ...r, result: res };
-        });
-        throw new Error("The server no longer has this link's audio.");
+        if (useTranscribeRun.getState().openRecordId === rec.id) patchItem(path, { mediaPath: fetched });
+        return fetched;
       }
-    }
+      // Nothing back = the server lost the file (a restart): forget the id, as the
+      // video's "expired" does, so the panel stops offering a save that can only fail.
+      // Only when the asked server is the one that issued it: trBackend falls back to
+      // the first backend for a record whose own one is gone (or unrecorded), and that
+      // server's 404 says nothing about an id restoring the backend would make good again.
+      if (serverAudioIssuer !== trBackend.id) {
+        throw new Error("The selected server doesn't have this link's audio.");
+      }
+      patchRecord(rec.id, (r) => {
+        if (r.result?.sourceMediaId !== sentId) return r;
+        const res = { ...r.result };
+        delete res.sourceMediaId; delete res.sourceMediaExpiresAt; delete res.sourceMediaBackendId;
+        return { ...r, result: res };
+      });
+      throw new Error("The server no longer has this link's audio.");
+    };
+    const copyOut = async (src: string, recordId: string): Promise<string> => {
+      const audioBase = audioBasePref(settings.recording);
+      const ext = extOf(src);
+      // "bin" = a type the fetch could not name; the confirmed extension is the better guess.
+      if (ext && ext !== "bin" && ext !== extOf(dest)) {
+        const real = dest.replace(/\.[^.\\/]+$/, "") + "." + ext;
+        if ((await copying(copyMediaTo({ src, dest: real, recordId, audioBase, noClobber: true }))) !== null) return real;
+      }
+      await copying(copyMediaTo({ src, dest, recordId, audioBase }));
+      return dest;
+    };
+    const kept = localAudio;
+    const src = kept ?? (await fetchServerAudio());
     if (!src) throw new Error("No audio is stored for this transcription.");
     if (!rec) throw new Error("This transcription has no record to export from.");
-    const audioBase = audioBasePref(settings.recording);
-    const ext = extOf(src);
-    // "bin" = a type the fetch could not name; the confirmed extension is the better guess.
-    if (ext && ext !== "bin" && ext !== extOf(dest)) {
-      const real = dest.replace(/\.[^.\\/]+$/, "") + "." + ext;
-      if ((await copying(copyMediaTo({ src, dest: real, recordId: rec.id, audioBase, noClobber: true }))) !== null) return real;
+    try {
+      return await copyOut(src, rec.id);
+    } catch (e) {
+      // A link's kept copy turned out gone (Settings' "Delete audio from link transcriptions",
+      // or by hand): forget it, as exportVideoTo does for the video, and use the server's
+      // copy while it still has one.
+      if (!urlSource || src !== kept || !isGoneSourceError(e)) throw e;
+      patchRecord(rec.id, (r) => (r.mediaPath === kept ? withoutCopyPath(r, "mediaPath") : r));
+      if (mediaPath === kept && useTranscribeRun.getState().openRecordId === rec.id) {
+        patchItem(path, { mediaPath: undefined });
+      }
+      const fetched = await fetchServerAudio();
+      if (!fetched) throw new Error("The kept audio of this link is gone, and the server no longer has it.");
+      return copyOut(fetched, rec.id);
     }
-    await copying(copyMediaTo({ src, dest, recordId: rec.id, audioBase }));
-    return dest;
   };
 
   /** The video: a plain copy when no tracks ride inside it and a local copy

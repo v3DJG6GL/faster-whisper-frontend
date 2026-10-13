@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isGoneSourceError, stripWipedVideoPath, videoPathsBeforeWipe, withoutVideoPath } from "./mediaExport";
+import { copyPathsBeforeWipe, isGoneSourceError, stripWipedCopyPath, withoutCopyPath, withoutVideoPath } from "./mediaExport";
 
 describe("withoutVideoPath", () => {
   it("drops the deleted local video copy and keeps every other field", () => {
@@ -35,14 +35,14 @@ describe("isGoneSourceError", () => {
   });
 });
 
-describe("stripWipedVideoPath after the Delete-videos wipe", () => {
+describe("stripWipedCopyPath after the Delete-videos wipe", () => {
   // The mirror as the wipe begins: r1 and r2 have a copy, r3 has none yet (its link download
   // is still writing the `.tmp` the wipe skips).
-  const before = videoPathsBeforeWipe([
+  const before = copyPathsBeforeWipe([
     { id: "r1", videoPath: "/base/video/r1.mkv" },
     { id: "r2", videoPath: "/base/video/r2.mp4" },
     { id: "r3" },
-  ]);
+  ], "videoPath");
 
   it("snapshots only the records that had a copy", () => {
     expect([...before]).toEqual([
@@ -52,18 +52,55 @@ describe("stripWipedVideoPath after the Delete-videos wipe", () => {
   });
 
   it("drops a path the wipe deleted", () => {
-    const out = stripWipedVideoPath({ id: "r1", videoPath: "/base/video/r1.mkv" }, before.get("r1"));
+    const out = stripWipedCopyPath({ id: "r1", videoPath: "/base/video/r1.mkv" }, "videoPath", before.get("r1"));
     expect("videoPath" in out).toBe(false);
   });
 
   it("keeps a path re-stamped during the wipe (a download renamed into place)", () => {
     const rec = { id: "r2", videoPath: "/base/video/r2.webm" };
-    expect(stripWipedVideoPath(rec, before.get("r2"))).toBe(rec);
+    expect(stripWipedCopyPath(rec, "videoPath", before.get("r2"))).toBe(rec);
   });
 
   it("leaves a record that had no copy when the wipe began untouched", () => {
     const rec = { id: "r3", videoPath: "/base/video/r3.mp4" };
     expect(before.get("r3")).toBeUndefined();
-    expect(stripWipedVideoPath(rec, before.get("r3"))).toBe(rec);
+    expect(stripWipedCopyPath(rec, "videoPath", before.get("r3"))).toBe(rec);
+  });
+});
+
+describe("stripWipedCopyPath after the Delete-audio-from-links wipe", () => {
+  // Link records as the wipe begins: r1 kept its audio, r2 kept audio AND video, r3 has none.
+  const records = [
+    { id: "r1", mediaPath: "/base/links/r1.m4a" },
+    { id: "r2", mediaPath: "/base/links/r2.webm", videoPath: "/base/video/r2.mkv" },
+    { id: "r3" },
+  ];
+  const before = copyPathsBeforeWipe(records, "mediaPath");
+
+  it("snapshots each record's audio copy, not its video", () => {
+    expect([...before]).toEqual([
+      ["r1", "/base/links/r1.m4a"],
+      ["r2", "/base/links/r2.webm"],
+    ]);
+  });
+
+  it("drops the deleted audio path and keeps the video copy", () => {
+    const out = stripWipedCopyPath(records[1], "mediaPath", before.get("r2"));
+    expect(out).toEqual({ id: "r2", videoPath: "/base/video/r2.mkv" });
+  });
+
+  it("keeps an audio path re-stamped during the wipe (a Save's fetch landing meanwhile)", () => {
+    const rec = { id: "r1", mediaPath: "/base/links/r1.opus" };
+    expect(stripWipedCopyPath(rec, "mediaPath", before.get("r1"))).toBe(rec);
+  });
+
+  it("leaves a record that had no audio copy when the wipe began untouched", () => {
+    const rec = { id: "r3", mediaPath: "/base/links/r3.m4a" };
+    expect(stripWipedCopyPath(rec, "mediaPath", before.get("r3"))).toBe(rec);
+  });
+
+  it("withoutCopyPath forgets only the named copy", () => {
+    expect(withoutCopyPath(records[1], "mediaPath")).toEqual({ id: "r2", videoPath: "/base/video/r2.mkv" });
+    expect(withoutCopyPath(records[2], "mediaPath")).toBe(records[2]);
   });
 });
