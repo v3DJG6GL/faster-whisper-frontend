@@ -1064,10 +1064,12 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("東京\nTokyo", true)).toBe("東京 Tokyo");
     expect(joinLineBreaks("Hello\nworld", true)).toBe("Hello world");
   });
-  it("cjkWraps: lines ending on 。，、 (a quarter of the CJK line ends) and no phrase space; ？！： alone, a mid-line 、 and phrase-spaced text do not wrap", () => {
+  it("cjkWraps: a quarter of the CJK lines carry 。，(or a ja 、) and no phrase space; ？！： alone, zh's enumeration 、 and phrase-spaced text do not wrap", () => {
     expect(cjkWraps("今日はとても\n良い天気ですね。")).toBe(true);
     expect(cjkWraps("我们今天去公园､\n散步然后")).toBe(true);
-    expect(cjkWraps("我们今天去公园\n散步､然后")).toBe(false); // an enumeration mark is no line end
+    expect(cjkWraps("我们今天去公园\n散步､然后")).toBe(false); // zh's enumeration mark, mid-line
+    expect(cjkWraps("今日はいい天気ですね。明日も\n晴れるでしょうか？")).toBe(true); // 。 mid-line
+    expect(cjkWraps("東京へ、大阪へ\nそして京都")).toBe(true); // ja's phrase comma
     expect(cjkWrapsLines(["我们走吧", "他们在等我们", "快点", "好的", "翻译：小明。"])).toBe(false); // one credit line
     expect(cjkWraps("我们走吧\n他们在等我们")).toBe(false);
     expect(cjkWraps("我不知道他去哪儿了\n你知道吗？")).toBe(false);

@@ -120,31 +120,32 @@ const PHRASE_SPACE = new RegExp(
   `(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})[^\\S\\n]+(?:${UNSPACED.source}|${UNSPACED_PUNCT.source})`,
   "u",
 );
-/** The phrase ends a punctuated CJK text carries and the unpunctuated convention drops. */
-const CJK_PHRASE_END = /[。，、｡､]/u;
+/** The phrase punctuation a punctuated CJK text carries and the unpunctuated convention drops:
+ *  。 and ， (halfwidth ｡ too) anywhere in a line. */
+const CJK_PHRASE_MARK = /[。，｡]/u;
+/** 、 is zh's enumeration mark (kept by the unpunctuated convention) but ja's phrase comma: it
+ *  counts in a line with kana, or ending a line. */
+const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
 /** Whether a text's line breaks between two CJK characters are wraps, not phrase separators,
- *  judged on its lines: it ends its phrases with 。，、 (halfwidth ｡､ too) — at least a quarter
- *  of the lines that end on a CJK character, and at least one — so a break mid-phrase
- *  only wraps it, and no line holds a phrase space (unpunctuated subtitles drop 。，、 at line
- *  ends and separate phrases with the break; Whisper's phrase-spaced text and our exports of it
- *  wrap at a space and drop it). ？！：； do not count: the unpunctuated convention keeps them.
- *  One stray 。 (a credit line) does not flip an unpunctuated file of a few cues, and a 、 inside
- *  a line (an enumeration) is no line end. Judged on
- *  the whole file (import) or the whole edited segment — a rule per line would read one file
- *  both ways. */
+ *  judged on its lines: at least one, and at least a quarter, of the lines holding CJK text carry
+ *  phrase punctuation (。， anywhere, 、 in a ja line or ending one) — sentences may end on ？！」,
+ *  and a wrap rarely lands right after a mark — and no line holds a phrase space (unpunctuated
+ *  subtitles drop 。，、 and separate phrases with the break; Whisper's phrase-spaced text and
+ *  our exports of it wrap at a space and drop it). ？！：； do not count: the unpunctuated
+ *  convention keeps them. One stray 。 (a credit line) does not flip an unpunctuated file of a
+ *  few cues. Judged on the whole file (import) or the whole edited segment — a rule per line
+ *  would read one file both ways. */
 export function cjkWrapsLines(lines: Iterable<string>): boolean {
-  let ends = 0;
-  let stops = 0;
+  let cjk = 0;
+  let marked = 0;
   for (const raw of lines) {
     const l = raw.trimEnd();
-    if (!l) continue;
+    if (!l || !UNSPACED.test(l)) continue;
     if (PHRASE_SPACE.test(l)) return false;
-    const e = edgeChar(l, true);
-    if (!unspacedChar(e)) continue;
-    ends++;
-    if (CJK_PHRASE_END.test(e)) stops++;
+    cjk++;
+    if (CJK_PHRASE_MARK.test(l) || /[、､]$/u.test(l) || (/[、､]/u.test(l) && KANA.test(l))) marked++;
   }
-  return stops > 0 && stops * 4 >= ends;
+  return marked > 0 && marked * 4 >= cjk;
 }
 /** `cjkWrapsLines` for one text (an edited segment). */
 export function cjkWraps(s: string): boolean {

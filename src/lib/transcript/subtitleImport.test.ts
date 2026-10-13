@@ -220,9 +220,12 @@ describe("plain text + errors", () => {
     // A .txt file decides once for the whole file: punctuated line ends, every CJK wrap joins.
     expect(parseImportedText("txt", "我们今天去公园，\n散步然后回家。\n\n我爱你\n你爱我。\n\nSecond\npara").segments.map((s) => s.text))
       .toEqual(["我们今天去公园，散步然后回家。", "我爱你你爱我。", "Second para"]);
-    // A 、 inside a line is an enumeration, no phrase end: the file keeps its separators.
+    // A mid-line ， is phrase punctuation too (sentences may end on ？！」 instead of 。).
     expect(parseImportedText("txt", "我们今天去公园\n散步，然后回家\n\n我爱你\n你爱我").segments.map((s) => s.text))
-      .toEqual(["我们今天去公园 散步，然后回家", "我爱你 你爱我"]);
+      .toEqual(["我们今天去公园散步，然后回家", "我爱你你爱我"]);
+    // zh's 、 is an enumeration mark the unpunctuated convention keeps: the file keeps its separators.
+    expect(parseImportedText("txt", "我买了苹果、香蕉\n我们走吧\n\n快点\n别迟到了").segments.map((s) => s.text))
+      .toEqual(["我买了苹果、香蕉 我们走吧", "快点 别迟到了"]);
     expect(parseImportedText("txt", "我们今天去公园\n散步\n\n我爱你\n你爱我").segments.map((s) => s.text))
       .toEqual(["我们今天去公园 散步", "我爱你 你爱我"]);
   });
@@ -244,6 +247,24 @@ describe("plain text + errors", () => {
     const t0 = performance.now();
     expect(parseImportedText("txt", body).segments.length).toBe(20_000);
     expect(performance.now() - t0).toBeLessThan(1500);
+  });
+  it("srt/vtt: punctuated CJK the export wrapped reads back unchanged, whatever its sentences end on", () => {
+    for (const [language, text] of [
+      ["ja", "今日はとてもいい天気ですね、明日も晴れるでしょうか？"],
+      ["ja", "彼は「明日は雨だ。」と言っていましたが、本当に降るのでしょうか」"],
+      ["zh", "我们今天去公园散步，然后回家吃饭再看一会儿电视吧！"],
+    ] as const) {
+      const r: BatchResult = {
+        text,
+        language,
+        segments: [{ start: 0, end: 6, text }],
+        words: [...text].map((word, i) => ({ word, start: i * 0.2, end: i * 0.2 + 0.2 })),
+      };
+      for (const format of ["srt", "vtt"] as const) {
+        const out = generateExport(r, { format, cues: { length: "standard", timing: "same" } });
+        expect(parseImportedText(format, out).segments.map((s) => s.text).join("")).toBe(text);
+      }
+    }
   });
   it("srt/vtt: a punctuated CJK cue the export wrapped over two lines reads back without a space at the break", () => {
     const text = "今日はとてもいい天気ですね。明日も晴れるでしょう。";

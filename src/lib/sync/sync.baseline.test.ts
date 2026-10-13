@@ -1856,7 +1856,11 @@ describe("a sync edit made during the launch work", () => {
     state: { version: 1, updated_ts: 1, device: "peer", blob: { logging: { logLevel: "debug", keepDays: 30, showInSidebar: true } } },
   };
 
-  async function launchEngine(syncAtLaunch: Partial<NonNullable<AppSettings["sync"]>>, snapshot: SyncBlob = {}) {
+  async function launchEngine(
+    syncAtLaunch: Partial<NonNullable<AppSettings["sync"]>>,
+    snapshot: SyncBlob = {},
+    stateExtra: Record<string, unknown> = {},
+  ) {
     io.launchRead = false;
     io.pushes = 0;
     io.pulls = 0;
@@ -1869,7 +1873,7 @@ describe("a sync edit made during the launch work", () => {
     vi.doMock("../api", async (importOriginal) => ({
       ...(await importOriginal<typeof import("../api")>()),
       isTauri: true,
-      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot, snapshotSecretIds: ["b1"] }),
+      loadSyncState: async () => ({ version: 1, updatedAt: 1, device: "peer", serverBackendId: "b1", snapshot, snapshotSecretIds: ["b1"], ...stateExtra }),
       saveSyncState: async () => {},
       syncDeviceInfo: async () => ({ deviceId: "d1", hostname: "me", platform: "linux" }),
       readBackendKeys: (ids: string[]) => {
@@ -2038,6 +2042,49 @@ describe("a sync edit made during the launch work", () => {
       await init;
       await vi.waitFor(() => expect(store.getState().syncStatus).toBe("ok"));
       expect(engine.getPendingConflict()).toBeNull();
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a re-enabled category whose dialog was left unanswered still asks after a restart", async () => {
+    // Its gate is already ON at launch: only the recorded mark says it was never reconciled.
+    const { engine, store, init } = await launchEngine({ sub: { ...offSub, logLevel: true } }, serverCopy, { freshCats: ["logging", "nonsense"] });
+    try {
+      store.setState((st) => ({ settings: { ...st.settings, logging: { ...st.settings.logging!, logLevel: "warn" } } }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      await new Promise((r) => setTimeout(r, 30));
+      expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("an automatic pull while a re-enabled category's dialog waits keeps its notice, and turning the setting off drops the dialog", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "warn" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      await vi.waitFor(() => expect(store.getState().syncStatus).not.toBe("syncing"));
+      const before = store.getState().syncStatus;
+      await engine.pullNow(); // a window-focus pull: same version, "nothing new"
+      expect(store.getState().syncStatus).toBe(before);
+      expect(store.getState().syncStatus).not.toBe("ok");
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: offSub } } }));
+      await vi.waitFor(() => expect(engine.getPendingConflict()).toBeNull());
+      expect(io.pushes).toBe(0);
     } finally {
       io.release({});
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));

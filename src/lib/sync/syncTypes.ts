@@ -13,6 +13,7 @@ import type {
   ThemeName,
   TranscribeSettings,
   AccentMotion,
+  SyncCategory,
 } from "../types";
 
 /** The `general` category: settings.theme + the portable general fields.
@@ -276,6 +277,9 @@ export interface SyncState {
   /** How many keyring accounts the stash of those keys spans (wincred caps one credential at
    *  2560 bytes). Absent means 1: the legacy single-account stash. */
   snapshotSecretChunks?: number;
+  /** Categories turned ON since `snapshot` was adopted whose reconcile has not landed yet (the
+   *  engine's `freshCats`), so a restart still merges them against a base without them. */
+  freshCats?: SyncCategory[];
 }
 
 /** Mirror of Rust transport::sync::SyncRemoteState. */
