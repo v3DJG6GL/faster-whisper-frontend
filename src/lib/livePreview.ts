@@ -49,14 +49,40 @@ export function pauseKind(seconds: number, t: LiveTimings): PauseKind {
   return "go";
 }
 
+/** Who supplies each pause, for serverTimings: the server rewrites a pair only when a client
+ *  value takes part, and never moves a locked one. */
+export interface PairFacts {
+  /** Sent by the client (the profile's or backend's own value, not locked by the server). */
+  client: { inner: boolean; outer: boolean; hard: boolean };
+  innerLocked: boolean;
+  hardLocked: boolean;
+  /** The server's own outer pause: what runs when it drops a client outer. */
+  serverOuterMs: number;
+}
+
 /** `t` as the server will run it: it keeps the inner pause below the outer one (else outer − 50 ms)
- *  and a hard break above it (else outer + 1 s), as streaming/routes.py does. The preview reads
- *  this so it never shows a pair the server would rewrite; the editor keeps the raw values. */
-export function serverTimings(t: LiveTimings): LiveTimings {
+ *  and a hard break above it (else outer + 1 s), as streaming/routes.py _client_stream_values does.
+ *  With `facts` it mirrors the rest of that rule: only a pair a client value takes part in is
+ *  rewritten, and a client outer that conflicts with a LOCKED inner or hard break is dropped (the
+ *  server's outer runs, the locked value stays). The preview reads this so it never shows a pair
+ *  the server would rewrite; the editor keeps the raw values. */
+export function serverTimings(t: LiveTimings, facts?: PairFacts): LiveTimings {
+  const client = facts?.client ?? { inner: true, outer: true, hard: true };
+  let outerMs = t.outerMs;
+  let outerClient = client.outer;
+  if (
+    facts &&
+    outerClient &&
+    ((facts.innerLocked && t.innerMs >= outerMs) || (facts.hardLocked && t.hardMs > 0 && t.hardMs <= outerMs))
+  ) {
+    outerMs = facts.serverOuterMs;
+    outerClient = false;
+  }
   return {
     ...t,
-    innerMs: t.innerMs >= t.outerMs ? Math.max(0, t.outerMs - 50) : t.innerMs,
-    hardMs: t.hardMs > 0 && t.hardMs <= t.outerMs ? t.outerMs + 1000 : t.hardMs,
+    outerMs,
+    innerMs: (client.inner || outerClient) && t.innerMs >= outerMs ? Math.max(0, outerMs - 50) : t.innerMs,
+    hardMs: (client.hard || outerClient) && t.hardMs > 0 && t.hardMs <= outerMs ? outerMs + 1000 : t.hardMs,
   };
 }
 

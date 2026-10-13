@@ -6,7 +6,8 @@
 // The server applies them and keeps the pair rules (inner < outer, hard break 0 or > outer);
 // the steppers keep the inner pause below the outer one (a server-locked partner is clamped
 // against, never moved), and the preview runs the values through serverTimings() (both server
-// pair rules), so it never shows a pair the server would rewrite.
+// pair rules, and the dropped client outer against a locked partner), so it never shows a pair
+// the server would rewrite.
 // Nothing here acts on the values — the preview just draws them.
 import { useId, type CSSProperties } from "react";
 import { RangeField, Stepper } from "@/components/ui";
@@ -25,6 +26,7 @@ import {
   separatorGlyphs,
   serverTimings,
   type LiveTimings,
+  type PairFacts,
   type PauseKind,
 } from "@/lib/livePreview";
 
@@ -55,6 +57,7 @@ export function LiveDictationFields({
   onChange,
   inherited,
   sources,
+  serverValues,
   locked,
   known,
   disabledReason,
@@ -67,6 +70,9 @@ export function LiveDictationFields({
   inherited?: InheritedValues;
   /** Where each inherited value comes from: "Backend default" reads "· backend", else "· server". */
   sources?: ServerInherited["sources"];
+  /** The server's own values (no backend layer under them), when `inherited` mixes a backend's
+   *  in: what runs when the server drops a client value. Absent = `inherited` is the server's. */
+  serverValues?: InheritedValues;
   locked?: ReadonlySet<DecodeKey>;
   known?: ReadonlySet<DecodeKey> | null;
   /** The whole block does nothing here (e.g. the profile uses the Batch endpoint): the tooltip. */
@@ -99,6 +105,25 @@ export function LiveDictationFields({
     outerMs: num(eff("streaming_vad_outer_silence_ms")) ?? num(inh("streaming_vad_outer_silence_ms")) ?? LIVE_FALLBACK.outerMs,
     hardMs: num(eff("streaming_hard_break_silence_ms")) ?? num(inh("streaming_hard_break_silence_ms")) ?? LIVE_FALLBACK.hardMs,
     separator: str(eff("streaming_hard_break_separator")) ?? str(inh("streaming_hard_break_separator")) ?? LIVE_FALLBACK.separator,
+  };
+
+  // Which pauses the server rewrites as a pair (serverTimings): only client-sent ones — this
+  // row's own value or the backend's under it — and never a locked one.
+  const sent = (k: DecodeKey) =>
+    !disabledReason && !locked?.has(k) && (value[k] !== undefined || sources?.[k] === "Backend default");
+  const outerKey: DecodeKey = "streaming_vad_outer_silence_ms";
+  const pairFacts: PairFacts = {
+    client: {
+      inner: sent("streaming_vad_inner_silence_ms"),
+      outer: sent(outerKey),
+      hard: sent("streaming_hard_break_silence_ms"),
+    },
+    innerLocked: !!locked?.has("streaming_vad_inner_silence_ms"),
+    hardLocked: !!locked?.has("streaming_hard_break_silence_ms"),
+    serverOuterMs:
+      num(serverValues?.[outerKey]) ??
+      (sources?.[outerKey] !== "Backend default" ? num(inh(outerKey)) : undefined) ??
+      LIVE_FALLBACK.outerMs,
   };
 
   /** Inner/outer: write the moved one, and the other only when it had to move along. A partner
@@ -285,7 +310,7 @@ export function LiveDictationFields({
           </OverrideHeader>
         );
       })}
-      {preview && <LivePreview t={t} />}
+      {preview && <LivePreview t={t} facts={pairFacts} />}
     </div>
   );
 }
@@ -304,8 +329,8 @@ const PAUSE_TIP: Record<PauseKind, string> = {
 
 /** "What you'd get": the sample dictation typed into a little app window, each pause shown
  *  where it happens, in the colour of the setting that decides it. */
-function LivePreview({ t }: { t: LiveTimings }) {
-  const st = serverTimings(t);
+function LivePreview({ t, facts }: { t: LiveTimings; facts: PairFacts }) {
+  const st = serverTimings(t, facts);
   const rule = previewRule(st);
   const tokens = livePreview(st);
   return (

@@ -94,6 +94,37 @@ describe("serverTimings", () => {
   it("pulls an inner pause at or over the outer one to outer − 50 ms", () => {
     expect(serverTimings({ ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200 }).innerMs).toBe(1150);
   });
+  describe("with who supplies each pause (routes.py _client_stream_values)", () => {
+    const none = { inner: false, outer: false, hard: false };
+    it("drops a client outer that conflicts with a LOCKED inner: the server's outer runs, the inner stays", () => {
+      const t = serverTimings(
+        { ...LIVE_FALLBACK, innerMs: 1500, outerMs: 1200 },
+        { client: { ...none, outer: true }, innerLocked: true, hardLocked: false, serverOuterMs: 2000 },
+      );
+      expect(t).toMatchObject({ innerMs: 1500, outerMs: 2000, hardMs: 5000 });
+      expect(previewRule(t).end).toBe("from 2 s period");
+    });
+    it("drops a client outer that conflicts with a LOCKED hard break, leaving the hard break", () => {
+      const t = serverTimings(
+        { ...LIVE_FALLBACK, outerMs: 1200, hardMs: 1000 },
+        { client: { ...none, outer: true }, innerLocked: false, hardLocked: true, serverOuterMs: 2000 },
+      );
+      expect(t).toMatchObject({ innerMs: 700, outerMs: 2000, hardMs: 1000 });
+    });
+    it("clamps a client-sent pair as before when nothing is locked", () => {
+      const facts = { client: { inner: true, outer: true, hard: true }, innerLocked: false, hardLocked: false, serverOuterMs: 2000 };
+      expect(serverTimings({ ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200, hardMs: 1000 }, facts)).toEqual({
+        ...LIVE_FALLBACK,
+        innerMs: 1150,
+        outerMs: 1200,
+        hardMs: 2200,
+      });
+    });
+    it("leaves the server's own values alone when no client value takes part", () => {
+      const t = { ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200, hardMs: 1000 };
+      expect(serverTimings(t, { client: none, innerLocked: false, hardLocked: false, serverOuterMs: 1200 })).toEqual(t);
+    });
+  });
   it("keeps the pulled-down inner pause apart from the outer one in the legend", () => {
     const rule = previewRule(serverTimings({ ...LIVE_FALLBACK, innerMs: 1200, outerMs: 1200 }));
     expect(rule.ref).toBe("from 1.15 s preview refreshes");

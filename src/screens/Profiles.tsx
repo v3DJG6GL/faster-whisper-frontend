@@ -562,6 +562,8 @@ function Editor({
             onChange={(v) => set({ decodeOverrides: Object.keys(v).length ? v : undefined })}
             inherited={server.values}
             sources={server.sources}
+            // The server's own values: the live preview's outer pause when the server drops ours.
+            serverValues={serverInherited(decodeDefaults, undefined, "stream").values}
             locked={server.locked}
             known={server.known}
             disabledReason={
