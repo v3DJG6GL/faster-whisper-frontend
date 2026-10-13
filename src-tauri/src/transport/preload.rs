@@ -43,19 +43,21 @@ struct PreloadReq {
 // client re-POSTs the whole plan on each renew tick (preload.ts), and a `plan_id`
 // that nothing could ever supply was dead plumbing across four layers.
 
-/// The request body for a plan, or None when no entry is left to send. Entries with a blank id
-/// or one past [`PRELOAD_ID_MAX`] are dropped BEFORE the [`MAX_ENTRIES`] clamp, so a dropped one
-/// doesn't push a sendable one out.
+/// The request body for a plan, or None when no entry is left to send. Entries with an id past
+/// [`PRELOAD_ID_MAX`], or one that is blank once folded (an id of invisible characters only folds
+/// to "", which the server's `min_length=1` would answer with a 422 for the whole plan), are
+/// dropped BEFORE the [`MAX_ENTRIES`] clamp, so a dropped one doesn't push a sendable one out.
 fn plan_body(models: Vec<PreloadModel>) -> Option<PreloadReq> {
     let models: Vec<PreloadModel> = models
         .into_iter()
-        .filter(|m| !m.id.trim().is_empty() && m.id.chars().count() <= PRELOAD_ID_MAX)
-        .take(MAX_ENTRIES)
+        .filter(|m| m.id.chars().count() <= PRELOAD_ID_MAX)
         .map(|m| PreloadModel {
             family: super::bounded_server_text(&m.family, FAMILY_MAX),
             // Folds control characters only: within the bound nothing is cut.
             id: super::bounded_server_text(&m.id, PRELOAD_ID_MAX),
         })
+        .filter(|m| !m.id.trim().is_empty())
+        .take(MAX_ENTRIES)
         .collect();
     (!models.is_empty()).then_some(PreloadReq {
         models,
@@ -135,6 +137,15 @@ mod tests {
         let mut plan = vec![entry("whisper", "  "), entry("whisper", &"m".repeat(129))];
         plan.extend((0..MAX_ENTRIES).map(|i| entry("whisper", &format!("m{i}"))));
         assert_eq!(ids(plan).map(|v| v.len()), Some(MAX_ENTRIES));
+    }
+
+    #[test]
+    fn an_id_that_folds_to_nothing_is_dropped_not_sent_blank() {
+        // `trim()` keeps a zero-width space; the fold deletes it, and a blank id 422s the plan.
+        assert_eq!(
+            ids(vec![entry("whisper", "\u{200B}"), entry("whisper", "m1")]),
+            Some(vec!["m1".to_string()])
+        );
     }
 
     #[test]

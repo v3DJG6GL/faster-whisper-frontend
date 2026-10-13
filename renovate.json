@@ -50,8 +50,8 @@
       "rangeStrategy": "update-lockfile"
     },
     {
-      "description": "Cargo treats a bump of the leftmost non-zero component as breaking: cpal 0.15 -> 0.16 or windows-sys 0.60 -> 0.61 is a semver-MAJOR change. Renovate's cargo versioning is plain semver 2.0, so it labels these updateType `minor` and the major rule at the bottom never sees them. Open the PR and let CI compile both targets, but never automerge: several of these crates are ABI-coupled to something outside their own version (windows-sys must stay on the version Tauri already resolves, or the binary carries two copies; gtk is ignored outright for the same reason).",
-      "matchManagers": ["cargo"],
+      "description": "Cargo treats a bump of the leftmost non-zero component as breaking: cpal 0.15 -> 0.16 or windows-sys 0.60 -> 0.61 is a semver-MAJOR change. Renovate's cargo versioning is plain semver 2.0, so it labels these updateType `minor` and the major rule at the bottom never sees them. Open the PR and let CI compile both targets, but never automerge: several of these crates are ABI-coupled to something outside their own version (windows-sys must stay on the version Tauri already resolves, or the binary carries two copies; gtk is ignored outright for the same reason). Matched by datasource, not manager, so the cargo-audit pin in the workflows (read by the custom regex manager) gets a human for a 0.x minor too.",
+      "matchDatasources": ["crate"],
       "matchCurrentVersion": "<1.0.0",
       "matchUpdateTypes": ["minor"],
       "automerge": false

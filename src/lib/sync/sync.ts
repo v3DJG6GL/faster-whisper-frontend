@@ -2008,12 +2008,18 @@ let gen = 0;
  *  clicked meanwhile awaits it instead of dropping at the `inFlight` gate; awaiting the launch
  *  work alone would wake with the startup pull holding the lock and drop all the same. */
 let launchDone: Promise<void> | null = null;
+/** Settles `launchDone` (and clears both); null outside launch. */
+let endLaunch: (() => void) | null = null;
 
 /** Invalidate whatever sync work is in flight or queued. Call BEFORE starting
  *  work against a different server (or after disabling sync). */
 function supersede(): void {
   gen++;
   inFlight = false; // the superseded call skips its own reset (epoch mismatch)
+  // Launch is over for whatever comes next: a pull for the new server must not wait out the
+  // superseded startup pull (up to a keyring wait plus the request timeout). Clicks parked on it
+  // wake and are voided by their gen check.
+  endLaunch?.();
   clearTimeout(pushTimer);
   setPendingConflict(null); // a conflict against the old server is unresolvable now
   setPendingReview(null); // ditto for a held-back pull from the old server
@@ -3986,9 +3992,12 @@ export async function initSync(): Promise<void> {
   let launchEnded!: () => void;
   launchDone = new Promise<void>((r) => {
     launchEnded = () => {
-      launchDone = null;
+      // A supersede may have ended this launch already and a later one begun: leave that alone.
+      if (endLaunch !== launchEnded) return;
+      launchDone = endLaunch = null;
       r();
     };
+    endLaunch = launchEnded;
   });
   try {
     await configReady;

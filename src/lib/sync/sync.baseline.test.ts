@@ -1586,12 +1586,17 @@ describe("a manual Push / Pull clicked during launch", () => {
     released: false,
     pushes: [] as { blob: SyncBlob; afterRelease: boolean }[],
     pull: null as unknown,
+    // When set, answers syncPull instead of `pull` (a hung startup pull).
+    pullFn: null as null | (() => Promise<unknown>),
+    pulls: 0,
   };
 
   async function launchEngine() {
     io.launchRead = false;
     io.released = false;
     io.pushes = [];
+    io.pullFn = null;
+    io.pulls = 0;
     const parked = new Promise<Record<string, string>>((r) => {
       io.release = (v) => {
         io.released = true;
@@ -1619,7 +1624,10 @@ describe("a manual Push / Pull clicked during launch", () => {
       },
       setBackendKey: async () => {},
       deleteBackendKey: async () => {},
-      syncPull: async () => io.pull,
+      syncPull: async () => {
+        io.pulls++;
+        return io.pullFn ? io.pullFn() : io.pull;
+      },
       syncPush: async (args: { blob: SyncBlob; baseVersion: number }) => {
         io.pushes.push({ blob: args.blob, afterRelease: io.released });
         return { ok: true, status: 200, state: { version: args.baseVersion + 1, updated_ts: 2, device: "me", blob: {} } };
@@ -1661,6 +1669,28 @@ describe("a manual Push / Pull clicked during launch", () => {
     } finally {
       io.release({});
       // Sync off: cancels the startup pull's scheduled push.
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("a sync-server switch does not wait for a startup pull that hangs", async () => {
+    // The configured server is unreachable: the startup pull waits out its timeout. The user
+    // switches to another server meanwhile — its pull must start at once, as before launch waited.
+    io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
+    const { store, init } = await launchEngine();
+    let hung = true;
+    io.pullFn = () => (hung ? new Promise(() => {}) : Promise.resolve(io.pull));
+    try {
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await vi.waitFor(() => expect(io.pulls).toBe(1)); // the startup pull, now hung
+      hung = false;
+      store.setState((st) => ({
+        backends: [...st.backends, backend({ id: "b2", hasApiKey: true })],
+        settings: { ...st.settings, sync: { ...st.settings.sync!, backendId: "b2" } },
+      }));
+      await vi.waitFor(() => expect(io.pulls).toBe(2));
+    } finally {
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
     }
   });
