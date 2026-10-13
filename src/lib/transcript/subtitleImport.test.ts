@@ -62,6 +62,18 @@ describe("round-trips against generateExport", () => {
     const back = parseImportedText("vtt", vtt);
     expect(back.segments[0]).toMatchObject({ text: "Hello there.", speaker: "Tom & <Jerry>" });
   });
+  it("vtt: a speaker name over 40 characters (an older rename) still re-imports as the speaker", () => {
+    for (const name of [
+      "Professor Maximilian von Hohenzollern-Sigmaringen", // 49
+      "Professor Maximilian von Hohenzollern-Sigmaringen und Freunde aus Berlin am Rhein", // 81
+    ]) {
+      const vtt = generateExport(RESULT, { format: "vtt", renames: { SPEAKER_00: name } });
+      expect(vtt).toContain(`<v ${name}>`);
+      const back = parseImportedText("vtt", vtt);
+      expect(back.segments[0]).toMatchObject({ text: "Hello there.", speaker: name.slice(0, 40).trim() });
+      expect(back.segments.some((s) => s.text.includes("<v"))).toBe(false);
+    }
+  });
   it("lrc: line tags parse, enhanced word tags reduce to text", () => {
     const lrc = generateExport(RESULT, { format: "lrc", wordTimestamps: true });
     const back = parseImportedText("lrc", lrc);

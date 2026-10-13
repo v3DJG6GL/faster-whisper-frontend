@@ -40,7 +40,7 @@ import {
   clearEdits, mergeSegmentTranslations, setRename, setSegmentEdit, setSegmentSpeaker,
   setSpeakerColor as setSpeakerColorAction, useTranscribeRun,
 } from "@/lib/transcribeRun";
-import { stripControlChars, safeDisplayText } from "@/lib/sanitize";
+import { capCodePoints, stripControlChars, safeDisplayText } from "@/lib/sanitize";
 import { shortModelName } from "@/lib/inherit";
 import {
   cueGrid, DEFAULT_SPEAKER_COLORS, joinSegmentTexts, prettySpeaker, speakerColorIndex, speakerName, speakerOrder,
@@ -373,7 +373,9 @@ export function TranscriptViewer({
 
   const commitRename = () => {
     if (editingSpeaker) {
-      setRename(okey, editingSpeaker, stripControlChars(renameDraft).trim());
+      // 40 code points: the longest name a subtitle re-import reads back as the speaker
+      // (subtitleImport's "Name: " prefix and voice-tag display bound).
+      setRename(okey, editingSpeaker, capCodePoints(stripControlChars(renameDraft).trim(), 40).trim());
     }
     setEditingSpeaker(null);
   };
@@ -2188,6 +2190,7 @@ export function TranscriptViewer({
                   <input
                     autoFocus
                     value={renameDraft}
+                    maxLength={40}
                     onChange={(e) => setRenameDraft(e.target.value)}
                     onBlur={commitRename}
                     onKeyDown={(e) => {

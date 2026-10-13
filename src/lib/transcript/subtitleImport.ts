@@ -338,8 +338,8 @@ function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
       // Only a dash right before a tag goes — an interrupted "I was going to—" keeps its own.
       const dj = joined.replace(/(^|\s)[-–—]\s*(?=<v[\s.])/g, "$1");
       const first = dj.search(/<v[\s.]/);
-      const spans = [...dj.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?=<v[\s.]|$)/g)];
-      // A tag the span regex rejects (a name over 40 characters) would drop its text: take
+      const spans = [...dj.slice(first).matchAll(/<v(?:\.[^\s>]*)?\s+([^>]{1,200})>([\s\S]*?)(?=<v[\s.]|$)/g)];
+      // A tag the span regex rejects (a name over 200 characters) would drop its text: take
       // the whole cue as plain text instead, as the single-voice path does.
       if (spans.length === tags) {
         const lead = cueText(dj.slice(0, first));
@@ -351,7 +351,7 @@ function cuesToSegments(cues: RawCue[], wraps: boolean): ImportedText {
         continue;
       }
     }
-    const v = tags > 1 ? null : /^<v(?:\.[^\s>]*)?\s+([^>]{1,40})>([\s\S]*?)(?:<\/v>)?$/.exec(joined);
+    const v = tags > 1 ? null : /^<v(?:\.[^\s>]*)?\s+([^>]{1,200})>([\s\S]*?)(?:<\/v>)?$/.exec(joined);
     if (v) {
       const text = stripMarkup(v[2]);
       if (text) segments.push({ start, end, text, speaker: voiceName(v[1]) });
