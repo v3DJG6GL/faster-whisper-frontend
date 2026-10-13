@@ -1167,11 +1167,14 @@ mod imp {
         for fire in fires {
             match fire {
                 Fire::Start(pid) => {
+                    // Registered before the emit, as evdev's twin does. No generation check is
+                    // needed here: this worker's own post-loop claims every hold it registered
+                    // (`take_hold`), so one registered after a teardown drain still gets its stop.
+                    note_hold(&pid, &engine.keys_for_profile(&pid), true);
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "start", Some(&chord_mods(&pid)));
-                    note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
                 Fire::Stop(pid) => {
                     if teardown {

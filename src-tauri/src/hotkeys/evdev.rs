@@ -294,8 +294,10 @@ mod imp {
         *g = None;
         let generation = retire_readers();
         // The abort skips their post-loop "stop" for a PTT chord held across this restart, so
-        // emit it now — AFTER the abort, so no reader can start a hold this drain misses (see
-        // commands::apply_bindings). Also covers the no-chords early return below.
+        // emit it now — after the generation moved on: a reader still inside `commit` past the
+        // abort registers (and emits) a start only under the live generation, so every hold that
+        // emitted a start is one this drain sees (`register_hold`). Also covers the no-chords
+        // early return below.
         stop_held_sessions(app);
         // Fresh start: drop any held-key counts left over from a previous run so the
         // inject-gate can't wait on a phantom modifier — and retire the old readers' writer
@@ -388,6 +390,24 @@ mod imp {
                 h.push((profile_id.to_string(), keys.to_vec()));
             }
         }
+    }
+
+    /// Register a hold that is about to emit "start" — only while `generation` (the reader's own)
+    /// is still the live one. `abort()` cancels a reader only at its next yield, so one already
+    /// inside the synchronous `commit` runs on past a teardown; checked under the lock the
+    /// teardown drain takes, after the teardown bumped GENERATION, this either lands before the
+    /// drain (and is drained) or is refused, and the caller then emits nothing. A poisoned lock
+    /// still registers: refusing there would silence push-to-talk for the rest of the run.
+    fn register_hold(generation: u64, profile_id: &str, keys: &[u16]) -> bool {
+        let mut h = ACTIVE_HOLDS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if GENERATION.load(std::sync::atomic::Ordering::SeqCst) != generation {
+            return false;
+        }
+        h.retain(|(p, _)| p != profile_id);
+        h.push((profile_id.to_string(), keys.to_vec()));
+        true
     }
 
     /// Is any shortcut MODIFIER of the chord still physically down on SOME keyboard, per the
@@ -483,6 +503,9 @@ mod imp {
     /// decides whether the loss latch arms — the same rule the other two teardown sites apply.
     /// (`chord_mod_still_down` enumerates /dev/input; the drain runs on the reader task, not the
     /// GTK thread, so that warning does not apply here.)
+    ///
+    /// `generation`: the reader's own, for `register_hold`.
+    #[allow(clippy::too_many_arguments)]
     fn commit(
         app: &AppHandle,
         held_keys: &crate::hotkeys::held_keys::HeldKeysWriter,
@@ -491,6 +514,7 @@ mod imp {
         code: u16,
         down: bool,
         teardown: bool,
+        generation: u64,
     ) {
         let changed = if down {
             held.insert(code)
@@ -514,11 +538,18 @@ mod imp {
         for fire in fires {
             match fire {
                 Fire::Start(pid) => {
+                    // Registered BEFORE the emit, so no teardown drain can miss a hold that
+                    // started; a retired reader's start is dropped (see `register_hold`).
+                    if !register_hold(generation, &pid, &engine.keys_for_profile(&pid)) {
+                        tracing::info!(
+                            "[evdev] chord start from a retired reader — not emitted (the listener is restarting)"
+                        );
+                        continue;
+                    }
                     // A fresh rising edge: this press IS in the map, so the still-held check
                     // works normally for it and any pending loss latch is now a dud.
                     crate::hotkeys::held_keys::clear_chord_lost();
                     emit(app, &pid, "start", Some(&chord_mods(&pid)));
-                    note_hold(&pid, &engine.keys_for_profile(&pid), true);
                 }
                 Fire::Stop(pid) => {
                     if teardown {
@@ -599,7 +630,16 @@ mod imp {
             // Due deferred releases first, so a real release always commits before
             // whatever event (if any) woke us.
             for key in deb.expire(now) {
-                commit(&app, &held_keys, &mut held, &mut engine, key, false, false);
+                commit(
+                    &app,
+                    &held_keys,
+                    &mut held,
+                    &mut engine,
+                    key,
+                    false,
+                    false,
+                    generation,
+                );
             }
             let Some(ev) = ev else { continue };
             if ev.event_type() != EventType::KEY {
@@ -611,7 +651,16 @@ mod imp {
                 _ => continue, // 2 = autorepeat
             };
             if let Some((k, d)) = deb.on_event(ev.code(), down, held.contains(&ev.code()), now) {
-                commit(&app, &held_keys, &mut held, &mut engine, k, d, false);
+                commit(
+                    &app,
+                    &held_keys,
+                    &mut held,
+                    &mut engine,
+                    k,
+                    d,
+                    false,
+                    generation,
+                );
             }
         }
         // Nothing re-enumerates on its own: flag the loss for the suspend watch, which re-scans
@@ -629,7 +678,16 @@ mod imp {
         // latch armed on a chord the user let go of (see the `windows` twin). Teardown mode:
         // the Stop is claimed via take_hold, since stop_held_sessions may have emitted it.
         for key in deb.drain() {
-            commit(&app, &held_keys, &mut held, &mut engine, key, false, true);
+            commit(
+                &app,
+                &held_keys,
+                &mut held,
+                &mut engine,
+                key,
+                false,
+                true,
+                generation,
+            );
         }
         // Keys still held — drop our contribution so a stale modifier can't wedge the gate.
         for &code in &held {
@@ -810,6 +868,22 @@ mod imp {
 
     #[cfg(test)]
     mod tests {
+        // The only test touching GENERATION / ACTIVE_HOLDS, so it cannot race another.
+        #[test]
+        fn a_retired_reader_registers_no_hold_and_the_drain_sees_every_registered_one() {
+            use super::{register_hold, retire_readers, ACTIVE_HOLDS, GENERATION};
+            let live = GENERATION.load(std::sync::atomic::Ordering::SeqCst);
+            assert!(register_hold(live, "gen-test-a", &[29, 42]));
+            // A teardown: the generation moves on before the drain takes the lock.
+            retire_readers();
+            assert!(!register_hold(live, "gen-test-b", &[29, 42]));
+            let drained: Vec<String> = std::mem::take(&mut *ACTIVE_HOLDS.lock().unwrap())
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect();
+            assert_eq!(drained, vec!["gen-test-a".to_string()]);
+        }
+
         // Every key a user can bind via the UI (src/lib/keys.ts `codeToToken` + MODIFIER_CODES)
         // MUST map here, or its chord is silently dropped under the evdev backend while still
         // firing under the plugin/CLI. This pins that bindability matrix so future drift fails the

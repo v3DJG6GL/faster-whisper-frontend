@@ -153,9 +153,9 @@ fn apply_bindings_locked(app: &AppHandle) {
     // holding push-to-talk) would wedge "listening". The Windows hook's stops are emitted here,
     // first (its worker exits gracefully and normally emits its own, but claim-based: whichever
     // side runs first wins — see hotkeys::windows::take_hold). evdev's are emitted AFTER its
-    // readers are aborted (inside evdev::start, or after evdev::stop below): draining first left
-    // the whole permitted() enumeration as a window in which a reader could start a hold that the
-    // abort then orphaned. No-op when nothing is held.
+    // readers are retired (inside evdev::start, or after evdev::stop below): a reader still
+    // running past the abort registers a hold only under the live generation, so the drain sees
+    // every hold that emitted a start (evdev::register_hold). No-op when nothing is held.
     crate::hotkeys::windows::stop_held_sessions(app);
     #[cfg(windows)]
     {
