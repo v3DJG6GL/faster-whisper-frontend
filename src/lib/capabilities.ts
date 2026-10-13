@@ -156,14 +156,15 @@ export function initCapsController(): void {
  *  `null` means UNKNOWN — no caps fetched yet, or an older backend that sends no
  *  `translation_models` at all. Callers must not read null as "cold": this
  *  codebase's rule is that an absent capability is never treated as a denial.
- *  With `model` given, answers for that model specifically; without one, "is ANY
- *  translation model loaded". */
+ *  With `model` given, answers for that model specifically; without one, whether
+ *  the server's default — which it lists first — is resident (another loaded model
+ *  says nothing about the one a session on the default will run). */
 export function translationWarm(caps: Capabilities | null, model?: string): boolean | null {
   const list = caps?.translation_models;
   if (!list) return null;
+  if (!list.length) return false;
   const want = model?.trim();
-  if (!want) return list.some((m) => m.loaded);
-  const hit = list.find((m) => m.id === want);
+  const hit = want ? list.find((m) => m.id === want) : list[0];
   // A model the server doesn't list is not "unknown" — the inventory IS the
   // answer, and a model outside it is certainly not resident.
   return hit ? hit.loaded : false;

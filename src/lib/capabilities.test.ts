@@ -46,13 +46,24 @@ describe("translationWarm", () => {
     ).toBe(false);
   });
 
-  it("is true when any model is loaded and no model is named", () => {
+  it("answers for the default (listed first) when no model is named", () => {
+    // A resident non-default model must not make a cold default look warm.
     expect(
       translationWarm(
         caps({
           translation_models: [
             { id: "a", loaded: false },
             { id: "b", loaded: true },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      translationWarm(
+        caps({
+          translation_models: [
+            { id: "a", loaded: true },
+            { id: "b", loaded: false },
           ],
         }),
       ),
@@ -76,10 +87,21 @@ describe("translationWarm", () => {
     ).toBe(false);
   });
 
-  it("falls back to the any-loaded answer for a blank model name", () => {
+  it("reads the default for a blank model name", () => {
     expect(
       translationWarm(caps({ translation_models: [{ id: "a", loaded: true }] }), "  "),
     ).toBe(true);
+    expect(
+      translationWarm(
+        caps({
+          translation_models: [
+            { id: "a", loaded: false },
+            { id: "b", loaded: true },
+          ],
+        }),
+        "  ",
+      ),
+    ).toBe(false);
   });
 
   it("is empty-list false, not null", () => {
