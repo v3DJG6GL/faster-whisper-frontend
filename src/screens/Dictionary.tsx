@@ -673,6 +673,8 @@ export default function Dictionary() {
   // backend's address or drops it from the candidates; with unsaved edits it keeps the document and
   // sets `held` instead of replacing it in silence (dictionaryLoadAction).
   const loadedIdRef = useRef<string | null>(null);
+  /** The address the rules on screen were fetched from. */
+  const loadedUrlRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
   const [held, setHeld] = useState<"keep-moved" | "keep-gone" | null>(null);
 
@@ -728,13 +730,17 @@ export default function Dictionary() {
     const myGen = ++loadGen.current;
     setLoading(true);
     setResult(null);
-    setHeld(null); // a reload brings the document back in line with the backend's current address
+    // The backend's address NOW, not the caller's copy: a save that lands after a sync moved the
+    // backend reloads with the object it was clicked with, which still names the old host.
+    const liveUrl = () => {
+      const st = useApp.getState();
+      const live = st.backends.find((x) => x.id === b.id);
+      return live ? effectiveServerUrl(live, st.settings) : null;
+    };
+    const serverUrl = liveUrl() ?? effectiveServerUrl(b, useApp.getState().settings);
     let res: Awaited<ReturnType<typeof getPipelineRules>>;
     try {
-      res = await getPipelineRules({
-        serverUrl: effectiveServerUrl(b, useApp.getState().settings),
-        backendId: b.id,
-      });
+      res = await getPipelineRules({ serverUrl, backendId: b.id });
     } catch (err) {
       // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
       // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
@@ -744,24 +750,35 @@ export default function Dictionary() {
       // follow-up reload failed — the saved rules read as unsaved, and a second Save sent stale
       // fingerprints. If the backend switched, only clear loading (unless a newer load() won).
       if (myGen !== loadGen.current) return;
-      if (b.id === selectedIdRef.current) {
+      if (b.id === selectedIdRef.current && liveUrl() === serverUrl) {
         setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
         setRules([]);
         setEdits({});
         setBase({});
         setExpanded(new Set());
+        setHeld(null);
+        loadedUrlRef.current = serverUrl;
       }
       setLoading(false);
       return;
     }
     if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return; // backend switched OR a newer load() won
+    // The address moved during the fetch: these are the old host's rules. Not committed, and the
+    // hold notice (set by the load-on-change effect under unsaved edits) stays truthful; without
+    // edits that effect is already loading the new address.
+    if (liveUrl() !== serverUrl) {
+      setLoading(false);
+      return;
+    }
+    setHeld(null); // the document is back in line with the backend's current address
+    loadedUrlRef.current = serverUrl;
     setFetchRes(res);
     const list = ruleListOf(res);
     setRules(list);
     const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
     setEdits(fresh);
     setBase(cloneEdits(fresh));
-    getRecentWords({ serverUrl: effectiveServerUrl(b, useApp.getState().settings), backendId: b.id })
+    getRecentWords({ serverUrl, backendId: b.id })
       .then((rw) => {
         if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
         setRecentWords((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
@@ -783,6 +800,7 @@ export default function Dictionary() {
     }
     setHeld(null);
     loadedIdRef.current = backend?.id ?? null;
+    loadedUrlRef.current = backend ? effectiveServerUrl(backend, useApp.getState().settings) : null;
     if (!backend) {
       setFetchRes(null);
       setRules([]);
