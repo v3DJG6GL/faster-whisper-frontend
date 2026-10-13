@@ -120,6 +120,10 @@ function setBusy(k: "dir" | "store", v: boolean) {
   busy[k] = v;
   busySubs.forEach((f) => f());
 }
+// Which store action holds `busy.store`, so its confirm can say "Deleting…". Module scope like
+// the flags (the wipe outlives the screen), and not `confirming`: that can change while it runs.
+type StoreKind = "dict" | "files" | "links" | "video" | "clear";
+let runningStore: StoreKind | null = null;
 const subscribeBusy = (f: () => void) => {
   busySubs.add(f);
   return () => {
@@ -177,6 +181,10 @@ export default function Settings() {
   // Its rendered mirror disables the folder buttons while a wipe runs (a move would walk the
   // folder the wipe is deleting from).
   const storeBusy = useSyncExternalStore(subscribeBusy, () => busy.store);
+  // Read with the flag: runningStore is set before and cleared before setBusy("store", …) notifies.
+  const deletingKind = useSyncExternalStore(subscribeBusy, () => runningStore);
+  // Every Delete… / confirm button: a click during a wipe or a move would only be refused.
+  const storeLocked = storeBusy || dirBusy;
   // Re-read on the busy true->false edge too: a wipe or move outlives the screen, so the mount
   // that started it may be gone when it settles — this effect refreshes whichever mount is live
   // (a wipe or a failed move leaves basePref unchanged, so nothing else would re-run it). It is
@@ -211,7 +219,7 @@ export default function Settings() {
   }, [tab, refreshStoreStats]);
   // Inline two-step confirmation for the destructive store actions — the
   // confirm names the exact count/size (never a bare "are you sure").
-  const [confirming, setConfirming] = useState<null | "dict" | "files" | "links" | "video" | "clear">(null);
+  const [confirming, setConfirming] = useState<null | StoreKind>(null);
   const [storeMsg, setStoreMsg] = useState<{ text: string; error?: boolean } | null>(null);
   // Both die with the tab that owns them: an armed "Delete 214 dictations" confirm must not
   // survive a trip to another tab, and a stale "Removed N files." must not greet the next visit.
@@ -230,8 +238,21 @@ export default function Settings() {
   // An action that resolves after the user left the tab must not re-set what the reset above cleared.
   const tabRef = useRef(tab);
   tabRef.current = tab;
-  const runStoreAction = (kind: "dict" | "files" | "links" | "video" | "clear") => {
-    if (busy.dir || busy.store) return;
+  const runStoreAction = (kind: StoreKind) => {
+    // The buttons are disabled while either runs; this backstops a click that raced the render.
+    // Say why instead of dropping it: the running wipe's `done` later clears the armed confirm
+    // and reports its own count, which read as if this one had run too.
+    if (busy.dir || busy.store) {
+      if (tabRef.current === "Recording & history") {
+        setStoreMsg({
+          text: busy.dir
+            ? "A folder move is still running — try again when it finishes."
+            : "A cleanup is still running — try again when it finishes.",
+          error: true,
+        });
+      }
+      return;
+    }
     // Nothing parked may land after the wipe: a coalesced record write, an 800 ms edit
     // debounce or a chunk merge otherwise re-created a JSON file Rust just removed.
     // Only the kinds that delete record JSONs; "files"/"links" empty a media folder and must
@@ -267,6 +288,7 @@ export default function Settings() {
       // A wipe that failed on one folder may still have removed records from another.
       void loadHistory(true).catch(() => {});
     };
+    runningStore = kind;
     setBusy("store", true); // set with the IPC, so nothing above can leave it stuck
     // [one, many]: delete_all_dictations returns one combined count of records and audio.
     const [op, what]: [Promise<number>, [string, string]] =
@@ -297,6 +319,7 @@ export default function Settings() {
       .then((n) => done(n, what))
       .catch(fail)
       .finally(() => {
+        runningStore = null;
         setBusy("store", false);
       });
   };
@@ -840,12 +863,14 @@ export default function Settings() {
             >
               {confirming === "dict" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")}>
-                    {dictN > 0
-                      ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
-                      : dictAudioN > 0
-                        ? `Delete ${plural(dictAudioN, "audio file")}`
-                        : "Delete"}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")} disabled={storeLocked}>
+                    {deletingKind === "dict"
+                      ? "Deleting…"
+                      : dictN > 0
+                        ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
+                        : dictAudioN > 0
+                          ? `Delete ${plural(dictAudioN, "audio file")}`
+                          : "Delete"}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -855,6 +880,7 @@ export default function Settings() {
                 <Button
                   size="sm"
                   variant="danger"
+                  disabled={storeLocked}
                   onClick={() => {
                     setStoreMsg(null);
                     setConfirming("dict");
@@ -927,8 +953,8 @@ export default function Settings() {
             >
               {confirming === "files" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("files")}>
-                    Delete {plural(storeStats?.fileMediaFiles ?? 0, "file")}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("files")} disabled={storeLocked}>
+                    {deletingKind === "files" ? "Deleting…" : `Delete ${plural(storeStats?.fileMediaFiles ?? 0, "file")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -938,6 +964,7 @@ export default function Settings() {
                 <Button
                   size="sm"
                   variant="danger"
+                  disabled={storeLocked}
                   onClick={() => {
                     setStoreMsg(null);
                     setConfirming("files");
@@ -953,8 +980,8 @@ export default function Settings() {
             >
               {confirming === "links" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("links")}>
-                    Delete {plural(storeStats?.linkMediaFiles ?? 0, "file")}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("links")} disabled={storeLocked}>
+                    {deletingKind === "links" ? "Deleting…" : `Delete ${plural(storeStats?.linkMediaFiles ?? 0, "file")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -964,6 +991,7 @@ export default function Settings() {
                 <Button
                   size="sm"
                   variant="danger"
+                  disabled={storeLocked}
                   onClick={() => {
                     setStoreMsg(null);
                     setConfirming("links");
@@ -979,8 +1007,8 @@ export default function Settings() {
             >
               {confirming === "video" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("video")}>
-                    Delete {plural(storeStats?.videoMediaFiles ?? 0, "file")}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("video")} disabled={storeLocked}>
+                    {deletingKind === "video" ? "Deleting…" : `Delete ${plural(storeStats?.videoMediaFiles ?? 0, "file")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -990,6 +1018,7 @@ export default function Settings() {
                 <Button
                   size="sm"
                   variant="danger"
+                  disabled={storeLocked}
                   onClick={() => {
                     setStoreMsg(null);
                     setConfirming("video");
@@ -1006,8 +1035,8 @@ export default function Settings() {
             >
               {confirming === "clear" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")}>
-                    Delete {plural(storeStats?.fileCount ?? 0, "transcript")}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")} disabled={storeLocked}>
+                    {deletingKind === "clear" ? "Deleting…" : `Delete ${plural(storeStats?.fileCount ?? 0, "transcript")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -1017,6 +1046,7 @@ export default function Settings() {
                 <Button
                   size="sm"
                   variant="danger"
+                  disabled={storeLocked}
                   onClick={() => {
                     setStoreMsg(null);
                     setConfirming("clear");
@@ -1310,7 +1340,7 @@ export default function Settings() {
               <>
                 <SettingRow
                   title="Hardware hotkeys (evdev)"
-                  desc="Reliable hold-to-talk + left/right modifiers + AltGr on Wayland by reading /dev/input. Reads all keyboard input — strictly opt-in, and needs the 'input' group."
+                  desc="Reliable hold-to-talk, modifier-only chords (like Ctrl + Shift), left/right modifiers and AltGr on Wayland by reading /dev/input. Reads all keyboard input — strictly opt-in, and needs the 'input' group."
                   last
                 >
                   {evdev === null ? (
@@ -1337,7 +1367,7 @@ export default function Settings() {
                 {evdevMsg && <div className="px-1 pt-3 text-[12px] text-dim">{evdevMsg}</div>}
                 {evdev && evdev.permitted && (
                   <div className="px-1 pt-3 text-[12px] text-faint">
-                    Profiles using AltGr or a specific left/right modifier only fire while this is on.
+                    Profiles whose shortcut is only modifiers (like Ctrl + Shift), uses AltGr or a specific left/right modifier, or holds more than one non-modifier key only fire while this is on.
                   </div>
                 )}
               </>
