@@ -3,24 +3,19 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import { cn } from "@/lib/cn";
-import { fmtDateTick, fmtDateFull, plural } from "@/lib/format";
+import { fmtDateTick, fmtDateFull, localTodayDay, plural } from "@/lib/format";
 import {
   KINDS, KIND_LABEL, KIND_VAR, METRIC_LABEL, metricValue, niceMax, presentKinds, safeTotals, type BucketMode,
   type ChartMetric, type UsageBucket, type UsageScope,
 } from "@/lib/usageDerive";
 import type { UsageKind, UsageKinds } from "@/lib/types";
-import { BUCKET_WORD, fmtMonthYear, kindFill, metricText, metricTick, useWidth } from "@/components/stats/chartKit";
+import { BUCKET_WORD, bucketTick, fmtMonthYear, kindFill, metricText, metricTick, useWidth } from "@/components/stats/chartKit";
 import { HatchDef, Panel, Swatch } from "@/components/stats/primitives";
 
 /* ── stacked columns by kind ─────────────────────────────────────────────── */
 
 const TIP_W = 176;
 
-/** Column label for a bucket's start: `12.06.` per day/week, `Juni` per month. */
-function bucketTick(b: UsageBucket, mode: BucketMode, last: boolean): string {
-  if (last && mode === "day") return "today";
-  return fmtDateTick(b.from, mode === "month");
-}
 /** Tooltip header: the day, `Woche ab 6.7.`-style for a week, month + year for a month. */
 function bucketTitle(b: UsageBucket, mode: BucketMode): string {
   if (mode === "day") return fmtDateFull(b.from);
@@ -47,6 +42,8 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
 
   const pts = buckets;
   const n = pts.length;
+  // Once per render: a chart left open past midnight relabels on its next one.
+  const today = localTodayDay();
   const cols = useMemo(
     () => pts.map((p) => KINDS.map((k) => (shown(k) ? metricValue(safeTotals(p[k]), metric) : 0))),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -181,7 +178,7 @@ export function StackedChart({ buckets, mode, scope, metric }: { buckets: UsageB
                     fontSize={10}
                     fill="var(--c-faint)"
                   >
-                    {bucketTick(p, mode, i === n - 1)}
+                    {bucketTick(p, mode, today)}
                   </text>
                 ) : null,
               )}

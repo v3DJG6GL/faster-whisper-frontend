@@ -1,7 +1,7 @@
 // The usage charts' shared non-component helpers: date and measure formatters, the line
 // path, the width hook, the kind fills. Their shared components live in primitives.tsx.
 import { useLayoutEffect, useRef, useState } from "react";
-import { dayToDate, fmtFull, fmtCompact, fmtDuration, fmtDurationAxis } from "@/lib/format";
+import { dayToDate, fmtDateTick, fmtFull, fmtCompact, fmtDuration, fmtDurationAxis } from "@/lib/format";
 import { KIND_VAR, METRIC_UNIT, isDurationMetric, type BucketMode, type ChartMetric } from "@/lib/usageDerive";
 import type { UsageKind } from "@/lib/types";
 
@@ -11,6 +11,14 @@ const _monthYear = new Intl.DateTimeFormat("de-CH", { month: "long", year: "nume
 export const fmtSpanDate = (day: number) => _spanDate.format(dayToDate(day));
 export const fmtMonthYear = (day: number) => _monthYear.format(dayToDate(day));
 export const fmtDateRange = (from: number, to: number) => `${fmtSpanDate(from)} – ${fmtSpanDate(to)}`;
+
+/** Column label for a bucket's start: `12.06.` per day/week, `Juni` per month — and "today" on
+ *  the column that is today (`today` = localTodayDay()), never merely the last one: a custom span
+ *  ending in the past ends on a date. */
+export function bucketTick(b: { from: number }, mode: BucketMode, today: number): string {
+  if (mode === "day" && b.from === today) return "today";
+  return fmtDateTick(b.from, mode === "month");
+}
 
 /* ── the measure's formatters: the two `_s` measures are durations, the rest counts ── */
 export const metricTick = (m: ChartMetric, v: number) => (isDurationMetric(m) ? fmtDurationAxis(v) : fmtCompact(v));
