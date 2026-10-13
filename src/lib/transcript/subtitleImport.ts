@@ -136,19 +136,24 @@ function bareLine(s: string): string {
  *  segments keep: each voice span is a line of its own (the blank between two spans is no
  *  phrase space), and a cue's first line goes without the "Name: " prefix cueText splits off as
  *  the speaker (our export writes one on every cue; its colon would hide the line's marks) —
- *  when that name opens at least two cues. A speaker recurs; a credit field ("翻译: 小明。",
- *  "校对: 小刚") is written once, so it is judged whole and its colon keeps discounting its
- *  marks. Colons inside the text (a quotation, a time) do not decide it. */
+ *  when that name opens at least two cues saying different things. A speaker recurs; a credit
+ *  field ("翻译: 小明。", "校对: 小刚") is written once, or repeated verbatim at the start and the
+ *  end, so it is judged whole and its colon keeps discounting its marks — with the blanks inside
+ *  its name squeezed out, so a one-off "山田 太郎: " is no phrase space. Colons inside the text (a
+ *  quotation, a time) do not decide it. */
 function cuesOf(cues: RawCue[]): ImportedText {
-  const lead = (c: RawCue): string | undefined => {
-    const first = c.lines[0];
-    if (first === undefined || /^\s*<v[\s.]/.test(first)) return undefined;
-    return speakerPrefix(bareLine(first).trimStart())?.[1].trim();
-  };
-  const seen = new Map<string, number>();
+  const seen = new Map<string, Set<string>>();
   for (const c of cues) {
-    const n = lead(c);
-    if (n !== undefined) seen.set(n, (seen.get(n) ?? 0) + 1);
+    const first = c.lines[0];
+    if (first === undefined || /^\s*<v[\s.]/.test(first)) continue;
+    const b = bareLine(first).trimStart();
+    const m = speakerPrefix(b);
+    if (!m) continue;
+    const name = m[1].trim();
+    const says = seen.get(name) ?? new Set<string>();
+    // Two distinct lines are all the rule needs: stop collecting there.
+    if (says.size < 2) says.add(b.slice(m[0].length) + "\n" + c.lines.slice(1).join("\n"));
+    seen.set(name, says);
   }
   const judged = cues.flatMap((c) =>
     c.lines.flatMap((l, i) =>
@@ -156,8 +161,11 @@ function cuesOf(cues: RawCue[]): ImportedText {
       l.split(/(?<!\s)\s*(?=<v[\s.])/).map((part, k) => {
         const b = bareLine(part);
         if (i > 0 || k > 0 || /^\s*<v[\s.]/.test(part)) return b;
-        const m = speakerPrefix(b.trimStart());
-        return m && (seen.get(m[1].trim()) ?? 0) >= 2 ? b.trimStart().slice(m[0].length) : b;
+        const s = b.trimStart();
+        const m = speakerPrefix(s);
+        if (!m) return b;
+        const rest = s.slice(m[0].length);
+        return (seen.get(m[1].trim())?.size ?? 0) >= 2 ? rest : `${m[1].replace(/\s+/g, "")}: ${rest}`;
       }),
     ),
   );

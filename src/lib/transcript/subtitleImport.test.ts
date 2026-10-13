@@ -266,6 +266,16 @@ describe("plain text + errors", () => {
       "山田 太郎: 彼は言った：「行こう」",
     ]);
     expect(yamada[0]).toMatchObject({ speaker: "山田 太郎", text: "今日はいい天気ですね、そうですね0" });
+    // A one-off spaced speaker name is no phrase space either.
+    const once = srt([...Array.from({ length: 6 }, (_, i) => `花子: 今日はいい天気ですね、公園に\n行きましょう${i}。`), "山田 太郎: そうですね、\n行きましょう。"]);
+    expect(once[0].text).toBe("今日はいい天気ですね、公園に行きましょう0。");
+    expect(once[6]).toMatchObject({ speaker: "山田 太郎", text: "そうですね、行きましょう。" });
+    // A credit or note repeated verbatim at the start and the end is still a credit.
+    const unp = Array.from({ length: 6 }, (_, i) => `我们今天去公园\n然后回家吃饭${i}`);
+    for (const credit of ["翻译: 小明。校对: 小刚", "注: 本片仅供学习交流，请勿商用"]) {
+      expect(srt([credit, ...unp, credit])[1].text).toBe("我们今天去公园 然后回家吃饭0");
+    }
+    expect(srt(["字幕: XX字幕组。", ...unp.slice(0, 3), "字幕: XX字幕组。"])[1].text).toBe("我们今天去公园 然后回家吃饭0");
     const alice = srt([...Array<string>(6).fill("Alice: 好的。"), "Alice: 今天天气很好，我们\n去公园吧。"]);
     expect(alice[6]).toMatchObject({ speaker: "Alice", text: "今天天气很好，我们去公园吧。" });
     // A quotation after a colon carries its marks.
