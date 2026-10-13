@@ -21,6 +21,19 @@ export function navKey(key: string, active: number, count: number): number | nul
   return Math.max(0, Math.min(count - 1, next));
 }
 
+/** Whether a language-picker key acts once per press, so its auto-repeat must be swallowed: a held
+ *  Backspace past the emptied filter dropped the preselected targets one per repeat, a held Enter
+ *  picked the filtered row and then committed unseen, held digits / Space flipped rows on and off.
+ *  The navigation keys keep repeating, and so does the filter's own editing (`typing`: the field
+ *  is focused with text in it, so its Space and digits type, and Backspace deletes while
+ *  `filterEmpty` is false). */
+export function pickerKeyActsOnce(key: string, typing: boolean, filterEmpty: boolean): boolean {
+  if (key === "Enter") return true;
+  if (key === "Backspace") return filterEmpty;
+  if (key === " " || /^[0-9]$/.test(key)) return !typing;
+  return false;
+}
+
 /** The DOM id of option `i` in the listbox `listId` (the target of aria-activedescendant). */
 export const optionId = (listId: string, i: number) => `${listId}-opt-${i}`;
 

@@ -27,7 +27,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { abortLangPick, commitLangPick, isTauri, subscribe } from "@/lib/api";
 import { routeSourceCode, targetCap, targetSections, toggleCode, untestedTitle, type LangRow } from "@/lib/languages";
-import { comboboxInputProps, navKey } from "@/lib/listNav";
+import { comboboxInputProps, navKey, pickerKeyActsOnce } from "@/lib/listNav";
 import { cleanRecent } from "@/lib/recent";
 import { KeyHint, OptionRows } from "@/components/ListPicker";
 import { CodeChip } from "@/components/ui";
@@ -154,6 +154,12 @@ export default function LangPick() {
     // work from anywhere.
     if ((e.key === "Enter" || e.key === " ") && e.target instanceof HTMLButtonElement) return;
     const typing = document.activeElement === inputRef.current && query.length > 0;
+    // A held key acts once (the arrows keep repeating). Swallowed, not passed on: a held digit
+    // would otherwise type into the empty filter.
+    if (e.repeat && pickerKeyActsOnce(e.key, typing, query.length === 0)) {
+      e.preventDefault();
+      return;
+    }
     const nav = navKey(e.key, active, rows.length);
     if (e.key === "Escape") {
       // Abort the whole action (don't start / don't insert) — see the header comment.
