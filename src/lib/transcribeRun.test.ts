@@ -585,6 +585,28 @@ describe("planTimeline (the proportional strip)", () => {
     expect(tl[1].fill).toBeCloseTo((160 + 85) / 330, 5);
   });
 
+  it("keeps a failed translate stage's unfinished languages empty instead of filling them as done", () => {
+    const tl = planTimeline({
+      stages: ["transcribing", "translating"],
+      skipped: new Set(),
+      plan: [
+        { stage: "transcribing", state: "done", tookS: 191 },
+        { stage: "translating", state: "failed", tookS: 200, units: [
+          { target: "en", state: "done", tookS: 160 },
+          { target: "fr", state: "failed", tookS: 40 },
+          { target: "ja", state: "queued", estS: 170 },
+        ] },
+      ],
+      stageTimes: {},
+      progress: null,
+      complete: true,
+      now: 400_000,
+    });
+    expect(tl[1].lanes?.map((l) => [l.target, l.state, l.fill])).toEqual([
+      ["en", "done", 1], ["fr", "failed", 0], ["ja", "queued", 0],
+    ]);
+  });
+
   it("widens an overrunning stage in 15 s steps, never narrower than elapsed, and clamps the fill", () => {
     const tl = planTimeline({
       stages: ["separating", "transcribing"],

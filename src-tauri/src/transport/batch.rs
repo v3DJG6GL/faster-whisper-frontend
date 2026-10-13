@@ -704,7 +704,8 @@ mod wire_field_tests {
             "units":[{"state":"running"},{"target":null,"state":"queued"},
                      {"target":"\u0007\u200b","state":"queued"},{"target":"es"},
                      {"target":"it","state":"paused"},{"target":"de","state":"done","took_s":4.0},
-                     {"target":"fr","state":"instant","instant":true}]}]}"#;
+                     {"target":"fr","state":"instant","instant":true},
+                     {"target":"ja","state":"failed","took_s":2.0},{"target":"ko","state":"bogus"}]}]}"#;
         let parsed: BatchProgress = serde_json::from_str(json).expect("progress parses");
         let p = bound_progress(parsed);
         let units = p.plan.as_ref().expect("plan")[0]
@@ -717,7 +718,13 @@ mod wire_field_tests {
             .collect();
         assert_eq!(
             kept,
-            [(Some("de"), Some("done")), (Some("fr"), Some("instant"))]
+            [
+                (Some("de"), Some("done")),
+                (Some("fr"), Some("instant")),
+                // The unit in flight when its stage failed: kept, so the failed language
+                // keeps its lane and the rail still counts it.
+                (Some("ja"), Some("failed"))
+            ]
         );
         let out = serde_json::to_string(&units).expect("serializes");
         assert!(!out.contains("\"target\":null"), "{out}");
@@ -811,8 +818,9 @@ pub struct PlanStage {
 const MAX_PLAN_STAGES: usize = 8;
 /// Matches the server's TRANSLATION_MAX_TARGETS ceiling with headroom.
 const MAX_PLAN_UNITS: usize = 16;
-/// The unit states the webview renders (`PlanUnit["state"]` in lib/types.ts).
-const PLAN_UNIT_STATES: [&str; 4] = ["queued", "running", "done", "instant"];
+/// The unit states the webview renders (`PlanUnit["state"]` in lib/types.ts). "failed" is
+/// the unit that was in flight when its stage failed (the server's run_plan closes it so).
+const PLAN_UNIT_STATES: [&str; 5] = ["queued", "running", "done", "instant", "failed"];
 
 /// The sanity range for a video height the server reports.
 const SERVER_HEIGHT: std::ops::RangeInclusive<u32> = 1..=8192;
@@ -853,7 +861,7 @@ pub(crate) fn bound_plan(plan: Vec<PlanStage>) -> Vec<PlanStage> {
                 us.into_iter()
                     .take(MAX_PLAN_UNITS)
                     .filter_map(|u| {
-                        // The webview's unit is `{target: string, state: <these four>}` and its
+                        // The webview's unit is `{target: string, state: <these five>}` and its
                         // rail renders the target as text: a unit without a language or with a
                         // state it has no rendering for is dropped here, not passed on as null
                         // (a null target crashed the Transcribe screen).

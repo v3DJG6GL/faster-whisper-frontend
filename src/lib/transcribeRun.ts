@@ -387,7 +387,10 @@ export function planTimeline(s: {
     if (state === "done") {
       const ms = tookMs ?? span ?? estMs ?? 1000;
       out.push({ stage: st, ms, elapsedMs: span ?? ms, state, fill: 1, overrun: false, estMs,
-        estimated: tookMs == null && span == null, lanes: lanesOf(p, true) });
+        // A failed stage's units are already closed by the server (done stays done, the
+        // one in flight failed, the queued never ran): forcing them done would fill the
+        // lane of a language that never got translated.
+        estimated: tookMs == null && span == null, lanes: lanesOf(p, p?.state !== "failed") });
       return;
     }
     if (state === "active") {

@@ -1168,7 +1168,8 @@ export interface TranscribeOptions {
 /** One translation target inside the run plan's translating stage. */
 export interface PlanUnit {
   target: string;
-  state: "queued" | "running" | "done" | "instant";
+  /** "failed" = the unit in flight when its stage failed. */
+  state: "queued" | "running" | "done" | "instant" | "failed";
   /** Same-language verbatim copy — no model call, no measurable time. */
   instant?: boolean;
   estS?: number | null;
