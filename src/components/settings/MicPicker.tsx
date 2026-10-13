@@ -6,7 +6,9 @@
 //
 // Keyboard: the trigger opens on Enter / Space / ArrowDown; inside, focus sits on the listbox
 // and ArrowUp/Down / Home / End move the active row (aria-activedescendant), Enter / Space pick
-// it, Escape closes back to the trigger, Tab closes.
+// it, Escape closes back to the trigger. Tab moves on to the paths switch at the foot of the
+// menu when it is there (Shift+Tab back to the list); Tab from the switch, or from a list with
+// no switch, closes.
 
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { Bluetooth, Check, Mic, SlidersHorizontal } from "lucide-react";
@@ -48,6 +50,7 @@ export function MicPicker({
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const footRef = useRef<HTMLDivElement>(null);
   const uid = useId();
   const showPaths = advanced && pathsListed;
   const view = useMemo(() => buildMicView(inv, value, savedLabel, showPaths), [inv, value, savedLabel, showPaths]);
@@ -97,9 +100,20 @@ export function MicPicker({
       if (r) pick(r);
     } else if (e.key === "Escape") close(true);
     else if (e.key === "Tab") {
-      setOpen(false);
-      return;
+      // Into the switch, keeping the menu open: closing first unmounted it under the focus move.
+      const sw = e.shiftKey ? null : footRef.current?.querySelector("button");
+      if (!sw) {
+        setOpen(false);
+        return;
+      }
+      sw.focus();
     } else return;
+    e.preventDefault();
+  };
+  const onFootKey = (e: KeyboardEvent) => {
+    if (e.key === "Tab" && e.shiftKey) listRef.current?.focus();
+    else if (e.key === "Tab" || e.key === "Escape") close(true);
+    else return;
     e.preventDefault();
   };
 
@@ -209,7 +223,13 @@ export function MicPicker({
             {view.rows.map(renderRow)}
           </ul>
           {inv?.advancedSupported && (
-            <div className="mt-1.5 flex items-start gap-3 border-t border-line px-2.5 pb-1 pt-2.5 text-[12px] text-dim">
+            <div
+              ref={footRef}
+              onKeyDown={onFootKey}
+              // A click flips the switch without taking focus off the list (arrows, Escape).
+              onMouseDown={(e) => e.preventDefault()}
+              className="mt-1.5 flex items-start gap-3 border-t border-line px-2.5 pb-1 pt-2.5 text-[12px] text-dim"
+            >
               <span className="min-w-0 flex-1">
                 <span className="block text-[13px] text-text">Show all audio paths (advanced)</span>
                 Direct ALSA paths skip {inv.server ?? "the sound server"}. Use one only if a mic does not work
