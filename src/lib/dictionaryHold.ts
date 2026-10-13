@@ -4,6 +4,9 @@
 // selected backend's address, flip its kind to standard, or delete it while the screen is open.
 // Pure, so the decision is testable without mounting the screen.
 
+import { plural } from "@/lib/format";
+import { safeDisplayText } from "@/lib/sanitize";
+
 /** - "reload": fetch the backend's rules and replace the document (nothing unsaved to lose).
  *  - "clear": no backend is selected and nothing is unsaved — empty the document.
  *  - "keep-moved": the SAME backend's address changed under unsaved edits — keep them and warn.
@@ -48,4 +51,25 @@ export function dictionaryHeldResolution(
 export function dictionarySelection(selectedId: string | null, candidateIds: readonly string[], dirty: boolean): string | null {
   if (selectedId !== null && (dirty || candidateIds.includes(selectedId))) return selectedId;
   return candidateIds[0] ?? null;
+}
+
+/** One step of a rules reload once its fetch from `requested` has returned. `live` is the backend's
+ *  address now (null when it is gone). A plain reload of an address that moved under it "bail"s:
+ *  those are the old host's rules, and the load-on-change effect owns the move. The reload after a
+ *  save that LANDED (`afterSave`) "refetch"es from the live address instead: the saved edits are no
+ *  longer unsaved, so leaving them on screen under a hold would ask for a second Save — which sends
+ *  the old host's slugs and fingerprints to the new one. */
+export function dictionaryReloadStep(requested: string, live: string | null, afterSave: boolean): "commit" | "refetch" | "bail" {
+  if (live === requested) return "commit";
+  return afterSave && live !== null ? "refetch" : "bail";
+}
+
+/** The banner line for rules a save stored. `savedTo` is the address the save went to, `shownFrom`
+ *  the one its follow-up reload committed (null when the reload did not commit): when a sync moved the
+ *  backend in between, the rules on screen are not the ones just saved, so the line names both. Either one unknown (null) reads as no move. */
+export function dictionarySavedText(count: number, savedTo: string | null, shownFrom: string | null): string {
+  const saved = `Saved ${plural(count, "rule")}`;
+  if (savedTo === null || shownFrom === null || shownFrom === savedTo) return `${saved}.`;
+  // No "whose rules are shown": in the fetch-error view the reload from the new address failed.
+  return `${saved} to ${safeDisplayText(savedTo, 120)} — this backend now points at ${safeDisplayText(shownFrom, 120)}.`;
 }

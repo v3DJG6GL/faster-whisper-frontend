@@ -1,7 +1,15 @@
 // A synced change to the selected backend (new address, kind flipped to standard, deleted) must not
 // replace the Dictionary's unsaved edits in silence — every manual path already refuses to.
 import { describe, expect, it } from "vitest";
-import { dictionaryHeldResolution, dictionaryLoadAction, dictionarySelection } from "./dictionaryHold";
+import {
+  dictionaryHeldResolution,
+  dictionaryLoadAction,
+  dictionaryReloadStep,
+  dictionarySavedText,
+  dictionarySelection,
+} from "./dictionaryHold";
+// Raw source (vite `?raw`): the screen wiring the pure decisions above stand for.
+import dictionarySrc from "../screens/Dictionary.tsx?raw";
 
 describe("dictionaryLoadAction", () => {
   it("keeps unsaved edits when the same backend's address changes", () => {
@@ -71,5 +79,47 @@ describe("dictionaryHeldResolution", () => {
     expect(dictionaryHeldResolution("keep-moved", true, true)).toBeNull();
     expect(dictionaryHeldResolution("keep-gone", true, false)).toBeNull();
     expect(dictionaryHeldResolution(null, false, true)).toBeNull();
+  });
+});
+
+describe("dictionaryReloadStep", () => {
+  it("commits rules fetched from the address the backend still has", () => {
+    expect(dictionaryReloadStep("http://a", "http://a", false)).toBe("commit");
+    expect(dictionaryReloadStep("http://a", "http://a", true)).toBe("commit");
+  });
+
+  it("a plain reload of a moved address leaves the move to the hold", () => {
+    expect(dictionaryReloadStep("http://a", "http://b", false)).toBe("bail");
+  });
+
+  it("the reload after a landed save fetches the backend's new address instead of keeping the saved edits", () => {
+    expect(dictionaryReloadStep("http://a", "http://b", true)).toBe("refetch");
+  });
+
+  it("a backend that is gone is never refetched", () => {
+    expect(dictionaryReloadStep("http://a", null, true)).toBe("bail");
+    expect(dictionaryReloadStep("http://a", null, false)).toBe("bail");
+  });
+});
+
+describe("dictionarySavedText", () => {
+  it("is a bare count when the backend did not move", () => {
+    expect(dictionarySavedText(2, "http://a", "http://a")).toBe("Saved 2 rules.");
+    expect(dictionarySavedText(1, "http://a", null)).toBe("Saved 1 rule.");
+    expect(dictionarySavedText(1, null, "http://b")).toBe("Saved 1 rule.");
+  });
+
+  it("names where the rules went and where the backend points now when a sync moved it", () => {
+    const text = dictionarySavedText(3, "http://a:8000", "http://b:8000");
+    expect(text).toContain("Saved 3 rules to http://a:8000");
+    expect(text).toContain("now points at http://b:8000");
+  });
+});
+
+describe("Dictionary save wiring", () => {
+  it("reloads after a landed save with the post-save flag and shows where the rules went", () => {
+    expect(dictionarySrc).toMatch(/await load\(backend, true\)/);
+    expect(dictionarySrc).toMatch(/dictionaryReloadStep\(serverUrl, live, afterSave/);
+    expect(dictionarySrc).toMatch(/setResult\(\{ \.\.\.res, savedTo, shownFrom \}\)/);
   });
 });

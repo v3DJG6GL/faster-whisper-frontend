@@ -33,7 +33,13 @@ import {
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
-import { dictionaryHeldResolution, dictionaryLoadAction, dictionarySelection } from "@/lib/dictionaryHold";
+import {
+  dictionaryHeldResolution,
+  dictionaryLoadAction,
+  dictionaryReloadStep,
+  dictionarySavedText,
+  dictionarySelection,
+} from "@/lib/dictionaryHold";
 import { getPipelineRules, getRecentWords, savePipelineRules } from "@/lib/api";
 import type {
   Backend, PipelineFetch, PipelineRule, PipelineSaveResult, RuleType,
@@ -688,7 +694,7 @@ export default function Dictionary() {
   const [base, setBase] = useState<Record<string, EditState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [saving, setSaving] = useState(false);
-  const [result, setResult] = useState<PipelineSaveResult | null>(null);
+  const [result, setResult] = useState<ShownSave | null>(null);
   // Recent-word suggestion pool for cb:map keys (best-effort; [] on old servers).
   const [recentWords, setRecentWords] = useState<string[]>([]);
   const [recentMax, setRecentMax] = useState<number | undefined>(undefined);
@@ -726,7 +732,11 @@ export default function Dictionary() {
     [editableFields, role],
   );
 
-  const load = useCallback(async (b: Backend) => {
+  /** Fetch the backend's rules and replace the document. Resolves to the address the document now
+   *  belongs to, or null when this load did not commit (a backend switch, a newer load, a move).
+   *  `afterSave`: the follow-up reload of a save that landed — an address a sync moved during the
+   *  round trip is fetched again instead of left to the hold (dictionaryReloadStep). */
+  const load = useCallback(async (b: Backend, afterSave = false): Promise<string | null> => {
     const myGen = ++loadGen.current;
     setLoading(true);
     setResult(null);
@@ -737,59 +747,80 @@ export default function Dictionary() {
       const live = st.backends.find((x) => x.id === b.id);
       return live ? effectiveServerUrl(live, st.settings) : null;
     };
-    const serverUrl = liveUrl() ?? effectiveServerUrl(b, useApp.getState().settings);
-    let res: Awaited<ReturnType<typeof getPipelineRules>>;
-    try {
-      res = await getPipelineRules({ serverUrl, backendId: b.id });
-    } catch (err) {
-      // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
-      // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
-      // Refresh / FetchError-retry / SaveBanner-reload callers, which call load() without a .catch).
-      // Mirrors the load-on-change effect's .catch: reset the document and surface a status-0 fetch
-      // error. Clearing only `loading` left the pre-save edits/base/_fp on screen after a save whose
-      // follow-up reload failed — the saved rules read as unsaved, and a second Save sent stale
-      // fingerprints. If the backend switched, only clear loading (unless a newer load() won).
-      if (myGen !== loadGen.current) return;
-      if (b.id === selectedIdRef.current && liveUrl() === serverUrl) {
-        setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
-        setRules([]);
-        setEdits({});
-        setBase({});
-        setExpanded(new Set());
-        setHeld(null);
-        loadedUrlRef.current = serverUrl;
+    let serverUrl = liveUrl() ?? effectiveServerUrl(b, useApp.getState().settings);
+    // Bounded: an address that moves again on every fetch ends in the plain bail, not a loop.
+    for (let refetches = 0; ; refetches++) {
+      let res: Awaited<ReturnType<typeof getPipelineRules>>;
+      try {
+        res = await getPipelineRules({ serverUrl, backendId: b.id });
+      } catch (err) {
+        // get_pipeline_rules is a non-Result command; a transport-level reject would otherwise leave
+        // the screen stuck on the loading spinner (and surface as an unhandled rejection from the
+        // Refresh / FetchError-retry / SaveBanner-reload callers, which call load() without a .catch).
+        // Mirrors the load-on-change effect's .catch: reset the document and surface a status-0 fetch
+        // error. Clearing only `loading` left the pre-save edits/base/_fp on screen after a save whose
+        // follow-up reload failed — the saved rules read as unsaved, and a second Save sent stale
+        // fingerprints. If the backend switched, only clear loading (unless a newer load() won).
+        if (myGen !== loadGen.current) return null;
+        if (b.id === selectedIdRef.current) {
+          const live = liveUrl();
+          const step = dictionaryReloadStep(serverUrl, live, afterSave && refetches < 3);
+          if (step === "refetch" && live !== null) {
+            serverUrl = live;
+            continue;
+          }
+          if (step === "commit") {
+            setFetchRes({ ok: false, status: 0, error: err instanceof Error ? err.message : String(err) });
+            setRules([]);
+            setEdits({});
+            setBase({});
+            setExpanded(new Set());
+            setHeld(null);
+            loadedUrlRef.current = serverUrl;
+            setLoading(false);
+            return serverUrl;
+          }
+        }
+        setLoading(false);
+        return null;
       }
+      if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return null; // backend switched OR a newer load() won
+      // The address moved during the fetch: these are the old host's rules. A plain reload does not
+      // commit them, and the hold notice (set by the load-on-change effect under unsaved edits) stays
+      // truthful; without edits that effect is already loading the new address. A post-save reload
+      // fetches the new address instead.
+      const live = liveUrl();
+      const step = dictionaryReloadStep(serverUrl, live, afterSave && refetches < 3);
+      if (step === "refetch" && live !== null) {
+        serverUrl = live;
+        continue;
+      }
+      if (step !== "commit") {
+        setLoading(false);
+        return null;
+      }
+      setHeld(null); // the document is back in line with the backend's current address
+      loadedUrlRef.current = serverUrl;
+      setFetchRes(res);
+      const list = ruleListOf(res);
+      setRules(list);
+      const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
+      setEdits(fresh);
+      setBase(cloneEdits(fresh));
+      getRecentWords({ serverUrl, backendId: b.id })
+        .then((rw) => {
+          if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
+          setRecentWords((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
+          setRecentMax(rw.max ?? undefined);
+        })
+        .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
+      // Keep whichever rule cards are open across a save-triggered reload (and the conflict
+      // auto-reload) — both go through load(). A rule that vanished server-side drops out.
+      // Switching Backend resets expansion separately (the load-on-change effect below).
+      setExpanded((prev) => new Set([...prev].filter((name) => list.some((r) => r.name === name))));
       setLoading(false);
-      return;
+      return serverUrl;
     }
-    if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return; // backend switched OR a newer load() won
-    // The address moved during the fetch: these are the old host's rules. Not committed, and the
-    // hold notice (set by the load-on-change effect under unsaved edits) stays truthful; without
-    // edits that effect is already loading the new address.
-    if (liveUrl() !== serverUrl) {
-      setLoading(false);
-      return;
-    }
-    setHeld(null); // the document is back in line with the backend's current address
-    loadedUrlRef.current = serverUrl;
-    setFetchRes(res);
-    const list = ruleListOf(res);
-    setRules(list);
-    const fresh = Object.fromEntries(list.map((r) => [r.name, toEdit(r)]));
-    setEdits(fresh);
-    setBase(cloneEdits(fresh));
-    getRecentWords({ serverUrl, backendId: b.id })
-      .then((rw) => {
-        if (b.id !== selectedIdRef.current || myGen !== loadGen.current) return;
-        setRecentWords((rw.words ?? []).slice(0, MAX_RECENT_WORDS));
-        setRecentMax(rw.max ?? undefined);
-      })
-      .catch(() => {}); // best-effort pool — a fetch failure must not surface as an unhandled rejection
-    // Keep whichever rule cards are open across a save-triggered reload (and the conflict
-    // auto-reload) — both go through load(). A rule that vanished server-side drops out.
-    // Switching Backend resets expansion separately (the load-on-change effect below).
-    setExpanded((prev) => new Set([...prev].filter((name) => list.some((r) => r.name === name))));
-    setLoading(false);
   }, []);
 
   useEffect(() => {
@@ -951,8 +982,9 @@ export default function Dictionary() {
     // control, the Save/Discard bar, AND the backend pills (all gated on saving), with no recovery but
     // leaving the screen.
     try {
+      const savedTo = effectiveServerUrl(backend, useApp.getState().settings);
       const res = await savePipelineRules({
-        serverUrl: effectiveServerUrl(backend, useApp.getState().settings),
+        serverUrl: savedTo,
         backendId: backend.id,
         patch: { rules_patch, fingerprints },
       });
@@ -964,13 +996,16 @@ export default function Dictionary() {
       // clears `result`, so set it afterwards. On 422 keep edits so the user can fix.
       // A 2xx whose reply couldn't be read (ok:false) still LANDED: reload too, or the stale
       // fingerprints turn the obvious re-save into bogus conflicts. The banner shows its detail.
+      // The reload goes to the backend's LIVE address even when a sync moved it during the round trip
+      // (afterSave): the saved edits are no longer unsaved, so they must not stay on screen under the
+      // hold. The banner then says where the rules went and whose are shown.
       const landed = saveLanded(res);
-      if (landed) await load(backend);
+      const shownFrom = landed ? await load(backend, true) : null;
       // load() awaited above — re-check the selection (mirrors the guard before it): a backend switch
       // during that reload makes load() bail on its own guard (leaving result null), so setting the old
       // backend's banner here would strand a stale "Saved N rules" over the now-selected backend.
       if (backend.id !== selectedIdRef.current) return false;
-      setResult(res);
+      setResult({ ...res, savedTo, shownFrom });
       // A 2xx with conflicts still dropped those rules' edits (load() replaced them with server truth):
       // report not-saved so "Save and leave" stays on-screen and the banner's conflict notice is seen.
       const conflicted = Array.isArray(res.conflicts) && res.conflicts.length > 0;
@@ -1283,6 +1318,10 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
   }
 }
 
+/** A save's result as the banner shows it: `savedTo` is the address the save went to, `shownFrom`
+ *  the one its follow-up reload committed (they differ when a sync moved the backend in between). */
+type ShownSave = PipelineSaveResult & { savedTo?: string; shownFrom?: string | null };
+
 function SaveBanner({
   result,
   reloadFailed = false,
@@ -1290,7 +1329,7 @@ function SaveBanner({
   reloadDisabled,
   onReload,
 }: {
-  result: PipelineSaveResult;
+  result: ShownSave;
   /** The save's follow-up reload is what failed (the fetch-error view): never claim it landed. */
   reloadFailed?: boolean;
   /** With reloadFailed: the FetchError below offers Retry (fetchRetryable); else point at Refresh. */
@@ -1365,7 +1404,7 @@ function SaveBanner({
     <div className="space-y-2">
       {result.saved.length > 0 && !listPinned && (
         <Notice tone="ok">
-          Saved {plural(result.saved.length, "rule")}.
+          {dictionarySavedText(result.saved.length, result.savedTo ?? null, result.shownFrom ?? null)}
           {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
         </Notice>
       )}
