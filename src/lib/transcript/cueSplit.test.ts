@@ -581,7 +581,8 @@ describe("wrapLines", () => {
     expect(wrapLines('我们明天去北京"看看""', 6, 2).some((l) => /^"/.test(l))).toBe(false);
     // The two quotations may be of different kinds: the closer still stays, the opener rides.
     for (const m of [`他说'你好朋友'"再见朋友"然后走了`, `他说"你好朋友"'再见朋友'然后走了`, `他说'你好'"OK"然后走了很远很远`,
-      `他说'你好朋友'"Hello"然后走了`, `他说"你好朋友"'OK朋友'然后走了`, `他说'你好朋友''M'然后走了很远`, `他说"你好朋友"'S'然后走了很远`]) {
+      `他说'你好朋友'"Hello"然后走了`, `他说"你好朋友"'OK朋友'然后走了`, `他说'你好朋友''M'然后走了很远`, `他说"你好朋友"'S'然后走了很远`,
+      `他说"你好朋友"'T恤'然后走了很远`, `他说"你好朋友"'M号'然后走了很远`, `他说"你好朋友"'M1'然后走了很远`]) {
       for (let cpl = 4; cpl <= 16; cpl++) {
         const lines = wrapLines(m, cpl, 2);
         expect(lines.some((l) => /['"]{2}$/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
@@ -590,12 +591,19 @@ describe("wrapLines", () => {
       for (let k = 1; k < 20; k++) expect(cutByShare(m, [k, 20 - k]).some((p) => /['"]{2}$/.test(p))).toBe(false);
     }
     expect(wrapLines(`他说'你好朋友'"再见朋友"然后走了`, 10, 2)).toEqual([`他说'你好朋友'`, `"再见朋友"然后走了`]);
+    // A quoted word that only starts like an English clitic (T恤, M号) is a quotation too.
+    expect(wrapLines(`他说"你好朋友"'T恤'然后走了很远`, 10, 3)).toEqual([`他说"你好朋友"`, `'T恤'然后走了很远`]);
     // A possessive after a closing quote is no second quotation: the 's stays with what it follows.
-    for (const m of [`我们看"东京"'s 夜景和"大阪"'s 美食吧`, `用"東京"'s 地图 and "大阪"'s 地图看看`]) {
+    for (const m of [`我们看"东京"'s 夜景和"大阪"'s 美食吧`, `用"東京"'s 地图 and "大阪"'s 地图看看`,
+      `用'東京''s 地图 and '大阪''s 地图看看`, `我们看'东京''s 夜景和'大阪''s 美食吧`]) {
       for (let cpl = 4; cpl <= 16; cpl++) {
-        const lines = wrapLines(m, cpl, 3);
-        expect(lines.some((l) => /^'s/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+        for (let n = 1; n <= 3; n++) {
+          const lines = wrapLines(m, cpl, n);
+          expect(lines.some((l) => /^'s/.test(l)), `@${cpl}x${n}: ${lines.join(" | ")}`).toBe(false);
+          expect(lines.join("").replace(/\s/g, "")).toBe(m.replace(/\s/g, "")); // a wrap eats its space
+        }
       }
+      for (let k = 1; k < 20; k++) expect(cutByShare(m, [k, 20 - k]).some((p) => /^'s/.test(p))).toBe(false);
     }
   });
   it("a cue right after an inch mark counts its quotes as its segment does", () => {
