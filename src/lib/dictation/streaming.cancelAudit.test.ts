@@ -237,6 +237,18 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(skip).toBeLessThan(task.indexOf("t.autoEnter"));
   });
 
+  it("stopping a hands-free session drops the armed phrase-end timer but keeps its dirty flags", () => {
+    // The timer's wait-for-the-server deferral is gated on capturing: left armed past stopLive it
+    // pressed Enter after the previous phrase while the stopped utterance was still decoding, and
+    // the drain's text then went into an empty field with a second Enter from the closed tail.
+    const stop = mask(fns.stopLive);
+    const clear = stop.indexOf("clearPhraseEndTimer(");
+    expect(clear, "stopLive must cancel the phrase-end quiet timer").toBeGreaterThanOrEqual(0);
+    expect(clear, "…before it awaits the stop").toBeLessThan(stop.indexOf("await "));
+    // The closed tail owns the last phrase's Enter (phraseDirty) and the clipboard restore.
+    expect(stop.slice(0, stop.indexOf("try {"))).not.toMatch(/clearPhraseEnd\(|phraseDirty =|clipDirty =/);
+  });
+
   it("a chord-family upgrade/restart leaves a finalizing session alone", () => {
     // After stopLive the mic is closed but insertCfg is intact: flipping `live` would drop the
     // stop-mode insert, and cancelling would discard the draining transcript unsaved.

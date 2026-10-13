@@ -4132,6 +4132,11 @@ export async function stopLive(): Promise<void> {
   // per-phrase translate still has the status on "translating".
   capturing = false;
   clearWarmTimer(); // drop the warm-up gate if we stop before the mic went live
+  // The quiet timer's wait-for-the-server deferral is gated on capturing, so a timer left armed
+  // here would press Enter after the previous phrase while the stopped utterance is still being
+  // decoded — splitting one sentence into two messages. The drain's final re-arms it and the
+  // `closed` tail enters the last phrase; the dirty flags stay for that tail.
+  clearPhraseEndTimer();
   // Streaming: server flushes + drains. Batch: transcription runs now. Either way the
   // `closed` event then moves us "transcribing" → "injecting" (while the text is
   // written out) → "idle" — so the chip shows progress the whole way through.
