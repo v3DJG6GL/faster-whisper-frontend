@@ -21,6 +21,7 @@ import {
 import { pickAndImportSettings, pickSavePath, syncDelete } from "@/lib/api";
 import { applyImport, exportToFile, stripMachineFolders } from "@/lib/sync/settingsFile";
 import { SyncSettingsList } from "@/components/sync/SyncSettingsList";
+import { syncServerOptions } from "@/components/sync/syncServerOptions";
 import { SETTING } from "@/lib/settingsManifest";
 import {
   ALL_CATEGORIES,
@@ -45,7 +46,7 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendLabel, backendOptions, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
+import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, normalizeUrl } from "@/lib/backends";
 import { ownProp } from "@/lib/own";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
@@ -1064,14 +1065,14 @@ export function SyncTab() {
             value={sync.backendId ?? ""}
             onChange={(v) => updateSync({ backendId: v || null })}
             disabled={!sync.enabled}
-            // This control picks which server receives EVERY backend's plaintext key, and a
-            // backend rename arrives with no prompt — so the labels get the same defanging as the
-            // device name on the conflict dialog, plus a host suffix when two of them collide.
-            options={backendOptions(backends).map((o, i) =>
-              backends[i].hasApiKey ? o : { ...o, label: `${o.label} (no API key)` },
-            )}
+            options={syncServerOptions(backends, sync.backendId, sync.enabled)}
           />
         </SettingRow>
+        {sync.enabled && !syncBackend && backends.length > 0 && (
+          <div className="pb-3">
+            <Notice tone="warn">No sync server chosen — pick one above.</Notice>
+          </div>
+        )}
         {sync.enabled && syncBackend && !syncBackend.hasApiKey && (
           <div className="pb-3">
             <Notice tone="warn">
