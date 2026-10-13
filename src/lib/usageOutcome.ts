@@ -71,7 +71,12 @@ export function enqueue(
   }
   const items = q.items.filter((x) => x.outcome.job_id !== item.outcome.job_id);
   items.push({ ...item, queuedAt: now, attempts: 0, nextAt: now });
-  return { version: 1, items: items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items };
+  return { version: 1, items: newest(items) };
+}
+
+/** The newest MAX_ITEMS of a list that runs oldest first. */
+function newest<T>(items: T[]): T[] {
+  return items.length > MAX_ITEMS ? items.slice(items.length - MAX_ITEMS) : items;
 }
 
 /** Drop what is too old to be worth posting. */
@@ -177,9 +182,9 @@ export function parseQueue(raw: unknown): OutcomeQueue {
       attempts: Math.max(0, Math.floor(num(it.attempts, 0))),
       nextAt: num(it.nextAt, 0),
     });
-    if (items.length >= MAX_ITEMS) break;
   }
-  return { version: 1, items };
+  // An oversize file keeps its NEWEST items, like enqueue: the oldest are the ones to give up.
+  return { version: 1, items: newest(items) };
 }
 
 /* ── runtime (main window only) ─────────────────────────────────────────── */
@@ -255,7 +260,11 @@ function readPersisted(): Promise<void> {
   loading ??= (async () => {
     try {
       const persisted = pruneQueue(parseQueue(await loadUsageOutcomes()), Date.now());
-      queue = { ...persisted, items: [...persisted.items, ...queue.items] };
+      // This session's items come after the backlog (and win over a same-id one, as in enqueue);
+      // bounded like enqueue, so a late read after an offline session cannot save twice the cap.
+      const mine = queue.items;
+      const ids = new Set(mine.map((x) => x.outcome.job_id));
+      queue = { ...persisted, items: newest([...persisted.items.filter((x) => !ids.has(x.outcome.job_id)), ...mine]) };
       loaded = true;
     } catch (e) {
       console.error("usage outcome queue load failed:", e);
