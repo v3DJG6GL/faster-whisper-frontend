@@ -85,6 +85,15 @@ describe("buildCues", () => {
     expect(cues.map((c) => c.text).join(" ")).toBe(text);
   });
 
+  it("a clause ending on a preposition (\"lights on,\") is a good seam, not a dangling one", () => {
+    const text = "We need to figure out how to turn the lights on, and then we can finally start the show tonight.";
+    const { cues } = buildCues(seg1(text, 0, 19 * 0.25), STD, ["orig"]);
+    expect(cues.map((c) => c.text)).toEqual(["We need to figure out how to turn the lights on,", "and then we can finally start the show tonight."]);
+    // An abbreviation still dangles: no cue ends on "Mr.".
+    const mr = "Yesterday afternoon I finally met Mr. Johnson and his wife at the station in the city centre.";
+    expect(buildCues(seg1(mr, 0, 17 * 0.25), STD, ["orig"]).cues.some((c) => c.text.endsWith("Mr."))).toBe(false);
+  });
+
   it("a pause beats a comma", () => {
     const text = "We went down to the river, it was cold that morning and we waited there for hours";
     // Pause after "morning" (index 10).
@@ -1372,9 +1381,9 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["en short", "en", "Hello there, how are you?", 0.3, "std", "Hello there, how are you? ⟨1⟩"],
     ["en LONG std", "en", LONG, 0.3, "std", "The glacier behind me has lost almost forty percent of its volume since 1980. ⟨2⟩ | The scientists who measure it every summer say the pace is still accelerating, ⟨2⟩ | so the valley below will look completely different within a generation. ⟨2⟩"],
     ["en LONG short", "en", LONG, 0.3, "short", "The glacier behind me has lost almost ⟨1⟩ | forty percent of its volume since 1980. ⟨1⟩ | The scientists who measure it every summer ⟨1⟩ | say the pace is still accelerating, ⟨1⟩ | so the valley below will look completely ⟨1⟩ | different within a generation. ⟨1⟩"],
-    ["en lights on,", "en", "We need to figure out how to turn the lights on, and then we can finally start the show tonight.", 0.25, "std", "We need to figure out how to turn the lights ⟨2⟩ | on, and then we can finally start the show tonight. ⟨2⟩"],
+    ["en lights on,", "en", "We need to figure out how to turn the lights on, and then we can finally start the show tonight.", 0.25, "std", "We need to figure out how to turn the lights on, ⟨2⟩ | and then we can finally start the show tonight. ⟨2⟩"],
     ["en lights up,", "en", "We need to figure out how to turn the lights up, and then we can finally start the show tonight.", 0.25, "std", "We need to figure out how to turn the lights up, ⟨2⟩ | and then we can finally start the show tonight. ⟨2⟩"],
-    ["en to her,", "en", "I gave the old letter back to her, because she asked me for it last night after dinner.", 0.25, "std", "I gave the old letter back to her, because ⟨1⟩ | she asked me for it last night after dinner. ⟨2⟩"],
+    ["en to her,", "en", "I gave the old letter back to her, because she asked me for it last night after dinner.", 0.25, "std", "I gave the old letter back to her, ⟨1⟩ | because she asked me for it last night after dinner. ⟨2⟩"],
     ["en in,", "en", "Please come in, sit down and tell me everything that happened at the station this morning.", 0.25, "std", "Please come in, sit down and tell me everything ⟨2⟩ | that happened at the station this morning. ⟨1⟩"],
     ["en Mr.", "en", "Yesterday afternoon I finally met Mr. Johnson and his wife at the station in the city centre.", 0.25, "std", "Yesterday afternoon I finally met Mr. Johnson ⟨2⟩ | and his wife at the station in the city centre. ⟨2⟩"],
     ["en Dr. long", "en", "After a very long and tiring meeting with the board we spoke to Dr. Watson about the results of the study.", 0.25, "std", "After a very long and tiring meeting with the board ⟨2⟩ | we spoke to Dr. Watson about the results of the study. ⟨2⟩"],
@@ -1382,10 +1391,10 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["en quotes", "en", "He said, \"Go home now.\" Then we all left the place quickly and nobody said a word on the way.", 0.25, "std", "He said, \"Go home now.\" ⟨1⟩ | Then we all left the place quickly and nobody said a word on the way. ⟨2⟩"],
     ["en quote ?", "en", "She asked, \"Are you coming with us?\" and I did not know what to answer her at that moment.", 0.25, "std", "She asked, \"Are you coming with us?\" ⟨1⟩ | and I did not know what to answer her at that moment. ⟨2⟩"],
     ["en paren", "en", "The new model (released last year.) is faster, cheaper and much easier to use than the old one.", 0.25, "std", "The new model (released last year.) ⟨1⟩ | is faster, cheaper and much easier to use than the old one. ⟨2⟩"],
-    ["en numbers", "en", "In 2024 we sold 1,234,567 units at 3.99 dollars each, which is 12.5 percent more than in 2023.", 0.25, "std", "In 2024 we sold 1,234,567 units at 3.99 dollars ⟨2⟩ | each, which is 12.5 percent more than in 2023. ⟨2⟩"],
+    ["en numbers", "en", "In 2024 we sold 1,234,567 units at 3.99 dollars each, which is 12.5 percent more than in 2023.", 0.25, "std", "In 2024 we sold 1,234,567 units at 3.99 dollars each, ⟨2⟩ | which is 12.5 percent more than in 2023. ⟨1⟩"],
     ["en 3-line probe", "en", "The quick brown fox jumps over the lazy dog while the extraordinarily uncomfortable farmer watches.", 0.3, "std", "The quick brown fox jumps over the lazy dog ⟨2⟩ | while the extraordinarily uncomfortable farmer watches. ⟨2⟩"],
     ["en custom 3 lines", "en", LONG, 0.3, "c3", "The glacier behind me has lost almost forty percent of its volume since 1980. ⟨2⟩ | The scientists who measure it every summer say the pace is still accelerating, ⟨2⟩ | so the valley below will look completely different within a generation. ⟨2⟩"],
-    ["en custom 1 line", "en", "We need to figure out how to turn the lights on, and then we can finally start the show tonight.", 0.25, "c1", "We need to figure out ⟨1⟩ | how to turn the lights ⟨1⟩ | on, and then we can ⟨1⟩ | finally start the show tonight. ⟨1⟩"],
+    ["en custom 1 line", "en", "We need to figure out how to turn the lights on, and then we can finally start the show tonight.", 0.25, "c1", "We need to figure out how ⟨1⟩ | to turn the lights on, ⟨1⟩ | and then we can finally ⟨1⟩ | start the show tonight. ⟨1⟩"],
     ["de compounds", "de", "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.", 0.4, "std", "Wir sprechen heute ⟨1⟩ | über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl. ⟨2⟩"],
     ["de long", "de", "Die Bundesregierung hat gestern beschlossen, die Mehrwertsteuer auf Lebensmittel zu senken, weil die Inflation weiterhin sehr hoch ist und viele Familien darunter leiden.", 0.3, "std", "Die Bundesregierung hat gestern beschlossen, ⟨2⟩ | die Mehrwertsteuer auf Lebensmittel zu senken, ⟨2⟩ | weil die Inflation weiterhin sehr hoch ist und viele Familien darunter leiden. ⟨2⟩"],
     ["de z.B.", "de", "Wir brauchen z.B. mehr Geld für die Schulen, die Krankenhäuser und die öffentlichen Verkehrsmittel im ganzen Land.", 0.3, "std", "Wir brauchen z.B. mehr Geld für die Schulen, ⟨2⟩ | die Krankenhäuser und die öffentlichen Verkehrsmittel im ganzen Land. ⟨2⟩"],
@@ -1402,15 +1411,15 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["zh numbers", "zh", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。", 0.3, "std", "我们在2024年卖出了123万台手机，比去年多了百分之十二点五。 ⟨2⟩"],
   ];
   const WRAP: [label: string, text: string, cpl: number, lines: number, reserve: number, want: string][] = [
-    ["w lights on", "how to turn the lights on, and then we can start", 42, 2, 0, "how to turn the lights / on, and then we can start"],
-    ["w to her,", "I gave it back to her, because she asked me", 30, 2, 0, "I gave it back / to her, because she asked me"],
+    ["w lights on", "how to turn the lights on, and then we can start", 42, 2, 0, "how to turn the lights on, / and then we can start"],
+    ["w to her,", "I gave it back to her, because she asked me", 30, 2, 0, "I gave it back to her, / because she asked me"],
     ["w quote", "He said, \"Go home now.\" Then we all left the place", 42, 2, 0, "He said, \"Go home now.\" / Then we all left the place"],
     ["w Mr.", "Yesterday I met Mr. Johnson at the station", 30, 2, 0, "Yesterday I met / Mr. Johnson at the station"],
     ["w de", "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.", 42, 2, 0, "Wir sprechen heute / über Verantwortungsbewusstsein / und Zusammengehörigkeitsgefühl."],
     ["w zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方", 16, 2, 0, "他说：「我们走吧。」然 / 后大家一起离开了这个地方"],
     ["w ja 。」", "彼は「もう帰ろう。」と言った。それから皆で", 13, 2, 0, "彼は「もう帰ろう。」 / と言った。それから皆で"],
     ["w ja ）", "東京（とうきょう）は日本の首都です。大きい", 13, 2, 0, "東京（とうきょう）は / 日本の首都です。大きい"],
-    ["w prefix", "the lights on, and then we can finally start", 42, 2, 8, "the lights on, and / then we can finally start"],
+    ["w prefix", "the lights on, and then we can finally start", 42, 2, 8, "the lights on, / and then we can finally start"],
   ];
   const CUT: [label: string, text: string, shares: number[], want: string][] = [
     ["c quote.", "He said, \"Go home now.\" Then we all left the place quickly.", [1, 1], "He said, \"Go home now.\" Then | we all left the place quickly."],

@@ -337,8 +337,10 @@ function breakScore(prev: string, next: string): number {
   let s = 0;
   if (isSentenceEnd(prev)) s += 100;
   else if (CLAUSE.test(prev)) s += 40;
+  // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
+  // drops its comma, so only a word running on into the next one counts ("Mr." still does).
+  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev))) s -= 80;
   if (CONJ.has(bare(next))) s += 20;
-  if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev))) s -= 80;
   return s;
 }
 
