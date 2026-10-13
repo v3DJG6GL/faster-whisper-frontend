@@ -144,6 +144,30 @@ export function tracksAtWrite(
   return now.length && now.length <= cap ? now : planned;
 }
 
+/** The result a video's embedded subtitle streams were built from, and their tracks. */
+export interface EmbeddedDecision {
+  res: BatchResult;
+  tracks: string[];
+}
+
+/** What a video Save's sidecars are written from. In "both" mode the very result and tracks
+ *  the embedded streams were built from (`embedded`): the two copies promise the same
+ *  subtitles, and a translation landing while the video waited in the queue, or a pick over
+ *  the embed cap, must not reach only the files beside it. Otherwise (sidecar mode, or no
+ *  video was packaged with streams) they are decided at the write, from `res` (tracksAtWrite,
+ *  no cap: files beside the video have none). */
+export function sidecarSource(
+  mode: SubtitleMode,
+  embedded: EmbeddedDecision | null,
+  planned: string[],
+  picked: string[],
+  res: BatchResult,
+  opts: ExportOptions,
+): EmbeddedDecision {
+  if (mode === "both" && embedded) return embedded;
+  return { res, tracks: tracksAtWrite(planned, picked, res, opts) };
+}
+
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for
@@ -201,7 +225,7 @@ export function sidecarNames(
 /** One sidecar file per chosen track, in track order, in the panel's
  *  subtitle format — the same per-language content the embedded tracks
  *  carry, so "both" writes the same subtitles twice, once inside and once
- *  beside the video. Named over the cue-bearing tracks only (cueTracks): a
+ *  beside the video (from the same result and tracks: sidecarSource). Named over the cue-bearing tracks only (cueTracks): a
  *  language whose first track is empty still gets its plain `stem.fr.srt`. */
 export function sidecarFiles(
   result: BatchResult,

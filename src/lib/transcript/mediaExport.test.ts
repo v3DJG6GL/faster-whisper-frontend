@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
   isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn,
-  siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp, tracksAtWrite,
+  siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, sidecarSource, stemTimestamp, tracksAtWrite,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
 
@@ -177,6 +177,28 @@ describe("embeddedSubtitleTracks", () => {
     expect(tracksAtWrite(["orig", "fr"], ["orig", "fr", "en"], res, opts, 3)).toEqual(["orig", "fr", "en"]);
     const empty: BatchResult = { text: "", language: "de", segments: [] };
     expect(tracksAtWrite(["orig"], ["orig"], empty, opts)).toEqual(["orig"]);
+  });
+  it("in \"both\" mode the sidecars carry exactly the embedded streams' result and tracks", () => {
+    const at = (fr?: string, en?: string): BatchResult => ({
+      text: "Hallo", language: "de",
+      segments: [{ start: 0, end: 1, text: "Hallo", translations: { ...(fr ? { fr } : {}), ...(en ? { en } : {}) } }],
+    });
+    const opts = { format: "srt" as const };
+    const picked = ["orig", "fr", "en"];
+    // The streams were built before the queue wait: English was still running, French in.
+    const early = at("Salut");
+    const embedded = { res: early, tracks: tracksAtWrite(["orig", "fr"], picked, early, opts, 2) };
+    // English lands while the video waits in the queue.
+    const late = at("Salut", "Hello");
+    const both = sidecarSource("both", embedded, ["orig", "fr"], picked, late, opts);
+    expect(both.tracks).toEqual(["orig", "fr"]);
+    expect(sidecarFiles(both.res, opts, both.tracks, "srt").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt"]);
+    // Files beside the video only: decided at the write, no embed cap.
+    const side = sidecarSource("sidecar", null, ["orig", "fr"], picked, late, opts);
+    expect(side.tracks).toEqual(["orig", "fr", "en"]);
+    expect(side.res).toBe(late);
+    // "both" whose video carried no streams (none decided) falls back to the write's decision.
+    expect(sidecarSource("both", null, ["orig", "fr"], picked, late, opts).tracks).toEqual(["orig", "fr", "en"]);
   });
   it("a site track's looser language tag embeds as one the packager accepts", () => {
     const site: BatchResult = {

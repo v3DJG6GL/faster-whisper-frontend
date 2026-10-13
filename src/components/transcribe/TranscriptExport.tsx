@@ -39,8 +39,8 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, goneVideoRetryRefusal, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, stampCopyPath, tracksAtWrite,
-  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams, type PackageSource,
+  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, packageSource, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, sidecarSource, stampCopyPath, tracksAtWrite,
+  subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedDecision, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams, type PackageSource,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
 import { patchRecord, type TranscriptRecord } from "@/lib/transcript/transcriptHistory";
@@ -50,6 +50,9 @@ import type { Backend, BatchResult, Capabilities } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { useResizeObserver } from "@/lib/useResizeObserver";
 import { ownProp } from "@/lib/own";
+
+/** The pre-dialog size check's subtitle streams: the result and tracks they were built from. */
+type CheckedTracks = { res: BatchResult; ids: string[]; tracks: EmbeddedTrack[] };
 
 /** Why a video Save stops for one subtitle track over the packager's embed cap. */
 const tooLargeToEmbed = (t: EmbeddedTrack) =>
@@ -338,7 +341,8 @@ export function TranscriptExport({
    *  closed one plans nothing) only those with a cue, so the plan names the sidecars exactly as
    *  sidecarFiles writes them (a language's empty first track never takes its plain name). */
   /** Every track picked for a video, cue or not: a Save re-filters them when it writes
-   *  (tracksAtWrite), so a translation still running at the click is written once it lands. */
+   *  (tracksAtWrite), so a translation still running at the click is written once it lands.
+   *  In "both" mode the sidecars take the streams' own decision (sidecarSource). */
   const pickedVideoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
   const videoTracks = useMemo(() => {
     if (!open || effMedia !== "video") return pickedVideoTracks;
@@ -521,10 +525,12 @@ export function TranscriptExport({
    *  the panel now shows while it is mounted and `started`'s record still shows (no
    *  outcome lands on another record's panel); otherwise a failure goes to `late`. `checked` = the
    *  tracks the pre-dialog size check built, reused while their result is still the
-   *  latest. `skipLocal` = the local copy is known gone (exportVideoTo's retry). */
+   *  latest. `skipLocal` = the local copy is known gone (exportVideoTo's retry). `onEmbedded`
+   *  learns the result and tracks the subtitle streams were built from ("both" writes its
+   *  sidecars from them: sidecarSource). */
   const exportVideoOnce = async (
     dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
-    checked: { res: BatchResult; tracks: EmbeddedTrack[] } | undefined, skipLocal: boolean,
+    checked: CheckedTracks | undefined, skipLocal: boolean, onEmbedded?: (d: EmbeddedDecision) => void,
   ): Promise<boolean> => {
     const localVideo = skipLocal ? null : panelLocalVideo;
     const mine = () => exportOutcomeShowsHere(mounted.current, openRef.current, latestResult.current.owner, started);
@@ -602,11 +608,12 @@ export function TranscriptExport({
     // edit during the dialog or the fetch) is rebuilt and checked against the cap again.
     const res = liveResult(started);
     const reuse = checked && checked.res === res;
+    const ids = !embedded.length ? [] : reuse ? checked.ids : tracksAtWrite(embedded, pickedVideoTracks, res, exportOptions, embedCap);
     const subtitles = !embedded.length
       ? []
       : reuse
         ? checked.tracks
-        : embeddedSubtitleTracks(res, exportOptions, tracksAtWrite(embedded, pickedVideoTracks, res, exportOptions, embedCap), trackNames);
+        : embeddedSubtitleTracks(res, exportOptions, ids, trackNames);
     const big = reuse ? null : oversizedEmbeddedTrack(subtitles);
     if (big) {
       const msg = tooLargeToEmbed(big);
@@ -614,6 +621,7 @@ export function TranscriptExport({
       else late(msg);
       return false;
     }
+    if (embedded.length) onEmbedded?.({ res, tracks: ids });
     const { defaultTrack, originalTrack } = legacyTrackIndices(subtitles);
     // The spoken language is known here; the source file's audio tag is
     // whatever the uploader's default was ("en" on a German video). Tagged the
@@ -731,10 +739,10 @@ export function TranscriptExport({
    *  fetches when the server can). */
   const exportVideoTo = async (
     dest: string, embedded: string[], started: typeof owner, late: (msg: string) => void,
-    checked?: { res: BatchResult; tracks: EmbeddedTrack[] },
+    checked?: CheckedTracks, onEmbedded?: (d: EmbeddedDecision) => void,
   ): Promise<boolean> => {
     try {
-      return await exportVideoOnce(dest, embedded, started, late, checked, false);
+      return await exportVideoOnce(dest, embedded, started, late, checked, false, onEmbedded);
     } catch (e) {
       const gone = panelLocalVideo;
       if (!urlSource || !rec || !gone || !isGoneSourceError(e)) throw e;
@@ -743,7 +751,7 @@ export function TranscriptExport({
         urlVideoOnDemand, packageOn, embeds: embedded.length > 0, destExt: extOf(dest), container: effContainer,
       });
       if (refusal) throw new Error(refusal);
-      return exportVideoOnce(dest, embedded, started, late, checked, true);
+      return exportVideoOnce(dest, embedded, started, late, checked, true, onEmbedded);
     }
   };
 
@@ -781,18 +789,17 @@ export function TranscriptExport({
     // The packager refuses the whole video for one subtitle track over its size cap: say
     // which one before the dialog, not after the file name was picked and the video fetched.
     // The tracks it built ride along to the packaging (exportVideoTo) while still current.
-    let checked: { res: BatchResult; tracks: EmbeddedTrack[] } | undefined;
+    let checked: CheckedTracks | undefined;
     if (plan.primary.kind === "video" && plan.embedded.length) {
       const res = liveResult(started);
-      const tracks = embeddedSubtitleTracks(
-        res, exportOptions, tracksAtWrite(plan.embedded, pickedVideoTracks, res, exportOptions, embedCap), trackNames,
-      );
+      const ids = tracksAtWrite(plan.embedded, pickedVideoTracks, res, exportOptions, embedCap);
+      const tracks = embeddedSubtitleTracks(res, exportOptions, ids, trackNames);
       const big = oversizedEmbeddedTrack(tracks);
       if (big) {
         setSaveError(tooLargeToEmbed(big));
         return;
       }
-      checked = { res, tracks };
+      checked = { res, ids, tracks };
     }
     let target: string | null;
     try {
@@ -814,6 +821,8 @@ export function TranscriptExport({
     // the stem the user actually chose in the dialog.
     const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
     const written: string[] = [];
+    /** What the video's subtitle streams were built from (null = none were). */
+    let embeddedFrom: EmbeddedDecision | null = null;
     try {
       // The media file first (the plan puts it first; the text files follow it).
       for (const f of plan.files) {
@@ -825,7 +834,7 @@ export function TranscriptExport({
           written.push(landed);
           continue;
         }
-        if (!(await exportVideoTo(dest, plan.embedded, started, late, checked))) return;
+        if (!(await exportVideoTo(dest, plan.embedded, started, late, checked, (d) => { embeddedFrom = d; }))) return;
         written.push(dest);
       }
       // Beside a video the text files are one subtitle file per language; the
@@ -833,10 +842,14 @@ export function TranscriptExport({
       // file is written, from the latest result (liveResult): a cancel pays nothing, the
       // dialog opens without waiting on them, and a translation that landed during the
       // dialog or the video's fetch is written. A video's sidecars are named over the tracks
-      // written (tracksAtWrite); the plain text files stay the click's plan.
+      // written (tracksAtWrite) — in "both" mode exactly the result and tracks its streams
+      // carry (sidecarSource); the plain text files stay the click's plan.
       const res = liveResult(started);
-      const files = plan.sidecars
-        ? sidecarFiles(res, exportOptions, tracksAtWrite(plan.sidecars.tracks, pickedVideoTracks, res, exportOptions), plan.sidecars.format)
+      const side = plan.sidecars
+        ? sidecarSource(effSubtitleMode, embeddedFrom, plan.sidecars.tracks, pickedVideoTracks, res, exportOptions)
+        : null;
+      const files = plan.sidecars && side
+        ? sidecarFiles(side.res, exportOptions, side.tracks, plan.sidecars.format)
         : generateExports(res, exportOptions);
       const contents = new Map(files.map((f) => [f.name(pickedStem), f.content]));
       const names = plan.sidecars
