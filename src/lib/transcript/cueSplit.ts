@@ -63,6 +63,10 @@ export type QuoteCount = Record<'"' | "'", number>;
 export interface QuoteCtx {
   before: QuoteCount;
   after: QuoteCount;
+  /** The segment's characters right before and after the text: quoteFlags judges a quote at
+   *  its edge by them (an inch mark after the 6 of the cue before), as the segment's own count does. */
+  prev?: string;
+  next?: string;
 }
 
 export interface CueGrid {
@@ -445,6 +449,11 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     // a spaced line still breaks at its phrase spaces first (cutByShare does the same).
     const at = ts[i].from;
     if (BRK_SYL.test(text[at - 1] ?? "") && BRK_SYL.test(text[at] ?? "")) s -= 40;
+    // Never right after an opening bracket or right before a closing one or a stop, as cutByShare
+    // and wrapLines: a 「 or 」 Whisper times as a word of its own ended or started a cue. Below
+    // every other seam's score (a pause included), so it is taken only when there is no other.
+    if (OPENER.test(edgeChar(text.slice(ts[i - 1].from, ts[i - 1].to).trimEnd(), true))
+      || CLOSE_PUNCT.includes(text[at] || "\0")) s -= 1000;
     // Both sides read by index: slicing the token array per candidate made every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
     const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
@@ -518,9 +527,8 @@ function stretchesOf(pieces: { start: number; end: number; text: string }[]): { 
 // ── translation cutting (same timing) ───────────────────────────────────────
 
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
- *  cuts after sentence/clause punctuation and never right after an article. `q` = the
- *  quotes of the segment around `text` when it is only part of one (QuoteCtx). */
-export function cutByShare(text: string, shares: number[], q?: QuoteCtx): string[] {
+ *  cuts after sentence/clause punctuation and never right after an article. */
+export function cutByShare(text: string, shares: number[]): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
   // One word of a spaced script ("Ja."): nothing to cut — it goes to the first part.
@@ -530,7 +538,7 @@ export function cutByShare(text: string, shares: number[], q?: QuoteCtx): string
   // whole here as it does on a line — its "." or "," used to draw the cut into it.
   let seams: Set<number> | null = null;
   if (!spaced) {
-    const m = mixedTokens(text, q);
+    const m = mixedTokens(text);
     seams = new Set(m.toks.map((w, k) => m.at[k] + w.length));
   }
   // Candidate cut positions: a space (dropped) or, for CJK, any code-point
@@ -705,19 +713,20 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
   return wrapTokens(toks, gaps, cpl, len, firstReserve);
 }
 
-/** Which characters of `t` are counted ASCII quotes, `seed` = those of each kind before `t`
- *  (its segment's, when `t` is a cue of it). A " or ' between two ASCII letters or digits is
+/** Which characters of `t` are counted ASCII quotes, `q` = its segment's quotes and characters
+ *  around it when `t` is a cue of it (QuoteCtx), so a cue counts its quotes as its segment does.
+ *  A " or ' between two ASCII letters or digits is
  *  none (it's, rock'n'roll), and neither is an inch or foot mark: one glued right after an
  *  ASCII digit while the count of its kind so far is even (6.1", 27") — counted, it flipped
  *  the pairing of every quote after it. At an odd count the same quote closes (他说"是2024"). */
-function quoteFlags(t: string, seed?: QuoteCount): boolean[] {
-  const n: QuoteCount = { '"': seed?.['"'] ?? 0, "'": seed?.["'"] ?? 0 };
+function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
+  const n: QuoteCount = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
   const out: boolean[] = [];
   for (let j = 0; j < t.length; j++) {
     const c = t[j];
-    const prev = t[j - 1] ?? "";
+    const prev = t[j - 1] ?? q?.prev ?? "";
     const is = (c === '"' || c === "'")
-      && !(/[A-Za-z0-9]/.test(prev) && /[A-Za-z0-9]/.test(t[j + 1] ?? ""))
+      && !(/[A-Za-z0-9]/.test(prev) && /[A-Za-z0-9]/.test(t[j + 1] ?? q?.next ?? ""))
       && !(/[0-9]/.test(prev) && n[c] % 2 === 0);
     if (is) n[c as keyof QuoteCount]++;
     out.push(is);
@@ -727,7 +736,8 @@ function quoteFlags(t: string, seed?: QuoteCount): boolean[] {
 
 /** The QuoteCtx of each of `parts` — trimmed substrings of `whole`, in order (cues, cut parts)
  *  — counted over `whole` in one pass; undefined for an empty or unfound part, or when no
- *  quote stands outside it. */
+ *  quote stands outside it and no ASCII letter or digit borders it (only those change how
+ *  quoteFlags judges a quote at its edge). */
 function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
   const f = quoteFlags(whole);
   /** Counted quotes of each kind before index i. */
@@ -745,7 +755,9 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
     const e = at + p.length;
     from = e;
     const q: QuoteCtx = { before: { '"': dq[at], "'": sq[at] }, after: { '"': dq[L] - dq[e], "'": sq[L] - sq[e] } };
-    return q.before['"'] + q.before["'"] + q.after['"'] + q.after["'"] ? q : undefined;
+    if (/[A-Za-z0-9]/.test(whole[at - 1] ?? "")) q.prev = whole[at - 1];
+    if (/[A-Za-z0-9]/.test(whole[e] ?? "")) q.next = whole[e];
+    return q.before['"'] + q.before["'"] + q.after['"'] + q.after["'"] || q.prev || q.next ? q : undefined;
   });
 }
 
@@ -769,7 +781,7 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
   const gaps: boolean[] = [];
   const at: number[] = [];
   let end = 0;
-  const flags = quoteFlags(t, q?.before);
+  const flags = quoteFlags(t, q);
   /** Counted quotes of each kind before the current match (from the segment start) — kept
    *  running, so the pass stays linear. */
   const quotes: Record<string, number> = { '"': q?.before['"'] ?? 0, "'": q?.before["'"] ?? 0 };
@@ -780,26 +792,38 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
   let quoted = -1;
   for (const m of t.matchAll(MIXED_TOKEN)) {
     let w = m[0];
-    const gap = m.index! > end;
-    end = m.index! + w.length;
+    let idx = m.index!;
+    const gap = idx > end;
+    end = idx + w.length;
     const k = toks.length - 1;
     // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
-    const qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
-    const after = m.index! + (qr?.[0].length ?? 0);
+    let qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
+    let c = qr?.[1][0] ?? '"';
+    // A glued run whose first quote closes the quotation before it (他说"你好""再见"): that quote
+    // joins the text it closes and the rest of the run is judged on its own. Judged as one, the
+    // quote opening the next quotation joined backward too, and a line or part ended on it.
+    if (qr && !gap && k >= 0 && qr[0] === qr[1] && qr[1].split(c).length > 2 && flags[idx] && quotes[c] % 2 === 1) {
+      toks[k] += c;
+      quotes[c]++;
+      idx++;
+      w = w.slice(1);
+      qr = /^\p{Ps}*(["']{1,6})(?!["'])/u.exec(w);
+      c = qr?.[1][0] ?? '"';
+    }
+    const after = idx + (qr?.[0].length ?? 0);
     // Glued to the text before it, a quote opens only on positive evidence: an even count of its
     // kind so far in the segment AND a later one of its kind to close it. The last unpaired one —
     // a closer whose opener was in the previous segment — joins the text it closes.
-    const c = qr?.[1][0] ?? '"';
     const opens = !!qr && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(after, after + 2), false))
       && (gap || k < 0 || qr[0] !== qr[1]
         || (quotes[c] % 2 === 0 && total[c] > quotes[c] + qr[1].split(c).length - 1));
-    for (let j = m.index!; j < end; j++) if (flags[j]) quotes[t[j]]++;
+    for (let j = idx; j < end; j++) if (flags[j]) quotes[t[j]]++;
     // An opener glued to the end of a Latin word ("Python(") moves onto what it opens, with
     // the ASCII quotes after it (print("). Brackets only: an initial quote at the end of a word
     // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off left „Hallo /
     // “東京… on two lines.
     const open = k >= 0 && !gap ? /\p{Ps}+["']*$/u.exec(toks[k]) : null;
-    let from = m.index!;
+    let from = idx;
     if (open && open.index > 0) {
       toks[k] = toks[k].slice(0, open.index);
       w = open[0] + w;

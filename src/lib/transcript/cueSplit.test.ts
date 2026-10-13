@@ -226,6 +226,34 @@ describe("buildCues", () => {
     }
   });
 
+  it("a bracket Whisper times as a word of its own never ends or starts a cue", () => {
+    // Whisper's merge_punctuations leaves 「 」 （ ） alone: each arrives as its own timed word.
+    const ja = ["私", "は", "昨日", "の", "夜", "に", "友達", "と", "一緒", "に", "「", "美味しい", "ラーメン", "屋", "さん", "」", "に", "行って", "、", "とても", "楽しい", "時間", "を", "過ごし", "ました", "。"];
+    const zh = ["我", "昨天", "和", "朋友", "去", "了", "一家", "（", "非常", "有名", "的", "）", "餐厅", "，", "吃", "得", "很", "开心", "。"];
+    for (const [lang, ws] of [["ja", ja], ["zh", zh]] as const) {
+      const text = ws.join("");
+      // No pause, and a pause right before the closing bracket.
+      for (const pauseBefore of [-1, ws.findIndex((w) => /^[」）]$/.test(w))]) {
+        let t = 0;
+        const words = ws.map((w, i) => {
+          if (i === pauseBefore) t += 0.6;
+          const word = { word: w, start: t, end: t + 0.12 * w.length };
+          t = word.end;
+          return word;
+        });
+        const r: BatchResult = { text, language: lang, words, segments: [{ start: 0, end: t, text }] };
+        for (const length of ["standard", "short"] as const) {
+          const { cues } = buildCues(r, { length, timing: "same" }, ["orig"]);
+          const all = cues.map((c) => c.text).join(" | ");
+          if (length === "short" || lang === "ja") expect(cues.length, all).toBeGreaterThan(1);
+          expect(cues.some((c) => /[「（]$/.test(c.text)), all).toBe(false);
+          expect(cues.some((c) => /^[」）。、，]/.test(c.text)), all).toBe(false);
+          expect(cues.map((c) => c.text).join("")).toBe(text);
+        }
+      }
+    }
+  });
+
   it("own timing: an opening bracket stays with the character it opens", () => {
     const ja = "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });
@@ -537,6 +565,39 @@ describe("wrapLines", () => {
       expect(lines.some((l) => /^"然|说"$/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
       expect(lines.join("")).toBe(inner);
     }
+  });
+  it("two quotations glued back to back: the second one's opening quote rides with what it opens", () => {
+    // `""` is one run: judged as one, the quote opening "再见朋友" joined the one closing "你好朋友".
+    const t = '他说"你好朋友""再见朋友"然后走了';
+    expect(wrapLines(t, 10, 2)).toEqual(['他说"你好朋友"', '"再见朋友"然后走了']);
+    for (let cpl = 4; cpl <= 16; cpl++) {
+      const lines = wrapLines(t, cpl, 2);
+      expect(lines.some((l) => /""$/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+      expect(lines.join("")).toBe(t);
+    }
+    expect(cutByShare(t, [8, 9])).toEqual(['他说"你好朋友"', '"再见朋友"然后走了']);
+    for (let k = 1; k < 20; k++) expect(cutByShare(t, [k, 20 - k]).some((p) => /""$/.test(p))).toBe(false);
+    // A closing quote with nothing after it to open still stays with what it closes.
+    expect(wrapLines('我们明天去北京"看看""', 6, 2).some((l) => /^"/.test(l))).toBe(false);
+  });
+  it("a cue right after an inch mark counts its quotes as its segment does", () => {
+    // The cue starts on the " after the 6 of the cue before: an inch mark in the segment, but
+    // counted alone the cue took it for a quote and the opening one of "很好" ended a line.
+    const ws = ["屏幕有6", '"大的手机', "他说", '"很好"', "然后", "走了"];
+    const text = ws.join("");
+    let t = 0;
+    const words = ws.map((w, i) => {
+      const word = { word: w, start: t, end: t + 0.12 * w.length };
+      t = word.end + (i === 0 ? 1 : 0);
+      return word;
+    });
+    const r: BatchResult = { text, language: "zh", words, segments: [{ start: 0, end: t, text }] };
+    const L = { cpl: 8, lines: 3, maxDur: 2, cps: 17 };
+    const { cues } = buildCues(r, { length: "custom", custom: L, timing: "same" }, ["orig"]);
+    expect(cues.map((c) => c.text)).toEqual(["屏幕有6", '"大的手机他说"很好"然后走了']);
+    const lines = wrapLines(cues[1].text, L.cpl, L.lines, 0, cues[1].q);
+    expect(lines.some((l) => /说"$/.test(l)), lines.join(" | ")).toBe(false);
+    expect(lines).toEqual(['"大的手机他说', '"很好"然后走了']);
   });
   it("an over-long word of spaced text wraps per character, sharing a line with its neighbour", () => {
     const w = "x".repeat(50);
