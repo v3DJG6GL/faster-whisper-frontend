@@ -102,7 +102,10 @@ function failedText(status: JobStatus): string {
 }
 
 /** Fetch + ingest a finished job. Returns false when the fetch must be retried
- *  (transport error, or the result is not published yet). Attached: an epoch move
+ *  (transport error, an HTTP status, or the result is not published yet). A stored result
+ *  Rust can never accept (over the body cap, not valid text, a parse failure) settles the run
+ *  failed with the reason: re-polling would refuse the same bytes until the row's age limit,
+ *  days of a "running" rail, where the live POST path fails the same body once. Attached: an epoch move
  *  during either fetch (the result, then a link's site subtitles) means the user cancelled (or started something else) and the
  *  stop hook already released the rail and forgot the row — drop the result. `stopped`:
  *  the watcher was stopped meanwhile (stopOrphan: the user retried) — drop it too. */
@@ -135,6 +138,11 @@ async function ingestDone(
       await forgetRow(row.jobId);
       return true;
     case "error":
+      if (isAnsweredError(r.message) && !/^HTTP \d/.test(r.message)) {
+        failJob(row, `The server's result could not be read: ${r.message}`, { attached });
+        await forgetRow(row.jobId);
+        return true;
+      }
       return false;
   }
 }

@@ -694,6 +694,39 @@ describe("reconcileJobs", () => {
     expect(getJobResult).toHaveBeenCalledTimes(calls);
   });
 
+  it("a stored result Rust can never read settles the run failed instead of re-polling", async () => {
+    await seed(row(JOB_A, T0));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "running" }));
+    await reconcileJobs();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useTranscribeRun.getState().running).toBe(true);
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue({
+      kind: "error", message: "The server sent an unreasonably large response — ignoring it.",
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    expect(records().map((r) => [r.id, r.status, r.error])).toEqual([[
+      JOB_A, "failed",
+      "The server's result could not be read: The server sent an unreasonably large response — ignoring it.",
+    ]]);
+    expect(ledgerRows()).toEqual([]);
+    expect(useTranscribeRun.getState().running).toBe(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+  });
+
+  it("a reconcile pass settles an unreadable stored result once, but retries an HTTP status", async () => {
+    await seed(row(JOB_A, T0), row(JOB_B, T0 + 1));
+    getJob.mockImplementation(async ({ jobId }) => ok({ jobId, state: "done", resultAvailable: true }));
+    getJobResult.mockImplementation(async ({ jobId }) => jobId === JOB_A
+      ? { kind: "error", message: "missing field `text` at line 1 column 2" }
+      : { kind: "error", message: "HTTP 500" });
+    await reconcileJobs();
+    expect(records().map((r) => [r.id, r.status])).toEqual([[JOB_A, "failed"]]);
+    expect(ledgerRows().map((r) => r.jobId)).toEqual([JOB_B]);
+  });
+
   it("a row from a long-TTL server is still watched past the 72 h default", async () => {
     const long = row(JOB_A, T0);
     long.ctx = { ...long.ctx, jobsTtlS: 7 * 86_400 };
