@@ -133,6 +133,21 @@ export function removeRow(l: Ledger, jobId: string): Ledger {
 let ledger: Ledger = EMPTY_LEDGER;
 let loaded = false;
 let loading: Promise<void> | null = null;
+/** A read failed before (the launch's, or a save's): the next one to land brings in rows no
+ *  launch pass has seen. */
+let readFailed = false;
+let onLateLoad: (() => void) | null = null;
+
+/** The reconcile's hook: the disk copy was read only after an earlier read failed, so an
+ *  earlier launch's rows just arrived — and nothing else would look at them this session. */
+export function setLedgerLateLoad(fn: (() => void) | null): void {
+  onLateLoad = fn;
+}
+
+/** Has the disk copy been read (merged) yet? Outside the desktop app there is none to read. */
+export function ledgerLoaded(): boolean {
+  return !isTauri || loaded;
+}
 
 async function write(): Promise<void> {
   if (!isTauri) return;
@@ -162,7 +177,9 @@ export function initLedger(): Promise<void> {
       const mine = ledger.rows;
       ledger = { v: 1, rows: [...persisted.rows.filter((r) => !mine.some((m) => m.jobId === r.jobId)), ...mine] };
       loaded = true;
+      if (readFailed) onLateLoad?.();
     } catch (e) {
+      readFailed = true;
       console.error("jobs ledger load failed:", e);
     } finally {
       loading = null;
@@ -195,4 +212,5 @@ export function _resetLedgerForTests(): void {
   ledger = EMPTY_LEDGER;
   loaded = false;
   loading = null;
+  readFailed = false;
 }

@@ -23,7 +23,7 @@ import { deleteJob, getJob, getJobResult, isTauri } from "./api";
 import { effectiveServerUrl } from "./backends";
 import { isAnsweredError } from "./errors";
 import { configReady } from "./persistence";
-import { forgetRow, initLedger, ledgerRows, maxAgeMs, type LedgerRow } from "./jobsLedger";
+import { forgetRow, initLedger, ledgerLoaded, ledgerRows, maxAgeMs, setLedgerLateLoad, type LedgerRow } from "./jobsLedger";
 import { useApp } from "./store";
 import {
   failJob, foldProgress, ingestJobResult, reattachRun, setOrphanForget, setOrphanStop, setOrphanWatch,
@@ -66,6 +66,8 @@ let retries = 0;
 let retryTimer: ReturnType<typeof setTimeout> | undefined;
 /** A retry timer fired while a pass was in flight: that pass runs one more right after it. */
 let rerun = false;
+/** The pass is reading the ledger itself: a late load it lands is its own to reconcile. */
+let passReading = false;
 /** Job ids a watcher is polling right now (→ its stop): a retry pass re-reads the live
  *  ledger, where a watched row stays until it settles, and must not start a second watcher. */
 const watching = new Map<string, () => void>();
@@ -353,6 +355,15 @@ export async function reconcileJobs(): Promise<void> {
   inFlight = true;
   let retry = false;
   try {
+    // The launch's read failed (a Windows AV lock): read again, and while it still fails keep
+    // retrying — an earlier launch's rows are only on disk, and no pass would look at them.
+    passReading = true;
+    try {
+      await initLedger();
+    } finally {
+      passReading = false;
+    }
+    if (!ledgerLoaded()) retry = true;
     const app = useApp.getState();
     const rows = [...ledgerRows()].sort((a, b) => a.startedAt - b.startedAt);
     const running: LedgerRow[] = [];
@@ -477,6 +488,12 @@ function scheduleRetry(): void {
   }, RETRY_MS);
 }
 
+/** A late read that lands outside a pass's own (a save's, after the retry budget ran out, or
+ *  mid-pass): reconcile what it brought — mid-pass, as the rerun right after that pass. */
+setLedgerLateLoad(() => {
+  if (started && !passReading) void reconcileJobs();
+});
+
 /** Once per launch: load the ledger after the config (backends) is in, then reconcile. */
 export async function initJobReconcile(): Promise<void> {
   if (!isTauri || started) return;
@@ -493,6 +510,7 @@ export function _resetReconcileForTests(): void {
   inFlight = false;
   retries = 0;
   rerun = false;
+  passReading = false;
   clearTimeout(retryTimer);
   retryTimer = undefined;
   watching.clear();

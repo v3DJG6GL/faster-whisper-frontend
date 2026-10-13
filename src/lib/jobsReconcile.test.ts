@@ -808,6 +808,33 @@ describe("reconcileJobs", () => {
     expect(records().filter((r) => r.id === JOB_A)).toEqual([]);
   });
 
+  it("a ledger the launch could not read is read again by the retry pass, and its rows are reconciled", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    loadJobsLedger.mockRejectedValueOnce("jobs ledger unreadable: Permission denied");
+    loadJobsLedger.mockRejectedValueOnce("jobs ledger unreadable: Permission denied");
+    loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [row(JOB_A, T0)] }));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "cancelled" }));
+    await initJobReconcile();
+    expect(getJob).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(getJob.mock.calls.map((c) => c[0].jobId)).toEqual([JOB_A]);
+    expect(records().find((r) => r.id === JOB_A)?.status).toBe("failed");
+    expect(ledgerRows()).toEqual([]);
+  });
+
+  it("a ledger first read by a later save is reconciled then, not only at the next launch", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    loadJobsLedger.mockImplementation(() => Promise.reject("jobs ledger unreadable: Permission denied"));
+    getJob.mockImplementation(async ({ jobId }) => ok({ jobId, state: "cancelled" }));
+    await initJobReconcile();
+    loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [row(JOB_A, T0)] }));
+    // This session's own request: its save is the read that lands.
+    await persistRow(row(JOB_C, Date.now() + 1));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getJob.mock.calls.map((c) => c[0].jobId)).toEqual([JOB_A]);
+    expect(records().find((r) => r.id === JOB_A)?.status).toBe("failed");
+  });
+
   it("a retry pass skips rows the pump persisted during this launch", async () => {
     loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [row(JOB_B, T0)] }));
     getJob.mockResolvedValue({ kind: "error", message: "Could not connect" });
