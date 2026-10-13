@@ -79,7 +79,6 @@ export function TranslateProgressCard({
   ];
   return (
     <div
-      role="status"
       className={cn(
         "mb-2.5 rounded-xl border p-3.5",
         reconnecting ? "border-warn/40 bg-warn/5" : "border-line bg-surface-2/60",
@@ -111,7 +110,11 @@ export function TranslateProgressCard({
             {Math.round(run.pct * 100)}%
           </span>
         )}
-        <span className="text-[12px] text-dim">{stageText}</span>
+        {/* The live region is the stage line only: the whole card as one would make a screen
+            reader re-read the ticking clock, the % and the streamed last line every second. */}
+        <span role="status" className="text-[12px] text-dim">
+          {stageText}
+        </span>
         {tgt && !done && (
           <span className="rounded-pill border border-[color:var(--c-translate)]/40 px-1.5 font-mono text-[10px] uppercase text-[color:var(--c-translate)]">
             {tgt}
