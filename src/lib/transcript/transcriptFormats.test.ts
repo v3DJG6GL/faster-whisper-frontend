@@ -306,12 +306,16 @@ describe("sanitisation", () => {
         { start: 0, end: 1, text: "今日は\nいい天気。" },
         { start: 1, end: 2, text: "a \n b" },
         { start: 2, end: 3, text: "我们走吧\n他们在等我们" },
+        { start: 3, end: 4, text: "Hello\n\nworld" },
       ],
     };
     for (const format of ["srt", "vtt", "lrc"] as const) {
       const out = generateExport(r, { format });
       expect(out).toContain("今日は いい天気。");
+      // The break and the blanks around it fold into ONE space (a blank line too).
       expect(out).toContain("a b");
+      expect(out).not.toContain("a  b");
+      expect(out).toContain("Hello world");
       expect(out).toContain("我们走吧 他们在等我们");
     }
   });

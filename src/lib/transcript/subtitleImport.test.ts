@@ -86,7 +86,7 @@ describe("round-trips against generateExport", () => {
     // Tags with no space between Latin words still separate them.
     expect(parseImportedText("lrc", "[00:01.00]<00:01.00>Hello<00:01.50>there\n").segments[0].text).toBe("Hello there");
   });
-  it("srt/vtt: an unpunctuated CJK cue the export wrapped at a phrase space reads back with that space", () => {
+  it("srt/vtt: a CJK cue the export wrapped at a phrase space reads back with that space", () => {
     const text = "我们今天去公园散步了 然后回家吃饭再看一会儿电视吧";
     const zh: BatchResult = {
       text,
