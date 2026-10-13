@@ -125,13 +125,15 @@ export function Combobox({
   }, [active, showPopover]);
   // If ArrowDown landed before the suggestions finished loading (a cold-start race —
   // recent words are fetched async), honour it the moment they arrive so the very
-  // first press isn't silently swallowed.
+  // first press isn't silently swallowed. Only while the popover is open: blur, Esc and Tab drop
+  // the intent, so a list that fills after the session ended (blur widens it to the whole pool)
+  // can't leave option 0 armed for the next focus, where Tab/Enter would pick it.
   useEffect(() => {
-    if (wantFirstRef.current && candidates.length > 0) {
+    if (wantFirstRef.current && open && candidates.length > 0) {
       wantFirstRef.current = false;
       setActive(0);
     }
-  }, [candidates.length]);
+  }, [candidates.length, open]);
 
   function choose(word: string | undefined) {
     // A keyboard pick reads candidates[active]; guard against a stale active index that
@@ -169,12 +171,13 @@ export function Combobox({
         if (showPopover && active >= 0) { e.preventDefault(); choose(candidates[active]); }
         break;
       case "Escape":
+        wantFirstRef.current = false;
         if (open) { e.stopPropagation(); setOpen(false); setActive(-1); }
         break;
       case "Tab":
         // Accept a highlighted option on Tab (fast entry); else just close.
         if (showPopover && active >= 0) { e.preventDefault(); choose(candidates[active]); }
-        else { setOpen(false); setActive(-1); }
+        else { wantFirstRef.current = false; setOpen(false); setActive(-1); }
         break;
     }
   }
@@ -204,7 +207,7 @@ export function Combobox({
         // Preserve the typed filter: clearing it here would discard a half-typed
         // query when the user clicks the field after Escape.
         onClick={() => { if (!disabled) setOpen(true); }}
-        onBlur={() => { setOpen(false); setActive(-1); setTyped(false); }}
+        onBlur={() => { wantFirstRef.current = false; setOpen(false); setActive(-1); setTyped(false); }}
         onKeyDown={onKeyDown}
       />
       {showPopover && box &&
