@@ -794,8 +794,11 @@ pub(crate) const MODEL_ID_MAX: usize = 200;
 /// A server model id under the model-id rule with ceiling `max`: an id longer than `max` (counted
 /// on the RAW id, so a kept id is never cut) is dropped, a kept one is folded like any server
 /// string ([`bounded_server_text`]), and one that is blank ONCE FOLDED is dropped too — an id of
-/// invisible characters only folds to "" and names no model. Every site that keeps or sends a
-/// model id uses this, so the copies cannot drift.
+/// invisible characters only folds to "" and names no model. Its users: the picker model lists
+/// and decode-default refs (discovery), the preload plan, the url-language body, and translation
+/// provenance (batch/text). The transcription form and T2T request fields (`model`,
+/// `translation_model`, `translation_mode`, `diarization_model`, `separation_model`) keep their
+/// own trim-and-omit-blank screen and are NOT capped by this rule.
 pub(crate) fn model_id_within(s: &str, max: usize) -> Option<String> {
     (s.chars().count() <= max)
         .then(|| bounded_server_text(s, max))
@@ -847,10 +850,10 @@ pub fn bounded_server_text(s: &str, n: usize) -> String {
 }
 
 /// [`bounded_server_text`] for a VALUE whose line breaks are part of it (an inherited hard-break
-/// separator is "\n"): `\n` is kept, every other control character and the invisible-format set
-/// are dropped. Same cap and ellipsis.
+/// separator is "\n", or a tab — the separator field's `\t` escape): `\n` and `\t` are kept,
+/// every other control character and the invisible-format set are dropped. Same cap and ellipsis.
 pub fn bounded_server_value(s: &str, n: usize) -> String {
-    bounded_chars(s, n, |c| (c == '\n').then_some(c))
+    bounded_chars(s, n, |c| (c == '\n' || c == '\t').then_some(c))
 }
 
 /// The shared walk: drop the invisible-format set, map each control character through `control`

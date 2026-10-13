@@ -144,13 +144,13 @@ describe("clampDecodeOverrides", () => {
     });
   });
 
-  it("text is capped to the server's length, controls go except a multiline newline", () => {
+  it("text is capped to the server's length, controls go except a multiline newline and tab", () => {
     const out = clampDecodeOverrides({
       streaming_hard_break_separator: "\n\n\r\t--- way too long",
       output_prefix: "a\nb\u0007c" + "x".repeat(600),
       hotwords: "h".repeat(3000),
     })!;
-    expect(out.streaming_hard_break_separator).toBe("\n\n--- wa");
+    expect(out.streaming_hard_break_separator).toBe("\n\n\t--- w");
     expect(out.output_prefix).toHaveLength(512);
     expect(out.output_prefix!.startsWith("abcxx")).toBe(true);
     expect(out.hotwords).toHaveLength(2048);

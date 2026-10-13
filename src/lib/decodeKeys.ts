@@ -228,9 +228,9 @@ export function parseLadderInput(
 
 const clamp = (n: number, min = -Infinity, max = Infinity) => Math.min(max, Math.max(min, n));
 
-/** C0 controls and DEL; a multiline value keeps its "\n". */
+/** C0 controls and DEL; a multiline value keeps its "\n" and "\t" (the separator's escapes). */
 const CONTROLS = /[\u0000-\u001f\u007f]/g;
-const CONTROLS_BUT_NEWLINE = /[\u0000-\u0009\u000b-\u001f\u007f]/g;
+const CONTROLS_BUT_LINE_BREAK_TAB = /[\u0000-\u0008\u000b-\u001f\u007f]/g;
 
 /** A rung the server's float() reads as a decimal (JS Number also takes hex/binary/octal). */
 const DECIMAL_RUNG = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
@@ -301,7 +301,7 @@ export function sanitizeDecodeValue(key: DecodeKey, v: unknown): number | boolea
       return typeof v === "string" ? sanitizeLadder(v, spec) : undefined;
     case "text": {
       if (typeof v !== "string") return undefined;
-      const cleaned = v.replace(spec.multiline ? CONTROLS_BUT_NEWLINE : CONTROLS, "");
+      const cleaned = v.replace(spec.multiline ? CONTROLS_BUT_LINE_BREAK_TAB : CONTROLS, "");
       return capCodePoints(cleaned, spec.maxLen ?? 512);
     }
   }

@@ -803,7 +803,7 @@ mod tests {
     /// survive, and a value keeps its "\n" while other controls and bidi overrides go — the
     /// label beside it stays one line.
     #[test]
-    fn decode_settings_map_is_bounded_and_values_keep_their_newline() {
+    fn decode_settings_map_is_bounded_and_values_keep_their_newline_and_tab() {
         let mut settings = serde_json::Map::new();
         for i in 0..100 {
             settings.insert(format!("k{i:03}"), serde_json::json!({"value": i}));
@@ -824,7 +824,7 @@ mod tests {
         .unwrap();
         bound_decode_defaults(&mut sep);
         let e = &sep.settings["streaming_hard_break_separator"];
-        assert_eq!(e.value, "\n¶");
+        assert_eq!(e.value, "\n\t¶");
         assert_eq!(e.label, "a b");
     }
 
