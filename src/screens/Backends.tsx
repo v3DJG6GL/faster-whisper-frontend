@@ -365,7 +365,22 @@ function Editor({
       left.current = true;
     };
   }, []);
-  const doSave = async () => {
+  // One Save at a time: the sidebar can raise "Save and leave" while a Save's keyring write is
+  // parked behind a wallet prompt. A second write (maybe a second prompt) would land after the
+  // first save closed the editor, read as abandoned, and never run the navigation — so a caller
+  // arriving mid-save shares the running one's result instead.
+  const saving = useRef<Promise<boolean> | null>(null);
+  const doSave = (): Promise<boolean> => {
+    if (saving.current) return saving.current;
+    const run = saveOnce();
+    saving.current = run;
+    const done = () => {
+      if (saving.current === run) saving.current = null;
+    };
+    run.then(done, done);
+    return run;
+  };
+  const saveOnce = async (): Promise<boolean> => {
     setKeyError(null);
     if (key) {
       setSavingKey(true);
