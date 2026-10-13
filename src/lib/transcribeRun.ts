@@ -219,6 +219,8 @@ export function activeRailIndex(
     const i = stages.findIndex((st) => !stageTimes[st]?.end && !skipped?.has(st));
     return i === -1 ? railIndex(progress.stage, stages) : i;
   }
+  const mt = mtFetchStage(progress.stage, stageTimes);
+  if (mt && stages.includes(mt)) return stages.indexOf(mt);
   return railIndex(progress.stage, stages);
 }
 
@@ -649,8 +651,8 @@ const get = useTranscribeRun.getState;
  *
  *  NOTE: "downloading" is ambiguous — it can be a media download (download rail)
  *  or an MT-model fetch (translating rail). railOf maps it to the download row;
- *  in a translating-only context (text runs) the RAIL_ORDER close-earlier-clocks
- *  logic in foldProgress prevents it from rewinding the rail. */
+ *  foldProgress and activeRailIndex first ask mtFetchStage, which keeps a
+ *  "downloading" poll after the rail moved past the download on the active row. */
 export function railOf(stage: string | undefined | null): RailStage {
   // "resolving" (the metadata probe) folds onto the download row the same
   // way "waiting"/"analyzing" fold onto transcribe — seconds-long phases
@@ -661,6 +663,23 @@ export function railOf(stage: string | undefined | null): RailStage {
   return stage === "separating" || stage === "diarizing" || stage === "translating"
     ? stage
     : "transcribing";
+}
+
+/** The rail row a "downloading" poll belongs to once the rail is past the download:
+ *  a media download only ever runs first, so after a later stage was observed it is
+ *  the MT-model fetch, a sub-phase of the active stage (the server's run plan labels
+ *  it the same way and never rewinds to a finished row). The active stage is the last
+ *  observed stage whose clock is still open. Null = not such a poll (use railOf). */
+function mtFetchStage(
+  stage: string | undefined | null,
+  stageTimes: Partial<Record<RailStage, StageTime>>,
+): RailStage | null {
+  if (stage !== "downloading") return null;
+  for (let i = RAIL_ORDER.length - 1; i > 0; i--) {
+    const t = stageTimes[RAIL_ORDER[i]];
+    if (t?.observed && !t.end) return RAIL_ORDER[i];
+  }
+  return null;
 }
 
 export function patchItem(path: string, patch: Partial<QueueItem>) {
@@ -1473,8 +1492,12 @@ export function foldProgress(p: BatchProgress) {
   if (!p.stage || p.stage === "unknown") return;
   set((s) => {
     const now = Date.now();
-    const prev = s.progress ? railOf(s.progress.stage) : null;
-    const cur = railOf(p.stage);
+    // An MT-model fetch ("downloading" after the rail moved past the download) stays on
+    // the active row: no clock closes or reopens, and the media receipt below is kept.
+    const mtPrev = s.progress ? mtFetchStage(s.progress.stage, s.stageTimes) : null;
+    const prev = s.progress ? (mtPrev ?? railOf(s.progress.stage)) : null;
+    const mtFetch = mtFetchStage(p.stage, s.stageTimes);
+    const cur = mtFetch ?? railOf(p.stage);
     // "waiting" is the registry's request-entry seed, not evidence the
     // transcribe row ran: it must not stamp a clock `observed` — a seeded
     // phantom span would read as the stage having run.
@@ -1547,7 +1570,7 @@ export function foldProgress(p: BatchProgress) {
     }
     // Actual-transfer clock: the exact stage (not the folded rail row) —
     // resolving polls must not start it.
-    if (p.stage === "downloading" && !stageMeta.downloading?.dlStart) {
+    if (p.stage === "downloading" && !mtFetch && !stageMeta.downloading?.dlStart) {
       stageMeta = {
         ...stageMeta,
         downloading: { ...stageMeta.downloading, dlStart: now },

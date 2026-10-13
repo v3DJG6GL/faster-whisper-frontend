@@ -303,6 +303,24 @@ describe("foldProgress stage clocks (the phantom-transcribe regression)", () => 
     expect(dl.dlStart).toBe(100_000 + 14_000); // first downloading poll wins
     expect(dl.bytes).toBe(21_800_000);
   });
+
+  it("a cold MT-model fetch after the rail moved on stays on the translating row" +
+     " and keeps the media download's receipt", () => {
+    at(0, "downloading", { totalBytes: 20_000_000 });
+    at(4_000, "transcribing");
+    at(30_000, "translating");
+    at(61_000, "downloading", { totalBytes: 5_000_000_000 }); // the GGUF fetch
+    const mid = useTranscribeRun.getState();
+    expect(activeRailIndex(mid.progress, mid.stageTimes, ["downloading", "transcribing", "translating"])).toBe(2);
+    at(100_000, "downloading", { totalBytes: 5_000_000_000 });
+    at(161_000, "translating");
+    const { stageTimes, stageMeta } = useTranscribeRun.getState();
+    expect(stageMeta.downloading?.bytes).toBe(20_000_000);
+    expect(stageMeta.downloading?.dlStart).toBe(100_000);
+    expect(stageTimes.downloading).toMatchObject({ start: 100_000, end: 100_000 + 4_000 });
+    expect(stageTimes.translating?.start).toBe(100_000 + 30_000);
+    expect(stageTimes.translating?.end).toBeUndefined();
+  });
 });
 
 describe("skippedStages with a download rail", () => {
