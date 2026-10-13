@@ -237,6 +237,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     setError(null);
     // Only for this attempt's error line (the key the user proved stays under the gate's own entry).
     let keyWriteFailed = false;
+    // The failed write was for a keyless kept backend: the keptKeyless note below the buttons
+    // already gives the advice, so the error line says only what went wrong.
+    let keylessMatch = false;
     try {
       // Normalize a pre-split server blob first — the apply arms filter fields to their new
       // categories, so an unmigrated old blob would silently drop the chip settings, the
@@ -285,6 +288,7 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
         const isGate = match.id === gateBackend.current?.id;
         const rotated = !isGate && !!match.hasApiKey && s.backends.some((b) => b.id === match!.id);
         if (!isGate) {
+          keylessMatch = !match.hasApiKey;
           keyWriteFailed = true;
           await setBackendKey(match.id, key);
           keyWriteFailed = false;
@@ -322,7 +326,9 @@ export function Onboarding({ onDone }: { onDone: () => void }) {
     } catch (e) {
       setError(
         keyWriteFailed
-          ? `Your settings were restored, but this server's API key couldn't be saved to the system keyring (${String(e)}). Try again, or finish without sync and enter the key under Backends.`
+          ? `Your settings were restored, but this server's API key couldn't be saved to the system keyring (${String(e)}).${
+              keylessMatch ? "" : " Try again, or finish without sync and enter the key under Backends."
+            }`
           : String(e),
       );
     } finally {
