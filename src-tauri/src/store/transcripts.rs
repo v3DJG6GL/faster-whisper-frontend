@@ -632,13 +632,15 @@ pub async fn delete_transcript_record(
         return Err("malformed record id".into());
     }
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
-        // As delete_all_dictations: not under this launch's audio-layout migration, which can
-        // move the record's file after the delete looked for it and rewrite the record after.
-        crate::commands::wait_audio_layout();
         // The `files/`/`links/`/video copies go only once the record is gone: a failed unlink
         // (Windows briefly locking the file) keeps the History entry, and it must keep its
         // playable media too. Runs after the lock is released, like the recordings unlink.
+        // Every media unlink first waits out this launch's audio-layout migration, which can move
+        // a file in after the delete looked (see delete_all_dictations). The record unlink does
+        // not: the record lives in app data, and a delete of one that owns nothing on a stalled
+        // audio base must not hang behind it.
         let drop_media = || {
+            crate::commands::wait_audio_layout();
             if let Ok(dirs) = all_media_dirs(&app, audio_base.clone()) {
                 for dir in dirs {
                     remove_media_for(&dir, &id);
@@ -647,6 +649,22 @@ pub async fn delete_transcript_record(
         };
         let name = format!("{id}.json");
         let file_path = transcripts_dir(&app)?.join(&name);
+        let source_of = |p: &Path| -> Option<String> {
+            std::fs::read_to_string(p)
+                .ok()
+                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+                .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned))
+        };
+        // A dictation with saved audio: the migration may be moving that audio and re-pointing
+        // the record, so wait it out BEFORE the lock below (its rewrite takes that lock per
+        // record) and before reading the path the unlink uses.
+        if !file_path.exists() {
+            if let Ok(dir) = dictations_dir(&app) {
+                if source_of(&dir.join(&name)).is_some() {
+                    crate::commands::wait_audio_layout();
+                }
+            }
+        }
         // Held across both branches' record read + unlink — see `RECORD_IO`: a media-path
         // rewrite that read this record before the unlink would otherwise rename its copy back
         // into place afterwards.
@@ -669,10 +687,7 @@ pub async fn delete_transcript_record(
         // take the .wav and its .txt sidecar with the record, or "delete from disk"
         // leaves a verbatim recording of the user's speech (and the deleted text)
         // behind with nothing referencing it.
-        let src: Option<String> = std::fs::read_to_string(&rec_path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v.get("sourcePath")?.as_str().map(str::to_owned));
+        let src: Option<String> = source_of(&rec_path);
         let res = std::fs::remove_file(rec_path).map_err(|e| e.to_string());
         // The audio unlink touches no record file and the record is gone, so no rewriter can
         // re-point it: release the lock first, or a slow recordings share would hold every

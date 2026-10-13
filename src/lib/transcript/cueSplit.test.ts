@@ -589,6 +589,13 @@ describe("wrapLines", () => {
       for (let k = 1; k < 20; k++) expect(cutByShare(m, [k, 20 - k]).some((p) => /['"]{2}$/.test(p))).toBe(false);
     }
     expect(wrapLines(`他说'你好朋友'"再见朋友"然后走了`, 10, 2)).toEqual([`他说'你好朋友'`, `"再见朋友"然后走了`]);
+    // A possessive after a closing quote is no second quotation: the 's stays with what it follows.
+    for (const m of [`我们看"东京"'s 夜景和"大阪"'s 美食吧`, `用"東京"'s 地图 and "大阪"'s 地图看看`]) {
+      for (let cpl = 4; cpl <= 16; cpl++) {
+        const lines = wrapLines(m, cpl, 3);
+        expect(lines.some((l) => /^'s/.test(l)), `@${cpl}: ${lines.join(" | ")}`).toBe(false);
+      }
+    }
   });
   it("a cue right after an inch mark counts its quotes as its segment does", () => {
     // The cue starts on the " after the 6 of the cue before: an inch mark in the segment, but

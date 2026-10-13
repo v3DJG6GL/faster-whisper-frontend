@@ -221,7 +221,10 @@ export async function initConfig(): Promise<void> {
     const saving = saveConfig({ settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules, version: CONFIG_VERSION })
       .then(
         () => {
-          if (mySeq === saveSeq) saveHeld = false;
+          // An earlier save settling after a later attempt neither clears that attempt's banner nor
+          // its hold: the newest attempt decides both (see `saveSeq`).
+          const newest = mySeq === saveSeq;
+          if (newest) saveHeld = false;
           // The write landed — clear any prior save-failure banner, THEN re-register. A "load"
           // notice (settings reset from a corrupt file / failed to load) is not a save failure:
           // it stays until the user dismisses it — and comes back once a save error or conflict
@@ -229,9 +232,11 @@ export async function initConfig(): Promise<void> {
           // went or the "saving may overwrite" warning. Re-registration has its OWN
           // catch: a reregister failure is NOT data loss (the config was persisted fine), so it
           // must never raise the "couldn't save your settings" banner below.
-          if (loadNotice) {
-            if (useApp.getState().saveError !== loadNotice) useApp.getState().setSaveError(loadNotice, "load");
-          } else useApp.getState().setSaveError(null);
+          if (newest) {
+            if (loadNotice) {
+              if (useApp.getState().saveError !== loadNotice) useApp.getState().setSaveError(loadNotice, "load");
+            } else useApp.getState().setSaveError(null);
+          }
           // Use the capture-aware variant: a debounced save left pending by an edit just before the
           // user enters chord-capture can resolve DURING the capture window, and a plain reregister
           // would re-arm the hotkeys mid-capture (the next keypress would both rebind AND fire
@@ -243,8 +248,10 @@ export async function initConfig(): Promise<void> {
           // A real disk/IPC failure (full/read-only disk, perms) — the in-memory store still
           // shows the change, but it wasn't written, so warn the user it may be lost on restart.
           console.error("saveConfig failed", e);
-          if (mySeq === saveSeq) saveHeld = true;
-          useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
+          if (mySeq === saveSeq) {
+            saveHeld = true;
+            useApp.getState().setSaveError(e instanceof Error ? e.message : String(e));
+          }
           // The write didn't land, so the re-register never ran — restore the intent (like the
           // conflict early-return does) so the NEXT successful save re-registers the bindings.
           // Otherwise a later non-binding save would persist the new chord to disk but leave it
