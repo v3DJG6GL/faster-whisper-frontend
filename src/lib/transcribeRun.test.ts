@@ -75,7 +75,8 @@ vi.mock("./api", async (importOriginal) => {
 });
 
 import {
-  activeRailIndex, axisLayout, flushPersistEdits, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
+  activeRailIndex, axisLayout, clearEdits, flushPersistEdits, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
+  setSegmentEdit,
   overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
   linkPrefetchFor, linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
@@ -647,6 +648,75 @@ describe("mergeSegmentTranslations kept-original marks", () => {
     expect(saved().result!.segments![0].translations).toEqual({ de: "A!" });
     // Untouched segment keeps its earlier merge untouched.
     expect(saved().result!.segments![1].translations).toEqual({ de: "B" });
+  });
+});
+
+describe("dropping a correction a re-translate was made from", () => {
+  const recOf = (id: string): TranscriptRecord => ({
+    schemaVersion: 1, kind: "file", id, createdAt: "2026-10-13T12:00:00Z",
+    sourcePath: `/${id}.mp3`, sourceName: `${id}.mp3`, status: "done",
+    result: {
+      text: "I red the book",
+      segments: [{ start: 0, end: 1, text: "I red the book", translations: { de: "Ich rot das Buch" } }],
+      translation: { targets: ["de"] },
+    },
+  });
+  const stale = (id: string) => useTranscribeRun.getState().translationsStale[id] ?? {};
+
+  it("Discard marks the segment stale: the restored original was never translated", async () => {
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    openHistoryRecord(recOf("fromedit-1"));
+    setSegmentEdit("fromedit-1", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-1", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    expect(stale("fromedit-1")).toEqual({});
+    clearEdits("fromedit-1");
+    expect(stale("fromedit-1")).toEqual({ 0: true });
+    flushPersistEdits();
+    const saved = useTranscriptHistory.getState().records.find((r) => r.id === "fromedit-1")!;
+    expect(saved.translationsStale).toEqual({ 0: true });
+  });
+
+  it("reverting the one line marks it stale too", () => {
+    openHistoryRecord(recOf("fromedit-2"));
+    setSegmentEdit("fromedit-2", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-2", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    setSegmentEdit("fromedit-2", 0, null);
+    expect(stale("fromedit-2")).toEqual({ 0: true });
+  });
+
+  it("the marker survives a reopen of the record", async () => {
+    const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+    openHistoryRecord(recOf("fromedit-3"));
+    setSegmentEdit("fromedit-3", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-3", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    flushPersistEdits();
+    const saved = useTranscriptHistory.getState().records.find((r) => r.id === "fromedit-3")!;
+    useTranscribeRun.setState({ translatedFromEdit: {} });
+    openHistoryRecord(saved);
+    clearEdits("fromedit-3");
+    expect(stale("fromedit-3")).toEqual({ 0: true });
+  });
+
+  it("a translation made from the original text leaves Discard clearing the mark", () => {
+    openHistoryRecord(recOf("fromedit-4"));
+    mergeSegmentTranslations("fromedit-4", { 0: { de: "Ich rot das Buch!" } }, { targets: ["de"] });
+    setSegmentEdit("fromedit-4", 0, "I read the book");
+    expect(stale("fromedit-4")).toEqual({ 0: true });
+    clearEdits("fromedit-4");
+    expect(stale("fromedit-4")).toEqual({});
+  });
+
+  it("a later merge with the correction gone drops the marker", () => {
+    openHistoryRecord(recOf("fromedit-5"));
+    setSegmentEdit("fromedit-5", 0, "I read the book");
+    mergeSegmentTranslations("fromedit-5", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    setSegmentEdit("fromedit-5", 0, null);
+    // Re-translate flagged: the original text goes out, the mark clears.
+    mergeSegmentTranslations("fromedit-5", { 0: { de: "Ich rot das Buch" } }, { targets: ["de"] });
+    expect(stale("fromedit-5")).toEqual({});
+    setSegmentEdit("fromedit-5", 0, "I read the book");
+    setSegmentEdit("fromedit-5", 0, null);
+    expect(stale("fromedit-5")).toEqual({});
   });
 });
 

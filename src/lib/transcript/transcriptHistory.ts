@@ -53,6 +53,9 @@ export interface TranscriptRecord {
   speakerEdits?: Record<number, string>;
   /** Segment indexes whose translations went stale (original edited). */
   translationsStale?: Record<number, true>;
+  /** Segment indexes whose translations were made from a correction (dropping
+   *  it marks them stale; transcribeRun's translatedFromEdit). */
+  translatedFromEdit?: Record<number, true>;
   /** The export panel's dragged track order and typed track names
    *  (lib/exportTracks TrackPrefs; read through readTrackPrefs). */
   exportTracks?: { order?: string[]; names?: Record<string, string> };
@@ -282,6 +285,7 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
         if (badKeys(out.edits)) out = { ...out, edits: remap(out.edits) };
         if (badKeys(out.speakerEdits)) out = { ...out, speakerEdits: remap(out.speakerEdits) };
         if (badKeys(out.translationsStale)) out = { ...out, translationsStale: remap(out.translationsStale) };
+        if (badKeys(out.translatedFromEdit)) out = { ...out, translatedFromEdit: remap(out.translatedFromEdit) };
       } else {
         out = {
           ...out,
@@ -289,6 +293,7 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
           edits: remap(out.edits),
           speakerEdits: remap(out.speakerEdits),
           translationsStale: remap(out.translationsStale),
+          translatedFromEdit: remap(out.translatedFromEdit),
         };
       }
     }
@@ -338,8 +343,8 @@ function repairRecord(r: TranscriptRecord): TranscriptRecord {
   // No segment for an index-keyed correction to land on, whether the list was damaged, is empty
   // or is missing: the maps go, or the viewer marks the record edited and rebuilds an empty text
   // for Copy/export from no segments.
-  if (!out.result?.segments?.length && (out.edits || out.speakerEdits || out.translationsStale)) {
-    out = { ...out, edits: undefined, speakerEdits: undefined, translationsStale: undefined };
+  if (!out.result?.segments?.length && (out.edits || out.speakerEdits || out.translationsStale || out.translatedFromEdit)) {
+    out = { ...out, edits: undefined, speakerEdits: undefined, translationsStale: undefined, translatedFromEdit: undefined };
   }
   if (r.appId != null && typeof r.appId !== "string") out = { ...out, appId: undefined };
   if (r.error != null && typeof r.error !== "string") out = { ...out, error: undefined };

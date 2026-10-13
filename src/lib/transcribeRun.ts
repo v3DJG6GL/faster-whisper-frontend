@@ -561,6 +561,10 @@ export interface TranscribeRunState {
   /** Per-file segment indexes whose translations went stale (the ORIGINAL
    *  text was edited after the MT ran). Cleared per index by re-translate. */
   translationsStale: Record<string, Record<number, true>>;
+  /** Per-file segment indexes whose CURRENT translations were made from a
+   *  correction (a re-translate ran while it was in place): dropping that
+   *  correction restores a text the MT never saw, so it marks them stale. */
+  translatedFromEdit: Record<string, Record<number, true>>;
   /** Link metadata by URL key (title/duration from the preview) —
    *  labels queue rows and survives resetForInputChange (re-adding the same
    *  link keeps its name). */
@@ -621,6 +625,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   edits: {},
   speakerEdits: {},
   translationsStale: {},
+  translatedFromEdit: {},
   urlMeta: {},
   lastOptions: undefined,
   lastOverrides: {},
@@ -860,6 +865,7 @@ function persistEditsNow(key: string) {
     edits: s.edits[key],
     speakerEdits: s.speakerEdits[key],
     translationsStale: s.translationsStale[key],
+    translatedFromEdit: s.translatedFromEdit[key],
   };
   registerRecord(updated);
   upsertRecord(updated);
@@ -1286,6 +1292,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     edits: { ...s.edits, [rec.id]: rec.edits ?? {} },
     speakerEdits: { ...s.speakerEdits, [rec.id]: rec.speakerEdits ?? {} },
     translationsStale: { ...s.translationsStale, [rec.id]: rec.translationsStale ?? {} },
+    translatedFromEdit: { ...s.translatedFromEdit, [rec.id]: rec.translatedFromEdit ?? {} },
   }));
   return true;
 }
@@ -1314,17 +1321,24 @@ export function setSegmentEdit(key: string, index: number, text: string | null) 
     if (text === null) delete file[index];
     else file[index] = text;
     // Editing the ORIGINAL text marks this segment's translations stale (they
-    // translated the old text); reverting the edit clears the mark.
+    // translated the old text); reverting the edit clears the mark — unless
+    // they were made from the edit, which then no longer matches either.
     const rec = registered(key);
     const hasTr = !!rec?.result?.segments?.[index]?.translations;
     let translationsStale = s.translationsStale;
+    let translatedFromEdit = s.translatedFromEdit;
     if (hasTr) {
       const stale = { ...s.translationsStale[key] };
-      if (text === null) delete stale[index];
+      if (text === null && !s.translatedFromEdit[key]?.[index]) delete stale[index];
       else stale[index] = true;
       translationsStale = { ...s.translationsStale, [key]: stale };
     }
-    return { edits: { ...s.edits, [key]: file }, translationsStale };
+    if (text === null && s.translatedFromEdit[key]?.[index]) {
+      const fromEdit = { ...s.translatedFromEdit[key] };
+      delete fromEdit[index];
+      translatedFromEdit = { ...s.translatedFromEdit, [key]: fromEdit };
+    }
+    return { edits: { ...s.edits, [key]: file }, translationsStale, translatedFromEdit };
   });
   schedulePersistEdits(key);
 }
@@ -1346,11 +1360,16 @@ export function clearEdits(key: string) {
     const edits = { ...s.edits };
     const speakerEdits = { ...s.speakerEdits };
     const translationsStale = { ...s.translationsStale };
+    const translatedFromEdit = { ...s.translatedFromEdit };
     delete edits[key];
     delete speakerEdits[key];
-    // Discarding the corrections restores the text the MT translated.
-    delete translationsStale[key];
-    return { edits, speakerEdits, translationsStale };
+    // Discarding the corrections restores the text the MT translated — except
+    // where a re-translate ran on a correction: those segments go stale.
+    const fromEdit = Object.keys(s.translatedFromEdit[key] ?? {});
+    if (fromEdit.length) translationsStale[key] = Object.fromEntries(fromEdit.map((i) => [Number(i), true as const]));
+    else delete translationsStale[key];
+    delete translatedFromEdit[key];
+    return { edits, speakerEdits, translationsStale, translatedFromEdit };
   });
   schedulePersistEdits(key);
 }
@@ -1406,12 +1425,25 @@ export function mergeSegmentTranslations(
   };
   // Clear the merged indexes' stale marks FIRST so the persisted record
   // carries the post-merge state (upsertRecord stringifies synchronously).
+  // A segment merged while corrected was translated FROM the correction (the
+  // retro-translate sends the edited text): note it, so dropping the correction
+  // marks it stale again.
   set((s) => {
     const stale = { ...s.translationsStale[key] };
-    for (const i of Object.keys(patch)) delete stale[Number(i)];
-    return { translationsStale: { ...s.translationsStale, [key]: stale } };
+    const fromEdit = { ...s.translatedFromEdit[key] };
+    for (const k of Object.keys(patch)) {
+      const i = Number(k);
+      delete stale[i];
+      if (s.edits[key]?.[i] !== undefined) fromEdit[i] = true;
+      else delete fromEdit[i];
+    }
+    return {
+      translationsStale: { ...s.translationsStale, [key]: stale },
+      translatedFromEdit: { ...s.translatedFromEdit, [key]: fromEdit },
+    };
   });
   updated.translationsStale = get().translationsStale[key];
+  updated.translatedFromEdit = get().translatedFromEdit[key];
   registerRecord(updated);
   upsertRecord(updated);
   // Never onto another open record of the same source (patchOwnRow).
