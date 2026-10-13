@@ -1285,7 +1285,9 @@ async fn transcribe_recording(app: AppHandle, epoch: u64, params: RecordParams, 
         Ok(res) => {
             // N1/N2 bounded the STREAMING transcript at its parse and gave the streaming sidecar
             // a byte budget; this is the other of the two branches that produce `stream://final`
-            // and one of `save_transcript_sidecar`'s exactly two callers, and it carried neither.
+            // and the one `save_transcript_sidecar` caller outside the streaming drain (whose
+            // session and per-utterance sidecars both write the parse-bounded document), and it
+            // carried neither.
             // Bound it HERE and not in `transport::batch`: `post()` is shared with
             // `commands::transcribe_file` (the Transcribe tab's file upload, 3600s timeout), where
             // a long transcript IS the product and E8 settled that it stays untouched. Batch

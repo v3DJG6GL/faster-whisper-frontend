@@ -60,7 +60,12 @@ pub fn publish_levels_with_live(
 /// Scale a raw RMS into the chip's 0..1 meter level: the tuned gain 6.0, clamped. This single
 /// constant COUPLES the live chip meter to the batch + streaming speech-gate thresholds, so it
 /// lives in ONE place — retuning it at one call site would silently desync the meter from the gate.
+/// A NaN RMS (a glitching F32 source) reads as silence: `clamp` passes NaN through, and every
+/// caller feeds an EMA that a NaN would latch for the rest of the session.
 pub fn chip_level(rms: f32) -> f32 {
+    if rms.is_nan() {
+        return 0.0;
+    }
     (rms * 6.0).clamp(0.0, 1.0)
 }
 
@@ -771,5 +776,31 @@ mod cap_tests {
         assert!(!push_pcm_capped_at(&mut buf, &[7, 8], CAP));
         assert_eq!(buf.len(), CAP);
         assert!(push_pcm_capped_at(&mut Vec::new(), &[], CAP));
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::{chip_level, SpeechGate};
+
+    #[test]
+    fn a_nan_rms_reads_as_silence() {
+        assert_eq!(chip_level(f32::NAN), 0.0);
+        assert_eq!(chip_level(f32::INFINITY), 1.0);
+        assert_eq!(chip_level(0.1), 0.6);
+    }
+
+    /// One corrupt F32 chunk must not latch the gate's EMAs: loud audio after it is kept again.
+    #[test]
+    fn a_nan_chunk_in_silence_does_not_latch_the_gate() {
+        let chunk = [1u8; 640]; // 20 ms @ 16 kHz s16le
+        let mut gate = SpeechGate::new();
+        let mut out = Vec::new();
+        gate.push(chip_level(0.0), &chunk, &mut out);
+        gate.push(chip_level(f32::NAN), &chunk, &mut out);
+        for _ in 0..20 {
+            gate.push(chip_level(1.0), &chunk, &mut out);
+        }
+        assert!(!out.is_empty(), "speech after the NaN chunk was dropped");
     }
 }
