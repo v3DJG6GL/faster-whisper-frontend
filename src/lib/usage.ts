@@ -23,7 +23,7 @@
 
 import { useApp } from "./store";
 import { isTauri, getUsageStats } from "./api";
-import { flushOutcomes, initOutcomeQueue } from "./usageOutcome";
+import { flushOutcomes, initOutcomeQueue, sentOutcomeCount } from "./usageOutcome";
 import { backendForProfile, homeTargetProfile } from "./dictation/dictation";
 import { effectiveServerKind } from "./serverKind";
 import { effectiveServerUrl } from "./backends";
@@ -252,8 +252,10 @@ async function refreshOne(backend: Backend): Promise<void> {
 
 /** Refresh usage for EVERY configured backend (sequentially, best-effort) so the
  *  usage view can switch between backends instantly from the store. Guarded so
- *  overlapping polls don't stack. */
-async function refreshAll(): Promise<void> {
+ *  overlapping polls don't stack. `pageFetchedAt`: the show handler just fetched the page's
+ *  documents, with `sentOutcomeCount()` at this value — the pass skips its own page step
+ *  unless an outcome was delivered since. */
+async function refreshAll(pageFetchedAt?: number): Promise<void> {
   // Already polling: don't stack a second pass, but record the request so we run once more after —
   // otherwise a refresh triggered by a backend edit (which deleted that backend's cached usage) is
   // dropped and the just-edited backend stays blank until the next 30s tick.
@@ -262,12 +264,15 @@ async function refreshAll(): Promise<void> {
     return;
   }
   pollingAll = true;
+  let skipPageAt = pageFetchedAt;
   try {
     // Outcomes first, so a session that ended while the server was unreachable lands
     // before the numbers are re-read (the server folds it into the same document).
     await flushOutcomes();
     do {
       rerunRequested = false;
+      const fetchedAt = skipPageAt; // the first iteration only: a rerun fetches the page as usual
+      skipPageAt = undefined;
       for (const b of useApp.getState().backends) {
         try {
           await refreshOne(b);
@@ -276,20 +281,25 @@ async function refreshAll(): Promise<void> {
         }
       }
       if (statsPageShown()) {
+        // The show handler fetched them a moment ago: refetching the same documents is only
+        // worth it when the flush above delivered an outcome they may not include.
+        const caughtUp = fetchedAt !== undefined && fetchedAt === sentOutcomeCount();
         // A hidden pass skipped the page's documents, so what it shows may be hours old: a
         // miss now marks it failed, as on a reopen. The show handler normally fetches them
         // itself and consumes the flag first; one still set here is consumed the same way.
         const stale = pageMissed;
         pageMissed = false;
-        try {
-          await refreshView(stale);
-        } catch {
-          /* the page keeps its last document */
-        }
-        try {
-          await refreshYear(true, stale);
-        } catch {
-          /* the calendar keeps its last year */
+        if (!caughtUp) {
+          try {
+            await refreshView(stale);
+          } catch {
+            /* the page keeps its last document */
+          }
+          try {
+            await refreshYear(true, stale);
+          } catch {
+            /* the calendar keeps its last year */
+          }
         }
       } else if (statsPagesOpen > 0) {
         // Hidden with the page open — whichever pass this is (tick, after-session, backend
@@ -319,17 +329,20 @@ export function initUsageController(): void {
   // open page's documents (skippedTicks is 0 then): catch up now, not on the next tick. The
   // page's documents are fetched directly rather than at the end of a pass, which first
   // flushes the outcomes and then waits on every backend's trend fetch (30 s each, bounded).
+  // That pass then skips its own page step unless its flush delivered an outcome meanwhile.
   onWindowHiddenChange((hidden) => {
     if (hidden || (skippedTicks === 0 && !pageMissed)) return;
+    let fetchedAt: number | undefined;
     if (pageMissed && statsPageShown()) {
       // Possibly hours old, so a miss marks them failed, as on a reopen.
+      fetchedAt = sentOutcomeCount();
       pageMissed = false;
       void refreshView(true).catch(() => {});
       void refreshYear(true, true).catch(() => {});
     }
     if (skippedTicks > 0) {
       skippedTicks = 0;
-      void refreshAll();
+      void refreshAll(fetchedAt);
     }
   });
 

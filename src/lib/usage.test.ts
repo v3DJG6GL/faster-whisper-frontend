@@ -3,13 +3,22 @@
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-const { getUsageStats, vis } = vi.hoisted(() => ({
+const { getUsageStats, vis, outcomes } = vi.hoisted(() => ({
   getUsageStats: vi.fn(async (_args: { query: Record<string, unknown> }) => ({ today: {}, total: {}, series: [] })),
   vis: { hidden: false, listeners: new Set<(h: boolean) => void>() },
+  // `queued` outcome batches are delivered (counted in `sent`) by the next flush.
+  outcomes: { queued: 0, sent: 0 },
 }));
 
 vi.mock("./api", async (orig) => ({ ...(await orig<typeof import("./api")>()), isTauri: true, getUsageStats }));
-vi.mock("./usageOutcome", () => ({ initOutcomeQueue: async () => {}, flushOutcomes: async () => {} }));
+vi.mock("./usageOutcome", () => ({
+  initOutcomeQueue: async () => {},
+  flushOutcomes: async () => {
+    outcomes.sent += outcomes.queued;
+    outcomes.queued = 0;
+  },
+  sentOutcomeCount: () => outcomes.sent,
+}));
 vi.mock("./windowVisibility", () => ({
   isWindowHidden: () => vis.hidden,
   onWindowHiddenChange: (fn: (h: boolean) => void) => {
@@ -129,6 +138,31 @@ describe("usage poll gates", () => {
     await settle();
     expect(calls().page).toBe(2);
     close();
+  });
+
+  it("a tray reopen fetches the page documents once, unless the catch-up pass delivers an outcome", async () => {
+    for (const queued of [0, 1]) {
+      await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous round left pending
+      await settle();
+      const close = openStatisticsPage();
+      await settle();
+      setHidden(true);
+      await vi.advanceTimersByTimeAsync(12 * 30_000); // a hidden pass skips the page, two ticks pass over
+      await settle();
+      outcomes.queued = queued; // a session outcome the catch-up pass's flush delivers
+      getUsageStats.mockClear();
+      try {
+        setHidden(false);
+        await settle();
+        await settle();
+        // The show fetches the view + year at once; the pass refetches them only when an outcome
+        // landed after that fetch went out (the documents may not include it).
+        expect(calls()).toEqual({ fixed: 1, page: queued ? 4 : 2 });
+      } finally {
+        setHidden(false);
+        close();
+      }
+    }
   });
 
   it("a page closed while hidden does not make every later show run a pass", async () => {
@@ -406,7 +440,7 @@ describe("usage poll gates", () => {
       getUsageStats.mockClear();
       releaseB2(null);
       await settle();
-      expect(calls().page).toBe(2); // the pass ends with its own (redundant, harmless) page fetch
+      expect(calls().page).toBe(0); // the show already fetched the page and no outcome was delivered since
     } finally {
       releaseB2?.(null); // never leave the pass stuck for the later cases
       await settle();

@@ -196,6 +196,14 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 // handshake can wait for a write the timer began a moment earlier.
 let saveInFlight: Promise<void> | undefined;
 let flushAgain = false;
+// Batches the server accepted since launch: usage.ts compares it across a page fetch to tell
+// whether a document it just read can already be missing an outcome delivered since.
+let sentOutcomes = 0;
+
+/** How many outcome batches the server has accepted so far (only ever grows). */
+export function sentOutcomeCount(): number {
+  return sentOutcomes;
+}
 
 /** Write the queue now, tracked in `saveInFlight` until it settles; never rejects. */
 function startSave(): Promise<void> {
@@ -307,6 +315,7 @@ async function flushPass(): Promise<void> {
           verdict = "retry";
         }
         queue = applyPost(queue, ids, verdict, Date.now());
+        if (verdict === "sent") sentOutcomes++;
         persist();
         if (verdict === "retry") break;
       }
