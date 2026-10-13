@@ -1733,6 +1733,23 @@ describe("a manual Push / Pull clicked during launch", () => {
     }
   });
 
+  it("a Pull and a Push both clicked during launch both run", async () => {
+    io.pull = { ok: true, status: 200, state: { version: 1, updated_ts: 1, device: "peer", blob: {} } };
+    const { engine, store, init } = await launchEngine();
+    try {
+      const pull = engine.pullNow(true);
+      const push = engine.pushNow(true);
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      await Promise.all([pull, push]);
+      expect(io.pulls).toBe(2); // the startup pull and the click
+      expect(io.pushes.length).toBeGreaterThan(0); // the Push click (a forced pull may add one)
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
   it("a click made after a server-copy delete runs even when the delete outlasts launch", async () => {
     io.pull = { ok: false, status: 0, error: "unreachable" };
     const { engine, store, init } = await launchEngine();

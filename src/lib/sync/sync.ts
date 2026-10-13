@@ -2582,16 +2582,14 @@ async function rePullAfterSession(): Promise<void> {
   if (myGen === gen && canSync()) await pullNow(true);
 }
 
-/** A manual Push / Pull clicked during launch: wait it out (see `launchDone`), then run. False when
- *  a supersede (sync switched, server copy deleted) happened meanwhile — the click is void then.
- *  Outside launch it returns at once, without an await. */
-async function waitForLaunch(): Promise<boolean> {
-  if (!launchDone) return true;
-  const myGen = gen;
-  await launchDone;
-  // A "Delete server copy" made during the launch work can still hold the lock (its keyring
-  // delete queues behind launch's keyring read): wait it out too, as rePullAfterSession does,
-  // or the click drops at the gate after all.
+/** A manual Push / Pull clicked during launch: wait it out (see `launchDone`), then wait out the
+ *  lock as well, as rePullAfterSession does — a "Delete server copy" made during the launch work
+ *  can still hold it (its keyring delete queues behind launch's keyring read), and two clicks
+ *  parked on one launch wake together, the first taking it. False when a supersede (sync
+ *  switched, server copy deleted) happened meanwhile — the click is void then. The caller takes
+ *  the lock one await hop later, so it loops on `inFlight` (the `manual && launchDone` block at the top of pullNow / pushNow). */
+async function waitForLaunch(myGen: number): Promise<boolean> {
+  if (launchDone) await launchDone;
   while (inFlight) {
     if (myGen !== gen) return false;
     await new Promise((r) => setTimeout(r, 50));
@@ -2602,7 +2600,15 @@ async function waitForLaunch(): Promise<boolean> {
 /** Pull the server blob and reconcile it into the running app. `manual` also
  *  re-applies when the version hasn't moved (a "make it so" button press). */
 export async function pullNow(manual = false): Promise<void> {
-  if (manual && !(await waitForLaunch())) return;
+  // A click made during launch runs once launch is over and the lock is free. The re-check of
+  // `inFlight` after each wait has no await before the take below: a twin parked on the same
+  // launch may have taken the lock in the hop since waitForLaunch saw it free.
+  if (manual && launchDone) {
+    const clickGen = gen;
+    do {
+      if (!(await waitForLaunch(clickGen))) return;
+    } while (inFlight);
+  }
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   inFlight = true;
@@ -2689,7 +2695,15 @@ export async function pullNow(manual = false): Promise<void> {
 /** Compose + push this device's state. No-ops when nothing sync-relevant
  *  changed since the last sync (hash match) unless `manual`. */
 export async function pushNow(manual = false): Promise<void> {
-  if (manual && !(await waitForLaunch())) return;
+  // A click made during launch runs once launch is over and the lock is free. The re-check of
+  // `inFlight` after each wait has no await before the take below: a twin parked on the same
+  // launch may have taken the lock in the hop since waitForLaunch saw it free.
+  if (manual && launchDone) {
+    const clickGen = gen;
+    do {
+      if (!(await waitForLaunch(clickGen))) return;
+    } while (inFlight);
+  }
   const backend = syncBackend();
   if (!backend || !canSync() || inFlight) return;
   // Don't propagate a state the local save-gate froze (hotkey conflict) or
