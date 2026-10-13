@@ -9,7 +9,7 @@
 // pill, and a bug report that copied nothing. Only touching a filter — a
 // different dependency — brought the view back.
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { LogLine } from "./api";
 
 function line(seq: number): LogLine {
@@ -54,7 +54,23 @@ function setHidden(h: boolean) {
   for (const fn of [...vis.listeners]) fn(h);
 }
 
-const { attachLogStream, clearView, visibleLines, useLogs, LOG_BUFFER_CAP } = await import("./logViewer");
+// The buffer, its seq cursor and the clear floor live at module level, so every case gets a
+// fresh module: no case may depend on what an earlier one appended (or on running in order).
+type LogViewer = typeof import("./logViewer");
+let attachLogStream: LogViewer["attachLogStream"];
+let clearView: LogViewer["clearView"];
+let visibleLines: LogViewer["visibleLines"];
+let useLogs: LogViewer["useLogs"];
+let LOG_BUFFER_CAP: LogViewer["LOG_BUFFER_CAP"];
+beforeEach(async () => {
+  vi.resetModules();
+  emit = null;
+  streamCalls.length = 0;
+  failNextTail = false;
+  vis.hidden = false;
+  vis.listeners.clear();
+  ({ attachLogStream, clearView, visibleLines, useLogs, LOG_BUFFER_CAP } = await import("./logViewer"));
+});
 
 describe("visibleLines", () => {
   it("hands back a fresh array on every version bump, so memos keyed on it invalidate", async () => {
@@ -87,7 +103,6 @@ describe("visibleLines", () => {
 
 describe("attachLogStream ownership", () => {
   it("a stale detach from a superseded attach never turns the live stream off", async () => {
-    streamCalls.length = 0;
     const p1 = attachLogStream();
     const p2 = attachLogStream();
     (await p1)();
@@ -99,11 +114,10 @@ describe("attachLogStream ownership", () => {
 
   it("rolls the listener back when hydration rejects", async () => {
     failNextTail = true;
-    const before = visibleLines().length;
     await expect(attachLogStream()).rejects.toThrow("ipc down");
     expect(emit).toBeNull(); // unlisten ran
     emit?.({ lines: [line(9)] });
-    expect(visibleLines().length).toBe(before);
+    expect(visibleLines()).toHaveLength(0);
   });
 });
 
@@ -111,8 +125,8 @@ describe("attachLogStream while the window is hidden", () => {
   it("holds batches without bumping the version, then replays them in order on show", async () => {
     const detach = await attachLogStream();
     const before = visibleLines().length;
-    // Well past anything earlier cases appended (append drops already-seen seqs).
-    const lastSeq = 100;
+    // Hydration delivered seqs 0 and 1 (append drops already-seen seqs).
+    const lastSeq = 1;
     const version = useLogs.getState().version;
 
     setHidden(true);
@@ -135,8 +149,8 @@ describe("attachLogStream while the window is hidden", () => {
 
   it("a long hidden spell replays only the newest cap's worth, in order", async () => {
     const detach = await attachLogStream();
-    // Past every seq earlier cases used.
-    const base = 1000;
+    // Past the two hydrated seqs.
+    const base = 2;
     setHidden(true);
     // Small batches well past 2x cap: the parked queue is trimmed with hysteresis.
     const total = 2 * LOG_BUFFER_CAP + 500;
