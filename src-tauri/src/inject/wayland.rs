@@ -442,7 +442,13 @@ mod imp {
                 caps_safe: true,
                 dead: None,
             }),
-            _ => map.get(&c).copied(),
+            // A space separator the layout has no key for (NBSP, NNBSP, thin space — French
+            // punctuation and digit grouping) types as a plain space: skipping it would glue the
+            // words on either side together, unlike a skipped symbol, which removes only itself.
+            _ => map
+                .get(&c)
+                .or_else(|| c.is_whitespace().then(|| map.get(&' ')).flatten())
+                .copied(),
         }
     }
 
@@ -1511,6 +1517,27 @@ mod imp {
             }
             assert!(case_pairs('\u{e9}') && case_pairs('E'));
             assert!(!case_pairs('\u{130}') && !case_pairs('\u{1f0}') && !case_pairs('\u{df}'));
+        }
+
+        #[test]
+        fn a_space_separator_the_layout_lacks_types_as_the_space_key() {
+            let map = latin_with(&[(' ', spec(57, false, None))]);
+            // NBSP, NNBSP, thin space and ideographic space: no key of their own, so the space key.
+            for c in ['\u{a0}', '\u{202f}', '\u{2009}', '\u{3000}'] {
+                let keys = key_sequence(c, &map).expect("space separator typeable");
+                assert_eq!(keys.len(), 1);
+                assert_eq!(keys[0].1.keycode, 57, "{c:?}");
+            }
+            // A layout that carries nobreakspace keeps its own key.
+            let nbsp = latin_with(&[
+                (' ', spec(57, false, None)),
+                ('\u{a0}', spec(58, true, None)),
+            ]);
+            assert_eq!(key_spec_for('\u{a0}', &nbsp).map(|s| s.keycode), Some(58));
+            // A non-space char the layout lacks is still unreachable.
+            assert!(key_sequence('\u{2014}', &map).is_none());
+            // No space key at all: nothing to fall back to.
+            assert!(key_sequence('\u{a0}', &us_letters()).is_none());
         }
 
         #[test]
