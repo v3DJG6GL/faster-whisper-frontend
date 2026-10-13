@@ -46,11 +46,25 @@ fn move_file(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<(
     if std::fs::rename(src, dest).is_ok() {
         return Ok(());
     }
-    std::fs::copy(src, dest)?;
+    copy_keeping_mtime(src, dest)?;
     // Owner-only on both platforms: on Windows the copy otherwise takes the DACL of a
     // destination folder that may have pre-existed the pick (`create_dir_private` skips it).
     crate::audio::restrict_file_private(dest);
     std::fs::remove_file(src)
+}
+
+/// `move_file`'s cross-volume copy, carrying the source's mtime over (`std::fs::copy` does not
+/// on Linux): dictation audio ages by mtime on the same clock as its record, which a move keeps
+/// (`rewrite_record_keep_mtime`), so a fresh copy clock would outlive the record by a window.
+fn copy_keeping_mtime(src: &std::path::Path, dest: &std::path::Path) -> std::io::Result<()> {
+    let mtime = std::fs::metadata(src).and_then(|m| m.modified()).ok();
+    std::fs::copy(src, dest)?;
+    if let Some(t) = mtime {
+        if let Ok(f) = std::fs::File::options().write(true).open(dest) {
+            let _ = f.set_modified(t);
+        }
+    }
+    Ok(())
 }
 
 /// Move every regular file from `from` into `to`, recording old→new paths.
@@ -674,6 +688,27 @@ mod tests {
         assert!(GATE.wait_timeout(Duration::from_secs(10)));
         opener.join().unwrap();
         assert!(GATE.wait_timeout(Duration::ZERO), "open for good");
+    }
+
+    #[test]
+    fn a_cross_volume_move_copy_keeps_the_source_mtime() {
+        let dir = std::env::temp_dir().join(format!("fwf-copymtime-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let (src, dest) = (dir.join("dictation-a.wav"), dir.join("moved.wav"));
+        std::fs::write(&src, b"RIFF").unwrap();
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&src)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        super::copy_keeping_mtime(&src, &dest).unwrap();
+        let mtime = std::fs::metadata(&dest).unwrap().modified().unwrap();
+        assert_eq!(mtime, old);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"RIFF");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

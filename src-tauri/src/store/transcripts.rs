@@ -237,8 +237,9 @@ pub(crate) fn record_kind(app: &AppHandle, id: &str) -> Option<String> {
 }
 
 /// Rewrite a record in place for a path fix-up (move / heal), keeping its mtime: record
-/// and dictation-audio retention both age by mtime, and a same-volume audio move keeps the
-/// file's, so a reset record clock would outlive its audio by a whole retention window.
+/// and dictation-audio retention both age by mtime, and an audio move keeps the file's (a
+/// cross-volume one too, see `copy_keeping_mtime`), so a reset record clock would outlive its
+/// audio by a whole retention window.
 /// User edits (`save_transcript_record`) deliberately DO refresh it.
 fn rewrite_record_keep_mtime(path: &Path, out: &str, mtime: Option<std::time::SystemTime>) -> bool {
     if crate::config::write_private_atomic(path, out).is_err() {
