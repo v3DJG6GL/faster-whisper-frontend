@@ -682,13 +682,12 @@ pub(crate) async fn inject_text(
             // A remote-desktop client fetches the clipboard only AFTER the forwarded chord, so its
             // write goes straight to the persistent owner, as the X11 twin's remote write does: a
             // plain write would be dropped when it returns (no data-control — GNOME through
-            // XWayland), leaving the remote nothing to fetch. A local `set_clipboard` on Linux is
-            // served by the live owner too — see `paste_write_via_live_owner`.
+            // XWayland), leaving the remote nothing to fetch. A local `set_clipboard` is served by
+            // the live owner too, so the transcript sticks either way.
             // (`set_clipboard_persistent`'s own pending-restore take is a no-op: `requeue` holds
-            // it.) `persisted` says the transcript is already on a live owner, so the two re-sets
-            // below need not serve it a second time.
+            // it.)
             let set_res = if remote_target {
-                persist_off_runtime(clip).await.map(|()| true)
+                persist_off_runtime(clip).await
             } else {
                 tokio::task::spawn_blocking(move || crate::inject::set_clipboard(&clip))
                     .await
@@ -696,7 +695,7 @@ pub(crate) async fn inject_text(
             };
             // Propagate a set_text failure (the guard puts the pending restore back); prev was
             // captured (time-bounded) above.
-            let persisted = set_res?;
+            set_res?;
             // The transcript is on the clipboard now, so this is where the paste went — see
             // LAST_PASTE_REMOTE. Recorded only here, past every bail above, so a phrase that
             // skipped without writing does not overwrite the previous paste's target.
@@ -780,32 +779,14 @@ pub(crate) async fn inject_text(
                 tracing::info!(
                     "[inject] our own window took focus before the paste chord — left on the clipboard"
                 );
-                // Re-set through the PERSISTENT owner first, unless the write above already went
-                // through it (`persisted`). Otherwise it was the plain `set_clipboard`, which does
-                // not stick on Wayland once the setter returns — so reporting the divert without
-                // this promises a clipboard that no longer holds the text, and the caller has
-                // already advanced past that phrase. Same rule the X11 twin follows at its own
-                // chord guard. If the persistent re-set fails, the plain `set_clipboard` above is
-                // exactly the write that does not stick, so promising a divert would be a false
-                // confirmation. No chord was pressed, so the caller's re-send is safe.
-                //
-                // A clipboard form that differs from the pasted text (a translated block's field
-                // gap, a plain phrase's seam space) is written over it even when the paste write
-                // already persisted: this is now a divert, and the user pastes it. That second
-                // write is unavoidable here — the paste write went out before the divert was
-                // known. If only IT fails, the gapped text is still on a live owner, so the divert
-                // stands.
-                if !persisted || clip_text != text {
+                // The paste write above already put the transcript on a live owner. A clipboard
+                // form that differs from the pasted text (a translated block's field gap, a plain
+                // phrase's seam space) is written over it: this is now a divert, and the user
+                // pastes it. That second write is unavoidable here — the paste write went out
+                // before the divert was known. If it fails, the gapped text is still on a live
+                // owner, so the divert stands.
+                if clip_text != text {
                     if let Err(e) = persist_off_runtime(clip_text.clone()).await {
-                        if !persisted {
-                            tracing::warn!(
-                                "[inject] divert before the paste chord failed (our own window took focus): {e}"
-                            );
-                            return Ok(InjectOutcome {
-                                landed: false,
-                                diverted: false,
-                            });
-                        }
                         tracing::warn!(
                             "[inject] divert before the paste chord: the clipboard form could not replace the pasted text: {e}"
                         );
@@ -837,12 +818,9 @@ pub(crate) async fn inject_text(
                         && crate::inject::cancel_wants_recovery(epoch)))
             {
                 crate::inject::restore_clipboard_later(prev);
-            } else if r.is_err() && (!persisted || clip_text != text) {
-                // The transcript stays on the clipboard to paste manually — but the write above
-                // was the plain `set_clipboard`, which does not stick on Wayland once its setter
-                // has dropped. Hand it to the persistent owner, as the X11 twin's failure arm does
-                // — in its clipboard form, since it is now there to paste manually. After a
-                // persisted paste write, a clipboard form that differs (a translated block without
+            } else if r.is_err() && clip_text != text {
+                // The transcript stays on a live owner to paste manually — in its clipboard form,
+                // since it is now there to paste: a form that differs (a translated block without
                 // its field gap, or a plain phrase without its seam space) is written over the
                 // pasted text, as the chord-time divert above does.
                 if let Err(e) = persist_off_runtime(clip_text.clone()).await {

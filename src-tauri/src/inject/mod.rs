@@ -925,25 +925,16 @@ pub fn read_primary_selection() -> Option<String> {
 /// and TIME-BOUNDED by the caller (read_selection_bounded — see commands/mod.rs), so this no
 /// longer does the unbounded get_text() that could wedge on a dead clipboard owner.
 ///
-/// On Linux the write goes through the live owner instead (`paste_write_via_live_owner`): arboard's
+/// The write always goes through the live owner (`persist_transcript`), so it sticks: arboard's
 /// X11 backend — which is also what a Wayland session WITHOUT the data-control protocol (GNOME)
 /// runs on, through XWayland — tears the selection down when the `Clipboard` drops with no
 /// clipboard manager running, and CLEARS it on that drop with clipboard privacy on, so a plain set
 /// could be gone before the portal's Ctrl+V reads it.
-///
-/// `Ok(true)` when the write went through that live owner (so it sticks and the caller need not
-/// re-serve it), `Ok(false)` after a plain write that may not outlive this call.
-pub fn set_clipboard(text: &str) -> Result<bool, String> {
-    if paste_write_via_live_owner(false, cfg!(target_os = "linux")) {
-        return persist_transcript(text).map(|()| true);
-    }
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    write_transcript(&mut cb, text)
-        .map(|()| false)
-        .map_err(|e| e.to_string())
+pub fn set_clipboard(text: &str) -> Result<(), String> {
+    persist_transcript(text)
 }
 
-/// The plain (non-owner) transcript write, shared by `set_clipboard`, `paste` and the Windows
+/// The plain (non-owner) transcript write, shared by `paste` and the Windows
 /// legacy remote write: CRLF on Windows, the user's history/cloud setting, and `note_injected`
 /// once the write succeeded, so a later capture does not adopt this transcript as the user's
 /// clipboard (`is_own_injected`).
@@ -1193,8 +1184,8 @@ fn write_remote_windows(text: &str) -> Result<Option<u64>, Landed> {
 }
 
 /// Whether a paste writes the transcript through the live owner (`persist_transcript`) rather than
-/// a function-local `Clipboard` — for `paste` (X11/Windows/macOS) and `set_clipboard` (the Wayland
-/// portal paste, which calls it for local targets only). A remote target always does (its fetch is
+/// a function-local `Clipboard` — for `paste` (X11/Windows/macOS; the Wayland portal paste always
+/// does, through `set_clipboard`). A remote target always does (its fetch is
 /// deferred — see the comment at `paste`'s write). So does every local paste on Linux: the target
 /// reads the selection asynchronously, after the synthesized chord and possibly after the writer
 /// has returned and dropped its `Clipboard`. arboard's X11 drop of the last instance hands
