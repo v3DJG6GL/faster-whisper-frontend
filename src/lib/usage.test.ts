@@ -475,6 +475,56 @@ describe("usage poll gates", () => {
     await vi.advanceTimersByTimeAsync(30_000);
     await settle();
   });
+  it("a hide and show before the page step of the pass a show started makes that step refetch the page", async () => {
+    useApp.setState({
+      backends: [
+        { id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never,
+        { id: "b2", name: "b2", serverUrl: "https://t.example", hasApiKey: false } as never,
+      ],
+      usageViewBackendId: "b1",
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+    const close = openStatisticsPage();
+    await settle();
+    setHidden(true);
+    await vi.advanceTimersByTimeAsync(10 * 30_000); // a hidden pass skips the page's documents
+    await settle();
+    const ok = getUsageStats.getMockImplementation()!;
+    let releaseB2!: (v: null) => void;
+    getUsageStats.mockImplementation((a) =>
+      (a as { backendId?: string }).backendId === "b2" && a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2
+        ? (new Promise((r) => (releaseB2 = r)) as never)
+        : ok(a),
+    );
+    try {
+      await vi.advanceTimersByTimeAsync(2 * 30_000); // two ticks passed over: the show starts a pass
+      await settle();
+      setHidden(false); // the direct fetch, and a catch-up pass that hangs on b2's trend fetch
+      await settle();
+      setHidden(true); // closed to the tray again: the direct fetch may be old by the next show
+      await settle();
+      setHidden(false); // nothing passed over and no page missed, so no fetch of its own
+      await settle();
+      getUsageStats.mockClear();
+      releaseB2(null);
+      await settle();
+      await settle();
+      expect(calls().page).toBe(2); // the pass's page step refetches the view + year
+    } finally {
+      releaseB2?.(null); // never leave the pass stuck for the later cases
+      await settle();
+      getUsageStats.mockImplementation(ok);
+      setHidden(false);
+      close();
+    }
+    useApp.setState({
+      backends: [{ id: "b1", name: "b1", serverUrl: "https://s.example", hasApiKey: false } as never],
+      usageViewBackendId: null,
+    });
+    await vi.advanceTimersByTimeAsync(30_000);
+    await settle();
+  });
   it("a show while a hidden pass is running hands it the direct fetch: its page step does not refetch", async () => {
     const isTrend = (a: { query: Record<string, unknown> }) => a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2;
     // skipped 0: the show only fetches the page (no pass of its own); 2: it also folds a rerun,

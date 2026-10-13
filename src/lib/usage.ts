@@ -56,8 +56,9 @@ let viewFreshSig: string | null = null;
 /** The show handler's direct page fetch: `sentOutcomeCount()` at `at`, and `confirmed` settles to
  *  whether both documents landed. */
 type DirectFetch = { at: number; confirmed: Promise<boolean> };
-// A direct fetch the show handler made while a pass was already running: that pass's next page
-// step takes it (one step only — a rerun fetches the page as usual), as a fresh pass takes its own.
+// The show handler's direct fetch for the running pass, whether that show started the pass or found
+// it running: the pass's next page step takes it (one step only — a rerun fetches the page as
+// usual). A hide drops it: the documents it fetched may be old by the next show.
 let pendingDirect: DirectFetch | undefined;
 
 /** The Statistics page documents are wanted: the page is open and can be seen. */
@@ -288,7 +289,7 @@ async function refreshAll(direct?: DirectFetch): Promise<void> {
     return;
   }
   pollingAll = true;
-  let skipPage = direct;
+  pendingDirect = direct; // undefined until now: only set while a pass runs, cleared in `finally`
   try {
     // Outcomes first, so a session that ended while the server was unreachable lands
     // before the numbers are re-read (the server folds it into the same document).
@@ -304,8 +305,8 @@ async function refreshAll(direct?: DirectFetch): Promise<void> {
       }
       // Taken here, not at the loop's head, so a show that landed during the loop above is seen;
       // one page step only: a rerun fetches the page as usual.
-      const fetched = skipPage ?? pendingDirect;
-      skipPage = pendingDirect = undefined;
+      const fetched = pendingDirect;
+      pendingDirect = undefined;
       if (statsPageShown()) {
         // The show handler fetched them a moment ago: refetching the same documents is only
         // worth it when that fetch missed, the page no longer answers the current view, or the

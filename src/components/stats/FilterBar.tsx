@@ -35,11 +35,11 @@ function CustomSpanPopover({ f, t, setF, setT, today, onApply, onCancel }: { f: 
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
           From
-          <input type="date" value={f} max={t} onChange={(e) => setF(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
+          <input type="date" value={f} min="1970-01-01" max={t} onChange={(e) => setF(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
         </label>
         <label className="flex flex-col gap-1 font-mono text-[10.5px] uppercase tracking-label text-faint">
           To
-          <input type="date" value={t} min={f} onChange={(e) => setT(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
+          <input type="date" value={t} min={f || "1970-01-01"} onChange={(e) => setT(e.target.value)} className="ring-signal rounded-[8px] border border-line-strong bg-panel px-2 py-1 font-mono text-[12.5px] normal-case tracking-normal text-text" />
         </label>
       </div>
       <div className="mt-2.5 flex flex-wrap gap-1.5">
@@ -58,7 +58,13 @@ function CustomSpanPopover({ f, t, setF, setT, today, onApply, onCancel }: { f: 
         ))}
       </div>
       <div className="mt-2.5 flex items-center gap-2 text-[11.5px] text-faint">
-        <span>{ok ? `${plural(days, "day")} · shown by ${BUCKET_WORD[mode]}` : "Pick a start on or before the end, at most 10 years apart."}</span>
+        <span>
+          {ok
+            ? `${plural(days, "day")} · shown by ${BUCKET_WORD[mode]}`
+            : fd === undefined || td === undefined
+              ? "Pick a start and an end date from 1970 on."
+              : "Pick a start on or before the end, at most 10 years apart."}
+        </span>
         <span className="flex-1" />
         <button type="button" onClick={onCancel} className="ring-signal rounded-pill border border-line-strong px-3 py-1 text-[12px] text-dim hover:text-text">
           Cancel
