@@ -134,13 +134,15 @@ function joinLines(lines: string[], wraps: boolean): string {
 
 /** A subtitle tag: a known name, then what that name can carry. Only `<v Name>` (as long as
  *  the voice regexes read it), `<lang en>`, `<font color=…>` and `<span class=…>` take a
- *  space-separated annotation; the rest take at most a `.class` list (`<c.mt>`) or a
- *  self-close (`<br />`), so "if a<b and c>d" or "x <i and y> z" is text, not a tag. */
+ *  space-separated annotation; the rest take a `.class` list (`<c.mt>`), `name=value`
+ *  attributes (an HTML/TTML conversion's `<i class="x">`) and a self-close (`<br />`) — never a
+ *  bare word, so "if a<b and c>d" or "x <i and y> z" is text, not a tag. */
 const MARKUP_TAG = new RegExp(
   [
     String.raw`<\/?v(?=[\s.>/])[^<>\n]{0,200}>`,
     String.raw`<\/?(?:lang|font|span)(?=[\s.>/])[^<>\n]{0,64}>`,
-    String.raw`<\/?(?:b|i|u|s|c|ruby|rt|rb|rp|br|em|strong|sub|sup)(?:\.[^\s<>]{1,64})?[^\S\n]*\/?>`,
+    String.raw`<\/?(?:b|i|u|s|c|ruby|rt|rb|rp|br|em|strong|sub|sup)(?:\.[^\s<>]{1,64})?` +
+      String.raw`(?:[^\S\n]+[a-z][\w:-]{0,31}=(?:"[^"<>\n]{0,64}"|'[^'<>\n]{0,64}'|[^\s<>"']{1,64})){0,8}[^\S\n]*\/?>`,
   ].join("|"),
   "gi",
 );
