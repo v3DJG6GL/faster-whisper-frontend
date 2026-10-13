@@ -38,6 +38,7 @@ import { useDebounced } from "@/lib/useDebounced";
 import { RestoreFromServer, SyncedCategoryChips } from "@/components/sync/SettingsSync";
 import { plural, relTime } from "@/lib/format";
 import { imeComposing } from "@/lib/keys";
+import { keyWriteOutcome } from "@/lib/backendKeyWrite";
 
 function Editor({
   initial,
@@ -355,6 +356,15 @@ function Editor({
   latestB.current = b;
   const latestResult = useRef(result);
   latestResult.current = result;
+  // Set on unmount (reset on mount, for StrictMode's mount → unmount → mount): a Save parked behind
+  // the keyring outlives an exit the Cancel/Esc/back gates don't cover (the sidebar's guard).
+  const left = useRef(false);
+  useEffect(() => {
+    left.current = false;
+    return () => {
+      left.current = true;
+    };
+  }, []);
   const doSave = async () => {
     setKeyError(null);
     if (key) {
@@ -368,16 +378,25 @@ function Editor({
       } finally {
         setSavingKey(false);
       }
+      // Left during the write (sidebar → Discard; the editor unmounted): the user walked away from
+      // this draft, so save nothing — onSave would persist it AND close whatever flow is open now.
       // Retyped during the write: the keyring holds the OLD key, so persisting now would claim
-      // the new one. Keep the editor open; the next Save stores what is typed. A backend not in
-      // the store yet owns no keyring entry, so drop the one just written (as Onboarding does);
-      // a saved one routes with it already, and the message says so.
-      if (liveTarget.current.key !== key) {
-        if (!useApp.getState().backends.some((x) => x.id === b.id)) {
-          void deleteBackendKey(b.id).catch(() => {});
-          setKeyError("The API key changed while it was being saved, so nothing was stored. Save again to store the new key.");
-        } else {
-          setKeyError("The API key changed while it was being saved. The key typed before is stored and already in use for this backend; Save again to store the new one.");
+      // the new one. Keep the editor open; the next Save stores what is typed. Either way a backend
+      // not in the store yet owns no keyring entry, so drop the one just written (as Onboarding
+      // does); a saved one routes with it already, and the retype message says so.
+      const outcome = keyWriteOutcome({
+        left: left.current,
+        retyped: liveTarget.current.key !== key,
+        inStore: useApp.getState().backends.some((x) => x.id === b.id),
+      });
+      if (outcome.kind !== "save") {
+        if (outcome.rollBack) void deleteBackendKey(b.id).catch(() => {});
+        if (outcome.kind === "retyped") {
+          setKeyError(
+            outcome.rollBack
+              ? "The API key changed while it was being saved, so nothing was stored. Save again to store the new key."
+              : "The API key changed while it was being saved. The key typed before is stored and already in use for this backend; Save again to store the new one.",
+          );
         }
         return false;
       }
@@ -447,7 +466,10 @@ function Editor({
   return (
     <Card className="p-6">
       <EditorHeader
-        onBack={() => guard.guardExit(onCancel)}
+        // A no-op mid key-write, like Cancel and Esc: leaving would abandon the Save in flight.
+        onBack={() => {
+          if (!savingKey) guard.guardExit(onCancel);
+        }}
         title={backendDisplayName(b.name)}
         subtitle={
           chips.length ? (
