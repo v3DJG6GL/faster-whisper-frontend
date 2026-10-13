@@ -93,12 +93,27 @@ fn roots() -> Vec<Root> {
         });
     }
     if let Some(base) = xdg("XDG_CACHE_HOME", &[".cache"]) {
-        out.push(Root {
-            base,
-            disposable: true,
-        });
+        push_cache_root(&mut out, base);
     }
     out
+}
+
+/// The cache root, unless it is the same folder as a config/data root (XDG_CACHE_HOME set to
+/// XDG_DATA_HOME, or a symlink to it): there the identifier folder holds the user's data, and
+/// the cache rule (delete, never move) would wipe what that data root just left in place on a
+/// `Conflict` or a `Failed` move.
+#[cfg(not(windows))]
+fn push_cache_root(out: &mut Vec<Root>, base: PathBuf) {
+    let same = |a: &Path| {
+        a == base || matches!((a.canonicalize(), base.canonicalize()), (Ok(x), Ok(y)) if x == y)
+    };
+    if out.iter().any(|r| !r.disposable && same(&r.base)) {
+        return;
+    }
+    out.push(Root {
+        base,
+        disposable: true,
+    });
 }
 
 /// Is a build with the OLD identifier running right now? Its single-instance name differs
@@ -642,6 +657,36 @@ mod tests {
         std::fs::create_dir_all(old.join("playback")).unwrap();
         assert_eq!(migrate_dir(&old, &new, true), Outcome::Absent);
         assert!(!old.exists() && !new.exists());
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_cache_root_that_is_the_data_root_never_deletes_the_users_data() {
+        // XDG_CACHE_HOME == XDG_DATA_HOME, and the user already started fresh under the new
+        // name: the data root leaves the old folder in place, the cache root must not drop it.
+        let base = scratch("cache-is-data");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(old.join("audio")).unwrap();
+        std::fs::write(old.join("audio").join("a.wav"), b"x").unwrap();
+        std::fs::create_dir_all(&new).unwrap();
+        std::fs::write(new.join("config.json"), "new").unwrap();
+        let mut roots = vec![root(&scratch("cache-is-data-cfg")), root(&base)];
+        push_cache_root(&mut roots, base.clone());
+        assert!(roots.iter().all(|r| !r.disposable));
+        assert_eq!(migrate(&roots, false), Verdict::Proceed);
+        assert!(old.join("audio").join("a.wav").exists());
+
+        // The same folder reached through a symlink is the same folder.
+        let link = scratch("cache-link").join("cache");
+        std::os::unix::fs::symlink(&base, &link).unwrap();
+        let mut roots = vec![root(&base)];
+        push_cache_root(&mut roots, link);
+        assert!(roots.iter().all(|r| !r.disposable));
+
+        // A cache of its own is still a cache.
+        let mut roots = vec![root(&base)];
+        push_cache_root(&mut roots, scratch("own-cache"));
+        assert!(roots[1].disposable);
     }
 
     #[test]
