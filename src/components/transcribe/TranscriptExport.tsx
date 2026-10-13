@@ -107,25 +107,20 @@ export function TranscriptExport({
   const hasSpeakers = speakers.length > 0;
   const urlSource = isSourceUrl(path);
   const textSource = isTextSourcePath(path);
-  // Export panel state, seeded from the persisted screen defaults.
-  // The user's format pick (persisted); `exportFormat` below is what this record exports.
-  const [formatPick, setFormatPick] = useState<ExportFormat>(
-    () => settings.transcribe?.exportFormat ?? "srt",
-  );
+  // The persisted picks are read live, like the Content toggles (useDisplayToggles): a sync
+  // pull, a reset or a conflict resolution shows at once. The click handlers only write them.
+  // The user's format pick; `exportFormat` below is what this record exports.
+  const formatPick: ExportFormat = settings.transcribe?.exportFormat ?? "srt";
   // Which language tracks the export carries: null = follow the viewer's
   // visible tracks (the-view-is-the-export); a pick overrides per panel.
   const [exportTracks, setExportTracks] = useState<string[] | null>(null);
-  // Media section (audio / video / video + subtitle tracks), seeded from the
-  // persisted defaults like the format card.
-  const [mediaChoice, setMediaChoice] = useState<MediaChoice>(
-    () => settings.transcribe?.exportMedia ?? "none",
-  );
-  const [container, setContainer] = useState<MediaContainer>(
-    () => settings.transcribe?.exportContainer ?? "mkv",
-  );
-  const [subtitleMode, setSubtitleMode] = useState<SubtitleMode>(
-    () => settings.transcribe?.exportSubtitleMode ?? "embedded",
-  );
+  /** History's "Save audio…/Save video…" opens the panel on that media for this visit only
+   *  (initialExport): never persisted, dropped on the user's own pick and on a record switch. */
+  const [mediaOverride, setMediaOverride] = useState<MediaChoice | null>(null);
+  // Media section (audio / video / video + subtitle tracks), from the persisted picks.
+  const mediaChoice: MediaChoice = mediaOverride ?? settings.transcribe?.exportMedia ?? "none";
+  const container: MediaContainer = settings.transcribe?.exportContainer ?? "mkv";
+  const subtitleMode: SubtitleMode = settings.transcribe?.exportSubtitleMode ?? "embedded";
   // The panel stays mounted across records, so a job names the record it saves: a running
   // export shows on its own record only, and another record's Save can queue behind it.
   const owner = rec?.id ?? path;
@@ -165,10 +160,6 @@ export function TranscriptExport({
   const queuedJob = useSyncExternalStore(subscribeExportQueue, () => queuedExportFor(owner));
   const [mediaError, setMediaError] = useState<{ kind: string; msg: string; reason?: string } | null>(null);
   const [streams, setStreams] = useState<MediaStreams | null>(null);
-  useEffect(() => {
-    if (!initialExport) return;
-    setMediaChoice(initialExport.media);
-  }, [initialExport]);
   // Expand preview: the preview leaves the right column for a full-width box
   // below both columns.
   const [wide, setWide] = useState(false);
@@ -279,7 +270,15 @@ export function TranscriptExport({
     setSaveError(null);
     setSaved(false);
     setAudioSavedAs(null);
+    // History's one-visit media pick belongs to the record it opened.
+    setMediaOverride(null);
   }, [overlayKey, path]);
+  // After the reset above (effects run in order): on the mount that brings it, the reset must
+  // not clear it again.
+  useEffect(() => {
+    if (!initialExport) return;
+    setMediaOverride(initialExport.media);
+  }, [initialExport]);
   /** Tracks the export actually carries (the picker, else the visible ones),
    *  in track order. `order` holds only THIS file's tracks, so a pick left
    *  over from another file never silently empties the export. */
@@ -949,7 +948,7 @@ export function TranscriptExport({
     // The chips say what the plan writes (`copyExt`): the source's own extension, which may
     // be neither chip (webm, mov) — then both sit out and the real one shows beside them.
     const copyLock = copyExt !== null;
-    const pick = (c: MediaChoice) => { setMediaChoice(c); patchTranscribe({ exportMedia: c }); };
+    const pick = (c: MediaChoice) => { setMediaOverride(null); patchTranscribe({ exportMedia: c }); };
     // `why` = not on offer, and why (the card's tooltip).
     const cards: { value: MediaChoice; label: string; sub: string; why?: string }[] = [
       { value: "none", label: "None", sub: "text file only" },
@@ -978,7 +977,7 @@ export function TranscriptExport({
                   <ChipToggle key={c} on={copyLock ? c === copyExt : effContainer === c} disabled={off} size="xs"
                     className="font-mono font-medium"
                     title={copyLock ? "a plain copy keeps the original container" : c === "mp4" && mp4Why ? mp4Why : undefined}
-                    onClick={() => { if (!off) { setContainer(c); patchTranscribe({ exportContainer: c }); } }}>
+                    onClick={() => { if (!off) patchTranscribe({ exportContainer: c }); }}>
                     {c.toUpperCase()}
                   </ChipToggle>
                 );
@@ -995,7 +994,7 @@ export function TranscriptExport({
                 <ChipToggle key={v} on={effSubtitleMode === v} disabled={v !== "sidecar" && !packageOn}
                   size="xs" className="font-mono font-medium"
                   title={v !== "sidecar" && !packageOn ? noPackageWhy : undefined}
-                  onClick={() => { setSubtitleMode(v); patchTranscribe({ exportSubtitleMode: v }); }}>
+                  onClick={() => patchTranscribe({ exportSubtitleMode: v })}>
                   {l}
                 </ChipToggle>
               ))}
@@ -1117,10 +1116,7 @@ export function TranscriptExport({
                     label={f.label}
                     sub={f.use}
                     mono
-                    onPick={() => {
-                      setFormatPick(f.value);
-                      patchTranscribe({ exportFormat: f.value });
-                    }}
+                    onPick={() => patchTranscribe({ exportFormat: f.value })}
                   />
                 );
               })}
