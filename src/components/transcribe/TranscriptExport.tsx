@@ -39,7 +39,7 @@ import {
 } from "@/lib/transcript/exportTracks";
 import {
   audioPackageLang, basename, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportOutcomeShowsHere, exportStem, extOf, fileStem, isGoneSourceError, isVideoSourcePath,
-  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles,
+  legacyTrackIndices, linkServerAudioLive, MAX_EMBED_SRT_BYTES, mediaExportPlan, mp4Disabled, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn, sidecarFiles, tracksAtWrite,
   subscribeExportQueue, withoutCopyPath, withoutVideoPath, type EmbeddedTrack, type MediaChoice, type MediaContainer, type MediaExportProgress, type MediaStreams,
   type SubtitleMode,
 } from "@/lib/transcript/mediaExport";
@@ -334,12 +334,14 @@ export function TranscriptExport({
   /** The tracks a video carries, inside or beside it: with Video on (and the panel open — a
    *  closed one plans nothing) only those with a cue, so the plan names the sidecars exactly as
    *  sidecarFiles writes them (a language's empty first track never takes its plain name). */
+  /** Every track picked for a video, cue or not: a Save re-filters them when it writes
+   *  (tracksAtWrite), so a translation still running at the click is written once it lands. */
+  const pickedVideoTracks = useMemo(() => (effTracks.length ? effTracks : ["orig"]), [effTracks]);
   const videoTracks = useMemo(() => {
-    const all = effTracks.length ? effTracks : ["orig"];
-    if (!open || effMedia !== "video") return all;
-    const kept = cueTracks(editedResult, exportOptions, all);
-    return kept.length ? kept : all;
-  }, [effTracks, open, effMedia, editedResult, exportOptions]);
+    if (!open || effMedia !== "video") return pickedVideoTracks;
+    const kept = cueTracks(editedResult, exportOptions, pickedVideoTracks);
+    return kept.length ? kept : pickedVideoTracks;
+  }, [pickedVideoTracks, open, effMedia, editedResult, exportOptions]);
   /** The files one Save writes (the media file first, then the text files),
    *  from the panel's current choices — Save, the preview tabs and the names
    *  all read this one plan. */
@@ -597,7 +599,11 @@ export function TranscriptExport({
     // edit during the dialog or the fetch) is rebuilt and checked against the cap again.
     const res = liveResult(started);
     const reuse = checked && checked.res === res;
-    const subtitles = !embedded.length ? [] : reuse ? checked.tracks : embeddedSubtitleTracks(res, exportOptions, embedded, trackNames);
+    const subtitles = !embedded.length
+      ? []
+      : reuse
+        ? checked.tracks
+        : embeddedSubtitleTracks(res, exportOptions, tracksAtWrite(embedded, pickedVideoTracks, res, exportOptions, embedCap), trackNames);
     const big = reuse ? null : oversizedEmbeddedTrack(subtitles);
     if (big) {
       const msg = tooLargeToEmbed(big);
@@ -775,7 +781,9 @@ export function TranscriptExport({
     let checked: { res: BatchResult; tracks: EmbeddedTrack[] } | undefined;
     if (plan.primary.kind === "video" && plan.embedded.length) {
       const res = liveResult(started);
-      const tracks = embeddedSubtitleTracks(res, exportOptions, plan.embedded, trackNames);
+      const tracks = embeddedSubtitleTracks(
+        res, exportOptions, tracksAtWrite(plan.embedded, pickedVideoTracks, res, exportOptions, embedCap), trackNames,
+      );
       const big = oversizedEmbeddedTrack(tracks);
       if (big) {
         setSaveError(tooLargeToEmbed(big));
@@ -799,37 +807,44 @@ export function TranscriptExport({
       return;
     }
     if (!target) return; // cancelled
-    // Beside a video the text files are one subtitle file per language; the
-    // plain text export stays the (possibly bilingual) reading file. Built after the
-    // dialog, from the latest result (liveResult): a cancel pays nothing, the dialog opens
-    // without waiting on them, and a translation that landed meanwhile is written. The plan
-    // stays the click's: it names the files the dialog confirmed.
-    const res = liveResult(started);
-    const files = plan.sidecars
-      ? sidecarFiles(res, exportOptions, plan.sidecars.tracks, plan.sidecars.format)
-      : generateExports(res, exportOptions);
     // The picked path names the FIRST file; siblings land beside it under
     // the stem the user actually chose in the dialog.
     const { dir, stem: pickedStem } = derivePickedStem(target, plan.primary.name(""), plan.primaryExt);
-    // Each planned text file by its name (an empty track writes nothing).
-    const contents = new Map(files.map((f) => [f.name(pickedStem), f.content]));
     const written: string[] = [];
     try {
+      // The media file first (the plan puts it first; the text files follow it).
       for (const f of plan.files) {
+        if (f.kind === "text") continue;
         const dest = dir + f.name(pickedStem);
-        if (f.kind === "text") {
-          const content = contents.get(f.name(pickedStem));
-          if (content === undefined) continue;
-          await saveTextFile(dest, content);
-        } else if (f.kind === "audio") {
+        if (f.kind === "audio") {
           const landed = await exportAudioTo(dest);
           if (landed !== dest && mine()) setAudioSavedAs(basename(landed));
           written.push(landed);
           continue;
-        } else if (!(await exportVideoTo(dest, plan.embedded, started, late, checked))) {
-          return;
         }
+        if (!(await exportVideoTo(dest, plan.embedded, started, late, checked))) return;
         written.push(dest);
+      }
+      // Beside a video the text files are one subtitle file per language; the
+      // plain text export stays the (possibly bilingual) reading file. Built once the media
+      // file is written, from the latest result (liveResult): a cancel pays nothing, the
+      // dialog opens without waiting on them, and a translation that landed during the
+      // dialog or the video's fetch is written. A video's sidecars are named over the tracks
+      // written (tracksAtWrite); the plain text files stay the click's plan.
+      const res = liveResult(started);
+      const files = plan.sidecars
+        ? sidecarFiles(res, exportOptions, tracksAtWrite(plan.sidecars.tracks, pickedVideoTracks, res, exportOptions), plan.sidecars.format)
+        : generateExports(res, exportOptions);
+      const contents = new Map(files.map((f) => [f.name(pickedStem), f.content]));
+      const names = plan.sidecars
+        ? files.map((f) => f.name(pickedStem))
+        // Each planned text file by its name (an empty track writes nothing).
+        : plan.files.filter((f) => f.kind === "text").map((f) => f.name(pickedStem));
+      for (const name of names) {
+        const content = contents.get(name);
+        if (content === undefined) continue;
+        await saveTextFile(dir + name, content);
+        written.push(dir + name);
       }
     } catch (e) {
       setMediaJob(null);

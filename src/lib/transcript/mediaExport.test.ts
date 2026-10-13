@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   BUSY_MAX_WAIT_MS, BUSY_RETRY_MS, audioPackageLang, cueTracks, dequeueMediaExport, derivePickedStem, embeddedSubtitleTracks, exportStem, fileStem, packageLang,
   isVideoSourcePath, legacyTrackIndices, linkServerAudioLive, linkSiteName, MAX_EMBED_SRT_BYTES, mediaExportPlan, oversizedEmbeddedTrack, queueMediaExport, queuedExportFor, revealAfterSaveOn,
-  siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp,
+  siteDisplayName, subscribeExportQueue, withTrackSites, mp4Disabled, sidecarFiles, sidecarNames, stemTimestamp, tracksAtWrite,
 } from "./mediaExport";
 import type { BatchResult } from "../types";
 
@@ -141,6 +141,42 @@ describe("embeddedSubtitleTracks", () => {
       audioExt: null, tracks: kept, result: site, hasVideoSource: true,
     });
     expect(plan.files.filter((f) => f.kind === "text").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt"]);
+  });
+  it("a picked track with no cue at the click is written once its translation lands before the write", () => {
+    const site = (fr?: string): BatchResult => ({
+      text: "Hallo",
+      language: "de",
+      segments: [{ start: 0, end: 1, text: "Hallo", ...(fr ? { translations: { fr } } : {}) }],
+      timedTracks: [
+        { id: "fr-x-site", lang: "fr", source: "site", kind: "manual", site: "YouTube", cues: [{ start: 0, end: 1, text: "Salut" }] },
+      ],
+    });
+    const picked = ["orig", "fr", "fr-x-site"];
+    const opts = { format: "srt" as const };
+    // At the click the French translation is still running: the plan holds the cue-bearing tracks.
+    const planned = cueTracks(site(), opts, picked);
+    expect(planned).toEqual(["orig", "fr-x-site"]);
+    // It lands during the video's fetch: the write takes it, named as its language's plain track.
+    const live = site("Bonjour");
+    const now = tracksAtWrite(planned, picked, live, opts);
+    expect(now).toEqual(["orig", "fr", "fr-x-site"]);
+    expect(sidecarFiles(live, opts, now, "srt").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt", "s.YouTube.fr.srt"]);
+    expect(embeddedSubtitleTracks(live, opts, now).map((t) => t.srt.includes("Bonjour"))).toEqual([false, true, false]);
+    // Still running at the write: dropped, and the site track keeps the plain name (d84b4932).
+    const still = tracksAtWrite(planned, picked, site(), opts);
+    expect(still).toEqual(["orig", "fr-x-site"]);
+    expect(sidecarFiles(site(), opts, still, "srt").map((f) => f.name("s"))).toEqual(["s.de.srt", "s.fr.srt"]);
+  });
+  it("the click's plan stands when the late tracks would go over the embed cap, or none has a cue", () => {
+    const res: BatchResult = {
+      text: "Hallo", language: "de",
+      segments: [{ start: 0, end: 1, text: "Hallo", translations: { fr: "Salut", en: "Hello" } }],
+    };
+    const opts = { format: "srt" as const };
+    expect(tracksAtWrite(["orig", "fr"], ["orig", "fr", "en"], res, opts, 2)).toEqual(["orig", "fr"]);
+    expect(tracksAtWrite(["orig", "fr"], ["orig", "fr", "en"], res, opts, 3)).toEqual(["orig", "fr", "en"]);
+    const empty: BatchResult = { text: "", language: "de", segments: [] };
+    expect(tracksAtWrite(["orig"], ["orig"], empty, opts)).toEqual(["orig"]);
   });
   it("a site track's looser language tag embeds as one the packager accepts", () => {
     const site: BatchResult = {

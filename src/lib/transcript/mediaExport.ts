@@ -128,6 +128,22 @@ export function cueTracks(result: BatchResult, opts: ExportOptions, tracks: stri
   return tracks.filter((t) => hasCue(trackSubtitle(result, opts, t, "srt")));
 }
 
+/** The tracks a video Save writes, inside or beside the video, decided when they are written
+ *  (`res` = the result then, after the dialog and the video's fetch): every track PICKED at the
+ *  click (`picked`) that has a cue by now, so a translation that landed meanwhile is written.
+ *  The click's plan (`planned`) stands when none has a cue, or when the late ones would take the
+ *  embedded tracks over the server's `cap` (the panel only checked the planned count). */
+export function tracksAtWrite(
+  planned: string[],
+  picked: string[],
+  res: BatchResult,
+  opts: ExportOptions,
+  cap = Infinity,
+): string[] {
+  const now = cueTracks(res, opts, picked);
+  return now.length && now.length <= cap ? now : planned;
+}
+
 /** One single-language SRT per chosen track (in track order), generated
  *  exactly as the panel's own SRT export would (edits, renames and speaker
  *  colouring included), so the embedded tracks match the sidecars byte for
