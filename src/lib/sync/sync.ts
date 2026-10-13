@@ -82,7 +82,7 @@ import type {
   SyncTranscription,
 } from "./syncTypes";
 import type { SyncSubSettings } from "../types";
-import { MANIFEST, completeGates } from "../settingsManifest";
+import { DEFS, MANIFEST, completeGates, type SettingId } from "../settingsManifest";
 import { isValidAccentMotion } from "../theme";
 import {
   APP_RULE_OVERRIDE_FIELDS,
@@ -96,8 +96,11 @@ import {
   substituteElementFields,
   type Gates,
   catsFromGates,
+  gatesTurnedOn,
+  gateStillSyncs,
   isPlainObject,
   SCALAR_CATS,
+  withGateParts,
 } from "./syncGates";
 
 export const ALL_CATEGORIES: SyncCategory[] = [
@@ -2038,14 +2041,112 @@ let endLaunch: (() => void) | null = null;
  *  restart. */
 const freshCats = new Set<SyncCategory>();
 
-/** Record `freshCats` in sync-state.json: a re-enabled category whose reconcile has not landed
- *  (its dialog unanswered, its pull failed) must still be one after a restart — its gate is
- *  already ON then, so no OFF→ON transition would mark it again, and the startup pull's "nothing
- *  new" shortcut would push this device's value over the peer's. */
+/** Settings turned ON since the last adopted base inside a category that already synced
+ *  (`gatesTurnedOn`): the same hazard as `freshCats`, for one setting of a synced group. Judged
+ *  apart from the rest of their category (`mergeFresh`): equal values merge, different ones ask
+ *  about that setting only, and the category's other fields keep their 3-way merge. Same
+ *  lifecycle as `freshCats` (cleared by an adopted base and a server switch, kept across sync
+ *  off/on and a restart); one turned off again drops out. */
+const freshGates = new Set<SettingId>();
+
+/** Is any re-enabled category or setting still to be reconciled? */
+function hasFresh(): boolean {
+  return freshCats.size > 0 || freshGates.size > 0;
+}
+
+/** Record `freshCats` and `freshGates` in sync-state.json: a re-enabled category or setting whose
+ *  reconcile has not landed (its dialog unanswered, its pull failed) must still be one after a
+ *  restart — its gate is already ON then, so no OFF→ON transition would mark it again, and the
+ *  startup pull's "nothing new" shortcut would push this device's value over the peer's. */
 function persistFresh(): void {
-  persistState({ freshCats: freshCats.size > 0 ? [...freshCats] : undefined }, { stash: false }).catch((e) =>
-    console.warn("sync: could not record the re-enabled categories", e),
-  );
+  persistState(
+    {
+      freshCats: freshCats.size > 0 ? [...freshCats] : undefined,
+      freshGates: freshGates.size > 0 ? [...freshGates] : undefined,
+    },
+    { stash: false },
+  ).catch((e) => console.warn("sync: could not record the re-enabled categories", e));
+}
+
+/** The fresh settings by category, leaving out a category that is fresh as a whole. */
+function freshGatesByCat(): Map<SyncCategory, SettingId[]> {
+  const out = new Map<SyncCategory, SettingId[]>();
+  for (const id of freshGates) {
+    const c = DEFS.find((d) => d.id === id)?.category as SyncCategory | undefined;
+    if (!c || freshCats.has(c)) continue;
+    out.set(c, [...(out.get(c) ?? []), id]);
+  }
+  return out;
+}
+
+/** What a change of the sync settings from `prev` to `now` (same server) does to the re-enabled
+ *  marks: the categories that came on whole, the settings that came on inside a category that
+ *  already synced, and the marked ones that no longer sync (turned off again before their
+ *  reconcile — nothing to ask about). The ONE rule the store subscriber and the launch work's
+ *  twin both read. */
+function freshTransition(prev: AppSettings["sync"], now: AppSettings["sync"]) {
+  const prevGates = completeGates(prev?.sub, prev?.categories);
+  const nowGates = completeGates(now?.sub, now?.categories);
+  const prevCats = catsFromGates(prevGates);
+  const on = catsFromGates(nowGates) as Record<SyncCategory, boolean>;
+  return {
+    on,
+    cats: ALL_CATEGORIES.filter((c) => on[c] && !prevCats[c]),
+    gates: gatesTurnedOn(prevGates, nowGates),
+    prunedCats: [...freshCats].filter((c) => !on[c]),
+    prunedGates: [...freshGates].filter((id) => !gateStillSyncs(nowGates, id)),
+  };
+}
+type FreshTransition = ReturnType<typeof freshTransition>;
+
+/** Apply a `freshTransition`; true when it marked or dropped anything. */
+function markFreshFrom(t: FreshTransition): boolean {
+  for (const c of t.prunedCats) freshCats.delete(c);
+  for (const id of t.prunedGates) freshGates.delete(id);
+  for (const c of t.cats) freshCats.add(c);
+  for (const id of t.gates) freshGates.add(id);
+  return t.prunedCats.length + t.prunedGates.length + t.cats.length + t.gates.length > 0;
+}
+
+/** Every merge's 3-way, with the re-enabled categories (`mergeBase`) and settings (`freshGates`)
+ *  reconciled as first contact. A category holding fresh settings is merged in two halves: the
+ *  rest of it 3-way, with the fresh settings made the remote's on every side; then the fresh
+ *  settings alone — this device's equal to the merge's, it merges; else the category is a
+ *  conflict whose two sides (`local` / `remote` here, what a pick lands) differ in those
+ *  settings only, so neither pick throws away the other side's edits to the rest of it. A
+ *  conflict in the rest of it is the whole category's, as without fresh settings. */
+function mergeFresh(local: SyncBlob, remote: SyncBlob): MergeResult & { local: SyncBlob; remote: SyncBlob } {
+  const base = mergeBase();
+  const res = mergeBlobs(base, local, remote);
+  const byCat = freshGatesByCat();
+  if (!base || byCat.size === 0) return { ...res, local, remote };
+  const merged: SyncBlob = { ...res.merged };
+  const conflicts = new Set(res.conflicts);
+  let sides = { local, remote };
+  for (const [c, ids] of byCat) {
+    const b = base[c];
+    const l = local[c];
+    const r = remote[c];
+    // Absent on a side: nothing to judge the settings apart from — the plain merge decides.
+    if (b === undefined || l === undefined || r === undefined) continue;
+    const part = (target: unknown, source: unknown) => withGateParts(c, ids, target, source, MY_BUCKET);
+    const rest = mergeBlobs({ [c]: part(b, r) }, { [c]: part(l, r) }, { [c]: r });
+    if (rest.conflicts.length > 0) {
+      conflicts.add(c);
+      continue;
+    }
+    const merge = rest.merged[c];
+    const mine = part(merge, l);
+    if (catEqual(mine, merge)) {
+      (merged as Record<string, unknown>)[c] = merge;
+      conflicts.delete(c);
+      continue;
+    }
+    conflicts.add(c);
+    (merged as Record<string, unknown>)[c] = mine; // placeholder: a conflicted category takes the pick
+    sides = { local: { ...sides.local, [c]: mine }, remote: { ...sides.remote, [c]: merge } };
+  }
+  return { merged, conflicts: ALL_CATEGORIES.filter((c) => conflicts.has(c)), ...sides };
 }
 
 /** The 3-way base every merge uses: the adopted snapshot, minus the `freshCats`. */
@@ -2242,14 +2343,15 @@ function backendsDegraded(composed: SyncBlob, cats: Record<SyncCategory, boolean
 function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
   // A re-enabled backends category (`freshCats`) was never compared — the degraded compose passed
   // the remote's list through — so no base may say it was: the first unlocked pull asks.
-  const fresh = freshCats.has("backends");
+  const fresh =
+    freshCats.has("backends") || [...freshGates].some((id) => DEFS.find((d) => d.id === id)?.category === "backends");
   if (!fresh && catEqual(remoteBlob.backends, state.snapshot?.backends)) return false;
   setRuntime({
     syncStatus: "error",
     // While it waits, nothing goes up either (the push gate holds every push until the list is
     // compared): say so, not only that incoming changes wait.
     syncError: fresh
-      ? "Your API keys couldn't be read from the keyring, so the server list you turned on for sync can't be compared with the server's yet, and nothing is synced until then. Unlock it and restart the app to resume syncing."
+      ? "Your API keys couldn't be read from the keyring, so the server list (or a server-list setting) you turned on for sync can't be compared with the server's yet, and nothing is synced until then. Unlock it and restart the app to resume syncing."
       : "Your API keys couldn't be read from the keyring, so incoming backend changes are on hold. Unlock it and restart the app to resume syncing.",
   });
   return true;
@@ -2491,7 +2593,9 @@ async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean }
   // A new base (or none): the categories turned on since are reconciled in it.
   if ("snapshot" in patch) {
     freshCats.clear();
+    freshGates.clear();
     state.freshCats = undefined;
+    state.freshGates = undefined;
   }
   // A bookkeeping-only write (`persistFresh`) leaves the keyring stash alone: re-deriving it from
   // a snapshot whose keys a locked keyring never restored deleted the stash and dropped its ids,
@@ -2793,7 +2897,9 @@ async function pullCore(manual: boolean): Promise<void> {
         setPendingConflict(null);
         pullParked = false;
       }
-      freshCats.clear(); // an empty server has nothing to reconcile them with: the push seeds it
+      // An empty server has nothing to reconcile them with: the push seeds it.
+      freshCats.clear();
+      freshGates.clear();
       persistFresh();
       setRuntime({ syncStatus: "ok" });
       schedulePush(0);
@@ -2810,7 +2916,7 @@ async function pullCore(manual: boolean): Promise<void> {
     if (
       !manual &&
       remote.version === state.version &&
-      !(freshCats.size > 0 && state.snapshot !== undefined && !pendingConflict && !pendingReview)
+      !(hasFresh() && state.snapshot !== undefined && !pendingConflict && !pendingReview)
     ) {
       // Nothing new; a local drift (edits while offline) still pushes via the
       // hash check on the next push tick. idleStatus, not "ok": a conflict or review can wait at
@@ -2880,7 +2986,7 @@ export async function pushNow(manual = false): Promise<void> {
   // waits, nothing goes up (no base was adopted, so the server may still be at this one).
   // No base: nothing to merge against, so nothing to wait for (an empty server's pull seeds it
   // with exactly this push, and gating it turned that into a pull loop).
-  if (freshCats.size > 0 && state.snapshot !== undefined) {
+  if (hasFresh() && state.snapshot !== undefined) {
     if (!pendingConflict && !pendingReview) void pullNow(true);
     return;
   }
@@ -3014,7 +3120,7 @@ export async function pushNow(manual = false): Promise<void> {
           blob = await composeLive(syncCats(), passThroughFor(remoteBlob));
           if (myGen !== gen) return;
         }
-        const { merged, conflicts } = mergeBlobs(mergeBase(), blob, remoteBlob);
+        const { merged, conflicts } = mergeFresh(blob, remoteBlob);
         if (conflicts.length > 0) {
           raiseConflict({ categories: conflicts, merged, local: blob, remote: remoteBlob,
             remoteVersion: remote.version, remoteDevice: remote.device ?? null,
@@ -3086,7 +3192,7 @@ async function reconcileRemote(remote: SyncRemoteState, myGen: number): Promise<
   // With no base, the remote fills what this device does not sync (see `composeLive`).
   const local = await composeLive(cats, passThroughFor(remoteBlob));
   if (myGen !== gen) return; // superseded — don't apply the old server's blob
-  const { merged, conflicts } = mergeBlobs(mergeBase(), local, remoteBlob);
+  const { merged, conflicts } = mergeFresh(local, remoteBlob);
   if (conflicts.length > 0) {
     raiseConflict({ categories: conflicts, merged, local, remote: remoteBlob,
       remoteVersion: remote.version, remoteDevice: remote.device ?? null,
@@ -3767,7 +3873,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // base's own version only with no fresh category waiting: a reconcile of one raises at the
   // version the base already holds, and adopting a base clears `freshCats`.
   const v0 = state.version ?? 0;
-  if (v0 > r.version || (v0 === r.version && freshCats.size === 0)) {
+  if (v0 > r.version || (v0 === r.version && !hasFresh())) {
     setPendingReview(null);
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
@@ -3833,7 +3939,7 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   //    discard the edit, keeping it would push this device's values over the peer's change.
   //    Ask, as a conflict at the review's version (its resolve re-runs the security check, so
   //    nothing lands unreviewed).
-  const re = mergeBlobs(mergeBase(), localNow, r.remote);
+  const re = mergeFresh(localNow, r.remote);
   const appliedAtRaise = r.applied;
   const gatesNow = gatesSignature();
   const blobNow: SyncBlob = { ...re.merged };
@@ -4057,7 +4163,7 @@ async function resolveLocked(
 ): Promise<ApproveOutcome> {
   // Same moot-conflict rule as approveLocked.
   const v0 = state.version ?? 0;
-  if (v0 > c.remoteVersion || (v0 === c.remoteVersion && freshCats.size === 0)) {
+  if (v0 > c.remoteVersion || (v0 === c.remoteVersion && !hasFresh())) {
     setPendingConflict(null);
     setRuntime({ syncStatus: "ok", syncError: null });
     return "done";
@@ -4075,7 +4181,7 @@ async function resolveLocked(
   // `c.merged` was merged against the raise-time local: an edit made here since (to a category
   // only this device changed) would be hydrated back to its old value. Re-merge against the live
   // compose, and if that conflicts on a category the user was never asked about, ask again.
-  const re = mergeBlobs(mergeBase(), localNow, c.remote);
+  const re = mergeFresh(localNow, c.remote);
   if (re.conflicts.some((cat) => !c.categories.includes(cat))) {
     raiseConflict({ ...c, categories: re.conflicts, merged: re.merged, local: localNow });
     return "prompt";
@@ -4083,7 +4189,8 @@ async function resolveLocked(
   setPendingConflict(null);
   const final: SyncBlob = { ...re.merged };
   for (const cat of c.categories) {
-    const src = choices[cat] === "remote" ? c.remote : localNow;
+    // The re-merge's sides: a category holding a re-enabled setting differs there only (`mergeFresh`).
+    const src = choices[cat] === "remote" ? re.remote : re.local;
     const val = src[cat];
     if (val === undefined) delete final[cat];
     else (final as Record<string, unknown>)[cat] = val;
@@ -4219,10 +4326,16 @@ export async function initSync(): Promise<void> {
     // The re-enabled categories a previous run had not reconciled yet (see `persistFresh`) — only
     // known ones still ON, and only with a base to merge against. The file is untrusted input.
     freshCats.clear();
-    if (state.snapshot && Array.isArray(state.freshCats)) {
-      const on = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
-      for (const c of state.freshCats) {
+    freshGates.clear();
+    if (state.snapshot) {
+      const gates = completeGates(launchSync?.sub, launchSync?.categories);
+      const on = catsFromGates(gates);
+      for (const c of Array.isArray(state.freshCats) ? state.freshCats : []) {
         if ((ALL_CATEGORIES as readonly unknown[]).includes(c) && on[c as SyncCategory]) freshCats.add(c as SyncCategory);
+      }
+      // A setting known to this version whose sync is still on (`gateStillSyncs` reads the id).
+      for (const id of Array.isArray(state.freshGates) ? state.freshGates : []) {
+        if (typeof id === "string" && gateStillSyncs(gates, id as SettingId)) freshGates.add(id as SettingId);
       }
     }
     await restoreSnapshotSecrets();
@@ -4294,28 +4407,16 @@ export async function initSync(): Promise<void> {
     // Gates turned ON or OFF on the same server, whether sync is on or not (`freshCats`): the base
     // survives sync turned off and on again, and so must the mark — a gate turned on while sync
     // was off is as unreconciled as one turned on while it ran.
-    let turnedOn: SyncCategory[] = [];
-    let pruned: SyncCategory[] = [];
-    let nowCats: Record<SyncCategory, boolean> | null = null;
-    if (prevSync && nowSync && prevSync.backendId === nowSync.backendId) {
-      const prevCats = catsFromGates(completeGates(prevSync.sub, prevSync.categories));
-      nowCats = catsFromGates(completeGates(nowSync.sub, nowSync.categories));
-      const on = nowCats;
-      turnedOn = ALL_CATEGORIES.filter((c) => on[c] && !prevCats[c]);
-      // Turned off again before its reconcile: not synced, so nothing to ask about.
-      pruned = [...freshCats].filter((c) => !on[c]);
-    }
-    const markFresh = (): boolean => {
-      for (const c of pruned) freshCats.delete(c);
-      for (const c of turnedOn) freshCats.add(c);
-      return pruned.length > 0 || turnedOn.length > 0;
-    };
+    const fresh = prevSync && nowSync && prevSync.backendId === nowSync.backendId ? freshTransition(prevSync, nowSync) : null;
+    const markFresh = (): boolean => (fresh ? markFreshFrom(fresh) : false);
     if (nowSync?.enabled && (!prevSync?.enabled || prevSync.backendId !== nowSync.backendId)) {
       supersede();
       // A server switch: the old server's base is not this one's. The same server turned back
       // on keeps its base, and with it the categories still to reconcile.
-      if (prevSync?.backendId !== nowSync.backendId) freshCats.clear();
-      else markFresh();
+      if (prevSync?.backendId !== nowSync.backendId) {
+        freshCats.clear();
+        freshGates.clear();
+      } else markFresh();
       persistFresh();
       setRuntime({ syncUnsupported: false, syncError: null });
       void pullNow(true);
@@ -4333,16 +4434,21 @@ export async function initSync(): Promise<void> {
       if (markFresh()) persistFresh();
       return;
     }
-    // A category toggled ON (via the per-setting gates) is reconciled with the server before
-    // anything is pushed, against a base without it (`freshCats`): the same value merges, a
-    // different one asks. Keyed on the DERIVED cats: `sync.categories` has had no writer since
-    // the manifest list replaced the category rows, so comparing the raw map was permanently
-    // false and a re-enabled setting pushed this device's value over the peer's.
-    if (nowCats) {
-      // A dialog that still asks about a category turned off again is re-raised without it (or
-      // dropped) by a fresh reconcile.
-      const stale = pruned.length > 0 && !!pendingConflict?.categories.some((c) => pruned.includes(c));
-      if (turnedOn.length > 0 || stale) {
+    // A category toggled ON (via the per-setting gates), or one more setting of a category that
+    // already syncs, is reconciled with the server before anything is pushed (`freshCats`,
+    // `freshGates`): the same value merges, a different one asks. Keyed on the gates, not the raw
+    // `sync.categories` map: that has had no writer since the manifest list replaced the category
+    // rows, so comparing it was permanently false and a re-enabled setting pushed this device's
+    // value over the peer's.
+    if (fresh) {
+      // A dialog that still asks about a category, or a setting, turned off again is re-raised
+      // without it (or dropped) by a fresh reconcile.
+      const prunedIn = new Set<SyncCategory>([
+        ...fresh.prunedCats,
+        ...fresh.prunedGates.map((id) => DEFS.find((d) => d.id === id)?.category as SyncCategory),
+      ]);
+      const stale = !!pendingConflict?.categories.some((c) => prunedIn.has(c));
+      if (fresh.cats.length > 0 || fresh.gates.length > 0 || stale) {
         supersede();
         markFresh();
         persistFresh();
@@ -4384,23 +4490,19 @@ export async function initSync(): Promise<void> {
   const sameServer = !!launchSync && launchSync.backendId === nowSync?.backendId;
   let turnedOnDuringLaunch = false;
   if (!sameServer) {
-    if (freshCats.size > 0) {
+    if (hasFresh()) {
       freshCats.clear();
+      freshGates.clear();
       persistFresh();
     }
   } else if (launchSync !== nowSync) {
-    const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
-    const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
-    const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
-    const pruned = [...freshCats].filter((c) => !nowCats[c]);
-    for (const c of pruned) freshCats.delete(c);
-    for (const c of turnedOn) freshCats.add(c);
-    if (turnedOn.length > 0 || pruned.length > 0) persistFresh();
-    turnedOnDuringLaunch = turnedOn.length > 0;
+    const fresh = freshTransition(launchSync, nowSync);
+    if (markFreshFrom(fresh)) persistFresh();
+    turnedOnDuringLaunch = fresh.cats.length > 0 || fresh.gates.length > 0;
   }
   if (canSync()) {
     // Forced also by a category still to reconcile, from this launch or recorded before a restart.
-    const forced = !launchSync?.enabled || !sameServer || turnedOnDuringLaunch || freshCats.size > 0;
+    const forced = !launchSync?.enabled || !sameServer || turnedOnDuringLaunch || hasFresh();
     endLaunch = launchEnded;
     void pullCore(forced).then(launchEnded, launchEnded);
   } else launchEnded();

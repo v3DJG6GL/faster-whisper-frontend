@@ -280,6 +280,9 @@ export interface SyncState {
   /** Categories turned ON since `snapshot` was adopted whose reconcile has not landed yet (the
    *  engine's `freshCats`), so a restart still merges them against a base without them. */
   freshCats?: SyncCategory[];
+  /** Settings turned ON since `snapshot` was adopted inside a category that already synced, whose
+   *  reconcile has not landed yet (the engine's `freshGates`). */
+  freshGates?: string[];
 }
 
 /** Mirror of Rust transport::sync::SyncRemoteState. */

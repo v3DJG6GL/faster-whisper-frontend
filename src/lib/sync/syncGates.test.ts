@@ -7,7 +7,7 @@ import {
   applyBlob, backendsBlobIncomplete, carriesQuickAddPin, categorySelection, composeBlob, mergeBlobs,
 } from "./sync";
 import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "../settingsManifest";
-import { catsFromGates, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
+import { catsFromGates, gatesTurnedOn, gateStillSyncs, withGateParts, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
 import { stableStringify } from "../stable";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
@@ -289,6 +289,73 @@ describe("catsFromGates", () => {
     const none = Object.fromEntries(Object.keys(GATES_ALL).map((k) => [k, false])) as typeof GATES_ALL;
     const catsNone = catsFromGates(none);
     for (const v of Object.values(catsNone)) expect(v).toBe(false);
+  });
+});
+
+describe("gatesTurnedOn", () => {
+  it("a second setting switched on in a category that already syncs is marked", () => {
+    expect(gatesTurnedOn({ ...GATES_ALL, logRetention: false }, GATES_ALL)).toEqual(["logRetention"]);
+  });
+
+  it("a category coming on whole marks no setting (the category is fresh as a whole)", () => {
+    const off = { ...GATES_ALL, logLevel: false, logRetention: false, logsInSidebar: false, logFolder: false };
+    expect(gatesTurnedOn(off, { ...off, logLevel: true })).toEqual([]);
+    expect(gatesTurnedOn({ ...GATES_ALL, backendList: false }, GATES_ALL).filter((id) => id !== "pinnedMappings")).toEqual([]);
+  });
+
+  it("a list's field switch counts only while the list syncs", () => {
+    expect(gatesTurnedOn({ ...GATES_ALL, modelDecodeDefaults: false }, GATES_ALL)).toEqual(["modelDecodeDefaults"]);
+    const listOff = { ...GATES_ALL, backendList: false, modelDecodeDefaults: false };
+    expect(gatesTurnedOn(listOff, { ...listOff, modelDecodeDefaults: true })).toEqual([]);
+  });
+
+  it("the quick-add pin travels only with the server list: the list coming on marks it", () => {
+    const prev = { ...GATES_ALL, backendList: false };
+    expect(gatesTurnedOn(prev, GATES_ALL)).toEqual(["pinnedMappings"]);
+  });
+
+  it("switches turned off, or left alone, mark nothing; a turned-off one no longer syncs", () => {
+    expect(gatesTurnedOn(GATES_ALL, GATES_ALL)).toEqual([]);
+    expect(gatesTurnedOn(GATES_ALL, { ...GATES_ALL, logRetention: false })).toEqual([]);
+    expect(gateStillSyncs(GATES_ALL, "logRetention")).toBe(true);
+    expect(gateStillSyncs({ ...GATES_ALL, logRetention: false }, "logRetention")).toBe(false);
+    expect(gateStillSyncs({ ...GATES_ALL, backendList: false }, "modelDecodeDefaults")).toBe(false);
+    expect(gateStillSyncs(GATES_ALL, "notASetting" as SettingId)).toBe(false);
+  });
+});
+
+describe("withGateParts", () => {
+  it("scalar settings take their wire keys from the source, absent ones deleted", () => {
+    const target = { logLevel: "info", keepDays: 30, showInSidebar: true };
+    expect(withGateParts("logging", ["logRetention"], target, { logLevel: "debug", keepDays: 90 }, "linux"))
+      .toEqual({ logLevel: "info", keepDays: 90, showInSidebar: true });
+    expect(withGateParts("logging", ["logRetention"], target, {}, "linux")).toEqual({ logLevel: "info", showInSidebar: true });
+  });
+
+  it("a list's field switch moves only those fields of the elements both lists hold", () => {
+    const target = { list: [{ id: "a", name: "A", serverUrl: "http://a", model: "m1" }, { id: "b", name: "B", model: "m2" }, null] };
+    const source = { list: [{ id: "a", name: "X", serverUrl: "http://x", model: "m9" }, { id: "c", model: "m3" }], secrets: { a: "k" } };
+    expect(withGateParts("backends", ["modelDecodeDefaults"], target, source, "linux")).toEqual({
+      list: [{ id: "a", name: "A", serverUrl: "http://a", model: "m9" }, { id: "b", name: "B", model: "m2" }, null],
+    });
+    expect(withGateParts("backends", ["serverAddresses", "apiKeys"], target, source, "linux")).toEqual({
+      list: [{ id: "a", name: "A", serverUrl: "http://x", model: "m1" }, { id: "b", name: "B", model: "m2" }, null],
+      secrets: { a: "k" },
+    });
+  });
+
+  it("the home profile and this OS's app-rule bucket", () => {
+    expect(withGateParts("profiles", ["homeProfile"], { list: [], homeProfileId: "p1" }, { list: [], homeProfileId: "p2" }, "linux"))
+      .toEqual({ list: [], homeProfileId: "p2" });
+    const rules = (m: string) => ({ linux: [{ id: "r", app: "x", insertMethod: m }], windows: [{ id: "w", insertMethod: m }] });
+    expect(withGateParts("appRules", ["perAppOverrides"], rules("type"), rules("paste"), "linux"))
+      .toEqual({ linux: [{ id: "r", app: "x", insertMethod: "paste" }], windows: [{ id: "w", insertMethod: "type" }] });
+  });
+
+  it("a setting of another category, or none, leaves the target alone", () => {
+    const target = { logLevel: "info", keepDays: 30 };
+    expect(withGateParts("logging", ["theme"], target, { keepDays: 1 }, "linux")).toEqual(target);
+    expect(withGateParts("logging", [], target, { keepDays: 1 }, "linux")).toEqual(target);
   });
 });
 

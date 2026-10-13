@@ -199,6 +199,121 @@ export const APP_RULE_LOCAL_ONLY_FIELDS = ["autoEnter"] as const;
 /** The per-Profile insertion overrides the Profiles field switch governs. */
 export const PROFILE_INSERTION_FIELDS = ["typeAsISpeak", "insertionOverrides"] as const;
 
+/** The list switches: each IS its category (`catsFromGates`), so turning one on is a category
+ *  coming on whole, never one setting inside it. */
+const LIST_SWITCHES: readonly string[] = ["backendList", "profileList", "rulesThisOs"];
+
+/** Does this setting actually travel under these gates: its switch on, its category synced, and —
+ *  for the quick-add pin, which is slaved to the server list (`extractDictionary`) — that list too. */
+function gateSyncs(gates: Gates, cats: Record<string, boolean>, d: SettingDef): boolean {
+  return gates[d.id as SettingId] && !!cats[d.category] && (d.id !== "pinnedMappings" || gates.backendList);
+}
+
+/** The settings whose sync came on between `prev` and `now` inside a category that already
+ *  synced in `prev` — one more setting of a synced group. While it was off, every base passed the
+ *  server's value of it through, so a 3-way merge would read this device's own value as an edit
+ *  and push it over the peer's. A category coming on whole is `catsFromGates`' business. */
+export function gatesTurnedOn(prev: Gates, now: Gates): SettingId[] {
+  const before = catsFromGates(prev);
+  const after = catsFromGates(now);
+  const out: SettingId[] = [];
+  for (const d of DEFS) {
+    if (d.localOnly || LIST_SWITCHES.includes(d.id)) continue;
+    if (!before[d.category]) continue;
+    if (gateSyncs(now, after, d) && !gateSyncs(prev, before, d)) out.push(d.id as SettingId);
+  }
+  return out;
+}
+
+/** Is this setting's sync still on (see `gatesTurnedOn`)? A fresh one turned off again drops out. */
+export function gateStillSyncs(gates: Gates, id: SettingId): boolean {
+  const d = DEFS.find((x) => x.id === id);
+  return !!d && !d.localOnly && !LIST_SWITCHES.includes(d.id) && gateSyncs(gates, catsFromGates(gates), d);
+}
+
+/** Per-element field copy for one list: each element of `live` whose id `src` also holds takes
+ *  `src`'s values of `fields` (absent ones deleted when `exact`). Malformed elements stay as they
+ *  are — this only moves values between two copies of a list, it never cleans one. */
+function swapElementFields(live: unknown, src: unknown, fields: readonly string[], exact: boolean): unknown {
+  if (!Array.isArray(live)) return live;
+  const byId = new Map<string, Record<string, unknown>>();
+  for (const e of Array.isArray(src) ? src : []) {
+    if (isPlainObject(e) && typeof e.id === "string") byId.set(e.id, e);
+  }
+  return live.map((e) => {
+    if (!isPlainObject(e) || typeof e.id !== "string") return e;
+    const from = byId.get(e.id);
+    if (!from) return e;
+    const out: Record<string, unknown> = { ...e };
+    for (const f of fields) {
+      const v = from[f];
+      if (v !== undefined) out[f] = v;
+      else if (exact) delete out[f];
+    }
+    return out;
+  });
+}
+
+/** `target` (one category's wire value) with the parts the given settings govern taken from
+ *  `source` — the same parts composeBlob substitutes when their switch is off: scalar fields, the
+ *  per-element fields of a list, the keys bundle, the home profile, this OS's app-rule bucket.
+ *  Everything else stays `target`'s. Lets a merge judge one setting of a category apart from the
+ *  rest of it. */
+export function withGateParts(
+  cat: WireCategory,
+  ids: readonly SettingId[],
+  target: unknown,
+  source: unknown,
+  myBucket: "linux" | "windows",
+): unknown {
+  const out: Record<string, unknown> = { ...(isPlainObject(target) ? target : {}) };
+  const s = isPlainObject(source) ? source : {};
+  const copy = (key: string) => {
+    if (s[key] !== undefined) out[key] = s[key];
+    else delete out[key];
+  };
+  const swapIn = (key: string, fields: readonly string[], exact: boolean) => {
+    if (Array.isArray(out[key])) out[key] = swapElementFields(out[key], s[key], fields, exact);
+  };
+  for (const id of ids) {
+    const d = DEFS.find((x) => x.id === id);
+    if (!d || d.category !== cat) continue;
+    switch (id) {
+      case "serverAddresses":
+        swapIn("list", ["serverUrl"], false);
+        break;
+      case "modelDecodeDefaults":
+        swapIn("list", BACKEND_DEFAULTS_FIELDS, true);
+        break;
+      case "apiKeys":
+        copy("secrets");
+        break;
+      case "profileHotkeys":
+        swapIn("list", ["hotkey"], false);
+        break;
+      case "enabledPerProfile":
+        swapIn("list", ["enabled"], false);
+        break;
+      case "profileInsertion":
+        swapIn("list", PROFILE_INSERTION_FIELDS, true);
+        break;
+      case "homeProfile":
+        copy("homeProfileId");
+        break;
+      case "perAppOverrides":
+        swapIn(myBucket, APP_RULE_OVERRIDE_FIELDS, true);
+        break;
+      case "perAppPasteShortcuts":
+        swapIn(myBucket, APP_RULE_PASTE_FIELDS, true);
+        break;
+      default:
+        // Scalar settings (and the quick-add pin): their wire keys, as `gatedOffKeys` reads them.
+        for (const ref of d.fields) copy(ref.key);
+    }
+  }
+  return out;
+}
+
 /** The disclosure contract for one group, in one place: which rows render,
  *  whether the panel is open, and whether the toggle honestly OWNS that panel.
  *  Filter on → the group's exceptions (changed OR switch off), expansion
