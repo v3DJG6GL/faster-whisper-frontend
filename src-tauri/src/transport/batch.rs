@@ -332,7 +332,7 @@ mod link_refused_tests {
 
 #[cfg(test)]
 mod media_tmp_tests {
-    use super::media_tmp_pid;
+    use super::{media_tmp_pid, stale_download_tmp};
 
     /// Only this record's `<id>.<ext>.<pid>-<seq>.tmp` names yield a pid — never the media
     /// file itself, another record's tmp, or another extension's.
@@ -344,6 +344,22 @@ mod media_tmp_tests {
         assert_eq!(media_tmp_pid("r10.mp4.4242-7.tmp", "r1", "mp4"), None);
         assert_eq!(media_tmp_pid("r1.webm.4242-7.tmp", "r1", "mp4"), None);
         assert_eq!(media_tmp_pid("r1.mp4.x-7.tmp", "r1", "mp4"), None);
+    }
+
+    /// The orphan sweep reclaims another (dead) process's download tmp of any record, but
+    /// never this process's live one, a copy tmp, or a tmp whose stem is not a record id.
+    #[test]
+    fn stale_download_tmp_is_only_another_pids_record_tmp() {
+        const ID: &str = "0f8b5c2e-6d1a-4c3b-9e7f-1a2b3c4d5e6f";
+        let other = std::process::id().wrapping_add(1);
+        let me = std::process::id();
+        assert!(stale_download_tmp(&format!("{ID}.mp4.{other}-3.tmp")));
+        assert!(stale_download_tmp(&format!("{ID}.m4a.{other}-0.tmp")));
+        assert!(!stale_download_tmp(&format!("{ID}.mp4.{me}-3.tmp")));
+        assert!(!stale_download_tmp(&format!("{ID}.mp4.tmp")));
+        assert!(!stale_download_tmp(&format!("{ID}.mp4")));
+        assert!(!stale_download_tmp(&format!("holiday.mp4.{other}-3.tmp")));
+        assert!(!stale_download_tmp(&format!("{ID}..{other}-3.tmp")));
     }
 }
 
@@ -2132,10 +2148,26 @@ fn media_tmp_pid(name: &str, record_id: &str, ext: &str) -> Option<u32> {
     pid.parse().ok()
 }
 
+/// Is `name` a `download_result_media` tmp (`<uuid record id>.<ext>.<pid>-<seq>.tmp`) that
+/// ANOTHER process left behind? The app is single-instance, so that writer is dead and the
+/// tmp is reclaimable by any sweep, whichever record or extension it was for.
+pub(crate) fn stale_download_tmp(name: &str) -> bool {
+    let Some((record_id, rest)) = name.split_once('.') else {
+        return false;
+    };
+    let Some((ext, _)) = rest.split_once('.') else {
+        return false;
+    };
+    !ext.is_empty()
+        && crate::store::transcripts::is_uuid_id(record_id)
+        && media_tmp_pid(name, record_id, ext).is_some_and(|pid| pid != std::process::id())
+}
+
 /// Remove the tmps an earlier process left for this record when it died or quit mid-download.
-/// Each call's tmp name is unique, so nothing else would ever reuse or reclaim them, and every
-/// sweep skips `.tmp`. Only OTHER processes' tmps: this process's belong to fetches that may
-/// still be streaming. Best effort — errors are ignored.
+/// Each call's tmp name is unique, so nothing else would ever reuse them, and only the orphan
+/// sweep (config save / retention / clear) reclaims them otherwise. Only OTHER processes'
+/// tmps: this process's belong to fetches that may still be streaming. Best effort — errors
+/// are ignored.
 async fn remove_stale_media_tmps(dest_dir: &Path, record_id: &str, ext: &str) {
     // The fixed pre-unique-name tmp older builds left here; no live writer uses it in this folder.
     let _ = tokio::fs::remove_file(dest_dir.join(format!("{record_id}.{ext}.tmp"))).await;

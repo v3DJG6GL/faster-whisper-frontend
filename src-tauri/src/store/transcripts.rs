@@ -533,7 +533,7 @@ pub(crate) fn valid_id(id: &str) -> bool {
 /// predicate for command inputs; as an OWNERSHIP predicate it accepted any 8+ hex-ish stem,
 /// so a user's own `20260901.mp3` or `12345678.wav` in the media folder read as ours and was
 /// deleted.
-fn is_uuid_id(s: &str) -> bool {
+pub(crate) fn is_uuid_id(s: &str) -> bool {
     let b = s.as_bytes();
     let dashless: Vec<u8> = match b.len() {
         32 => b.to_vec(),
@@ -1148,6 +1148,15 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
             // config save, and unlinking the tmp under the writer made its final rename
             // fail — the record then silently lost its only playable audio.
             if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
+                // A media download tmp of another (so dead: single-instance) process has no
+                // writer left, and nothing else would ever reclaim it once its record is gone.
+                let stale = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(crate::transport::batch::stale_download_tmp);
+                if stale && std::fs::remove_file(&path).is_ok() {
+                    removed += 1;
+                }
                 continue;
             }
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
