@@ -1848,6 +1848,7 @@ describe("a sync edit made during the launch work", () => {
     launchRead: false,
     pushes: 0,
     pulls: 0,
+    deletes: 0,
   };
   const REMOTE = {
     ok: true,
@@ -1864,6 +1865,7 @@ describe("a sync edit made during the launch work", () => {
     io.launchRead = false;
     io.pushes = 0;
     io.pulls = 0;
+    io.deletes = 0;
     const parked = new Promise<Record<string, string>>((r) => (io.release = r));
     vi.resetModules();
     vi.doMock("../persistence", async (importOriginal) => ({
@@ -1884,7 +1886,9 @@ describe("a sync edit made during the launch work", () => {
         return Promise.resolve({ b1: "sk-1" });
       },
       setBackendKey: async () => {},
-      deleteBackendKey: async () => {},
+      deleteBackendKey: async () => {
+        io.deletes++;
+      },
       syncPull: async () => {
         io.pulls++;
         return REMOTE;
@@ -2085,6 +2089,26 @@ describe("a sync edit made during the launch work", () => {
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, sub: offSub } } }));
       await vi.waitFor(() => expect(engine.getPendingConflict()).toBeNull());
       expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  it("recording a re-enabled category with the keyring locked leaves the stashed keys alone", async () => {
+    const { engine, store, init } = await launchEngine({ sub: offSub }, serverCopy);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "warn" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({}); // the keyring is locked: the snapshot's keys are not restored
+      await init;
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      expect(io.deletes).toBe(0);
     } finally {
       io.release({});
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));

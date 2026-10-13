@@ -2044,7 +2044,7 @@ const freshCats = new Set<SyncCategory>();
  *  already ON then, so no OFF→ON transition would mark it again, and the startup pull's "nothing
  *  new" shortcut would push this device's value over the peer's. */
 function persistFresh(): void {
-  persistState({ freshCats: freshCats.size > 0 ? [...freshCats] : undefined }).catch((e) =>
+  persistState({ freshCats: freshCats.size > 0 ? [...freshCats] : undefined }, { stash: false }).catch((e) =>
     console.warn("sync: could not record the re-enabled categories", e),
   );
 }
@@ -2241,10 +2241,15 @@ function backendsDegraded(composed: SyncBlob, cats: Record<SyncCategory, boolean
 function degradedBaseWithheld(remoteBlob: SyncBlob): boolean {
   // A re-enabled backends category (`freshCats`) was never compared — the degraded compose passed
   // the remote's list through — so no base may say it was: the first unlocked pull asks.
-  if (!freshCats.has("backends") && catEqual(remoteBlob.backends, state.snapshot?.backends)) return false;
+  const fresh = freshCats.has("backends");
+  if (!fresh && catEqual(remoteBlob.backends, state.snapshot?.backends)) return false;
   setRuntime({
     syncStatus: "error",
-    syncError: "Your API keys couldn't be read from the keyring, so incoming backend changes are on hold. Unlock it and restart the app to resume syncing.",
+    // While it waits, nothing goes up either (the push gate holds every push until the list is
+    // compared): say so, not only that incoming changes wait.
+    syncError: fresh
+      ? "Your API keys couldn't be read from the keyring, so the server list you turned on for sync can't be compared with the server's yet, and nothing is synced until then. Unlock it and restart the app to resume syncing."
+      : "Your API keys couldn't be read from the keyring, so incoming backend changes are on hold. Unlock it and restart the app to resume syncing.",
   });
   return true;
 }
@@ -2406,16 +2411,9 @@ async function clearSnapshotSecrets(chunks: number | undefined): Promise<void> {
   await dropSnapshotChunks(0, snapshotChunkCount(chunks));
 }
 
-async function persistState(patch: Partial<SyncState>): Promise<void> {
-  // The accounts the CURRENT stash spans, before a patch can drop the count: a smaller stash
-  // written below must delete the tail a larger one left.
-  const prevChunks = snapshotChunkCount(state.snapshotSecretChunks);
-  state = { ...state, ...patch };
-  // A new base (or none): the categories turned on since are reconciled in it.
-  if ("snapshot" in patch) {
-    freshCats.clear();
-    state.freshCats = undefined;
-  }
+/** Split the snapshot's secrets out to the keyring (the file gets ids only) — `persistState`'s
+ *  stash step. `prevChunks`: the accounts the stash spanned before the patch. */
+async function stashSnapshot(prevChunks: number): Promise<void> {
   // Split the snapshot's secrets out to the keyring; the file gets ids only.
   const secrets = state.snapshot?.backends?.secrets;
   // Same reason as `reconcileBackendSecrets`: `Object.keys` on a server-supplied STRING yields one
@@ -2479,6 +2477,22 @@ async function persistState(patch: Partial<SyncState>): Promise<void> {
     state.snapshotSecretChunks = undefined;
     await clearSnapshotSecrets(prevChunks);
   }
+}
+
+async function persistState(patch: Partial<SyncState>, opts: { stash?: boolean } = {}): Promise<void> {
+  // The accounts the CURRENT stash spans, before a patch can drop the count: a smaller stash
+  // written below must delete the tail a larger one left.
+  const prevChunks = snapshotChunkCount(state.snapshotSecretChunks);
+  state = { ...state, ...patch };
+  // A new base (or none): the categories turned on since are reconciled in it.
+  if ("snapshot" in patch) {
+    freshCats.clear();
+    state.freshCats = undefined;
+  }
+  // A bookkeeping-only write (`persistFresh`) leaves the keyring stash alone: re-deriving it from
+  // a snapshot whose keys a locked keyring never restored deleted the stash and dropped its ids,
+  // which also lifted the refusal of a keyless backends push.
+  if (opts.stash !== false) await stashSnapshot(prevChunks);
   // `isPlainObject` on BOTH containers, for the reason the `ids` line above already gives — but
   // this is the half that PERSISTS. `state.snapshot?.backends?.secrets` reads `undefined` when
   // `backends` is a server-supplied STRING, so the guarded `ids` path above is silently skipped

@@ -266,6 +266,23 @@ describe("plain text + errors", () => {
       }
     }
   });
+  it("srt/vtt: a ja dialogue ending its lines on ？！ with one mid-line 。 reads back unchanged", () => {
+    const texts = [
+      "あなたは本当に明日の会議に来るつもりなの？",
+      "もちろん行くよでも少し遅れるかもしれない！",
+      "それなら先に資料を送っておいてくれる？",
+      "わかった。今夜のうちに必ず送るからね！",
+    ];
+    let t = 0;
+    const segments = texts.map((text) => ({ start: t, end: (t += 5), text }));
+    const words = segments.flatMap((g) => [...g.text].map((word, i) => ({ word, start: g.start + i * 0.2, end: g.start + i * 0.2 + 0.2 })));
+    const r: BatchResult = { text: texts.join(""), language: "ja", segments, words };
+    for (const format of ["srt", "vtt"] as const) {
+      const out = generateExport(r, { format, cues: { length: "standard", timing: "same" } });
+      expect(out).toMatch(/[\u3040-\u9fff]\n[\u3040-\u9fff]/); // the export did wrap
+      expect(parseImportedText(format, out).segments.map((s) => s.text).join("")).toBe(texts.join(""));
+    }
+  });
   it("srt/vtt: a punctuated CJK cue the export wrapped over two lines reads back without a space at the break", () => {
     const text = "今日はとてもいい天気ですね。明日も晴れるでしょう。";
     const ja: BatchResult = {

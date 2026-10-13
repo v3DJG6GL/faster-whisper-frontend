@@ -126,6 +126,9 @@ const CJK_PHRASE_MARK = /[。，｡]/u;
 /** 、 is zh's enumeration mark (kept by the unpunctuated convention) but ja's phrase comma: it
  *  counts in a line with kana, or ending a line. */
 const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
+/** 。， (or a ja 、) with more CJK text after it on the same line. */
+const MARK_INSIDE = new RegExp(`[。，｡].*(?:${UNSPACED.source})`, "u");
+const COMMA_INSIDE = new RegExp(`[、､].*(?:${UNSPACED.source})`, "u");
 /** Whether a text's line breaks between two CJK characters are wraps, not phrase separators,
  *  judged on its lines: at least one, and at least a quarter, of the lines holding CJK text carry
  *  phrase punctuation (。， anywhere, 、 in a ja line or ending one) — sentences may end on ？！」,
@@ -138,14 +141,19 @@ const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
 export function cjkWrapsLines(lines: Iterable<string>): boolean {
   let cjk = 0;
   let marked = 0;
+  let inside = false;
   for (const raw of lines) {
     const l = raw.trimEnd();
     if (!l || !UNSPACED.test(l)) continue;
     if (PHRASE_SPACE.test(l)) return false;
     cjk++;
+    // A mark with more CJK text after it on the same line is decisive on its own: neither the
+    // unpunctuated convention nor a line-final credit ("翻译：小明。") writes one. Line-final
+    // marks only count toward the quarter.
+    if (MARK_INSIDE.test(l) || (KANA.test(l) && COMMA_INSIDE.test(l))) inside = true;
     if (CJK_PHRASE_MARK.test(l) || /[、､]$/u.test(l) || (/[、､]/u.test(l) && KANA.test(l))) marked++;
   }
-  return marked > 0 && marked * 4 >= cjk;
+  return inside || (marked > 0 && marked * 4 >= cjk);
 }
 /** `cjkWrapsLines` for one text (an edited segment). */
 export function cjkWraps(s: string): boolean {
