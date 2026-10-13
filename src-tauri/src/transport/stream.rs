@@ -161,6 +161,13 @@ fn strip_prefix_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
 /// Derive the streaming WS URL from a profile's http(s) server URL. The scheme match is
 /// case-insensitive to mirror reqwest/url's scheme handling: an "HTTP://…" that Test Connection
 /// (via reqwest) accepts must yield a valid "ws://…" here, not a malformed "ws://HTTP://…".
+///
+/// The result goes through the parser reqwest uses (the WHATWG `url` crate) for the same reason:
+/// tungstenite's `http::Uri` takes ASCII only, so an IDN host (`bücher.example`) or a space in the
+/// path passed Test connection — reqwest punycodes / percent-encodes them — and then failed every
+/// live dictation with "invalid uri character". ws/wss are special schemes, so the url crate
+/// applies the same IDNA and percent-encoding the HTTP routes get. Unparseable → the string as
+/// built, so the connect error still names it.
 pub fn http_to_ws(server_url: &str) -> String {
     let s = server_url.trim().trim_end_matches('/');
     let scheme_swapped = if let Some(rest) = strip_prefix_ci(s, "https://") {
@@ -170,7 +177,8 @@ pub fn http_to_ws(server_url: &str) -> String {
     } else {
         format!("ws://{s}")
     };
-    format!("{scheme_swapped}/v1/audio/transcriptions/stream")
+    let ws = format!("{scheme_swapped}/v1/audio/transcriptions/stream");
+    reqwest::Url::parse(&ws).map(String::from).unwrap_or(ws)
 }
 
 /// The `Authorization` values the handshake carries, in the order [`super::with_auth`] gives the
@@ -1313,6 +1321,43 @@ mod display_url_tests {
         assert_eq!(display_url("wss://host:8000/v1/x"), "wss://host:8000");
         assert_eq!(display_url("wss://[::1]:8000/v1/x"), "wss://[::1]:8000");
         assert_eq!(display_url("host:8000"), "host:8000");
+    }
+}
+
+#[cfg(test)]
+mod http_to_ws_tests {
+    use super::http_to_ws;
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+
+    #[test]
+    fn an_idn_host_or_a_spaced_path_yields_a_url_the_handshake_accepts() {
+        // reqwest (Test connection, batch, sync) sends to the punycoded / percent-encoded form;
+        // the handshake's `http::Uri` takes ASCII only, so the raw string failed every dictation.
+        let idn = http_to_ws("https://bücher.example:8000");
+        assert_eq!(
+            idn,
+            "wss://xn--bcher-kva.example:8000/v1/audio/transcriptions/stream"
+        );
+        assert!(idn.as_str().into_client_request().is_ok(), "{idn}");
+        let spaced = http_to_ws("http://host/my path/");
+        assert_eq!(spaced, "ws://host/my%20path/v1/audio/transcriptions/stream");
+        assert!(spaced.as_str().into_client_request().is_ok(), "{spaced}");
+    }
+
+    #[test]
+    fn plain_ascii_urls_are_unchanged() {
+        assert_eq!(
+            http_to_ws("HTTP://host:8000/"),
+            "ws://host:8000/v1/audio/transcriptions/stream"
+        );
+        assert_eq!(
+            http_to_ws("https://u:p@10.0.0.2:8443/base"),
+            "wss://u:p@10.0.0.2:8443/base/v1/audio/transcriptions/stream"
+        );
+        assert_eq!(
+            http_to_ws("host:8000"),
+            "ws://host:8000/v1/audio/transcriptions/stream"
+        );
     }
 }
 
