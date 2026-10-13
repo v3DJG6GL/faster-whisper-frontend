@@ -265,6 +265,8 @@ export default function Transcribe() {
   const stageTimes = useTranscribeRun((s) => s.stageTimes);
   const stageMeta = useTranscribeRun((s) => s.stageMeta);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);
+  // What the pump really runs with (a retry's reconciled options): the rail's stages.
+  const runOptions = useTranscribeRun((s) => s.runOptions ?? s.lastOptions);
   const lastOverrides = useTranscribeRun((s) => s.lastOverrides);
   const openRecordId = useTranscribeRun((s) => s.openRecordId);
   // "Silence skipping ate the file" notice — dismissed per file path.
@@ -2105,9 +2107,9 @@ export default function Transcribe() {
         // lacks (runLink's per-link rewrite, shared via linkTranslateTo): with every target
         // covered there is no Translating stage, so the rail must not show one and paint it done.
         const panelOptions =
-          forUrl && panelUrlMeta?.siteSubs && lastOptions
-            ? { ...lastOptions, translateTo: linkTranslateTo(lastOptions, panelUrlMeta) }
-            : lastOptions;
+          forUrl && panelUrlMeta?.siteSubs && runOptions
+            ? { ...runOptions, translateTo: linkTranslateTo(runOptions, panelUrlMeta) }
+            : runOptions;
         // A link answered by the site's own transcript track runs no audio stage — unless the
         // track couldn't be fetched and the run fell back to transcribing the audio: marked on
         // the item the moment the run decides it (still running), else by the settled result's

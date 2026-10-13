@@ -602,8 +602,14 @@ export interface TranscribeRunState {
     /** The link card's site-subtitle plan (D86), frozen at Add link. */
     siteSubs?: SiteSubsRun;
   }>;
-  /** Options/overrides of the current or last run (rail layout + Retry). */
+  /** Options/overrides of the current or last run as REQUESTED (Retry replays them). A retry
+   *  never overwrites them: every failed row of the queue, and every later retry, reconciles
+   *  from this one copy (reconcileRetryOptions). */
   lastOptions?: TranscribeOptions;
+  /** The options the current or last pump really runs with — a retry's reconciled ones (no
+   *  Translating stage on a server without it); the rail and the stage inference read these.
+   *  Undefined = the requested ones (lastOptions). */
+  runOptions?: TranscribeOptions;
   lastOverrides: DecodeOverrides;
   /** History-record id of the transcript on the workbench, or null. The
    *  Recent strip marks its row with this — path can't do it, same-URL
@@ -629,6 +635,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   translatedFromEdit: {},
   urlMeta: {},
   lastOptions: undefined,
+  runOptions: undefined,
   lastOverrides: {},
   openRecordId: null,
   epoch: 0,
@@ -1329,6 +1336,7 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
     // no decode overrides: an earlier run's set of either must not ride along into a retry
     // (or the rail's stages and VAD line).
     lastOptions: rec.options,
+    runOptions: undefined,
     lastOverrides: {},
     // Overlay slots keyed by record ID — the path can't do it, two records
     // of the same URL share theirs (edits used to bleed between them).
@@ -1544,7 +1552,7 @@ export function foldProgress(p: BatchProgress) {
     const now = Date.now();
     // An MT-model fetch ("downloading" after the rail moved past the download) stays on
     // the active row: no clock closes or reopens, and the media receipt below is kept.
-    const mtModel = s.lastOptions?.translationModel?.trim() || undefined;
+    const mtModel = (s.runOptions ?? s.lastOptions)?.translationModel?.trim() || undefined;
     const mtPrev = s.progress ? mtFetchStage(s.progress, s.stageTimes, mtModel) : null;
     const prev = s.progress ? (mtPrev ?? railOf(s.progress.stage)) : null;
     const mtFetch = mtFetchStage(p, s.stageTimes, mtModel);
@@ -1771,6 +1779,7 @@ export function reattachRun(row: LedgerRow, serverUrlOf: () => string): number {
     openRecordId: null,
     lastRunPath: row.path,
     lastOptions: row.options,
+    runOptions: undefined,
     lastOverrides: row.overrides ?? {},
     urlMeta: row.urlMeta ? { ...s.urlMeta, [row.path]: { ...s.urlMeta[row.path], ...row.urlMeta } } : s.urlMeta,
     progress: null,
@@ -2483,6 +2492,7 @@ export function startRun(options: TranscribeOptions | undefined,
       title: s.urlMeta[path]?.title,
     })),
     lastOptions: options,
+    runOptions: undefined,
     lastOverrides: overrides,
   });
   void pump(epoch, options, ctx);
@@ -2528,8 +2538,9 @@ export function runTotals(queue: QueueItem[]): { tookMs: number; audioSec: numbe
  *  `translationRunOptions` leaves it), which `linkTranslateTo` reads to skip a site plan's
  *  frozen targets. A missing slice stays missing: filled in as an explicit empty list it would
  *  turn a site plan's frozen targets back on (`linkTranslateTo`) while the rail, which reads
- *  `lastOptions` (retryFile stores these), shows no Translating stage. `translationAvailable` unset =
- *  unknown (caps not loaded): only a standard server is assumed to lack it. */
+ *  `runOptions` (retryFile stores these there; `lastOptions` keeps the requested ones for the
+ *  next retry), shows no Translating stage. `translationAvailable` unset = unknown (caps not
+ *  loaded): only a standard server is assumed to lack it. */
 export function reconcileRetryOptions(
   opts: TranscribeOptions | undefined,
   standard: boolean,
@@ -2572,10 +2583,12 @@ export function retryFile(path: string, ctx: RunContext, overrides?: DecodeOverr
   // the old job lands a second record (and transcribes the file twice).
   stopOrphans([path]);
   patchItem(path, { status: "queued", error: undefined, orphanJobId: undefined });
-  // The options the retry really runs with are the store's too: the rail (railStages) reads
-  // lastOptions, and a Translating row the retry skips would otherwise be painted done.
+  // Reconciled from the REQUESTED options every time (lastOptions, never overwritten here): a
+  // retry on a server without translation must not strip the targets from the next retry on
+  // one with it. The options it really runs with go to runOptions — the rail (railStages)
+  // reads those, and a Translating row the retry skips would otherwise be painted done.
   const options = reconcileRetryOptions(s.lastOptions, ctx.standard, ctx.translationAvailable);
-  set({ lastOptions: options });
+  set({ runOptions: options });
   void pump(s.epoch, options, ctx);
 }
 

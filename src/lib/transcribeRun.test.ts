@@ -1134,16 +1134,49 @@ describe("reconcileRetryOptions (a retry after a backend switch)", () => {
     expect(reconcileRetryOptions(undefined, false)).toBeUndefined();
   });
 
-  it("the store's lastOptions become the reconciled ones, so the rail shows only the stages the retry runs", async () => {
+  it("the store's runOptions become the reconciled ones, so the rail shows only the stages the retry runs", async () => {
     useTranscribeRun.setState({
       queue: [{ path: "/s.srt", status: "failed", kind: "text" }] as QueueItem[],
       lastOptions: { translateTo: ["de"], translationMode: "faithful" },
+      runOptions: undefined,
       running: false,
     });
     retryFile("/s.srt", { serverUrl: "http://x", backendId: "b", standard: false, translationAvailable: false } as never);
-    expect(useTranscribeRun.getState().lastOptions?.translateTo).toBeUndefined();
-    expect(useTranscribeRun.getState().lastOptions?.translationMode).toBeUndefined();
+    expect(useTranscribeRun.getState().runOptions?.translateTo).toBeUndefined();
+    expect(useTranscribeRun.getState().runOptions?.translationMode).toBeUndefined();
     await vi.waitFor(() => expect(useTranscribeRun.getState().queue[0].status).toBe("failed"));
+  });
+
+  it("a retry on a server without translation keeps the run's targets for a later retry on one with it", async () => {
+    const sent: (string[] | undefined)[] = [];
+    transcribeFile.mockImplementation((async (a: { options?: { translateTo?: string[] } }) => {
+      sent.push(a.options?.translateTo);
+      throw new Error("offline");
+    }) as never);
+    vi.stubGlobal("window", { setInterval: () => 0, clearInterval: () => {} });
+    try {
+      useTranscribeRun.setState({
+        queue: [{ path: "/a.mp3", status: "failed" }, { path: "/b.mp3", status: "failed" }] as QueueItem[],
+        lastOptions: { translateTo: ["de"], translationMode: "faithful" },
+        runOptions: undefined,
+        running: false,
+      });
+      // A standard server: no Translating stage on the rail, nothing translated.
+      retryFile("/a.mp3", { serverUrl: "http://x", backendId: "b", standard: true } as never);
+      const s1 = useTranscribeRun.getState();
+      expect(railStages(s1.runOptions ?? s1.lastOptions)).not.toContain("translating");
+      expect(s1.lastOptions?.translateTo).toEqual(["de"]);
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      // Back on a translating server: file 3's retry still translates.
+      retryFile("/b.mp3", { serverUrl: "http://x", backendId: "b", standard: false, translationAvailable: true } as never);
+      const s2 = useTranscribeRun.getState();
+      expect(railStages(s2.runOptions ?? s2.lastOptions)).toContain("translating");
+      await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+      expect(sent).toEqual([undefined, ["de"]]);
+    } finally {
+      transcribeFile.mockReset();
+      vi.unstubAllGlobals();
+    }
   });
 
   it("a text source retried on a full server with translation off names the server, not a hidden switch", async () => {
