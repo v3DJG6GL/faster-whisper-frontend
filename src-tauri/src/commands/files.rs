@@ -416,14 +416,17 @@ pub async fn read_media_file(path: String) -> Result<tauri::ipc::Response, Strin
     // `decode_media_file`), with headroom for the JS-side Blob copy. The viewer routes an
     // over-cap refusal to the decode path instead of calling the media broken.
     const MAX_MEDIA_BYTES: u64 = 192 * 1024 * 1024;
-    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-    if meta.len() > MAX_MEDIA_BYTES {
-        return Err(MEDIA_TOO_LARGE.into());
-    }
-    let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(&path))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
+    // The size check too runs on the blocking pool: a stat of media on a stalled mount (a
+    // sleeping disk, an offline share) must not park a runtime worker any more than the read.
+    let bytes = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+        if meta.len() > MAX_MEDIA_BYTES {
+            return Err(MEDIA_TOO_LARGE.into());
+        }
+        std::fs::read(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
     Ok(tauri::ipc::Response::new(bytes))
 }
 
@@ -626,6 +629,27 @@ mod tests {
         waiter.join().unwrap();
         assert!(PASSED.load(Ordering::SeqCst));
         GATE.wait(); // open for good: a later wait returns at once
+    }
+
+    #[test]
+    fn read_media_file_refuses_an_over_cap_file_and_reports_a_missing_one() {
+        let dir = std::env::temp_dir().join(format!("fwf-readmedia-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let big = dir.join("big.webm");
+        // Sparse: the size check reads the length, never the bytes.
+        std::fs::File::create(&big)
+            .unwrap()
+            .set_len(192 * 1024 * 1024 + 1)
+            .unwrap();
+        let small = dir.join("small.webm");
+        std::fs::write(&small, b"abc").unwrap();
+        let read = |p: &std::path::Path| {
+            tauri::async_runtime::block_on(super::read_media_file(p.to_string_lossy().into_owned()))
+        };
+        assert_eq!(read(&big).err().as_deref(), Some(super::MEDIA_TOO_LARGE));
+        assert!(read(&small).is_ok());
+        assert!(read(&dir.join("gone.webm")).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
