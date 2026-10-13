@@ -129,8 +129,19 @@ const KANA = /[\p{Script=Hiragana}\p{Script=Katakana}]/u;
 /** Whether a line holds a mark of `marks` with more CJK text after it. Only the first mark is
  *  looked at — if any has CJK text after it, so does the first — so a long line stays linear. */
 function markInside(l: string, marks: RegExp): boolean {
-  const i = l.search(marks);
+  const i = evidenceMark(l, marks);
   return i >= 0 && UNSPACED.test(l.slice(i + 1));
+}
+/** Where a line's first mark of `marks` sits, or -1 when there is none or it is no evidence: the
+ *  credit, note and title shapes an unpunctuated file still writes ("翻译：小明。字幕：小红",
+ *  "（注：……。）", "《三体。黑暗森林》") — a mark after a colon or inside brackets. */
+function evidenceMark(l: string, marks: RegExp): number {
+  const i = l.search(marks);
+  if (i < 0) return -1;
+  const before = l.slice(0, i);
+  if (/[：:]/u.test(before)) return -1;
+  const open = (o: string, c: string) => before.lastIndexOf(o) > before.lastIndexOf(c);
+  return open("（", "）") || open("(", ")") || open("《", "》") || open("〈", "〉") ? -1 : i;
 }
 /** Whether a text's line breaks between two CJK characters are wraps, not phrase separators,
  *  judged on its lines: at least one in eight of the lines holding CJK text carry a phrase mark
@@ -139,8 +150,9 @@ function markInside(l: string, marks: RegExp): boolean {
  *  mark — and no line holds a phrase space (unpunctuated
  *  subtitles drop 。，、 and separate phrases with the break; Whisper's phrase-spaced text and
  *  our exports of it wrap at a space and drop it). ？！：； do not count: the unpunctuated
- *  convention keeps them. One stray 。 (a credit line) does not flip an unpunctuated file of a
- *  few cues. Judged on the whole file (import) or the whole edited segment — a rule per line
+ *  convention keeps them. A credit, note or title line ("翻译：小明。字幕：小红", "（注：……。）")
+ *  is no evidence at all, and one other stray mark does not flip a file of more than a few
+ *  cues. Judged on the whole file (import) or the whole edited segment — a rule per line
  *  would read one file both ways. */
 export function cjkWrapsLines(lines: Iterable<string>): boolean {
   let cjk = 0;
@@ -155,7 +167,12 @@ export function cjkWrapsLines(lines: Iterable<string>): boolean {
     // writes one, so one line in eight suffices — not one line in any file, which let a single
     // two-field credit ("翻译：小明。字幕：小红") or aside flip a whole unpunctuated file.
     if (markInside(l, /[。，｡]/u) || (KANA.test(l) && markInside(l, /[、､]/u))) inside++;
-    if (CJK_PHRASE_MARK.test(l) || /[、､]$/u.test(l) || (/[、､]/u.test(l) && KANA.test(l))) marked++;
+    if (
+      evidenceMark(l, CJK_PHRASE_MARK) >= 0 ||
+      evidenceMark(l, /[、､]$/u) >= 0 ||
+      (KANA.test(l) && evidenceMark(l, /[、､]/u) >= 0)
+    )
+      marked++;
   }
   return (inside > 0 && inside * 8 >= cjk) || (marked > 0 && marked * 4 >= cjk);
 }

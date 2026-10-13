@@ -4368,25 +4368,30 @@ export async function initSync(): Promise<void> {
   // is forced as its arms would have made it: an automatic one finding the server version
   // unchanged skips the reconcile and pushes this device's value over the peer's. It goes through
   // pullCore, as pullNow(true) would park on this very launch.
-  if (canSync()) {
-    const nowSync = useApp.getState().settings.sync;
-    const sameServer = !!launchSync && launchSync.backendId === nowSync?.backendId;
-    let forced = !launchSync?.enabled || !sameServer;
-    // Also when sync itself was off at launch: the base stays with the same server (see the
-    // subscriber's gate arm).
-    if (sameServer && launchSync !== nowSync) {
-      const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
-      const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
-      const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
-      for (const c of turnedOn) freshCats.add(c); // as the subscriber arm would have
-      if (turnedOn.length > 0) {
-        forced = true;
-        persistFresh();
-      }
+  // Gate transitions during the launch work on the same server, whether or not sync is on now
+  // (the subscriber, armed only now, never saw them), are marked as its gate arm would have; a
+  // server switch leaves nothing of the old base to reconcile against.
+  const nowSync = useApp.getState().settings.sync;
+  const sameServer = !!launchSync && launchSync.backendId === nowSync?.backendId;
+  let turnedOnDuringLaunch = false;
+  if (!sameServer) {
+    if (freshCats.size > 0) {
+      freshCats.clear();
+      persistFresh();
     }
-    // A re-enabled category recorded before a restart (its reconcile never landed) is reconciled
-    // now, the same forced way.
-    forced ||= freshCats.size > 0;
+  } else if (launchSync !== nowSync) {
+    const prevCats = catsFromGates(completeGates(launchSync?.sub, launchSync?.categories));
+    const nowCats = catsFromGates(completeGates(nowSync?.sub, nowSync?.categories));
+    const turnedOn = ALL_CATEGORIES.filter((c) => nowCats[c] && !prevCats[c]);
+    const pruned = [...freshCats].filter((c) => !nowCats[c]);
+    for (const c of pruned) freshCats.delete(c);
+    for (const c of turnedOn) freshCats.add(c);
+    if (turnedOn.length > 0 || pruned.length > 0) persistFresh();
+    turnedOnDuringLaunch = turnedOn.length > 0;
+  }
+  if (canSync()) {
+    // Forced also by a category still to reconcile, from this launch or recorded before a restart.
+    const forced = !launchSync?.enabled || !sameServer || turnedOnDuringLaunch || freshCats.size > 0;
     endLaunch = launchEnded;
     void pullCore(forced).then(launchEnded, launchEnded);
   } else launchEnded();

@@ -2141,6 +2141,28 @@ describe("a sync edit made during the launch work", () => {
     }
   });
 
+  it("a gate turned ON during the launch work while sync is off asks once sync comes on", async () => {
+    const { engine, store, init } = await launchEngine({ enabled: false, sub: offSub }, serverCopy);
+    try {
+      store.setState((st) => ({
+        settings: {
+          ...st.settings,
+          logging: { ...st.settings.logging!, logLevel: "warn" },
+          sync: { ...st.settings.sync!, sub: { ...offSub, logLevel: true } },
+        },
+      }));
+      io.release({ __sync_snapshot_secrets__: JSON.stringify({ b1: "sk-1" }) });
+      await init;
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: true } } }));
+      await vi.waitFor(() => expect(engine.getPendingConflict()?.categories).toEqual(["logging"]));
+      await new Promise((r) => setTimeout(r, 30));
+      expect(io.pushes).toBe(0);
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
   it("sync turned on reconciles against the server instead of pushing over it", async () => {
     const { engine, store, init } = await launchEngine({ enabled: false });
     try {

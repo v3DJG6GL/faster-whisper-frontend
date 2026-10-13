@@ -1082,6 +1082,10 @@ describe("joinLineBreaks", () => {
     const lines = ["我们走吧", "他们在等我们", "快点", "别迟到了", "好的", "马上来", "你在哪里", "我在门口", "翻译：小明。字幕：小红"];
     expect(cjkWrapsLines(lines)).toBe(false);
     expect(cjkWrapsLines(["今日は晴れ。明日は雨", "そうですか", "はい"])).toBe(true);
+    // A credit, note or title is no evidence, however short the file.
+    expect(cjkWrapsLines(["我们走吧", "他们在等我们", "快点", "别迟到了", "好的", "马上来", "翻译：小明。字幕：小红"])).toBe(false);
+    expect(cjkWrapsLines(["我们走吧", "他们在等我们", "快点", "别迟到了", "（注：这是一个地名。）就在南方"])).toBe(false);
+    expect(cjkWrapsLines(["我在读", "《三体。黑暗森林》这本书", "很好看", "你也看吧"])).toBe(false);
     const long = "中" + "，".repeat(60_000);
     const t0 = performance.now();
     expect(cjkWrapsLines([long])).toBe(true); // one line, marked anywhere: the quarter holds
