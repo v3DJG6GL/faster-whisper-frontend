@@ -913,6 +913,10 @@ fn save_capped(saved: &mut Vec<u8>, bytes: &[u8], capped: &mut bool) {
 /// Fold one server event into the saved recording (when saving), then forward it — followed by
 /// the per-utterance clip it cut, so the client already holds the utterance's record when the
 /// clip's path arrives. The clip cutter sees the transcript BEFORE the event is folded in.
+///
+/// The clip's disk work (the `.wav` and the previous clip's `.txt`) runs only AFTER the event is
+/// forwarded: a recordings folder on a sleeping disk or an offline share held the utterance's own
+/// `Final` — the phrase shown and typed — behind the spin-up or the share timeout.
 #[allow(clippy::too_many_arguments)]
 fn forward_saved<F: Fn(StreamEvent)>(
     e: StreamEvent,
@@ -924,22 +928,24 @@ fn forward_saved<F: Fn(StreamEvent)>(
     current: &mut String,
     on_event: &F,
 ) {
-    let mut clip = None;
-    if let Some(dir) = save_dir {
-        if let Some(c) = clips {
+    let mut io = ClipIo::default();
+    if save_dir.is_some() {
+        if let Some(c) = clips.as_mut() {
             // A Cancel after stop (see `StreamParams::detached`) cuts no further clip, but the
             // transcript still folds in, so the clip already kept gets its complete `.txt`.
-            if discard.load(Ordering::SeqCst) {
-                c.observe_discarded(&e, current);
+            io = if discard.load(Ordering::SeqCst) {
+                c.observe_discarded(&e, current)
             } else {
-                clip = c.observe(&e, saved, current, dir);
-            }
+                c.observe(&e, saved, current)
+            };
         }
         accumulate_transcript(&e, docs, current);
     }
     on_event(e);
-    if let Some(c) = clip {
-        on_event(c);
+    if let (Some(dir), Some(c)) = (save_dir, clips.as_mut()) {
+        if let Some(clip) = c.write(io, dir) {
+            on_event(clip);
+        }
     }
 }
 
@@ -988,6 +994,15 @@ struct ClipCutter {
     pending_txt: Option<(PathBuf, usize)>,
 }
 
+/// The disk work one event leaves for after it is forwarded (see [`forward_saved`]).
+#[derive(Default)]
+struct ClipIo {
+    /// The previous clip's finished `.txt`: its `.wav` path and the text.
+    txt: Option<(PathBuf, String)>,
+    /// This utterance's clip: its ordinal, the cut PCM, and the document offset its text starts at.
+    clip: Option<(u32, Vec<u8>, usize)>,
+}
+
 impl ClipCutter {
     fn new() -> Self {
         Self {
@@ -999,15 +1014,11 @@ impl ClipCutter {
         }
     }
 
-    /// Act on one event; `doc` is the transcript BEFORE the event is folded in. Returns the
-    /// clip event an ordinal `final` produced.
-    fn observe(
-        &mut self,
-        e: &StreamEvent,
-        saved: &mut Vec<u8>,
-        doc: &str,
-        dir: &std::path::Path,
-    ) -> Option<StreamEvent> {
+    /// Act on one event; `doc` is the transcript BEFORE the event is folded in. Cuts the buffer
+    /// in memory and returns the files to write — [`Self::write`] does that once the event is
+    /// forwarded.
+    fn observe(&mut self, e: &StreamEvent, saved: &mut Vec<u8>, doc: &str) -> ClipIo {
+        let mut io = ClipIo::default();
         match e {
             StreamEvent::Utterance {
                 state: UtteranceState::Decoding,
@@ -1039,41 +1050,53 @@ impl ClipCutter {
                 ..
             } => {
                 // The previous clip's text ends here: this final opens the next utterance's.
-                self.flush_txt(doc);
+                io.txt = self.take_txt(doc);
                 self.cut_any = true;
                 let cut = self
                     .take_mark(*n)
                     .map_or(saved.len(), |end| end.saturating_sub(self.taken));
                 let pcm = split_at_cut(saved, cut);
                 self.taken += pcm.len();
-                let stem = clip_stem(&self.stamp, *n);
-                let path = crate::audio::save_recording_as(dir, &stem, &pcm, 16_000)?;
-                self.pending_txt = Some((path.clone(), doc.len()));
-                return Some(StreamEvent::RecordingSaved {
-                    path: path.to_string_lossy().into_owned(),
-                    utterance: Some(*n),
-                    duration_ms: pcm_duration_ms(pcm.len()),
-                });
+                io.clip = Some((*n, pcm, doc.len()));
             }
-            StreamEvent::Boundary { .. } => self.flush_txt(doc),
+            StreamEvent::Boundary { .. } => io.txt = self.take_txt(doc),
             _ => {}
         }
-        None
+        io
+    }
+
+    /// Write what [`Self::observe`] planned: the previous clip's `.txt`, then this utterance's
+    /// `.wav`. Returns the clip event for a `.wav` written.
+    fn write(&mut self, io: ClipIo, dir: &std::path::Path) -> Option<StreamEvent> {
+        if let Some((path, text)) = io.txt {
+            crate::audio::save_transcript_sidecar(&path, &text);
+        }
+        let (n, pcm, start) = io.clip?;
+        let stem = clip_stem(&self.stamp, n);
+        let path = crate::audio::save_recording_as(dir, &stem, &pcm, 16_000)?;
+        self.pending_txt = Some((path.clone(), start));
+        Some(StreamEvent::RecordingSaved {
+            path: path.to_string_lossy().into_owned(),
+            utterance: Some(n),
+            duration_ms: pcm_duration_ms(pcm.len()),
+        })
     }
 
     /// [`Self::observe`] for a drain a Cancel after stop discarded: no clip is cut, but the kept
     /// clip's text still ends where `observe` would have ended it — at the next utterance's
     /// ordinal `final` or a hard break — so a later utterance's words never land in its `.txt`.
-    fn observe_discarded(&mut self, e: &StreamEvent, doc: &str) {
-        if matches!(
+    fn observe_discarded(&mut self, e: &StreamEvent, doc: &str) -> ClipIo {
+        let ends = matches!(
             e,
             StreamEvent::Final {
                 utterance: Some(_),
                 last: false,
                 ..
             } | StreamEvent::Boundary { .. }
-        ) {
-            self.flush_txt(doc);
+        );
+        ClipIo {
+            txt: if ends { self.take_txt(doc) } else { None },
+            clip: None,
         }
     }
 
@@ -1084,10 +1107,17 @@ impl ClipCutter {
         end
     }
 
-    /// Write the pending clip's `.txt`: everything the document gained since its `final` began.
+    /// The pending clip's `.txt`, retired: everything the document gained since its `final` began.
+    fn take_txt(&mut self, doc: &str) -> Option<(PathBuf, String)> {
+        self.pending_txt
+            .take()
+            .map(|(path, start)| (path, doc.get(start..).unwrap_or("").to_string()))
+    }
+
+    /// Write the pending clip's `.txt` now (at close).
     fn flush_txt(&mut self, doc: &str) {
-        if let Some((path, start)) = self.pending_txt.take() {
-            crate::audio::save_transcript_sidecar(&path, doc.get(start..).unwrap_or(""));
+        if let Some((path, text)) = self.take_txt(doc) {
+            crate::audio::save_transcript_sidecar(&path, &text);
         }
     }
 }
@@ -1564,6 +1594,65 @@ mod clip_tests {
         };
         assert_eq!(txt(0), "Hallo Welt Komma\n");
         assert_eq!(txt(1), "und weiter\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The phrase is forwarded BEFORE its clip touches the disk: a sleeping recordings disk or an
+    /// offline share held the utterance's `Final` (shown and typed) behind the `.wav` write, and a
+    /// hard break behind the previous clip's `.txt`. Both files still land, in order, right after.
+    #[test]
+    fn the_phrase_is_forwarded_before_its_clip_is_written() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let files_with = |ext: &str| {
+            std::fs::read_dir(&dir).map_or(0, |d| {
+                d.filter(|f| {
+                    f.as_ref()
+                        .is_ok_and(|f| f.path().extension().is_some_and(|x| x == ext))
+                })
+                .count()
+            })
+        };
+        let seen = RefCell::new(Vec::new());
+        let on_event = |e: StreamEvent| {
+            let tag = match e {
+                StreamEvent::Final { .. } => format!("final wav={}", files_with("wav")),
+                StreamEvent::Boundary { .. } => format!("boundary txt={}", files_with("txt")),
+                StreamEvent::RecordingSaved { .. } => format!("saved wav={}", files_with("wav")),
+                _ => return,
+            };
+            seen.borrow_mut().push(tag);
+        };
+        let mut saved = vec![0u8; 32_000];
+        let mut clips = Some(ClipCutter::new());
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let keep = AtomicBool::new(false);
+        for e in [
+            fin(" Hallo Welt", Some(1)),
+            StreamEvent::Boundary {
+                separator: "\n".into(),
+            },
+        ] {
+            forward_saved(
+                e,
+                Some(&dir),
+                &keep,
+                &mut saved,
+                &mut clips,
+                &mut docs,
+                &mut cur,
+                &on_event,
+            );
+        }
+        assert_eq!(
+            seen.into_inner(),
+            ["final wav=0", "saved wav=1", "boundary txt=0"]
+        );
+        assert_eq!(
+            files_with("txt"),
+            1,
+            "the hard break still ends the clip's text"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
