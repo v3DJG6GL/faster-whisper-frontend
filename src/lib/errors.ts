@@ -1,4 +1,4 @@
-import { backendDisplayName } from "./sanitize";
+import { backendDisplayName, safeDisplayText } from "./sanitize";
 import { fmtBytes } from "./format";
 // Truthful error toasts ("Job Signals"): one template mapping the Rust
 // transport's classified error strings (friendly_err's "Could not connect…" /
@@ -129,17 +129,28 @@ export function describeTransportError(
     // Only a body that SAYS so is "turned off": a bare 403 on a translate job is the
     // server refusing the key (missing, wrong, or without translate permission), and
     // telling that user to "enable translation" sent them after the wrong problem.
-    if (kind === "translate" && /\bdisabled\b/i.test(msg)) {
+    const off = /\b(disabled|not enabled)\b/i.test(msg);
+    if (kind === "translate" && off) {
       return {
         title: `Translation is turned off on ${label}.`,
         hint: "Enable it there, or pick another backend.",
         showLogs: true,
       };
     }
+    // The templates that OPEN with the label: the fallback is capitalized here, a backend's own
+    // name keeps the casing its author gave it.
+    const subject = label === "the backend" ? "The backend" : label;
+    // The other feature switches (URL download, video download) answer 403 "<feature> is not
+    // enabled on this server": the key is fine, so the server's own sentence names the switch.
+    if (code === 403 && off) {
+      const said = safeDisplayText(/HTTP \d{3}:\s*(.*)/.exec(msg)?.[1] ?? "", 200).replace(/[\s.]+$/, "");
+      return {
+        title: `${subject} has this feature turned off.`,
+        hint: `${said ? `${said[0].toUpperCase()}${said.slice(1)}. ` : ""}Enable it there, or pick another backend.`,
+        showLogs: true,
+      };
+    }
     if (code === 401 || code === 403) {
-      // The one template that OPENS with the label: the fallback is capitalized here, a backend's
-      // own name keeps the casing its author gave it.
-      const subject = label === "the backend" ? "The backend" : label;
       return {
         title: `${subject} rejected the request (HTTP ${code}).`,
         hint:

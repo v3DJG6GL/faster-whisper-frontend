@@ -74,6 +74,25 @@ describe("describeTransportError", () => {
     expect(key.hint).toContain("API key");
   });
 
+  it("a 403 saying a feature is not enabled names the server's switch, not the API key", () => {
+    const off = describeTransportError(
+      "transcribe", new Error("HTTP 403: URL download is not enabled on this server"), "GPU box",
+    );
+    expect(off.title).toBe("GPU box has this feature turned off.");
+    expect(off.hint).toContain("URL download is not enabled on this server.");
+    expect(`${off.title} ${off.hint}`).not.toContain("API key");
+    expect(describeTransportError("transcribe", "HTTP 403: video download is not enabled on this server", "").title)
+      .toBe("The backend has this feature turned off.");
+    // A key refusal still points at the key, and translate's own wording is unchanged.
+    const key = describeTransportError("transcribe", "HTTP 403: invalid API key", "GPU box");
+    expect(key.title).toBe("GPU box rejected the request (HTTP 403).");
+    expect(key.hint).toBe("Check the backend's API key.");
+    expect(describeTransportError("translate", "HTTP 403: translation disabled", "GPU box").title)
+      .toBe("Translation is turned off on GPU box.");
+    // A 401 is always the key, whatever its body says.
+    expect(describeTransportError("transcribe", "HTTP 401: not enabled", "GPU box").hint).toBe("Check the backend's API key.");
+  });
+
   it("strips bidi and bounds a peer-authored backend name", () => {
     const d = describeTransportError("transcribe", "HTTP 500", "\u202E" + "A".repeat(300));
     expect(d.title).not.toContain("\u202E");
