@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backendForAddress, backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, missingAfterSuppliedKey, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
+import { backendForAddress, backendLabel, backendLabelById, backendLabels, backendOptions, backendPrompt, backendPromptFields, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel, insecureUrlWarning, fatesAfterSuppliedKey, isStorableServerUrl, newBackendDraft, normalizeUrl, storedTypedUrl, stripUrlNoise, typedServerUrl, authorityOf } from "./backends";
 import { NO_OVERRIDE_PROFILE, type AppSettings, type Backend } from "./types";
 import { spokenLabel, spokenValue } from "./languages";
 
@@ -298,7 +298,9 @@ describe("stripUrlNoise trims the edges the Rust transport trims (str::trim)", (
 
 // Run #75 F10-1: the connect-first restore writes the key the user just typed into the restored
 // backend for the server it connected to, so the dialog must not tell them that backend needs one.
-describe("missingAfterSuppliedKey — the restore dialog's keyless list", () => {
+describe("fatesAfterSuppliedKey — the restore dialog's keyless list", () => {
+  const missingAfterSuppliedKey = (missing: Backend[], installed: Backend[], keyFor?: string) =>
+    fatesAfterSuppliedKey({ missing, moved: [] }, installed, keyFor).missing;
   const home = backend({ id: "home", name: "Home server", serverUrl: "home.lan:8000/", hasApiKey: true });
   const work = backend({ id: "work", name: "Work", serverUrl: "https://work.example", hasApiKey: true });
   it("drops the backend the supplied key lands on (normalized address match), keeps the others", () => {

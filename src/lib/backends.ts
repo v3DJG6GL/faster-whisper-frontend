@@ -86,12 +86,22 @@ export function backendForAddress(list: Backend[], address: string): Backend | u
   return list.find((b) => normalizeUrl(b.serverUrl) === target);
 }
 
-/** The restore dialog's "needs an API key re-entered" list once the caller supplies a key for
+/** The restore dialog's key fates (`backendKeyFates`) once the caller supplies a key for
  *  `keyFor`: the backend that key lands on (`backendForAddress` over the list the restore
- *  installs) is not missing one. No address → unchanged. */
-export function missingAfterSuppliedKey(missing: Backend[], installed: Backend[], keyFor?: string): Backend[] {
+ *  installs) neither needs one re-entered nor keeps this device's old key — the restore writes
+ *  the typed key over it. No address → unchanged. */
+export function fatesAfterSuppliedKey<F extends { missing: Backend[]; moved: { backend: Backend }[] }>(
+  fates: F,
+  installed: Backend[],
+  keyFor?: string,
+): F {
   const supplied = keyFor ? backendForAddress(installed, keyFor) : undefined;
-  return supplied ? missing.filter((b) => b.id !== supplied.id) : missing;
+  if (!supplied) return fates;
+  return {
+    ...fates,
+    missing: fates.missing.filter((b) => b.id !== supplied.id),
+    moved: fates.moved.filter((m) => m.backend.id !== supplied.id),
+  };
 }
 
 /** Does this string carry NO scheme, so that prefixing `http://` is honest?

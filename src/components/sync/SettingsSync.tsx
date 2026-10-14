@@ -49,7 +49,7 @@ import {
   sanitizeProfiles,
   type SecurityChange,
 } from "@/lib/sync/sync";
-import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, missingAfterSuppliedKey } from "@/lib/backends";
+import { authorityOf, backendLabel, effectiveServerUrl, insecureUrlWarning, fatesAfterSuppliedKey } from "@/lib/backends";
 import { plural, relTime } from "@/lib/format";
 import { canonicalizeCodes, sameCodes } from "@/lib/keys";
 import { IS_WINDOWS } from "@/lib/platform";
@@ -453,7 +453,7 @@ export function RestoreFromServer({
   // The apply bypasses the review gate (ignoreGates), so this is the only place a moved key or
   // the account's stored keys replacing this device's is disclosed — ImportPreview's notices.
   const fates = backendKeyFates(sel.backends ? installBackends : [], blob.backends?.secrets, st.backends, st.settings);
-  const keyFates = { ...fates, missing: missingAfterSuppliedKey(fates.missing, sel.backends ? installBackends : [], keyFor) };
+  const keyFates = fatesAfterSuppliedKey(fates, sel.backends ? installBackends : [], keyFor);
 
   const apply = async () => {
     // Re-check right before applying: applyBlob refuses while dictating, and
