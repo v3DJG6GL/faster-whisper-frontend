@@ -393,3 +393,11 @@ export function cancelTranslateRun(
   void abort({ serverUrl: ctl.serverUrl, backendId: ctl.backendId, progressId: ctl.pid }).catch(() => {});
   return true;
 }
+
+/** Whether the live run under `key` has been cancelled but is still finishing its in-flight
+ *  chunk (its ctl stays until that request settles), so a Cancel button reads "Cancelling…"
+ *  instead of staying live and pressable as a no-op. translateCtls is not reactive: the
+ *  pressing component re-renders itself when cancelTranslateRun returns true. */
+export function isTranslateCancelled(key: string): boolean {
+  return translateCtls.get(key)?.cancelled === true;
+}

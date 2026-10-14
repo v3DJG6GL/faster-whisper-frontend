@@ -7,7 +7,7 @@
 // and edit state survive every layout switch.
 
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState,
 } from "react";
 import {
   ArrowDownToLine, BookOpen, Check, Copy, Download, ExternalLink, Maximize2,
@@ -27,7 +27,7 @@ import {
   type TextTranslationResult,
 } from "@/lib/api";
 import {
-  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, newTranslateRun,
+  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
   runChunkedTranslate, translateCtls as trCtls, translateOptsFrom, untranslatedIndexes, type TranslateRunUi,
 } from "@/lib/retroTranslate";
 import { isAnsweredError, transportErrorDoorway } from "@/lib/errors";
@@ -819,8 +819,10 @@ export function TranscriptViewer({
    *  live card — cancelling on unmount would kill a long translate every time
    *  the user looked at another screen. A future "cancel everything on
    *  teardown" audit must leave this one alone. */
+  const [, rerenderCancelled] = useReducer((n: number) => n + 1, 0);
   const cancelTranslate = () => {
-    cancelTranslateRun(trKey, cancelTextTranslation);
+    // Only the module-scope ctl's flag flips: re-render so the card shows "Cancelling…" at once.
+    if (cancelTranslateRun(trKey, cancelTextTranslation)) rerenderCancelled();
   };
 
   // A clock-less text source's clocks are placeholders (start = row index),
@@ -2061,7 +2063,12 @@ export function TranscriptViewer({
       )}
 
       {trRun ? (
-        <TranslateProgressCard run={trRun} modeLabel={trRunMode} onCancel={cancelTranslate} />
+        <TranslateProgressCard
+          run={trRun}
+          modeLabel={trRunMode}
+          onCancel={cancelTranslate}
+          cancelling={isTranslateCancelled(trKey)}
+        />
       ) : (
         <>
           {reading && hasSegments && langs.length === 0 && isTauri && retroTranslateAvailable && (

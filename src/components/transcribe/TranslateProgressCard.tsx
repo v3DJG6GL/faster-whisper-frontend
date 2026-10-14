@@ -28,11 +28,14 @@ export function TranslateProgressCard({
   run,
   modeLabel,
   onCancel,
+  cancelling = false,
 }: {
   run: TranslateRunUi;
   /** The run's requested mode ("fluent"/"faithful") — a detail chip. */
   modeLabel?: string;
   onCancel: () => void;
+  /** Cancel was pressed; the run ends once its in-flight chunk settles. */
+  cancelling?: boolean;
 }) {
   // Self-ticking clock: polls drive most re-renders, but between chunks (or
   // against a backend without the progress entry) nothing else updates.
@@ -49,7 +52,9 @@ export function TranslateProgressCard({
   const amberW = lane * (done ? 1 : run.modelPct);
   const tealW = (1 - lane) * (done ? 1 : run.pct);
   const stageText =
-    run.phase === "starting"
+    cancelling && !done
+      ? "Cancelling…"
+      : run.phase === "starting"
       ? "Starting…"
       : run.phase === "downloading"
         ? "Downloading model…"
@@ -92,9 +97,10 @@ export function TranslateProgressCard({
           <button
             type="button"
             onClick={onCancel}
-            className="ring-signal inline-flex h-6 items-center rounded-pill border border-line bg-surface-2 px-2.5 text-[11.5px] font-medium text-dim hover:text-text"
+            disabled={cancelling}
+            className="ring-signal inline-flex h-6 items-center rounded-pill border border-line bg-surface-2 px-2.5 text-[11.5px] font-medium text-dim hover:text-text disabled:pointer-events-none disabled:opacity-50"
           >
-            Cancel
+            {cancelling ? "Cancelling…" : "Cancel"}
           </button>
         )}
       </div>

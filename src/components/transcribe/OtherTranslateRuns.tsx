@@ -1,3 +1,4 @@
+import { useReducer } from "react";
 import { useApp } from "@/lib/store";
 import { Button, MicroLabel } from "@/components/ui";
 import { useTranscribeRun } from "@/lib/transcribeRun";
@@ -6,7 +7,7 @@ import { openHistoryRecord } from "@/lib/transcribeRun";
 import { langText, langTexts } from "@/lib/languages";
 import { safeDisplayText } from "@/lib/sanitize";
 import { cancelTextTranslation } from "@/lib/api";
-import { cancelTranslateRun, translateCtls } from "@/lib/retroTranslate";
+import { cancelTranslateRun, isTranslateCancelled, translateCtls } from "@/lib/retroTranslate";
 
 /** Retro-translate runs whose transcript is NOT the one on screen: a slim
  *  strip in the Processing-card design language, so a run started on another
@@ -18,6 +19,8 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
   const trRuns = useApp((s) => s.trRuns);
   const records = useTranscriptHistory((s) => s.records);
   const running = useTranscribeRun((s) => s.running); // openHistoryRecord refuses mid-run
+  // A cancel only flips the module-scope ctl's flag: re-render so the row shows it at once.
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
   const entries = Object.entries(trRuns).filter(([k]) => !excludeKeys.includes(k));
   if (entries.length === 0) return null;
   return (
@@ -28,6 +31,7 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
         const rec = records.find((r) => r.id === key || r.sourcePath === key);
         // Gated on the SANITIZED target (joiners dropped): a code that strips to blank would leave a stray arrow.
         const tgt = langText(run.target ?? "", 12).trim();
+        const cancelling = run.phase !== "done" && isTranslateCancelled(key);
         return (
           <div key={key} className="flex items-center gap-3 py-1">
             <span className="size-1.5 shrink-0 rounded-full bg-[color:var(--c-translate)]" />
@@ -41,12 +45,17 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
               ) : null}
             </span>
             <span className="shrink-0 font-mono text-[11px] tabular-nums text-[color:var(--c-translate)]">
-              {run.phase === "done" ? "done" : `${Math.round(run.pct * 100)}%`}
+              {run.phase === "done" ? "done" : cancelling ? "cancelling…" : `${Math.round(run.pct * 100)}%`}
             </span>
             <span className="flex-1" />
             {run.phase !== "done" && translateCtls.has(key) && (
-              <Button variant="ghost" size="sm" onClick={() => cancelTranslateRun(key, cancelTextTranslation)}>
-                Cancel
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={cancelling}
+                onClick={() => cancelTranslateRun(key, cancelTextTranslation) && rerender()}
+              >
+                {cancelling ? "Cancelling…" : "Cancel"}
               </Button>
             )}
             {rec && (

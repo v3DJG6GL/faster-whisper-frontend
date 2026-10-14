@@ -3,12 +3,14 @@
 // (TranscriptViewer) only wires these to translateText + the store.
 import { describe, expect, it, vi } from "vitest";
 import {
-  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, newTranslateRun,
+  beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
   runChunkedTranslate, TRANSLATE_CHUNK, type TranslateRunUi,
   translateCtls, translateOptsFrom, untranslatedIndexes,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
 import otherRunsSrc from "../components/transcribe/OtherTranslateRuns.tsx?raw";
+import viewerSrc from "../components/transcribe/TranscriptViewer.tsx?raw";
+import progressCardSrc from "../components/transcribe/TranslateProgressCard.tsx?raw";
 
 const answer = (texts: string[], lang = "en"): TextTranslationResult => ({
   results: texts.map((t) => ({ [lang]: `${lang}:${t}` })),
@@ -445,7 +447,34 @@ describe("cancelTranslateRun", () => {
   });
   it("the other-runs strip offers that Cancel on each live row", () => {
     expect(otherRunsSrc).toMatch(/cancelTranslateRun\(key, cancelTextTranslation\)/);
-    expect(otherRunsSrc).toMatch(/>\s*Cancel\s*</);
+    expect(otherRunsSrc).toMatch(/\? "Cancelling…" : "Cancel"/);
+  });
+  it("a pressed Cancel reads as cancelling while the in-flight chunk finishes, and stays so", () => {
+    translateCtls.set("rec-4", { pid: "p4", cancelled: false, serverUrl: "http://srv", backendId: "b1" });
+    try {
+      expect(isTranslateCancelled("rec-4")).toBe(false);
+      expect(cancelTranslateRun("rec-4", () => Promise.resolve())).toBe(true);
+      expect(isTranslateCancelled("rec-4")).toBe(true);
+      // A second press is a no-op and leaves the state as it is.
+      expect(cancelTranslateRun("rec-4", () => Promise.resolve())).toBe(false);
+      expect(isTranslateCancelled("rec-4")).toBe(true);
+    } finally {
+      translateCtls.delete("rec-4");
+    }
+    // The run gone (its loop's finally dropped the ctl): nothing is cancelling.
+    expect(isTranslateCancelled("rec-4")).toBe(false);
+  });
+  it("both Cancel buttons re-render on a press and turn into a disabled Cancelling…", () => {
+    // The strip: the row reads the flag, disables its button, and swaps the % for the state.
+    expect(otherRunsSrc).toMatch(/const cancelling = run\.phase !== "done" && isTranslateCancelled\(key\)/);
+    expect(otherRunsSrc).toMatch(/disabled=\{cancelling\}/);
+    expect(otherRunsSrc).toMatch(/cancelTranslateRun\(key, cancelTextTranslation\) && rerender\(\)/);
+    expect(otherRunsSrc).toMatch(/cancelling \? "cancelling…"/);
+    // The viewer card: same flag, through the card's cancelling prop.
+    expect(viewerSrc).toMatch(/if \(cancelTranslateRun\(trKey, cancelTextTranslation\)\) rerenderCancelled\(\)/);
+    expect(viewerSrc).toMatch(/cancelling=\{isTranslateCancelled\(trKey\)\}/);
+    expect(progressCardSrc).toMatch(/disabled=\{cancelling\}/);
+    expect(progressCardSrc).toMatch(/cancelling && !done\s*\? "Cancelling…"/);
   });
 });
 
