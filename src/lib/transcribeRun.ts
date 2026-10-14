@@ -1968,6 +1968,9 @@ export async function translateParsed(
       serverUrl: ctx.serverUrl,
       backendId: ctx.backendId,
       texts: parsed.segments.slice(at, at + CHUNK).map((seg) => seg.text),
+      // Ids are positions in the whole source, so a later chunk's warnings name its own cues
+      // (and two chunks' same-reason warnings stay two lines through the de-dupe below).
+      firstId: at,
       targets,
       source: srcCode,
       model: options.translationModel ?? null,

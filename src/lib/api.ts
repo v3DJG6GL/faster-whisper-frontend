@@ -232,6 +232,9 @@ export interface TextTranslationResult {
  *  subtitle/text-file sources. */
 export async function translateText(args: ServerTarget & {
   texts: string[];
+  /** The segment id of `texts[0]` (default 0). A chunked caller passes the chunk's offset
+   *  in the whole source: the server's "segment N" warnings name the ids it was sent. */
+  firstId?: number | null;
   targets: string[];
   source?: string | null;
   model?: string | null;
@@ -256,6 +259,7 @@ export async function translateText(args: ServerTarget & {
 }): Promise<TextTranslationResult> {
   return invokeServer<TextTranslationResult>("translate_text", args, {
     texts: args.texts,
+    firstId: args.firstId ?? null,
     targets: args.targets,
     source: args.source ?? null,
     model: args.model ?? null,

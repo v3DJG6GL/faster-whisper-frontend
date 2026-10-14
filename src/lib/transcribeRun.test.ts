@@ -2325,6 +2325,15 @@ describe("translateParsed joins a text source like the TXT export", () => {
     expect(en.text).toBe("Hello. How are you?");
   });
 
+  it("each chunk numbers its segments from its offset in the whole source", async () => {
+    // The server's "segment N" warnings name the ids it was sent: per-request ids from 0 made a
+    // later chunk's warning point at a cue in the first chunk.
+    translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
+    const segments = Array.from({ length: 401 }, (_, i) => ({ text: `cue ${i}` }));
+    await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    expect(translateText.mock.calls.map(([a]) => [a.firstId, a.texts.length])).toEqual([[0, 400], [400, 1]]);
+  });
+
   it("the per-target translations join the same way", async () => {
     translateText.mockImplementation(() =>
       Promise.resolve({ results: [{ ja: "やあ。", de: "Hallo." }, { ja: "元気？", de: "Wie geht's?" }] }),

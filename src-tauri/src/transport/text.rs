@@ -125,9 +125,15 @@ pub struct TextTranslationResult {
 /// The two ids are screened, not tri-state — they are trimmed, and an id that is blank
 /// after trimming names nothing, so it is omitted (a stray space in a synced id would
 /// otherwise warm one model and request a differently spelled one).
+///
+/// Segment ids start at `first_id`: the server rewrites its "segment N" warnings into
+/// the ids it was sent, so a chunked caller passes the chunk's offset in the whole
+/// source — with per-request ids from 0, every chunk's warnings named a cue in the
+/// first chunk, and two chunks' identical warnings collapsed into one.
 #[allow(clippy::too_many_arguments)]
 fn build_request_body<'a>(
     texts: &'a [String],
+    first_id: usize,
     targets: &'a [String],
     source: Option<&'a str>,
     model: Option<&'a str>,
@@ -142,7 +148,10 @@ fn build_request_body<'a>(
         segments: texts
             .iter()
             .enumerate()
-            .map(|(id, t)| SegmentIn { id, text: t })
+            .map(|(i, t)| SegmentIn {
+                id: first_id + i,
+                text: t,
+            })
             .collect(),
         targets,
         source,
@@ -161,6 +170,8 @@ pub async fn translate_texts(
     server_url: &str,
     api_key: Option<&str>,
     texts: &[String],
+    // The id of `texts[0]` (see `build_request_body`); `None` = 0.
+    first_id: Option<usize>,
     targets: &[String],
     source: Option<&str>,
     model: Option<&str>,
@@ -180,6 +191,10 @@ pub async fn translate_texts(
     if texts.len() > MAX_TEXTS {
         bail!("too many segments in one request (max {MAX_TEXTS})");
     }
+    let first_id = first_id.unwrap_or(0);
+    if first_id.checked_add(texts.len()).is_none() {
+        bail!("segment id out of range");
+    }
     // The same screen the batch form applies; the CAP differs on purpose (refuse, don't
     // truncate — see `transport::MAX_TARGETS`).
     let targets: Vec<String> = targets
@@ -193,6 +208,7 @@ pub async fn translate_texts(
     let targets = &targets[..];
     let body = build_request_body(
         texts,
+        first_id,
         targets,
         source,
         model,
@@ -236,11 +252,14 @@ pub async fn translate_texts(
         (0..texts.len()).map(|_| BTreeMap::new()).collect();
     let mut kept: Vec<Vec<String>> = (0..texts.len()).map(|_| Vec::new()).collect();
     for seg in parsed.segments {
-        if let Some(slot) = results.get_mut(seg.id) {
+        let Some(at) = seg.id.checked_sub(first_id) else {
+            continue;
+        };
+        if let Some(slot) = results.get_mut(at) {
             *slot = super::batch::bound_translation_keys(seg.translations);
             // Kept-original markers are language codes — bound like the
             // translation keys, capped at the target ceiling.
-            if let Some(k) = kept.get_mut(seg.id) {
+            if let Some(k) = kept.get_mut(at) {
                 *k = seg
                     .kept_original
                     .iter()
@@ -298,7 +317,7 @@ mod request_body_tests {
         let texts = vec!["hallo".to_string()];
         let targets = vec!["en".to_string()];
         serde_json::to_value(build_request_body(
-            &texts, &targets, source, None, None, glossary, None, None, None, None,
+            &texts, 0, &targets, source, None, None, glossary, None, None, None, None,
         ))
         .unwrap()
     }
@@ -333,6 +352,7 @@ mod request_body_tests {
         let targets = vec!["en".to_string()];
         let v = serde_json::to_value(build_request_body(
             &texts,
+            0,
             &targets,
             None,
             Some(""),
@@ -363,6 +383,7 @@ mod request_body_tests {
         let targets = vec!["en".to_string()];
         let padded = serde_json::to_value(build_request_body(
             &texts,
+            0,
             &targets,
             None,
             Some(" gemma "),
@@ -378,6 +399,7 @@ mod request_body_tests {
         assert_eq!(padded["translation_mode"], "fast");
         let blank = serde_json::to_value(build_request_body(
             &texts,
+            0,
             &targets,
             None,
             Some("  "),
@@ -391,5 +413,27 @@ mod request_body_tests {
         .unwrap();
         assert!(blank.get("translation_model").is_none());
         assert!(blank.get("translation_mode").is_none());
+    }
+
+    #[test]
+    fn segment_ids_start_at_the_callers_first_id() {
+        // A chunked source's warnings must name the cue's position in the whole source,
+        // not its position in this one request.
+        let texts = vec!["a".to_string(), "b".to_string()];
+        let targets = vec!["en".to_string()];
+        let ids = |first_id| {
+            let v = serde_json::to_value(build_request_body(
+                &texts, first_id, &targets, None, None, None, None, None, None, None, None,
+            ))
+            .unwrap();
+            v["segments"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|s| s["id"].as_u64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(400), vec![400, 401]);
+        assert_eq!(ids(0), vec![0, 1]);
     }
 }
