@@ -66,7 +66,8 @@ export function dictionaryReloadStep(requested: string, live: string | null, aft
 
 /** The two addresses, display-safe, when a sync moved the backend between a save (`savedTo`) and its
  *  follow-up reload (`shownFrom`, null when the reload did not commit); null when it did not move.
- *  Either one unknown (null) reads as no move. */
+ *  Either one unknown (null) reads as no move — the clauses below check a reload that did not commit
+ *  on their own. */
 function savedElsewhere(savedTo: string | null, shownFrom: string | null): { to: string; now: string } | null {
   if (savedTo === null || shownFrom === null || shownFrom === savedTo) return null;
   return { to: safeDisplayText(savedTo, 120), now: safeDisplayText(shownFrom, 120) };
@@ -83,6 +84,11 @@ export function dictionarySavedText(count: number, savedTo: string | null, shown
   return `${saved} to ${moved.to} — this backend now points at ${moved.now}.`;
 }
 
+/** The follow-up reload committed nothing (`shownFrom` null outside the fetch-error view): a peer
+ *  deleted the backend during the save, or its address kept moving. The pre-save edits are still on
+ *  screen under the hold notice, so a clause must not claim the rules were reloaded. */
+const NOT_RELOADED = " The rules were not reloaded — this backend changed during the save, so your edits from before it are still on screen";
+
 /** The clause after the detail of a save that landed but whose reply was unreadable. After a move the
  *  rules on screen (or the ones Retry/Refresh loads) are the new address's, so "check that your
  *  changes are there" would send the user looking where the changes never went. */
@@ -91,8 +97,9 @@ export function dictionaryLandedText(savedTo: string | null, shownFrom: string |
   if (moved) {
     return ` The changes went to ${moved.to} — this backend now points at ${moved.now}, so check ${moved.to} for them: a rule changed elsewhere may not have been saved.`;
   }
-  return reloadFailed
-    ? ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"}, then check that your changes are there.`
+  if (reloadFailed) return ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"}, then check that your changes are there.`;
+  return shownFrom === null
+    ? `${NOT_RELOADED}. Check ${savedTo === null ? "the server" : safeDisplayText(savedTo, 120)} for your changes: a rule changed elsewhere may not have been saved.`
     : " The rules were reloaded from the server — check that your changes are there: a rule changed elsewhere may not have been saved.";
 }
 
@@ -106,5 +113,6 @@ export function dictionaryConflictText(savedTo: string | null, shownFrom: string
       ? ` That server is ${moved.to} — this backend now points at ${moved.now}, and loading its rules failed — use ${retry}.`
       : ` That server is ${moved.to} — this backend now points at ${moved.now}, whose rules are shown.`;
   }
-  return reloadFailed ? ` Reloading the rules failed — use ${retry} to load the latest version.` : " The latest version has been reloaded.";
+  if (reloadFailed) return ` Reloading the rules failed — use ${retry} to load the latest version.`;
+  return shownFrom === null ? `${NOT_RELOADED}.` : " The latest version has been reloaded.";
 }

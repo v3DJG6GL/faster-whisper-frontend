@@ -160,6 +160,26 @@ describe("dictionaryConflictText", () => {
   });
 });
 
+// Run #77 F14-1: a follow-up reload that committed nothing (a peer deleted the backend during the
+// save, or its address kept moving) leaves the pre-save edits on screen — no clause may claim a reload.
+describe("a post-save reload that did not commit", () => {
+  it("never claims the rules were reloaded", () => {
+    const conflict = dictionaryConflictText("http://a:8000", null, false, false);
+    expect(conflict).not.toContain("has been reloaded");
+    expect(conflict).toContain("were not reloaded");
+    expect(conflict).not.toContain("latest version");
+    const landed = dictionaryLandedText("http://a:8000", null, false, false);
+    expect(landed).not.toContain("reloaded from the server");
+    expect(landed).toContain("were not reloaded");
+    expect(landed).toContain("Check http://a:8000 for your changes");
+  });
+
+  it("keeps the reload wording when the reload committed", () => {
+    expect(dictionaryConflictText("http://a", "http://a", false, false)).toBe(" The latest version has been reloaded.");
+    expect(dictionaryLandedText("http://a", "http://a", false, false)).toContain("reloaded from the server");
+  });
+});
+
 describe("Dictionary save wiring", () => {
   it("reloads after a landed save with the post-save flag and shows where the rules went", () => {
     expect(dictionarySrc).toMatch(/await load\(backend, true\)/);

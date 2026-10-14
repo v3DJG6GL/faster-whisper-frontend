@@ -1319,7 +1319,8 @@ function describeFetchError(fetch: PipelineFetch, name: string): { title: string
 }
 
 /** A save's result as the banner shows it: `savedTo` is the address the save went to, `shownFrom`
- *  the one its follow-up reload committed (they differ when a sync moved the backend in between). */
+ *  the one its follow-up reload committed (they differ when a sync moved the backend in between;
+ *  null when that reload committed nothing, and the banner must not claim it). */
 type ShownSave = PipelineSaveResult & { savedTo?: string; shownFrom?: string | null };
 
 function SaveBanner({
