@@ -1079,6 +1079,11 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
     .catch((e) => console.error("url video fetch failed:", e));
 }
 
+const NO_LONGER_TRACKED = "the server no longer tracks this video";
+// A jobs-off server closes the progress entry right after the video ends but keeps no job row
+// to read the outcome (or media id) from: the video may well sit finished on the server.
+const NO_JOB_RECORD = "this server keeps no record of how the video ended — Try again downloads it once more";
+
 /** The transcript returned while its video was still downloading: keep
  *  polling the run's progress id (its own poller: every second while this
  *  link is the one on screen, every 5 s otherwise or while the window is
@@ -1088,7 +1093,8 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
  *  the file. Gives up when the entry vanishes (server restart / stale
  *  sweep) or after two hours — a run's own poll (no `request`) first asks
  *  the job row, which the server stamps with the video's outcome just
- *  before it closes the entry.
+ *  before it closes the entry. `jobRow` = such a row exists: a jobs-off
+ *  server closes the entry all the same but keeps no outcome to ask for.
  *
  *  `request` = an on-demand fetch's own request (startOnDemandVideo): the
  *  server closes that entry the moment the video is done, so a poll almost
@@ -1101,6 +1107,7 @@ function awaitRunUrlVideo(
   pid: string,
   epoch: number,
   request?: Promise<UrlMediaDownload | null>,
+  jobRow = !!ctx.jobsEnabled,
 ) {
   const startedAt = Date.now();
   // Started after its file took the rail (every caller): a later same-path file is a new seq.
@@ -1161,7 +1168,10 @@ function awaitRunUrlVideo(
             // A run's own id is its job id: the server closes the entry only after it
             // wrote the video's outcome onto the job row, a "done" a 1 s poll almost
             // always misses.
-            if (!request) settleFromJob();
+            if (!request) {
+              if (jobRow) settleFromJob(1);
+              else paintSettled(null, NO_JOB_RECORD);
+            }
             return;
           }
         }
@@ -1208,40 +1218,46 @@ function awaitRunUrlVideo(
   function onScreen() {
     return epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath;
   }
-  // Read the video's outcome off the job row once: pull a finished one, else mark the row
-  // failed so Try again shows (the row would otherwise stay at its last "downloading").
-  function settleFromJob() {
+  // Read the video's outcome off the job row: pull a finished one, else mark the row failed
+  // so Try again shows (the row would otherwise stay at its last "downloading"). A transport
+  // error is asked once more a poll later before it becomes the verdict.
+  function settleFromJob(retries: number) {
     void getJobResult({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, jobId: pid })
       .catch((e): { kind: "error"; message: string } => ({ kind: "error", message: errorText(e, 200) }))
       .then((o) => {
         if (pulled || !registeredIds.has(rec.id)) return;
-        const res = o.kind === "ok" ? o.value : null;
-        const mediaId = res?.sourceVideoMediaId;
-        if (onScreen()) {
-          const prev = get().stageMeta.downloading?.video;
-          const video: VideoProgress = res && mediaId
-            ? {
-                ...prev,
-                state: "done",
-                mediaId,
-                expiresAt: res.sourceVideoExpiresAt ?? prev?.expiresAt,
-                bytes: res.sourceVideoBytes ?? prev?.bytes,
-                height: res.sourceVideoHeight ?? prev?.height,
-                container: res.sourceVideoContainer ?? prev?.container,
-                error: null,
-              }
-            : {
-                ...prev,
-                state: "failed",
-                error: res?.sourceVideoError
-                  ?? (o.kind === "error" ? o.message : "the server no longer tracks this video"),
-              };
-          set((s) => ({
-            stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) },
-          }));
+        if (o.kind === "error" && retries > 0) {
+          setTimeout(() => settleFromJob(retries - 1), 1000);
+          return;
         }
-        if (mediaId) pull(mediaId);
+        const res = o.kind === "ok" ? o.value : null;
+        paintSettled(res, o.kind === "error" ? o.message : o.kind === "disabled" ? NO_JOB_RECORD : NO_LONGER_TRACKED);
       });
+  }
+  // The settled outcome: `res` names the video's media id (done) or its error, else the row
+  // fails with `fallback`.
+  function paintSettled(res: BatchResult | null, fallback: string) {
+    if (pulled || !registeredIds.has(rec.id)) return;
+    const mediaId = res?.sourceVideoMediaId;
+    if (onScreen()) {
+      const prev = get().stageMeta.downloading?.video;
+      const video: VideoProgress = res && mediaId
+        ? {
+            ...prev,
+            state: "done",
+            mediaId,
+            expiresAt: res.sourceVideoExpiresAt ?? prev?.expiresAt,
+            bytes: res.sourceVideoBytes ?? prev?.bytes,
+            height: res.sourceVideoHeight ?? prev?.height,
+            container: res.sourceVideoContainer ?? prev?.container,
+            error: null,
+          }
+        : { ...prev, state: "failed", error: res?.sourceVideoError ?? fallback };
+      set((s) => ({
+        stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) },
+      }));
+    }
+    if (mediaId) pull(mediaId);
   }
   // A failed request (null) already marked the Video row failed: the poll ends with it
   // (Try again recovers).
@@ -1896,8 +1912,9 @@ export function ingestJobResult(
       fetchRunUrlVideo(rec, row.ctx, res.sourceVideoMediaId);
     } else if (res.sourceVideoPending) {
       // Headless: -1 never equals the store epoch, so the poll never paints
-      // the rail — it only waits for the video and pulls it.
-      awaitRunUrlVideo(rec, row.ctx, row.jobId, opts.attached ? get().epoch : -1);
+      // the rail — it only waits for the video and pulls it. A re-attached run always has its
+      // job row (it was just read).
+      awaitRunUrlVideo(rec, row.ctx, row.jobId, opts.attached ? get().epoch : -1, undefined, true);
     }
   } else {
     copyRunMedia(row.path, rec);

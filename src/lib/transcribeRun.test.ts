@@ -2241,11 +2241,78 @@ describe("a run's pending video whose progress entry closed between two polls", 
     expect(fetchUrlVideo).not.toHaveBeenCalled();
   });
 
-  it("marks the Video row failed when the job row cannot be read", async () => {
+  it("marks the Video row failed when the job row cannot be read twice", async () => {
     getJobResult.mockImplementation(() => Promise.resolve({ kind: "error", message: "HTTP 502" }));
     await poll(2);
-    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    await vi.waitFor(
+      () => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"),
+      { timeout: 3000 },
+    );
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("HTTP 502");
+    expect(getJobResult).toHaveBeenCalledTimes(2);
+    expect(fetchUrlVideo).not.toHaveBeenCalled();
+  });
+
+  it("asks the job row once more after a blip and pulls the finished video", async () => {
+    getJobResult
+      .mockImplementationOnce(() => Promise.resolve({ kind: "error", message: "HTTP 502" }))
+      .mockImplementation(() => Promise.resolve({ kind: "ok", value: {
+        text: "hi", sourceVideoMediaId: "f".repeat(32), sourceVideoHeight: 720, sourceVideoContainer: "mp4",
+      } }));
+    await poll(2);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    expect(fetchUrlVideo.mock.calls[0][0].mediaId).toBe("f".repeat(32));
+    expect(getJobResult).toHaveBeenCalledTimes(2);
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
+  });
+
+  it("names the missing job record when the server has jobs switched off", async () => {
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "disabled" }));
+    await poll(2);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toMatch(/keeps no record/);
+    expect(fetchUrlVideo).not.toHaveBeenCalled();
+  });
+
+  it("says the server no longer tracks the video when the job row is gone", async () => {
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "not_found" }));
+    await poll(2);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("the server no longer tracks this video");
+  });
+});
+
+describe("a jobs-off server's run whose video entry closed between two polls", () => {
+  // No job row exists to read the outcome from: the Video row must not claim a failed download.
+  const url = "https://youtu.be/no-jobs";
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  afterEach(() => {
+    getTranscribeProgress.mockReset();
+    getJobResult.mockReset();
+    transcribeUrl.mockReset();
+    fetchUrlVideo.mockReset();
+    vi.unstubAllGlobals();
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {}, urlMeta: {} });
+  });
+
+  it("never asks for a job row and says the server keeps no record", async () => {
+    let tick: (() => void) | null = null;
+    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
+    getTranscribeProgress.mockImplementation(() => Promise.resolve({ stage: "unknown" } as import("./types").BatchProgress));
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: { text: "hi", sourceVideoMediaId: "f".repeat(32) } }));
+    fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/no-jobs.mp4"));
+    transcribeUrl.mockImplementation((() => Promise.resolve({ text: "hi", sourceVideoPending: true })) as never);
+    useTranscribeRun.setState({ files: [url], queue: [], running: false, stageMeta: {}, stageTimes: {}, urlMeta: {} });
+    startRun(undefined, {}, {
+      backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false, jobsEnabled: false,
+    });
+    await vi.waitFor(() => expect(useTranscribeRun.getState().running).toBe(false));
+    // The video poll is the last interval the run started.
+    tick!();
+    await flush();
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toMatch(/keeps no record/);
+    expect(getJobResult).not.toHaveBeenCalled();
     expect(fetchUrlVideo).not.toHaveBeenCalled();
   });
 });
