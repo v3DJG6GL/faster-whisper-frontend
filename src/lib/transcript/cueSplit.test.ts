@@ -504,6 +504,30 @@ describe("wrapLines", () => {
     expect(cutByShare(hi, [1, 1], "hi")[0]).toBe("मैं आज बाजार गया था।");
     expect(wrapLines(hi, 30, 2, 0, undefined, "hi")[0]).toBe("मैं आज बाजार गया था।");
   });
+  it("Khmer, Burmese and Tibetan sentence and clause marks are seams like a Latin stop", () => {
+    expect(cutByShare("សួស្តី។ខ្ញុំឈ្មោះចន។ថ្ងៃនេះអាកាសធាតុល្អ។", [1, 1, 1], "km")).toEqual([
+      "សួស្តី។", "ខ្ញុំឈ្មោះចន។", "ថ្ងៃនេះអាកាសធាតុល្អ។",
+    ]);
+    expect(cutByShare("ខ្ញុំទៅផ្ទះ។បន្ទាប់មកខ្ញុំញ៉ាំបាយ។", [1, 1], "km")).toEqual(["ខ្ញុំទៅផ្ទះ។", "បន្ទាប់មកខ្ញុំញ៉ាំបាយ។"]);
+    expect(cutByShare("ကျွန်တော်အိမ်ပြန်သွားတယ်။ပြီးတော့ထမင်းစားတယ်။", [1, 1], "my")).toEqual([
+      "ကျွန်တော်အိမ်ပြန်သွားတယ်။", "ပြီးတော့ထမင်းစားတယ်။",
+    ]);
+    // Spaced text: the cut lands where it lands with "." in the mark's place.
+    for (const [t, mark, lang, shares] of [
+      ["ខ្ញុំ បាន ទៅ ផ្សារ ថ្ងៃនេះ។ នៅទីនោះ មាន មនុស្ស ច្រើន ណាស់ ហើយ ក្តៅ", "។", "km", [1, 1]],
+      ["ကျွန်တော် ဈေး ကို သွားခဲ့တယ်။ အဲဒီမှာ လူ အများကြီး ရှိတယ် ပြီးတော့ ပူတယ်", "။", "my", [1, 1]],
+      ["ང་ ཉི་མ་ འདི་ ལ་ ཁྲོམ་ ལ་ ཕྱིན་བྱུང་། དེར་ མི་ མང་པོ་ འདུག་ ཚ་པོ་ ཡང་ ཡོད", "།", "bo", [1, 2]],
+      ["ང་ ཁྲོམ་ ལ་ ཕྱིན་བྱུང་༎ དེར་ མི་ མང་པོ་ འདུག", "༎", "bo", [1, 1, 1]],
+    ] as const) {
+      const parts = cutByShare(t, [...shares], lang);
+      expect(parts[0].endsWith(mark)).toBe(true);
+      expect(parts).toEqual(cutByShare(t.replace(mark, "."), [...shares], lang).map((p) => p.replace(".", mark)));
+    }
+    // The Burmese comma is a clause seam.
+    expect(cutByShare("ကျွန်တော် ဈေး ကို သွားခဲ့တယ်၊ အဲဒီမှာ လူ အများကြီး ရှိတယ်", [1, 2], "my")[0]).toBe(
+      "ကျွန်တော် ဈေး ကို သွားခဲ့တယ်၊",
+    );
+  });
   it("a CJK line never ends on an opening bracket nor starts with a closer or stop", () => {
     for (const t of [
       "あいうえおかきくけこ「さしすせそたちつてとなに」",
