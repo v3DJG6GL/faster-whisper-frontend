@@ -501,6 +501,60 @@ describe("a stale API-key flag the keyring reports absent", () => {
       }
     }
   });
+
+  // The review's store signature judged the keyring by the old rule: a stale flag whose key the
+  // store reports absent read as an unread keyring, so every approval whose re-merge conflicted on
+  // backends asked "unclear key rotation" — and taking the peer's side again re-raised the same
+  // review, so the peer's change could never be accepted.
+  describe("approving a held-back backends review", () => {
+    /** A keyless v1 base; b1 renamed here with a flag claiming a key the keyring does not hold; a
+     *  peer moves b1's address; "take the peer's" raises the review that holds backends back. */
+    async function raiseOverStaleFlag(apiKeysGate: boolean) {
+      await resetSyncState();
+      const settings = structuredClone(DEFAULT_SETTINGS);
+      settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+      settings.sync.sub = { ...settings.sync.sub!, serverAddresses: true, apiKeys: apiKeysGate };
+      api.store = new Map();
+      const b1 = backend({ hasApiKey: false });
+      useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
+      await pushNow(true);
+      const base = structuredClone(api.pushed) as SyncBlob;
+      useApp.setState({ backends: [{ ...b1, name: "renamed-here", hasApiKey: true }] });
+      const remote = structuredClone(base);
+      remote.backends = { list: [{ ...b1, serverUrl: "http://peer:9" }] };
+      api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+      await pullNow(true);
+      expect(getPendingConflict()?.categories).toEqual(["backends"]);
+      await resolveSyncConflicts({ backends: "remote" }, getPendingConflict()!.id);
+      expect(getPendingReview()?.changes.map((c) => c.kind)).toEqual(["server-url"]);
+    }
+
+    it("a key the keyring reports absent lands the approval without asking", async () => {
+      try {
+        await raiseOverStaleFlag(true);
+        await approvePendingReview();
+        expect(getPendingConflict()).toBeNull();
+        expect(getPendingReview()).toBeNull();
+        expect(useApp.getState().backends.map((b) => [b.serverUrl, b.hasApiKey])).toEqual([["http://peer:9", false]]);
+      } finally {
+        cleanup();
+      }
+    });
+
+    // The "API keys" gate off skips the compose's own read, so only the signature reads the
+    // keyring here: one that FAILS on b1 still cannot rule out a key rotation, and asks.
+    it("a key the read fails on still asks", async () => {
+      try {
+        await raiseOverStaleFlag(false);
+        api.unreadable = ["b1"];
+        await approvePendingReview();
+        expect(getPendingReview()).toBeNull();
+        expect(getPendingConflict()?.categories).toEqual(["backends"]);
+      } finally {
+        cleanup();
+      }
+    });
+  });
 });
 
 // After a peer's "Delete server copy" the backend answers a stale base with a 409 whose body is the

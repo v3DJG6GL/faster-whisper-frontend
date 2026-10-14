@@ -572,6 +572,12 @@ function echoElementKeys<T extends { id: string }>(list: T[], snapList: unknown,
 
 type StoreSlice = Pick<Config, "settings" | "backends" | "profiles"> & { appRules: AppRule[] };
 
+/** A keyring read that answered for every id: each one is either read or reported ABSENT. Only
+ *  then does a missing key mean "no key stored" rather than "could not tell" (a timeout is null). */
+function keyReadFailedNowhere(read: BackendKeyRead | null): read is BackendKeyRead {
+  return read !== null && Array.isArray(read.unreadable) && read.unreadable.length === 0;
+}
+
 /** Blobs `composeBlob` built through its degraded-keyring pass-through (see `backendsDegraded`). */
 const degradedComposes = new WeakSet<SyncBlob>();
 
@@ -636,7 +642,7 @@ export async function composeBlob(
       // completeness rule as is. And only from the ADOPTED base: with none, or with backends
       // fresh, a merge's pass-through is the remote, whose key carried here reads as this
       // device's own — the consent rule then sees no change and the apply stores it unreviewed.
-      if (read && Array.isArray(read.unreadable) && read.unreadable.length === 0 && !snapshotSecretsUnavailable) {
+      if (keyReadFailedNowhere(read) && !snapshotSecretsUnavailable) {
         const base = state.snapshot?.backends;
         const snapSecrets = base !== undefined && snapshot?.backends === base ? base.secrets : undefined;
         const carried: [string, string][] = [];
@@ -2930,17 +2936,17 @@ async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<Sync
     },
   );
   if (cats.backends && isPlainObject(sig.backends)) {
-    const keys = await withTimeout(
-      readBackendKeys(s.backends.map((b) => b.id)).catch(() => null),
+    const read = await withTimeout(
+      readBackendKeyStates(s.backends.map((b) => b.id)).catch(() => null),
       10_000,
-      null as Record<string, string> | null,
+      null as BackendKeyRead | null,
     );
-    // Same completeness rule as composeBlob: `read_backend_keys` drops what it cannot read.
-    const complete =
-      isPlainObject(keys) && s.backends.every((b) => !b.hasApiKey || ownProp(keys, b.id) !== undefined);
+    // Same rule as composeBlob: an id the store reports ABSENT holds no key (a stale `hasApiKey`),
+    // which is what the store holds — only a failed id or a timeout leaves a rotation unknowable.
+    // Counting the absent one as unread asked on every backends conflict of every approval.
     const prints: Record<string, string> = {};
-    if (complete) {
-      for (const [id, key] of Object.entries(keys)) prints[id] = keyPrint(String(key));
+    if (keyReadFailedNowhere(read) && isPlainObject(read.keys)) {
+      for (const [id, key] of Object.entries(read.keys)) prints[id] = keyPrint(String(key));
     } else {
       prints[KEYS_UNREAD] = "1";
     }
