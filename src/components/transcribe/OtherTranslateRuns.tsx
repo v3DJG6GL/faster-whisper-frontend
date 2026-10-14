@@ -49,11 +49,13 @@ export function OtherTranslateRuns({ excludeKeys }: { excludeKeys: (string | nul
             </span>
             <span className="flex-1" />
             {run.phase !== "done" && translateCtls.has(key) && (
+              // Not `disabled`: set by the press that cancels, it would drop a keyboard user's
+              // focus from the FOCUSED button to <body>. The click is a no-op instead.
               <Button
                 variant="ghost"
                 size="sm"
-                disabled={cancelling}
-                onClick={() => cancelTranslateRun(key, cancelTextTranslation) && rerender()}
+                className={cancelling ? "opacity-40" : undefined}
+                onClick={() => !cancelling && cancelTranslateRun(key, cancelTextTranslation) && rerender()}
               >
                 {cancelling ? "Cancelling…" : "Cancel"}
               </Button>

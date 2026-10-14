@@ -94,11 +94,16 @@ export function TranslateProgressCard({
           translate · {langTexts(run.targets).join(", ")}
         </span>
         {!done && (
+          // aria-disabled, not disabled: a native `disabled` set by the press that cancels would
+          // disable the FOCUSED button and drop a keyboard user's focus to <body> until the card
+          // unmounts. The click is a no-op instead.
           <button
             type="button"
-            onClick={onCancel}
-            disabled={cancelling}
-            className="ring-signal inline-flex h-6 items-center rounded-pill border border-line bg-surface-2 px-2.5 text-[11.5px] font-medium text-dim hover:text-text disabled:pointer-events-none disabled:opacity-50"
+            onClick={() => {
+              if (!cancelling) onCancel();
+            }}
+            aria-disabled={cancelling || undefined}
+            className="ring-signal inline-flex h-6 items-center rounded-pill border border-line bg-surface-2 px-2.5 text-[11.5px] font-medium text-dim hover:text-text aria-disabled:pointer-events-none aria-disabled:opacity-50"
           >
             {cancelling ? "Cancelling…" : "Cancel"}
           </button>
