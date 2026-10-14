@@ -392,10 +392,11 @@ fn inside_app_storage(app: &tauri::AppHandle, audio_base: Option<String>, dest: 
 }
 
 /// inside_app_storage's decision. A custom audio base is an ordinary user folder (~/Videos,
-/// even ~), so only what the app keeps in it is guarded: its AUDIO_SUBDIRS and its
-/// HEAL_STAMP; an export may sit next to them. The default base lives under the app data
-/// dir, which stays guarded whole. (copy_media_to's source check is the narrower
-/// record-owned or AUDIO_SUBDIRS test.)
+/// even ~), so only what the app keeps in it is guarded: its AUDIO_SUBDIRS, its HEAL_STAMP,
+/// and in its root the `dictation-*` names the launch layout sweep moves into dictations/
+/// (where retention would later delete them); an export may sit next to them. The default
+/// base lives under the app data dir, which stays guarded whole. (copy_media_to's source
+/// check is the narrower record-owned or AUDIO_SUBDIRS test.)
 fn inside_managed_storage(base: Option<&Path>, app_data: Option<&Path>, dest: &Path) -> bool {
     let Some(parent) = dest.parent() else {
         return false;
@@ -409,17 +410,19 @@ fn inside_managed_storage(base: Option<&Path>, app_data: Option<&Path>, dest: &P
     if AUDIO_SUBDIRS.iter().any(|s| under(&base.join(s), parent)) {
         return true;
     }
-    // In the base root itself, the app's own names are taken (case-blind, for Windows/macOS).
+    // In the base root itself, the app's own names are taken (case-blind, for Windows/macOS),
+    // and so is every name ensure_audio_layout's legacy sweep claims (its own predicate).
     let in_root = match (base.canonicalize(), parent.canonicalize()) {
         (Ok(b), Ok(p)) => b == p,
         _ => false,
     };
     in_root
         && dest.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
-            AUDIO_SUBDIRS
-                .iter()
-                .chain(std::iter::once(&HEAL_STAMP))
-                .any(|own| n.eq_ignore_ascii_case(own))
+            crate::audio::is_dictation_file(n)
+                || AUDIO_SUBDIRS
+                    .iter()
+                    .chain(std::iter::once(&HEAL_STAMP))
+                    .any(|own| n.eq_ignore_ascii_case(own))
         })
 }
 
@@ -897,6 +900,12 @@ mod tests {
         assert!(inside(&base.join("dictations/x.wav")));
         assert!(inside(&base.join("dictations/day/x.wav")));
         assert!(inside(&base.join(HEAL_STAMP)));
+        // The launch sweep files a loose dictation-* in the base root into dictations/; only
+        // the root is swept, so a subfolder keeps the name.
+        assert!(inside(&base.join("dictation-2026-10-14_12-00-00.wav")));
+        assert!(inside(&base.join("dictation-2026-10-14_12-00-00.txt")));
+        std::fs::create_dir_all(base.join("sub")).unwrap();
+        assert!(!inside(&base.join("sub/dictation-x.wav")));
         assert!(inside(&app_data.join("x.mkv")));
         assert!(!inside(&dir.join("talk.mkv")));
         let _ = std::fs::remove_dir_all(&dir);

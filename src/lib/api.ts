@@ -370,8 +370,8 @@ export async function packageMedia(args: ServerTarget & {
   destPath: string;
   filename: string;
   maxUploadBytes?: number | null;
-  /** The custom audio base (`audioBasePref`), so an export folder under it counts as app
-   *  storage and is refused. */
+  /** The custom audio base (`audioBasePref`): an export may sit in it, but not inside its
+   *  app-kept subfolders, on its heal stamp, or under a `dictation-*` name in its root. */
   audioBase?: string | null;
 }): Promise<PackageOutcome> {
   return invokeServer<PackageOutcome>("package_media", args, {
