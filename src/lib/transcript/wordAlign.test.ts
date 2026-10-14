@@ -70,6 +70,12 @@ describe("alignSegmentWords", () => {
     expect(out[2]).toEqual(LINE[3]);
   });
 
+  it("tells apart words that differ only in an Indic vowel sign", () => {
+    const old = [w("काम", 0, 1), w("कम", 1, 2), w("है", 2, 3)];
+    const out = alignSegmentWords(old, "कम है");
+    expect(out).toEqual([old[1], old[2]]);
+  });
+
   it("returns nothing for an emptied line or a line without words", () => {
     expect(alignSegmentWords(LINE, "   ")).toEqual([]);
     expect(alignSegmentWords([], "Hallo Welt")).toEqual([]);

@@ -36,11 +36,12 @@ export function segmentWordRanges(
   });
 }
 
-/** Comparison key for matching: letters/digits/apostrophes only, case-folded —
+/** Comparison key for matching: letters/marks/digits/apostrophes only, case-folded —
  *  so "Velonavitest," still matches "Velonavitest" and punctuation-only edits
- *  keep every timing. */
+ *  keep every timing. Combining marks stay: Indic vowel signs are separate code points,
+ *  and dropping them gives काम and कम one key. */
 function norm(s: string): string {
-  const t = s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}']+/gu, "");
+  const t = s.normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{M}\p{N}']+/gu, "");
   return t || s.trim().toLowerCase();
 }
 
