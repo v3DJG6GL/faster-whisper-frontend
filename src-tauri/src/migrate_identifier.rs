@@ -508,13 +508,16 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
         let side = config.with_extension("json.invalid-utf8.bak");
         if lossy {
             // A copy already holding exactly these bytes is kept: an earlier launch wrote it and
-            // then failed the rewrite below, and refusing now would skip this re-point too.
+            // then failed the rewrite below, and refusing now would skip this re-point too. A
+            // copy cut short (a crash mid-write) holds a prefix of them: it is written again.
             let kept = match keep_private_copy(&side, &bytes) {
-                Err(e)
-                    if e.kind() == std::io::ErrorKind::AlreadyExists
-                        && std::fs::read(&side).is_ok_and(|b| b == bytes) =>
-                {
-                    Ok(())
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    match std::fs::read(&side) {
+                        Ok(b) if b == bytes => Ok(()),
+                        Ok(b) if bytes.starts_with(&b) => std::fs::remove_file(&side)
+                            .and_then(|()| keep_private_copy(&side, &bytes)),
+                        _ => Err(e),
+                    }
                 }
                 r => r,
             };
@@ -578,8 +581,13 @@ fn keep_private_copy(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         opts.mode(0o600);
     }
     let mut f = opts.open(path)?;
-    f.write_all(bytes)?;
-    f.sync_all()
+    let written = f.write_all(bytes).and_then(|()| f.sync_all());
+    if written.is_err() {
+        // A partial copy would refuse every retry (`create_new`): remove it, best effort.
+        drop(f);
+        let _ = std::fs::remove_file(path);
+    }
+    written
 }
 
 #[cfg(test)]
@@ -909,6 +917,34 @@ mod tests {
             bytes
         );
         assert!(!new.join("config.json.bak").exists());
+    }
+
+    /// A side copy cut short (a write that failed half-way, a crash) must not refuse every later
+    /// re-point; one holding other bytes is still never overwritten.
+    #[test]
+    fn a_side_copy_cut_short_is_written_again_so_the_re_point_retry_lands() {
+        let base = scratch("side-partial");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(&new).unwrap();
+        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
+        bytes.extend(serde_json::to_vec(&old.join("my-audio")).unwrap());
+        bytes.extend(br#"},"general":{"note":"caf"#);
+        bytes.push(0xE9);
+        bytes.extend(br#""}}}"#);
+        let config = new.join("config.json");
+        std::fs::write(&config, &bytes).unwrap();
+        let side = new.join("config.json.invalid-utf8.bak");
+        let moved = [(old, new.clone())];
+        std::fs::write(&side, b"other").unwrap();
+        assert!(rewrite_config_paths(&config, &moved).is_err());
+        assert_eq!(std::fs::read(&side).unwrap(), b"other");
+        std::fs::write(&side, &bytes[..10]).unwrap();
+        assert_eq!(
+            rewrite_config_paths(&config, &moved),
+            Ok(vec![new.join("my-audio")])
+        );
+        assert_eq!(std::fs::read(&side).unwrap(), bytes);
+        assert!(!new.join(REPOINT_PENDING).exists());
     }
 
     #[test]
