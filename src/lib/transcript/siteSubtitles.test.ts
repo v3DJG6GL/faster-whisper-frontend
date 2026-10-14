@@ -117,6 +117,18 @@ describe("presets (v18, v31, v32)", () => {
     const [i6, st6] = apply(inp, toggleTarget(inp, st0, "de", false));
     expect(keys(i6, st6)).toMatchObject({ "cand:fr": "active", "ex:fr": "active" });
   });
+  it("a language dropped under Custom once the spoken language is known stays off when it is unknown again", () => {
+    const inp = input({ spoken: null, tracks: [tr("de-CH", "de-CH"), tr("fr", "fr"), tr("en", "en")], targets: ["fr"] });
+    // Custom taken while the spoken language was unknown: its snapshot picks the de-CH candidate.
+    const [i1, st1] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    const i2 = { ...i1, spoken: "en" };
+    const [i3, st3] = apply(i2, toggleTarget(i2, st1, "de", false));
+    expect(derive(i3, st3).run!.fetch).not.toContain("de-CH");
+    const i4 = { ...i3, spoken: null };
+    const v = derive(i4, st3);
+    expect(v.run!.fetch).not.toContain("de-CH");
+    expect(v.rows.flatMap((r) => r.badges).filter((b) => b.key === "cand:de-CH").map((b) => b.state)).toEqual(["off"]);
+  });
 });
 
 describe("badge clicks (v25, v27, v28)", () => {

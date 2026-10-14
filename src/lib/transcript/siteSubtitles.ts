@@ -630,13 +630,15 @@ export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: stri
     const sel = { ...st.sel, ["mt:" + code]: want };
     // Dropping a language drops its site tracks too: under Custom a stale pick of one
     // would otherwise keep it downloading (the pick outranks the off language) — and so does
-    // a track's candidate twin on the Original row, which has no language in codeOf.
+    // a track's candidate twin on the Original row, which has no language in codeOf. Also
+    // when no candidate badge shows now: a pick taken while the spoken language was unknown
+    // would light it again once it is unknown again.
     if (!want) {
       for (const k of Object.keys(m.codeOf)) {
         if (m.codeOf[k] !== code) continue;
         sel[k] = false;
         const tid = keyTrack(k);
-        if (tid && "cand:" + tid in m.snap) sel["cand:" + tid] = false;
+        if (tid) sel["cand:" + tid] = false;
       }
     }
     next = { ...st, sel };
