@@ -118,15 +118,23 @@ export function chipTuckHold(a: {
  *  processing). Normally the ✕ waits out CANCEL_AFFORDANCE_DELAY_MS so a fast finalize
  *  never blinks one up. A phase that declares itself cold AND cancellable shows it at
  *  once: the wait is known to be long, and an escape hatch that appears late is one
- *  the user has already spent the wait looking for. */
+ *  the user has already spent the wait looking for.
+ *
+ *  While the mic is still capturing (a live per-phrase translate), the generic ✕ would be
+ *  cancel-dictation — discarding the session the user is still speaking into. That state is
+ *  a STOP, not a cancel (dictationVisual.isGracefulStop, the Dashboard's rule), so no ✕;
+ *  only a cancellable translate card keeps one, since its action skips just that translate. */
 export function chipCancelVisible(a: {
   phase?: DictationPhase | null;
   processingSince: number | null;
   status: DictationStatus;
+  /** Is the mic still capturing? (streaming.isCapturing, carried in the chip payload.) */
+  capturing?: boolean;
   now: number;
 }): boolean {
   if (a.processingSince == null) return false;
   const phase = currentPhase(a.status, a.phase);
+  if (a.capturing && !(phase?.kind === "translating" && phase.cancellable)) return false;
   if (phase?.cancellable && phase.cold) return true;
   return a.now - a.processingSince >= CANCEL_AFFORDANCE_DELAY_MS;
 }

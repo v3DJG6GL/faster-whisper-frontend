@@ -39,6 +39,9 @@ interface ChipState {
   status: DictationStatus;
   // Mic opening but not yet capturing (e.g. Bluetooth profile switch) → show "warming up…".
   warming?: boolean;
+  // The mic is still capturing (streaming.isCapturing): a processing status then is a live
+  // per-phrase stage, where the generic ✕ would discard the running session (chipCancelVisible).
+  capturing?: boolean;
   // What the SERVER is doing behind a "listening" status: cold-loading its model, or holding /
   // decoding the last phrase → blue "working" instead of amber "ready". Server-authored.
   serverWork?: ServerWork;
@@ -296,6 +299,7 @@ export default function Overlay() {
           setState({
             ...e.payload,
             warming: e.payload.warming ?? false,
+            capturing: e.payload.capturing ?? false,
             // Narrowed, not trusted: it selects a visual state, and the payload is just JSON.
             serverWork: asServerWork(e.payload.serverWork),
             dictationError: e.payload.dictationError ?? "",
@@ -825,6 +829,7 @@ export default function Overlay() {
     phase: state.phase,
     processingSince,
     status: state.status,
+    capturing: state.capturing,
     now: Date.now(),
   });
 

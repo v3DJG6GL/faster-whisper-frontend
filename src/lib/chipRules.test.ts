@@ -202,6 +202,29 @@ describe("chipCancelVisible", () => {
       }),
     ).toBe(false);
   });
+
+  it("offers no session cancel during a live per-phrase translate (the mic is still capturing)", () => {
+    // A live phrase's translate has no phase card, so the ✕ would be cancel-dictation and
+    // discard the session the user is still speaking into — a STOP state, not a cancel.
+    const long = { processingSince: NOW, status: "translating" as const, phase: null, now: NOW + 5_000 };
+    expect(chipCancelVisible({ ...long, capturing: true })).toBe(false);
+    for (const status of PROCESSING) {
+      expect(chipCancelVisible({ ...long, status, capturing: true })).toBe(false);
+    }
+    // Post-capture, the same stall keeps its recovery ✕.
+    expect(chipCancelVisible({ ...long, capturing: false })).toBe(true);
+    expect(chipCancelVisible(long)).toBe(true);
+  });
+
+  it("keeps the cancel-translate ✕ of a cancellable translate card while capturing", () => {
+    const base = { processingSince: NOW, status: "translating" as const, capturing: true };
+    expect(chipCancelVisible({ ...base, phase: phase({ cold: true, cancellable: true }), now: NOW })).toBe(true);
+    expect(
+      chipCancelVisible({ ...base, phase: phase({ cancellable: true }), now: NOW + CANCEL_AFFORDANCE_DELAY_MS }),
+    ).toBe(true);
+    // Not cancellable → its ✕ would be the session cancel again.
+    expect(chipCancelVisible({ ...base, phase: phase(), now: NOW + 5_000 })).toBe(false);
+  });
 });
 
 describe("phase helpers", () => {

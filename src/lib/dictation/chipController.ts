@@ -17,6 +17,7 @@ import { ownProp } from "../own";
 import { effectiveLanguage } from "../backends";
 import { routeSourceCode } from "../languages";
 import { isActiveDictation, sessionNoteHoldMs } from "./dictationVisual";
+import { isCapturing } from "./streaming";
 import type { OverlayStatsMetric, ServerWork, UsageStats } from "../types";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { sendableTargets } from "../capabilities";
@@ -273,6 +274,10 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
   return {
     status: state.status,
     warming: state.warming, // mic opening but not yet capturing → chip shows "warming up…"
+    // The mic is still open → a processing status is a live per-phrase stage, where the chip
+    // must not offer the session-discarding ✕ (chipRules.chipCancelVisible). Read at emit time:
+    // every capture end lands with a store write (stopLive's status, a teardown's), which re-emits.
+    capturing: isCapturing(),
     // What the SERVER is doing behind a "listening" status (cold model load / an utterance it
     // holds or is decoding) → the chip reads blue "working", not amber "ready".
     serverWork: state.serverWork,
