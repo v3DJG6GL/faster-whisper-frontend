@@ -163,7 +163,10 @@ pub enum Verdict {
 
 /// The launch's verdict from what the migration saw. `failed` = the old folders whose move
 /// failed (nothing is lost: a failed move leaves the old folder whole and the new one absent).
-fn verdict(legacy_running: bool, failed: &[PathBuf]) -> Verdict {
+/// `unrepointed` = the config.json files whose settings could not be re-pointed into a moved
+/// folder: going on would run a session on the vacated folder they still name, re-created
+/// empty, and strand what it records there once the next launch's retry re-points them.
+fn verdict(legacy_running: bool, failed: &[PathBuf], unrepointed: &[PathBuf]) -> Verdict {
     if legacy_running {
         return Verdict::Stop(
             "An older version of faster-whisper-frontend is still running.\n\n\
@@ -172,15 +175,27 @@ fn verdict(legacy_running: bool, failed: &[PathBuf]) -> Verdict {
                 .into(),
         );
     }
+    let lines = |ps: &[PathBuf]| -> String {
+        let paths: Vec<String> = ps.iter().map(|p| p.display().to_string()).collect();
+        paths.join("\n")
+    };
     if failed.is_empty() {
-        return Verdict::Proceed;
+        if unrepointed.is_empty() {
+            return Verdict::Proceed;
+        }
+        return Verdict::Stop(format!(
+            "The data of the previous version was moved to this version's folder, but these \
+             settings could not be updated and still point at the old folder:\n\n{}\n\n\
+             Nothing was lost. Close every window of the app (also from the system tray), and \
+             any program that may hold that file open, then start it again.",
+            lines(unrepointed)
+        ));
     }
-    let paths: Vec<String> = failed.iter().map(|p| p.display().to_string()).collect();
     Verdict::Stop(format!(
         "The data of the previous version could not be moved to this version's folder. \
          Nothing was lost — it is still in:\n\n{}\n\n\
          Close every window of the app (also from the system tray), then start it again.",
-        paths.join("\n")
+        lines(failed)
     ))
 }
 
@@ -197,7 +212,7 @@ fn migrate(roots: &[Root], legacy_running: bool) -> Verdict {
             tracing::warn!(
                 "[migrate] a build with the old identifier is running; not starting until it is closed"
             );
-            return verdict(true, &[]);
+            return verdict(true, &[], &[]);
         }
         tracing::info!(
             "[migrate] a build with the old identifier is running, but there is nothing left to move"
@@ -229,14 +244,18 @@ fn migrate(roots: &[Root], legacy_running: bool) -> Verdict {
     }
     // The fix-ups still run when another root failed: the roots that moved now carry the
     // marker and are never looked at again, so it is now or never for them — unless an
-    // earlier launch's config write failed and left REPOINT_PENDING, which retries it.
+    // earlier launch's config write failed and left REPOINT_PENDING, which retries it. A
+    // re-point that fails stops this launch like a failed move, so no session runs on the
+    // vacated folder before that retry.
     let repoint_pending = roots
         .iter()
         .any(|r| r.base.join(NEW_ID).join(REPOINT_PENDING).exists());
-    if !moved.is_empty() || repoint_pending {
-        rewrite_moved_paths(roots, moved);
-    }
-    verdict(false, &failed)
+    let unrepointed = if !moved.is_empty() || repoint_pending {
+        rewrite_moved_paths(roots, moved)
+    } else {
+        Vec::new()
+    };
+    verdict(false, &failed, &unrepointed)
 }
 
 /// Show a `Verdict::Stop` text natively — the webview never opens on that path. Windows: a
@@ -289,8 +308,9 @@ pub fn tell_user(msg: &str) {
 
 /// Re-point config paths into every moved folder. A root that moved on an EARLIER launch
 /// (one that then stopped on another root's failed move) counts too: the config.json naming a
-/// folder inside it may only arrive now, with the root that failed then.
-fn rewrite_moved_paths(roots: &[Root], mut moved: Vec<(PathBuf, PathBuf)>) {
+/// folder inside it may only arrive now, with the root that failed then. Returns the config.json
+/// files whose re-point failed (each left REPOINT_PENDING for the next launch).
+fn rewrite_moved_paths(roots: &[Root], mut moved: Vec<(PathBuf, PathBuf)>) -> Vec<PathBuf> {
     for root in roots.iter().filter(|r| !r.disposable) {
         let pair = (root.base.join(LEGACY_ID), root.base.join(NEW_ID));
         if pair.1.join(MARKER).exists() && !moved.contains(&pair) {
@@ -300,6 +320,7 @@ fn rewrite_moved_paths(roots: &[Root], mut moved: Vec<(PathBuf, PathBuf)>) {
     // config.json lives in ONE root (config dir) while a custom audio/log folder may sit inside
     // ANOTHER (Linux data dir, Windows LocalAppData) — so every config.json is checked against
     // every move, not just its own root's.
+    let mut failed = Vec::new();
     for root in roots {
         let config = root.base.join(NEW_ID).join("config.json");
         if !config.is_file() {
@@ -307,10 +328,16 @@ fn rewrite_moved_paths(roots: &[Root], mut moved: Vec<(PathBuf, PathBuf)>) {
         }
         // A custom audio base that moved carries its own heal stamp; drop it so the setup heal
         // re-points the records' absolute media paths there too (see `after_move`).
-        for base in rewrite_config_paths(&config, &moved) {
-            let _ = std::fs::remove_file(base.join(crate::commands::HEAL_STAMP));
+        match rewrite_config_paths(&config, &moved) {
+            Ok(bases) => {
+                for base in bases {
+                    let _ = std::fs::remove_file(base.join(crate::commands::HEAL_STAMP));
+                }
+            }
+            Err(()) => failed.push(config),
         }
     }
+    failed
 }
 
 fn is_empty_dir(p: &Path) -> bool {
@@ -415,12 +442,13 @@ fn after_move(new: &Path) {
 /// the setting at where it is now. `moved` holds every (old, new) pair that moved this launch.
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
-/// (`audioBaseDir` / `recordingsDir`, not `logDir`).
-fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
+/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when a re-point it found could
+/// not land (REPOINT_PENDING is then left for the next launch).
+fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<Vec<PathBuf>, ()> {
     let mut audio_bases = Vec::new();
     // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes.
     let Ok(bytes) = std::fs::read(config) else {
-        return audio_bases;
+        return Ok(audio_bases);
     };
     let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
     // Invalid UTF-8 is decoded lossily, as the app's own loader (`config::read_config_text`)
@@ -431,7 +459,7 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
     let lossy = std::str::from_utf8(body).is_err();
     let text = String::from_utf8_lossy(body);
     let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return audio_bases;
+        return Ok(audio_bases);
     };
     let mut changed = false;
     for (section, key) in [
@@ -484,23 +512,23 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
                     side.display()
                 );
                 mark_repoint_pending(config);
-                return Vec::new();
+                return Err(());
             }
         }
         let written = serde_json::to_string_pretty(&json)
             .map_err(std::io::Error::other)
             .and_then(|out| crate::config::write_private_atomic(config, &out));
         // A failed write (a full disk, an AV or sync client holding config.json) leaves the
-        // settings naming the vacated folders: say so, return no audio bases so the caller
-        // keeps their heal stamps rather than trusting a re-point that never landed, and leave
-        // the pending marker so the next launch tries again.
+        // settings naming the vacated folders: say so, fail so the caller keeps their heal
+        // stamps rather than trusting a re-point that never landed and stops the launch, and
+        // leave the pending marker so the next launch tries again.
         if let Err(e) = written {
             tracing::warn!(
                 "[migrate] could not write the re-pointed folders to {} ({e}); its settings still name the old folder",
                 config.display()
             );
             mark_repoint_pending(config);
-            return Vec::new();
+            return Err(());
         }
         if lossy {
             tracing::warn!(
@@ -511,7 +539,7 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
     }
     // Landed, or nothing (left) to re-point: no later launch needs to look again.
     let _ = std::fs::remove_file(config.with_file_name(REPOINT_PENDING));
-    audio_bases
+    Ok(audio_bases)
 }
 
 /// Leave REPOINT_PENDING beside `config` so the next launch re-runs the re-point. Best effort:
@@ -561,14 +589,14 @@ mod tests {
 
     #[test]
     fn a_launch_that_cannot_move_the_old_data_stops_instead_of_starting_empty() {
-        assert!(matches!(verdict(true, &[]), Verdict::Stop(m) if m.contains("still running")));
+        assert!(matches!(verdict(true, &[], &[]), Verdict::Stop(m) if m.contains("still running")));
         let old = PathBuf::from("/home/u/.local/share").join(LEGACY_ID);
-        match verdict(false, std::slice::from_ref(&old)) {
+        match verdict(false, std::slice::from_ref(&old), &[]) {
             Verdict::Stop(m) => assert!(m.contains(&old.display().to_string()), "{m}"),
             Verdict::Proceed => panic!("a failed move must stop the launch"),
         }
         // Absent / AlreadyDone / Moved / Conflict leave nothing in `failed`.
-        assert_eq!(verdict(false, &[]), Verdict::Proceed);
+        assert_eq!(verdict(false, &[], &[]), Verdict::Proceed);
     }
 
     fn root(base: &Path) -> Root {
@@ -801,7 +829,8 @@ mod tests {
             "logging": { "logDir": null },
         }});
         std::fs::write(new.join("config.json"), cfg.to_string()).unwrap();
-        let rebased = rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]);
+        let rebased =
+            rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]).unwrap();
         assert_eq!(rebased, vec![new.join("my-audio")]);
         let out: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(new.join("config.json")).unwrap())
@@ -827,7 +856,8 @@ mod tests {
         let mut bytes = b"\xEF\xBB\xBF".to_vec();
         bytes.extend_from_slice(cfg.to_string().as_bytes());
         std::fs::write(new.join("config.json"), bytes).unwrap();
-        let rebased = rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]);
+        let rebased =
+            rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]).unwrap();
         assert_eq!(rebased, vec![new.join("my-audio")]);
         let text = crate::config::read_config_text(&new.join("config.json"))
             .unwrap()
@@ -852,7 +882,7 @@ mod tests {
         bytes.extend(br#""}}}"#);
         let config = new.join("config.json");
         std::fs::write(&config, &bytes).unwrap();
-        let rebased = rewrite_config_paths(&config, &[(old, new.clone())]);
+        let rebased = rewrite_config_paths(&config, &[(old, new.clone())]).unwrap();
         // Re-pointed: the loader reads the file lossily anyway, and the move never retries.
         assert_eq!(rebased, vec![new.join("my-audio")]);
         let text = crate::config::read_config_text(&config).unwrap().unwrap();
@@ -886,7 +916,7 @@ mod tests {
         let blocker = crate::transport::media::tmp_sibling(&config);
         std::fs::create_dir_all(blocker.join("held")).unwrap();
         let moved = [(old, new.clone())];
-        assert!(rewrite_config_paths(&config, &moved).is_empty());
+        assert!(rewrite_config_paths(&config, &moved).is_err());
         assert_eq!(std::fs::read(&config).unwrap(), bytes);
         assert!(new.join(REPOINT_PENDING).exists());
         // The next launch, brought back by the pending marker, finds the side copy from the
@@ -894,7 +924,7 @@ mod tests {
         std::fs::remove_dir_all(&blocker).unwrap();
         assert_eq!(
             rewrite_config_paths(&config, &moved),
-            vec![new.join("my-audio")]
+            Ok(vec![new.join("my-audio")])
         );
         assert_eq!(
             std::fs::read(new.join("config.json.invalid-utf8.bak")).unwrap(),
@@ -904,7 +934,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_config_write_is_retried_by_a_launch_with_nothing_left_to_move() {
+    fn a_failed_config_write_stops_the_launch_and_a_launch_with_nothing_left_to_move_re_points() {
         let base = scratch("write-retry");
         let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
         std::fs::create_dir_all(old.join("my-audio")).unwrap();
@@ -917,13 +947,18 @@ mod tests {
         let blocker = crate::transport::media::tmp_sibling(&old.join("config.json"));
         std::fs::create_dir_all(blocker.join("held")).unwrap();
         let roots = [root(&base)];
-        assert_eq!(migrate(&roots, false), Verdict::Proceed);
+        let config = new.join("config.json");
+        // No session may run on the vacated folder the setting still names: the launch stops,
+        // as on a failed move, and says which settings file is stuck.
+        match migrate(&roots, false) {
+            Verdict::Stop(m) => assert!(m.contains(&config.display().to_string()), "{m}"),
+            Verdict::Proceed => panic!("a failed re-point must stop the launch"),
+        }
         let audio_base = |cfg: &Path| -> serde_json::Value {
             let out: serde_json::Value =
                 serde_json::from_str(&std::fs::read_to_string(cfg).unwrap()).unwrap();
             out["settings"]["recording"]["audioBaseDir"].clone()
         };
-        let config = new.join("config.json");
         assert_eq!(audio_base(&config), serde_json::json!(old.join("my-audio")));
         assert!(new.join(REPOINT_PENDING).exists());
         // The next launch: every root already moved, yet the setting is re-pointed.
@@ -949,7 +984,7 @@ mod tests {
             (cfg_root.join(LEGACY_ID), cfg_new.clone()),
             (data_old, data_new.clone()),
         ];
-        let rebased = rewrite_config_paths(&cfg_new.join("config.json"), &moved);
+        let rebased = rewrite_config_paths(&cfg_new.join("config.json"), &moved).unwrap();
         assert_eq!(rebased, vec![data_new.join("audio-x")]);
         let out: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(cfg_new.join("config.json")).unwrap())
