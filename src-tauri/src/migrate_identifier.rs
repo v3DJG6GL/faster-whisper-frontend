@@ -411,17 +411,19 @@ fn after_move(new: &Path) {
 /// (`audioBaseDir` / `recordingsDir`, not `logDir`).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
     let mut audio_bases = Vec::new();
-    // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes. Strict UTF-8 though, not
-    // the loader's lossy decode: this writes the file back, and would replace the user's
-    // invalid bytes with U+FFFD for good.
+    // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes.
     let Ok(bytes) = std::fs::read(config) else {
         return audio_bases;
     };
-    let Ok(text) = std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes))
-    else {
-        return audio_bases;
-    };
-    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(text) else {
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+    // Invalid UTF-8 is decoded lossily, as the app's own loader (`config::read_config_text`)
+    // does: its first settings save writes the U+FFFD text back anyway, while a skipped re-point
+    // is lost for good — the marker means this never runs again, and the setting keeps naming
+    // the vacated folder, which the audio/log setup then re-creates empty. The original bytes
+    // are kept in a side copy before the rewrite (see below).
+    let lossy = std::str::from_utf8(body).is_err();
+    let text = String::from_utf8_lossy(body);
+    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else {
         return audio_bases;
     };
     let mut changed = false;
@@ -454,11 +456,43 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
         }
     }
     if changed {
+        // Not config.json.bak: the reset banner names that file as the copy of a config the
+        // loader could not parse.
+        let side = config.with_extension("json.invalid-utf8.bak");
+        if lossy {
+            if let Err(e) = keep_private_copy(&side, &bytes) {
+                tracing::warn!(
+                    "[migrate] config.json is not valid UTF-8 and its bytes could not be kept in {} ({e}); its moved folders are not re-pointed",
+                    side.display()
+                );
+                return Vec::new();
+            }
+            tracing::warn!(
+                "[migrate] config.json is not valid UTF-8; re-pointing its moved folders, original bytes kept in {}",
+                side.display()
+            );
+        }
         if let Ok(out) = serde_json::to_string_pretty(&json) {
             let _ = crate::config::write_private_atomic(config, &out);
         }
     }
     audio_bases
+}
+
+/// Keep `bytes` in a NEW owner-only file at `path` (`config::write_private` takes text only).
+/// `create_new` never follows a planted symlink and never overwrites an earlier copy.
+fn keep_private_copy(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    let mut f = opts.open(path)?;
+    f.write_all(bytes)?;
+    f.sync_all()
 }
 
 #[cfg(test)]
@@ -759,7 +793,7 @@ mod tests {
     }
 
     #[test]
-    fn a_config_that_is_not_valid_utf8_is_left_byte_for_byte() {
+    fn a_config_that_is_not_valid_utf8_follows_the_move_and_keeps_its_bytes_aside() {
         let base = scratch("not-utf8");
         let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
         std::fs::create_dir_all(&new).unwrap();
@@ -769,10 +803,23 @@ mod tests {
         bytes.extend(br#"},"general":{"note":"caf"#);
         bytes.push(0xE9);
         bytes.extend(br#""}}}"#);
-        std::fs::write(new.join("config.json"), &bytes).unwrap();
-        let rebased = rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]);
-        assert!(rebased.is_empty());
-        assert_eq!(std::fs::read(new.join("config.json")).unwrap(), bytes);
+        let config = new.join("config.json");
+        std::fs::write(&config, &bytes).unwrap();
+        let rebased = rewrite_config_paths(&config, &[(old, new.clone())]);
+        // Re-pointed: the loader reads the file lossily anyway, and the move never retries.
+        assert_eq!(rebased, vec![new.join("my-audio")]);
+        let text = crate::config::read_config_text(&config).unwrap().unwrap();
+        let out: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            out["settings"]["recording"]["audioBaseDir"],
+            serde_json::json!(new.join("my-audio"))
+        );
+        // The original bytes survive in a side copy — not config.json.bak, the reset banner's.
+        assert_eq!(
+            std::fs::read(new.join("config.json.invalid-utf8.bak")).unwrap(),
+            bytes
+        );
+        assert!(!new.join("config.json.bak").exists());
     }
 
     #[test]
