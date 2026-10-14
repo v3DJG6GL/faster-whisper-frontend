@@ -1,7 +1,18 @@
-// The quick-add window's verdict on one whole-map PATCH reply (QuickAdd.tsx flushSave). Pure, so
-// the state each reply leads to is testable without mounting the standalone window.
+// The quick-add window's verdict on one whole-map PATCH reply (QuickAdd.tsx flushSave), and the
+// address it sends that PATCH to. Pure, so each is testable without mounting the standalone window.
+import { effectiveServerUrl, serverUrlFromPeer } from "./backends";
 import { envPinnedOf, saveLanded, RULE_LIST_SETTING } from "./pipelineMap";
-import type { PipelineSaveResult } from "./types";
+import type { AppSettings, Backend, PipelineSaveResult } from "./types";
+
+/** Where quick-add connects for `backend`, read straight from config.json (this window has no
+ *  store). The main store canonicalises an older build's address on load (wellFormedBackends)
+ *  but never writes that back, so the file can still hold a schemeless `nas.lan:8000` that the
+ *  main window sends as `http://nas.lan:8000` — and the Rust transport, which only trims, would
+ *  refuse here. The same canonicalisation, so both windows send one address. */
+export function quickAddServerUrl(backend: Backend, settings: AppSettings): string {
+  const serverUrl = serverUrlFromPeer(backend.serverUrl) || backend.serverUrl;
+  return effectiveServerUrl(serverUrl === backend.serverUrl ? backend : { ...backend, serverUrl }, settings);
+}
 
 /** - "saved": the PATCH landed (a 2xx, readable or not).
  *  - "pinned": a 2xx, but the server's environment pins the rule list — nothing took effect.

@@ -22,7 +22,7 @@ import {
   type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, mapKeyTwinProblem, ruleListOf, ruleLockedFor,
   ruleMapWritable,
 } from "@/lib/pipelineMap";
-import { quickAddRejectReason, quickAddSaveOutcome } from "@/lib/quickAddSave";
+import { quickAddRejectReason, quickAddSaveOutcome, quickAddServerUrl } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
@@ -30,7 +30,6 @@ import {
   getQuickAddSeed, getFocusedSelection, getFocusedApp, injectText, subscribe, isTauri,
 } from "@/lib/api";
 import { resolveInjectionTarget } from "@/lib/dictation/streaming";
-import { effectiveServerUrl } from "@/lib/backends";
 import { IS_WINDOWS } from "@/lib/platform";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
 import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
@@ -237,7 +236,7 @@ export default function QuickAdd() {
       }
       // Per-device address override wins for the connection (cfg is this
       // window's own readConfig snapshot — the quick-add webview has no store).
-      const url = effectiveServerUrl(backend, cfg!.settings);
+      const url = quickAddServerUrl(backend, cfg!.settings);
       target.current = { serverUrl: url, backendId: backend.id, slug: pin.slug };
       setPhase("loading");
       const res = await getPipelineRules({ serverUrl: url, backendId: backend.id });
