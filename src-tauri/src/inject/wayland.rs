@@ -750,17 +750,32 @@ mod imp {
     /// `(reachable, unreachable)`. Only letters count: digits, punctuation, symbols and emoji say
     /// nothing about whether the layout fits the transcript's script.
     fn letter_reach(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> (usize, usize) {
+        let (reachable, unreachable, _) = letter_walk(text, map, caps);
+        (reachable, unreachable)
+    }
+
+    /// [`letter_reach`]'s walk, plus whether any unreachable letter is one the layout HAS a key
+    /// for and only the live Caps Lock blocks (`caps_plan` refused the press).
+    fn letter_walk(
+        text: &str,
+        map: &HashMap<char, KeySpec>,
+        caps: LiveCaps,
+    ) -> (usize, usize, bool) {
         text.chars()
             .filter(|c| c.is_alphabetic())
-            .fold((0, 0), |(yes, no), c| match typeable_keys(c, map, caps) {
-                Some(_) => (yes + 1, no),
-                None => (yes, no + 1),
+            .fold((0, 0, false), |(yes, no, blocked), c| {
+                match typeable_keys(c, map, caps) {
+                    Some(_) => (yes + 1, no, blocked),
+                    None => (yes, no + 1, blocked || key_sequence(c, map).is_some()),
+                }
             })
     }
 
     /// Should a typed job go on the clipboard instead, because the active layout cannot produce
-    /// its letters? Two cases divert. Most letters are unreachable (Chinese on a US layout, digits
-    /// or not). Or ANY unreachable letter belongs to a foreign word: a non-Latin script (Han,
+    /// its letters? Three cases divert. Most letters are unreachable (Chinese on a US layout, digits
+    /// or not). Or ANY unreachable letter is one the layout has a key for but the live Caps Lock
+    /// blocks (ü on ch(de_nodeadkeys) with Caps remapped): no stray accent, so every one of them
+    /// would vanish. Or ANY unreachable letter belongs to a foreign word: a non-Latin script (Han,
     /// Kana, Hangul, Arabic, Hebrew, Thai, but also cased Cyrillic, Greek, Armenian...) on any
     /// layout, so "我在用iPhone 15 Pro Max" must not be typed as "iPhone 15 Pro Max", nor "Ich habe
     /// gestern Привет gesagt" lose "Привет", just because the Latin letters outnumber it — and,
@@ -768,8 +783,11 @@ mod imp {
     /// "Я купил новый iPhone вчера" keeps its "iPhone". Only stray Latin letters on a Latin
     /// layout (an accent a US layout lacks) are left to the per-character skip.
     fn divert_unreachable(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> bool {
-        let (reachable, unreachable) = letter_reach(text, map, caps);
-        unreachable > 0 && (unreachable >= reachable || unreachable_foreign_word(text, map, caps))
+        let (reachable, unreachable, caps_blocked) = letter_walk(text, map, caps);
+        unreachable > 0
+            && (unreachable >= reachable
+                || caps_blocked
+                || unreachable_foreign_word(text, map, caps))
     }
 
     /// Does `text` hold a letter of a foreign word that the active layout cannot type? On any
@@ -2004,6 +2022,9 @@ mod imp {
             // The typing loop skips every ü under that Caps state; the divert check must see them.
             assert_eq!(letter_reach(text, &map, stuck), (9, 3));
             assert!(typeable_keys('\u{fc}', &map, stuck).is_none());
+            // ...and divert the line: the layout has ü, so these are no stray accents to skip.
+            assert!(divert_unreachable(text, &map, stuck));
+            assert!(!divert_unreachable(text, &map, CAPS_OFF));
             // Caps off, or a Caps key that still taps Caps Lock: ü is typed, nothing unreachable.
             assert_eq!(letter_reach(text, &map, CAPS_OFF), (12, 0));
             let usable = LiveCaps {
