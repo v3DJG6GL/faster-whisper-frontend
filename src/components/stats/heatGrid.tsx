@@ -40,11 +40,16 @@ export function levelLegendLabels(breaks: [number, number, number], counts: read
   // Duration quartiles can sit under ten seconds (processing time per day); the axis
   // formatter rounds those to "0s", which read as "1s–0s". Sub-ten-second bounds keep a
   // decimal, and the first active step opens at 0.1 s instead of 1 s when its break is below it
-  // (an empty step's 0 break says nothing: legendRanges draws it as "—").
+  // (an empty step's 0 break says nothing: legendRanges draws it as "—"). Below 0.1 s a bound
+  // keeps one significant digit and the floor drops to the break's own decade (0.03 s opens at
+  // 0.01 s): one decimal would print 0.03 s as "0s", so a later step would open below the one
+  // before it, and the top step would claim "0.1s+" for values the floor lifted it past.
   const dur = isDurationMetric(metric);
-  const fmt = (v: number) => (dur && v > 0 && v < 10 ? `${Math.round(v * 10) / 10}s` : metricTick(metric, v));
+  const fmt = (v: number) =>
+    dur && v > 0 && v < 10 ? `${v < 0.1 ? Number(v.toPrecision(1)) : Math.round(v * 10) / 10}s` : metricTick(metric, v);
   const firstBreak = breaks.find((v) => v > 0) ?? 0;
-  return legendRanges(breaks, fmt, dur && firstBreak < 1 ? 0.1 : 1, counts[4]);
+  const lo = !dur || firstBreak >= 1 ? 1 : firstBreak >= 0.1 || firstBreak === 0 ? 0.1 : 10 ** Math.floor(Math.log10(firstBreak));
+  return legendRanges(breaks, fmt, lo, counts[4]);
 }
 
 /** The five labelled steps: swatch, value range, count. Shared by both grids. */
