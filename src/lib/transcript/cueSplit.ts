@@ -441,10 +441,15 @@ const TRAILS = "\\u0e30\\u0e32\\u0e33\\u0e45\\u0eb0\\u0eb2\\u0eb3";
 const STACKERS = "\\u1039\\u17d2";
 const LEAD_OR_STACKER = new RegExp(`[${LEADS}${STACKERS}]`);
 const TRAIL = new RegExp(`[${TRAILS}]`);
+/** A Burmese consonant killed by asat (န် ယ် င့်) or a Khmer one by bantoc (ប់): the final
+ *  consonant of the syllable before it, so it sticks to that one — ရန်ကုန် wrapped as ရ / န်ကုန်. */
+const KILLED = "[\\u1000-\\u1021](?=\\u1037?\\u103a)|[\\u1780-\\u17a2](?=\\u17cb)";
+const KILLED_AT = new RegExp(`^(?:${KILLED})`);
 /** What rides after a base character: combining marks, emoji skin tones, Thai/Lao following
  *  vowels, a halfwidth voicing mark (ﾞ ﾟ — a letter, not a mark, so it rides before a
- *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks. */
-const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S)*`;
+ *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks,
+ *  a killed Burmese/Khmer consonant. */
+const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*`;
 /** Scripts written without spaces between words that are no CJK (unspacedChar keeps
  *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
  *  between its syllables, like a CJK run — a space-joined multi-sentence Thai translation
@@ -742,8 +747,9 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     const cp = text.codePointAt(i)!;
     if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") continue;
     // Nor inside a Thai/Lao syllable (after a leading vowel, before a following vowel)
-    // or a Burmese/Khmer consonant stack (right after the virama).
-    if (LEAD_OR_STACKER.test(text[i - 1]) || TRAIL.test(text[i])) continue;
+    // or a Burmese/Khmer consonant stack (right after the virama), nor before a killed
+    // Burmese/Khmer consonant.
+    if (LEAD_OR_STACKER.test(text[i - 1]) || TRAIL.test(text[i]) || KILLED_AT.test(text.slice(i, i + 3))) continue;
     if (isRI(cp)) {
       let n = 0;
       for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;

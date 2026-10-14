@@ -959,6 +959,28 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
       expect(p[0].endsWith("\u1039")).toBe(false);
     }
   });
+  it("a killed Burmese/Khmer consonant (asat, bantoc) stays with the syllable before it", () => {
+    const KILLED_START = /^[က-အ]့?်|^[ក-អ]់/u;
+    const my = "ကျွန်တော်တို့မနက်ဖြန်ရန်ကုန်မြို့ကိုသွားမယ်။ အဲဒီမှာသူငယ်ချင်းတွေနဲ့တွေ့ပြီးထမင်းစားမယ်။";
+    const myUn = "ကျွန်တော်အိမ်ပြန်သွားတယ်။ပြီးတော့ထမင်းစားတယ်။";
+    const km = "ខ្ញុំទៅផ្ទះ។បន្ទាប់មកខ្ញុំញ៉ាំបាយ។";
+    const lines = wrapLines(my, 28, 2, 0, undefined, "my");
+    expect(lines.join("").replace(/\s/g, "")).toBe(my.replace(/\s/g, ""));
+    expect(lines.some((l) => l.includes("ရန်ကုန်"))).toBe(true);
+    for (const t of [my, myUn, km]) {
+      for (let cpl = 6; cpl <= 30; cpl++) {
+        const w = wrapLines(t, cpl, 2);
+        expect(w.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+        expect(w.filter((l) => KILLED_START.test(l))).toEqual([]);
+      }
+      for (const s of [[1, 1], [1, 2], [2, 1], [1, 1, 1], [1, 1, 1, 1]]) {
+        const p = cutByShare(t, s);
+        expect(p.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+        expect(p.filter((x) => KILLED_START.test(x))).toEqual([]);
+      }
+    }
+    expect(cutByShare(km, [1, 1], "km")[1].startsWith("ប់")).toBe(false);
+  });
   // Two Thai sentences joined by one space: spaced text, but each sentence is still one run.
   const THAI2 = THAI + " " + "พรุ่งนี้ฝนจะตกหนักมากดังนั้นเราควรอยู่บ้านและดูหนังด้วยกันทั้งวันเลยนะครับ";
   it("own timing: a spaced multi-sentence Thai translation splits inside its sentences", () => {
