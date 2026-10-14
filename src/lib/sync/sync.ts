@@ -629,12 +629,16 @@ export async function composeBlob(
       // Held as missing, it took the degraded pass-through below on every compose, and every
       // merge then left backends out of the apply: `reconcileBackendSecrets`, the one place that
       // re-derives the flag, never ran, and sync stayed degraded for good. So: the base's key for
-      // that id travels when it holds one (nothing is erased, and the apply's reconcile writes it
-      // here), else the entry goes up as keyless, which is what it is. Only a read with NO failed
-      // id, and only while the base's keys were read back whole (otherwise "no base key" may just
-      // mean an unread stash): a failed id or a timeout keeps the old completeness rule as is.
+      // that id travels when it holds one (nothing is erased; it is written back here only when an
+      // apply's reconcile runs), else the entry goes up as keyless, which is what it is. Only a
+      // read with NO failed id, and only while the base's keys were read back whole (otherwise "no
+      // base key" may just mean an unread stash): a failed id or a timeout keeps the old
+      // completeness rule as is. And only from the ADOPTED base: with none, or with backends
+      // fresh, a merge's pass-through is the remote, whose key carried here reads as this
+      // device's own — the consent rule then sees no change and the apply stores it unreviewed.
       if (read && Array.isArray(read.unreadable) && read.unreadable.length === 0 && !snapshotSecretsUnavailable) {
-        const snapSecrets = snapshot?.backends?.secrets;
+        const base = state.snapshot?.backends;
+        const snapSecrets = base !== undefined && snapshot?.backends === base ? base.secrets : undefined;
         const carried: [string, string][] = [];
         const list = cfg.backends.map((b) => {
           if (!b.hasApiKey || ownProp(secrets, b.id) !== undefined) return b;

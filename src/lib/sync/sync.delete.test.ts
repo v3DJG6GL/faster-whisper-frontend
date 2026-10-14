@@ -472,6 +472,35 @@ describe("a stale API-key flag the keyring reports absent", () => {
       cleanup();
     }
   });
+
+  // With NO base (first contact, a forgotten re-created document, a re-enabled backends category)
+  // a merge's compose passes the REMOTE through: carrying "the base's key" from it read the peer's
+  // key as this device's own, so the consent rule saw no change and the apply stored it unreviewed.
+  it("a peer's key met with no base asks before it is stored, as on a device with no key", async () => {
+    for (const stale of [true, false]) {
+      try {
+        await resetSyncState();
+        const settings = structuredClone(DEFAULT_SETTINGS);
+        settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+        api.store = new Map();
+        api.keyWrites = [];
+        useApp.setState({ settings, backends: [backend({ hasApiKey: stale })], profiles: [], appRules: [] });
+        const remote: SyncBlob = { backends: { list: [backend({ hasApiKey: true })], secrets: { b1: "sk-PEER" } } };
+        api.pulled = { version: 3, updated_ts: 3, device: "peer", blob: remote };
+        await pullNow(true);
+        // The two lists differ in b1's flag: the dialog asks first; taking the peer's then reviews
+        // the key it brings.
+        expect(getPendingConflict()?.categories).toEqual(["backends"]);
+        await resolveSyncConflicts({ backends: "remote" }, getPendingConflict()!.id);
+        expect(api.keyWrites.filter(([id]) => id === "b1")).toEqual([]);
+        expect(getPendingReview()?.changes.map((c) => [c.kind, c.id, c.detail])).toEqual([
+          ["api-key", "b1", "a key would be stored for this server"],
+        ]);
+      } finally {
+        cleanup();
+      }
+    }
+  });
 });
 
 // After a peer's "Delete server copy" the backend answers a stale base with a 409 whose body is the
