@@ -460,20 +460,43 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
         // loader could not parse.
         let side = config.with_extension("json.invalid-utf8.bak");
         if lossy {
-            if let Err(e) = keep_private_copy(&side, &bytes) {
+            // A copy already holding exactly these bytes is kept: an earlier launch wrote it and
+            // then failed the rewrite below, and refusing now would skip this re-point too.
+            let kept = match keep_private_copy(&side, &bytes) {
+                Err(e)
+                    if e.kind() == std::io::ErrorKind::AlreadyExists
+                        && std::fs::read(&side).is_ok_and(|b| b == bytes) =>
+                {
+                    Ok(())
+                }
+                r => r,
+            };
+            if let Err(e) = kept {
                 tracing::warn!(
                     "[migrate] config.json is not valid UTF-8 and its bytes could not be kept in {} ({e}); its moved folders are not re-pointed",
                     side.display()
                 );
                 return Vec::new();
             }
+        }
+        let written = serde_json::to_string_pretty(&json)
+            .map_err(std::io::Error::other)
+            .and_then(|out| crate::config::write_private_atomic(config, &out));
+        // A failed write (a full disk, an AV or sync client holding config.json) leaves the
+        // settings naming the vacated folders: say so, and return no audio bases so the caller
+        // keeps their heal stamps rather than trusting a re-point that never landed.
+        if let Err(e) = written {
             tracing::warn!(
-                "[migrate] config.json is not valid UTF-8; re-pointing its moved folders, original bytes kept in {}",
+                "[migrate] could not write the re-pointed folders to {} ({e}); its settings still name the old folder",
+                config.display()
+            );
+            return Vec::new();
+        }
+        if lossy {
+            tracing::warn!(
+                "[migrate] config.json is not valid UTF-8; re-pointed its moved folders, original bytes kept in {}",
                 side.display()
             );
-        }
-        if let Ok(out) = serde_json::to_string_pretty(&json) {
-            let _ = crate::config::write_private_atomic(config, &out);
         }
     }
     audio_bases
@@ -820,6 +843,38 @@ mod tests {
             bytes
         );
         assert!(!new.join("config.json.bak").exists());
+    }
+
+    #[test]
+    fn a_failed_config_write_reports_nothing_re_pointed_and_a_later_launch_still_re_points() {
+        let base = scratch("write-fails");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(&new).unwrap();
+        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
+        bytes.extend(serde_json::to_vec(&old.join("my-audio")).unwrap());
+        bytes.extend(br#"},"general":{"note":"caf"#);
+        bytes.push(0xE9);
+        bytes.extend(br#""}}}"#);
+        let config = new.join("config.json");
+        std::fs::write(&config, &bytes).unwrap();
+        // A directory where the atomic write's temp file goes: the write fails, as a held
+        // config.json does on Windows.
+        let blocker = crate::transport::media::tmp_sibling(&config);
+        std::fs::create_dir_all(blocker.join("held")).unwrap();
+        let moved = [(old, new.clone())];
+        assert!(rewrite_config_paths(&config, &moved).is_empty());
+        assert_eq!(std::fs::read(&config).unwrap(), bytes);
+        // The next launch that re-checks the config finds the side copy from the first try,
+        // holding these exact bytes, and still re-points.
+        std::fs::remove_dir_all(&blocker).unwrap();
+        assert_eq!(
+            rewrite_config_paths(&config, &moved),
+            vec![new.join("my-audio")]
+        );
+        assert_eq!(
+            std::fs::read(new.join("config.json.invalid-utf8.bak")).unwrap(),
+            bytes
+        );
     }
 
     #[test]
