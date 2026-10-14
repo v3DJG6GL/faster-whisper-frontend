@@ -39,7 +39,8 @@ pub struct InjectOutcome {
     /// timed-out offer may still reach the clipboard later), or an insert the caller marked
     /// `withhold_on_divert` (the hard-break separator) that would otherwise have been diverted, or
     /// recovered after a sink that wrote nothing, before anything was written: it writes nothing,
-    /// and that caller drops it rather than re-sending. A cancel before the write is not a
+    /// and that caller drops it rather than re-sending. Or a bare auto-Enter (empty text) the
+    /// mid-function divert withheld: no Return went out. A cancel before the write is not a
     /// `landed: false` cause, withheld or not.
     ///
     /// The default for any future early return must be `true`. `false` means "send it again", and a
@@ -419,13 +420,7 @@ pub(crate) async fn inject_text(
                 crate::inject::note_recovery_on_clipboard();
             }
         }
-        // The one site that reports a DIVERT: the caller asked to type or paste and we did neither.
-        // Reported only when a transcript was written — a withheld bare Enter (empty text) wrote
-        // nothing, so a caller booking a clipboard outcome on `diverted` must not see one.
-        return Ok(InjectOutcome {
-            landed: true,
-            diverted: !text.is_empty(),
-        });
+        return Ok(divert_outcome(&text));
     }
     // Now that the method is final and focus has been read once, at the sink. Two detectors (see
     // `inject::rdp_client`): the focused app id against the known clients, and — Windows — the focused
@@ -965,9 +960,30 @@ fn clipboard_form(text: &str, clipboard_text: Option<String>) -> String {
     }
 }
 
+/// The mid-function divert's answer — the one site that reports a DIVERT: the caller asked to type
+/// or paste and we did neither. Reported only when a transcript was written. A withheld bare Enter
+/// (empty text) wrote nothing and pressed no Return, so it is `landed: false` like every other sink
+/// that skips one: a caller clearing its owed phrase gap on a landed Enter must not see one.
+fn divert_outcome(text: &str) -> InjectOutcome {
+    InjectOutcome {
+        landed: !text.is_empty(),
+        diverted: !text.is_empty(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::clipboard_form;
+    use super::{clipboard_form, divert_outcome};
+
+    /// A bare auto-Enter that reaches the divert arm (focus moved, modifiers stuck) pressed no
+    /// Return: not landed, not diverted. A transcript there is on the clipboard: landed, diverted.
+    #[test]
+    fn a_diverted_bare_enter_reports_not_landed() {
+        let enter = divert_outcome("");
+        assert!(!enter.landed && !enter.diverted);
+        let phrase = divert_outcome("Hallo Welt");
+        assert!(phrase.landed && phrase.diverted);
+    }
 
     /// A live phrase types behind the field's phrase gap or seam space, but every clipboard write
     /// of it (divert, recovery, clipboard-only) gets the clipboard form the caller handed over.
