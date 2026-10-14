@@ -323,7 +323,8 @@ const ONE_LETTER_WORDS = [
   /^[aiouwz]$/iu, // Polish
   /^[aikosuvz]$/iu, // Czech / Slovak
   /^[авикосуя]$/iu, // Russian
-  /^[авзійоуї]$/iu, // Ukrainian
+  /^[авзійоуїяє]$/iu, // Ukrainian
+  /^[авзіуўя]$/iu, // Belarusian
 ];
 
 /** Broadcaster subtitles (SRF and friends) hyphenate words across lines ("journa-" /

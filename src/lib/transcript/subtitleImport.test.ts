@@ -571,6 +571,16 @@ describe("site subtitle cleanup", () => {
       "Il y a à boire", "tam a w z nim", "А я в шоке.", "a k s",
     ]);
   });
+  it("Ukrainian and Belarusian one-letter words (я, є, ў) stay words; Cyrillic emphasis still glues", () => {
+    const kept = [
+      "Мама і я з дітьми", "Він і я в місті", "А я і ти", "А я з тобою.", "І я в шоці.", "Я і в тебе",
+      "Я є у тебе", "Вона і я ў хаце", "А я в шоке.",
+    ];
+    expect(fixBroadcasterText(kept)).toEqual(kept);
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nМама і я з дітьми\n";
+    expect(parseImportedText("srt", srt).segments[0].text).toBe("Мама і я з дітьми");
+    expect(fixBroadcasterText(["У В А Г А", "w i e immer", "z w e i Mal"])).toEqual(["УВАГА", "wie immer", "zwei Mal"]);
+  });
   it("a voice tag whose name opens with initials keeps its tag, its speaker and its name", () => {
     const cue = (text: string) =>
       parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}\n`).segments.map((s) => ({
