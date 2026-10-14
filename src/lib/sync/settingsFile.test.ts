@@ -148,6 +148,32 @@ describe("exportToFile", () => {
       useApp.setState({ backends: prev });
     }
   });
+
+  // The sync stash latch (a launch read-back of the merge base's keys came back partial) is about
+  // the sync base, which an export never consults: it must not keep a stale absent flag claiming a
+  // key and so drop the readable keys from the backup.
+  it("carries the readable keys and writes a stale absent flag keyless while the sync stash latch is set", async () => {
+    const { useApp } = await import("../store");
+    const api = await import("../api");
+    const { restoreSnapshotSecretsForTests } = await import("./sync");
+    const { exportToFile } = await import("./settingsFile");
+    const prev = useApp.getState().backends;
+    const base = { ...(prev[0] ?? {}), hasApiKey: true } as (typeof prev)[number];
+    useApp.setState({ backends: [{ ...base, id: "a" }, { ...base, id: "b" }] });
+    try {
+      // The mocked keyring read gives nothing back for the stash: the latch is set.
+      expect((await restoreSnapshotSecretsForTests(["a"])).blocked).toBe(true);
+      vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: { a: "sk-a" }, unreadable: [] });
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+      const calls = vi.mocked(api.exportSettingsFile).mock.calls;
+      const env = calls[calls.length - 1][1] as { categories: SyncBlob };
+      expect(env.categories.backends?.secrets).toEqual({ a: "sk-a" });
+      expect(env.categories.backends?.list.map((b) => [b.id, b.hasApiKey])).toEqual([["a", true], ["b", false]]);
+    } finally {
+      await restoreSnapshotSecretsForTests([]); // clears the latch
+      useApp.setState({ backends: prev });
+    }
+  });
 });
 
 // ── stripMachineFolders ─────────────────────────────────────────────────────

@@ -642,7 +642,10 @@ export async function composeBlob(
       // completeness rule as is. And only from the ADOPTED base: with none, or with backends
       // fresh, a merge's pass-through is the remote, whose key carried here reads as this
       // device's own — the consent rule then sees no change and the apply stores it unreviewed.
-      if (keyReadFailedNowhere(read) && !snapshotSecretsUnavailable) {
+      // The stash latch is consulted only when a base is passed: a settings export passes none,
+      // so no base key could travel, and the latch (a sync-base matter) dropped every readable key
+      // from the backup over one stale flag.
+      if (keyReadFailedNowhere(read) && (snapshot === undefined || !snapshotSecretsUnavailable)) {
         const base = state.snapshot?.backends;
         const snapSecrets = base !== undefined && snapshot?.backends === base ? base.secrets : undefined;
         const carried: [string, string][] = [];
