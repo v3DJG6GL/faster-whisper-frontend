@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { playRejectionBreaks, renameToCommit, speakerRenameDraft, speakerRenameValue } from "./viewerKit";
+import {
+  applySpeakerRenameInput,
+  playRejectionBreaks,
+  renameToCommit,
+  speakerRenameDraft,
+  speakerRenameEdit,
+  speakerRenameValue,
+} from "./viewerKit";
 import viewerSrc from "./TranscriptViewer.tsx?raw";
 
 describe("speakerRenameValue", () => {
@@ -19,7 +26,8 @@ describe("speakerRenameDraft", () => {
     const emoji = "🎤".repeat(40);
     expect(speakerRenameDraft("🎤".repeat(39), emoji)).toBe(emoji);
     expect(speakerRenameDraft(emoji, emoji + "🎤")).toBe(emoji);
-    expect(speakerRenameDraft("", "𠀀".repeat(41))).toBe("");
+    // A paste fills the field to the cap, the way maxLength does, instead of being dropped.
+    expect(speakerRenameDraft("", "𠀀".repeat(41))).toBe("𠀀".repeat(40));
     // The colon stays in the draft: the commit drops it (speakerRenameValue).
     expect(speakerRenameDraft("Host:", "Host: A")).toBe("Host: A");
   });
@@ -27,6 +35,35 @@ describe("speakerRenameDraft", () => {
     const full = "A".repeat(20) + "B".repeat(20);
     const typoFix = "A".repeat(20) + "x" + "B".repeat(20);
     expect(speakerRenameDraft(full, typoFix)).toBe(full);
+  });
+  it("a paste past the cap keeps what fits of the pasted run, around the text already there", () => {
+    const name = "Johanna Katharina von Hohenzollern-Sig"; // 38 code points
+    expect(speakerRenameDraft("Dr. ", "Dr. " + name)).toBe("Dr. " + name.slice(0, 36));
+    // Pasted between "Dr. " and ", PhD": the suffix stays, the paste is cut.
+    expect(speakerRenameDraft("Dr. , PhD", "Dr. " + name + ", PhD")).toBe("Dr. " + name.slice(0, 31) + ", PhD");
+    // A selection replaced by a paste: the replaced characters free their room.
+    expect(speakerRenameDraft("Speaker 1", name + "ABCDEFG")).toBe((name + "AB"));
+  });
+  it("the caret lands where the kept insertion ends, not at the end of the name", () => {
+    const full = "A".repeat(20) + "B".repeat(20);
+    expect(speakerRenameEdit(full, "A".repeat(10) + "x" + "A".repeat(10) + "B".repeat(20))).toEqual({ draft: full, caret: 10 });
+    expect(speakerRenameEdit("Dr. , PhD", "Dr. " + "Z".repeat(38) + ", PhD")).toEqual({
+      draft: "Dr. " + "Z".repeat(31) + ", PhD",
+      caret: 35,
+    });
+    // UTF-16 index: 40 surrogate pairs.
+    expect(speakerRenameEdit("", "𠀀".repeat(41)).caret).toBe(80);
+    expect(speakerRenameEdit("Ann", "Anna").caret).toBeNull();
+  });
+  it("the field gets the cut draft and the caret written back, so React's restore does not jump it", () => {
+    const calls: [number, number][] = [];
+    const el = { value: "Dr. " + "Z".repeat(38), setSelectionRange: (a: number, b: number) => void calls.push([a, b]) };
+    expect(applySpeakerRenameInput(el, "Dr. ", false)).toBe("Dr. " + "Z".repeat(36));
+    expect(el.value).toBe("Dr. " + "Z".repeat(36));
+    expect(calls).toEqual([[40, 40]]);
+    const typing = { value: "Ann", setSelectionRange: () => calls.push([-1, -1]) };
+    expect(applySpeakerRenameInput(typing, "An", false)).toBe("Ann");
+    expect(calls).toHaveLength(1);
   });
   it("a name stored before the cap can be shortened and edited down without losing its end", () => {
     const long = "Moderatorin der Podiumsdiskussion am Nachmittag"; // 47 code points
@@ -41,7 +78,7 @@ describe("speakerRenameDraft", () => {
   });
   it("the rename field caps in code points, not with a UTF-16 maxLength", () => {
     expect(viewerSrc).not.toMatch(/maxLength=\{40\}/);
-    expect(viewerSrc).toMatch(/setRenameDraft\(speakerRenameDraft\(renameDraft, e\.target\.value, \(e\.nativeEvent as InputEvent\)\.isComposing\)\)/);
+    expect(viewerSrc).toMatch(/setRenameDraft\(applySpeakerRenameInput\(e\.target, renameDraft, \(e\.nativeEvent as InputEvent\)\.isComposing\)\)/);
   });
 });
 

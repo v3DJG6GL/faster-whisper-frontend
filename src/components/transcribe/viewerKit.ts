@@ -28,15 +28,53 @@ export function speakerRenameValue(draft: string): string {
 
 /** The rename field's next draft: maxLength's behaviour, counted in code points (an input's
  *  maxLength counts UTF-16 units, which stopped an emoji or CJK Ext-B name at 20). An edit that
- *  grows the draft past the cap is refused, so the draft stays `prev` and the caret stays put —
- *  cutting the tail instead deleted the name's end on a mid-string typo fix and moved the caret.
- *  A shorter or equal value (a deletion, or a name stored before the cap being trimmed) and an
- *  open IME composition (cutting it mid-composition ends or duplicates it) pass as typed: the
- *  commit caps (speakerRenameValue). */
+ *  grows the draft past the cap keeps only as much of the inserted run (the part between the
+ *  common prefix and suffix of `prev` and `typed`) as fits: a paste fills the field to the cap,
+ *  and a keystroke at the cap inserts nothing — cutting the tail instead deleted the name's end
+ *  on a mid-string typo fix. `caret` is where the kept insertion ends (UTF-16 index), null when
+ *  the draft is `typed` as the browser has it. A shorter or equal value (a deletion, or a name
+ *  stored before the cap being trimmed) and an open IME composition (cutting it mid-composition
+ *  ends or duplicates it) pass as typed: the commit caps (speakerRenameValue). */
+export function speakerRenameEdit(
+  prev: string,
+  typed: string,
+  composing = false,
+): { draft: string; caret: number | null } {
+  const asTyped = { draft: typed, caret: null };
+  if (composing || typed.length <= SPEAKER_NAME_MAX) return asTyped;
+  const t = Array.from(typed);
+  const p = Array.from(prev);
+  if (t.length <= SPEAKER_NAME_MAX || t.length <= p.length) return asTyped;
+  let pre = 0;
+  while (pre < p.length && p[pre] === t[pre]) pre++;
+  let suf = 0;
+  while (suf < p.length - pre && suf < t.length - pre && p[p.length - 1 - suf] === t[t.length - 1 - suf]) suf++;
+  // A name stored before the cap leaves no room at all: pre + suf is already past it.
+  const room = Math.max(0, SPEAKER_NAME_MAX - pre - suf);
+  const head = t.slice(0, pre).join("") + t.slice(pre, t.length - suf).slice(0, room).join("");
+  return { draft: head + t.slice(t.length - suf).join(""), caret: head.length };
+}
+
+/** The next draft alone (speakerRenameEdit). */
 export function speakerRenameDraft(prev: string, typed: string, composing = false): string {
-  if (composing || typed.length <= SPEAKER_NAME_MAX) return typed;
-  const n = Array.from(typed).length;
-  return n > SPEAKER_NAME_MAX && n > Array.from(prev).length ? prev : typed;
+  return speakerRenameEdit(prev, typed, composing).draft;
+}
+
+/** The rename input's onChange: the next draft, with a cut edit written back to the field here.
+ *  React's controlled-value restore assigns `.value` when the DOM differs from state, and that
+ *  moves the caret to the end in WebKitGTK and WebView2; once the field already holds the draft
+ *  React writes nothing, so the caret set here stays where the edit happened. */
+export function applySpeakerRenameInput(
+  el: Pick<HTMLInputElement, "value" | "setSelectionRange">,
+  prev: string,
+  composing: boolean,
+): string {
+  const { draft, caret } = speakerRenameEdit(prev, el.value, composing);
+  if (caret !== null) {
+    el.value = draft;
+    el.setSelectionRange(caret, caret);
+  }
+  return draft;
 }
 
 /** What committing the speaker rename editor writes: null = nothing, when the draft is the

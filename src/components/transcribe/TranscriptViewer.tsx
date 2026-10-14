@@ -67,7 +67,7 @@ import type { BatchResult, TranscriptWord } from "@/lib/types";
 import { newProgressId } from "@/lib/ids";
 import { SegmentRow } from "@/components/transcribe/SegmentRow";
 import { TranslateProgressCard } from "@/components/transcribe/TranslateProgressCard";
-import { chipStyle, playRejectionBreaks, renameToCommit, speakerRenameDraft, type EffSegment } from "@/components/transcribe/viewerKit";
+import { applySpeakerRenameInput, chipStyle, playRejectionBreaks, renameToCommit, type EffSegment } from "@/components/transcribe/viewerKit";
 import { imeComposing } from "@/lib/keys";
 
 const trDoneTimers = new Map<string, number>();
@@ -2187,7 +2187,7 @@ export function TranscriptViewer({
                     autoFocus
                     value={renameDraft}
                     onChange={(e) =>
-                      setRenameDraft(speakerRenameDraft(renameDraft, e.target.value, (e.nativeEvent as InputEvent).isComposing))
+                      setRenameDraft(applySpeakerRenameInput(e.target, renameDraft, (e.nativeEvent as InputEvent).isComposing))
                     }
                     onBlur={commitRename}
                     onKeyDown={(e) => {
