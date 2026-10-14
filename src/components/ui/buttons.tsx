@@ -362,7 +362,9 @@ export function FieldTrigger({
           : "h-8 rounded-lg px-2.5 text-[12.5px] text-dim",
         // cn doesn't merge, and border-line would beat the accent: choose, never override.
         open ? "border-accent/55" : "border-line",
-        rest.disabled && "cursor-not-allowed opacity-40",
+        // aria-disabled too: ListPicker keeps a capped trigger natively enabled while it holds focus.
+        (rest.disabled || rest["aria-disabled"] === true || rest["aria-disabled"] === "true") &&
+          "cursor-not-allowed opacity-40",
         className,
       )}
     >

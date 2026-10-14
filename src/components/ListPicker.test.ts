@@ -110,6 +110,44 @@ describe("ListPicker trigger while the popover is open", () => {
     expect(trigger.disabled).toBe(true);
   });
 
+  it("stays focusable after that close while it holds focus, so focus is not dropped to <body>", () => {
+    render(false);
+    // A native button: focus() is a no-op while its rendered `disabled` is set, and taking focus
+    // fires its onFocus.
+    let focused = false;
+    (trigger.ref as { current: unknown }).current = {
+      focus: () => {
+        if (trigger.disabled) return;
+        focused = true;
+        trigger.onFocus?.();
+      },
+    };
+    trigger.onKeyDown(key("ArrowDown") as never);
+    // The search field takes focus; then the pick fills the last slot.
+    trigger.onBlur?.();
+    const tree = render(true);
+    listKeyHandler((tree.props as { children: unknown }).children)!(key("Escape"));
+    expect(focused).toBe(true);
+
+    // The close render: a focused button set natively disabled would drop focus to <body>.
+    render(true);
+    expect(trigger["aria-expanded"]).toBe(false);
+    expect(trigger.disabled).toBeFalsy();
+    expect(trigger["aria-disabled"]).toBe(true);
+    // Still refuses to open: a click (Enter or Space on the button) or ↓.
+    trigger.onClick();
+    render(true);
+    expect(trigger["aria-expanded"]).toBe(false);
+    trigger.onKeyDown(key("ArrowDown") as never);
+    render(true);
+    expect(trigger["aria-expanded"]).toBe(false);
+
+    // Focus moves on: now it is natively disabled.
+    trigger.onBlur?.();
+    render(true);
+    expect(trigger.disabled).toBe(true);
+  });
+
   it("a disabled closed trigger does not open", () => {
     render(true);
     trigger.onKeyDown(key("ArrowDown") as never);

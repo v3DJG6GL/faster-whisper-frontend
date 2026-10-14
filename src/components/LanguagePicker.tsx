@@ -227,14 +227,14 @@ export function TargetLanguagePicker({
               // ignores it, and a natively disabled button can't take the focus back when Enter or
               // Esc closes the still-open multi popover — focus would drop to <body>.
               disabled={disabled}
-              aria-disabled={p.disabled || undefined}
+              aria-disabled={p["aria-disabled"]}
               aria-label={full && !anyFree ? `Add a target language — ${fullTitle}` : "Add a target language"}
               // One border/text set, chosen: cn is clsx (no merge) and the built CSS emits
               // border-line-strong after border-accent/55, so an appended open state would lose.
               className={cn(
                 "ring-signal h-7 rounded-pill border border-dashed px-2.5 text-[11.5px] hover:text-text",
                 p["aria-expanded"] ? "border-accent/55 text-text" : "border-line-strong text-dim",
-                p.disabled && "cursor-not-allowed opacity-50",
+                p["aria-disabled"] && "cursor-not-allowed opacity-50",
               )}
             >
               + language

@@ -45,11 +45,16 @@ export interface PickerSection<R> {
 export interface TriggerProps {
   ref: Ref<HTMLButtonElement>;
   type: "button";
+  /** Native: off while the trigger is open or holds focus (see below). */
   disabled?: boolean;
+  /** The caller's `disabled`, always — what a trigger shows and AT announces. */
+  "aria-disabled"?: true;
   "aria-haspopup": "listbox";
   "aria-expanded": boolean;
   onClick: () => void;
   onKeyDown: (e: KeyboardEvent<HTMLElement>) => void;
+  onFocus: () => void;
+  onBlur: () => void;
 }
 
 /** The grouped listbox: section headers with counts, options with the active one outlined and
@@ -219,6 +224,7 @@ export function ListPicker<R>({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [triggerFocused, setTriggerFocused] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
   const rect = useAnchoredRect(triggerRef, open);
@@ -310,10 +316,12 @@ export function ListPicker<R>({
       {renderTrigger({
         ref: triggerRef,
         type: "button",
-        // Enabled while open: a pick that fills the caller's last slot flips `disabled` with the
-        // list still up, and the Enter/Esc/Tab close then refocuses the trigger — a natively
-        // disabled button can't take it, so focus would drop to <body>. show() still refuses.
-        disabled: disabled && !open,
+        // Enabled while open or focused: a pick that fills the caller's last slot flips `disabled`
+        // with the list still up, and the Enter/Esc/Tab close then refocuses the trigger — a
+        // natively disabled button can't take it, and one disabled while focused drops it to
+        // <body>. It goes native-disabled once focus leaves; until then show() refuses.
+        disabled: disabled && !open && !triggerFocused,
+        "aria-disabled": disabled || undefined,
         "aria-haspopup": "listbox",
         "aria-expanded": open,
         onClick: () => (open ? close(false) : show()),
@@ -329,6 +337,8 @@ export function ListPicker<R>({
             show();
           }
         },
+        onFocus: () => setTriggerFocused(true),
+        onBlur: () => setTriggerFocused(false),
       })}
       {open &&
         pos &&
