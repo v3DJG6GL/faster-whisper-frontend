@@ -33,6 +33,9 @@ const LEGACY_ID: &str = "ch.informethic.faster-whisper-frontend";
 const NEW_ID: &str = "org.fasterwhisper.frontend";
 /// Dropped into each migrated folder; its presence means "do not look at the old one again".
 const MARKER: &str = ".migrated-from-legacy";
+/// Left beside a config.json whose re-point failed (see `rewrite_config_paths`): every root then
+/// carries MARKER and nothing moves again, so this is what brings a later launch back to it.
+const REPOINT_PENDING: &str = ".migrate-repoint-pending";
 
 #[derive(Debug, PartialEq, Eq)]
 enum Outcome {
@@ -225,8 +228,12 @@ fn migrate(roots: &[Root], legacy_running: bool) -> Verdict {
         }
     }
     // The fix-ups still run when another root failed: the roots that moved now carry the
-    // marker and are never looked at again, so it is now or never for them.
-    if !moved.is_empty() {
+    // marker and are never looked at again, so it is now or never for them — unless an
+    // earlier launch's config write failed and left REPOINT_PENDING, which retries it.
+    let repoint_pending = roots
+        .iter()
+        .any(|r| r.base.join(NEW_ID).join(REPOINT_PENDING).exists());
+    if !moved.is_empty() || repoint_pending {
         rewrite_moved_paths(roots, moved);
     }
     verdict(false, &failed)
@@ -476,6 +483,7 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
                     "[migrate] config.json is not valid UTF-8 and its bytes could not be kept in {} ({e}); its moved folders are not re-pointed",
                     side.display()
                 );
+                mark_repoint_pending(config);
                 return Vec::new();
             }
         }
@@ -483,13 +491,15 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
             .map_err(std::io::Error::other)
             .and_then(|out| crate::config::write_private_atomic(config, &out));
         // A failed write (a full disk, an AV or sync client holding config.json) leaves the
-        // settings naming the vacated folders: say so, and return no audio bases so the caller
-        // keeps their heal stamps rather than trusting a re-point that never landed.
+        // settings naming the vacated folders: say so, return no audio bases so the caller
+        // keeps their heal stamps rather than trusting a re-point that never landed, and leave
+        // the pending marker so the next launch tries again.
         if let Err(e) = written {
             tracing::warn!(
                 "[migrate] could not write the re-pointed folders to {} ({e}); its settings still name the old folder",
                 config.display()
             );
+            mark_repoint_pending(config);
             return Vec::new();
         }
         if lossy {
@@ -499,7 +509,21 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<Path
             );
         }
     }
+    // Landed, or nothing (left) to re-point: no later launch needs to look again.
+    let _ = std::fs::remove_file(config.with_file_name(REPOINT_PENDING));
     audio_bases
+}
+
+/// Leave REPOINT_PENDING beside `config` so the next launch re-runs the re-point. Best effort:
+/// a folder that refuses even this empty file is logged, and the re-point waits for a move.
+fn mark_repoint_pending(config: &Path) {
+    let pending = config.with_file_name(REPOINT_PENDING);
+    if let Err(e) = std::fs::write(&pending, b"") {
+        tracing::warn!(
+            "[migrate] could not leave {} to retry the re-point next launch ({e})",
+            pending.display()
+        );
+    }
 }
 
 /// Keep `bytes` in a NEW owner-only file at `path` (`config::write_private` takes text only).
@@ -864,8 +888,9 @@ mod tests {
         let moved = [(old, new.clone())];
         assert!(rewrite_config_paths(&config, &moved).is_empty());
         assert_eq!(std::fs::read(&config).unwrap(), bytes);
-        // The next launch that re-checks the config finds the side copy from the first try,
-        // holding these exact bytes, and still re-points.
+        assert!(new.join(REPOINT_PENDING).exists());
+        // The next launch, brought back by the pending marker, finds the side copy from the
+        // first try holding these exact bytes, and still re-points.
         std::fs::remove_dir_all(&blocker).unwrap();
         assert_eq!(
             rewrite_config_paths(&config, &moved),
@@ -875,6 +900,37 @@ mod tests {
             std::fs::read(new.join("config.json.invalid-utf8.bak")).unwrap(),
             bytes
         );
+        assert!(!new.join(REPOINT_PENDING).exists());
+    }
+
+    #[test]
+    fn a_failed_config_write_is_retried_by_a_launch_with_nothing_left_to_move() {
+        let base = scratch("write-retry");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(old.join("my-audio")).unwrap();
+        let cfg = serde_json::json!({ "settings": {
+            "recording": { "audioBaseDir": old.join("my-audio") },
+        }});
+        std::fs::write(old.join("config.json"), cfg.to_string()).unwrap();
+        // Moves with the folder and blocks the atomic write's temp file, as a held config.json
+        // does on Windows.
+        let blocker = crate::transport::media::tmp_sibling(&old.join("config.json"));
+        std::fs::create_dir_all(blocker.join("held")).unwrap();
+        let roots = [root(&base)];
+        assert_eq!(migrate(&roots, false), Verdict::Proceed);
+        let audio_base = |cfg: &Path| -> serde_json::Value {
+            let out: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(cfg).unwrap()).unwrap();
+            out["settings"]["recording"]["audioBaseDir"].clone()
+        };
+        let config = new.join("config.json");
+        assert_eq!(audio_base(&config), serde_json::json!(old.join("my-audio")));
+        assert!(new.join(REPOINT_PENDING).exists());
+        // The next launch: every root already moved, yet the setting is re-pointed.
+        std::fs::remove_dir_all(crate::transport::media::tmp_sibling(&config)).unwrap();
+        assert_eq!(migrate(&roots, false), Verdict::Proceed);
+        assert_eq!(audio_base(&config), serde_json::json!(new.join("my-audio")));
+        assert!(!new.join(REPOINT_PENDING).exists());
     }
 
     #[test]
