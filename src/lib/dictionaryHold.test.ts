@@ -2,7 +2,9 @@
 // replace the Dictionary's unsaved edits in silence — every manual path already refuses to.
 import { describe, expect, it } from "vitest";
 import {
+  dictionaryConflictText,
   dictionaryHeldResolution,
+  dictionaryLandedText,
   dictionaryLoadAction,
   dictionaryReloadStep,
   dictionarySavedText,
@@ -116,10 +118,55 @@ describe("dictionarySavedText", () => {
   });
 });
 
+describe("dictionaryLandedText", () => {
+  it("keeps the reload wording when the backend did not move", () => {
+    expect(dictionaryLandedText("http://a", "http://a", false, false)).toBe(
+      " The rules were reloaded from the server — check that your changes are there: a rule changed elsewhere may not have been saved.",
+    );
+    expect(dictionaryLandedText("http://a", null, true, true)).toBe(
+      " Reloading the rules failed — use Retry below, then check that your changes are there.",
+    );
+    expect(dictionaryLandedText(null, "http://b", true, false)).toBe(
+      " Reloading the rules failed — use Refresh above, then check that your changes are there.",
+    );
+  });
+
+  it("sends the user to the address the changes went to when a sync moved the backend", () => {
+    for (const failed of [false, true]) {
+      const text = dictionaryLandedText("http://a:8000", "http://b:8000", failed, true);
+      expect(text).toContain("went to http://a:8000");
+      expect(text).toContain("now points at http://b:8000");
+      expect(text).toContain("check http://a:8000 for them");
+      expect(text).not.toContain("reloaded from the server");
+    }
+  });
+});
+
+describe("dictionaryConflictText", () => {
+  it("keeps the reload wording when the backend did not move", () => {
+    expect(dictionaryConflictText("http://a", "http://a", false, false)).toBe(" The latest version has been reloaded.");
+    expect(dictionaryConflictText("http://a", null, true, true)).toBe(" Reloading the rules failed — use Retry below to load the latest version.");
+    expect(dictionaryConflictText(null, "http://b", true, false)).toBe(" Reloading the rules failed — use Refresh above to load the latest version.");
+  });
+
+  it("names the server that reported the conflicts and the one whose rules are shown when a sync moved the backend", () => {
+    const text = dictionaryConflictText("http://a:8000", "http://b:8000", false, false);
+    expect(text).toContain("http://a:8000");
+    expect(text).toContain("now points at http://b:8000, whose rules are shown");
+    expect(text).not.toContain("latest version");
+    const failed = dictionaryConflictText("http://a:8000", "http://b:8000", true, true);
+    expect(failed).toContain("now points at http://b:8000");
+    expect(failed).toContain("Retry below");
+  });
+});
+
 describe("Dictionary save wiring", () => {
   it("reloads after a landed save with the post-save flag and shows where the rules went", () => {
     expect(dictionarySrc).toMatch(/await load\(backend, true\)/);
     expect(dictionarySrc).toMatch(/dictionaryReloadStep\(serverUrl, live, afterSave/);
     expect(dictionarySrc).toMatch(/setResult\(\{ \.\.\.res, savedTo, shownFrom \}\)/);
+    // Every post-save banner line reads the move, not only "Saved N rules".
+    expect(dictionarySrc).toMatch(/dictionaryLandedText\(result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed, retryBelow\)/);
+    expect(dictionarySrc).toMatch(/dictionaryConflictText\(result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed, retryBelow\)/);
   });
 });

@@ -35,7 +35,9 @@ import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
 import { effectiveServerKind } from "@/lib/serverKind";
 import {
+  dictionaryConflictText,
   dictionaryHeldResolution,
+  dictionaryLandedText,
   dictionaryLoadAction,
   dictionaryReloadStep,
   dictionarySavedText,
@@ -1382,10 +1384,7 @@ function SaveBanner({
     return (
       <Notice>
         {result.detail?.trim() || "Couldn't save the changes."}
-        {landed &&
-          (reloadFailed
-            ? ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"}, then check that your changes are there.`
-            : " The rules were reloaded from the server — check that your changes are there: a rule changed elsewhere may not have been saved.")}
+        {landed && dictionaryLandedText(result.savedTo ?? null, result.shownFrom ?? null, reloadFailed, retryBelow)}
       </Notice>
     );
   }
@@ -1422,10 +1421,10 @@ function SaveBanner({
           {/* In the fetch-error view the reload is what failed, so "Reload again" is not offered.
               FetchError draws its own Retry only for a retryable failure (fetchRetryable); for any
               other the clause points at the header's Refresh instead (retryBelow says which). */}
-          {reloadFailed && ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"} to load the latest version.`}
+          {dictionaryConflictText(result.savedTo ?? null, result.shownFrom ?? null, reloadFailed, retryBelow)}
           {!reloadFailed && (
             <>
-              {" "}The latest version has been reloaded.{" "}
+              {" "}
               <button
                 type="button"
                 disabled={reloadDisabled}

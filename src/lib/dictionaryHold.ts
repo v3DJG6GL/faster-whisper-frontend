@@ -64,12 +64,47 @@ export function dictionaryReloadStep(requested: string, live: string | null, aft
   return afterSave && live !== null ? "refetch" : "bail";
 }
 
+/** The two addresses, display-safe, when a sync moved the backend between a save (`savedTo`) and its
+ *  follow-up reload (`shownFrom`, null when the reload did not commit); null when it did not move.
+ *  Either one unknown (null) reads as no move. */
+function savedElsewhere(savedTo: string | null, shownFrom: string | null): { to: string; now: string } | null {
+  if (savedTo === null || shownFrom === null || shownFrom === savedTo) return null;
+  return { to: safeDisplayText(savedTo, 120), now: safeDisplayText(shownFrom, 120) };
+}
+
 /** The banner line for rules a save stored. `savedTo` is the address the save went to, `shownFrom`
  *  the one its follow-up reload committed (null when the reload did not commit): when a sync moved the
- *  backend in between, the rules on screen are not the ones just saved, so the line names both. Either one unknown (null) reads as no move. */
+ *  backend in between, the rules on screen are not the ones just saved, so the line names both. */
 export function dictionarySavedText(count: number, savedTo: string | null, shownFrom: string | null): string {
   const saved = `Saved ${plural(count, "rule")}`;
-  if (savedTo === null || shownFrom === null || shownFrom === savedTo) return `${saved}.`;
+  const moved = savedElsewhere(savedTo, shownFrom);
+  if (!moved) return `${saved}.`;
   // No "whose rules are shown": in the fetch-error view the reload from the new address failed.
-  return `${saved} to ${safeDisplayText(savedTo, 120)} — this backend now points at ${safeDisplayText(shownFrom, 120)}.`;
+  return `${saved} to ${moved.to} — this backend now points at ${moved.now}.`;
+}
+
+/** The clause after the detail of a save that landed but whose reply was unreadable. After a move the
+ *  rules on screen (or the ones Retry/Refresh loads) are the new address's, so "check that your
+ *  changes are there" would send the user looking where the changes never went. */
+export function dictionaryLandedText(savedTo: string | null, shownFrom: string | null, reloadFailed: boolean, retryBelow: boolean): string {
+  const moved = savedElsewhere(savedTo, shownFrom);
+  if (moved) {
+    return ` The changes went to ${moved.to} — this backend now points at ${moved.now}, so check ${moved.to} for them: a rule changed elsewhere may not have been saved.`;
+  }
+  return reloadFailed
+    ? ` Reloading the rules failed — use ${retryBelow ? "Retry below" : "Refresh above"}, then check that your changes are there.`
+    : " The rules were reloaded from the server — check that your changes are there: a rule changed elsewhere may not have been saved.";
+}
+
+/** The clause after "N rules changed on the server and were not saved". After a move the server that
+ *  reported the conflicts is not the one whose rules were reloaded, so it names both. */
+export function dictionaryConflictText(savedTo: string | null, shownFrom: string | null, reloadFailed: boolean, retryBelow: boolean): string {
+  const retry = retryBelow ? "Retry below" : "Refresh above";
+  const moved = savedElsewhere(savedTo, shownFrom);
+  if (moved) {
+    return reloadFailed
+      ? ` That server is ${moved.to} — this backend now points at ${moved.now}, and loading its rules failed — use ${retry}.`
+      : ` That server is ${moved.to} — this backend now points at ${moved.now}, whose rules are shown.`;
+  }
+  return reloadFailed ? ` Reloading the rules failed — use ${retry} to load the latest version.` : " The latest version has been reloaded.";
 }
