@@ -155,13 +155,22 @@ export async function initConfig(): Promise<void> {
     hydrated = true;
   }
 
+  // An answer that flips the save gate's collapse decision re-checks a save held under the old
+  // one: a status slower than the startup cap (or the 400 ms save after an evdev toggle) froze an
+  // L/R-only profile pair as "used by two bindings", and nothing else re-ran it — the banner, the
+  // stale config.json and the refused sync push stayed until an unrelated edit. A real conflict
+  // just holds again.
+  const learnEvdevPermitted = (permitted: boolean) => {
+    const before = evdevPermittedFor("save");
+    evdevPermitted = permitted;
+    if (saveHeld && evdevPermittedFor("save") !== before) void flushPendingSave?.();
+  };
+
   // evdevPermitted (module scope, see there): read now, refreshed on the evdev toggle below.
   // configReady waits for it (bounded) below, so the startup pull decides side-collapse on the
   // real bit rather than on "unknown".
   const evdevKnown = evdevStatus()
-    .then((st) => {
-      evdevPermitted = st.permitted;
-    })
+    .then((st) => learnEvdevPermitted(st.permitted))
     .catch(() => {});
 
   // The load notice's banner went away (the user dismissed it; the save path below never clears
@@ -208,9 +217,7 @@ export async function initConfig(): Promise<void> {
     // tracks the live backend (the toggle alone doesn't carry the permitted bit).
     if (state.settings.general.evdevEnabled !== prev.settings.general.evdevEnabled) {
       void evdevStatus()
-        .then((st) => {
-          evdevPermitted = st.permitted;
-        })
+        .then((st) => learnEvdevPermitted(st.permitted))
         .catch(() => {});
     }
     clearTimeout(timer);
