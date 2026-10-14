@@ -87,11 +87,13 @@ mod imp {
         /// type's modifiers, so KWin capitalizes the lowercase keysym under Caps Lock). The
         /// typer brackets such a keypress with a Caps Lock toggle. See `build_charmap`.
         lock: bool,
-        /// Does this key's Shift level produce the base glyph's case-inverse (a normal A–Z key)?
-        /// When a live Caps Lock capitalizes alphabetic output, the typer cancels it by pressing
-        /// Shift — but that only recovers the intended glyph on a case-pair key. On a FOUR_LEVEL key
-        /// (ü, where Shift→è) pressing Shift selects the WRONG glyph, so for `caps_safe == false`
-        /// the typer flips Caps OFF for the press instead. See the live-Caps branch in the typer.
+        /// Does toggling Shift on this glyph's press, under a live Caps Lock, still type THIS glyph
+        /// (a normal A–Z key)? When a live Caps Lock capitalizes alphabetic output, the typer
+        /// cancels it by pressing Shift — but that only recovers the intended glyph where Shift and
+        /// Lock cancel out. On a FOUR_LEVEL key (ü, where Shift→è), for a letter on a digit key's
+        /// Shift level (Swiss ç on Shift+4) or an AltGr letter (µ on AltGr+m) pressing Shift
+        /// selects the WRONG glyph, so for `caps_safe == false` the typer flips Caps OFF for the
+        /// press instead. Per glyph, not per key. See `ShiftCancelsCaps` and `caps_plan`.
         caps_safe: bool,
         /// A dead-key prefix `(keycode, shift, altgr)` tapped before this key: the char exists only
         /// as a compose of that dead key and this base key — Spanish/French/Portuguese é/ê/ñ,
@@ -459,6 +461,7 @@ mod imp {
         // AltGr glyphs (and AltGr dead-key prefixes) are registered only while those codes still
         // produce Caps_Lock / ISO_Level3_Shift; otherwise they stay unreachable.
         let caps_usable = caps_usable(keymap, group);
+        let mut shift_cancels_caps = ShiftCancelsCaps::new(keymap);
         let altgr_usable = key_produces(
             keymap,
             group,
@@ -488,7 +491,6 @@ mod imp {
             // out of the map makes them unreachable — skipped per character by the typing loop,
             // or counted by `letter_reach` toward a clipboard divert — rather than mis-typed.
             let levels = keymap.num_levels_for_key(key, g).min(4);
-            let caps_safe = key_is_caps_safe(keymap, key, g);
             for level in 0..levels {
                 if !altgr_usable && level >= 2 {
                     continue;
@@ -519,12 +521,12 @@ mod imp {
                         // Unlike the dead keys above, this is NOT fewest-modifier: every key found
                         // here types the glyph, and a cost-first pick would move ( and ) onto the
                         // keypad-paren keycodes.
-                        map.entry(ch).or_insert(KeySpec {
+                        map.entry(ch).or_insert_with(|| KeySpec {
                             keycode: (kc - EVDEV_OFFSET) as i32,
                             shift: level == 1 || level == 3,
                             altgr: level == 2 || level == 3,
                             lock: false,
-                            caps_safe,
+                            caps_safe: shift_cancels_caps.check(key, g, level, ch),
                             dead: None,
                         });
                     }
@@ -828,29 +830,46 @@ mod imp {
         })
     }
 
-    /// Is this key a normal case-pair (its Shift level is the case-inverse of its base glyph)? Used so
-    /// the live-Caps-Lock compensation knows whether pressing Shift actually cancels KWin's
-    /// capitalization. A non-alphabetic base (digits, symbols) is unaffected by Caps → safe. A
-    /// FOUR_LEVEL letter key (Swiss-German ü, whose Shift gives è — NOT Ü) is NOT safe.
-    fn key_is_caps_safe(keymap: &xkb::Keymap, key: xkb::Keycode, group: u32) -> bool {
-        let base = keymap
-            .key_get_syms_by_level(key, group, 0)
-            .iter()
-            .filter_map(|s| char::from_u32(xkb::keysym_to_utf32(*s)))
-            .find(|c| c.is_alphabetic());
-        let Some(base) = base.filter(|c| c.is_lowercase()) else {
-            return true; // non-alphabetic (or already-uppercase) base → Caps doesn't mis-map it
-        };
-        let upper: Vec<char> = base.to_uppercase().collect();
-        if upper.len() != 1 {
-            return true; // multi-char expansion (e.g. ß) → leave to the normal/lock paths
+    /// The live-Caps compensation's test, asked of the keymap itself: with Caps Lock locked, does
+    /// pressing `key` at `level` with Shift toggled type `ch`? That holds where the key type consumes
+    /// Lock as a Shift (the A–Z case-pair shape), and fails where Lock instead capitalizes whatever
+    /// the level gives: Swiss-German ü (Shift → È), ç on Shift+4 (Caps + bare 4 → 4), µ on AltGr+m
+    /// (Caps + Shift+AltGr+m → º). Those take the flip-Caps-off path in `caps_plan`, which presses
+    /// the glyph's own level with Caps off and is always right. A glyph Caps does not fold never
+    /// reaches the test there (`case_pairs`).
+    struct ShiftCancelsCaps {
+        state: xkb::State,
+        shift: u32,
+        level3: u32,
+        lock: u32,
+    }
+
+    impl ShiftCancelsCaps {
+        fn new(keymap: &xkb::Keymap) -> Self {
+            let mask = |name: &str| 1u32.checked_shl(keymap.mod_get_index(name)).unwrap_or(0);
+            // AltGr's modifier as the typer presses it: the fixed KEY_RIGHTALT code.
+            let mut state = xkb::State::new(keymap);
+            state.update_key(
+                xkb::Keycode::new(KEY_RIGHTALT as u32 + EVDEV_OFFSET),
+                xkb::KeyDirection::Down,
+            );
+            let level3 = state.serialize_mods(xkb::STATE_MODS_DEPRESSED);
+            Self {
+                state: xkb::State::new(keymap),
+                shift: mask(xkb::MOD_NAME_SHIFT),
+                level3,
+                lock: mask(xkb::MOD_NAME_CAPS),
+            }
         }
-        // Safe iff the Shift (level 1) glyph IS that uppercase — the A–Z case-pair shape.
-        keymap
-            .key_get_syms_by_level(key, group, 1)
-            .iter()
-            .filter_map(|s| char::from_u32(xkb::keysym_to_utf32(*s)))
-            .any(|u| u == upper[0])
+
+        fn check(&mut self, key: xkb::Keycode, group: u32, level: u32, ch: char) -> bool {
+            let shift = level == 0 || level == 2; // the glyph's own Shift, toggled
+            let altgr = level >= 2;
+            let depressed =
+                if shift { self.shift } else { 0 } | if altgr { self.level3 } else { 0 };
+            self.state.update_mask(depressed, 0, self.lock, 0, 0, group);
+            char::from_u32(self.state.key_get_utf32(key)) == Some(ch)
+        }
     }
 
     /// Is Caps Lock currently on? Read from the keyboard's `capslock` LED in sysfs —
@@ -1999,6 +2018,108 @@ mod imp {
             // Caps off, or a case-pair key cancelled by Shift: typed as before, no Caps tap.
             assert_eq!(caps_plan('\u{fc}', &ue, false, false), Some((false, false)));
             assert_eq!(caps_plan('a', &map[&'a'], true, false), Some((false, true)));
+        }
+
+        /// What the compositor types for `spec` pressed by `plan` under `caps`: the typer's press
+        /// replayed on an xkb state (Caps flipped for the press when the plan says so).
+        fn typed_under(
+            keymap: &xkb::Keymap,
+            spec: &KeySpec,
+            plan: (bool, bool),
+            caps: bool,
+        ) -> char {
+            let mask = |name: &str| 1u32 << keymap.mod_get_index(name);
+            let mut l3 = xkb::State::new(keymap);
+            l3.update_key(
+                xkb::Keycode::new(KEY_RIGHTALT as u32 + EVDEV_OFFSET),
+                xkb::KeyDirection::Down,
+            );
+            let (flip, shift) = plan;
+            let depressed = if shift { mask(xkb::MOD_NAME_SHIFT) } else { 0 }
+                | if spec.altgr {
+                    l3.serialize_mods(xkb::STATE_MODS_DEPRESSED)
+                } else {
+                    0
+                };
+            let locked = if caps ^ flip {
+                mask(xkb::MOD_NAME_CAPS)
+            } else {
+                0
+            };
+            let mut state = xkb::State::new(keymap);
+            state.update_mask(depressed, 0, locked, 0, 0, 0);
+            let key = xkb::Keycode::new(spec.keycode as u32 + EVDEV_OFFSET);
+            char::from_u32(state.key_get_utf32(key)).unwrap_or('\0')
+        }
+
+        /// Shift cancels a live Caps Lock only on a case-pair level: ç on the Swiss 4 key's Shift
+        /// level, or µ on AltGr+m, must take the Caps-off press instead of typing 4 or º.
+        #[test]
+        fn a_live_caps_lock_types_letters_on_a_digit_or_altgr_level_as_themselves() {
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            for (layout, variant, text) in [
+                ("ch", "de_nodeadkeys", "gar\u{e7}on"),
+                ("de", "", "5 \u{b5}m"),
+            ] {
+                let Some(keymap) = xkb::Keymap::new_from_names(
+                    &ctx,
+                    "evdev",
+                    "pc105",
+                    layout,
+                    variant,
+                    None,
+                    xkb::KEYMAP_COMPILE_NO_FLAGS,
+                ) else {
+                    eprintln!("skipped: no XKB data for `{layout}({variant})`");
+                    continue;
+                };
+                let map = charmap_from_keymap(&keymap, 0, None);
+                for caps in [false, true] {
+                    for c in text.chars() {
+                        let spec = map[&c];
+                        let plan = caps_plan(c, &spec, caps, true).expect("typeable");
+                        assert_eq!(
+                            typed_under(&keymap, &spec, plan, caps),
+                            c,
+                            "{layout}: {c} with caps {caps}"
+                        );
+                    }
+                }
+                // Plain letters keep the Shift XOR under Caps; Caps off is unchanged.
+                assert_eq!(caps_plan('a', &map[&'a'], true, true), Some((false, true)));
+                assert_eq!(
+                    caps_plan('a', &map[&'a'], false, true),
+                    Some((false, false))
+                );
+            }
+            if let Some(keymap) = xkb::Keymap::new_from_names(
+                &ctx,
+                "evdev",
+                "pc105",
+                "ch",
+                "de_nodeadkeys",
+                None,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            ) {
+                let map = charmap_from_keymap(&keymap, 0, None);
+                let cedilla = map[&'\u{e7}'];
+                assert!(cedilla.shift && !cedilla.caps_safe);
+                // Caps on: Caps off for the press, then Shift+4 — never a bare 4.
+                assert_eq!(
+                    caps_plan('\u{e7}', &cedilla, true, true),
+                    Some((true, true))
+                );
+                assert_eq!(
+                    caps_plan('\u{e7}', &cedilla, false, true),
+                    Some((false, true))
+                );
+                // A Caps key that cannot be tapped blocks ç, so the job diverts instead.
+                let stuck = LiveCaps {
+                    on: true,
+                    usable: false,
+                };
+                assert!(typeable_keys('\u{e7}', &map, stuck).is_none());
+            }
         }
 
         #[test]
