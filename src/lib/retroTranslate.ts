@@ -15,6 +15,12 @@ import { ownProp } from "./own";
  *  window to do their job (context = 3 segments, fluent groups span a few). */
 export const TRANSLATE_CHUNK = 32;
 
+/** Character budget of one /v1/text/translations request, for every chunked caller: the
+ *  server answers 413 for a request whose segment texts total over 200,000 characters
+ *  (_TEXT_TRANSLATE_MAX_CHARS, backend translation/routes.py), so a run of long .txt
+ *  paragraphs failed whole. UTF-16 length never undercounts its code points. */
+export const TRANSLATE_CHUNK_CHARS = 180_000;
+
 /** Segment indexes missing at least one of `langs` — a cancelled or failed chunked run
  *  leaves these behind, and they are the run's resume set. The viewer's other doors
  *  close the moment the FIRST chunk lands (`langs` is non-empty from then on), so this is
@@ -309,9 +315,10 @@ export interface ChunkedTranslateArgs {
   chunk?: number;
 }
 
-/** Drive a whole run in TRANSLATE_CHUNK-sized requests, merging per chunk so
- *  translated rows appear as they finish. Throws the first chunk's transport
- *  error unchanged (the caller owns the toast copy). */
+/** Drive a whole run in requests of at most TRANSLATE_CHUNK segments and
+ *  TRANSLATE_CHUNK_CHARS characters, merging per chunk so translated rows appear
+ *  as they finish. Throws the first chunk's transport error unchanged (the caller
+ *  owns the toast copy). */
 export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   model?: string;
   source?: string;
@@ -324,11 +331,21 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
   let source: string | undefined;
   let mergedChunks = 0;
   const warnings: string[] = [];
-  for (let at = 0; at < a.indexes.length; at += chunk) {
+  let slice: number[] = [];
+  for (let at = 0; at < a.indexes.length; at += slice.length) {
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };
-    const slice = a.indexes.slice(at, at + chunk);
+    // Close the chunk before the segment that would cross either cap; a lone segment over
+    // the character budget still goes out alone (the server answers for it).
+    slice = [a.indexes[at]];
+    const texts = [a.textOf(a.indexes[at])];
+    for (let chars = texts[0].length, k = at + 1; k < a.indexes.length && slice.length < chunk; k++) {
+      const t = a.textOf(a.indexes[k]);
+      chars += t.length;
+      if (chars > TRANSLATE_CHUNK_CHARS) break;
+      slice.push(a.indexes[k]);
+      texts.push(t);
+    }
     a.onChunkStart?.(slice, at);
-    const texts = slice.map((i) => a.textOf(i));
     const r = await a.translate(texts, slice);
     // Cancelled while this chunk was in flight: its results are lost by
     // design (the approved copy says so); everything merged before stays.

@@ -36,6 +36,7 @@ import { newProgressId } from "./ids";
 import { hasOwn, ownProp } from "./own";
 import { backendTargetCap, refreshCaps } from "./capabilities";
 import { wireCodes } from "./translationTargets";
+import { TRANSLATE_CHUNK_CHARS } from "./retroTranslate";
 import { isWindowHidden, onWindowHiddenChange } from "./windowVisibility";
 import {
   attachSiteTracks, siteTimedTracks, type ParsedSiteTrack, type SiteSubsRun,
@@ -1958,10 +1959,6 @@ export async function translateParsed(
   // Chunk well under the transport's 512-text cap — a feature-length .srt
   // easily exceeds it, and each chunk is one server round trip.
   const CHUNK = 400;
-  // ...and under the server's character cap: it answers 413 for a request whose segment texts
-  // total over 200,000 characters (_TEXT_TRANSLATE_MAX_CHARS, backend translation/routes.py), so
-  // 400 long .txt paragraphs failed the whole run. UTF-16 length never undercounts its code points.
-  const CHUNK_CHARS = 180_000;
   const results: Record<string, string>[] = [];
   const keptAll: string[][] = [];
   const warnings: string[] = [];
@@ -1974,12 +1971,13 @@ export async function translateParsed(
   // An imported JSON may name its language as a word ("english"): only a code goes out.
   const srcCode = translateSourceCode(parsed.language);
   for (let at = 0, end = 0; targets.length && at < parsed.segments.length; at = end) {
-    // Close the chunk before the segment that would cross either cap; a lone segment over the
-    // character budget still goes out alone (the server answers for it).
+    // Close the chunk before the segment that would cross either cap (the 400 above, and the
+    // server's character cap: TRANSLATE_CHUNK_CHARS); a lone segment over the character
+    // budget still goes out alone (the server answers for it).
     let chars = parsed.segments[at].text.length;
     for (end = at + 1; end < parsed.segments.length && end - at < CHUNK; end++) {
       chars += parsed.segments[end].text.length;
-      if (chars > CHUNK_CHARS) break;
+      if (chars > TRANSLATE_CHUNK_CHARS) break;
     }
     // A cancel or an input change bumps the epoch; the pump only checks it after this
     // function returns, so without this a feature-length file kept POSTing chunk after

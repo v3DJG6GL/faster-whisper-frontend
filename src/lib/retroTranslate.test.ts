@@ -4,7 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   beginChunk, cancelTranslateRun, foldPollFailure, foldTranslatePoll, isTranslateCancelled, newTranslateRun,
-  runChunkedTranslate, TRANSLATE_CHUNK, type TranslateRunUi,
+  runChunkedTranslate, TRANSLATE_CHUNK, TRANSLATE_CHUNK_CHARS, type TranslateRunUi,
   translateCtls, translateOptsFrom, untranslatedIndexes,
 } from "./retroTranslate";
 import type { TextTranslationResult } from "./api";
@@ -92,6 +92,39 @@ describe("runChunkedTranslate", () => {
       [["t3", "t7", "t40"], [3, 7, 40]],
       [["t41", "t90"], [41, 90]],
     ]);
+  });
+
+  it("a chunk also closes under the server's character cap", async () => {
+    // 32 paragraphs of 7,000 characters is one count-chunk but 224,000 characters: the server
+    // 413s anything over 200,000, failing the viewer's Translate on a record the run translated.
+    const indexes = Array.from({ length: 32 }, (_, i) => i);
+    const sent: number[][] = [];
+    await runChunkedTranslate({
+      indexes,
+      textOf: () => "x".repeat(7_000),
+      translate: (texts, idxs) => {
+        expect(texts.join("").length).toBeLessThanOrEqual(TRANSLATE_CHUNK_CHARS);
+        sent.push(idxs);
+        return Promise.resolve(answer(texts));
+      },
+      onMerge: () => {},
+    });
+    expect(sent.length).toBeGreaterThan(1);
+    expect(sent.flat()).toEqual(indexes);
+  });
+
+  it("a lone segment over the character budget still goes out, alone", async () => {
+    const sizes: number[] = [];
+    await runChunkedTranslate({
+      indexes: [0, 1, 2],
+      textOf: (i) => (i === 1 ? "x".repeat(190_000) : "a"),
+      translate: (texts) => {
+        sizes.push(texts.length);
+        return Promise.resolve(answer(texts));
+      },
+      onMerge: () => {},
+    });
+    expect(sizes).toEqual([1, 1, 1]);
   });
 
   it("drops per-segment empty results and skips an all-empty chunk's merge", async () => {
