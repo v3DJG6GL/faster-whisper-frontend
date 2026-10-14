@@ -2353,6 +2353,31 @@ describe("translateParsed joins a text source like the TXT export", () => {
     expect(translateText.mock.calls.map(([a]) => [a.firstId, a.texts.length])).toEqual([[0, 400], [400, 1]]);
   });
 
+  it("a chunk also closes under the server's character cap", async () => {
+    // 400 paragraphs of 800 characters is one count-chunk but 320,000 characters: the server
+    // 413s anything over 200,000.
+    translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
+    const segments = Array.from({ length: 400 }, () => ({ text: "x".repeat(800) }));
+    const r = await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    const calls = translateText.mock.calls.map(([a]) => a);
+    expect(calls.length).toBeGreaterThan(1);
+    for (const c of calls) expect(c.texts.join("").length).toBeLessThanOrEqual(180_000);
+    let next = 0;
+    for (const c of calls) {
+      expect(c.firstId).toBe(next);
+      next += c.texts.length;
+    }
+    expect(next).toBe(400);
+    expect(r.segments).toHaveLength(400);
+  });
+
+  it("a lone segment over the character budget still goes out, alone", async () => {
+    translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
+    const segments = [{ text: "a" }, { text: "x".repeat(190_000) }, { text: "b" }];
+    await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    expect(translateText.mock.calls.map(([a]) => [a.firstId, a.texts.length])).toEqual([[0, 1], [1, 1], [2, 1]]);
+  });
+
   it("the per-target translations join the same way", async () => {
     translateText.mockImplementation(() =>
       Promise.resolve({ results: [{ ja: "やあ。", de: "Hallo." }, { ja: "元気？", de: "Wie geht's?" }] }),

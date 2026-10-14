@@ -1958,6 +1958,10 @@ export async function translateParsed(
   // Chunk well under the transport's 512-text cap — a feature-length .srt
   // easily exceeds it, and each chunk is one server round trip.
   const CHUNK = 400;
+  // ...and under the server's character cap: it answers 413 for a request whose segment texts
+  // total over 200,000 characters (_TEXT_TRANSLATE_MAX_CHARS, backend translation/routes.py), so
+  // 400 long .txt paragraphs failed the whole run. UTF-16 length never undercounts its code points.
+  const CHUNK_CHARS = 180_000;
   const results: Record<string, string>[] = [];
   const keptAll: string[][] = [];
   const warnings: string[] = [];
@@ -1969,7 +1973,14 @@ export async function translateParsed(
   let plan: PlanStage[] | undefined;
   // An imported JSON may name its language as a word ("english"): only a code goes out.
   const srcCode = translateSourceCode(parsed.language);
-  for (let at = 0; targets.length && at < parsed.segments.length; at += CHUNK) {
+  for (let at = 0, end = 0; targets.length && at < parsed.segments.length; at = end) {
+    // Close the chunk before the segment that would cross either cap; a lone segment over the
+    // character budget still goes out alone (the server answers for it).
+    let chars = parsed.segments[at].text.length;
+    for (end = at + 1; end < parsed.segments.length && end - at < CHUNK; end++) {
+      chars += parsed.segments[end].text.length;
+      if (chars > CHUNK_CHARS) break;
+    }
     // A cancel or an input change bumps the epoch; the pump only checks it after this
     // function returns, so without this a feature-length file kept POSTing chunk after
     // chunk for minutes after Cancel. The partial result is discarded by the pump.
@@ -1977,7 +1988,7 @@ export async function translateParsed(
     const r = await translateText({
       serverUrl: ctx.serverUrl,
       backendId: ctx.backendId,
-      texts: parsed.segments.slice(at, at + CHUNK).map((seg) => seg.text),
+      texts: parsed.segments.slice(at, end).map((seg) => seg.text),
       // Ids are positions in the whole source, so a later chunk's warnings name its own cues
       // (and two chunks' same-reason warnings stay two lines through the de-dupe below).
       firstId: at,
