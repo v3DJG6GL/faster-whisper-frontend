@@ -157,3 +157,24 @@ export function nextProcessingSince(
   if (!prev.processing || (prev.capturing && !next.capturing)) return now;
   return since ?? now;
 }
+
+/** The (processing, capturing) a `processingSince` stamp was last taken at, and the stamp. */
+export interface ProcessingStamp {
+  processing: boolean;
+  capturing: boolean;
+  since: number | null;
+}
+
+/** The stamp for this render, stepped from the last one (the SAME object when nothing changed).
+ *  Overlay steps it DURING render, not in an effect: a passive effect runs after the chip-payload
+ *  update has painted, so the frame where the mic closes would pair `capturing: false` with the
+ *  translate's old, past-the-delay stamp and draw the ✕ for that one frame — the blink the restamp
+ *  exists to prevent. */
+export function stepProcessingStamp(
+  stamp: ProcessingStamp,
+  next: { processing: boolean; capturing: boolean },
+  now: number,
+): ProcessingStamp {
+  if (stamp.processing === next.processing && stamp.capturing === next.capturing) return stamp;
+  return { ...next, since: nextProcessingSince(stamp.since, stamp, next, now) };
+}

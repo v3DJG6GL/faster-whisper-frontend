@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipTuckHold,
-  currentPhase, nextProcessingSince, phaseClock, phaseElapsedMs,
+  currentPhase, nextProcessingSince, phaseClock, phaseElapsedMs, stepProcessingStamp, type ProcessingStamp,
 } from "./chipRules";
 import type { DictationPhase, DictationStatus } from "./types";
 
@@ -264,6 +264,32 @@ describe("nextProcessingSince", () => {
         now: NOW,
       }),
     ).toBe(true);
+  });
+});
+
+// Overlay steps the stamp during render, so the rule never sees a new `capturing` beside the old
+// stamp. Replays the chip's renders: on the one where the mic closes mid-translate, the ✕ (which
+// a passive-effect restamp drew for one painted frame) must already be hidden.
+describe("stepProcessingStamp", () => {
+  function render(stamp: ProcessingStamp, payload: { status: DictationStatus; capturing: boolean }, now: number) {
+    const next = stepProcessingStamp(stamp, { processing: PROCESSING.includes(payload.status), capturing: payload.capturing }, now);
+    const cancel = chipCancelVisible({ processingSince: next.since, status: payload.status, capturing: payload.capturing, now });
+    return { stamp: next, cancel };
+  }
+
+  it("hides the ✕ on the very render the mic closes during a long translate", () => {
+    let r = render({ processing: false, capturing: false, since: null }, { status: "listening", capturing: true }, NOW - 6_000);
+    r = render(r.stamp, { status: "translating", capturing: true }, NOW - 5_000);
+    expect(r.cancel).toBe(false); // capturing: a stop, not a cancel
+    r = render(r.stamp, { status: "translating", capturing: false }, NOW);
+    expect(r.stamp.since).toBe(NOW);
+    expect(r.cancel).toBe(false);
+    expect(render(r.stamp, { status: "translating", capturing: false }, NOW + CANCEL_AFFORDANCE_DELAY_MS).cancel).toBe(true);
+  });
+
+  it("returns the same stamp when nothing it depends on changed", () => {
+    const stamp: ProcessingStamp = { processing: true, capturing: false, since: NOW - 5_000 };
+    expect(stepProcessingStamp(stamp, { processing: true, capturing: false }, NOW)).toBe(stamp);
   });
 });
 
