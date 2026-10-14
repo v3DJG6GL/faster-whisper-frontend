@@ -3,6 +3,7 @@ import { navKey, pickerKeyActsOnce } from "./listNav";
 // Raw sources (vite `?raw`): the other keyboard lists that must consult the same predicate.
 import listPickerSrc from "../components/ListPicker.tsx?raw";
 import buttonsSrc from "../components/ui/buttons.tsx?raw";
+import micPickerSrc from "../components/settings/MicPicker.tsx?raw";
 
 describe("navKey", () => {
   it("moves by one, by a page, and to either end, clamped", () => {
@@ -60,6 +61,13 @@ describe("held keys in the other picker lists act once", () => {
     expect(bodyOf(buttonsSrc, "const onMenuKey")).toMatch(/e\.repeat && pickerKeyActsOnce\(/);
     expect(buttonsSrc.slice(buttonsSrc.indexOf("ref={chevronRef}"))).toMatch(
       /onKeyDown=\{\(e\) => \{\s*if \(e\.repeat && pickerKeyActsOnce\(/,
+    );
+  });
+
+  it("MicPicker's list keys swallow a held Space / Enter, and so does its trigger", () => {
+    expect(bodyOf(micPickerSrc, "const onListKey")).toMatch(/e\.repeat && pickerKeyActsOnce\(/);
+    expect(micPickerSrc.slice(micPickerSrc.indexOf("<FieldTrigger"))).toMatch(
+      /onKeyDown=\{\(e\) => \{\s*(\/\/[^\n]*\s*)*if \(e\.repeat && pickerKeyActsOnce\(/,
     );
   });
 });

@@ -14,7 +14,7 @@ import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from 
 import { Bluetooth, Check, Mic, SlidersHorizontal } from "lucide-react";
 import { Badge, FieldTrigger, Toggle } from "@/components/ui";
 import { cn } from "@/lib/cn";
-import { navKey } from "@/lib/listNav";
+import { navKey, pickerKeyActsOnce } from "@/lib/listNav";
 import { buildMicView, isSelectable, micFootKey, type MicRow, type SelectableRow } from "@/lib/micOptions";
 import { safeDisplayText } from "@/lib/sanitize";
 import { useOutsidePress } from "@/lib/useOutsidePress";
@@ -89,6 +89,12 @@ export function MicPicker({
   };
 
   const onListKey = (e: KeyboardEvent) => {
+    // A held Enter / Space acts once, as in ListPicker: its repeat reached the refocused trigger,
+    // which reopened the menu, and the next repeat picked again — the arrows keep repeating.
+    if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
+      e.preventDefault();
+      return;
+    }
     const next = navKey(e.key, activeIdx, choices.length);
     if (next !== null) {
       e.preventDefault();
@@ -205,6 +211,11 @@ export function MicPicker({
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
         onKeyDown={(e) => {
+          // The repeat of the Enter / Space that picked and closed lands here: it would reopen.
+          if (e.repeat && pickerKeyActsOnce(e.key, false, true)) {
+            e.preventDefault();
+            return;
+          }
           if (e.key === "ArrowDown" || e.key === "Enter" || e.key === " ") {
             e.preventDefault();
             setOpen(true);
