@@ -1,7 +1,8 @@
 /**
- * Speaking detector (silence ⇄ speech) over a smoothed RMS level — shared by the
- * dictation chip (Overlay.tsx) and the main-window store so EVERY surface agrees on
- * when you're "actively speaking" (green) vs merely armed and silent (amber).
+ * Speaking detector (silence ⇄ speech) over a smoothed RMS level — run by the
+ * main-window store (and streaming.ts's auto-stop), whose flag the dictation chip
+ * receives in its payload, so EVERY surface agrees on when you're "actively
+ * speaking" (green) vs merely armed and silent (amber).
  *
  * Hysteresis + an asymmetric hold: enter "speaking" fast, leave only after a short
  * silence, so the natural pauses between words don't flicker the indicator. The
@@ -26,9 +27,9 @@ export function newSpeakMemo(): SpeakMemo {
  * given whether dictation is currently listening. Mutates `memo` and returns the
  * updated speaking flag. When not listening, resets to silent.
  *
- * Each consumer keeps its own `SpeakMemo` (the chip in a ref, the store in a
- * module-level singleton); the logic is identical so they converge on the same
- * level stream.
+ * Each consumer keeps its own `SpeakMemo` and must step it once per level sample
+ * (the store in a module-level singleton); the logic is identical so they converge
+ * on the same level stream.
  */
 export function stepSpeaking(memo: SpeakMemo, level: number, listening: boolean, now: number): boolean {
   if (!listening) {

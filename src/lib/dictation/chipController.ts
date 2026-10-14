@@ -282,6 +282,11 @@ function chipPayload(state: ReturnType<typeof useApp.getState>) {
     // holds or is decoding) → the chip reads blue "working", not amber "ready".
     serverWork: state.serverWork,
     level: state.level,
+    // The store's speaking verdict (green vs armed-silent), not re-derived chip-side: the
+    // detector must step once per level SAMPLE, and this payload only crosses on a level
+    // CHANGE — so a mic delivering exact zeros between phrases froze a chip-side detector on
+    // "speaking" while every main-window surface had gone silent. Changes only on a transition.
+    speaking: state.speaking,
     // "Live transcript in overlay" off → show the status label, not words. In "on hover"
     // mode the words are still sent but the chip only surfaces them while hovered.
     // Tail only: `state.partial` is the whole document since the last hard break and this
@@ -406,6 +411,7 @@ export async function initOverlayController(): Promise<void> {
       state.warming !== prev.warming || // mic warm-up gate (chip "warming up…")
       state.serverWork !== prev.serverWork || // server-side work behind "listening" (blue, not amber)
       state.level !== prev.level ||
+      state.speaking !== prev.speaking || // flips on a same-value level sample too (a held zero)
       state.partial !== prev.partial ||
       state.dictationError !== prev.dictationError ||
       state.dictationPhase !== prev.dictationPhase || // stage label / progress / elapsed clock

@@ -521,3 +521,32 @@ describe("initOverlayController — the hide linger outlasts the chip's session 
     expect(hideOverlay).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("initOverlayController — the chip's speaking state follows every level sample", () => {
+  it("goes silent through a held zero level, as the store does", async () => {
+    // A noise-suppressed / muted mic sends exact zeros between phrases. The store steps its
+    // detector on every sample; the chip only hears a level CHANGE — so it must be handed the
+    // store's verdict, or one step toward 0 then a freeze leaves it green through the silence.
+    const s = useApp.getState().settings;
+    let now = 1_000_000;
+    const clock = vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      useApp.setState({ settings: { ...s, recording: { ...s.recording, indicatorPosition: "top" } } });
+      await initOverlayController();
+      const set = useApp.getState().setDictation;
+      set({ status: "listening", level: 0 });
+      const last = () => {
+        const u = emit.mock.calls.filter((c) => c[0] === "dictation://update");
+        return u[u.length - 1]?.[1] as { speaking?: boolean };
+      };
+      for (let i = 0; i < 30; i++, now += 33) set({ level: 0.3 });
+      expect(last()?.speaking).toBe(true);
+      for (let i = 0; i < 90; i++, now += 33) set({ level: 0 });
+      expect(useApp.getState().speaking).toBe(false);
+      expect(last()?.speaking).toBe(false);
+    } finally {
+      clock.mockRestore();
+      useApp.getState().setDictation({ status: "idle", level: 0 });
+    }
+  });
+});

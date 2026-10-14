@@ -7,7 +7,6 @@ import { cn } from "@/lib/cn";
 import { safeDisplayText, safeIdentityText, stripControlChars } from "@/lib/sanitize";
 import { langCode, langText } from "@/lib/languages";
 import { quickLaunchMeta } from "@/lib/screenRegistry";
-import { newSpeakMemo, stepSpeaking } from "@/lib/dictation/speaking";
 import {
   dictationVisual,
   isActiveDictation,
@@ -46,6 +45,9 @@ interface ChipState {
   // decoding the last phrase → blue "working" instead of amber "ready". Server-authored.
   serverWork?: ServerWork;
   level: number;
+  // Actively speaking vs armed-silent: the main-window store's shared detector, forwarded
+  // (chipController) rather than re-derived here — see the `speaking` read below.
+  speaking?: boolean;
   partial: string;
   // When true, the live words are revealed only while the chip is hover-revealed (else always).
   previewOnHover?: boolean;
@@ -300,6 +302,7 @@ export default function Overlay() {
             ...e.payload,
             warming: e.payload.warming ?? false,
             capturing: e.payload.capturing ?? false,
+            speaking: e.payload.speaking === true,
             // Narrowed, not trusted: it selects a visual state, and the payload is just JSON.
             serverWork: asServerWork(e.payload.serverWork),
             dictationError: e.payload.dictationError ?? "",
@@ -380,6 +383,7 @@ export default function Overlay() {
       setState({
         status: "listening",
         level,
+        speaking: true, // the demo level never dips below the detector's floor
         partial: sample.slice(0, chars),
         dictationError: "",
         position: "top",
@@ -412,17 +416,11 @@ export default function Overlay() {
     return () => cancelAnimationFrame(raf.current);
   }, []);
 
-  // Derive speaking vs silent from the level stream (only while listening), via the
-  // SHARED detector so the chip agrees with the main-window surfaces (see lib/dictation/speaking).
-  const [speaking, setSpeaking] = useState(false);
-  const speakMemo = useRef(newSpeakMemo());
-  useEffect(() => {
-    const sp = stepSpeaking(speakMemo.current, state.level, state.status === "listening", performance.now());
-    // Functional update + no `speaking` dep: stepSpeaking mutates its memo, so re-running the effect
-    // when `speaking` flips would double-step the smoothing on every transition and drift the chip's
-    // detector ahead of the store's (which steps exactly once per level sample). One step per frame.
-    setSpeaking((prev) => (prev === sp ? prev : sp));
-  }, [state.level, state.status]);
+  // Speaking vs silent is the STORE's verdict (lib/dictation/speaking, stepped once per level
+  // sample), carried in the payload — so the chip can never disagree with the main-window
+  // surfaces. A chip-side detector could only step when a payload arrived, i.e. on a level
+  // CHANGE: a held level (a mic sending exact zeros between phrases) froze it on "speaking".
+  const speaking = state.status === "listening" && !!state.speaking;
 
   // Status dot colour (NEVER red while listening) via the SHARED dictationVisual()
   // mapping — so the chip, sidebar dot, Home button + waveforms all agree. The chip
