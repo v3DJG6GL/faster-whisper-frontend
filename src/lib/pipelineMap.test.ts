@@ -3,7 +3,7 @@
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
 import {
-  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapRowsFromRule, ruleCountOf, ruleListOf,
+  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowsFromRule, ruleCountOf, ruleListOf,
   ruleLockedFor, ruleMapWritable, saveLanded,
 } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
@@ -104,6 +104,24 @@ describe("mapEntryProblem", () => {
     expect(mapEntryProblem("don't", "")).toMatch(/^“'” /);
     expect(mapEntryProblem("a\tb", "")).toMatch(/^A tab /);
     expect(mapEntryProblem("a\u00a0b", "")).toMatch(/^U\+00A0 /);
+  });
+});
+
+// The server lower-cases a map's keys and 422s the whole PATCH when two collide ("map keys
+// ['Komma', 'komma'] collide when lowercased"), so a case twin must be refused before it is sent.
+describe("mapKeyTwinProblem", () => {
+  const rows = [{ id: 1, k: "komma", v: "," }];
+
+  it("refuses a key that differs from another row's only in letter case", () => {
+    expect(mapKeyTwinProblem("Komma", rows)).toMatch(/“komma” is already in this list/);
+    expect(mapKeyTwinProblem("STRAẞE", [{ id: 2, k: "straße", v: "" }])).not.toBeNull(); // ẞ lower-cases to ß
+  });
+
+  it("takes a new key, an exact duplicate, and a row's own case change", () => {
+    expect(mapKeyTwinProblem("punkt", rows)).toBeNull();
+    expect(mapKeyTwinProblem("komma", rows)).toBeNull(); // one key on the wire: the newest row wins
+    expect(mapKeyTwinProblem("Komma", rows, 1)).toBeNull(); // editing the "komma" row itself
+    expect(mapKeyTwinProblem(" komma", rows)).toBeNull(); // spaces are part of the server's key
   });
 });
 

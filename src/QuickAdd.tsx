@@ -19,7 +19,7 @@ import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import {
-  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, ruleListOf, ruleLockedFor,
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, mapKeyTwinProblem, ruleListOf, ruleLockedFor,
   ruleMapWritable,
 } from "@/lib/pipelineMap";
 import { quickAddRejectReason, quickAddSaveOutcome } from "@/lib/quickAddSave";
@@ -502,11 +502,13 @@ export default function QuickAdd() {
 
   // A pair the server's word-list schema would reject is refused here, with the reason under
   // the capture row: sent, its 422 would fail the whole-map PATCH — and every later save with it.
-  // A selection seed ("don't", "C++", a long phrase) is the usual way one arrives.
-  const addProblem = find.trim() ? mapEntryProblem(find, insert) : null;
+  // A selection seed ("don't", "C++", a long phrase, a capitalised "Komma" beside "komma") is the
+  // usual way one arrives.
+  const addProblem = find.trim() ? (mapEntryProblem(find, insert) ?? mapKeyTwinProblem(find, rows)) : null;
   const addMapping = useCallback(() => {
     if (!find.trim()) return; // ignore a blank/whitespace-only spoken phrase
-    if (mapEntryProblem(find, insert)) return; // its reason is already on screen (addProblem)
+    // Its reason is already on screen (addProblem).
+    if (mapEntryProblem(find, insert) ?? mapKeyTwinProblem(find, rowsRef.current)) return;
     const k = find; // keep the key VERBATIM — leading/trailing spaces are meaningful (see pipelineMap)
     const v = insert;
     mutate((rs) => [{ id: nextRowId(), k, v }, ...rs]);
@@ -523,8 +525,10 @@ export default function QuickAdd() {
   const editRow = useCallback(
     (row: MapRow, field: "k" | "v", value: string) => {
       const next = { ...row, [field]: value };
-      const problem = next.k.trim() ? mapEntryProblem(next.k, next.v) : null;
-      if (problem && !(row.k.trim() && mapEntryProblem(row.k, row.v))) {
+      const problemOf = (r: MapRow) =>
+        r.k.trim() ? (mapEntryProblem(r.k, r.v) ?? mapKeyTwinProblem(r.k, rowsRef.current, r.id)) : null;
+      const problem = problemOf(next);
+      if (problem && !problemOf(row)) {
         setRowProblem({ id: row.id, msg: problem });
         return;
       }

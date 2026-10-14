@@ -180,6 +180,16 @@ export function mapEntryProblem(k: string, v: string): string | null {
   return null;
 }
 
+/** Why key `k` can't join the list beside `rows` (the row `selfId` it replaces excluded), or null.
+ *  The server lower-cases a map's keys and rejects the whole PATCH (422) when two collide, so a
+ *  case twin ("Komma" beside "komma") would block every later save. An exact duplicate is not a
+ *  twin: mapBodyFromRows sends one key for it (the newest row wins). */
+export function mapKeyTwinProblem(k: string, rows: MapRow[], selfId?: number): string | null {
+  const lower = k.toLowerCase();
+  const twin = rows.find((r) => r.id !== selfId && r.k !== k && r.k.trim() && r.k.toLowerCase() === lower);
+  return twin ? `“${twin.k}” is already in this list — edit that row` : null;
+}
+
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
  *  (`compile_map`): longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE
  *  pass (no cascade), and every ß key also matches its derived ss spelling (ß→ss, ẞ→SS; a key
