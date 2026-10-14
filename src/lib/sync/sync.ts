@@ -3418,9 +3418,7 @@ export async function pushNow(manual = false): Promise<void> {
         // Applied without the degraded backends category: adopt the base and keep pushing only
         // when the remote left that category alone (see `degradedBaseWithheld`).
         if (degraded && degradedBaseWithheld(remoteBlob)) return;
-        // The merge carries the base's backends category, not this device's list: a second 409
-        // must still keep it out of the apply.
-        if (degraded) degradedComposes.add(merged);
+        // A second 409 recomposes `blob` first, and that compose re-derives the degraded flag.
         blob = merged;
         base = remote.version;
         continue;
