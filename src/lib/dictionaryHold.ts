@@ -73,21 +73,23 @@ function savedElsewhere(savedTo: string | null, shownFrom: string | null): { to:
   return { to: safeDisplayText(savedTo, 120), now: safeDisplayText(shownFrom, 120) };
 }
 
-/** The banner line for rules a save stored. `savedTo` is the address the save went to, `shownFrom`
- *  the one its follow-up reload committed (null when the reload did not commit): when a sync moved the
- *  backend in between, the rules on screen are not the ones just saved, so the line names both. */
-export function dictionarySavedText(count: number, savedTo: string | null, shownFrom: string | null): string {
-  const saved = `Saved ${plural(count, "rule")}`;
-  const moved = savedElsewhere(savedTo, shownFrom);
-  if (!moved) return `${saved}.`;
-  // No "whose rules are shown": in the fetch-error view the reload from the new address failed.
-  return `${saved} to ${moved.to} — this backend now points at ${moved.now}.`;
-}
-
 /** The follow-up reload committed nothing (`shownFrom` null outside the fetch-error view): a peer
  *  deleted the backend during the save, or its address kept moving. The pre-save edits are still on
  *  screen under the hold notice, so a clause must not claim the rules were reloaded. */
 const NOT_RELOADED = " The rules were not reloaded — this backend changed during the save, so your edits from before it are still on screen";
+
+/** The banner line for rules a save stored. `savedTo` is the address the save went to, `shownFrom`
+ *  the one its follow-up reload committed (null when the reload did not commit): when a sync moved the
+ *  backend in between, the rules on screen are not the ones just saved, so the line names both. A
+ *  reload that committed nothing outside the fetch-error view (`reloadFailed`, whose FetchError says
+ *  so) leaves the saved edits on screen as unsaved changes, so the line says they were not reloaded. */
+export function dictionarySavedText(count: number, savedTo: string | null, shownFrom: string | null, reloadFailed: boolean): string {
+  const saved = `Saved ${plural(count, "rule")}`;
+  const moved = savedElsewhere(savedTo, shownFrom);
+  if (!moved) return shownFrom === null && !reloadFailed ? `${saved}.${NOT_RELOADED}.` : `${saved}.`;
+  // No "whose rules are shown": in the fetch-error view the reload from the new address failed.
+  return `${saved} to ${moved.to} — this backend now points at ${moved.now}.`;
+}
 
 /** The clause after the detail of a save that landed but whose reply was unreadable. After a move the
  *  rules on screen (or the ones Retry/Refresh loads) are the new address's, so "check that your

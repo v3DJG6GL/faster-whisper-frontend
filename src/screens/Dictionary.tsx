@@ -1402,7 +1402,7 @@ function SaveBanner({
     <div className="space-y-2">
       {result.saved.length > 0 && !listPinned && (
         <Notice tone="ok">
-          {dictionarySavedText(result.saved.length, result.savedTo ?? null, result.shownFrom ?? null)}
+          {dictionarySavedText(result.saved.length, result.savedTo ?? null, result.shownFrom ?? null, reloadFailed)}
           {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
         </Notice>
       )}

@@ -106,13 +106,24 @@ describe("dictionaryReloadStep", () => {
 
 describe("dictionarySavedText", () => {
   it("is a bare count when the backend did not move", () => {
-    expect(dictionarySavedText(2, "http://a", "http://a")).toBe("Saved 2 rules.");
-    expect(dictionarySavedText(1, "http://a", null)).toBe("Saved 1 rule.");
-    expect(dictionarySavedText(1, null, "http://b")).toBe("Saved 1 rule.");
+    expect(dictionarySavedText(2, "http://a", "http://a", false)).toBe("Saved 2 rules.");
+    expect(dictionarySavedText(1, null, "http://b", false)).toBe("Saved 1 rule.");
+    // The fetch-error view: its FetchError reports the failed reload.
+    expect(dictionarySavedText(1, "http://a", null, true)).toBe("Saved 1 rule.");
+  });
+
+  it("says the rules were not reloaded when the follow-up reload committed nothing", () => {
+    // A peer deleted the backend (or kept moving it) during the save: the saved edits are still on
+    // screen as "unsaved changes", so the line must not read as a plain success.
+    const text = dictionarySavedText(3, "http://a", null, false);
+    expect(text).toMatch(/^Saved 3 rules\. The rules were not reloaded — .*your edits from before it are still on screen\.$/);
+    expect(text).toBe(`Saved 3 rules.${dictionaryConflictText("http://a", null, false, false)}`);
+    expect(dictionarySavedText(3, "http://a", "http://a", false)).toBe("Saved 3 rules.");
+    expect(dictionarySrc).toMatch(/dictionarySavedText\(result\.saved\.length, result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed\)/);
   });
 
   it("names where the rules went and where the backend points now when a sync moved it", () => {
-    const text = dictionarySavedText(3, "http://a:8000", "http://b:8000");
+    const text = dictionarySavedText(3, "http://a:8000", "http://b:8000", false);
     expect(text).toContain("Saved 3 rules to http://a:8000");
     expect(text).toContain("now points at http://b:8000");
   });
