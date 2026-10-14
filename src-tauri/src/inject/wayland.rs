@@ -358,10 +358,11 @@ mod imp {
         }
     }
 
-    /// Build a character → (keycode, modifiers) map for the active layout. `composes: false` (a
+    /// Build a character → (keycode, modifiers) map for the active layout, and whether
+    /// KEY_CAPSLOCK still produces Caps_Lock on it (see `caps_usable`). `composes: false` (a
     /// paste job, which only looks up the chord's ASCII letter) skips the compose table and the
     /// dead-key pass: they only add accented chars no key types directly.
-    fn build_charmap(composes: bool) -> Option<HashMap<char, KeySpec>> {
+    fn build_charmap(composes: bool) -> Option<(HashMap<char, KeySpec>, bool)> {
         static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         // Look glyphs up in the ACTIVE layout group, not always group 0: with a multi-layout config
         // (us,de,…) the portal injects raw keycodes KWin resolves under the live group, so a group-0
@@ -378,7 +379,28 @@ mod imp {
             tracing::info!(?source, ?layouts, group, "[inject] typing keymap");
         }
         let compose = if composes { compose_table() } else { None };
-        Some(charmap_from_keymap(&keymap, group, compose.as_ref()))
+        Some((
+            charmap_from_keymap(&keymap, group, compose.as_ref()),
+            caps_usable(&keymap, group),
+        ))
+    }
+
+    /// Does evdev key `evdev` produce keysym `want` at its base level in layout group `group`?
+    fn key_produces(keymap: &xkb::Keymap, group: u32, evdev: i32, want: u32) -> bool {
+        let key = xkb::Keycode::new(evdev as u32 + EVDEV_OFFSET);
+        let num_layouts = keymap.num_layouts_for_key(key);
+        num_layouts > 0
+            && keymap
+                .key_get_syms_by_level(key, group % num_layouts, 0)
+                .iter()
+                .any(|s| s.raw() == want)
+    }
+
+    /// Does the fixed KEY_CAPSLOCK code still produce Caps_Lock? Not under `caps:escape` or
+    /// `caps:swapescape` — and Caps Lock can still be ON there (the Esc key, both Shifts), so the
+    /// typer must not tap KEY_CAPSLOCK to compensate for it either. See `caps_plan`.
+    fn caps_usable(keymap: &xkb::Keymap, group: u32) -> bool {
+        key_produces(keymap, group, KEY_CAPSLOCK, xkb::keysyms::KEY_Caps_Lock)
     }
 
     /// The compose table the focused app most likely resolves dead keys with: the one for the
@@ -424,17 +446,13 @@ mod imp {
         // Escape or Alt+key shortcuts into the focused app — so the Caps Lock capitals and the
         // AltGr glyphs (and AltGr dead-key prefixes) are registered only while those codes still
         // produce Caps_Lock / ISO_Level3_Shift; otherwise they stay unreachable.
-        let key_is = |evdev: i32, want: u32| {
-            let key = xkb::Keycode::new(evdev as u32 + EVDEV_OFFSET);
-            let num_layouts = keymap.num_layouts_for_key(key);
-            num_layouts > 0
-                && keymap
-                    .key_get_syms_by_level(key, group % num_layouts, 0)
-                    .iter()
-                    .any(|s| s.raw() == want)
-        };
-        let caps_usable = key_is(KEY_CAPSLOCK, xkb::keysyms::KEY_Caps_Lock);
-        let altgr_usable = key_is(KEY_RIGHTALT, xkb::keysyms::KEY_ISO_Level3_Shift);
+        let caps_usable = caps_usable(keymap, group);
+        let altgr_usable = key_produces(
+            keymap,
+            group,
+            KEY_RIGHTALT,
+            xkb::keysyms::KEY_ISO_Level3_Shift,
+        );
         // Dead keysyms (dead_acute, dead_circumflex, dead_tilde...) and the key that types each,
         // fewest-modifier occurrence wins, lowest keycode on a tie (de has dead_circumflex at
         // AltGr on ä and bare on ^: ê must not cost an AltGr chord). They produce no character
@@ -585,6 +603,25 @@ mod imp {
         let lo: Vec<char> = c.to_lowercase().collect();
         let up: Vec<char> = c.to_uppercase().collect();
         lo.len() == 1 && up.len() == 1 && lo[0] != up[0]
+    }
+
+    /// How the typer presses `spec` to type `ch` under the live Caps Lock state `caps`:
+    /// `(flip_caps, needs_shift)` — see the live-Caps comment in the typing loop. `None` when the
+    /// press needs a Caps Lock tap but KEY_CAPSLOCK no longer produces Caps_Lock (`caps_usable`):
+    /// the tap would type Escape (or whatever the option put there) into the focused app, and,
+    /// with Caps never flipped, the glyph would still come out in the wrong case — so the char is
+    /// unreachable, skipped like any other.
+    fn caps_plan(ch: char, spec: &KeySpec, caps: bool, caps_usable: bool) -> Option<(bool, bool)> {
+        let (flip_caps, needs_shift) = if spec.lock {
+            (!caps, spec.shift)
+        } else {
+            let caps_affects = caps && case_pairs(ch);
+            (
+                caps_affects && !spec.caps_safe,
+                spec.shift ^ (caps_affects && spec.caps_safe),
+            )
+        };
+        (!flip_caps || caps_usable).then_some((flip_caps, needs_shift))
     }
 
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
@@ -1065,7 +1102,7 @@ mod imp {
             // XOpenDisplay and the xkb compile must not stall a runtime worker. A paste job reads
             // only the chord's letter key, so it skips the compose table and the dead-key pass.
             let charmap = if !job.paste && job.text.is_empty() {
-                Some(HashMap::new())
+                Some((HashMap::new(), true))
             } else {
                 let paste = job.paste;
                 tokio::task::spawn_blocking(move || build_charmap(!paste))
@@ -1073,7 +1110,7 @@ mod imp {
                     .ok()
                     .flatten()
             };
-            let charmap = match charmap {
+            let (charmap, caps_usable) = match charmap {
                 Some(m) => m,
                 None => {
                     let _ = job
@@ -1275,7 +1312,16 @@ mod imp {
                     // `continue`s without advancing `typed`, so a probe placed above re-fired on
                     // every character of an unreachable run (curly quotes, an em dash, emoji) —
                     // back to back, with no sleep between them — instead of once per 32 typed.
-                    let Some(keys) = key_sequence(c, &charmap) else {
+                    // Each key with its Caps plan up front: a char one of whose keys would need a
+                    // Caps Lock tap on a keymap that remapped KEY_CAPSLOCK is skipped whole, never
+                    // left half typed (see `caps_plan`).
+                    let Some(keys) = key_sequence(c, &charmap).and_then(|keys| {
+                        keys.into_iter()
+                            .map(|(ch, spec)| {
+                                caps_plan(ch, &spec, caps, caps_usable).map(|plan| (spec, plan))
+                            })
+                            .collect::<Option<Vec<_>>>()
+                    }) else {
                         continue; // char not reachable on this layout — skip
                     };
                     if typed.is_multiple_of(32) && typed > 0 && own_window_focused(app) {
@@ -1300,7 +1346,7 @@ mod imp {
                     // letter plus separately typed combining marks (`key_sequence`). The cancel and
                     // focus checks above stay per transcript char, so a char is never left half
                     // composed by them.
-                    for (ch, spec) in keys {
+                    for (spec, (flip_caps, needs_shift)) in keys {
                         // Dead-key prefix (es/fr/pt é ê ñ, gr έ): tap the dead key with its own
                         // modifiers first; the app composes it with the base key pressed below.
                         // Through press!/release!, so a failure mid-tap is still released by the
@@ -1346,16 +1392,8 @@ mod imp {
                         // XOR-Shift below would wrongly select their shift-level keysym (e.g. German
                         // Shift+ß = '?', turning "Straße" into "Stra?e").
                         //
-                        // Both cases press the same sequence and differ only in this pair.
-                        let (flip_caps, needs_shift) = if spec.lock {
-                            (!caps, spec.shift)
-                        } else {
-                            let caps_affects = caps && case_pairs(ch);
-                            (
-                                caps_affects && !spec.caps_safe,
-                                spec.shift ^ (caps_affects && spec.caps_safe),
-                            )
-                        };
+                        // Both cases press the same sequence and differ only in this pair, which
+                        // `caps_plan` computed above.
                         if flip_caps {
                             press!(KEY_CAPSLOCK);
                             // Caps Lock toggles on the PRESS, so mark it flipped here — before the
@@ -1799,6 +1837,45 @@ mod imp {
                 remapped.get(&'\u{fc}').is_some_and(|s| !s.lock),
                 "ü still typed"
             );
+        }
+
+        #[test]
+        fn a_remapped_caps_key_is_never_tapped_to_cancel_a_live_caps_lock() {
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let compile = |options: Option<String>| {
+                xkb::Keymap::new_from_names(
+                    &ctx,
+                    "evdev",
+                    "pc105",
+                    "ch",
+                    "de_nodeadkeys",
+                    options,
+                    xkb::KEYMAP_COMPILE_NO_FLAGS,
+                )
+            };
+            let (Some(plain), Some(swapped)) =
+                (compile(None), compile(Some("caps:swapescape".into())))
+            else {
+                eprintln!("skipped: no XKB data for `ch(de_nodeadkeys)`");
+                return;
+            };
+            assert!(caps_usable(&plain, 0));
+            // Caps Lock sits on the Esc key now: the LED can read on while KEY_CAPSLOCK types Escape.
+            assert!(!caps_usable(&swapped, 0));
+            let plain_map = charmap_from_keymap(&plain, 0, None);
+            let map = charmap_from_keymap(&swapped, 0, None);
+            let ue = map[&'\u{fc}'];
+            // ü is a FOUR_LEVEL key (Shift gives è): a live Caps Lock is cancelled by a Caps tap.
+            assert!(!ue.caps_safe && !ue.lock);
+            assert_eq!(
+                caps_plan('\u{fc}', &plain_map[&'\u{fc}'], true, true),
+                Some((true, false))
+            );
+            // With the Caps key remapped that tap would be Escape, ü, Escape: no tap, ü skipped.
+            assert_eq!(caps_plan('\u{fc}', &ue, true, false), None);
+            // Caps off, or a case-pair key cancelled by Shift: typed as before, no Caps tap.
+            assert_eq!(caps_plan('\u{fc}', &ue, false, false), Some((false, false)));
+            assert_eq!(caps_plan('a', &map[&'a'], true, false), Some((false, true)));
         }
 
         #[test]
