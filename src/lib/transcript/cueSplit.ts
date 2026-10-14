@@ -330,10 +330,20 @@ const CLAUSE = /[,;:–—、，；：]["'»”’)\]」』）】〉》]*$/;
 const quoteGoesOn = (before: string, after: string): boolean =>
   /[」』）】〉》]$/u.test(before) && /^(?:と|って)/u.test(after);
 
-function isSentenceEnd(word: string): boolean {
+/** Languages that write an ordinal with a dot ("am 3. Mai"), by base subtag. */
+const DOTTED_ORDINAL = new Set([
+  "de", "da", "nb", "nn", "no", "fi", "is", "fo", "cs", "sk", "pl", "hu", "tr", "sl", "hr", "sr", "bs", "et", "lv",
+]);
+
+/** `cut` is the translation cut's view (cutByShare): the text after the stop and the track's
+ *  language. There "no."/"nr." abbreviate only before a number ("No. 5") — "I said no." and
+ *  "Yo creo que no." end a sentence — and "12." is an ordinal only in a language that dots
+ *  them ("He was 12." ends one). Without it (breakScore) both rules hold everywhere. */
+function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boolean {
   const w = word.toLowerCase();
   if (!SENT_END.test(w)) return false;
-  if (ABBREV.has(w)) return false;
+  if (ABBREV.has(w) && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
+  if (cut?.lang && !DOTTED_ORDINAL.has(cut.lang.toLowerCase().split(/[-_]/)[0])) return true;
   return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
 }
 
@@ -691,8 +701,9 @@ function stretchesOf(pieces: { start: number; end: number; text: string }[]): { 
 // ── translation cutting (same timing) ───────────────────────────────────────
 
 /** Cut `text` into `shares.length` parts proportional to `shares`, preferring
- *  cuts after sentence/clause punctuation and never right after an article. */
-export function cutByShare(text: string, shares: number[]): string[] {
+ *  cuts after sentence/clause punctuation and never right after an article.
+ *  `lang` is the text's language code, for whether "12." can be an ordinal. */
+export function cutByShare(text: string, shares: number[], lang?: string): string[] {
   if (shares.length < 2) return [text.trim()];
   const spaced = /\s/.test(text.trim());
   // One word of a spaced script ("Ja."): nothing to cut — it goes to the first part.
@@ -785,7 +796,9 @@ export function cutByShare(text: string, shares: number[]): string[] {
         // in breakScore — judged on the word before the cut when there is one.
         (quoteGoesOn(back, text.slice(i, i + 2))
           ? 0
-          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevWord)) ? 16 : CLAUSE.test(back) ? 9 : 0) +
+          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevWord, { next: text.slice(i, i + 9).trimStart(), lang }))
+            ? 16
+            : CLAUSE.test(back) ? 9 : 0) +
         (sylSpaced && /\s/.test(text[i]) ? 9 : 0) -
         // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
         (spaced && !sylSpaced && !/\s/.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
@@ -1223,7 +1236,7 @@ export function buildCues(
           own[lang].push({ seg: si, start: seg.start, end: seg.end, text: t, speaker: seg.speaker, tr: {} });
           continue;
         }
-        const texts = cutByShare(t, spans.map((sp) => sp.len));
+        const texts = cutByShare(t, spans.map((sp) => sp.len), lang);
         // Each stretch's text is a part of the translation: its tokens pair a quote with the
         // partner the next stretch holds, and so do the lines of its cues — counted over the
         // whole translation, as each cue's own (pq below) is.
@@ -1240,7 +1253,7 @@ export function buildCues(
         const pq = quoteCtxs(t, parts.map((p) => p.text));
         own[lang].push(...parts.map((p, k) => ({ seg: si, ...p, speaker: seg.speaker, tr: {}, ...(pq[k] ? { q: pq[k] } : {}) })));
       } else {
-        const parts = cutByShare(t, mine.map((c) => Math.max(1, c.text.length)));
+        const parts = cutByShare(t, mine.map((c) => Math.max(1, c.text.length)), lang);
         const pq = quoteCtxs(t, parts);
         mine.forEach((c, k) => {
           if (parts[k]) c.tr[lang] = parts[k];

@@ -1233,6 +1233,29 @@ describe("cutByShare", () => {
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1]))
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
     expect(cutByShare("Am 3. Mai kaufen wir Obst und Birnen. Dann gehen wir alle nach Hause zurück.", [1, 3])[0]).not.toBe("Am 3.");
+  });
+  it("ends a sentence on 'no.' unless a number follows, and on a number unless the language dots ordinals", () => {
+    expect(cutByShare("I said no. But tomorrow we go to the beach with everyone", [1, 2], "en"))
+      .toEqual(["I said no.", "But tomorrow we go to the beach with everyone"]);
+    expect(cutByShare("Yo creo que no. Pero mañana vamos a la playa con todos", [1, 2], "es"))
+      .toEqual(["Yo creo que no.", "Pero mañana vamos a la playa con todos"]);
+    expect(cutByShare("He was 12. Then they moved to a new city far away", [1, 1], "en"))
+      .toEqual(["He was 12.", "Then they moved to a new city far away"]);
+    // "No. 5" / "Nr. 5" stay abbreviations, a German ordinal stays one (also with a region or no
+    // language), and "z.B." still ends nothing.
+    expect(cutByShare("Take no. 5 and then go home with all the others", [1, 4], "en")[0]).toBe("Take no. 5");
+    expect(cutByShare("Wir nehmen Nr. 5 und gehen dann nach Hause", [1, 3], "de")[0]).toBe("Wir nehmen");
+    const am3 = "Am 3. Mai kaufen wir Obst und Birnen. Dann gehen wir alle nach Hause zurück.";
+    for (const l of ["de", "de-AT", undefined]) expect(cutByShare(am3, [1, 3], l)[0]).not.toBe("Am 3.");
+    expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1], "de"))
+      .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
+  });
+  it("a same-timed translation's cut knows its track's language", () => {
+    const orig = "Ich habe ihr gestern ganz klar nein gesagt. Aber morgen fahren wir trotzdem alle zusammen an den Strand.";
+    const en = "Yesterday I told her no. But tomorrow we all drive together to the beach and swim.";
+    const r = seg1(orig, 0, 7.2, { language: "de", segments: [{ start: 0, end: 7.2, text: " " + orig, translations: { en } }] });
+    expect(buildCues(r, STD, ["orig", "en"]).cues.map((c) => c.tr.en))
+      .toEqual(["Yesterday I told her no.", "But tomorrow we all drive together to the beach and swim."]);
     // An ellipsis ends a sentence; a fullwidth colon and a dash end a clause.
     expect(cutByShare("Nun ja… dann gehen wir eben morgen wieder nach Hause zurück", [1, 2]))
       .toEqual(["Nun ja…", "dann gehen wir eben morgen wieder nach Hause zurück"]);
