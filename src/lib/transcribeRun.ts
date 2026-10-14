@@ -9,7 +9,7 @@
 import { create } from "zustand";
 import {
   audioBasePref, cancelBackendTranscription, cancelFileTranscription, fetchUrlAudioOnDemand, fetchUrlMedia,
-  fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getTranscribeProgress, readTextFile,
+  fetchUrlSubtitles, fetchUrlVideo, fetchUrlVideoOnDemand, getJobResult, getTranscribeProgress, readTextFile,
   saveTranscriptMedia, transcribeFile, transcribeUrl, translateText, type UrlMediaDownload,
 } from "./api";
 import {
@@ -1086,7 +1086,9 @@ function fetchRunUrlVideo(rec: TranscriptRecord, ctx: RunContext, mediaId: strin
  *  until the `video` sub-object reaches a terminal state, folding it
  *  into the rail only while this run is still the one on screen, then pull
  *  the file. Gives up when the entry vanishes (server restart / stale
- *  sweep) or after two hours.
+ *  sweep) or after two hours — a run's own poll (no `request`) first asks
+ *  the job row, which the server stamps with the video's outcome just
+ *  before it closes the entry.
  *
  *  `request` = an on-demand fetch's own request (startOnDemandVideo): the
  *  server closes that entry the moment the video is done, so a poll almost
@@ -1143,10 +1145,7 @@ function awaitRunUrlVideo(
         failures = 0;
         // The request's answer landed while this poll was out: it must not repaint the row.
         if (pulled || ended) return;
-        // The epoch stays the same across the files of one run: only the link
-        // the rail is showing may take this video's progress — and a same-path retry is a
-        // different file on the rail (`railFileSeq`).
-        const painting = epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath;
+        const painting = onScreen();
         // A poll that paints nothing (headless, epoch -1, or its link no longer
         // on screen) only feeds the terminal check: match the headless watcher's
         // 5 s cadence — as does one nobody can see (window hidden to the tray).
@@ -1155,11 +1154,14 @@ function awaitRunUrlVideo(
         if (!painting || isWindowHidden()) skip = 4;
         hiddenSkip = painting && isWindowHidden();
         if (p.stage === "unknown" || !p.stage) {
-          // Entry gone without a terminal state: the fetch is lost to us
-          // (the export panel can still fetch on demand). An on-demand
-          // request still open has not claimed it yet, or answers itself.
+          // Entry gone without a terminal state. An on-demand request still
+          // open has not claimed it yet, or answers itself.
           if (!p.video && requestSettled) {
             end();
+            // A run's own id is its job id: the server closes the entry only after it
+            // wrote the video's outcome onto the job row, a "done" a 1 s poll almost
+            // always misses.
+            if (!request) settleFromJob();
             return;
           }
         }
@@ -1200,6 +1202,47 @@ function awaitRunUrlVideo(
     window.clearInterval(timer);
     offHidden();
   }
+  // The epoch stays the same across the files of one run: only the link the rail is
+  // showing may take this video's progress — and a same-path retry is a different file on
+  // the rail (`railFileSeq`).
+  function onScreen() {
+    return epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath;
+  }
+  // Read the video's outcome off the job row once: pull a finished one, else mark the row
+  // failed so Try again shows (the row would otherwise stay at its last "downloading").
+  function settleFromJob() {
+    void getJobResult({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, jobId: pid })
+      .catch((e): { kind: "error"; message: string } => ({ kind: "error", message: errorText(e, 200) }))
+      .then((o) => {
+        if (pulled || !registeredIds.has(rec.id)) return;
+        const res = o.kind === "ok" ? o.value : null;
+        const mediaId = res?.sourceVideoMediaId;
+        if (onScreen()) {
+          const prev = get().stageMeta.downloading?.video;
+          const video: VideoProgress = res && mediaId
+            ? {
+                ...prev,
+                state: "done",
+                mediaId,
+                expiresAt: res.sourceVideoExpiresAt ?? prev?.expiresAt,
+                bytes: res.sourceVideoBytes ?? prev?.bytes,
+                height: res.sourceVideoHeight ?? prev?.height,
+                container: res.sourceVideoContainer ?? prev?.container,
+                error: null,
+              }
+            : {
+                ...prev,
+                state: "failed",
+                error: res?.sourceVideoError
+                  ?? (o.kind === "error" ? o.message : "the server no longer tracks this video"),
+              };
+          set((s) => ({
+            stageMeta: { ...s.stageMeta, downloading: foldVideo(s.stageMeta.downloading, video, Date.now()) },
+          }));
+        }
+        if (mediaId) pull(mediaId);
+      });
+  }
   // A failed request (null) already marked the Video row failed: the poll ends with it
   // (Try again recovers).
   void request?.then((dl) => {
@@ -1211,7 +1254,7 @@ function awaitRunUrlVideo(
       return;
     }
     if (!registeredIds.has(rec.id)) return;
-    if (epoch === get().epoch && railSeq === railFileSeq && get().lastRunPath === rec.sourcePath) {
+    if (onScreen()) {
       const prev = get().stageMeta.downloading?.video;
       // The answer's own height/container: a short fetch no poll saw still names its format.
       // An answer at another height (a Try again at a different pick) is another rung: the

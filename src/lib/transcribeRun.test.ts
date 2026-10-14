@@ -21,6 +21,8 @@ const getTranscribeProgress = vi.fn<(args: Parameters<typeof import("./api").get
 // Unset = the real outside-Tauri commands; the on-demand video completion tests answer them.
 const fetchUrlVideoOnDemand = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideoOnDemand>[0]) => Promise<import("./api").UrlMediaDownload>>();
 const fetchUrlVideo = vi.fn<(args: Parameters<typeof import("./api").fetchUrlVideo>[0]) => Promise<string | null>>();
+// Unset = the real outside-Tauri command; the run-video "entry gone" tests answer it.
+const getJobResult = vi.fn<(args: Parameters<typeof import("./api").getJobResult>[0]) => ReturnType<typeof import("./api").getJobResult>>();
 // Unset = the real outside-Tauri command (no copy); the late audio-copy test answers it.
 const saveTranscriptMedia = vi.fn<(...a: Parameters<typeof import("./api").saveTranscriptMedia>) => Promise<string | null>>();
 // Unset = the real caps fetch; the translateParsed caps-miss test answers it.
@@ -69,6 +71,8 @@ vi.mock("./api", async (importOriginal) => {
       fetchUrlVideoOnDemand.getMockImplementation() ? fetchUrlVideoOnDemand(a) : orig.fetchUrlVideoOnDemand(a),
     fetchUrlVideo: (a: Parameters<typeof orig.fetchUrlVideo>[0]) =>
       fetchUrlVideo.getMockImplementation() ? fetchUrlVideo(a) : orig.fetchUrlVideo(a),
+    getJobResult: (a: Parameters<typeof orig.getJobResult>[0]) =>
+      getJobResult.getMockImplementation() ? getJobResult(a) : orig.getJobResult(a),
     saveTranscriptMedia: (...a: Parameters<typeof orig.saveTranscriptMedia>) =>
       saveTranscriptMedia.getMockImplementation() ? saveTranscriptMedia(...a) : orig.saveTranscriptMedia(...a),
   };
@@ -2164,6 +2168,85 @@ describe("a same-link retry takes the Video row from the first run's watcher", (
       vi.unstubAllGlobals();
       useTranscribeRun.setState({ stageMeta: {} });
     }
+  });
+});
+
+describe("a run's pending video whose progress entry closed between two polls", () => {
+  // The server writes the video's outcome onto the job row and closes the progress entry
+  // milliseconds after "done": a 1 s poll reads "unknown" with no video. The job row has it.
+  const url = "https://youtu.be/entry-gone";
+  const jobId = "e".repeat(32);
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+  const row = {
+    v: 1 as const, jobId, backendId: "b1", serverUrl: "http://x", path: url, kind: "url" as const,
+    title: "Talk", options: {}, ctx, urlMeta: { title: "Talk" }, startedAt: 1_000,
+  };
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  let tick: (() => void) | null = null;
+  // downloading, then the entry is gone.
+  let polls = 0;
+  beforeEach(async () => {
+    tick = null;
+    polls = 0;
+    vi.stubGlobal("window", { setInterval: (fn: () => void) => { tick = fn; return 1; }, clearInterval: () => {} });
+    getTranscribeProgress.mockImplementation(() => Promise.resolve((polls++ === 0
+      ? { stage: "done", progress: 1, video: { state: "downloading", progress: 0.6 } }
+      : { stage: "unknown" }) as import("./types").BatchProgress));
+    fetchUrlVideo.mockImplementation(() => Promise.resolve("/videos/entry-gone.mp4"));
+    const { reattachRun, ingestJobResult } = await import("./transcribeRun");
+    reattachRun(row, () => "http://x");
+    ingestJobResult(row, { text: "hi", sourceVideoPending: true }, 10, { attached: true });
+  });
+  afterEach(() => {
+    getTranscribeProgress.mockReset();
+    getJobResult.mockReset();
+    fetchUrlVideo.mockReset();
+    vi.unstubAllGlobals();
+    useTranscribeRun.setState({ files: [], queue: [], running: false, progress: null, stageTimes: {}, stageMeta: {} });
+  });
+  const poll = async (n: number) => { for (let i = 0; i < n; i++) { tick!(); await flush(); } };
+
+  it("reads the job row once and pulls the finished video", async () => {
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: {
+      text: "hi", sourceVideoMediaId: "f".repeat(32), sourceVideoHeight: 720, sourceVideoContainer: "mp4",
+    } }));
+    await poll(1);
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("downloading");
+    await poll(1);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    expect(fetchUrlVideo.mock.calls[0][0].mediaId).toBe("f".repeat(32));
+    expect(getJobResult).toHaveBeenCalledTimes(1);
+    expect(getJobResult.mock.calls[0][0].jobId).toBe(jobId);
+    const v = useTranscribeRun.getState().stageMeta.downloading?.video;
+    expect(v?.state).toBe("done");
+    expect(v?.height).toBe(720);
+    // The download clock closed.
+    expect(useTranscribeRun.getState().stageMeta.downloading?.videoDlEnd).toBeTypeOf("number");
+  });
+
+  it("marks the Video row failed when the job row names the video's error", async () => {
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: {
+      text: "hi", sourceVideoError: "video download failed",
+    } }));
+    await poll(2);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("video download failed");
+    expect(fetchUrlVideo).not.toHaveBeenCalled();
+  });
+
+  it("marks the Video row failed when the job row carries no video", async () => {
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "ok", value: { text: "hi" } }));
+    await poll(2);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    expect(fetchUrlVideo).not.toHaveBeenCalled();
+  });
+
+  it("marks the Video row failed when the job row cannot be read", async () => {
+    getJobResult.mockImplementation(() => Promise.resolve({ kind: "error", message: "HTTP 502" }));
+    await poll(2);
+    await vi.waitFor(() => expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("failed"));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.error).toBe("HTTP 502");
+    expect(fetchUrlVideo).not.toHaveBeenCalled();
   });
 });
 
