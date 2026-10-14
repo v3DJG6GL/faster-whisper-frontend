@@ -321,7 +321,9 @@ export function ListPicker<R>({
         // natively disabled button can't take it, and one disabled while focused drops it to
         // <body>. It goes native-disabled once focus leaves; until then show() refuses.
         disabled: disabled && !open && !triggerFocused,
-        "aria-disabled": disabled || undefined,
+        // Not while open: the trigger still closes the list then, so it must not read (or look)
+        // unavailable.
+        "aria-disabled": (disabled && !open) || undefined,
         "aria-haspopup": "listbox",
         "aria-expanded": open,
         onClick: () => (open ? close(false) : show()),

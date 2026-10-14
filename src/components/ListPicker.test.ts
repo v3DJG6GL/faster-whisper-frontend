@@ -148,6 +148,20 @@ describe("ListPicker trigger while the popover is open", () => {
     expect(trigger.disabled).toBe(true);
   });
 
+  it("is not announced or drawn as disabled while open — it still closes the list", () => {
+    render(false);
+    trigger.onKeyDown(key("ArrowDown") as never);
+    // The pick filled the last slot with the list still up.
+    render(true);
+    expect(trigger["aria-expanded"]).toBe(true);
+    expect(trigger["aria-disabled"]).toBeFalsy();
+    // A click on it closes the list, as an enabled trigger would.
+    trigger.onClick();
+    render(true);
+    expect(trigger["aria-expanded"]).toBe(false);
+    expect(trigger["aria-disabled"]).toBe(true);
+  });
+
   it("a disabled closed trigger does not open", () => {
     render(true);
     trigger.onKeyDown(key("ArrowDown") as never);

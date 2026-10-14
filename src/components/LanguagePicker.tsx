@@ -222,12 +222,10 @@ export function TargetLanguagePicker({
           // The tooltip sits on a wrapper: a disabled button shows none in some webviews.
           <span title={full && !anyFree ? fullTitle : undefined} className="inline-flex">
             <button
+              // p.disabled, not the caller's raw `disabled`: ListPicker keeps the button natively
+              // enabled while the list is open or it holds focus, so a run starting under the
+              // keyboard focus (or a pick that hits the cap) does not drop focus to <body>.
               {...p}
-              // At the cap the button only LOOKS disabled (aria-disabled): ListPicker.show already
-              // ignores it, and a natively disabled button can't take the focus back when Enter or
-              // Esc closes the still-open multi popover — focus would drop to <body>.
-              disabled={disabled}
-              aria-disabled={p["aria-disabled"]}
               aria-label={full && !anyFree ? `Add a target language — ${fullTitle}` : "Add a target language"}
               // One border/text set, chosen: cn is clsx (no merge) and the built CSS emits
               // border-line-strong after border-accent/55, so an appended open state would lose.
