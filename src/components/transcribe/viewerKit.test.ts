@@ -3,7 +3,6 @@ import {
   applySpeakerRenameInput,
   playRejectionBreaks,
   renameToCommit,
-  speakerRenameDraft,
   speakerRenameEdit,
   speakerRenameValue,
 } from "./viewerKit";
@@ -21,7 +20,10 @@ describe("speakerRenameValue", () => {
   });
 });
 
-describe("speakerRenameDraft", () => {
+describe("speakerRenameEdit", () => {
+  const speakerRenameDraft = (prev: string, typed: string, composing = false) =>
+    speakerRenameEdit(prev, typed, composing).draft;
+
   it("takes 40 emoji or CJK Ext-B characters and refuses the 41st, as the stored name allows", () => {
     const emoji = "🎤".repeat(40);
     expect(speakerRenameDraft("🎤".repeat(39), emoji)).toBe(emoji);
@@ -57,13 +59,47 @@ describe("speakerRenameDraft", () => {
   });
   it("the field gets the cut draft and the caret written back, so React's restore does not jump it", () => {
     const calls: [number, number][] = [];
-    const el = { value: "Dr. " + "Z".repeat(38), setSelectionRange: (a: number, b: number) => void calls.push([a, b]) };
+    const el = {
+      value: "Dr. " + "Z".repeat(38),
+      selectionEnd: 42,
+      setSelectionRange: (a: number, b: number) => void calls.push([a, b]),
+    };
     expect(applySpeakerRenameInput(el, "Dr. ", false)).toBe("Dr. " + "Z".repeat(36));
     expect(el.value).toBe("Dr. " + "Z".repeat(36));
     expect(calls).toEqual([[40, 40]]);
-    const typing = { value: "Ann", setSelectionRange: () => calls.push([-1, -1]) };
+    const typing = { value: "Ann", selectionEnd: 3, setSelectionRange: () => calls.push([-1, -1]) };
     expect(applySpeakerRenameInput(typing, "An", false)).toBe("Ann");
     expect(calls).toHaveLength(1);
+  });
+  it("a paste starting with the text after the caret cuts the paste, not the name's own tail", () => {
+    // The field's caret after the input marks where the paste ends; everything after it was there.
+    const paste = (prev: string, at: number, run: string) => {
+      const typed = prev.slice(0, at) + run + prev.slice(at);
+      return speakerRenameEdit(prev, typed, false, at + run.length);
+    };
+    expect(paste("Dr Smith", 3, "Smithson-Jones from the Regional Office of Planning")).toEqual({
+      draft: "Dr Smithson-Jones from the RegionalSmith",
+      caret: 35,
+    });
+    const name = "Mariana Lopez de la Fuente y Hernandez Garcia"; // 45 code points
+    expect(paste("Maria", 0, name)).toEqual({ draft: name.slice(0, 35) + "Maria", caret: 35 });
+    const head = "Maria Schmidt Weber, Head of "; // before "Research"
+    expect(paste(head + "Research", head.length, "Regional ")).toEqual({
+      draft: head + "RegResearch",
+      caret: head.length + 3,
+    });
+    // A keystroke at the cap beside an identical letter: refused, the caret stays where it was typed.
+    const full = "Anna" + "x".repeat(36);
+    expect(paste(full, 2, "n")).toEqual({ draft: full, caret: 2 });
+    // The field writes the cut back with the caret it reported.
+    const calls: [number, number][] = [];
+    const el = {
+      value: name + "Maria",
+      selectionEnd: 45,
+      setSelectionRange: (a: number, b: number) => void calls.push([a, b]),
+    };
+    expect(applySpeakerRenameInput(el, "Maria", false)).toBe(name.slice(0, 35) + "Maria");
+    expect(calls).toEqual([[35, 35]]);
   });
   it("a name stored before the cap can be shortened and edited down without losing its end", () => {
     const long = "Moderatorin der Podiumsdiskussion am Nachmittag"; // 47 code points
