@@ -526,15 +526,24 @@ mod imp {
                         // Unlike the dead keys above, this is NOT fewest-modifier: every key found
                         // here types the glyph, and a cost-first pick would move ( and ) onto the
                         // keypad-paren keycodes.
-                        map.entry(ch).or_insert_with(|| KeySpec {
-                            keycode: (kc - EVDEV_OFFSET) as i32,
-                            shift: level == 1 || level == 3,
-                            altgr: level == 2 || level == 3,
-                            lock: false,
-                            caps_safe: replay.shift_cancels_caps(key, g, level, ch),
-                            caps_keeps: replay.types(key, g, level, true, ch),
-                            dead: None,
-                        });
+                        //
+                        // Registered only where the press the typer will send types it: a level is
+                        // not always reached by Shift/AltGr. On a KEYPAD key level 2 is NumLock's —
+                        // Shift+KP_2 is KP_Down — so th/vn, whose digits are only on the keypad,
+                        // would select, paste (Shift+KP_Insert) and move the cursor for "2024".
+                        if let std::collections::hash_map::Entry::Vacant(e) = map.entry(ch) {
+                            if replay.types(key, g, level, false, ch) {
+                                e.insert(KeySpec {
+                                    keycode: (kc - EVDEV_OFFSET) as i32,
+                                    shift: level == 1 || level == 3,
+                                    altgr: level == 2 || level == 3,
+                                    lock: false,
+                                    caps_safe: replay.shift_cancels_caps(key, g, level, ch),
+                                    caps_keeps: replay.types(key, g, level, true, ch),
+                                    dead: None,
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -2228,6 +2237,45 @@ mod imp {
             };
             assert!(typeable_keys('\u{df}', &map, stuck).is_none());
             assert!(divert_unreachable("Stra\u{df}e", &map, stuck));
+        }
+
+        /// A digit a layout carries only on the keypad (th, vn: no ASCII digits on the main row)
+        /// sits on a KEYPAD-type key whose level 2 is reached by NumLock, not Shift: Shift+KP_2 is
+        /// KP_Down. Registered as a Shift press, "2024" would select, paste (Shift+KP_Insert) and
+        /// move the cursor through the user's document.
+        #[test]
+        fn a_keypad_only_digit_is_never_registered_as_a_shift_keypad_press() {
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            for layout in ["th", "vn", "us"] {
+                let Some(keymap) = xkb::Keymap::new_from_names(
+                    &ctx,
+                    "evdev",
+                    "pc105",
+                    layout,
+                    "",
+                    None,
+                    xkb::KEYMAP_COMPILE_NO_FLAGS,
+                ) else {
+                    eprintln!("skipped: no XKB data for `{layout}`");
+                    continue;
+                };
+                let map = charmap_from_keymap(&keymap, 0, None);
+                for d in '0'..='9' {
+                    if let Some(spec) = map.get(&d) {
+                        assert_eq!(
+                            typed_under(&keymap, spec, (false, spec.shift), false),
+                            d,
+                            "{layout}: {d} on keycode {}",
+                            spec.keycode
+                        );
+                    }
+                }
+                if layout == "us" {
+                    // The main-row 2 key (evdev 3), bare, as before.
+                    let two = map[&'2'];
+                    assert_eq!((two.keycode, two.shift, two.altgr), (3, false, false));
+                }
+            }
         }
 
         #[test]
