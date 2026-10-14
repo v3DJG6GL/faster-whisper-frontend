@@ -561,6 +561,16 @@ describe("site subtitle cleanup", () => {
     expect(parseImportedText("srt", srt).segments[0].text).toBe("И я в Москве.");
     expect(fixBroadcasterText(["В Н И М А Н И Е", "W I C H T I G"])).toEqual(["ВНИМАНИЕ", "WICHTIG"]);
   });
+  it("letter-spaced emphasis glues unless every letter is a one-letter word of ONE language", () => {
+    expect(
+      fixBroadcasterText([
+        "Das ist w i e immer", "s i e kommt", "z w e i Mal", "W A S soll das?", "Y E S!", "m i t", "s e h r",
+      ]),
+    ).toEqual(["Das ist wie immer", "sie kommt", "zwei Mal", "WAS soll das?", "YES!", "mit", "sehr"]);
+    expect(fixBroadcasterText(["Il y a à boire", "tam a w z nim", "А я в шоке.", "a k s"])).toEqual([
+      "Il y a à boire", "tam a w z nim", "А я в шоке.", "a k s",
+    ]);
+  });
   it("decoded references and JSON escapes cannot smuggle control or bidi characters", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\n&#x202E;abc &#27;x\n";
     expect(parseImportedText("srt", srt).segments[0].text).toBe("abc x");
