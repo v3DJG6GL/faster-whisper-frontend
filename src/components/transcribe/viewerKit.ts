@@ -26,10 +26,17 @@ export function speakerRenameValue(draft: string): string {
   return capCodePoints(name, SPEAKER_NAME_MAX).trim();
 }
 
-/** The rename field's value as typed or pasted: cut at the stored cap in code points. An
- *  input's maxLength counts UTF-16 units, which stopped an emoji or CJK Ext-B name at 20. */
-export function speakerRenameDraft(typed: string): string {
-  return capCodePoints(typed, SPEAKER_NAME_MAX);
+/** The rename field's next draft: maxLength's behaviour, counted in code points (an input's
+ *  maxLength counts UTF-16 units, which stopped an emoji or CJK Ext-B name at 20). An edit that
+ *  grows the draft past the cap is refused, so the draft stays `prev` and the caret stays put —
+ *  cutting the tail instead deleted the name's end on a mid-string typo fix and moved the caret.
+ *  A shorter or equal value (a deletion, or a name stored before the cap being trimmed) and an
+ *  open IME composition (cutting it mid-composition ends or duplicates it) pass as typed: the
+ *  commit caps (speakerRenameValue). */
+export function speakerRenameDraft(prev: string, typed: string, composing = false): string {
+  if (composing || typed.length <= SPEAKER_NAME_MAX) return typed;
+  const n = Array.from(typed).length;
+  return n > SPEAKER_NAME_MAX && n > Array.from(prev).length ? prev : typed;
 }
 
 /** What committing the speaker rename editor writes: null = nothing, when the draft is the

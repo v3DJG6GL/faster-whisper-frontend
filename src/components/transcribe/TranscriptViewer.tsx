@@ -2179,7 +2179,9 @@ export function TranscriptViewer({
                   <input
                     autoFocus
                     value={renameDraft}
-                    onChange={(e) => setRenameDraft(speakerRenameDraft(e.target.value))}
+                    onChange={(e) =>
+                      setRenameDraft(speakerRenameDraft(renameDraft, e.target.value, (e.nativeEvent as InputEvent).isComposing))
+                    }
                     onBlur={commitRename}
                     onKeyDown={(e) => {
                       // Mid-composition the IME owns Esc and Enter.
