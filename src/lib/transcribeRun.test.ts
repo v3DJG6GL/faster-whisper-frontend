@@ -2344,13 +2344,16 @@ describe("translateParsed joins a text source like the TXT export", () => {
     expect(en.text).toBe("Hello. How are you?");
   });
 
-  it("each chunk numbers its segments from its offset in the whole source", async () => {
+  it("each chunk sends its segments' positions in the whole source as their ids", async () => {
     // The server's "segment N" warnings name the ids it was sent: per-request ids from 0 made a
     // later chunk's warning point at a cue in the first chunk.
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = Array.from({ length: 401 }, (_, i) => ({ text: `cue ${i}` }));
     await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
-    expect(translateText.mock.calls.map(([a]) => [a.firstId, a.texts.length])).toEqual([[0, 400], [400, 1]]);
+    const [first, second] = translateText.mock.calls.map(([a]) => a);
+    expect(translateText.mock.calls).toHaveLength(2);
+    expect(first.ids).toEqual(Array.from({ length: 400 }, (_, i) => i));
+    expect(second.ids).toEqual([400]);
   });
 
   it("a chunk also closes under the server's character cap", async () => {
@@ -2364,7 +2367,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     for (const c of calls) expect(c.texts.join("").length).toBeLessThanOrEqual(180_000);
     let next = 0;
     for (const c of calls) {
-      expect(c.firstId).toBe(next);
+      expect(c.ids).toEqual(Array.from({ length: c.texts.length }, (_, k) => next + k));
       next += c.texts.length;
     }
     expect(next).toBe(400);
@@ -2375,7 +2378,7 @@ describe("translateParsed joins a text source like the TXT export", () => {
     translateText.mockImplementation((a) => Promise.resolve({ results: a.texts.map((t) => ({ de: t })) }));
     const segments = [{ text: "a" }, { text: "x".repeat(190_000) }, { text: "b" }];
     await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
-    expect(translateText.mock.calls.map(([a]) => [a.firstId, a.texts.length])).toEqual([[0, 1], [1, 1], [2, 1]]);
+    expect(translateText.mock.calls.map(([a]) => a.ids)).toEqual([[0], [1], [2]]);
   });
 
   it("the per-target translations join the same way", async () => {

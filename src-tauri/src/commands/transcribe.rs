@@ -65,9 +65,9 @@ pub async fn translate_text(
     backend_id: Option<String>,
     api_key: Option<String>,
     texts: Vec<String>,
-    // The id of `texts[0]` — a chunked caller's offset, so the server's
-    // "segment N" warnings name the cue in the whole source. Omitted = 0.
-    first_id: Option<usize>,
+    // Each text's 0-based position in the caller's whole source, so the
+    // server's "segment N" warnings name that cue. Omitted = 0..n.
+    ids: Option<Vec<usize>>,
     targets: Vec<String>,
     source: Option<String>,
     model: Option<String>,
@@ -86,7 +86,7 @@ pub async fn translate_text(
         &server_url,
         key.as_deref(),
         &texts,
-        first_id,
+        ids.as_deref(),
         &targets,
         source.as_deref(),
         model.as_deref(),

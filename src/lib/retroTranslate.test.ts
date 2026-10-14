@@ -74,6 +74,26 @@ describe("runChunkedTranslate", () => {
     expect(merges[0][17]).toEqual({ en: "en:t17" });
   });
 
+  it("hands each chunk's segment indexes to translate, sparse rows included", async () => {
+    // They become the request's ids: the server's "segment N" warnings must name the row in
+    // the whole transcript, not a position in the chunk (which collided across chunks).
+    const seen: [string[], number[]][] = [];
+    await runChunkedTranslate({
+      indexes: [3, 7, 40, 41, 90],
+      chunk: 3,
+      textOf: (i) => `t${i}`,
+      translate: (texts, idxs) => {
+        seen.push([texts, idxs]);
+        return Promise.resolve(answer(texts));
+      },
+      onMerge: () => {},
+    });
+    expect(seen).toEqual([
+      [["t3", "t7", "t40"], [3, 7, 40]],
+      [["t41", "t90"], [41, 90]],
+    ]);
+  });
+
   it("drops per-segment empty results and skips an all-empty chunk's merge", async () => {
     const onMerge = vi.fn();
     const r = await runChunkedTranslate({

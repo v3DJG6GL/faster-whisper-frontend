@@ -1991,7 +1991,7 @@ export async function translateParsed(
       texts: parsed.segments.slice(at, end).map((seg) => seg.text),
       // Ids are positions in the whole source, so a later chunk's warnings name its own cues
       // (and two chunks' same-reason warnings stay two lines through the de-dupe below).
-      firstId: at,
+      ids: Array.from({ length: end - at }, (_, k) => at + k),
       targets,
       source: srcCode,
       model: options.translationModel ?? null,

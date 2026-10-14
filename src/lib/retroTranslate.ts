@@ -279,8 +279,10 @@ export interface ChunkedTranslateArgs {
   /** Current text of a segment index (edits layered over the transcript). */
   textOf: (segIdx: number) => string;
   /** One server round trip for a chunk's texts (the caller closes over
-   *  targets/model/mode/glossary and the run's progress id). */
-  translate: (texts: string[]) => Promise<TextTranslationResult>;
+   *  targets/model/mode/glossary and the run's progress id). `idxs[k]` is the segment
+   *  index of `texts[k]` — sent as the request's ids, so the server's "segment N"
+   *  warnings name the row in the whole transcript, not a position in this chunk. */
+  translate: (texts: string[], idxs: number[]) => Promise<TextTranslationResult>;
   /** A chunk request is about to leave: its segment indexes and how many
    *  segments are already merged. */
   onChunkStart?: (chunkIdxs: number[], done: number) => void;
@@ -327,7 +329,7 @@ export async function runChunkedTranslate(a: ChunkedTranslateArgs): Promise<{
     const slice = a.indexes.slice(at, at + chunk);
     a.onChunkStart?.(slice, at);
     const texts = slice.map((i) => a.textOf(i));
-    const r = await a.translate(texts);
+    const r = await a.translate(texts, slice);
     // Cancelled while this chunk was in flight: its results are lost by
     // design (the approved copy says so); everything merged before stays.
     if (a.isCancelled?.()) return { model, source, cancelled: true, mergedChunks, warnings };

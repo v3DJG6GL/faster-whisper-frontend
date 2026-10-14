@@ -4,7 +4,7 @@
 
 use super::{base_url, bounded_server_text, client, friendly_err, json_capped, with_auth};
 use anyhow::bail;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 /// Client-side ceilings — the server has its own (4 MiB JSON body, 200k chars
@@ -126,14 +126,11 @@ pub struct TextTranslationResult {
 /// after trimming names nothing, so it is omitted (a stray space in a synced id would
 /// otherwise warm one model and request a differently spelled one).
 ///
-/// Segment ids start at `first_id`: the server rewrites its "segment N" warnings into
-/// the ids it was sent, so a chunked caller passes the chunk's offset in the whole
-/// source — with per-request ids from 0, every chunk's warnings named a cue in the
-/// first chunk, and two chunks' identical warnings collapsed into one.
+/// `wire_ids[i]` is the id sent for `texts[i]` (see [`wire_ids`]).
 #[allow(clippy::too_many_arguments)]
 fn build_request_body<'a>(
     texts: &'a [String],
-    first_id: usize,
+    wire_ids: &[usize],
     targets: &'a [String],
     source: Option<&'a str>,
     model: Option<&'a str>,
@@ -147,11 +144,8 @@ fn build_request_body<'a>(
     RequestBody {
         segments: texts
             .iter()
-            .enumerate()
-            .map(|(i, t)| SegmentIn {
-                id: first_id + i,
-                text: t,
-            })
+            .zip(wire_ids)
+            .map(|(t, &id)| SegmentIn { id, text: t })
             .collect(),
         targets,
         source,
@@ -165,13 +159,76 @@ fn build_request_body<'a>(
     }
 }
 
+/// The wire id of each text, from the caller's `ids` (each text's 0-based position in
+/// its WHOLE source; `None` = this request is the whole source, positions 0..n).
+///
+/// Sent 1-based: the server rewrites its own 1-based "segment N" warnings into the
+/// N-th id it was sent, so `position + 1` makes a warning read the cue number the user
+/// sees (an SRT cue number, the viewer's "segment i+1", the batch route's own count).
+/// Explicit ids rather than a chunk offset because the viewer sends sparse rows (only
+/// the untranslated / stale / flagged ones): with per-request ids every chunk's
+/// warnings named a cue in the first chunk, and two chunks' identical warnings
+/// collapsed into one. A list that does not match `texts` one-to-one is refused —
+/// a guessed alignment would put translations on the wrong rows.
+fn wire_ids(ids: Option<&[usize]>, len: usize) -> anyhow::Result<Vec<usize>> {
+    let Some(ids) = ids else {
+        return Ok((1..=len).collect());
+    };
+    if ids.len() != len {
+        bail!("{} segment ids for {len} segments", ids.len());
+    }
+    let mut seen = HashSet::with_capacity(len);
+    ids.iter()
+        .map(|&p| {
+            if !seen.insert(p) {
+                bail!("duplicate segment id {p}");
+            }
+            p.checked_add(1)
+                .ok_or_else(|| anyhow::anyhow!("segment id out of range"))
+        })
+        .collect()
+}
+
+/// Re-order the server's segments by id into dense lists aligned with the input
+/// (`wire_ids[i]` names input i); an id the request did not carry is ignored, a
+/// skipped input keeps an empty map. Translation VALUES are output (untouched), the
+/// language-code keys get bounded.
+fn align_segments(
+    segments: Vec<SegmentOut>,
+    wire_ids: &[usize],
+) -> (Vec<BTreeMap<String, String>>, Vec<Vec<String>>) {
+    let index: HashMap<usize, usize> = wire_ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| (id, i))
+        .collect();
+    let mut results: Vec<BTreeMap<String, String>> =
+        (0..wire_ids.len()).map(|_| BTreeMap::new()).collect();
+    let mut kept: Vec<Vec<String>> = (0..wire_ids.len()).map(|_| Vec::new()).collect();
+    for seg in segments {
+        let Some(&at) = index.get(&seg.id) else {
+            continue;
+        };
+        results[at] = super::batch::bound_translation_keys(seg.translations);
+        // Kept-original markers are language codes — bound like the
+        // translation keys, capped at the target ceiling.
+        kept[at] = seg
+            .kept_original
+            .iter()
+            .take(MAX_TARGETS)
+            .map(|k| bounded_server_text(k, 16))
+            .collect();
+    }
+    (results, kept)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn translate_texts(
     server_url: &str,
     api_key: Option<&str>,
     texts: &[String],
-    // The id of `texts[0]` (see `build_request_body`); `None` = 0.
-    first_id: Option<usize>,
+    // Each text's 0-based position in the whole source (see `wire_ids`).
+    ids: Option<&[usize]>,
     targets: &[String],
     source: Option<&str>,
     model: Option<&str>,
@@ -191,10 +248,7 @@ pub async fn translate_texts(
     if texts.len() > MAX_TEXTS {
         bail!("too many segments in one request (max {MAX_TEXTS})");
     }
-    let first_id = first_id.unwrap_or(0);
-    if first_id.checked_add(texts.len()).is_none() {
-        bail!("segment id out of range");
-    }
+    let wire_ids = wire_ids(ids, texts.len())?;
     // The same screen the batch form applies; the CAP differs on purpose (refuse, don't
     // truncate — see `transport::MAX_TARGETS`).
     let targets: Vec<String> = targets
@@ -208,7 +262,7 @@ pub async fn translate_texts(
     let targets = &targets[..];
     let body = build_request_body(
         texts,
-        first_id,
+        &wire_ids,
         targets,
         source,
         model,
@@ -246,29 +300,7 @@ pub async fn translate_texts(
     let parsed: ResponseBody = json_capped::<ResponseBody>(resp)
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
-    // Re-order by id into a dense list aligned with the input; translation
-    // VALUES are output (untouched), the language-code keys get bounded.
-    let mut results: Vec<BTreeMap<String, String>> =
-        (0..texts.len()).map(|_| BTreeMap::new()).collect();
-    let mut kept: Vec<Vec<String>> = (0..texts.len()).map(|_| Vec::new()).collect();
-    for seg in parsed.segments {
-        let Some(at) = seg.id.checked_sub(first_id) else {
-            continue;
-        };
-        if let Some(slot) = results.get_mut(at) {
-            *slot = super::batch::bound_translation_keys(seg.translations);
-            // Kept-original markers are language codes — bound like the
-            // translation keys, capped at the target ceiling.
-            if let Some(k) = kept.get_mut(at) {
-                *k = seg
-                    .kept_original
-                    .iter()
-                    .take(MAX_TARGETS)
-                    .map(|k| bounded_server_text(k, 16))
-                    .collect();
-            }
-        }
-    }
+    let (results, kept) = align_segments(parsed.segments, &wire_ids);
     Ok(TextTranslationResult {
         results,
         kept,
@@ -317,7 +349,17 @@ mod request_body_tests {
         let texts = vec!["hallo".to_string()];
         let targets = vec!["en".to_string()];
         serde_json::to_value(build_request_body(
-            &texts, 0, &targets, source, None, None, glossary, None, None, None, None,
+            &texts,
+            &[1],
+            &targets,
+            source,
+            None,
+            None,
+            glossary,
+            None,
+            None,
+            None,
+            None,
         ))
         .unwrap()
     }
@@ -352,7 +394,7 @@ mod request_body_tests {
         let targets = vec!["en".to_string()];
         let v = serde_json::to_value(build_request_body(
             &texts,
-            0,
+            &[1],
             &targets,
             None,
             Some(""),
@@ -383,7 +425,7 @@ mod request_body_tests {
         let targets = vec!["en".to_string()];
         let padded = serde_json::to_value(build_request_body(
             &texts,
-            0,
+            &[1],
             &targets,
             None,
             Some(" gemma "),
@@ -399,7 +441,7 @@ mod request_body_tests {
         assert_eq!(padded["translation_mode"], "fast");
         let blank = serde_json::to_value(build_request_body(
             &texts,
-            0,
+            &[1],
             &targets,
             None,
             Some("  "),
@@ -415,25 +457,55 @@ mod request_body_tests {
         assert!(blank.get("translation_mode").is_none());
     }
 
-    #[test]
-    fn segment_ids_start_at_the_callers_first_id() {
-        // A chunked source's warnings must name the cue's position in the whole source,
-        // not its position in this one request.
+    fn sent_ids(ids: Option<&[usize]>) -> Vec<u64> {
         let texts = vec!["a".to_string(), "b".to_string()];
         let targets = vec!["en".to_string()];
-        let ids = |first_id| {
-            let v = serde_json::to_value(build_request_body(
-                &texts, first_id, &targets, None, None, None, None, None, None, None, None,
-            ))
-            .unwrap();
-            v["segments"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|s| s["id"].as_u64().unwrap())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(ids(400), vec![400, 401]);
-        assert_eq!(ids(0), vec![0, 1]);
+        let wire = super::wire_ids(ids, texts.len()).unwrap();
+        let v = serde_json::to_value(build_request_body(
+            &texts, &wire, &targets, None, None, None, None, None, None, None, None,
+        ))
+        .unwrap();
+        v["segments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["id"].as_u64().unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn segment_ids_are_the_callers_positions_sent_one_based() {
+        // The server's "segment N" warnings are rewritten into the N-th id sent, so a
+        // chunk's (or the viewer's sparse rows') warnings must carry the cue's number in
+        // the whole source — 1-based, the number the user sees.
+        assert_eq!(sent_ids(Some(&[400, 401])), vec![401, 402]);
+        assert_eq!(sent_ids(Some(&[3, 7])), vec![4, 8]);
+        assert_eq!(sent_ids(None), vec![1, 2]);
+    }
+
+    #[test]
+    fn ids_that_do_not_match_the_texts_one_to_one_are_refused() {
+        assert!(super::wire_ids(Some(&[0]), 2).is_err());
+        assert!(super::wire_ids(Some(&[0, 1, 2]), 2).is_err());
+        assert!(super::wire_ids(Some(&[5, 5]), 2).is_err());
+        assert!(super::wire_ids(Some(&[usize::MAX]), 1).is_err());
+    }
+
+    #[test]
+    fn the_response_is_realigned_by_id_not_by_order() {
+        let parsed: super::ResponseBody = serde_json::from_value(serde_json::json!({
+            "segments": [
+                { "id": 402, "translations": { "de": "B" }, "kept_original": ["de"] },
+                { "id": 401, "translations": { "de": "A" } },
+                { "id": 7, "translations": { "de": "stray" } },
+            ]
+        }))
+        .unwrap();
+        let wire = super::wire_ids(Some(&[400, 401]), 2).unwrap();
+        let (results, kept) = super::align_segments(parsed.segments, &wire);
+        assert_eq!(results[0]["de"], "A");
+        assert_eq!(results[1]["de"], "B");
+        assert!(kept[0].is_empty());
+        assert_eq!(kept[1], vec!["de".to_string()]);
     }
 }

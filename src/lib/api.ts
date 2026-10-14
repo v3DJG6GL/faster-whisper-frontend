@@ -232,9 +232,10 @@ export interface TextTranslationResult {
  *  subtitle/text-file sources. */
 export async function translateText(args: ServerTarget & {
   texts: string[];
-  /** The segment id of `texts[0]` (default 0). A chunked caller passes the chunk's offset
-   *  in the whole source: the server's "segment N" warnings name the ids it was sent. */
-  firstId?: number | null;
+  /** Each text's 0-based position in the caller's whole source (default 0..n), one per text
+   *  and unique. A chunked or sparse caller passes them so the server's "segment N" warnings
+   *  name the cue in the whole source (the transport sends them 1-based, the number users see). */
+  ids?: number[] | null;
   targets: string[];
   source?: string | null;
   model?: string | null;
@@ -259,7 +260,7 @@ export async function translateText(args: ServerTarget & {
 }): Promise<TextTranslationResult> {
   return invokeServer<TextTranslationResult>("translate_text", args, {
     texts: args.texts,
-    firstId: args.firstId ?? null,
+    ids: args.ids ?? null,
     targets: args.targets,
     source: args.source ?? null,
     model: args.model ?? null,

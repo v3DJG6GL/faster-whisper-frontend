@@ -705,7 +705,7 @@ export function TranscriptViewer({
         // Read the store, not the render closure: the chunk loop outlives this render and a
         // correction made mid-run must be translated as it is NOW (the merge clears its stale mark).
         textOf: (i) => (useTranscribeRun.getState().edits[okey]?.[i] ?? result.segments?.[i]?.text ?? "").trim(),
-        translate: async (texts) => {
+        translate: async (texts, idxs) => {
           if (!groups) {
             // Caps never fetched for this backend: fetch them now (never throws). A server that
             // really reports nothing (older backend) keeps the documented ceiling.
@@ -720,6 +720,7 @@ export function TranscriptViewer({
               serverUrl,
               backendId: backend.id,
               texts,
+              ids: idxs,
               targets: group,
               // A word-named language from an imported file would 422 every chunk.
               source: translateSourceCode(result.language),
