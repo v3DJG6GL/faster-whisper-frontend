@@ -21,7 +21,7 @@ import { stripControlChars } from "@/lib/sanitize";
 import { lastStartedAt } from "@/lib/seekKeys";
 import { rowsToRender } from "@/lib/virtualRows";
 import {
-  TRANSCRIBED_CPS, timedTrack, trackLimits, wrapLines,
+  TRANSCRIBED_CPS, timedTrack, trackLang, trackLimits, wrapLines,
   type CueGrid, type CueLimits, type CueOptions, type QuoteCtx,
 } from "@/lib/transcript/cueSplit";
 import { trackCode } from "@/lib/transcript/exportTracks";
@@ -268,7 +268,7 @@ export const SubtitleList = memo(function SubtitleList({
       const prefix = showNames && speaker && body.trim() ? `${displayName(speaker)}: ` : "";
       const L = limitOf(track);
       return {
-        text: prefix + (L ? wrapLines(body, L.cpl, L.lines, prefix.length, q).join("\n") : body),
+        text: prefix + (L ? wrapLines(body, L.cpl, L.lines, prefix.length, q, trackLang(result, track)).join("\n") : body),
         main,
         color: main && colorize && speaker ? colorOf(speaker) : undefined,
       };

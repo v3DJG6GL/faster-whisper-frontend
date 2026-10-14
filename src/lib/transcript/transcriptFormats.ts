@@ -5,7 +5,7 @@
 // and both end up in files that get opened elsewhere.
 
 import {
-  buildCues, cueQuoteCtx, cueResult, edgeChar, joinLineBreaks, timedTrack, trText, trackCps, trackCues, trackLimits, unspacedChar, wrapLines,
+  buildCues, cueQuoteCtx, cueResult, edgeChar, joinLineBreaks, timedTrack, trText, trackCps, trackCues, trackLang, trackLimits, unspacedChar, wrapLines,
   type Cue, type CueGrid, type CueLimits, type CueOptions, type QuoteCtx,
 } from "./cueSplit";
 import { planTracks, trackFileSuffixes } from "./exportTracks";
@@ -819,7 +819,7 @@ function ctxOf(result: BatchResult, opts: ExportOptions): Ctx {
       if (!lim.has(track)) lim.set(track, trackLimits(result, cues, track));
       const L = lim.get(track);
       if (!L) return text;
-      return wrapLines(text, L.cpl, L.lines, reserve, q).join("\n");
+      return wrapLines(text, L.cpl, L.lines, reserve, q, trackLang(result, track)).join("\n");
     },
   };
 }

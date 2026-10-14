@@ -1250,6 +1250,32 @@ describe("cutByShare", () => {
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1], "de"))
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
   });
+  it("the cue split and the line wrap judge 'no.' and '12.' as the translation cut does", () => {
+    const party = (x: string) => `When he asked me to come along to the party I said ${x} Then we went home and talked about the whole evening for hours`;
+    const cuesOf = (r: BatchResult, tracks = ["orig"]) => buildCues(r, STD, tracks);
+    // The original: a sentence ends on "no." and "12." as on "yes.", but not on "no. 5".
+    for (const x of ["yes.", "no.", "12."]) {
+      expect(cuesOf(seg1(party(x), 0, 9)).cues[0].text).toBe(`When he asked me to come along to the party I said ${x}`);
+    }
+    expect(cuesOf(seg1(party("no. 5"), 0, 9)).cues[0].text).not.toMatch(/no\.$/);
+    // German keeps "12." an ordinal: no cue ends on "am 12.".
+    const de = "Wir haben uns damals im Sommer getroffen und zwar am 12. Mai in einem kleinen Café am See";
+    expect(cuesOf(seg1(de, 0, 9, { language: "de" })).cues.map((c) => c.text).some((t) => t.endsWith("12."))).toBe(false);
+    // An own-timed English translation of a German original splits at its sentence end too.
+    const orig = "Als der Krieg begann, war er gerade einmal zwölf Jahre alt. Dann zog die ganze Familie weit weg in eine neue Stadt.";
+    const en = "When the war began he was barely 12. Then the whole family moved to a new city far away from home.";
+    const r = seg1(orig, 0, 9, { language: "de", segments: [{ start: 0, end: 9, text: " " + orig, translations: { en } }] });
+    expect(buildCues(r, { ...STD, timing: "own" }, ["orig", "en"]).own.en[0].text).toBe("When the war began he was barely 12.");
+    // The line wrap prefers the seam after the sentence-final number or "no." in English.
+    for (const x of ["12.", "no."]) {
+      expect(wrapLines(`He was told ${x} Then they all moved to Bern in May`, 42, 2, 0, undefined, "en"))
+        .toEqual([`He was told ${x}`, "Then they all moved to Bern in May"]);
+    }
+    // An unknown language, filed as "und" (trackLang), keeps "12." an ordinal as no language does.
+    const twelve = "He was told 12. Then they all moved to Bern in May";
+    expect(wrapLines(twelve, 42, 2, 0, undefined, "und")).toEqual(wrapLines(twelve, 42, 2));
+    expect(wrapLines(twelve, 42, 2)).not.toEqual(wrapLines(twelve, 42, 2, 0, undefined, "en"));
+  });
   it("a same-timed translation's cut knows its track's language", () => {
     const orig = "Ich habe ihr gestern ganz klar nein gesagt. Aber morgen fahren wir trotzdem alle zusammen an den Strand.";
     const en = "Yesterday I told her no. But tomorrow we all drive together to the beach and swim.";

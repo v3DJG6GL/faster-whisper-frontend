@@ -335,25 +335,27 @@ const DOTTED_ORDINAL = new Set([
   "de", "da", "nb", "nn", "no", "fi", "is", "fo", "cs", "sk", "pl", "hu", "tr", "sl", "hr", "sr", "bs", "et", "lv",
 ]);
 
-/** `cut` is the translation cut's view (cutByShare): the text after the stop and the track's
- *  language. There "no."/"nr." abbreviate only before a number ("No. 5") — "I said no." and
- *  "Yo creo que no." end a sentence — and "12." is an ordinal only in a language that dots
- *  them ("He was 12." ends one). Without it (breakScore) both rules hold everywhere. */
+/** `cut` = the text after the stop and the track's language, as the cue split, the line wrap
+ *  and the translation cut all know them. "no."/"nr." abbreviate only before a number
+ *  ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
+ *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
+ *  an ordinal). */
 function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boolean {
   const w = word.toLowerCase();
   if (!SENT_END.test(w)) return false;
   if (ABBREV.has(w) && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
-  if (cut?.lang && !DOTTED_ORDINAL.has(cut.lang.toLowerCase().split(/[-_]/)[0])) return true;
+  const base = primarySubtag(cut?.lang);
+  if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
   return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
 }
 
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
 
-/** Score of breaking between `prev` and `next` (words as written). */
-function breakScore(prev: string, next: string): number {
+/** Score of breaking between `prev` and `next` (words as written) in a text of `lang`. */
+function breakScore(prev: string, next: string, lang?: string): number {
   let s = 0;
   const quoted = quoteGoesOn(prev, next);
-  if (!quoted && isSentenceEnd(prev)) s += 100;
+  if (!quoted && isSentenceEnd(prev, { next, lang })) s += 100;
   else if (!quoted && CLAUSE.test(prev)) s += 40;
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
@@ -583,8 +585,9 @@ const sliceOf = (text: string, ts: Tok[]) => text.slice(ts[0].from, ts[ts.length
 
 /** Limits of one segment's text: `reserve` = chars a "Name: " prefix takes; `q(at, e)` = the
  *  quotes around the piece `text[at, e)` that its cue will carry (Cue.q), absent when the
- *  piece is the whole text the cue's quotes are counted over. */
-type Budget = CueLimits & { reserve: number; q?: (at: number, e: number) => QuoteCtx | undefined };
+ *  piece is the whole text the cue's quotes are counted over; `lang` = the text's language,
+ *  for where a sentence ends (breakScore). */
+type Budget = CueLimits & { reserve: number; q?: (at: number, e: number) => QuoteCtx | undefined; lang?: string };
 
 function fits(text: string, ts: Tok[], L: Budget): boolean {
   const s = sliceOf(text, ts);
@@ -596,7 +599,7 @@ function fits(text: string, ts: Tok[], L: Budget): boolean {
   // partner lies in the next cue tokenises differently without them, and the cue's real
   // wrap took a line more than the one judged here.
   const at = text.indexOf(s, ts[0].from);
-  return wrapLines(s, L.cpl, L.lines, L.reserve, L.q?.(at, at + s.length)).length <= L.lines;
+  return wrapLines(s, L.cpl, L.lines, L.reserve, L.q?.(at, at + s.length), L.lang).length <= L.lines;
 }
 
 /** Recursive best-gap split until every piece fits. */
@@ -611,6 +614,7 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     let s = (ts[i].bs ??= breakScore(
       text.slice(ts[i - 1].from, ts[i - 1].to).trim(),
       text.slice(ts[i].from, ts[i].to).trim(),
+      L.lang,
     ));
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
     // Between two syllables of a Thai/Lao/Khmer/Burmese run (no space): a fallback seam, so
@@ -792,8 +796,8 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase() : "";
       const s =
         -Math.abs(i - target) +
-        // A stop after an abbreviation or a German ordinal ("z.B.", "3.") ends no sentence, as
-        // in breakScore — judged on the word before the cut when there is one.
+        // A stop after an abbreviation or an ordinal ("z.B.", "3.") ends no sentence, as in
+        // breakScore — judged on the word before the cut when there is one.
         (quoteGoesOn(back, text.slice(i, i + 2))
           ? 0
           : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevWord, { next: text.slice(i, i + 9).trimStart(), lang }))
@@ -839,8 +843,11 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
  *  breaks after punctuation and never after an article. Text that cannot fit
  *  gets extra lines rather than losing words. `firstReserve` = chars a prefix
  *  ("Name: ", "[DE] ") takes on the first line. `q` = the quotes of the cue's segment
- *  around `text` (Cue.q), so a quote pairs with its partner in the next cue. */
-export function wrapLines(text: string, cpl: number, _lines: number, firstReserve = 0, q?: QuoteCtx): string[] {
+ *  around `text` (Cue.q), so a quote pairs with its partner in the next cue. `lang` = the
+ *  track's language, so a line ends where the cue split sees a sentence end ("He was 12."). */
+export function wrapLines(
+  text: string, cpl: number, _lines: number, firstReserve = 0, q?: QuoteCtx, lang?: string,
+): string[] {
   const t = text.trim();
   const len = t.length + firstReserve;
   if (len <= cpl) return [t];
@@ -870,8 +877,8 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
       // A balanced break inside the split word can cost a line at a small cpl (a URL after
       // "wonderful" at 14, two e-mails at 20) that the word kept whole — on lines of its
       // own, wrapped per character — did not: the fewer lines win, the shared ones on a tie.
-      const split = wrapTokens(toks, gaps, cpl, len, firstReserve);
-      const whole = wrapTokens(words, words.map((_, i) => i > 0), cpl, len, firstReserve);
+      const split = wrapTokens(toks, gaps, cpl, len, firstReserve, lang);
+      const whole = wrapTokens(words, words.map((_, i) => i > 0), cpl, len, firstReserve, lang);
       return whole.length < split.length ? whole : split;
     }
   } else {
@@ -890,7 +897,7 @@ export function wrapLines(text: string, cpl: number, _lines: number, firstReserv
       ? [t]
       : wrapTokens(u, [], cpl, len, firstReserve);
   }
-  return wrapTokens(toks, gaps, cpl, len, firstReserve);
+  return wrapTokens(toks, gaps, cpl, len, firstReserve, lang);
 }
 
 /** Which characters of `t` are counted ASCII quotes, `q` = its segment's quotes and characters
@@ -1086,7 +1093,9 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
  *  `reserve`, toks.length >= 2; `gaps[i]` = a space stands before toks[i] (only
  *  there does a seam score as a word break). Line widths come from prefix sums, so
  *  a long unsplit paragraph costs one pass per line, not one rejoin per candidate. */
-function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, reserve: number): string[] {
+function wrapTokens(
+  toks: string[], gaps: boolean[], cpl: number, len: number, reserve: number, lang?: string,
+): string[] {
   const cum = [0];
   toks.forEach((w, i) => cum.push(cum[i] + (gaps[i] ? 1 : 0) + w.length));
   const T = toks.length;
@@ -1136,7 +1145,7 @@ function wrapTokens(toks: string[], gaps: boolean[], cpl: number, len: number, r
       if (a > cpl) s -= 2000 + 50 * (a - cpl);
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) {
-        s += breakScore(toks[i - 1], toks[i]) * 0.3;
+        s += breakScore(toks[i - 1], toks[i], lang) * 0.3;
         // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?"): it
         // stays with its word — below the over-cap penalties, so a forced cut still happens,
         // and not on a line over the cap, which only its overflow may decide.
@@ -1199,6 +1208,8 @@ export function buildCues(
   const words = result.words ?? [];
   const ranges = o && words.length && !result.timingSynthesized ? segmentWordRanges(segs, words) : null;
   const L = trackLimits(result, o, "orig");
+  // Filed as trackLang, as the export and the Subtitles view wrap the track's lines with it.
+  const origLang = trackLang(result, "orig");
   const timedIds = new Set((result.timedTracks ?? []).map((t) => t.id));
   const mtLangs = tracks.filter((t) => t !== "orig" && !timedIds.has(t));
   const own: Record<string, Cue[]> = {};
@@ -1218,7 +1229,7 @@ export function buildCues(
     const toks = ranges && L ? tokensOf(seg.text, words.slice(ranges[si][0], ranges[si][1])) : null;
     // A piece's quotes as its cue will carry them (Cue.q), so fits() wraps it as the export does.
     const split = toks && L && needSplit
-      ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg), q: quotesIn(seg.text) })
+      ? timedPieces(seg.text, toks, seg.start, seg.end, { ...L, reserve: reserve(seg), q: quotesIn(seg.text), lang: origLang })
       : null;
     const pieces = split && needMine ? split : [{ start: seg.start, end: seg.end, text: seg.text.trim() }];
     // Each cue's quotes around it in the segment, so its lines pair a quote across cues.
@@ -1231,7 +1242,7 @@ export function buildCues(
       const t = trText(seg, lang);
       if (t === null) continue;
       if (ownMt) {
-        const LL = { ...mtLim.get(lang)!, reserve: reserve(seg) };
+        const LL = { ...mtLim.get(lang)!, reserve: reserve(seg), lang: trackLang(result, lang) };
         if (!spans.length) {
           own[lang].push({ seg: si, start: seg.start, end: seg.end, text: t, speaker: seg.speaker, tr: {} });
           continue;

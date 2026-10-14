@@ -879,6 +879,16 @@ describe("subtitle cues", () => {
     }
   });
 
+  it("the export wraps a cue's lines with its track's language, as the cue split judged them", () => {
+    const text = "He was told 12. Then they all moved to Bern in May";
+    const words = text.split(" ").map((w, i) => ({ word: " " + w, start: i * 0.5, end: i * 0.5 + 0.4 }));
+    const r: BatchResult = { text, language: "en", segments: [{ start: 0, end: 6, text: " " + text }], words };
+    expect(cueGrid(r, { format: "srt", cues: STANDARD }, ["orig"]).cues).toHaveLength(1);
+    // English: "12." ends a sentence, so the line ends there too.
+    expect(generateExport(r, { format: "srt", tracks: ["orig"], cues: STANDARD }))
+      .toContain("He was told 12.\nThen they all moved to Bern in May");
+  });
+
   it("no cue options ⇒ one cue per segment, unwrapped (the pre-cue output)", () => {
     const out = generateExport(CUED, { format: "srt", tracks: ["orig", "de"] });
     expect(out.split("\n\n").filter(Boolean)).toHaveLength(1);
