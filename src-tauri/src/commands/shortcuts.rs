@@ -238,14 +238,19 @@ pub async fn reregister_shortcuts_unless_capturing(app: AppHandle) -> Result<(),
 /// the reader tasks), and it silently kills the dictation WebSocket. On resume we
 /// rebuild the hotkey backend (fresh held-state, freshly enumerated devices) and tell
 /// the UI to drop any in-flight session so the chip can't hang at "finalizing…".
-pub fn spawn_suspend_watch(app: AppHandle) {
+///
+/// `seed` is the input-node listing taken before setup's apply_bindings (see
+/// `suspend_watch_seed`).
+pub fn spawn_suspend_watch(app: AppHandle, seed: SuspendWatchSeed) {
     const TICK: std::time::Duration = std::time::Duration::from_secs(2);
+    #[cfg(not(target_os = "linux"))]
+    let _ = seed;
     let _ = std::thread::Builder::new()
         .name("suspend-watch".into())
         .spawn(move || {
             let mut clock = SleepClock::new();
             #[cfg(target_os = "linux")]
-            let mut nodes = InputNodeWatch::default();
+            let mut nodes = InputNodeWatch::seeded(seed.0);
             loop {
                 std::thread::sleep(TICK);
                 let Some(slept) = clock.tick() else {
@@ -293,6 +298,20 @@ pub fn spawn_suspend_watch(app: AppHandle) {
                 let _ = app.emit("system://resumed", ());
             }
         });
+}
+
+/// The suspend watch's starting input-node baseline. setup takes it BEFORE its apply_bindings
+/// enumerates keyboards, as the resume path does around its own apply: baselined on the watch's
+/// first tick instead (2 s later), a keyboard that appeared in between — a Bluetooth or dock
+/// keyboard connecting right after login — was never probed, and its chords stayed dead until
+/// something else re-applied.
+pub struct SuspendWatchSeed(#[cfg(target_os = "linux")] Option<std::collections::BTreeSet<String>>);
+
+pub fn suspend_watch_seed() -> SuspendWatchSeed {
+    SuspendWatchSeed(
+        #[cfg(target_os = "linux")]
+        input_event_nodes(),
+    )
 }
 
 /// The `/dev/input/event*` node names (no device is opened). None when the directory can't be
@@ -470,6 +489,16 @@ const LOSS_STABLE_TICKS: u32 = 30;
 
 #[cfg(target_os = "linux")]
 impl InputNodeWatch {
+    /// A watch baselined on `listing`, taken before an apply enumerated (see `after_apply`); a
+    /// failed listing leaves the first tick to baseline, as before.
+    fn seeded(listing: Option<std::collections::BTreeSet<String>>) -> Self {
+        let mut w = Self::default();
+        if let Some(now) = listing {
+            w.after_apply(now);
+        }
+        w
+    }
+
     /// Feed this tick's node set and evdev's reader-lost flag. `Some(reader_lost)` when a re-scan
     /// decision is due; the caller clears `pending` unless it defers.
     fn observe(&mut self, now: std::collections::BTreeSet<String>, lost: bool) -> Option<bool> {
@@ -726,6 +755,20 @@ mod tests {
             None,
             "only once"
         );
+    }
+
+    #[test]
+    fn a_seeded_watch_reads_a_node_that_appeared_before_its_first_tick_as_new() {
+        // Seeded from setup's pre-apply listing: event5 arrived after that listing but before the
+        // first tick, so it is an arrival to probe, not part of the baseline.
+        let mut w = InputNodeWatch::seeded(Some(set(&["event0"])));
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
+        assert_eq!(w.pending, set(&["event5"]));
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), Some(false));
+        // A failed seed listing keeps the old behaviour: the first tick is the baseline.
+        let mut w = InputNodeWatch::seeded(None);
+        assert_eq!(w.observe(set(&["event0", "event5"]), false), None);
+        assert!(w.pending.is_empty());
     }
 
     #[test]

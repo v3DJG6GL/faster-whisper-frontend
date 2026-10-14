@@ -309,6 +309,9 @@ pub fn run() {
             logging::spawn_emit_pump(app.handle().clone());
             // Webview memory into the log every few minutes (debug; warn on a spike).
             memwatch::spawn();
+            // Before the apply enumerates keyboards: a node that appears after this listing reads
+            // as new on the suspend watch's first tick (see `suspend_watch_seed`).
+            let watch_seed = commands::suspend_watch_seed();
             commands::apply_bindings(app.handle());
             // Warm the AT-SPI focus listener now so the focused-app cache is populated by
             // the time the user dictates (per-app rules + the chip target readout), and
@@ -320,7 +323,7 @@ pub fn run() {
             }
             // Recover hotkeys + any in-flight dictation after the machine wakes from
             // suspend (a dropped key-release / dead WebSocket would otherwise wedge us).
-            commands::spawn_suspend_watch(app.handle().clone());
+            commands::spawn_suspend_watch(app.handle().clone(), watch_seed);
             // Never veto a Windows shutdown/logoff, and really exit when the session ends.
             #[cfg(windows)]
             win_session_end::install(app.handle());
