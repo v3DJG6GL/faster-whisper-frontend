@@ -182,6 +182,41 @@ describe("alignSegmentWords", () => {
     expect(out[0]).toBe(th[0]);
     expect(out[1]).toBe(th[1]);
   });
+
+  it("does not keep Whisper's leading space on a matched word that now sits mid-run", () => {
+    const ja: TranscriptWord[] = [
+      { word: " 今日", start: 0, end: 1 },
+      { word: "は", start: 1, end: 1.2 },
+      { word: "晴れ", start: 1.2, end: 2 },
+      { word: "です", start: 2, end: 2.5 },
+    ];
+    const out = alignSegmentWords(ja, "ああ今日は晴れです");
+    expect(out.map((x) => x.word).join("").trim()).toBe("ああ今日は晴れです");
+    expect(out[1]).toMatchObject({ word: "今日", start: 0, end: 1 });
+    const zh: TranscriptWord[] = [
+      { word: " 我们", start: 0, end: 1 },
+      { word: "今天", start: 1, end: 2 },
+      { word: "去", start: 2, end: 3 },
+    ];
+    expect(alignSegmentWords(zh, "所以我们今天去").map((x) => x.word).join("").trim()).toBe("所以我们今天去");
+    const th: TranscriptWord[] = [
+      { word: "สวัสดี", start: 0, end: 1 },
+      { word: "ค่ะ", start: 1, end: 2 },
+      { word: " ผม", start: 2, end: 2.5 },
+      { word: "ชื่อ", start: 2.5, end: 3 },
+    ];
+    expect(alignSegmentWords(th, "สวัสดีค่ะผมชื่อ").map((x) => x.word).join("")).toBe("สวัสดีค่ะผมชื่อ");
+    // A Latin word inside the run keeps its space, and an English edit is untouched.
+    const mixed: TranscriptWord[] = [
+      { word: " 今日", start: 0, end: 1 },
+      { word: "は", start: 1, end: 1.2 },
+      { word: " AI", start: 1.2, end: 2 },
+      { word: "です", start: 2, end: 2.5 },
+    ];
+    expect(alignSegmentWords(mixed, "ああ今日はAIです").map((x) => x.word).join("").trim()).toBe("ああ今日は AIです");
+    const en = alignSegmentWords(LINE, "So Das ist so passiert im Velonavitest des TCS");
+    expect(en.slice(1)).toEqual(LINE);
+  });
 });
 
 describe("segmentWordRanges", () => {

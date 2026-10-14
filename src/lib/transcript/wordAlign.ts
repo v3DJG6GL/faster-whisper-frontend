@@ -166,7 +166,11 @@ export function alignSegmentWords(
    *  standing where an old word carried a space (a Latin " AI" inside the line) gets one —
    *  never one mid-run. */
   const lead = (j: number, old?: TranscriptWord) =>
-    !spacey ? "" : opens[j] || (old && /^\s/.test(old.word)) ? " " : "";
+    !spacey ? "" : opens[j] || (old && /^\s/.test(old.word) && !midRun(j)) ? " " : "";
+  /** Token j continues an unspaced run of the edit: Whisper's " 今日" keeps no space once
+   *  the user prepends "ああ" to it (karaoke renders words verbatim). */
+  const midRun = (j: number) =>
+    j > 0 && !opens[j] && UNSPACED_RE.test(newToks[j - 1].slice(-1)) && UNSPACED_RE.test(newToks[j][0]);
   const out: TranscriptWord[] = [];
   /** Emit new tokens [nj0,nj1) over the span of old words [oi0,oi1). */
   const flush = (oi0: number, oi1: number, nj0: number, nj1: number) => {
@@ -209,7 +213,7 @@ export function alignSegmentWords(
       // a correction like "Velonavitest" → "Velo-Navi-Test" still lands here —
       // adopt the corrected spelling whenever the raw strings differ.
       out.push(
-        oldWords[i].word.trim() === newToks[j]
+        oldWords[i].word.trim() === newToks[j] && !(midRun(j) && /^\s/.test(oldWords[i].word))
           ? oldWords[i]
           : { ...oldWords[i], word: lead(j, oldWords[i]) + newToks[j] },
       );
