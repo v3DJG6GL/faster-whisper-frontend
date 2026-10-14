@@ -25,9 +25,9 @@ import {
   sanitizeProfiles,
 } from "@/lib/sync/sync";
 import { startersClearOf } from "@/lib/starters";
-import { ruleListOf } from "@/lib/pipelineMap";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
+import { quickAddListsOf } from "@/screens/onboardingLists";
 import { IS_WINDOWS } from "@/lib/platform";
 import { peerDeviceName, ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import {
@@ -733,7 +733,7 @@ function QuickAddStep({
       .then((res) => {
         if (!live) return;
         if (!res.ok) setLoadFailed(true);
-        const maps = ruleListOf(res).filter((r) => r.type === "callback:map");
+        const maps = quickAddListsOf(res);
         setRules(maps);
         setSlug(maps[0]?.name ?? null);
       })
