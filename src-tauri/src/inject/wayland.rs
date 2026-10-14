@@ -636,6 +636,30 @@ mod imp {
         (!flip_caps || caps_usable).then_some((flip_caps, needs_shift))
     }
 
+    /// The live Caps Lock as the typer sees it: `on` from the LED, `usable` = KEY_CAPSLOCK still
+    /// produces Caps_Lock on this keymap (see `caps_plan`).
+    #[derive(Clone, Copy)]
+    struct LiveCaps {
+        on: bool,
+        usable: bool,
+    }
+
+    /// The keys that type `c` under `caps`, each with its Caps plan — `key_sequence` with every
+    /// key passed through `caps_plan`, `None` when the layout lacks the char or a key would need a
+    /// Caps tap the keymap cannot give. The ONE reachability test: the typing loop presses what
+    /// this returns and `letter_reach` counts what it rejects, so a letter the loop drops for the
+    /// live Caps Lock is counted toward the clipboard divert instead of vanishing unreported.
+    fn typeable_keys(
+        c: char,
+        map: &HashMap<char, KeySpec>,
+        caps: LiveCaps,
+    ) -> Option<Vec<(KeySpec, (bool, bool))>> {
+        key_sequence(c, map)?
+            .into_iter()
+            .map(|(ch, spec)| caps_plan(ch, &spec, caps.on, caps.usable).map(|plan| (spec, plan)))
+            .collect()
+    }
+
     fn key_spec_for(c: char, map: &HashMap<char, KeySpec>) -> Option<KeySpec> {
         match c {
             '\n' | '\r' => Some(KeySpec {
@@ -722,13 +746,13 @@ mod imp {
         None
     }
 
-    /// How many of `text`'s letters the active layout can type, and how many it cannot —
+    /// How many of `text`'s letters the active layout can type under `caps`, and how many it cannot —
     /// `(reachable, unreachable)`. Only letters count: digits, punctuation, symbols and emoji say
     /// nothing about whether the layout fits the transcript's script.
-    fn letter_reach(text: &str, map: &HashMap<char, KeySpec>) -> (usize, usize) {
+    fn letter_reach(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> (usize, usize) {
         text.chars()
             .filter(|c| c.is_alphabetic())
-            .fold((0, 0), |(yes, no), c| match key_sequence(c, map) {
+            .fold((0, 0), |(yes, no), c| match typeable_keys(c, map, caps) {
                 Some(_) => (yes + 1, no),
                 None => (yes, no + 1),
             })
@@ -743,9 +767,9 @@ mod imp {
     /// symmetrically, a Latin letter on a layout that types no basic Latin (Russian, Greek), so
     /// "Я купил новый iPhone вчера" keeps its "iPhone". Only stray Latin letters on a Latin
     /// layout (an accent a US layout lacks) are left to the per-character skip.
-    fn divert_unreachable(text: &str, map: &HashMap<char, KeySpec>) -> bool {
-        let (reachable, unreachable) = letter_reach(text, map);
-        unreachable > 0 && (unreachable >= reachable || unreachable_foreign_word(text, map))
+    fn divert_unreachable(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> bool {
+        let (reachable, unreachable) = letter_reach(text, map, caps);
+        unreachable > 0 && (unreachable >= reachable || unreachable_foreign_word(text, map, caps))
     }
 
     /// Does `text` hold a letter of a foreign word that the active layout cannot type? On any
@@ -758,7 +782,7 @@ mod imp {
     /// Greek...): also any unreachable Latin letter (ASCII, Latin-1, Latin Extended-A/-B) — there
     /// it is an English brand or name, not a stray accent. Modifier letters (the Belarusian
     /// apostrophe U+02BC a `by` layout cannot type) and µ ª º stay with the per-character skip.
-    fn unreachable_foreign_word(text: &str, map: &HashMap<char, KeySpec>) -> bool {
+    fn unreachable_foreign_word(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> bool {
         const LATIN_ABOVE_GREEK: [std::ops::RangeInclusive<u32>; 14] = [
             0x1D00..=0x1DFF,   // phonetic extensions (+ supplement), combining Latin letters
             0x1E00..=0x1EFF,   // Latin Extended Additional (Vietnamese ạ, Welsh ẁ)
@@ -779,7 +803,7 @@ mod imp {
         text.chars().any(|c| {
             let u = c as u32;
             c.is_alphabetic()
-                && key_sequence(c, map).is_none()
+                && typeable_keys(c, map, caps).is_none()
                 && ((u >= 0x0370 && !LATIN_ABOVE_GREEK.iter().any(|r| r.contains(&u)))
                     || (!latin_layout
                         && (c.is_ascii_alphabetic() || (0x00C0..=0x024F).contains(&u))))
@@ -1209,9 +1233,21 @@ mod imp {
                 // diverts too. Symbols (a "♪" or "…" phrase, curly quotes, an em dash, emoji) and a
                 // few stray accented Latin letters in an otherwise typeable line on a Latin layout
                 // are still skipped per character below.
+                //
+                // KWin interprets each injected keycode under the LIVE Caps Lock, and our
+                // charmap only models Shift/AltGr (not Lock) — so with Caps ON, alphabetic
+                // keys come out inverted-case. Compensate by flipping Shift for Lock-
+                // affected (alphabetic) keys while Caps is on. (zwp_virtual_keyboard would
+                // sidestep this, but KWin doesn't advertise it, so we're on this path.) Read
+                // BEFORE the divert check: a letter the typing loop drops for this Caps state
+                // must count as unreachable there too (see `typeable_keys`).
+                let caps = LiveCaps {
+                    on: !job.paste && caps_lock_on(),
+                    usable: caps_usable,
+                };
                 if !job.paste && !job.text.is_empty() {
-                    let (reachable, unreachable) = letter_reach(&job.text, &charmap);
-                    if divert_unreachable(&job.text, &charmap) {
+                    let (reachable, unreachable) = letter_reach(&job.text, &charmap, caps);
+                    if divert_unreachable(&job.text, &charmap, caps) {
                         tracing::warn!(
                             "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout — putting the text on the clipboard instead of typing",
                             reachable + unreachable
@@ -1289,12 +1325,6 @@ mod imp {
                     tokio::time::sleep(Duration::from_millis(40)).await;
                     return Ok(crate::inject::Landed::Yes);
                 }
-                // KWin interprets each injected keycode under the LIVE Caps Lock, and our
-                // charmap only models Shift/AltGr (not Lock) — so with Caps ON, alphabetic
-                // keys come out inverted-case. Compensate by flipping Shift for Lock-
-                // affected (alphabetic) keys while Caps is on. (zwp_virtual_keyboard would
-                // sidestep this, but KWin doesn't advertise it, so we're on this path.)
-                let caps = caps_lock_on();
                 // Characters actually sent to the compositor, and the countdown to the next focus
                 // probe. See the probe below for why it is periodic rather than per character.
                 let mut typed: usize = 0;
@@ -1320,20 +1350,14 @@ mod imp {
                     // (hazard P16), so the untyped tail is dropped and this reports `Yes` — the
                     // same trade Q32 settled for the mid-typing cancel right above.
                     //
-                    // Below the `key_sequence` lookup, not above it: an unreachable character
+                    // Below the `typeable_keys` lookup, not above it: an unreachable character
                     // `continue`s without advancing `typed`, so a probe placed above re-fired on
                     // every character of an unreachable run (curly quotes, an em dash, emoji) —
                     // back to back, with no sleep between them — instead of once per 32 typed.
                     // Each key with its Caps plan up front: a char one of whose keys would need a
                     // Caps Lock tap on a keymap that remapped KEY_CAPSLOCK is skipped whole, never
                     // left half typed (see `caps_plan`).
-                    let Some(keys) = key_sequence(c, &charmap).and_then(|keys| {
-                        keys.into_iter()
-                            .map(|(ch, spec)| {
-                                caps_plan(ch, &spec, caps, caps_usable).map(|plan| (spec, plan))
-                            })
-                            .collect::<Option<Vec<_>>>()
-                    }) else {
+                    let Some(keys) = typeable_keys(c, &charmap, caps) else {
                         continue; // char not reachable on this layout — skip
                     };
                     if typed.is_multiple_of(32) && typed > 0 && own_window_focused(app) {
@@ -1636,6 +1660,12 @@ mod imp {
             }
         }
 
+        /// Caps Lock off: the reach tests that are not about the live Caps state.
+        const CAPS_OFF: LiveCaps = LiveCaps {
+            on: false,
+            usable: true,
+        };
+
         fn us_letters() -> HashMap<char, KeySpec> {
             ('a'..='z')
                 .enumerate()
@@ -1675,9 +1705,9 @@ mod imp {
         #[test]
         fn letter_reach_counts_a_script_the_layout_cannot_type_digits_or_not() {
             // Chinese on a US layout: the digits are typeable, the words are not — divert.
-            assert_eq!(letter_reach("你好 世界\n", &us_letters()), (0, 4));
+            assert_eq!(letter_reach("你好 世界\n", &us_letters(), CAPS_OFF), (0, 4));
             assert_eq!(
-                letter_reach("会议在3点开始。2026年预算", &us_letters()),
+                letter_reach("会议在3点开始。2026年预算", &us_letters(), CAPS_OFF),
                 (0, 9)
             );
         }
@@ -1686,15 +1716,22 @@ mod imp {
         fn letter_reach_ignores_symbols_and_whitespace() {
             // A music/ellipsis phrase or an em dash is skipped per character, never a reason to
             // divert a live phrase.
-            assert_eq!(letter_reach("♪ … — 😀 \n\t", &us_letters()), (0, 0));
-            assert_eq!(letter_reach("ab — c", &us_letters()), (3, 0));
+            assert_eq!(
+                letter_reach("♪ … — 😀 \n\t", &us_letters(), CAPS_OFF),
+                (0, 0)
+            );
+            assert_eq!(letter_reach("ab — c", &us_letters(), CAPS_OFF), (3, 0));
         }
 
         #[test]
         fn letter_reach_keeps_a_mostly_typeable_line_typeable() {
-            let (yes, no) = letter_reach("caf\u{e9} ole", &us_letters());
+            let (yes, no) = letter_reach("caf\u{e9} ole", &us_letters(), CAPS_OFF);
             assert!(no > 0 && no < yes);
-            assert!(!divert_unreachable("caf\u{e9} ole", &us_letters()));
+            assert!(!divert_unreachable(
+                "caf\u{e9} ole",
+                &us_letters(),
+                CAPS_OFF
+            ));
         }
 
         #[test]
@@ -1703,36 +1740,61 @@ mod imp {
             // non-Latin rule diverts it. The Han words must not be dropped.
             assert!(unreachable_foreign_word(
                 "我在用iPhone 15 Pro Max",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
-            assert!(divert_unreachable("我在用iPhone 15 Pro Max", &us_letters()));
-            assert!(divert_unreachable("你好 世界", &us_letters()));
+            assert!(divert_unreachable(
+                "我在用iPhone 15 Pro Max",
+                &us_letters(),
+                CAPS_OFF
+            ));
+            assert!(divert_unreachable("你好 世界", &us_letters(), CAPS_OFF));
             // A stray accented cased letter is still skipped per character.
-            assert!(!unreachable_foreign_word("caf\u{e9}", &us_letters()));
-            assert!(!divert_unreachable("Caf\u{c9} au lait", &us_letters()));
+            assert!(!unreachable_foreign_word(
+                "caf\u{e9}",
+                &us_letters(),
+                CAPS_OFF
+            ));
+            assert!(!divert_unreachable(
+                "Caf\u{c9} au lait",
+                &us_letters(),
+                CAPS_OFF
+            ));
             // A Latin-context modifier letter (the ʻokina) is not a non-Latin word.
             assert!(!unreachable_foreign_word(
                 "I flew to Hawai\u{2bb}i today",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
             assert!(!divert_unreachable(
                 "I flew to Hawai\u{2bb}i today",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
             // Latin Extended-D's caseless letters (U+A7F7 sideways I) stay with the per-character
             // skip too; Hebrew does not.
-            assert!(!unreachable_foreign_word("a\u{a7f7}b", &us_letters()));
-            assert!(unreachable_foreign_word("a\u{05d0}b", &us_letters()));
+            assert!(!unreachable_foreign_word(
+                "a\u{a7f7}b",
+                &us_letters(),
+                CAPS_OFF
+            ));
+            assert!(unreachable_foreign_word(
+                "a\u{05d0}b",
+                &us_letters(),
+                CAPS_OFF
+            ));
             // A squared-letter or circled-letter emoji is a symbol, not a word: skipped per
             // character, the rest typed.
             assert!(!divert_unreachable(
                 "Park on level 3 \u{1f17f}\u{fe0f} near the \u{24c2} exit",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
             // So is Vietnamese's ạ (Latin Extended Additional) in a Latin line.
             assert!(!divert_unreachable(
                 "Ha\u{1ea1} is in Hanoi today",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
         }
 
@@ -1743,11 +1805,13 @@ mod imp {
             // Cyrillic letters), and "Привет" was skipped letter by letter.
             assert!(divert_unreachable(
                 "Ich habe gestern \u{41f}\u{440}\u{438}\u{432}\u{435}\u{442} gesagt",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
             assert!(divert_unreachable(
                 "hello \u{3ba}\u{3b1}\u{3bb}\u{3b7}\u{3bc}\u{3ad}\u{3c1}\u{3b1} world",
-                &us_letters()
+                &us_letters(),
+                CAPS_OFF
             ));
         }
 
@@ -1758,16 +1822,17 @@ mod imp {
             let ru = ru_letters();
             assert!(divert_unreachable(
                 "\u{42f} \u{43a}\u{443}\u{43f}\u{438}\u{43b} \u{43d}\u{43e}\u{432}\u{44b}\u{439} iPhone \u{432}\u{447}\u{435}\u{440}\u{430}",
-                &ru
+                &ru, CAPS_OFF
             ));
             assert!(!divert_unreachable(
                 "\u{44f} \u{43a}\u{443}\u{43f}\u{438}\u{43b} \u{43d}\u{43e}\u{432}\u{44b}\u{439} \u{442}\u{435}\u{43b}\u{435}\u{444}\u{43e}\u{43d}",
-                &ru
+                &ru, CAPS_OFF
             ));
             // A modifier apostrophe (U+02BC, "сямʼя") is not a Latin word: skipped, no divert.
             assert!(!divert_unreachable(
                 "\u{441}\u{44f}\u{43c}\u{2bc}\u{44f}",
-                &ru
+                &ru,
+                CAPS_OFF
             ));
         }
 
@@ -1919,6 +1984,36 @@ mod imp {
         }
 
         #[test]
+        fn a_letter_the_live_caps_lock_drops_counts_as_unreachable() {
+            // ch(de_nodeadkeys)-like: ü is a FOUR_LEVEL key (Shift gives è), so a live Caps Lock
+            // can be cancelled only by a Caps tap, which a remapped Caps key cannot give.
+            let ue = KeySpec {
+                keycode: 26,
+                shift: false,
+                altgr: false,
+                lock: false,
+                caps_safe: false,
+                dead: None,
+            };
+            let map = latin_with(&[('\u{fc}', ue), ('\u{df}', spec(12, false, None))]);
+            let text = "Gr\u{fc}\u{df}e f\u{fc}r J\u{fc}rg";
+            let stuck = LiveCaps {
+                on: true,
+                usable: false,
+            };
+            // The typing loop skips every ü under that Caps state; the divert check must see them.
+            assert_eq!(letter_reach(text, &map, stuck), (9, 3));
+            assert!(typeable_keys('\u{fc}', &map, stuck).is_none());
+            // Caps off, or a Caps key that still taps Caps Lock: ü is typed, nothing unreachable.
+            assert_eq!(letter_reach(text, &map, CAPS_OFF), (12, 0));
+            let usable = LiveCaps {
+                on: true,
+                usable: true,
+            };
+            assert_eq!(letter_reach(text, &map, usable), (12, 0));
+        }
+
+        #[test]
         fn altgr_glyphs_are_dropped_when_an_xkb_option_remaps_right_alt() {
             let (Some(plain), Some(remapped)) = (
                 real_charmap_with("de", "", None),
@@ -1982,8 +2077,8 @@ mod imp {
                 .map(|(ch, _)| ch)
                 .collect();
             assert_eq!(seq, ['\u{f4}', '\u{301}']);
-            assert_eq!(letter_reach("Vi\u{1ec7}t", &vn), (4, 0));
-            assert!(!divert_unreachable("Vi\u{1ec7}t Nam", &vn));
+            assert_eq!(letter_reach("Vi\u{1ec7}t", &vn, CAPS_OFF), (4, 0));
+            assert!(!divert_unreachable("Vi\u{1ec7}t Nam", &vn, CAPS_OFF));
             // A mark with no key of its own leaves the letter unreachable: ẽ needs U+0303.
             assert!(key_sequence('\u{1ebd}', &vn).is_none());
             // A letter on its own key is that one key.
@@ -2033,27 +2128,36 @@ mod imp {
             }
             assert!(!divert_unreachable(
                 "La canci\u{f3}n est\u{e1} aqu\u{ed}",
-                &es
+                &es,
+                CAPS_OFF
             ));
             assert_eq!(
-                letter_reach("La canci\u{f3}n est\u{e1} aqu\u{ed}", &es),
+                letter_reach("La canci\u{f3}n est\u{e1} aqu\u{ed}", &es, CAPS_OFF),
                 (17, 0)
             );
             if let Some(fr) = real_charmap("fr") {
                 // French ê: dead_circumflex + e.
                 assert!(fr.get(&'\u{ea}').is_some_and(|s| s.dead.is_some()));
-                assert!(!divert_unreachable("\u{ea}tre ou ne pas \u{ea}tre", &fr));
+                assert!(!divert_unreachable(
+                    "\u{ea}tre ou ne pas \u{ea}tre",
+                    &fr,
+                    CAPS_OFF
+                ));
             }
             if let Some(vn) = real_charmap("vn") {
                 // Vietnamese ệ ọ: a combining-mark key or a dead key after the base letter.
                 assert!(key_sequence('\u{1ec7}', &vn).is_some());
-                assert!(!divert_unreachable("Vi\u{1ec7}t Nam h\u{1ecd}c", &vn));
+                assert!(!divert_unreachable(
+                    "Vi\u{1ec7}t Nam h\u{1ecd}c",
+                    &vn,
+                    CAPS_OFF
+                ));
             }
             if let Some(gr) = real_charmap("gr") {
                 assert!(gr.get(&'\u{3ad}').is_some_and(|s| s.dead.is_some()));
                 assert!(!divert_unreachable(
                     "\u{39a}\u{3b1}\u{3bb}\u{3b7}\u{3bc}\u{3ad}\u{3c1}\u{3b1} \u{3c3}\u{3b5} \u{3cc}\u{3bb}\u{3bf}\u{3c5}\u{3c2}",
-                    &gr
+                    &gr, CAPS_OFF
                 ));
             }
         }
