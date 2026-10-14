@@ -172,7 +172,9 @@ function FieldLabel({ children }: { children: ReactNode }) {
 // The rule list itself needs none here: `ruleListOf` already caps it, so the "first N of M"
 // note counts the server's rules BEFORE that cap (ruleCountOf).
 const MAX_SHOWN_MAP_ROWS = 500;
-const MAX_SHOWN_ENTRIES = 500;
+// A regex list's entries: the server's own cap (RegexListRule.entries max_length in settings/schema.py),
+// so Add stops where a Save would 422. Also the render bound for a payload that ignores it.
+const MAX_REGEX_ENTRIES = 200;
 const MAX_RECENT_WORDS = 500;
 
 /* ── one rule (stable, module-scope component) ─────────────────────────── */
@@ -266,7 +268,7 @@ function RuleCard({
 
   // cb:map: show the newest N (mapCollapseAfter); collapse the rest behind a toggle.
   const entriesTotal = edit.entries?.length ?? 0;
-  const shownEntries = (edit.entries ?? []).slice(0, MAX_SHOWN_ENTRIES);
+  const shownEntries = (edit.entries ?? []).slice(0, MAX_REGEX_ENTRIES);
   const mapPairs = edit.pairs ?? [];
   // Over every row, not just the shown ones: a twin can sit past the render cap. The parent holds
   // the Save while any remains (mapRowsProblem).
@@ -455,19 +457,18 @@ function RuleCard({
                   </div>
                 );
               })}
-              {entriesTotal > MAX_SHOWN_ENTRIES && (
+              {entriesTotal > MAX_REGEX_ENTRIES && (
                 <div className="font-mono text-[11px] text-faint">
-                  Showing the first {MAX_SHOWN_ENTRIES} of {entriesTotal} entries — the rest are kept and saved unchanged.
+                  Showing the first {MAX_REGEX_ENTRIES} of {entriesTotal} entries — the rest are kept and saved unchanged.
                 </div>
               )}
               {bodyEditable && (
-                // Disabled past the cap: Add APPENDS, so past 500 it created a dirty, blank,
-                // unfillable row nothing on screen showed.
+                // Disabled at the server's cap: one more entry and every Save of this list is a 422.
                 <Button
                   variant="ghost"
                   size="sm"
-                  disabled={saving || entriesTotal >= MAX_SHOWN_ENTRIES}
-                  title={entriesTotal >= MAX_SHOWN_ENTRIES ? `This screen edits the first ${MAX_SHOWN_ENTRIES} entries` : undefined}
+                  disabled={saving || entriesTotal >= MAX_REGEX_ENTRIES}
+                  title={entriesTotal >= MAX_REGEX_ENTRIES ? `A list holds at most ${MAX_REGEX_ENTRIES} entries` : undefined}
                   onClick={() => setEntries((rows) => [...rows, { id: mkId(), pattern: "", replacement: "" }])}
                 >
                   <Plus className="size-3.5" /> Add entry
