@@ -310,7 +310,10 @@ export function ListPicker<R>({
       {renderTrigger({
         ref: triggerRef,
         type: "button",
-        disabled,
+        // Enabled while open: a pick that fills the caller's last slot flips `disabled` with the
+        // list still up, and the Enter/Esc/Tab close then refocuses the trigger — a natively
+        // disabled button can't take it, so focus would drop to <body>. show() still refuses.
+        disabled: disabled && !open,
         "aria-haspopup": "listbox",
         "aria-expanded": open,
         onClick: () => (open ? close(false) : show()),
