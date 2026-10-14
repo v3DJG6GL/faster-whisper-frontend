@@ -796,6 +796,25 @@ describe("dropping a correction a re-translate was made from", () => {
     expect(stale("fromedit-3")).toEqual({ 0: true });
   });
 
+  it("re-opening the open record before its edit's debounced save keeps the edit", async () => {
+    // The Recent row of the open record: blurring the field commits the edit (save pending),
+    // then the click re-opens the record from its pre-edit mirror copy.
+    vi.useFakeTimers();
+    try {
+      const { useTranscriptHistory } = await import("./transcript/transcriptHistory");
+      const saved = () => useTranscriptHistory.getState().records.find((r) => r.id === "reopen-1")!;
+      openHistoryRecord(recOf("reopen-1"));
+      const stale = saved();
+      setSegmentEdit("reopen-1", 0, "I read the book");
+      openHistoryRecord(stale);
+      vi.advanceTimersByTime(1_000);
+      expect(useTranscribeRun.getState().edits["reopen-1"]).toEqual({ 0: "I read the book" });
+      expect(saved().edits).toEqual({ 0: "I read the book" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("a translation made from the original text leaves Discard clearing the mark", () => {
     openHistoryRecord(recOf("fromedit-4"));
     mergeSegmentTranslations("fromedit-4", { 0: { de: "Ich rot das Buch!" } }, { targets: ["de"] });

@@ -1319,6 +1319,16 @@ export function openHistoryRecord(rec: TranscriptRecord): boolean {
   // Loading a history record replaces the workbench (epoch bump below), so any
   // still-registered server-side run is ours to stop.
   abandonActiveRun();
+  // Re-opening the open record (its Recent row stays clickable) while an edit still waits for
+  // its debounced save: the caller's row predates that edit, and restoring the overlays from it
+  // wiped the edit, which the pending timer then re-saved as gone. Save it now and read the
+  // overlays back from the saved copy.
+  const pending = persistTimers.get(rec.id);
+  if (pending !== undefined) {
+    window.clearTimeout(pending);
+    persistEditsNow(rec.id);
+    rec = currentRecord(rec.id) ?? rec;
+  }
   // Every caller hands over a row it rendered from the history mirror, so the record is
   // there — but the registry resolves through the mirror, and a record missing from it
   // would open with edits that silently never save. Seed it rather than lose them.
