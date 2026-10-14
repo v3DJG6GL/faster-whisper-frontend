@@ -125,6 +125,28 @@ describe("loadHistory", () => {
     expect(useTranscriptHistory.getState().loaded).toBe(true);
   });
 
+  it("lists records newest first by their instant, also with a foreign offset or a damaged stamp", async () => {
+    const rec = (id: string, createdAt: string): TranscriptRecord => ({
+      schemaVersion: 1, kind: "file", id, createdAt, sourcePath: "", sourceName: id, status: "done",
+    });
+    listTranscriptRecords.mockResolvedValue([
+      rec("damaged", "garbage"),
+      // 09:30Z: older than both noon records, though its string sorts above them.
+      rec("offset", "2026-10-13T23:30:00+14:00"),
+      rec("noon", "2026-10-13T12:00:00.000Z"),
+      rec("eleven", "2026-10-13T11:00:00.000Z"),
+      rec("noon-twin", "2026-10-13T12:00:00.000Z"),
+    ]);
+    await loadHistory(true);
+    // Transcribe's recent strip takes the first three of this list.
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["noon", "noon-twin", "eleven", "offset", "damaged"]);
+
+    // Plain app-written Z stamps keep their order.
+    listTranscriptRecords.mockResolvedValue([rec("a", "2026-10-12T08:00:00.000Z"), rec("c", "2026-10-14T08:00:00.000Z"), rec("b", "2026-10-13T08:00:00.000Z")]);
+    await loadHistory(true);
+    expect(useTranscriptHistory.getState().records.map((r) => r.id)).toEqual(["c", "b", "a"]);
+  });
+
   it("keeps a record with a non-string appId, dropping only that field", async () => {
     listTranscriptRecords.mockResolvedValue([
       {

@@ -21,8 +21,8 @@ function dayBucket(d: Date, todayStart: number): { label: string; day: number } 
 
 /** Group records by day, newest day first and newest record first inside a day. A label is
  *  one group even when its records are not adjacent, and both orders go by the parsed instant:
- *  the list is sorted on the raw stamp strings, so a damaged or foreign stamp ('garbage' sorts
- *  above ISO, '' below; a non-Z offset among Z stamps) splits a day or lifts an older day
+ *  a list sorted on the raw stamp strings would let a damaged or foreign stamp ('garbage' sorts
+ *  above ISO, '' below; a non-Z offset among Z stamps) split a day or lift an older day
  *  above today — two groups of one label drew twice and shared a React key. Unparseable stamps
  *  form one "Earlier" group, last, in their given order. */
 export function dayBuckets<T extends { createdAt: string }>(
