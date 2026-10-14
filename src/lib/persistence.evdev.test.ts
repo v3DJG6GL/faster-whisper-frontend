@@ -2,19 +2,24 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { IS_WINDOWS } from "./platform";
 import type { Profile } from "./types";
 
-/** `evdevStatus` parks on `release` until a test answers it; every other api call initConfig makes
- *  is a quiet no-op "in Tauri". */
+/** `evdevStatus` parks on `release` until a test answers it; a save parks on `landSave` while
+ *  `parkSaves` is set; every other api call initConfig makes is a quiet no-op "in Tauri". */
 const ipc = vi.hoisted(() => ({
   release: null as null | ((st: { permitted: boolean }) => void),
   fail: null as null | ((e: unknown) => void),
   saves: 0,
+  saved: [] as { profiles: unknown[] }[],
+  parkSaves: false,
+  landSave: null as null | (() => void),
 }));
 vi.mock("./api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./api")>()),
   isTauri: true,
   loadConfig: async () => null,
-  saveConfig: async () => {
+  saveConfig: async (cfg: { profiles: unknown[] }) => {
     ipc.saves += 1;
+    ipc.saved.push(cfg);
+    if (ipc.parkSaves) await new Promise<void>((r) => (ipc.landSave = r));
   },
   applyLiveSwitches: async () => {},
   reregisterShortcutsUnlessCapturing: async () => {},
@@ -44,6 +49,9 @@ describe("evdev permitted bit at startup", () => {
     ipc.release = null;
     ipc.fail = null;
     ipc.saves = 0;
+    ipc.saved = [];
+    ipc.parkSaves = false;
+    ipc.landSave = null;
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -132,5 +140,33 @@ describe("evdev permitted bit at startup", () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(ipc.saves).toBe(1);
     expect(persistence.configSaveHeld()).toBe(false);
+  });
+
+  // Run #77 F11-1: an OLDER write still in flight when the status flips the collapse — the flush
+  // used to await only that write, and the freeze that held the newer edit stayed.
+  it.runIf(!IS_WINDOWS)("a held save re-runs once the status is known even while an older write is in flight", async () => {
+    const { persistence, store } = await boot((st) => {
+      withEvdev(true)(st);
+      st.useApp.setState({ profiles: [pair[0]] });
+    });
+    await vi.advanceTimersByTimeAsync(2_000); // past the startup cap: still unknown
+    ipc.parkSaves = true;
+    store.useApp.setState({ profiles: [{ ...pair[0], name: "Left hand" }] });
+    await vi.advanceTimersByTimeAsync(400); // save A: writing, parked
+    expect(ipc.saves).toBe(1);
+    const landA = ipc.landSave!;
+    ipc.parkSaves = false;
+    store.useApp.setState({ profiles: pair });
+    await vi.advanceTimersByTimeAsync(400); // save B: frozen as an L/R-only "conflict"
+    expect(persistence.configSaveHeld()).toBe(true);
+    expect(ipc.saves).toBe(1);
+    ipc.release!({ permitted: true });
+    await vi.advanceTimersByTimeAsync(0);
+    landA();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(ipc.saves).toBe(2);
+    expect(ipc.saved[1].profiles).toHaveLength(2);
+    expect(persistence.configSaveHeld()).toBe(false);
+    expect(store.useApp.getState().saveError).toBeNull();
   });
 });

@@ -80,7 +80,8 @@ export function flushConfigSave(): Promise<void> {
 
 /** Retry a held save now (see `saveHeld`) — the sync engine's manual Push, which otherwise has
  *  nothing to re-issue it but an unrelated edit. A pending or in-flight save decides the hold
- *  instead; nothing held, nothing to do. Never rejects. */
+ *  instead (one older than a freeze is awaited, then the freeze re-checked); nothing held, nothing
+ *  to do. Never rejects. */
 export function retryHeldConfigSave(): Promise<void> {
   return saveHeld ? flushConfigSave() : Promise.resolve();
 }
@@ -185,6 +186,9 @@ export async function initConfig(): Promise<void> {
   let pendingBindingChange = false;
   // The save issued last, until it settles — what a flush with no timer pending waits for.
   let inFlight: Promise<void> | null = null;
+  // Its `saveSeq`: a later conflict freeze never takes `inFlight`, so the write may be older than
+  // the newest attempt.
+  let inFlightSeq = 0;
   useApp.subscribe((state, prev) => {
     if (!hydrated) return;
     if (
@@ -320,6 +324,7 @@ export async function initConfig(): Promise<void> {
         },
       );
     inFlight = saving;
+    inFlightSeq = mySeq;
     void saving.then(() => {
       if (inFlight === saving) inFlight = null;
     });
@@ -331,7 +336,12 @@ export async function initConfig(): Promise<void> {
       clearTimeout(timer);
       return saveNow();
     }
-    if (inFlight) return inFlight;
+    if (inFlight) {
+      // An older write still pending under a newer conflict freeze: it cannot lift that hold, so
+      // re-check the freeze once the write settled — else the retry (an evdev status that flips the
+      // collapse, a manual Push, the quit flush) ends with the hold still standing.
+      return inFlightSeq === saveSeq ? inFlight : inFlight.then(flushConfigSave);
+    }
     // A held save with nothing pending: retry it. A failed write may succeed now; a conflict
     // freeze returns at once from saveNow (its banner again, nothing written).
     return saveHeld ? saveNow() : Promise.resolve();
