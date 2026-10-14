@@ -442,14 +442,26 @@ fn after_move(new: &Path) {
 /// the setting at where it is now. `moved` holds every (old, new) pair that moved this launch.
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
-/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when a re-point it found could
-/// not land (REPOINT_PENDING is then left for the next launch).
+/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when the file could not be read or
+/// a re-point it found could not land (REPOINT_PENDING is then left for the next launch).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<Vec<PathBuf>, ()> {
     let mut audio_bases = Vec::new();
-    // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes.
-    let Ok(bytes) = std::fs::read(config) else {
-        return Ok(audio_bases);
+    // A read that fails for the reasons a write does (an AV or sync client holding the file, an
+    // I/O error right after the move) must retry too: every root carries MARKER now, so nothing
+    // else would ever bring a launch back here. No file at all has nothing to re-point.
+    let bytes = match std::fs::read(config) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(audio_bases),
+        Err(e) => {
+            tracing::warn!(
+                "[migrate] could not read {} to re-point its moved folders ({e})",
+                config.display()
+            );
+            mark_repoint_pending(config);
+            return Err(());
+        }
     };
+    // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes.
     let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
     // Invalid UTF-8 is decoded lossily, as the app's own loader (`config::read_config_text`)
     // does: its first settings save writes the U+FFFD text back anyway, while a skipped re-point
@@ -931,6 +943,24 @@ mod tests {
             bytes
         );
         assert!(!new.join(REPOINT_PENDING).exists());
+    }
+
+    #[test]
+    fn a_config_that_cannot_be_read_is_retried_and_a_missing_one_is_not() {
+        let base = scratch("read-fails");
+        let new = base.join(NEW_ID);
+        std::fs::create_dir_all(&new).unwrap();
+        let moved = [(base.join(LEGACY_ID), new.clone())];
+        // Missing: nothing to re-point, no marker.
+        assert_eq!(
+            rewrite_config_paths(&new.join("config.json"), &moved),
+            Ok(vec![])
+        );
+        assert!(!new.join(REPOINT_PENDING).exists());
+        // Present but unreadable (a directory here; a held file on Windows): fails and marks.
+        std::fs::create_dir_all(new.join("config.json")).unwrap();
+        assert!(rewrite_config_paths(&new.join("config.json"), &moved).is_err());
+        assert!(new.join(REPOINT_PENDING).exists());
     }
 
     #[test]
