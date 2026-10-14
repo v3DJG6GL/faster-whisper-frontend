@@ -553,6 +553,14 @@ describe("site subtitle cleanup", () => {
     expect(fixBroadcasterText(["Il y a à boire"])).toEqual(["Il y a à boire"]);
     expect(fixBroadcasterText(["m i t"])).toEqual(["mit"]);
   });
+  it("Cyrillic and Slavic one-letter words stay words; a run with other letters still glues", () => {
+    expect(fixBroadcasterText(["А я в шоке.", "Ты и я в одной лодке.", "tam a w z nim"])).toEqual([
+      "А я в шоке.", "Ты и я в одной лодке.", "tam a w z nim",
+    ]);
+    const srt = "1\n00:00:01,000 --> 00:00:02,000\nИ я в Москве.\n";
+    expect(parseImportedText("srt", srt).segments[0].text).toBe("И я в Москве.");
+    expect(fixBroadcasterText(["В Н И М А Н И Е", "W I C H T I G"])).toEqual(["ВНИМАНИЕ", "WICHTIG"]);
+  });
   it("decoded references and JSON escapes cannot smuggle control or bidi characters", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\n&#x202E;abc &#27;x\n";
     expect(parseImportedText("srt", srt).segments[0].text).toBe("abc x");

@@ -309,9 +309,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
 const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
 /** Three or more single cased letters spaced apart ("m i t") — broadcaster emphasis. */
 const LETTER_SPACED = /(?<![\p{L}\p{N}])(?:[\p{Lu}\p{Ll}] ){2,}[\p{Lu}\p{Ll}](?![\p{L}\p{N}])/gu;
-/** Letters that are words on their own ("Il y a à boire"): a run made only of
- *  these is ordinary text, not emphasis, and must not be glued together. */
-const ONE_LETTER_WORD = /^[aàáeéèioóuyAÀÁEÉÈIOÓUY]$/u;
+/** Letters that are words on their own ("Il y a à boire", Polish "a w z", Russian
+ *  "А я в"): a run made only of these is ordinary text, not emphasis, and must not be
+ *  glued together. Slavic speech strings them three in a row all the time. */
+const ONE_LETTER_WORD = /^[aàáeéèioóuywzksvAÀÁEÉÈIOÓUYWZKSVаявкосуиіїйзАЯВКОСУИІЇЙЗ]$/u;
 
 /** Broadcaster subtitles (SRF and friends) hyphenate words across lines ("journa-" /
  *  "listische") and letter-space emphasis ("m i t"). Rejoin both so the text reads — and
