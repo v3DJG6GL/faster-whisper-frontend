@@ -315,16 +315,17 @@ const LETTER_SPACED = /(?<![\p{L}\p{N}])(?:[\p{Lu}\p{Ll}] ){2,}[\p{Lu}\p{Ll}](?!
 const TAG_OR_LETTER_SPACED = new RegExp(`${MARKUP_TAG.source}|${LETTER_SPACED.source}`, "giu");
 /** One-letter words per language ("Il y a à boire", Polish "a w z", Russian "А я в"): a
  *  run whose letters are ALL words of ONE language is ordinary text, not emphasis, and must
- *  not be glued — Slavic speech strings them three in a row all the time. Pooling the sets
- *  would let letters from different languages pass as words and leave German "w i e" /
- *  "z w e i" spaced. */
+ *  not be glued — Slavic speech strings them three in a row all the time, the particles
+ *  б (бы) and ж (же) included ("Я б в лётчики пошёл"). Pooling the sets would let letters
+ *  from different languages pass as words and leave German "w i e" / "z w e i" spaced. */
 const ONE_LETTER_WORDS = [
   /^[aàáeéèioóuy]$/iu, // Romance
   /^[aiouwz]$/iu, // Polish
   /^[aikosuvz]$/iu, // Czech / Slovak
-  /^[авикосуя]$/iu, // Russian
-  /^[авзійоуїяє]$/iu, // Ukrainian
-  /^[авзіуўя]$/iu, // Belarusian
+  /^[абвжикосуя]$/iu, // Russian
+  /^[абвжзійоуїяє]$/iu, // Ukrainian
+  /^[абвжзіуўя]$/iu, // Belarusian
+  /^[οηή]$/iu, // Greek ("ο", "η", "ή")
 ];
 
 /** Broadcaster subtitles (SRF and friends) hyphenate words across lines ("journa-" /

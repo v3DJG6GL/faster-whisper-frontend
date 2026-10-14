@@ -581,6 +581,27 @@ describe("site subtitle cleanup", () => {
     expect(parseImportedText("srt", srt).segments[0].text).toBe("Мама і я з дітьми");
     expect(fixBroadcasterText(["У В А Г А", "w i e immer", "z w e i Mal"])).toEqual(["УВАГА", "wie immer", "zwei Mal"]);
   });
+  it("the particles б and ж and the Greek one-letter words stay words; emphasis with other letters still glues", () => {
+    const kept = [
+      "Я б в лётчики пошёл, пусть меня научат", "Ну я ж и говорю", "Я б с тобой", "Я б и сам пошёл", "А я б с тобой",
+      "Я ж в шоке", "Ти ж і я", "Вось я б у горад", "Ή ο ένας ή ο άλλος", "ο ή η υπεύθυνος", "Ο Η Ή",
+      // Unchanged from before: every letter a word of one language.
+      "Il y a à boire", "tam a w z nim", "А я в шоке.", "a k s", "Мама і я з дітьми", "Я є у тебе", "О К О",
+    ];
+    expect(fixBroadcasterText(kept)).toEqual(kept);
+    const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n<v A J Smith>Я б в рабочие пошёл</v>\n";
+    expect(parseImportedText("vtt", vtt).segments[0]).toMatchObject({ speaker: "A J Smith", text: "Я б в рабочие пошёл" });
+    // A run with a letter outside every set still glues, as before — Cyrillic, Greek and Latin.
+    expect(
+      fixBroadcasterText([
+        "Б О Ж Е", "Б Ы Л О", "Ж Д И", "ж и в о й", "В Н И М А Н И Е", "У В А Г А", "С Л А В А",
+        "Ο Χ Ι", "Ν Α Ι", "Π Ρ Ο Σ Ο Χ Η", "w i e immer", "W A S soll das?", "s e h r", "a b c",
+      ]),
+    ).toEqual([
+      "БОЖЕ", "БЫЛО", "ЖДИ", "живой", "ВНИМАНИЕ", "УВАГА", "СЛАВА",
+      "ΟΧΙ", "ΝΑΙ", "ΠΡΟΣΟΧΗ", "wie immer", "WAS soll das?", "sehr", "abc",
+    ]);
+  });
   it("a voice tag whose name opens with initials keeps its tag, its speaker and its name", () => {
     const cue = (text: string) =>
       parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}\n`).segments.map((s) => ({
