@@ -717,6 +717,7 @@ pub async fn run<F>(
         // buffer; the cap exists so a cpal Stream drop that stalls (device yanked, wedged audio
         // service) cannot starve the flush/stop sends below out of the whole write budget.
         const PCM_DRAIN_CAP: Duration = Duration::from_secs(2);
+        let keep_tail = drain_keeps_tail(saving, trim, &saved);
         if tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
@@ -727,7 +728,8 @@ pub async fn run<F>(
             // ~one buffer. The drain has its own sub-cap (PCM_DRAIN_CAP, one flat deadline so a
             // trickle of chunks can't extend it) so the flush/stop frames below always run under
             // the remaining DRAIN_WRITE_DEADLINE budget. Saved (when recording) like the flush tail
-            // below: the end-of-stream sliver isn't speech-gated.
+            // below: the end-of-stream sliver isn't speech-gated, so under trim it is kept only
+            // behind speech the gate already kept (`keep_tail`).
             let pcm_deadline = tokio::time::Instant::now() + PCM_DRAIN_CAP;
             loop {
                 let chunk = match tokio::time::timeout_at(pcm_deadline, pcm_rx.recv()).await {
@@ -740,7 +742,7 @@ pub async fn run<F>(
                 };
                 let bytes = resampler.push(&chunk);
                 if !bytes.is_empty() {
-                    if saving {
+                    if keep_tail {
                         save_capped(&mut saved, &bytes, &mut saved_capped);
                     }
                     let _ = write.send(Message::Binary(bytes.into())).await;
@@ -751,7 +753,7 @@ pub async fn run<F>(
             // (or the saved recording). The trailing zeros resample to a soft decay, not a click.
             let tail = resampler.flush();
             if !tail.is_empty() {
-                if saving {
+                if keep_tail {
                     save_capped(&mut saved, &tail, &mut saved_capped);
                 }
                 let _ = write.send(Message::Binary(tail.into())).await;
@@ -966,6 +968,13 @@ impl Drop for AbortOnDrop {
     fn drop(&mut self) {
         self.0.abort();
     }
+}
+
+/// Whether the drain's ungated tail (the queued capture chunks and the resampler flush) joins the
+/// saved recording. Under silence-trim only behind speech the gate already kept: the flush tail is
+/// almost never empty, so a silent tap otherwise wrote a ~21 ms `.wav` no history record names.
+fn drain_keeps_tail(saving: bool, trim: bool, saved: &[u8]) -> bool {
+    saving && (!trim || !saved.is_empty())
 }
 
 /// Append to the saved recording copy, stopping at `MAX_RECORD_PCM_BYTES` (4 h). Only the copy
@@ -1657,10 +1666,23 @@ mod emit_message_tests {
 
 #[cfg(test)]
 mod clip_tests {
-    use super::{clip_stem, forward_saved, split_at_cut, ClipCutter, StreamEvent, UtteranceState};
+    use super::{
+        clip_stem, drain_keeps_tail, forward_saved, split_at_cut, ClipCutter, StreamEvent,
+        UtteranceState,
+    };
     use std::cell::RefCell;
     use std::sync::atomic::AtomicBool;
     use tokio::sync::mpsc::UnboundedReceiver;
+
+    /// A silent kept session under trim saves no tail (so writes no near-empty `.wav`); speech
+    /// still in progress at stop keeps its tail, and so does every untrimmed recording.
+    #[test]
+    fn the_drain_tail_joins_the_recording_only_behind_kept_speech() {
+        assert!(!drain_keeps_tail(true, true, &[]));
+        assert!(drain_keeps_tail(true, true, &[0u8; 64]));
+        assert!(drain_keeps_tail(true, false, &[]));
+        assert!(!drain_keeps_tail(false, false, &[]));
+    }
 
     #[test]
     fn a_cut_is_clamped_and_sample_aligned() {
