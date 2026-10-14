@@ -138,3 +138,22 @@ export function chipCancelVisible(a: {
   if (phase?.cancellable && phase.cold) return true;
   return a.now - a.processingSince >= CANCEL_AFFORDANCE_DELAY_MS;
 }
+
+/** The `processingSince` stamp chipCancelVisible measures its delay from, given the previous
+ *  render's (processing, capturing) and this one's.
+ *
+ *  A processing run that outlives the mic restamps when capture ends: a live per-phrase
+ *  translate (✕ hidden — capturing) that is still running when the user stops flows straight
+ *  into "finalizing" without `processing` ever dropping, so an unchanged stamp would already be
+ *  past the delay and pop the ✕ up the instant the mic closes — then drop it a beat later on a
+ *  fast finalize, the very blink the delay exists to prevent. */
+export function nextProcessingSince(
+  since: number | null,
+  prev: { processing: boolean; capturing: boolean },
+  next: { processing: boolean; capturing: boolean },
+  now: number,
+): number | null {
+  if (!next.processing) return null;
+  if (!prev.processing || (prev.capturing && !next.capturing)) return now;
+  return since ?? now;
+}

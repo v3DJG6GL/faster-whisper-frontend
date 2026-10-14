@@ -18,7 +18,7 @@ import {
 } from "@/lib/dictation/dictationVisual";
 import {
   CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
-  phaseClock, phaseElapsedMs,
+  nextProcessingSince, phaseClock, phaseElapsedMs,
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
 import { asServerWork } from "@/lib/types";
@@ -814,9 +814,14 @@ export default function Overlay() {
   // a genuinely slow/stuck stage surfaces it as a real, clickable recovery control — and a
   // KNOWN-cold translate gets it immediately, since that wait is long by definition.
   const [processingSince, setProcessingSince] = useState<number | null>(null);
+  const stampPrev = useRef({ processing: false, capturing: false });
   useEffect(() => {
-    setProcessingSince(processing ? Date.now() : null);
-  }, [processing]);
+    // Restamps when the mic closes mid-run, too (nextProcessingSince).
+    const prev = stampPrev.current;
+    const next = { processing, capturing: !!state.capturing };
+    stampPrev.current = next;
+    setProcessingSince((since) => nextProcessingSince(since, prev, next, Date.now()));
+  }, [processing, state.capturing]);
   // One re-render at the delay mark: what changes there is the clock, not a prop, so
   // nothing else would re-evaluate the rule below.
   const [, tickCancel] = useState(0);

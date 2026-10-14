@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipTuckHold,
-  currentPhase, phaseClock, phaseElapsedMs,
+  currentPhase, nextProcessingSince, phaseClock, phaseElapsedMs,
 } from "./chipRules";
 import type { DictationPhase, DictationStatus } from "./types";
 
@@ -224,6 +224,46 @@ describe("chipCancelVisible", () => {
     ).toBe(true);
     // Not cancellable → its ✕ would be the session cancel again.
     expect(chipCancelVisible({ ...base, phase: phase(), now: NOW + 5_000 })).toBe(false);
+  });
+});
+
+describe("nextProcessingSince", () => {
+  const live = { processing: true, capturing: true };
+  const post = { processing: true, capturing: false };
+  const off = { processing: false, capturing: false };
+
+  it("stamps a run when it starts and clears it when it ends", () => {
+    expect(nextProcessingSince(null, off, post, NOW)).toBe(NOW);
+    expect(nextProcessingSince(NOW, post, off, NOW + 50)).toBeNull();
+  });
+
+  it("restamps when the mic closes mid-run, so the ✕ waits its delay from the stop", () => {
+    // A live per-phrase translate began 5 s before the stop; the stop flows straight into
+    // finalizing without `processing` ever dropping.
+    const since = nextProcessingSince(NOW - 5_000, live, post, NOW);
+    expect(since).toBe(NOW);
+    const show = (dt: number) =>
+      chipCancelVisible({ processingSince: since, status: "transcribing", capturing: false, now: NOW + dt });
+    expect(show(0)).toBe(false);
+    expect(show(CANCEL_AFFORDANCE_DELAY_MS)).toBe(true);
+  });
+
+  it("keeps the stamp across an unrelated re-render of the same run", () => {
+    expect(nextProcessingSince(NOW - 5_000, post, post, NOW)).toBe(NOW - 5_000);
+    expect(nextProcessingSince(NOW - 5_000, live, live, NOW)).toBe(NOW - 5_000);
+  });
+
+  it("a cold cancellable translate card while capturing still gets a stamp (its immediate ✕)", () => {
+    const since = nextProcessingSince(null, { processing: false, capturing: true }, live, NOW);
+    expect(
+      chipCancelVisible({
+        processingSince: since,
+        status: "translating",
+        phase: phase({ cold: true, cancellable: true }),
+        capturing: true,
+        now: NOW,
+      }),
+    ).toBe(true);
   });
 });
 
