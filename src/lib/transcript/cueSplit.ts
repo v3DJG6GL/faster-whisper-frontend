@@ -314,6 +314,8 @@ const NOBREAK = new Set([
   "jeden", "jede", "jedes", "sein", "seine", "ihr", "ihre", "mein", "meine",
   "le", "la", "les", "un", "une", "de", "du", "des", "au", "aux", "en", "son", "sa", "ses", "mon", "ma",
   "el", "los", "las", "del", "al", "il", "lo", "gli", "nel", "della", "het", "een", "van", "o", "os", "do", "da",
+  // Thai "His Excellency": a title, like "dr.", goes with the name after it.
+  "ฯพณฯ",
 ]);
 const ABBREV = new Set([
   "dr.", "mr.", "mrs.", "ms.", "prof.", "st.", "vs.", "etc.", "e.g.", "i.e.", "no.", "nr.",
@@ -434,14 +436,21 @@ const CHOON = "(?:(?<![ーｰ])[ーｰ])?";
 /** Thai/Lao leading vowels (เ แ โ ใ ไ): written before the consonant they follow in
  *  speech, so they stick to the character after them. */
 const LEADS = "\\u0e40-\\u0e44\\u0ec0-\\u0ec4";
-/** Thai/Lao following vowels that are letters, not marks (ะ า ำ ๅ), and the Thai/Lao/Khmer
- *  repetition marks and the Thai abbreviation mark (ๆ ໆ ៗ ฯ — letters too, not punctuation):
- *  they stick to the character before them. */
-const TRAILS = "\\u0e30\\u0e32\\u0e33\\u0e45\\u0eb0\\u0eb2\\u0eb3\\u0e2f\\u0e46\\u0ec6\\u17d7";
+/** Thai/Lao following vowels that are letters, not marks (ะ า ำ ๅ): they stick to the
+ *  character before them. */
+const VOWEL_TRAILS = "\\u0e30\\u0e32\\u0e33\\u0e45\\u0eb0\\u0eb2\\u0eb3";
+/** The Thai/Lao/Khmer repetition marks and the Thai abbreviation mark (ๆ ໆ ៗ ฯ — letters too,
+ *  not punctuation): ONE sticks to the character before it, as one ー does — a whole
+ *  มากๆๆๆ… (emphasis, or a Whisper repetition loop) glued into one unit could not wrap or cut
+ *  and ran over the cap. A ฯ after a space opens a word (ฯพณฯ, ฯลฯ) and is no tail at all. */
+const REPEATS = "\\u0e2f\\u0e46\\u0ec6\\u17d7";
+const REPEAT = `(?:(?<![${REPEATS}])[${REPEATS}])?`;
+const TRAILS = VOWEL_TRAILS + REPEATS;
 /** Burmese/Khmer stacking viramas: the consonant after one is stacked under the one before. */
 const STACKERS = "\\u1039\\u17d2";
 const LEAD_OR_STACKER = new RegExp(`[${LEADS}${STACKERS}]`);
-const TRAIL = new RegExp(`[${TRAILS}]`);
+const VOWEL_TRAIL = new RegExp(`[${VOWEL_TRAILS}]`);
+const REPEAT_AT = new RegExp(`[${REPEATS}]`);
 /** A word of spaced text that is only closers, stops or TRAILS ("»", "?", Thai "บ่อย ๆ"):
  *  it stays with the word before it. */
 const LONE_CLOSER = new RegExp(`^[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}]+$`, "u");
@@ -454,7 +463,7 @@ const KILLED_AT = new RegExp(`^(?:${KILLED})`);
  *  vowels, a halfwidth voicing mark (ﾞ ﾟ — a letter, not a mark, so it rides before a
  *  following ｰ: ﾃﾞｰ, never ﾃﾞ / ｰ), ZWJ + next, a stacking virama + the consonant it stacks,
  *  a killed Burmese/Khmer consonant. */
-const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*`;
+const UNIT_TAIL = `(?:[\\p{M}\\p{Emoji_Modifier}\\u200d\\uff9e\\uff9f${VOWEL_TRAILS}]|(?<=[\\u200d${STACKERS}])\\S|${KILLED})*${REPEAT}`;
 /** Scripts written without spaces between words that are no CJK (unspacedChar keeps
  *  only Han/Kana, as the LRC seams need): inside spaced text a run of them still breaks
  *  between its syllables, like a CJK run — a space-joined multi-sentence Thai translation
@@ -564,7 +573,10 @@ const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
 function splitsUnit(text: string, i: number): boolean {
   const cp = text.codePointAt(i)!;
   if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") return true;
-  if (LEAD_OR_STACKER.test(text[i - 1]) || TRAIL.test(text[i]) || KILLED_AT.test(text.slice(i, i + 3))) return true;
+  if (LEAD_OR_STACKER.test(text[i - 1]) || VOWEL_TRAIL.test(text[i]) || KILLED_AT.test(text.slice(i, i + 3))) return true;
+  // One repetition mark rides (the second of a run is a seam again); a ฯ after a space opens a word.
+  if (REPEAT_AT.test(text[i]) && !REPEAT_AT.test(text[i - 1] ?? "")
+    && !(text[i] === "\u0e2f" && /^\s?$/.test(text[i - 1] ?? ""))) return true;
   if (!isRI(cp)) return false;
   let n = 0;
   for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
@@ -1168,7 +1180,10 @@ function wrapTokens(
         // "บ่อย ๆ"): it
         // stays with its word — below the over-cap penalties, so a forced cut still happens,
         // and not on a line over the cap, which only its overflow may decide.
-        if (a <= cpl && (LONE_CLOSER.test(toks[i]) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[i - 1]))) s -= 500;
+        // A whole word only: the " ฯ" of " ฯลฯ" is a token of its own but opens the abbreviation.
+        if (a <= cpl && ((LONE_CLOSER.test(toks[i]) && (i + 1 >= T || gaps[i + 1])) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[i - 1]))) {
+          s -= 500;
+        }
         // A phrase space between two longer runs ("…行った 楽しかった…") that keeps both lines
         // within the cap beats a balanced cut inside a CJK word. Not beside a short word or
         // number ("Tokyo", "2024 年"): that one stays balanced into its sentence.

@@ -1008,6 +1008,37 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
       for (let cpl = 5; cpl <= 32; cpl++) expect(wrapLines(t, cpl, 2).filter((l) => REP_START.test(l))).toEqual([]);
     }
   });
+  it("one repetition mark rides, a run of them wraps, and a ฯ after a space opens its word", () => {
+    // A run longer than a line (emphasis, a repetition loop) wraps between its marks, as ー runs do.
+    for (const t of ["มาก" + "ๆ".repeat(50), "ຂອບໃຈຫຼາຍ" + "ໆ".repeat(50), "ดีมาก" + "ๆ".repeat(24)]) {
+      for (const cpl of [10, 13, 42]) {
+        const lines = wrapLines(t, cpl, 2, 0, undefined, "th");
+        expect(lines.join("")).toBe(t);
+        expect(lines.filter((l) => l.length > cpl), lines.join(" | ")).toEqual([]);
+      }
+    }
+    const parts = cutByShare("ดีมาก" + "ๆ".repeat(24), [1, 1, 1], "th");
+    expect(parts.map((x) => x.length).every((n) => n >= 7 && n <= 13), parts.join(" | ")).toBe(true);
+    // ฯลฯ ("etc.") is one word: no line ends on its first ฯ or starts with its ลฯ.
+    for (let cpl = 6; cpl <= 20; cpl++) {
+      const lines = wrapLines("สินค้า ฯลฯ ทั้งหมดอยู่ที่นี่", cpl, 2);
+      expect(lines.filter((l) => /(?:^|\s)ฯ$/u.test(l) || l.startsWith("ลฯ")), lines.join(" | ")).toEqual([]);
+    }
+    expect(wrapLines("สินค้า ฯลฯ ทั้งหมดอยู่ที่นี่", 8, 2)[0]).toBe("สินค้า");
+    // The title ฯพณฯ goes with the name after it.
+    expect(cutByShare("ขอเชิญท่านผู้มีเกียรติ ฯพณฯ นายกรัฐมนตรี กล่าวเปิดงาน", [1, 1], "th")[1])
+      .toMatch(/^ฯพณฯ นายกรัฐมนตรี/u);
+    const ws = ["ขอเชิญ", "ท่าน", "ผู้มี", "เกียรติ", " ฯพณฯ", " นายก", "รัฐมนตรี", " กล่าว", "เปิด", "งาน"];
+    let t = 0;
+    const words = ws.map((word) => ({ word, start: t, end: (t += 0.4) }));
+    const text = ws.join("");
+    const r: BatchResult = { text, language: "th", words, segments: [{ start: 0, end: t, text }] };
+    for (const cpl of [20, 24, 28, 32]) {
+      const cues = buildCues(r, { length: "custom", custom: { cpl, lines: 1, maxDur: 3, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+      expect(cues.filter((c) => c.endsWith("ฯพณฯ")), cues.join(" | ")).toEqual([]);
+    }
+  });
   it("a cue split at Whisper's per-token words never starts on a mark, a following vowel or a killed consonant", () => {
     // faster-whisper times th/lo/my per decoded token: a "word" can be one code point.
     const BAD_START = /^(?:[\p{M}ะาำๅະາຳ]|[က-အ]့?်|[ក-អ]់)/u;
