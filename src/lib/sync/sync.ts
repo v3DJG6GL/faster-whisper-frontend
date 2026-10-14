@@ -2895,18 +2895,32 @@ async function ensureStateFor(backendId: string): Promise<void> {
  *  default. A compose merged against a remote with NO base (first contact, or a re-created
  *  document's forgotten one) passes `state.snapshot ?? remote` instead — with nothing to pass
  *  through, the gates delete those fields, the first-contact merge counts every one the remote
- *  carries as a local edit, and "Keep mine" pushed them erased (the API keys among them). */
-function composeLive(
+ *  carries as a local edit, and "Keep mine" pushed them erased (the API keys among them).
+ *  The store is read BEFORE the keyring wait (up to 10 s behind a wallet prompt), and applyBlob's
+ *  stale guard only sees edits made during its own wait: an edit made during this one was in
+ *  neither the compose nor the merge, the apply hydrated over it, the retry pushed the old value
+ *  as the base, and the edit's own push found nothing to send. So compose again while the store
+ *  moved underneath (bounded: a store that never settles goes up as last read). */
+async function composeLive(
   cats: Record<SyncCategory, boolean>,
   passThrough: SyncBlob | undefined = state.snapshot,
 ): Promise<SyncBlob> {
-  const s = useApp.getState();
-  return composeBlob(
-    { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
-    cats,
-    passThrough,
-    { includeSecrets: true, sub: subSettings(), gates: settingGates() },
-  );
+  for (let attempt = 1; ; attempt++) {
+    const s = useApp.getState();
+    const blob = await composeBlob(
+      { settings: s.settings, backends: s.backends, profiles: s.profiles, appRules: s.appRules },
+      cats,
+      passThrough,
+      { includeSecrets: true, sub: subSettings(), gates: settingGates() },
+    );
+    const now = useApp.getState();
+    const moved =
+      now.settings !== s.settings ||
+      now.backends !== s.backends ||
+      now.profiles !== s.profiles ||
+      now.appRules !== s.appRules;
+    if (!moved || attempt >= 3) return blob;
+  }
 }
 
 /** Stands in for the API-key fingerprints in a `storeSignature` whose keyring read came back
