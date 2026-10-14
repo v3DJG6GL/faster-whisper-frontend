@@ -3339,21 +3339,25 @@ export async function pushNow(manual = false): Promise<void> {
         // Normalize a pre-split peer's blob before merging — the 3-way base and the local
         // compose are already in the current shape.
         const remoteBlob = migrateBlob((remote.blob ?? {}) as SyncBlob);
-        if (state.snapshot === undefined || freshCats.size > 0) {
-          // No base (first contact, or the re-created document's just forgotten): recompose with
-          // the remote as the pass-through. The blob above filled its pass-through slots
-          // (categories and fields this device does not sync, the other-OS rules, a degraded
-          // backends list WITH its keys) from the dead snapshot or from nothing, and a
-          // first-contact merge counts either as local edits — pushing the deleted document's
-          // values back, or erasing the remote's gated-off ones. pullNow's reconcile composes
-          // the same way, and so does every retry here (no base is adopted between attempts).
-          // No keyring-refusal re-check: the forget cleared the stash latch with the snapshot it
-          // guarded, and a locked keyring now passes the REMOTE's backends through (marked
-          // degraded), which the arms below hold out of the apply and withhold as a base.
-          // A fresh category (`freshCats`) composes its pass-through from the remote the same way.
-          blob = await composeLive(syncCats(), passThroughFor(remoteBlob));
-          if (myGen !== gen) return;
-        }
+        // ALWAYS recompose from the live store: `blob` was read before the PUT (or is the last
+        // attempt's merge), so an edit made while the request was on the wire is in neither it
+        // nor the merge — and applying the merge would hydrate over that edit, push the old value
+        // and adopt it as the base, while the edit's own push then found nothing to send.
+        // No base (first contact, or the re-created document's just forgotten): the remote is the
+        // pass-through. The pre-PUT compose filled its pass-through slots (categories and fields this device does not sync, the other-OS rules, a degraded
+        // backends list WITH its keys) from the dead snapshot or from nothing, and a
+        // first-contact merge counts either as local edits — pushing the deleted document's
+        // values back, or erasing the remote's gated-off ones. pullNow's reconcile composes
+        // the same way, and so does every retry here (no base is adopted between attempts).
+        // No keyring-refusal re-check: the forget cleared the stash latch with the snapshot it
+        // guarded, and a locked keyring now passes the REMOTE's backends through (marked
+        // degraded), which the arms below hold out of the apply and withhold as a base.
+        // A fresh category (`freshCats`) composes its pass-through from the remote the same way.
+        blob = await composeLive(
+          syncCats(),
+          state.snapshot === undefined || freshCats.size > 0 ? passThroughFor(remoteBlob) : undefined,
+        );
+        if (myGen !== gen) return;
         const { merged, conflicts } = mergeFresh(blob, remoteBlob);
         if (conflicts.length > 0) {
           raiseConflict({ categories: conflicts, merged, local: blob, remote: remoteBlob,
