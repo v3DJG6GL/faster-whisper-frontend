@@ -36,8 +36,11 @@ pub enum StreamEvent {
     },
     /// Long-silence hard break: the server reset its document. The client should
     /// reset its injection baseline and optionally type `separator` between docs.
+    /// `suffix` is the closed document's output suffix, which the server also puts at the
+    /// front of `separator` (empty when none): the saved transcript ends the document with it.
     Boundary {
         separator: String,
+        suffix: String,
     },
     /// The capture-row id the server minted for the utterance it just
     /// finalized. Rides its own frame because the `final` frame is emitted
@@ -1195,7 +1198,7 @@ impl ClipCutter {
                 self.pending_txt = Some(doc.len());
                 io.clip = Some((*n, pcm));
             }
-            StreamEvent::Boundary { .. } => io.txt = self.take_txt(doc),
+            StreamEvent::Boundary { suffix, .. } => io.txt = self.take_txt_closed(doc, suffix),
             _ => {}
         }
         io
@@ -1212,18 +1215,16 @@ impl ClipCutter {
     /// clip's text still ends where `observe` would have ended it — at the next utterance's
     /// ordinal `final` or a hard break — so a later utterance's words never land in its `.txt`.
     fn observe_discarded(&mut self, e: &StreamEvent, doc: &str) -> ClipIo {
-        let ends = matches!(
-            e,
+        let txt = match e {
             StreamEvent::Final {
                 utterance: Some(_),
                 last: false,
                 ..
-            } | StreamEvent::Boundary { .. }
-        );
-        ClipIo {
-            txt: if ends { self.take_txt(doc) } else { None },
-            clip: None,
-        }
+            } => self.take_txt(doc),
+            StreamEvent::Boundary { suffix, .. } => self.take_txt_closed(doc, suffix),
+            _ => None,
+        };
+        ClipIo { txt, clip: None }
     }
 
     /// The decode mark of utterance `n`, retiring it and any older ones.
@@ -1238,6 +1239,12 @@ impl ClipCutter {
         self.pending_txt
             .take()
             .map(|start| doc.get(start..).unwrap_or("").to_string())
+    }
+
+    /// [`Self::take_txt`] at a hard break: the document closes with its output suffix, which the
+    /// server sends on the `boundary` rather than in any `final`.
+    fn take_txt_closed(&mut self, doc: &str, suffix: &str) -> Option<String> {
+        self.take_txt(doc).map(|txt| txt + suffix)
     }
 
     /// Queue the pending clip's `.txt` now (at close).
@@ -1257,7 +1264,8 @@ async fn recv_clip(rx: &mut Option<mpsc::UnboundedReceiver<StreamEvent>>) -> Opt
 
 /// Fold a stream event into the running session transcript (for the saved-recording `.txt` sidecar),
 /// mirroring the frontend's per-hard-break archive: a `Final` replaces the current document with
-/// `committed + tail`; a `Boundary` banks the (trimmed, non-empty) current document and resets it.
+/// `committed + tail`; a `Boundary` banks the (trimmed, non-empty) current document, closed with its
+/// output suffix as the frontend's bank closes it, and resets it.
 fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut String) {
     match e {
         StreamEvent::Final {
@@ -1267,7 +1275,8 @@ fn accumulate_transcript(e: &StreamEvent, docs: &mut Vec<String>, current: &mut 
             current.push_str(committed);
             current.push_str(tail);
         }
-        StreamEvent::Boundary { .. } => {
+        StreamEvent::Boundary { suffix, .. } => {
+            current.push_str(suffix);
             bank_doc(docs, current);
             current.clear();
         }
@@ -1344,6 +1353,7 @@ fn emit_message<F: Fn(StreamEvent)>(text: &str, on_event: &F) -> Frame {
         Some("boundary") => {
             on_event(StreamEvent::Boundary {
                 separator: bounded(str_field(&v, "separator"), MAX_SEPARATOR),
+                suffix: bounded(str_field(&v, "suffix"), MAX_SUFFIX),
             });
             Frame::Continue
         }
@@ -1417,7 +1427,10 @@ const MAX_SIDECAR_BYTES: usize = 8 * 1024 * 1024;
 /// decode key's and OUTPUT_SUFFIX's limit) ahead of a hard-break separator of up to 8. The
 /// frontend types it as keystrokes into the focused window, so it stays bounded — at that sum, so
 /// a long suffix is not cut differently at a break than inside `final.committed` at the end.
-const MAX_SEPARATOR: usize = 512 + 8;
+const MAX_SEPARATOR: usize = MAX_SUFFIX + 8;
+
+/// The `boundary` frame's own copy of that output suffix (the `output_suffix` limit).
+const MAX_SUFFIX: usize = 512;
 
 /// First `n` chars of a server-supplied string. Char-indexed, so it can't split a UTF-8 sequence.
 pub(crate) fn bounded(s: &str, n: usize) -> String {
@@ -1571,7 +1584,10 @@ mod handshake_auth_tests {
 
 #[cfg(test)]
 mod emit_message_tests {
-    use super::{close_frame_error, emit_message, Frame, StreamEvent, UtteranceState};
+    use super::{
+        accumulate_transcript, bank_doc, close_frame_error, emit_message, Frame, StreamEvent,
+        UtteranceState,
+    };
     use std::cell::RefCell;
 
     /// The `utterance` events one server text frame produces.
@@ -1634,12 +1650,43 @@ mod emit_message_tests {
         let text = serde_json::json!({ "type": "boundary", "separator": separator }).to_string();
         let seen = RefCell::new(Vec::new());
         let frame = emit_message(&text, &|e| {
-            if let StreamEvent::Boundary { separator } = e {
+            if let StreamEvent::Boundary { separator, .. } = e {
                 seen.borrow_mut().push(separator);
             }
         });
         assert_eq!(seen.into_inner(), vec![separator.to_string()]);
         assert!(frame == Frame::Continue);
+    }
+
+    /// The sidecar's documents for "Hello" ‹boundary frame› "World".
+    fn sidecar_docs(boundary: serde_json::Value) -> Vec<String> {
+        let mut events = Vec::new();
+        for frame in [
+            serde_json::json!({ "type": "final", "committed": "Hello", "tail": "" }),
+            boundary,
+            serde_json::json!({ "type": "final", "committed": "World", "tail": "", "last": true }),
+        ] {
+            let seen = RefCell::new(Vec::new());
+            emit_message(&frame.to_string(), &|e| seen.borrow_mut().push(e));
+            events.extend(seen.into_inner());
+        }
+        let (mut docs, mut current) = (Vec::new(), String::new());
+        for e in &events {
+            accumulate_transcript(e, &mut docs, &mut current);
+        }
+        bank_doc(&mut docs, &current);
+        docs
+    }
+
+    #[test]
+    fn a_document_a_hard_break_ends_keeps_its_output_suffix_in_the_sidecar() {
+        let docs = sidecar_docs(serde_json::json!({
+            "type": "boundary", "separator": " -- sig\n\n", "suffix": " -- sig",
+        }));
+        assert_eq!(docs, ["Hello -- sig", "World"]);
+        // A server that sends no suffix field (no output suffix set) banks as before.
+        let docs = sidecar_docs(serde_json::json!({ "type": "boundary", "separator": "\n\n" }));
+        assert_eq!(docs, ["Hello", "World"]);
     }
 
     #[test]
@@ -1829,6 +1876,7 @@ mod clip_tests {
             fin(" Hallo Welt", Some(1)),
             StreamEvent::Boundary {
                 separator: "\n".into(),
+                suffix: String::new(),
             },
         ] {
             forward_saved(
@@ -1850,6 +1898,44 @@ mod clip_tests {
             1,
             "the hard break still ends the clip's text"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A hard break closes the clip's `.txt` with the document's output suffix, as it closes the
+    /// typed text; the server sends it on the `boundary`, never in a `final`.
+    #[test]
+    fn a_clip_a_hard_break_ends_keeps_its_output_suffix() {
+        let dir = std::env::temp_dir().join(format!("fwf-clips-suffix-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut saved = vec![0u8; 32_000];
+        let (cutter, rx) = ClipCutter::new(&dir);
+        let mut clips = Some(cutter);
+        let (mut docs, mut cur) = (Vec::new(), String::new());
+        let keep = AtomicBool::new(false);
+        for e in [
+            fin(" Hallo Welt", Some(1)),
+            StreamEvent::Boundary {
+                separator: " -- sig\n\n".into(),
+                suffix: " -- sig".into(),
+            },
+        ] {
+            forward_saved(
+                e,
+                Some(&dir),
+                &keep,
+                &mut saved,
+                &mut clips,
+                &mut docs,
+                &mut cur,
+                &|_| {},
+            );
+        }
+        let seen = finish(clips, rx);
+        assert_eq!(seen.len(), 1);
+        let wav = std::path::Path::new(&seen[0].0);
+        let txt = std::fs::read_to_string(wav.with_extension("txt")).unwrap();
+        assert!(txt.starts_with("Hallo Welt -- sig"), "{txt:?}");
+        assert_eq!(docs, ["Hallo Welt -- sig"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

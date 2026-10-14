@@ -558,7 +558,7 @@ pub fn start(app: AppHandle, p: StartParams) -> Result<StreamSession, String> {
                 UtterancePayload { state, utterance },
             );
         }
-        StreamEvent::Boundary { separator } => {
+        StreamEvent::Boundary { separator, .. } => {
             tracing::info!("[stream] session {epoch} boundary (hard break)");
             emit_if_active(&appc, epoch, "stream://boundary", separator);
         }
