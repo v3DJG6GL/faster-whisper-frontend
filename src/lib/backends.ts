@@ -62,12 +62,18 @@ export function storedTypedUrl(raw: string): string {
   // the remainder is a port (the isSchemelessAddress rule): `http:8000` (host `http`, port 8000)
   // keeps its schemeless meaning, and a bare `http:` is left alone. A URL that already passes
   // is left untouched, so a stored URL is not rewritten (and re-evicted) on an unchanged save.
-  let t = stripUrlNoise(raw.trim());
-  if (!/^https?:\/\//i.test(t)) {
-    const canon = (_m: string, s: string) => `${s.toLowerCase()}://`;
-    t = t.replace(/^(https?):[\\/]+/i, canon).replace(/^(https?):(?![\\/]|\d+(?:\/|$))(?=\S)/i, canon);
-  }
+  const t = canonicalHttpScheme(stripUrlNoise(raw.trim()));
   return !t || /^https?:\/\//i.test(t) ? t : normalizeUrl(t) || t;
+}
+
+/** The lenient-scheme step of `storedTypedUrl` alone, on an already-cleaned string: `http:/h`,
+ *  `HTTPS:\\h`, `http:h` → `http(s)://h`, read the way the parsers read them. Shared with the sync
+ *  sanitizer, which must not apply `storedTypedUrl`'s JS `trim()` (it also strips U+FEFF, which
+ *  `stripUrlNoise` keeps because the transport does). */
+export function canonicalHttpScheme(t: string): string {
+  if (/^https?:\/\//i.test(t)) return t;
+  const canon = (_m: string, s: string) => `${s.toLowerCase()}://`;
+  return t.replace(/^(https?):[\\/]+/i, canon).replace(/^(https?):(?![\\/]|\d+(?:\/|$))(?=\S)/i, canon);
 }
 
 /** A typed address → the connectable form: the stored form (storedTypedUrl), then normalised.

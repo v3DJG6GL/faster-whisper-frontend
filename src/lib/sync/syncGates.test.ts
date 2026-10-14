@@ -4,8 +4,9 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  applyBlob, backendsBlobIncomplete, carriesQuickAddPin, categorySelection, composeBlob, mergeBlobs,
+  applyBlob, backendsBlobIncomplete, carriesQuickAddPin, categorySelection, composeBlob, mergeBlobs, sanitizeBackends,
 } from "./sync";
+import { storedTypedUrl } from "../backends";
 import { completeGates, DEFAULT_SETTING_SYNC, type SettingDef, type SettingId } from "../settingsManifest";
 import { catsFromGates, gatePartsPresent, gatesTurnedOn, gateStillSyncs, withGateParts, gateApplyScalar, gateComposeScalar, groupPanelState } from "./syncGates";
 import { stableStringify } from "../stable";
@@ -256,7 +257,7 @@ describe("apply: keep-local per gate", () => {
         backends: {
           list: [
             backend({ id: "b7", serverUrl: "192.168.1.5:8000" }),
-            backend({ id: "b8", serverUrl: "https:/evil.tld" }),
+            backend({ id: "b8", serverUrl: "ftp://evil.tld" }),
             backend({ id: "b9", serverUrl: "https://host:1/" }),
           ],
         },
@@ -267,6 +268,20 @@ describe("apply: keep-local per gate", () => {
     expect(byId.get("b7")!.serverUrl).toBe("http://192.168.1.5:8000");
     expect(byId.get("b8")!.serverUrl).toBe(""); // unspoken scheme → blanked, id (and keyring tie) kept
     expect(byId.get("b9")!.serverUrl).toBe("https://host:1/");
+  });
+
+  it("an inbound lenient http(s) scheme is canonicalised the way the editor stores it, not blanked", () => {
+    // Older builds stored these verbatim and the transport reads them as http(s)://host, so
+    // blanking broke a working backend (and pushed the "" back to the peer).
+    const cases: [string, string][] = [
+      ["http:/host:8000", "http://host:8000"],
+      ["HTTPS:\\\\srv.example", "https://srv.example"],
+      ["http:host.lan:8000", "http://host.lan:8000"],
+      ["https:/srv.example", "https://srv.example"],
+    ];
+    const out = sanitizeBackends(cases.map(([url], i) => backend({ id: `b${i}`, serverUrl: url })));
+    expect(out.map((b) => [b.id, b.serverUrl])).toEqual(cases.map(([, want], i) => [`b${i}`, want]));
+    for (const [url, want] of cases) expect(storedTypedUrl(url)).toBe(want);
   });
 
   it("homeProfile off: this device's pick survives the blob", async () => {

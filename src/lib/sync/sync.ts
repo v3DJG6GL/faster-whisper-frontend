@@ -32,7 +32,7 @@ import {
   syncPush,
 } from "../api";
 import { configReady, configSaveHeld, evdevPermittedNow, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
-import { effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
+import { canonicalHttpScheme, effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
@@ -1341,6 +1341,12 @@ const ENDPOINT_KINDS = ["stream", "batch"] as const;
 const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
 const BACKEND_KINDS = ["auto", "full", "standard"] as const;
 
+function serverUrlFromPeer(raw: string): string {
+  const t = canonicalHttpScheme(stripUrlNoise(raw));
+  if (!isStorableServerUrl(t)) return "";
+  return /^https?:\/\//i.test(t) || t === "" ? t : normalizeUrl(t) || t;
+}
+
 export function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];
   return dedupeById(list.filter(
@@ -1379,11 +1385,11 @@ export function sanitizeBackends(list: unknown): Backend[] {
       // that path stores it — with the `http://` `normalizeUrl` prepends. Stored bare, every
       // display helper re-normalised it for the UI while the transport handed reqwest a
       // scheme-less string and every request failed with an opaque URL-parse error.
-      serverUrl: isStorableServerUrl(b.serverUrl)
-        ? (/^https?:\/\//i.test(stripUrlNoise(b.serverUrl)) || stripUrlNoise(b.serverUrl) === ""
-          ? stripUrlNoise(b.serverUrl)
-          : normalizeUrl(b.serverUrl) || stripUrlNoise(b.serverUrl))
-        : "",
+      // …and a LENIENT http(s) scheme (`http:/host`, `HTTPS:\\host`, `http:host`) is canonicalised
+      // the way the editor stores it rather than blanked: older builds stored it verbatim and
+      // the transport reads it as `http(s)://host`, so the canonical form names the very host
+      // reqwest connects to — blanking broke a working backend and pushed the "" back to the peer.
+      serverUrl: serverUrlFromPeer(b.serverUrl),
       name: typeof b.name === "string" ? b.name : "",
       model: typeof b.model === "string" ? b.model : "",
       language: typeof b.language === "string" ? b.language : "auto",
