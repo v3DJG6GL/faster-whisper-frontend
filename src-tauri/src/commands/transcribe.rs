@@ -1,7 +1,7 @@
 //! Batch transcription and translation of files and links, link media fetches,
 //! and media export (both share the cancel epochs below).
 
-use super::{resolve_audio_base, resolve_key_async, AUDIO_SUBDIRS};
+use super::{resolve_audio_base, resolve_key_async, AUDIO_SUBDIRS, HEAL_STAMP};
 use crate::transport;
 use std::path::{Path, PathBuf};
 use tauri::{Emitter, Manager};
@@ -382,22 +382,45 @@ fn under(dir: &std::path::Path, path: &std::path::Path) -> bool {
     }
 }
 
-/// Whether `path` sits inside any folder this app manages (the audio base or
-/// the app data dir): an export must never land there. (copy_media_to's source
-/// check is the narrower record-owned or AUDIO_SUBDIRS test.)
-fn inside_app_storage(
-    app: &tauri::AppHandle,
-    audio_base: Option<String>,
-    path: &std::path::Path,
-) -> bool {
-    let mut dirs: Vec<PathBuf> = Vec::new();
-    if let Some(b) = resolve_audio_base(app, audio_base) {
-        dirs.push(b);
+/// Whether the export `dest` would land inside storage this app manages (the audio base's
+/// own subfolders and heal stamp, or the app data dir): an export must never land there.
+/// `dest`'s parent must exist (the callers check it first).
+fn inside_app_storage(app: &tauri::AppHandle, audio_base: Option<String>, dest: &Path) -> bool {
+    let base = resolve_audio_base(app, audio_base);
+    let app_data = app.path().app_data_dir().ok();
+    inside_managed_storage(base.as_deref(), app_data.as_deref(), dest)
+}
+
+/// inside_app_storage's decision. A custom audio base is an ordinary user folder (~/Videos,
+/// even ~), so only what the app keeps in it is guarded: its AUDIO_SUBDIRS and its
+/// HEAL_STAMP; an export may sit next to them. The default base lives under the app data
+/// dir, which stays guarded whole. (copy_media_to's source check is the narrower
+/// record-owned or AUDIO_SUBDIRS test.)
+fn inside_managed_storage(base: Option<&Path>, app_data: Option<&Path>, dest: &Path) -> bool {
+    let Some(parent) = dest.parent() else {
+        return false;
+    };
+    if app_data.is_some_and(|d| under(d, parent)) {
+        return true;
     }
-    if let Ok(d) = app.path().app_data_dir() {
-        dirs.push(d);
+    let Some(base) = base else {
+        return false;
+    };
+    if AUDIO_SUBDIRS.iter().any(|s| under(&base.join(s), parent)) {
+        return true;
     }
-    dirs.iter().any(|d| under(d, path))
+    // In the base root itself, the app's own names are taken (case-blind, for Windows/macOS).
+    let in_root = match (base.canonicalize(), parent.canonicalize()) {
+        (Ok(b), Ok(p)) => b == p,
+        _ => false,
+    };
+    in_root
+        && dest.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            AUDIO_SUBDIRS
+                .iter()
+                .chain(std::iter::once(&HEAL_STAMP))
+                .any(|own| n.eq_ignore_ascii_case(own))
+        })
 }
 
 /// Is `dest` the source file itself (through any symlink or `..`)? An export over its own
@@ -489,10 +512,10 @@ pub async fn package_media(
     let checks_dest = dest.clone();
     let checked = tauri::async_runtime::spawn_blocking(
         move || -> Result<Result<Source, PackageOutcome>, String> {
-            let Some(parent) = checks_dest.parent().filter(|p| p.is_dir()) else {
+            if !checks_dest.parent().is_some_and(|p| p.is_dir()) {
                 return Err("the export folder does not exist".into());
-            };
-            if inside_app_storage(&checks_app, audio_base, parent) {
+            }
+            if inside_app_storage(&checks_app, audio_base, &checks_dest) {
                 return Err("choose a folder outside the app's own storage".into());
             }
             match (source_media_id, source_path) {
@@ -773,10 +796,10 @@ pub async fn copy_media_to(
         if !owned && !in_store {
             return Err("that file does not belong to this transcription".into());
         }
-        let Some(parent) = dest_path.parent().filter(|p| p.is_dir()) else {
+        if !dest_path.parent().is_some_and(|p| p.is_dir()) {
             return Err("the export folder does not exist".into());
-        };
-        if inside_app_storage(&app, audio_base, parent) {
+        }
+        if inside_app_storage(&app, audio_base, &dest_path) {
             return Err("choose a folder outside the app's own storage".into());
         }
         if is_source_itself(&src_real, &dest_path) {
@@ -858,6 +881,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    /// A custom audio base is a user folder: an export may sit next to the app's own
+    /// subfolders in it, but never inside one, on its heal stamp, or under the app data dir.
+    #[test]
+    fn an_export_into_a_custom_base_is_refused_only_inside_what_the_app_keeps_there() {
+        let dir = scratch("storage");
+        let base = dir.join("Videos");
+        let app_data = dir.join("appdata");
+        std::fs::create_dir_all(base.join("dictations/day")).unwrap();
+        std::fs::create_dir_all(&app_data).unwrap();
+        let inside = |dest: &Path| inside_managed_storage(Some(&base), Some(&app_data), dest);
+        assert!(!inside(&base.join("talk.mkv")));
+        assert!(inside(&base.join("dictations/x.wav")));
+        assert!(inside(&base.join("dictations/day/x.wav")));
+        assert!(inside(&base.join(HEAL_STAMP)));
+        assert!(inside(&app_data.join("x.mkv")));
+        assert!(!inside(&dir.join("talk.mkv")));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// The export-over-its-own-source guard (copy_media_to and package_media): the same
