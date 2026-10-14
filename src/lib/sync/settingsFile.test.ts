@@ -6,12 +6,18 @@ import type { ImportResult, SyncBlob } from "./syncTypes";
 
 vi.mock("../api", async (importOriginal) => {
   const mod = await importOriginal<typeof import("../api")>();
+  const readBackendKeys = vi.fn(async (_ids: string[]): Promise<Record<string, string>> => ({}));
   return {
     ...mod,
     appVersion: async () => "0.0.0-test",
     syncDeviceInfo: async () => null,
     exportSettingsFile: vi.fn(async () => undefined),
-    readBackendKeys: vi.fn(async () => ({})),
+    readBackendKeys,
+    // An id the mocked read leaves out FAILED to read (a locked wallet), it is not absent.
+    readBackendKeyStates: async (ids: string[]) => {
+      const keys = await readBackendKeys(ids);
+      return { keys, unreadable: ids.filter((id) => !Object.prototype.hasOwnProperty.call(keys, id)) };
+    },
   };
 });
 

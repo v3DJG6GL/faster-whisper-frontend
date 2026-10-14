@@ -1589,7 +1589,8 @@ export interface BackendKeyRead {
 /** Bulk keyring read, telling a key that cannot be read apart from one that is not stored —
  *  for a caller that re-derives `hasApiKey`, where only the store's own "absent" may clear it. */
 export async function readBackendKeyStates(backendIds: string[]): Promise<BackendKeyRead> {
-  if (!isTauri) return { keys: {}, unreadable: [] };
+  // No keyring to ask: every key is unknown, not absent — "absent" clears flags and keyless-pushes.
+  if (!isTauri) return { keys: {}, unreadable: [...backendIds] };
   return invoke<BackendKeyRead>("read_backend_keys", { backendIds });
 }
 

@@ -618,20 +618,43 @@ export async function composeBlob(
     // "API keys" gate off: the gate pass below carries the snapshot's keys whatever is read here,
     // so skip the live read — a locked wallet must not divert the list to the degraded pass-through.
     if (opts.includeSecrets && (!opts.gates || opts.gates.apiKeys)) {
-      const secrets = await withTimeout(
-        readBackendKeys(cfg.backends.map((b) => b.id)),
+      const read = await withTimeout(
+        readBackendKeyStates(cfg.backends.map((b) => b.id)),
         10_000,
-        {} as Record<string, string>,
+        null as BackendKeyRead | null,
       );
-      // COMPLETENESS, not non-emptiness. `readBackendKeys` leaves out the individual entries it
+      let secrets = read?.keys ?? {};
+      // A key the store reports ABSENT (read fine, no entry) is a stale local `hasApiKey` — config
+      // copied from another machine, wallet reset, entry deleted by hand — not a locked wallet.
+      // Held as missing, it took the degraded pass-through below on every compose, and every
+      // merge then left backends out of the apply: `reconcileBackendSecrets`, the one place that
+      // re-derives the flag, never ran, and sync stayed degraded for good. So: the base's key for
+      // that id travels when it holds one (nothing is erased, and the apply's reconcile writes it
+      // here), else the entry goes up as keyless, which is what it is. Only a read with NO failed
+      // id, and only while the base's keys were read back whole (otherwise "no base key" may just
+      // mean an unread stash): a failed id or a timeout keeps the old completeness rule as is.
+      if (read && Array.isArray(read.unreadable) && read.unreadable.length === 0 && !snapshotSecretsUnavailable) {
+        const snapSecrets = snapshot?.backends?.secrets;
+        const carried: [string, string][] = [];
+        const list = cfg.backends.map((b) => {
+          if (!b.hasApiKey || ownProp(secrets, b.id) !== undefined) return b;
+          const key = inboundSecret(snapSecrets, b.id);
+          if (key === undefined) return { ...b, hasApiKey: false };
+          carried.push([b.id, key]);
+          return b;
+        });
+        if (carried.length > 0) secrets = { ...secrets, ...Object.fromEntries(carried) };
+        blob.backends.list = list;
+      }
+      // COMPLETENESS, not non-emptiness. The read's `keys` leaves out the individual entries it
       // cannot read rather than failing the batch, so a PARTIAL map is the
       // normal degraded shape. Uploading it replaces the server's copy of every key that is
       // missing here with nothing — the same erase hazard the `else` branch below guards, one
       // step earlier. (`restoreSnapshotSecrets` already treats a partial read-back as failure.)
-      const complete = cfg.backends.every((b) => !b.hasApiKey || ownProp(secrets, b.id) !== undefined);
+      const complete = blob.backends.list.every((b) => !b.hasApiKey || ownProp(secrets, b.id) !== undefined);
       if (Object.keys(secrets).length > 0 && complete) {
         blob.backends.secrets = secrets;
-      } else if (cfg.backends.some((b) => b.hasApiKey)) {
+      } else if (blob.backends.list.some((b) => b.hasApiKey)) {
         // Same erase-the-server's-keys hazard as the pass-through branch below, on the branch
         // that actually runs by default: when the wallet is locked the read above degrades to
         // `{}`, and pushing this list without secrets replaces the server's copy with a keyless

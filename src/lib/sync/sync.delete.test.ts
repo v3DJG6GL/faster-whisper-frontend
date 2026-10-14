@@ -46,6 +46,10 @@ const api = vi.hoisted(() => ({
   keyDeletes: [] as string[],
   /** When set, a keyring delete waits on it (after being recorded in `keyDeletes`). */
   deletePark: null as null | Promise<void>,
+  /** When set (and `keys` is not), a live keyring: reads answer from it, writes land in it, and an
+   *  id it does not hold reads ABSENT — unless listed in `unreadable`, whose reads FAIL. */
+  store: null as null | Map<string, string>,
+  unreadable: [] as string[],
 }));
 vi.mock("../api", async (importOriginal) => {
   const orig = await importOriginal<typeof import("../api")>();
@@ -53,15 +57,29 @@ vi.mock("../api", async (importOriginal) => {
     api.readCalled = true;
     api.reads++;
     const park = api.parkOn === null || api.reads === api.parkOn ? api.park : null;
-    return park ?? (api.keys ? Promise.resolve(api.keys) : orig.readBackendKeys(ids));
+    if (park) return park;
+    if (api.keys) return Promise.resolve(api.keys);
+    const store = api.store;
+    if (store) {
+      const held = ids.filter((id) => store.has(id) && !api.unreadable.includes(id));
+      return Promise.resolve(Object.fromEntries(held.map((id) => [id, store.get(id)!])));
+    }
+    return orig.readBackendKeys(ids);
   };
   return {
     ...orig,
     isTauri: true,
     readBackendKeys,
-    readBackendKeyStates: async (ids: string[]) => ({ keys: await readBackendKeys(ids), unreadable: [] }),
+    // `keys` models a wallet that is open or LOCKED: an id it leaves out failed to read (a locked
+    // wallet's shape), it is never reported absent.
+    readBackendKeyStates: async (ids: string[]) => {
+      const keys = await readBackendKeys(ids);
+      if (api.store && !api.keys) return { keys, unreadable: api.unreadable.filter((id) => ids.includes(id)) };
+      return { keys, unreadable: ids.filter((id) => !Object.prototype.hasOwnProperty.call(keys, id)) };
+    },
     setBackendKey: async (id: string, key: string) => {
       api.keyWrites.push([id, key]);
+      api.store?.set(id, key);
     },
     deleteBackendKey: async (id: string) => {
       api.keyDeletes.push(id);
@@ -362,6 +380,94 @@ describe("a sync composed with a degraded keyring", () => {
       expect(st.backends.map((b) => [b.id, b.name])).toEqual([["b1", "local"], ["b2", "added-here"]]);
       expect(st.syncStatus).toBe("error");
       expect(st.syncError).toContain("keyring");
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+// A stale `hasApiKey: true` (config copied from another machine, wallet reset, entry deleted by
+// hand) is a key the keyring reports ABSENT, not one it fails to read. composeBlob held it as a
+// degraded read, so with a base every merge left backends out of the apply — the one step that
+// re-derives the flag never ran, and this device's backend edits never went up again.
+describe("a stale API-key flag the keyring reports absent", () => {
+  /** Seed a version-1 base from a clean push (b1 keyed when `serverKey`), then make b1's local
+   *  flag claim a key the keyring does not hold, add a backend here, and pull a peer's change. */
+  async function staleThenPull(serverKey: boolean, unreadable: string[] = []) {
+    await resetSyncState();
+    const settings = structuredClone(DEFAULT_SETTINGS);
+    settings.sync = { ...settings.sync!, enabled: true, backendId: "b1" };
+    const b1 = backend({ hasApiKey: serverKey });
+    api.store = new Map(serverKey ? [["b1", "sk-secret"]] : []);
+    useApp.setState({ settings, backends: [b1], profiles: [], appRules: [], status: "idle" });
+    await pushNow(true);
+    const base = structuredClone(api.pushed) as SyncBlob;
+    expect(base.backends?.secrets?.b1).toBe(serverKey ? "sk-secret" : undefined);
+    if (unreadable.length > 0) api.unreadable = unreadable; // locked: the key is there, unread
+    else api.store.delete("b1");
+    const added = { ...b1, id: "b2", name: "added-here", hasApiKey: false } as Backend;
+    useApp.setState({ backends: [{ ...b1, hasApiKey: true }, added] });
+    const before = useApp.getState().settings.general.typeAsISpeak;
+    const remote = structuredClone(base);
+    remote.general = { ...remote.general, typeAsISpeak: !before } as never;
+    api.pulled = { version: 2, updated_ts: 2, device: "peer", blob: remote };
+    await pullNow(true);
+    return { base, before };
+  }
+  const cleanup = () => {
+    api.store = null;
+    api.unreadable = [];
+    api.pulled = null;
+  };
+  const flag = (id: string) => useApp.getState().backends.find((b) => b.id === id)?.hasApiKey;
+
+  it("adopts the server's key when the base holds one, and never pushes b1 without it", async () => {
+    try {
+      const { before } = await staleThenPull(true);
+      const st = useApp.getState();
+      expect(st.backends.map((b) => b.id)).toEqual(["b1", "b2"]); // the local add survived
+      expect(st.settings.general.typeAsISpeak).toBe(!before);
+      expect(st.syncStatus).toBe("ok");
+      expect(api.store!.get("b1")).toBe("sk-secret"); // the apply ran and wrote the server's key
+      expect(flag("b1")).toBe(true);
+      await pushNow(true);
+      const pushed = api.pushed as SyncBlob;
+      expect(api.pushedBase).toBe(2);
+      expect(pushed.backends?.list.map((b) => [b.id, b.hasApiKey])).toEqual([["b1", true], ["b2", false]]);
+      expect(pushed.backends?.secrets).toEqual({ b1: "sk-secret" });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("clears the flag when the base holds no key, and this device's list goes up", async () => {
+    try {
+      await staleThenPull(false);
+      const st = useApp.getState();
+      expect(st.backends.map((b) => b.id)).toEqual(["b1", "b2"]);
+      expect(st.syncStatus).toBe("ok");
+      expect(flag("b1")).toBe(false);
+      await pushNow(true);
+      const pushed = api.pushed as SyncBlob;
+      expect(api.pushedBase).toBe(2);
+      expect(pushed.backends?.list.map((b) => [b.id, b.hasApiKey])).toEqual([["b1", false], ["b2", false]]);
+      expect(pushed.backends?.secrets).toBeUndefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a key the read FAILS on (locked wallet) still takes the degraded pass-through", async () => {
+    try {
+      const { base } = await staleThenPull(true, ["b1"]);
+      const st = useApp.getState();
+      expect(st.backends.map((b) => b.id)).toEqual(["b1", "b2"]); // kept out of the apply
+      expect(st.syncStatus).toBe("ok"); // the peer left backends alone: base adopted
+      expect(flag("b1")).toBe(true); // not re-derived
+      expect(api.store!.get("b1")).toBe("sk-secret");
+      await pushNow(true);
+      // The base's own category, keys and all — never this device's keyless list.
+      expect((api.pushed as SyncBlob).backends).toEqual(base.backends);
     } finally {
       cleanup();
     }

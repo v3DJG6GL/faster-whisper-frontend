@@ -1564,6 +1564,43 @@ describe("applyBlob keep-local (baseline)", () => {
     expect(flag("b1")).toBe(false);
     expect(flag("b2")).toBe(true);
   });
+
+  // composeBlob re-derives a flag the keyring reports ABSENT, but only off a read that failed
+  // nowhere: a timed-out read, or one that failed on ANY id, keeps the whole degraded pass-through.
+  describe("composeBlob with a stale flag beside a degraded read", () => {
+    const snapshot: SyncBlob = { backends: { list: [backend({ hasApiKey: true })], secrets: { b1: "sk-peer" } } };
+    const live = [backend({ hasApiKey: true, name: "renamed" }), backend({ id: "b2", hasApiKey: true })];
+    const compose = () =>
+      composeBlob(slice({ backends: live }), CATS_ALL, snapshot, {
+        includeSecrets: true,
+        sub: LEGACY_SUB,
+        gates: { ...DEFAULT_SETTING_SYNC },
+      });
+
+    it("a timed-out read re-sends the base's category", async () => {
+      vi.useFakeTimers();
+      keyring.park = new Promise(() => {});
+      try {
+        const composing = compose();
+        await vi.advanceTimersByTimeAsync(10_000);
+        expect((await composing).backends).toEqual(snapshot.backends);
+      } finally {
+        keyring.park = null;
+        vi.useRealTimers();
+      }
+    });
+
+    it("an absent b1 beside an unreadable b2 re-sends the base's category", async () => {
+      keyring.keys = {};
+      keyring.unreadable = ["b2"];
+      try {
+        expect((await compose()).backends).toEqual(snapshot.backends);
+      } finally {
+        keyring.keys = null;
+        keyring.unreadable = [];
+      }
+    });
+  });
 });
 
 // A key rotated on another device keeps the backend's serverUrl and hasApiKey, so hydrate's own
@@ -1926,6 +1963,7 @@ describe("a manual Push / Pull clicked during launch", () => {
         }
         return Promise.resolve({ b1: "sk-1" });
       },
+      readBackendKeyStates: async () => ({ keys: { b1: "sk-1" }, unreadable: [] }),
       setBackendKey: async () => {},
       deleteBackendKey: () => io.delHold ?? Promise.resolve(),
       syncPull: async () => {
@@ -2125,6 +2163,8 @@ describe("a sync edit made during the launch work", () => {
     remote: undefined as SyncBlob | undefined,
     /** The keyring refuses live key reads (the launch stash read still answers). */
     locked: false,
+    /** The keyring answers live key reads but holds no backend key (reads them ABSENT). */
+    absent: false,
     /** The server's version for this test (default: REMOTE's). */
     remoteVersion: undefined as number | undefined,
   };
@@ -2149,6 +2189,7 @@ describe("a sync edit made during the launch work", () => {
     io.pushed = undefined;
     io.remote = undefined;
     io.locked = false;
+    io.absent = false;
     io.remoteVersion = undefined;
     const parked = new Promise<Record<string, string>>((r) => (io.release = r));
     vi.resetModules();
@@ -2169,8 +2210,13 @@ describe("a sync edit made during the launch work", () => {
           io.launchRead = true;
           return parked;
         }
-        return Promise.resolve(io.locked ? {} : { b1: "sk-1" });
+        return Promise.resolve(io.locked || io.absent ? {} : { b1: "sk-1" });
       },
+      // A locked wallet FAILS the read of every id; it does not report them absent.
+      readBackendKeyStates: async (ids: string[]) =>
+        io.locked
+          ? { keys: {}, unreadable: ids }
+          : { keys: io.absent ? {} : { b1: "sk-1" }, unreadable: [] },
       setBackendKey: async () => {},
       deleteBackendKey: async () => {
         io.deletes++;
@@ -2734,6 +2780,28 @@ describe("a sync edit made during the launch work", () => {
       expect(io.pulls).toBe(1);
       expect(engine.getPendingConflict()).toBeNull();
       expect(io.pushes).toBe(0); // the automatic push is still 3 s out
+    } finally {
+      io.release({});
+      store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
+    }
+  });
+
+  // A key the keyring reports absent is re-derived only against a base whose keys were read back:
+  // with the stash unreadable, "the base holds no key for b1" says nothing about the server, and a
+  // b1 composed keyless would go up and erase the key the server holds.
+  it("a stale flag with the base's stashed keys unreadable never pushes the backend keyless", async () => {
+    const list = [backend({ hasApiKey: true })];
+    const base = { ...serverCopy, backends: { list } } as SyncBlob; // the file copy: keys stripped
+    const { engine, store, init } = await launchEngine({}, base);
+    try {
+      io.remote = { ...serverCopy, backends: { list, secrets: { b1: "sk-1" } } } as SyncBlob;
+      io.absent = true;
+      io.release({}); // the stash is gone: the base's keys cannot be restored
+      await init;
+      await engine.pushNow(true);
+      expect(io.pushes).toBe(0);
+      expect(store.getState().syncError).toMatch(/keyring/);
+      expect(store.getState().backends[0].hasApiKey).toBe(true);
     } finally {
       io.release({});
       store.setState((st) => ({ settings: { ...st.settings, sync: { ...st.settings.sync!, enabled: false } } }));
