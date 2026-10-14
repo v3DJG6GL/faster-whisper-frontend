@@ -14,10 +14,10 @@ vi.mock("../api", async (importOriginal) => {
     exportSettingsFile: vi.fn(async () => undefined),
     readBackendKeys,
     // An id the mocked read leaves out FAILED to read (a locked wallet), it is not absent.
-    readBackendKeyStates: async (ids: string[]) => {
+    readBackendKeyStates: vi.fn(async (ids: string[]) => {
       const keys = await readBackendKeys(ids);
       return { keys, unreadable: ids.filter((id) => !Object.prototype.hasOwnProperty.call(keys, id)) };
-    },
+    }),
   };
 });
 
@@ -121,6 +121,29 @@ describe("exportToFile", () => {
         useApp.setState({ backends: [b0] });
       });
       await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+    } finally {
+      useApp.setState({ backends: prev });
+    }
+  });
+
+  // A flag whose key the keyring reports ABSENT (config copied from another machine, wallet reset)
+  // goes into the file as keyless, which it is: nothing failed to read, so nothing is missing.
+  it("does not report keysMissing for a stale flag the keyring reports absent", async () => {
+    const { useApp } = await import("../store");
+    const api = await import("../api");
+    const { exportToFile } = await import("./settingsFile");
+    const prev = useApp.getState().backends;
+    const b0 = { ...(prev[0] ?? {}), id: "b1", hasApiKey: true } as (typeof prev)[number];
+    useApp.setState({ backends: [b0] });
+    try {
+      vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: {}, unreadable: [] });
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: false });
+      const calls = vi.mocked(api.exportSettingsFile).mock.calls;
+      const env = calls[calls.length - 1][1] as { categories: SyncBlob };
+      expect(env.categories.backends?.list.map((b) => b.hasApiKey)).toEqual([false]);
+
+      vi.mocked(api.readBackendKeyStates).mockResolvedValueOnce({ keys: {}, unreadable: ["b1"] });
+      await expect(exportToFile("/tmp/x.json", true)).resolves.toEqual({ keysMissing: true });
     } finally {
       useApp.setState({ backends: prev });
     }

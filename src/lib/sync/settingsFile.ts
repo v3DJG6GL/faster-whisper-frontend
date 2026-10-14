@@ -46,12 +46,14 @@ export async function exportToFile(
   path: string,
   includeSecrets: boolean,
 ): Promise<{ keysMissing: boolean }> {
-  // Judged on the snapshot the envelope is built from (buildEnvelope reads the store before its
-  // first await), not the live store after the keyring read and the write: a focus pull landing
-  // meanwhile can add or drop a key, and the verdict would then disagree with the file written.
-  const hadKeys = useApp.getState().backends.some((b) => b.hasApiKey);
   const envelope = await buildEnvelope(includeSecrets);
   await exportSettingsFile(path, envelope);
+  // Judged on the list the file holds, not the live store after the keyring read and the write (a
+  // focus pull landing meanwhile can add or drop a key) nor the store's flags at the start:
+  // composeBlob writes a flag whose key the keyring reports absent as keyless, and that file
+  // lacks nothing.
+  const list = envelope.categories.backends?.list;
+  const hadKeys = Array.isArray(list) && list.some((b) => b.hasApiKey);
   const keysMissing = includeSecrets && hadKeys && !envelope.categories.backends?.secrets;
   return { keysMissing };
 }
