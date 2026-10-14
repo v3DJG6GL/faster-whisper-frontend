@@ -981,6 +981,33 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     }
     expect(cutByShare(km, [1, 1], "km")[1].startsWith("ប់")).toBe(false);
   });
+  it("the repetition marks ๆ ໆ ៗ and the abbreviation mark ฯ stay with the word before them", () => {
+    const REP_START = /^[ฯๆໆៗ]/u;
+    expect(cutByShare("ค่อยๆเดิน", [1, 1], "th")).toEqual(["ค่อยๆ", "เดิน"]);
+    expect(cutByShare("ទៅៗមក", [1, 1], "km")).toEqual(["ទៅៗ", "មក"]);
+    expect(wrapLines("เด็กๆชอบเล่นกันมากๆเลยนะครับวันนี้", 5, 2)).not.toContainEqual(expect.stringMatching(REP_START));
+    expect(wrapLines("ເດັກໆມັກຫຼິ້ນກັນຫຼາຍໆເລີຍ", 6, 2)).not.toContainEqual(expect.stringMatching(REP_START));
+    // Standard Thai spacing: ๆ written with a space on both sides.
+    const spaced = "วันนี้เราไปเที่ยวทะเลกันบ่อย ๆ แล้วก็กินอาหารทะเลอร่อย ๆ ที่กรุงเทพฯ ด้วยกันเสมอ ๆ นะครับเพื่อน ๆ ทุกคน";
+    for (let cpl = 28; cpl <= 42; cpl++) {
+      const lines = wrapLines(spaced, cpl, 2);
+      expect(lines.join("").replace(/\s/g, "")).toBe(spaced.replace(/\s/g, ""));
+      expect(lines.filter((l) => REP_START.test(l)), lines.join(" | ")).toEqual([]);
+    }
+    expect(wrapLines(spaced, 32, 2)).toEqual([
+      "วันนี้เราไปเที่ยวทะเลกันบ่อย ๆ", "แล้วก็กินอาหารทะเลอร่อย ๆ", "ที่กรุงเทพฯ ด้วยกันเสมอ ๆ", "นะครับเพื่อน ๆ ทุกคน",
+    ]);
+    const glued = spaced.replace(/ ([ๆฯ])/g, "$1");
+    const bkk = "กรุงเทพฯเป็นเมืองหลวงของประเทศไทยที่มีคนอาศัยอยู่มาก";
+    for (const t of [THAI, glued, bkk]) {
+      for (let k = 1; k < 20; k++) for (const s of [[k, 20 - k], [k, 10, 20 - k]]) {
+        const p = cutByShare(t, s, "th");
+        expect(p.join("").replace(/\s/g, "")).toBe(t.replace(/\s/g, ""));
+        expect(p.filter((x) => REP_START.test(x))).toEqual([]);
+      }
+      for (let cpl = 5; cpl <= 32; cpl++) expect(wrapLines(t, cpl, 2).filter((l) => REP_START.test(l))).toEqual([]);
+    }
+  });
   it("a cue split at Whisper's per-token words never starts on a mark, a following vowel or a killed consonant", () => {
     // faster-whisper times th/lo/my per decoded token: a "word" can be one code point.
     const BAD_START = /^(?:[\p{M}ะาำๅະາຳ]|[က-အ]့?်|[ក-អ]់)/u;

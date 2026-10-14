@@ -434,13 +434,18 @@ const CHOON = "(?:(?<![ーｰ])[ーｰ])?";
 /** Thai/Lao leading vowels (เ แ โ ใ ไ): written before the consonant they follow in
  *  speech, so they stick to the character after them. */
 const LEADS = "\\u0e40-\\u0e44\\u0ec0-\\u0ec4";
-/** Thai/Lao following vowels that are letters, not marks (ะ า ำ ๅ): they stick to the
- *  character before them. */
-const TRAILS = "\\u0e30\\u0e32\\u0e33\\u0e45\\u0eb0\\u0eb2\\u0eb3";
+/** Thai/Lao following vowels that are letters, not marks (ะ า ำ ๅ), and the Thai/Lao/Khmer
+ *  repetition marks and the Thai abbreviation mark (ๆ ໆ ៗ ฯ — letters too, not punctuation):
+ *  they stick to the character before them. */
+const TRAILS = "\\u0e30\\u0e32\\u0e33\\u0e45\\u0eb0\\u0eb2\\u0eb3\\u0e2f\\u0e46\\u0ec6\\u17d7";
 /** Burmese/Khmer stacking viramas: the consonant after one is stacked under the one before. */
 const STACKERS = "\\u1039\\u17d2";
 const LEAD_OR_STACKER = new RegExp(`[${LEADS}${STACKERS}]`);
 const TRAIL = new RegExp(`[${TRAILS}]`);
+/** A word of spaced text that is only closers, stops or TRAILS ("»", "?", Thai "บ่อย ๆ"):
+ *  it stays with the word before it. */
+const LONE_CLOSER = new RegExp(`^[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}]+$`, "u");
+const LONE_CLOSER_AHEAD = new RegExp(`^[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}]+(?:\\s|$)`, "u");
 /** A Burmese consonant killed by asat (န် ယ် င့်) or a Khmer one by bantoc (ប់): the final
  *  consonant of the syllable before it, so it sticks to that one — ရန်ကုန် wrapped as ရ / န်ကုန်. */
 const KILLED = "[\\u1000-\\u1021](?=\\u1037?\\u103a)|[\\u1780-\\u17a2](?=\\u17cb)";
@@ -820,9 +825,9 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
         // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
         (spaced && !sylSpaced && !/\s/.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
         // A space right before a lone closing mark or after a lone opening one (French
-        // « bonjour », "Ça va ?"): the mark stays with its word.
+        // « bonjour », "Ça va ?", Thai "บ่อย ๆ"): the mark stays with its word.
         (/\s/.test(text[i])
-          && (/^[\p{Pe}\p{Pf}\p{Po}]+(?:\s|$)/u.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
+          && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
         (NOBREAK.has(prevWord) ? 12 : 0) -
@@ -1159,10 +1164,11 @@ function wrapTokens(
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) {
         s += breakScore(toks[i - 1], toks[i], lang) * 0.3;
-        // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?"): it
+        // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?", Thai
+        // "บ่อย ๆ"): it
         // stays with its word — below the over-cap penalties, so a forced cut still happens,
         // and not on a line over the cap, which only its overflow may decide.
-        if (a <= cpl && (/^[\p{Pe}\p{Pf}\p{Po}]+$/u.test(toks[i]) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[i - 1]))) s -= 500;
+        if (a <= cpl && (LONE_CLOSER.test(toks[i]) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[i - 1]))) s -= 500;
         // A phrase space between two longer runs ("…行った 楽しかった…") that keeps both lines
         // within the cap beats a balanced cut inside a CJK word. Not beside a short word or
         // number ("Tokyo", "2024 年"): that one stays balanced into its sentence.
