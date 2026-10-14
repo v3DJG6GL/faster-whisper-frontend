@@ -1359,9 +1359,12 @@ pub(crate) const MAX_TRANSCRIPT: usize = 4 * 1024 * 1024;
 /// in the Transcribe tab, which takes a different path and writes no sidecar.
 const MAX_SIDECAR_BYTES: usize = 8 * 1024 * 1024;
 
-/// A `boundary` separator is a delimiter — " ", "\n", "\n\n", ". ". The frontend types it as
-/// keystrokes into the focused window, so the server does not get to make it a payload.
-const MAX_SEPARATOR: usize = 32;
+/// A `boundary` separator is a delimiter — " ", "\n", "\n\n", ". " — but the server prefixes the
+/// open document's output suffix to it, and that suffix may be 512 chars (the `output_suffix`
+/// decode key's and OUTPUT_SUFFIX's limit) ahead of a hard-break separator of up to 8. The
+/// frontend types it as keystrokes into the focused window, so it stays bounded — at that sum, so
+/// a long suffix is not cut differently at a break than inside `final.committed` at the end.
+const MAX_SEPARATOR: usize = 512 + 8;
 
 /// First `n` chars of a server-supplied string. Char-indexed, so it can't split a UTF-8 sequence.
 pub(crate) fn bounded(s: &str, n: usize) -> String {
@@ -1568,6 +1571,22 @@ mod emit_message_tests {
         assert_eq!(seen, vec![(UtteranceState::Open, None)]);
         let (seen, _) = utterances(r#"{"type":"utterance","state":"open","utterance":-3}"#);
         assert_eq!(seen, vec![(UtteranceState::Open, None)]);
+    }
+
+    #[test]
+    fn a_boundary_separator_carrying_a_long_output_suffix_is_forwarded_whole() {
+        // The server sends `suffix + separator`; a 46-char suffix plus "\n\n" must not lose its
+        // tail or the newlines, or the next document is typed glued onto a cut suffix.
+        let separator = " -- dictated on my laptop, please excuse typos\n\n";
+        let text = serde_json::json!({ "type": "boundary", "separator": separator }).to_string();
+        let seen = RefCell::new(Vec::new());
+        let frame = emit_message(&text, &|e| {
+            if let StreamEvent::Boundary { separator } = e {
+                seen.borrow_mut().push(separator);
+            }
+        });
+        assert_eq!(seen.into_inner(), vec![separator.to_string()]);
+        assert!(frame == Frame::Continue);
     }
 }
 
