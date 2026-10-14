@@ -981,6 +981,33 @@ describe("Thai/Lao syllables and Burmese/Khmer stacks stay whole", () => {
     }
     expect(cutByShare(km, [1, 1], "km")[1].startsWith("ប់")).toBe(false);
   });
+  it("a cue split at Whisper's per-token words never starts on a mark, a following vowel or a killed consonant", () => {
+    // faster-whisper times th/lo/my per decoded token: a "word" can be one code point.
+    const BAD_START = /^(?:[\p{M}ะาำๅະາຳ]|[က-အ]့?်|[ក-អ]់)/u;
+    const BAD_END = /[เ-ไເ-ໄ္្]$/u;
+    const texts: [string, string][] = [
+      ["my", "ကျွန်တော်တို့မနက်ဖြန်ရန်ကုန်မြို့ကိုသွားမယ်လို့ပြောခဲ့တယ်ရန်ကုန်မြို့ကိုသွားမယ်နော်"],
+      ["th", THAI],
+      ["th", "พรุ่งนี้เราจะไปกรุงเทพด้วยกันแล้วก็กินข้าวผัดอร่อยมากเพราะว่าอร่อยมากและถูกด้วยครับ"],
+      ["km", "ខ្ញុំចង់ទៅលេងសមុទ្រជាមួយមិត្តភក្តិរបស់ខ្ញុំនៅថ្ងៃស្អែកដើម្បីលេងទឹកនិងញ៉ាំបាយ"],
+      ["lo", "ມື້ນີ້ອາກາດດີຫຼາຍແລະຂ້ອຍຢາກໄປທ່ຽວທະເລກັບເພື່ອນໆທີ່ໜ້າຮັກທີ່ສຸດໃນໂລກນີ້"],
+    ];
+    const opts: CueOptions[] = [STD, { length: "short", timing: "same" }];
+    for (const cpl of [20, 32, 42]) for (const lines of [1, 2]) for (const maxDur of [2, 3, 4]) {
+      opts.push({ length: "custom", custom: { cpl, lines, maxDur, cps: 17 }, timing: "same" });
+    }
+    for (const [language, text] of texts) {
+      let t = 0;
+      const words = [...text].map((word) => ({ word, start: t, end: (t += 0.15) }));
+      const r: BatchResult = { text, language, words, segments: [{ start: 0, end: t, text }] };
+      for (const o of opts) {
+        const cues = buildCues(r, o, ["orig"]).cues.map((c) => c.text);
+        expect(cues.join("")).toBe(text);
+        expect(cues.filter((c, k) => (k > 0 && BAD_START.test(c)) || (k < cues.length - 1 && BAD_END.test(c))), cues.join(" | "))
+          .toEqual([]);
+      }
+    }
+  });
   // Two Thai sentences joined by one space: spaced text, but each sentence is still one run.
   const THAI2 = THAI + " " + "พรุ่งนี้ฝนจะตกหนักมากดังนั้นเราควรอยู่บ้านและดูหนังด้วยกันทั้งวันเลยนะครับ";
   it("own timing: a spaced multi-sentence Thai translation splits inside its sentences", () => {

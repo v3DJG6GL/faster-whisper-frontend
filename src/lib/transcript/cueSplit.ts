@@ -549,6 +549,22 @@ function tokenUnits(w: string): string[] {
 }
 /** A regional indicator (half of a flag emoji). */
 const isRI = (cp: number): boolean => cp >= 0x1f1e6 && cp <= 0x1f1ff;
+/** A cut right before `text[i]` splits a unit: between a base and its combining mark (tested
+ *  on the code point: an astral mark such as the variation selector U+E0100 is a surrogate
+ *  pair), inside a ZWJ sequence, before a skin tone, inside a Thai/Lao syllable (after a
+ *  leading vowel, before a following vowel), inside a Burmese/Khmer consonant stack (right
+ *  after the virama), before a killed Burmese/Khmer consonant, or between a flag's two
+ *  regional indicators (an odd run of indicators right before i means i is the second half
+ *  of a pair). */
+function splitsUnit(text: string, i: number): boolean {
+  const cp = text.codePointAt(i)!;
+  if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") return true;
+  if (LEAD_OR_STACKER.test(text[i - 1]) || TRAIL.test(text[i]) || KILLED_AT.test(text.slice(i, i + 3))) return true;
+  if (!isRI(cp)) return false;
+  let n = 0;
+  for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
+  return n % 2 === 1;
+}
 /** Length of the whitespace-free run around index `i` of `t`, counted only up to 7 — a
  *  long run is all cutByShare needs to know, and it must not cost a scan per candidate. */
 function runAt(t: string, i: number): number {
@@ -638,6 +654,10 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     if (ts[i - 1].opens || OPENER.test(edgeChar(left, true)) || /(?:^|[\s\p{Pe}\p{Pf}])[\p{Ps}\p{Pi}]+$/u.test(left)
       || CLOSE_PUNCT.includes(text[at] || "\0") || /^(?:(?!["'])[\p{Pe}\p{Pf}\p{Po}])+["']*$/u.test(right)
       || (/[\p{Pe}\p{Pf}]'$/u.test(left) && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])/iu.test(right))) s -= 1000;
+    // Nor inside a unit, as wraps and cutByShare: Whisper times Thai/Lao/Burmese per decoded
+    // token, so a "word" can be a lone tone mark, following vowel or killed consonant, and a
+    // cue opened on a bare mark (a dotted circle) or ended on a leading vowel.
+    if (splitsUnit(text, at)) s -= 1000;
     // Both sides read by index: slicing the token array per candidate made every level O(n²).
     const leftLen = text.slice(ts[0].from, ts[i - 1].to).trim().length;
     const rightLen = text.slice(ts[i].from, ts[ts.length - 1].to).trim().length;
@@ -739,22 +759,8 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     if (OPENER.test(text[i - 1]) || CLOSE_PUNCT.includes(text[i])) continue;
     // Nor before the first ー (or ｰ) after a character (the second ー of a run is a seam again).
     if (/[ーｰ]/.test(text[i]) && !/[ーｰ]/.test(text[i - 1])) continue;
-    // Never between a base and its combining mark (tested on the code point: an
-    // astral mark such as the variation selector U+E0100 is a surrogate pair), nor
-    // inside a ZWJ sequence, nor before a skin tone, nor between a flag's two
-    // regional indicators (an odd run of indicators right before i means i is the
-    // second half of a pair).
-    const cp = text.codePointAt(i)!;
-    if (/[\p{M}\p{Emoji_Modifier}\u200d]/u.test(String.fromCodePoint(cp)) || text[i - 1] === "\u200d") continue;
-    // Nor inside a Thai/Lao syllable (after a leading vowel, before a following vowel)
-    // or a Burmese/Khmer consonant stack (right after the virama), nor before a killed
-    // Burmese/Khmer consonant.
-    if (LEAD_OR_STACKER.test(text[i - 1]) || TRAIL.test(text[i]) || KILLED_AT.test(text.slice(i, i + 3))) continue;
-    if (isRI(cp)) {
-      let n = 0;
-      for (let j = i - 2; j >= 0 && isRI(text.codePointAt(j)!); j -= 2) n++;
-      if (n % 2) continue;
-    }
+    // Never inside a grapheme or a Thai/Lao/Burmese/Khmer syllable unit.
+    if (splitsUnit(text, i)) continue;
     if (
       spaced
         ? /\s/.test(text[i])
