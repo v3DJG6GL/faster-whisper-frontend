@@ -11,7 +11,7 @@
 // module-scope <RuleCard> (keyed by slug) — never a component redefined per
 // render — so editing never remounts an input (cf. DecodeFields focus-loss caveat).
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { screenEyebrow, screenTitle } from "@/lib/screenRegistry";
 import { ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import { ownProp } from "@/lib/own";
@@ -29,7 +29,8 @@ import { QuickAddShortcutField } from "@/components/QuickAddShortcutField";
 import { ReorderControls } from "@/components/ReorderControls";
 import { IS_LINUX } from "@/lib/platform";
 import {
-  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, ruleListOf, ruleCountOf, ruleLockedFor, envPinnedOf, saveLanded, RULE_LIST_SETTING,
+  type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, mapEntryProblem, mapRowEditProblem, mapRowTwinProblems,
+  mapRowsProblem, ruleListOf, ruleCountOf, ruleLockedFor, envPinnedOf, saveLanded, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
@@ -236,6 +237,19 @@ function RuleCard({
     onPatch((e) => ({ ...e, entries: fn(e.entries ?? []) }));
   const setPairs = (fn: (rows: MapRow[]) => MapRow[]) =>
     onPatch((e) => ({ ...e, pairs: fn(e.pairs ?? []) }));
+  // A mapping edit the server's word-list schema would reject, refused with its reason under the row
+  // (as Quick-Add does): the map is PATCHed whole, so its 422 would fail the whole Save.
+  const [pairProblem, setPairProblem] = useState<{ id: number; msg: string } | null>(null);
+  const editPair = (row: MapRow, field: "k" | "v", value: string): boolean => {
+    const problem = mapRowEditProblem(row, { ...row, [field]: value });
+    if (problem) {
+      setPairProblem({ id: row.id, msg: problem });
+      return false;
+    }
+    setPairProblem((p) => (p?.id === row.id ? null : p));
+    setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, [field]: value } : r)));
+    return true;
+  };
 
   // cb:map recent-word suggestions: the fetched pool minus keys already mapped
   // in THIS rule (case-insensitive), so we never re-suggest an existing mapping.
@@ -254,6 +268,9 @@ function RuleCard({
   const entriesTotal = edit.entries?.length ?? 0;
   const shownEntries = (edit.entries ?? []).slice(0, MAX_SHOWN_ENTRIES);
   const mapPairs = edit.pairs ?? [];
+  // Over every row, not just the shown ones: a twin can sit past the render cap. The parent holds
+  // the Save while any remains (mapRowsProblem).
+  const mapTwins = useMemo(() => mapRowTwinProblems(edit.pairs ?? []), [edit.pairs]);
   // Clamped to what expanding actually reveals (MAX_SHOWN_MAP_ROWS): "▸ Show 4985 older"
   // over a 5000-pair list promised 4485 rows the cap could never keep.
   const { hidden: mapHidden, unshown: mapUnshown } = collapseCounts(
@@ -494,38 +511,48 @@ function RuleCard({
                 // bypassed and the "Added" column prints a fabricated date for a mapping that has
                 // no timestamp. Same fix as `connections` gets four hundred lines up.
                 const ts = ownProp(rule.map_meta ?? {}, row.k);
+                const problem =
+                  pairProblem?.id === row.id
+                    ? pairProblem.msg
+                    : ((row.k.trim() ? mapEntryProblem(row.k, row.v) : null) ?? mapTwins.get(row.id));
                 return (
-                  <div key={row.id} className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
-                    <Combobox
-                      value={row.k}
-                      disabled={inputsDisabled}
-                      placeholder="comma"
-                      className="min-w-0 flex-1"
-                      autoFocus={row.id === justAddedId}
-                      suggestions={keySuggestions}
-                      footerMax={recentMax}
-                      onChange={(v) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: v } : r)))}
-                      onSelect={(word) => {
-                        setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, k: word } : r)));
-                        valueRefs.current.get(row.id)?.focus();
-                      }}
-                    />
-                    <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
-                    <TextInput ref={(el) => { if (el) valueRefs.current.set(row.id, el); else valueRefs.current.delete(row.id); }}
-                      value={row.v} disabled={inputsDisabled} spellCheck={false} placeholder="," mono className="min-w-0 flex-1"
-                      onChange={(ev) => setPairs((rows) => rows.map((r) => (r.id === row.id ? { ...r, v: ev.target.value } : r)))} />
-                    <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
-                      title={ts ? absWhen(ts) : undefined}>
-                      {fmtWhen(ts)}
-                    </span>
-                    {bodyEditable && (
-                      <button type="button" title="Remove mapping" disabled={saving}
-                        onClick={() => setPairs((rows) => rows.filter((r) => r.id !== row.id))}
-                        className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec disabled:opacity-40">
-                        <Trash2 className="size-3.5" />
-                      </button>
+                  <Fragment key={row.id}>
+                    <div className="flex items-center gap-3 rounded-lg border border-line bg-surface-2/40 px-2.5 py-2">
+                      <Combobox
+                        value={row.k}
+                        disabled={inputsDisabled}
+                        placeholder="comma"
+                        className="min-w-0 flex-1"
+                        autoFocus={row.id === justAddedId}
+                        suggestions={keySuggestions}
+                        footerMax={recentMax}
+                        onChange={(v) => editPair(row, "k", v)}
+                        onSelect={(word) => {
+                          if (editPair(row, "k", word)) valueRefs.current.get(row.id)?.focus();
+                        }}
+                      />
+                      <span className="w-4 shrink-0 text-center text-faint" aria-hidden>→</span>
+                      <TextInput ref={(el) => { if (el) valueRefs.current.set(row.id, el); else valueRefs.current.delete(row.id); }}
+                        value={row.v} disabled={inputsDisabled} spellCheck={false} placeholder="," mono className="min-w-0 flex-1"
+                        onChange={(ev) => editPair(row, "v", ev.target.value)} />
+                      <span className="w-44 shrink-0 whitespace-nowrap text-right font-mono text-[10.5px] text-faint"
+                        title={ts ? absWhen(ts) : undefined}>
+                        {fmtWhen(ts)}
+                      </span>
+                      {bodyEditable && (
+                        <button type="button" title="Remove mapping" disabled={saving}
+                          onClick={() => setPairs((rows) => rows.filter((r) => r.id !== row.id))}
+                          className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint hover:text-rec disabled:opacity-40">
+                          <Trash2 className="size-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    {problem && (
+                      <div role="status" className="flex items-center gap-1.5 px-2.5 text-[11.5px] text-warn">
+                        <AlertTriangle className="size-3.5 shrink-0" /> {problem}
+                      </div>
                     )}
-                  </div>
+                  </Fragment>
                 );
               })}
               {mapUnshown > 0 && (
@@ -948,6 +975,16 @@ export default function Dictionary() {
   // app://navigate unmounted this screen and threw them away in silence.
   const guard = useUnsavedGuard(dirty.length > 0);
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
+  // Why the Save is held: a dirty word-mapping list the server would 422 (a pair its schema rejects,
+  // or a case twin). The PATCH carries every dirty rule, so one such list would fail them all.
+  const saveBlocked = useMemo(() => {
+    for (const r of dirty) {
+      if (r.type !== "callback:map" || !("map" in patchFor(r))) continue;
+      const problem = mapRowsProblem(edits[r.name]?.pairs ?? []);
+      if (problem) return `${ruleListLabel(r.label, r.name, 120)}: ${problem}`;
+    }
+    return null;
+  }, [dirty, patchFor, edits]);
 
   const totalRules = useMemo(() => (fetchRes ? ruleCountOf(fetchRes) : rules.length), [fetchRes, rules.length]);
 
@@ -969,7 +1006,7 @@ export default function Dictionary() {
   }
 
   async function runSave(): Promise<boolean> {
-    if (!backend || dirty.length === 0) return false;
+    if (!backend || dirty.length === 0 || saveBlocked) return false;
     const rules_patch: Record<string, Record<string, unknown>> = {};
     const fingerprints: Record<string, string> = {};
     for (const r of dirty) {
@@ -1214,9 +1251,14 @@ export default function Dictionary() {
               <span className="text-[13px] text-text">
                 {dirty.length} unsaved {dirty.length === 1 ? "change" : "changes"}
               </span>
+              {saveBlocked && (
+                <span role="status" className="flex min-w-0 items-center gap-1.5 text-[12px] text-warn">
+                  <AlertTriangle className="size-3.5 shrink-0" /> <span className="truncate" title={saveBlocked}>{saveBlocked}</span>
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-2">
                 <Button variant="ghost" size="sm" onClick={discardAll} disabled={saving}>Discard</Button>
-                <Button variant="accent" size="sm" onClick={save} disabled={saving || !backend}>
+                <Button variant="accent" size="sm" onClick={save} disabled={saving || !backend || !!saveBlocked}>
                   {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />} Save changes
                 </Button>
               </div>

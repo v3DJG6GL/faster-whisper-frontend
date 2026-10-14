@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem, mapRowTwinProblems,
-  mapRowsFromRule, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
+  mapRowsFromRule, mapRowsProblem, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
   type MapRow,
 } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
@@ -164,6 +164,21 @@ describe("mapRowEditProblem + mapRowTwinProblems (the inline list editor)", () =
 
   it("an exact duplicate or blank rows are not twins", () => {
     expect(mapRowTwinProblems([{ id: 1, k: "komma", v: "," }, { id: 2, k: "komma", v: ";" }, { id: 3, k: " ", v: "" }, { id: 4, k: "", v: "" }]).size).toBe(0);
+  });
+});
+
+describe("mapRowsProblem (the Dictionary's Save gate)", () => {
+  it("holds the Save for a case twin, naming the other spelling", () => {
+    expect(mapRowsProblem([{ id: 1, k: "Komma", v: ";" }, { id: 2, k: "komma", v: "," }])).toMatch(/“komma” is already in this list/);
+  });
+
+  it("holds the Save for a pair the schema rejects", () => {
+    expect(mapRowsProblem([{ id: 1, k: "punkt", v: "." }, { id: 2, k: "C++", v: "c" }])).toMatch(/^“\+” /);
+    expect(mapRowsProblem([{ id: 1, k: "x".repeat(65), v: "" }])).toMatch(/phrase is too long/);
+  });
+
+  it("takes a valid map, an exact duplicate and an unfilled row", () => {
+    expect(mapRowsProblem([{ id: 1, k: "komma", v: "," }, { id: 2, k: "komma", v: ";" }, { id: 3, k: "", v: "'" }, { id: 4, k: "punkt", v: "." }])).toBeNull();
   });
 });
 

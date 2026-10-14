@@ -226,6 +226,17 @@ export function mapRowTwinProblems(rows: MapRow[]): Map<number, string> {
   return out;
 }
 
+/** The first reason the server would 422 a whole-map PATCH of `rows`, or null when it takes them:
+ *  a pair the schema rejects (a row already out of bounds — the editors refuse only the keystroke
+ *  that would make one) or a case twin. Blank rows are never sent. */
+export function mapRowsProblem(rows: MapRow[]): string | null {
+  for (const r of rows) {
+    const p = r.k.trim() ? mapEntryProblem(r.k, r.v) : null;
+    if (p) return p;
+  }
+  return mapRowTwinProblems(rows).values().next().value ?? null;
+}
+
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
  *  (`compile_map`): longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE
  *  pass (no cascade), and every ß key also matches its derived ss spelling (ß→ss, ẞ→SS; a key
