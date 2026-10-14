@@ -411,11 +411,17 @@ fn after_move(new: &Path) {
 /// (`audioBaseDir` / `recordingsDir`, not `logDir`).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Vec<PathBuf> {
     let mut audio_bases = Vec::new();
-    // The config loader's own read: a "UTF-8 with BOM" file is not JSON to serde.
-    let Ok(Some(text)) = crate::config::read_config_text(config) else {
+    // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes. Strict UTF-8 though, not
+    // the loader's lossy decode: this writes the file back, and would replace the user's
+    // invalid bytes with U+FFFD for good.
+    let Ok(bytes) = std::fs::read(config) else {
         return audio_bases;
     };
-    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(&text) else {
+    let Ok(text) = std::str::from_utf8(bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes))
+    else {
+        return audio_bases;
+    };
+    let Ok(mut json) = serde_json::from_str::<serde_json::Value>(text) else {
         return audio_bases;
     };
     let mut changed = false;
@@ -750,6 +756,23 @@ mod tests {
             out["settings"]["recording"]["audioBaseDir"],
             serde_json::json!(new.join("my-audio"))
         );
+    }
+
+    #[test]
+    fn a_config_that_is_not_valid_utf8_is_left_byte_for_byte() {
+        let base = scratch("not-utf8");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(&new).unwrap();
+        // A stray Latin-1 byte (0xE9, "é") inside a string value.
+        let mut bytes = br#"{"settings":{"recording":{"audioBaseDir":"#.to_vec();
+        bytes.extend(serde_json::to_vec(&old.join("my-audio")).unwrap());
+        bytes.extend(br#"},"general":{"note":"caf"#);
+        bytes.push(0xE9);
+        bytes.extend(br#""}}}"#);
+        std::fs::write(new.join("config.json"), &bytes).unwrap();
+        let rebased = rewrite_config_paths(&new.join("config.json"), &[(old, new.clone())]);
+        assert!(rebased.is_empty());
+        assert_eq!(std::fs::read(new.join("config.json")).unwrap(), bytes);
     }
 
     #[test]
