@@ -292,12 +292,14 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   } else {
     // Unknown spoken language: every plain human subtitle is a candidate. Nothing replaces the
     // transcript then — Prefer behaves like Side by side (decision), the candidates ride along.
+    // A candidate whose language you switched off is off, as its twin on that language's row:
+    // lit, it kept downloading the track while its own row showed it struck.
     const cands = avail.filter((t) => t.kind === "manual" && use(t) && !t.hoh);
+    const candState = (t: T): BadgeState =>
+      ownProp(tmap, t.code) === false ? "off" : st.policy === "generate" ? "idle" : "active";
     origBadges.push(
       mk({ kind: "transcribe", text: genText, title: "Whisper transcribes the audio" }, "active"),
-      ...(st.subs
-        ? cands.map((t) => exBadge(t, st.policy === "generate" ? "idle" : "active", true, `if ${languageLabel(t.code)}: `))
-        : []),
+      ...(st.subs ? cands.map((t) => exBadge(t, candState(t), true, `if ${languageLabel(t.code)}: `)) : []),
     );
   }
   const rows: SiteRow[] = [{
@@ -627,8 +629,16 @@ export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: stri
   if (st.sel) {
     const sel = { ...st.sel, ["mt:" + code]: want };
     // Dropping a language drops its site tracks too: under Custom a stale pick of one
-    // would otherwise keep it downloading (the pick outranks the off language).
-    if (!want) for (const k of Object.keys(m.codeOf)) if (m.codeOf[k] === code) sel[k] = false;
+    // would otherwise keep it downloading (the pick outranks the off language) — and so does
+    // a track's candidate twin on the Original row, which has no language in codeOf.
+    if (!want) {
+      for (const k of Object.keys(m.codeOf)) {
+        if (m.codeOf[k] !== code) continue;
+        sel[k] = false;
+        const tid = keyTrack(k);
+        if (tid && "cand:" + tid in m.snap) sel["cand:" + tid] = false;
+      }
+    }
     next = { ...st, sel };
   }
   return fromMap(input, next, { ...m.tmap, [code]: want });

@@ -88,6 +88,35 @@ describe("presets (v18, v31, v32)", () => {
     expect(i1.targets).toEqual(targets);
     expect(i2.targets).toEqual(targets);
   });
+  it("an unknown spoken language: dropping a language stops downloading its track, candidate badge included", () => {
+    const inp = input({ spoken: null, tracks: [tr("de-CH", "de-CH"), tr("fr", "fr")], targets: ["fr"] });
+    const st0 = initialSiteState(inp.targets);
+    const keys = (i: SiteSubsInput, st: SiteSubsState) =>
+      Object.fromEntries(derive(i, st).rows.flatMap((r) => r.badges).filter((b) => b.key && /^(?:ex|cand):/.test(b.key))
+        .map((b) => [b.key, b.state]));
+    expect(derive(inp, st0).run!.fetch).toEqual(["de-CH", "fr"]);
+    // Prefer: the de chip removed in the chips' picker.
+    const [i1, st1] = apply(inp, setTargets(inp, st0, ["fr"]));
+    expect(derive(i1, st1).chips.map((c) => c.code)).toEqual(["fr"]);
+    expect(derive(i1, st1).run!.fetch).toEqual(["fr"]);
+    expect(keys(i1, st1)).toEqual({ "cand:de-CH": "off", "cand:fr": "active", "ex:de-CH": "off", "ex:fr": "active" });
+    // Re-added, both badges are back as before.
+    const [i2, st2] = apply(i1, setTargets(i1, st1, ["fr", "de"]));
+    expect(derive(i2, st2).run!.fetch).toEqual(["de-CH", "fr"]);
+    expect(keys(i2, st2)).toEqual(keys(inp, st0));
+    // Custom: "Translate into" German off.
+    const [i3, st3] = apply(inp, pickPolicy(inp, st0, "custom"));
+    const [i4, st4] = apply(i3, toggleTarget(i3, st3, "de", false));
+    expect(derive(i4, st4).run!.fetch).toEqual(["fr"]);
+    expect(keys(i4, st4)).toEqual({ "cand:de-CH": "off", "cand:fr": "active", "ex:de-CH": "off", "ex:fr": "active" });
+    // Re-added under Custom, machine translation serves it and the twins still agree.
+    const [i5, st5] = apply(i4, toggleTarget(i4, st4, "de", true));
+    expect(derive(i5, st5).run).toMatchObject({ fetch: ["fr"], mtTargets: ["de"] });
+    expect(keys(i5, st5)).toMatchObject({ "cand:de-CH": "off", "ex:de-CH": "off" });
+    // Another language's candidate is untouched.
+    const [i6, st6] = apply(inp, toggleTarget(inp, st0, "de", false));
+    expect(keys(i6, st6)).toMatchObject({ "cand:fr": "active", "ex:fr": "active" });
+  });
 });
 
 describe("badge clicks (v25, v27, v28)", () => {
