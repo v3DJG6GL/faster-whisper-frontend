@@ -187,6 +187,9 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
         let bus = bus.clone();
         let deep = deep.clone();
         tauri::async_runtime::spawn(async move {
+            // The last element focus note_focus rejected for another app's foreground mark (see
+            // replay_parked). Resolver-local: only this task reads or writes it.
+            let mut parked: Option<Parked> = None;
             loop {
                 notify.notified().await;
                 let (act, deact, foc) = {
@@ -194,6 +197,10 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                     (p.0.take(), p.1.take(), p.2.take())
                 };
                 let deep = deep.load(Ordering::Relaxed);
+                let mark_before = snapshot.lock().active_app.clone();
+                let deact_bus = deact
+                    .as_ref()
+                    .and_then(|(_, item)| item.name_as_str().map(str::to_owned));
                 // Deactivate first only when it arrived before the activate (see Slots).
                 let deact_first = matches!((&act, &deact), (Some((a, _)), Some((d, _))) if d < a);
                 // window:activate → mark this app foreground. Only a genuine activation reports
@@ -239,6 +246,8 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                 }
                 // element focus → accept only from the foreground app (or when none is marked).
                 if let Some(item) = foc {
+                    // A newer focus supersedes the parked one, whether or not it resolves.
+                    parked = None;
                     if let Ok(Some((app_id, editable, _))) = tokio::time::timeout(
                         std::time::Duration::from_millis(1000),
                         resolve_focus(&item, &bus, deep, true, false),
@@ -247,8 +256,15 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                     {
                         // Hand the element ref to the snapshot so a later command can read its
                         // selection (Quick-Add seed + correct-on-close) without a tree walk.
-                        note_focus(&snapshot, app_id, editable, item);
+                        parked = note_focus(&snapshot, app_id, editable, item);
                     }
+                } else {
+                    replay_parked(
+                        &snapshot,
+                        &mut parked,
+                        mark_before.as_deref(),
+                        deact_bus.as_deref(),
+                    );
                 }
             }
         })
@@ -555,22 +571,60 @@ fn clear_mark(snap: &mut super::Snapshot) {
     snap.active_bus = None;
 }
 
+/// An element focus note_focus rejected, kept so the resolver can replay it (replay_parked).
+pub(super) struct Parked {
+    app_id: String,
+    editable: Option<bool>,
+    item: ObjectRefOwned,
+}
+
 /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground
 /// (the moment right after a switch). A background app's stray focus while a DIFFERENT app is
-/// foreground is rejected — that's the "chromium ghost" gate.
-fn note_focus(
+/// foreground is rejected — that's the "chromium ghost" gate — and handed back for parking.
+pub(super) fn note_focus(
     snapshot: &parking_lot::Mutex<super::Snapshot>,
     app_id: String,
     editable: Option<bool>,
     element: ObjectRefOwned,
-) {
+) -> Option<Parked> {
     let mut snap = snapshot.lock();
     if let Some(active) = snap.active_app.as_deref() {
         if active != app_id.as_str() {
-            return;
+            return Some(Parked {
+                app_id,
+                editable,
+                item: element,
+            });
         }
     }
     set_current(&mut snap, app_id, editable, Some(element));
+    None
+}
+
+/// The focus step of a resolver cycle that carried no element focus. The departing app's
+/// window:deactivate can land a cycle AFTER the new app's focus (two processes, arbitrary
+/// order), so that focus was rejected against the still-standing mark — and an Electron app
+/// never emits window:activate, so nothing else would bring it into the snapshot until the
+/// user moves focus inside it. Once this cycle's window events changed the mark
+/// (`mark_before` → now), replay the parked focus through note_focus, once. An unchanged mark
+/// keeps it waiting; the parked app's own deactivate (by bus name) drops it as stale.
+pub(super) fn replay_parked(
+    snapshot: &parking_lot::Mutex<super::Snapshot>,
+    parked: &mut Option<Parked>,
+    mark_before: Option<&str>,
+    deactivated_bus: Option<&str>,
+) {
+    let Some(p) = parked.take() else {
+        return;
+    };
+    if deactivated_bus.is_some() && p.item.name_as_str() == deactivated_bus {
+        return;
+    }
+    if snapshot.lock().active_app.as_deref() == mark_before {
+        *parked = Some(p);
+        return;
+    }
+    let _ = note_focus(snapshot, p.app_id, p.editable, p.item);
 }
 
 /// Fold a focused app into the snapshot. `current` tracks the latest; `last_other` captures the

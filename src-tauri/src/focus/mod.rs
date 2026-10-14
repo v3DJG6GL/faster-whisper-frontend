@@ -364,6 +364,70 @@ mod tests {
         assert_eq!(snap.lock().active_bus.as_deref(), Some(":1.9"));
     }
 
+    /// The new app's focus can land a resolver cycle BEFORE the departing app's deactivate
+    /// (two processes, arbitrary order): rejected against the standing mark, it is replayed
+    /// once that mark changes — an Electron app never sends the window:activate that would
+    /// otherwise bring it in.
+    #[test]
+    fn a_focus_rejected_before_the_departing_apps_deactivate_is_replayed_after_it() {
+        use super::atspi::{note_activate, note_deactivate_bus, note_focus, replay_parked};
+        use ::atspi::object_ref::ObjectRefOwned;
+        let el = |bus: &'static str| ObjectRefOwned::from_static_str_unchecked(bus, "/org/a11y/el");
+        let current = |snap: &parking_lot::Mutex<super::Snapshot>| {
+            let s = snap.lock();
+            let c = s.current.as_ref().unwrap();
+            let el_bus = s
+                .current_el
+                .as_ref()
+                .and_then(|e| e.name_as_str().map(str::to_owned));
+            (c.app_id.clone(), c.editable, el_bus)
+        };
+        let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        note_activate(&snap, "org.kde.konsole".into(), Some(":1.1".into()));
+        // Cycle N: Electron app E's focus alone, while the terminal still holds the mark.
+        let mut parked = note_focus(&snap, "code".into(), Some(true), el(":1.2"));
+        assert!(parked.is_some());
+        assert_eq!(current(&snap).0, "org.kde.konsole");
+        // Cycle N+1: only the terminal's deactivate — the mark clears, E is replayed.
+        let mark = snap.lock().active_app.clone();
+        assert!(!note_deactivate_bus(&snap, Some(":1.1")));
+        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"));
+        assert_eq!(
+            current(&snap),
+            ("code".into(), Some(true), Some(":1.2".into()))
+        );
+        assert!(parked.is_none());
+
+        // A newer focus in the next cycle wins over the parked one.
+        let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        note_activate(&snap, "org.kde.konsole".into(), Some(":1.1".into()));
+        let mut parked = note_focus(&snap, "code".into(), Some(true), el(":1.2"));
+        assert!(parked.is_some());
+        assert!(!note_deactivate_bus(&snap, Some(":1.1")));
+        parked = note_focus(&snap, "firefox".into(), Some(false), el(":1.3"));
+        assert!(parked.is_none());
+        replay_parked(&snap, &mut parked, None, None);
+        assert_eq!(
+            current(&snap),
+            ("firefox".into(), Some(false), Some(":1.3".into()))
+        );
+
+        // An unchanged mark (another app's deactivate) keeps it waiting; the parked app's own
+        // deactivate drops it as stale.
+        let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        note_activate(&snap, "org.kde.konsole".into(), Some(":1.1".into()));
+        let mut parked = note_focus(&snap, "code".into(), Some(true), el(":1.2"));
+        let mark = snap.lock().active_app.clone();
+        assert!(!note_deactivate_bus(&snap, Some(":1.9")));
+        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.9"));
+        assert!(parked.is_some());
+        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.2"));
+        assert!(parked.is_none());
+        assert!(!note_deactivate_bus(&snap, Some(":1.1")));
+        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"));
+        assert_eq!(current(&snap).0, "org.kde.konsole");
+    }
+
     #[test]
     fn selection_reads_are_capped_at_sel_max_chars_on_a_char_boundary() {
         let short = "hello wörld".to_string();
