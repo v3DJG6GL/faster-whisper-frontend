@@ -4,7 +4,7 @@
 // edit's own push then found nothing to send. The merge must start from the live store.
 
 import { expect, it, vi } from "vitest";
-import { pullNow, pushNow, resetSyncState } from "./sync";
+import { approvePendingReview, getPendingReview, pullNow, pushNow, resetSyncState } from "./sync";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { backend } from "./syncTestFixtures";
@@ -119,4 +119,33 @@ it("a setting edited while a pull's compose waits on the keyring survives the me
   const s = useApp.getState();
   expect(s.settings.recording.chipScale).toBe(edited);
   expect(s.settings.general.startMinimized).toBe(peerStart);
+});
+
+// The approval decides "edited since the raise" from the store as it moved during the signature's
+// keyring wait. Its compose then waits on the keyring too, and recomposes when the store moved
+// meanwhile, so an edit made in THAT wait was in the live compose and in no "edited" test: the
+// conflicting category counted as untouched, and the reviewed value went back over the edit.
+it("a setting edited while an approval's compose waits on the keyring survives the approval", async () => {
+  const { edited, remote } = await seed();
+  // The peer changes the chip (applied at the raise) and lowers the retention (held for review).
+  const peerScale = edited === 1.5 ? 1.75 : 2;
+  remote.chip = { ...remote.chip, chipScale: peerScale } as never;
+  remote.recording = { ...remote.recording, dictationRetentionDays: 1 } as never;
+  api.pull = { version: 5, updated_ts: 5, device: "peer", blob: remote };
+  await pullNow(true);
+  expect(getPendingReview()).not.toBeNull();
+  expect(useApp.getState().settings.recording.chipScale).toBe(peerScale);
+  // The first keyring read is the store signature's; the edit lands in the compose's.
+  api.onKeyRead = () => {
+    api.onKeyRead = () => editChipScale(edited);
+  };
+  const pushesBefore = api.pushes;
+  await approvePendingReview();
+  expect(getPendingReview()).toBeNull();
+  const s = useApp.getState();
+  expect(s.settings.recording.chipScale).toBe(edited);
+  expect(s.settings.transcribe?.dictationRetentionDays).toBe(1);
+  // The follow-up push carries the edit on the adopted base, not the peer's value.
+  await vi.waitFor(() => expect(api.pushes).toBe(pushesBefore + 1));
+  expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
 });

@@ -4164,12 +4164,15 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
   // new `storeSig` next to a blob built from this compose): an edit landing during the compose's
   // keyring wait is then in `localNow` and missing from `sigNow`, so the next approval still sees
   // it as an edit. Read after, it was in the signature but not the relisted blob — "not edited"
-  // next time, and the reviewed value went back over it. Both snapshot the store when called, so
-  // an edit landing during the signature's own keyring wait is in `localNow` only: `movedMid`
-  // then counts every conflicting category as edited (keep the live value, or ask), never as the
-  // reviewed value going back over it.
+  // next time, and the reviewed value went back over it. An edit landing during either keyring
+  // wait (the signature's, or the compose's, which recomposes when the store moved) is therefore
+  // in `localNow` only: `movedMid` spans both waits and then counts every conflicting category as
+  // edited (keep the live value, or ask), never as the reviewed value going back over it.
   const st0 = useApp.getState();
   const sigNow = await storeSignature(r.cats);
+  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
+  // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
+  const localNow = await composeLive(cats, passThroughFor(r.remote));
   if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   const st1 = useApp.getState();
   const movedMid =
@@ -4177,9 +4180,6 @@ async function approveLocked(r: PendingReview, myGen: number): Promise<ApproveOu
     st0.backends !== st1.backends ||
     st0.profiles !== st1.profiles ||
     st0.appRules !== st1.appRules;
-  // With no base, the remote is the pass-through, as the raisers compose (see `composeLive`).
-  const localNow = await composeLive(cats, passThroughFor(r.remote));
-  if (myGen !== gen || pendingReview !== r || useApp.getState().status !== "idle") return "done";
   // The keyring can lock between the raise and this approval: a degraded compose carries the
   // base's (or remote's) backends category, not this device's list, so the merge reads backends
   // as "local unchanged" and the apply below wrote that list over every backend added here.
