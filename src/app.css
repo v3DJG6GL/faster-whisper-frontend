@@ -244,11 +244,15 @@ html.accent-tick .transition-colors {
   transition-property: none !important;
 }
 
-input,
-textarea {
-  font-family: inherit;
-  user-select: text;
-  -webkit-user-select: text;
+/* Layered on purpose: an unlayered rule beats every `@layer utilities` declaration whatever its
+   specificity, so `font-mono` on an input/textarea silently rendered proportional. */
+@layer base {
+  input,
+  textarea {
+    font-family: inherit;
+    user-select: text;
+    -webkit-user-select: text;
+  }
 }
 
 ::selection {
