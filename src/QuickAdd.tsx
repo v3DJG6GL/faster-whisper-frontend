@@ -19,8 +19,8 @@ import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import {
-  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, mapKeyTwinProblem, ruleListOf, ruleLockedFor,
-  ruleMapWritable,
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem,
+  mapRowTwinProblems, ruleListOf, ruleLockedFor, ruleMapWritable,
 } from "@/lib/pipelineMap";
 import { quickAddRejectReason, quickAddSaveOutcome, quickAddServerUrl } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
@@ -32,7 +32,7 @@ import {
 import { resolveInjectionTarget } from "@/lib/dictation/streaming";
 import { IS_WINDOWS } from "@/lib/platform";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme } from "@/lib/theme";
-import type { AppRule, GeneralSettings, PipelineFetch, ThemeName } from "@/lib/types";
+import type { AppRule, GeneralSettings, PipelineFetch, PipelineSaveResult, ThemeName } from "@/lib/types";
 import { imeComposing } from "@/lib/keys";
 
 // Client-side ceilings on the two server-supplied lists this window renders. Both arrive as
@@ -61,7 +61,7 @@ function SaveStatus({ state, reason, onRetry }: { state: SaveState; reason: stri
     );
   if (state === "rejected")
     return (
-      <span className="flex items-center gap-1.5 text-[11.5px] text-warn" title={`The server refused this list: ${reason}`}>
+      <span className="flex items-center gap-1.5 text-[11.5px] text-warn" title={`This list was not saved: ${reason}`}>
         <AlertTriangle className="size-3.5" /> not saved
       </span>
     );
@@ -320,9 +320,13 @@ export default function QuickAdd() {
     // then re-synced over the refused rows. A flight superseded while it queued sends nothing:
     // the newer one sends the newest rows (both read when the flight starts, as one pair).
     const mySeq = ++saveSeq.current;
-    const run = saveFlight.current.then(() => {
+    const run = saveFlight.current.then<PipelineSaveResult | string | null>(() => {
       const t = target.current;
       if (!t || mySeq !== saveSeq.current) return null;
+      // Held, not sent, while a case twin remains: the server would 422 the whole map. Read with
+      // the rows it guards, at the flight's start — an edit made while this queued counts.
+      const twin = mapRowTwinProblems(rowsRef.current).values().next().value;
+      if (twin !== undefined) return twin;
       return savePipelineRules({
         serverUrl: t.serverUrl,
         backendId: t.backendId,
@@ -336,6 +340,15 @@ export default function QuickAdd() {
         // Superseded: the newer flight owns the badge. Still the newest: the pin went away while
         // this queued (refresh → "nopin"), so nothing is unsaved — don't leave "saving" stuck.
         if (mySeq === saveSeq.current && saveTimer.current === null) setSaveState("idle");
+        return false;
+      }
+      if (typeof res === "string") {
+        // A held twin reads as a 422 would: the rows are kept, never auto-retried, and the edit
+        // that resolves the twin sends them.
+        if (saveTimer.current === null && mySeq === saveSeq.current) {
+          setRejectReason(res);
+          setSaveState("rejected");
+        }
         return false;
       }
       const newest = mySeq === saveSeq.current;
@@ -518,16 +531,16 @@ export default function QuickAdd() {
     setShowSeq((s) => s + 1); // remount Combobox → re-focus find for the next add
   }, [find, insert, mutate]);
 
+  // Rows whose phrase is a case twin of another row — the reason shows under each, and flushSave
+  // holds the PATCH while any remains.
+  const twinProblems = useMemo(() => mapRowTwinProblems(rows), [rows]);
+
   // An inline list edit, refused (with its reason under the row) when it would turn a row the
-  // server takes into one it rejects. A row that is already out of bounds takes any edit, so it
-  // can be fixed a keystroke at a time. A blank phrase is never sent (mapBodyFromRows drops it).
+  // server takes into one it rejects (see mapRowEditProblem — a case twin is not refused here).
   const editRow = useCallback(
     (row: MapRow, field: "k" | "v", value: string) => {
-      const next = { ...row, [field]: value };
-      const problemOf = (r: MapRow) =>
-        r.k.trim() ? (mapEntryProblem(r.k, r.v) ?? mapKeyTwinProblem(r.k, rowsRef.current, r.id)) : null;
-      const problem = problemOf(next);
-      if (problem && !problemOf(row)) {
+      const problem = mapRowEditProblem(row, { ...row, [field]: value });
+      if (problem) {
         setRowProblem({ id: row.id, msg: problem });
         return;
       }
@@ -755,9 +768,10 @@ export default function QuickAdd() {
                         <Trash2 className="size-3.5" />
                       </button>
                     </div>
-                    {rowProblem?.id === row.id && (
+                    {(rowProblem?.id === row.id || twinProblems.has(row.id)) && (
                       <div role="status" className="flex items-center gap-1.5 px-4 pb-1 text-[11.5px] text-warn">
-                        <AlertTriangle className="size-3.5 shrink-0" /> {rowProblem.msg}
+                        <AlertTriangle className="size-3.5 shrink-0" />{" "}
+                        {rowProblem?.id === row.id ? rowProblem.msg : twinProblems.get(row.id)}
                       </div>
                     )}
                   </Fragment>

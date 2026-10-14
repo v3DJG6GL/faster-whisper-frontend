@@ -3,8 +3,9 @@
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
 import {
-  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowsFromRule, ruleCountOf, ruleListOf,
-  ruleLockedFor, ruleMapWritable, saveLanded,
+  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem, mapRowTwinProblems,
+  mapRowsFromRule, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
+  type MapRow,
 } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
 
@@ -122,6 +123,47 @@ describe("mapKeyTwinProblem", () => {
     expect(mapKeyTwinProblem("komma", rows)).toBeNull(); // one key on the wire: the newest row wins
     expect(mapKeyTwinProblem("Komma", rows, 1)).toBeNull(); // editing the "komma" row itself
     expect(mapKeyTwinProblem(" komma", rows)).toBeNull(); // spaces are part of the server's key
+  });
+});
+
+describe("mapRowEditProblem + mapRowTwinProblems (the inline list editor)", () => {
+  // The row editor: each keystroke is taken unless mapRowEditProblem refuses it, as QuickAdd's
+  // editRow does. Select-all then type: the first character replaces the phrase.
+  function typeInto(rows: MapRow[], id: number, text: string, seen: (rows: MapRow[]) => void = () => {}): MapRow[] {
+    for (let i = 1; i <= text.length; i++) {
+      const row = rows.find((r) => r.id === id)!;
+      const next = { ...row, k: text.slice(0, i) };
+      if (mapRowEditProblem(row, next) === null) rows = rows.map((r) => (r.id === id ? next : r));
+      seen(rows);
+    }
+    return rows;
+  }
+
+  it("types through a case twin of another row on the way to a different phrase", () => {
+    const start = [{ id: 1, k: "komma", v: "," }, { id: 2, k: "x", v: ";" }];
+    let atTwin: Map<number, string> | null = null;
+    const end = typeInto(start, 2, "Kommandozeile", (rs) => {
+      if (rs.find((r) => r.id === 2)!.k === "Komma") atTwin = mapRowTwinProblems(rs);
+    });
+    expect(end.find((r) => r.id === 2)!.k).toBe("Kommandozeile");
+    // While the row read "Komma" the twin showed under it — and held the save (a non-empty map).
+    expect(atTwin!.get(2)).toMatch(/“komma” is already in this list/);
+    expect(atTwin!.get(1)).toMatch(/“Komma” is already in this list/);
+    expect(mapRowTwinProblems(end).size).toBe(0);
+    // Adding "Komma" from the capture row is still refused.
+    expect(mapKeyTwinProblem("Komma", start)).not.toBeNull();
+  });
+
+  it("still refuses a keystroke the schema rejects, and lets an out-of-bounds row be fixed", () => {
+    const row = { id: 1, k: "don", v: "" };
+    expect(mapRowEditProblem(row, { ...row, k: "don'" })).toMatch(/^“'” /);
+    const bad = { id: 1, k: "C++", v: "" };
+    expect(mapRowEditProblem(bad, { ...bad, k: "C+" })).toBeNull();
+    expect(mapRowEditProblem({ id: 1, k: "", v: "" }, { id: 1, k: "", v: "x".repeat(65) })).toBeNull(); // a blank phrase is never sent
+  });
+
+  it("an exact duplicate or blank rows are not twins", () => {
+    expect(mapRowTwinProblems([{ id: 1, k: "komma", v: "," }, { id: 2, k: "komma", v: ";" }, { id: 3, k: " ", v: "" }, { id: 4, k: "", v: "" }]).size).toBe(0);
   });
 });
 

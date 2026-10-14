@@ -187,7 +187,43 @@ export function mapEntryProblem(k: string, v: string): string | null {
 export function mapKeyTwinProblem(k: string, rows: MapRow[], selfId?: number): string | null {
   const lower = k.toLowerCase();
   const twin = rows.find((r) => r.id !== selfId && r.k !== k && r.k.trim() && r.k.toLowerCase() === lower);
-  return twin ? `“${twin.k}” is already in this list — edit that row` : null;
+  return twin ? twinReason(twin.k) : null;
+}
+
+const twinReason = (other: string) => `“${other}” is already in this list — edit that row`;
+
+/** Why an inline edit turning `row` into `next` is refused, or null to take it. Only the per-pair
+ *  rules (mapEntryProblem) refuse a keystroke: they are prefix-closed — every prefix of a phrase
+ *  they take is taken too — so typing a character at a time always reaches a valid phrase. A case
+ *  twin is not ("Komma" lies on the way to "Kommandozeile" beside "komma"): it is a list-level
+ *  problem (mapRowTwinProblems), shown under the row and holding the save, never a refused key.
+ *  A row already out of bounds takes any edit, so it can be fixed a keystroke at a time; a blank
+ *  phrase is never sent (mapBodyFromRows drops it). */
+export function mapRowEditProblem(row: MapRow, next: MapRow): string | null {
+  const problemOf = (r: MapRow) => (r.k.trim() ? mapEntryProblem(r.k, r.v) : null);
+  const problem = problemOf(next);
+  return problem && !problemOf(row) ? problem : null;
+}
+
+/** Each row whose phrase has a case twin elsewhere in `rows`, by row id, with the reason naming the
+ *  other spelling. The server would 422 the whole-map PATCH while any remains, so an editor holds
+ *  the save until this is empty. One pass — the list can run to thousands of rows. */
+export function mapRowTwinProblems(rows: MapRow[]): Map<number, string> {
+  const spellings = new Map<string, string[]>();
+  for (const r of rows) {
+    if (!r.k.trim()) continue;
+    const lower = r.k.toLowerCase();
+    const seen = spellings.get(lower);
+    if (!seen) spellings.set(lower, [r.k]);
+    else if (!seen.includes(r.k)) seen.push(r.k);
+  }
+  const out = new Map<number, string>();
+  for (const r of rows) {
+    if (!r.k.trim()) continue;
+    const other = spellings.get(r.k.toLowerCase())?.find((s) => s !== r.k);
+    if (other !== undefined) out.set(r.id, twinReason(other));
+  }
+  return out;
 }
 
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
