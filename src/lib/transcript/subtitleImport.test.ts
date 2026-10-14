@@ -571,6 +571,25 @@ describe("site subtitle cleanup", () => {
       "Il y a à boire", "tam a w z nim", "А я в шоке.", "a k s",
     ]);
   });
+  it("a voice tag whose name opens with initials keeps its tag, its speaker and its name", () => {
+    const cue = (text: string) =>
+      parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n${text}\n`).segments.map((s) => ({
+        speaker: s.speaker,
+        text: s.text,
+      }));
+    expect(cue("<v A J Smith>Hello there</v>")).toEqual([{ speaker: "A J Smith", text: "Hello there" }]);
+    expect(cue("<v C S Lewis>Hi</v> - <v Bob>Yo</v>")).toEqual([
+      { speaker: "C S Lewis", text: "Hi" },
+      { speaker: "Bob", text: "Yo" },
+    ]);
+    expect(cue("<v A B C>Hi</v>")).toEqual([{ speaker: "A B C", text: "Hi" }]);
+    expect(cue("<v A J Smith>Hi <i>a b c</i></v>")).toEqual([{ speaker: "A J Smith", text: "Hi abc" }]);
+    // Emphasis inside or beside tags still glues; a stray "<" that is no tag changes nothing.
+    expect(cue("<v Bob>w i e immer</v>")).toEqual([{ speaker: "Bob", text: "wie immer" }]);
+    expect(fixBroadcasterText(["<i>w i e</i> immer", "<c.yellow>W A S</c>", "x < a b c > y", "a <i>b</i> c d"])).toEqual([
+      "<i>wie</i> immer", "<c.yellow>WAS</c>", "x < abc > y", "a <i>b</i> c d",
+    ]);
+  });
   it("decoded references and JSON escapes cannot smuggle control or bidi characters", () => {
     const srt = "1\n00:00:01,000 --> 00:00:02,000\n&#x202E;abc &#27;x\n";
     expect(parseImportedText("srt", srt).segments[0].text).toBe("abc x");

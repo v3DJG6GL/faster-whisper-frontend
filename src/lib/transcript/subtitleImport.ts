@@ -309,6 +309,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
 const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
 /** Three or more single cased letters spaced apart ("m i t") — broadcaster emphasis. */
 const LETTER_SPACED = /(?<![\p{L}\p{N}])(?:[\p{Lu}\p{Ll}] ){2,}[\p{Lu}\p{Ll}](?![\p{L}\p{N}])/gu;
+/** A tag or a letter-spaced run: the cue lines still hold their markup, and a tag's name is
+ *  not a letter — `<v A J Smith>` read as "v A J" glued to `<vAJ Smith>`, a tag nothing
+ *  downstream recognises (the speaker lost, the tag left in the text). */
+const TAG_OR_LETTER_SPACED = new RegExp(`${MARKUP_TAG.source}|${LETTER_SPACED.source}`, "giu");
 /** One-letter words per language ("Il y a à boire", Polish "a w z", Russian "А я в"): a
  *  run whose letters are ALL words of ONE language is ordinary text, not emphasis, and must
  *  not be glued — Slavic speech strings them three in a row all the time. Pooling the sets
@@ -337,8 +341,8 @@ export function fixBroadcasterText(lines: string[]): string[] {
     }
   }
   return out.map((l) =>
-    l.replace(LETTER_SPACED, (m) =>
-      ONE_LETTER_WORDS.some((w) => m.split(" ").every((c) => w.test(c))) ? m : m.replace(/ /g, ""),
+    l.replace(TAG_OR_LETTER_SPACED, (m) =>
+      m[0] === "<" || ONE_LETTER_WORDS.some((w) => m.split(" ").every((c) => w.test(c))) ? m : m.replace(/ /g, ""),
     ),
   );
 }
