@@ -171,6 +171,29 @@ describe("badge clicks (v25, v27, v28)", () => {
     expect(i1.targets).toEqual(["en"]);
     expect(derive(i1, st1).rows.find((r) => r.code === "fr")!.sub).toBe("off");
   });
+  it("without machine translation a Custom row whose site subtitle downloads does not read off", () => {
+    const tracks = [tr("de", "de"), tr("fr", "fr"), tr("en", "en")];
+    // No machine translation: the caller feeds no targets and drops the ones a change writes.
+    const inp = input({ tracks, spoken: "en", targets: [] });
+    const st0 = initialSiteState([]);
+    const rowsOf = (st: SiteSubsState) =>
+      derive(inp, st).rows.filter((r) => r.code).map((r) => [r.code, r.sub, r.badges.map((b) => b.state)]);
+    expect(rowsOf(st0)).toEqual([
+      ["de", "from the site", ["idle", "active"]], ["fr", "from the site", ["idle", "active"]],
+    ]);
+    for (const ch of [pickPolicy(inp, st0, "custom"), flip(inp, st0, "ex:fr")]) {
+      const v = derive(inp, ch.state);
+      expect(v.run!.fetch).toContain("de");
+      expect(v.rows.find((r) => r.code === "de")!.sub).toBe("from the site");
+      expect(v.rows.find((r) => r.code === "de")!.badges[1].state).toBe("active");
+    }
+    // A row whose site subtitle is off still reads off.
+    const off = flip(inp, st0, "ex:fr");
+    expect(derive(inp, off.state).rows.find((r) => r.code === "fr")!.sub).toBe("off");
+    // With machine translation the targets flow back: unchanged.
+    const [i1, st1] = apply({ ...inp, targets: ["de"] }, pickPolicy({ ...inp, targets: ["de"] }, initialSiteState(["de"]), "custom"));
+    expect(derive(i1, st1).rows.filter((r) => r.code).map((r) => r.sub)).toEqual(["translation target", "translation target"]);
+  });
   it("switching a source on makes the language wanted again", () => {
     const inp = input();
     const [i1, st1] = apply(inp, toggleTarget(inp, initialSiteState(inp.targets), "it"));

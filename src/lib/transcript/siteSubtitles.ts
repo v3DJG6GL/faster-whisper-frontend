@@ -319,7 +319,11 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     rows.push({
       code,
       label: languageLabel(code),
-      sub: !src.isTarget ? "off" : tmap[code] === true ? "translation target" : "from the site",
+      // A language the run still downloads a track for is no "off": without machine translation
+      // the panel's targets stay empty, and every Custom row read "off" beside a lit site badge.
+      sub: !src.isTarget
+        ? src.badges.some((b) => b.kind !== "mt" && b.state === "active") ? "from the site" : "off"
+        : tmap[code] === true ? "translation target" : "from the site",
       badges: src.badges,
       deletable: !siteCodes.includes(code),
     });
