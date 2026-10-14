@@ -496,6 +496,14 @@ describe("wrapLines", () => {
     const parts = cutByShare("Il a dit « bonjour » à Paris", [1, 1]);
     expect(parts).toEqual(["Il a dit", "« bonjour » à Paris"]);
   });
+  it("Arabic and Hindi sentence marks are seams like a Latin stop", () => {
+    const ar = "هل أنت بخير اليوم؟ نعم أنا بخير والحمد لله";
+    expect(cutByShare(ar, [1, 1], "ar")).toEqual(["هل أنت بخير اليوم؟", "نعم أنا بخير والحمد لله"]);
+    expect(wrapLines(ar, 30, 2, 0, undefined, "ar")[0]).toBe("هل أنت بخير اليوم؟");
+    const hi = "मैं आज बाजार गया था। वहाँ बहुत भीड़ थी और गर्मी भी";
+    expect(cutByShare(hi, [1, 1], "hi")[0]).toBe("मैं आज बाजार गया था।");
+    expect(wrapLines(hi, 30, 2, 0, undefined, "hi")[0]).toBe("मैं आज बाजार गया था।");
+  });
   it("a CJK line never ends on an opening bracket nor starts with a closer or stop", () => {
     for (const t of [
       "あいうえおかきくけこ「さしすせそたちつてとなに」",

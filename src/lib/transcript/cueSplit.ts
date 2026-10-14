@@ -322,9 +322,10 @@ const ABBREV = new Set([
 
 /** A sentence or clause end, for the original's splitter (breakScore) and the cut of a translation
  *  onto its cues (cutByShare) alike: the mark may sit inside closing quotes or brackets
- *  ('now." Then', '。」然后'). */
-const SENT_END = /[.?!…。？！](["'»”’)\]」』）】〉》]*)$/;
-const CLAUSE = /[,;:–—、，；：]["'»”’)\]」』）】〉》]*$/;
+ *  ('now." Then', '。」然后'). Arabic/Urdu (؟ ۔ ، ؛), Devanagari (। ॥), Armenian (։) and Ethiopic
+ *  (። ፧ ፣ ፤) write their own marks. */
+const SENT_END = /[.?!…。？！؟۔।॥։።፧](["'»”’)\]」』）】〉》]*)$/;
+const CLAUSE = /[,;:–—、，；：،؛፣፤]["'»”’)\]」』）】〉》]*$/;
 /** A Japanese quote the sentence goes on from (「帰ろう。」と言った): the mark inside the
  *  bracket ends the quote, not the sentence — no seam bonus there, as before the brackets counted. */
 const quoteGoesOn = (before: string, after: string): boolean =>
