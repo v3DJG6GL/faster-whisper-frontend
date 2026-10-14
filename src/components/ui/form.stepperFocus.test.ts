@@ -24,10 +24,26 @@ describe("Stepper keeps keyboard focus", () => {
     }
   });
 
-  it("the reset returns focus to the field once it re-renders", () => {
+  it("the reset returns focus to the field once it re-renders, after a keyboard press only", () => {
     const reset = button("Reset");
-    expect(reset).toContain("resetPressed.current = true");
+    // detail 0 is a keyboard activation (Enter/Space); a mouse click leaves focus alone, or the
+    // field would show its focused look instead of the inherited one it was just reset to.
+    expect(reset).toContain("resetPressed.current = e.detail === 0");
+    expect(reset).not.toContain("resetPressed.current = true");
     expect(stepper).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!resetPressed\.current\) return;[\s\S]*?inputRef\.current\?\.focus\(\)/);
     expect(stepper).toContain("ref={inputRef}");
+  });
+});
+
+describe("RangeField keeps keyboard focus", () => {
+  const range = formSrc.slice(formSrc.indexOf("export function RangeField("), formSrc.indexOf("export function Stepper("));
+
+  it("the reset returns focus to the slider after a keyboard press only", () => {
+    const at = range.indexOf("aria-label={`Reset ");
+    expect(at).toBeGreaterThanOrEqual(0);
+    const reset = range.slice(at, range.indexOf("</button>", at));
+    expect(reset).toContain("resetPressed.current = e.detail === 0");
+    expect(range).toMatch(/useLayoutEffect\(\(\) => \{\s*if \(!resetPressed\.current\) return;[\s\S]*?inputRef\.current\?\.focus\(\)/);
+    expect(range).toMatch(/<input\s+ref=\{inputRef\}[\s\S]*?type="range"/);
   });
 });

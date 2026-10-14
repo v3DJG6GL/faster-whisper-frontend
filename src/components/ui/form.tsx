@@ -183,6 +183,16 @@ export function RangeField({
   disabled?: boolean;
 }) {
   const id = useId();
+  // ↺ unmounts itself on a reset, which dropped keyboard focus to <body>: refocus the slider after a
+  // keyboard press (a click with detail 0), as the Stepper's ↺ does.
+  const inputRef = useRef<HTMLInputElement>(null);
+  const resetPressed = useRef(false);
+  useLayoutEffect(() => {
+    if (!resetPressed.current) return;
+    resetPressed.current = false;
+    const active = document.activeElement;
+    if (active === null || active === document.body) inputRef.current?.focus();
+  });
   return (
     <div
       className={cn(
@@ -194,6 +204,7 @@ export function RangeField({
     >
       {!hideLabel && <label htmlFor={id}>{label}</label>}
       <input
+        ref={inputRef}
         id={id}
         aria-label={hideLabel ? label : undefined}
         type="range"
@@ -218,7 +229,11 @@ export function RangeField({
           title={`Reset to ${defaultValue}${unit}`}
           aria-label={`Reset ${label.toLowerCase()} to ${defaultValue}${unit}`}
           disabled={disabled}
-          onClick={() => (onReset ? onReset() : onChange(defaultValue))}
+          onClick={(e) => {
+            resetPressed.current = e.detail === 0;
+            if (onReset) onReset();
+            else onChange(defaultValue);
+          }}
           className="ring-signal grid size-7 place-items-center rounded-lg text-accent enabled:hover:bg-surface-2 disabled:cursor-not-allowed"
         >
           <RotateCcw className="size-3.5" />
@@ -501,7 +516,9 @@ export function Stepper({
 
   // ↺ unmounts itself (it shows only while a value is set), which dropped keyboard focus to <body>:
   // after the reset re-renders, focus goes to the field instead — then its onFocus reads the reset
-  // value, not the one it replaced.
+  // value, not the one it replaced. A keyboard press only (a click with detail 0): after a mouse
+  // reset the focused field would show its focused look — full-colour value, no inherit note —
+  // instead of the inherited one, so the reset looked as if it did not take.
   const inputRef = useRef<HTMLInputElement>(null);
   const resetPressed = useRef(false);
   useLayoutEffect(() => {
@@ -681,8 +698,8 @@ export function Stepper({
           title={inheritNote ? `Back to the ${inheritNote} value` : "Reset to inherited"}
           aria-label={`Reset${ariaLabel ? ` ${ariaLabel}` : ""}`}
           disabled={disabled}
-          onClick={() => {
-            resetPressed.current = true;
+          onClick={(e) => {
+            resetPressed.current = e.detail === 0;
             onReset();
           }}
           className={cn(btn, "w-8 border-l border-line text-faint")}
