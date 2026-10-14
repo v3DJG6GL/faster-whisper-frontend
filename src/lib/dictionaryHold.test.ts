@@ -117,7 +117,6 @@ describe("dictionarySavedText", () => {
     // screen as "unsaved changes", so the line must not read as a plain success.
     const text = dictionarySavedText(3, "http://a", null, false);
     expect(text).toMatch(/^Saved 3 rules\. The rules were not reloaded — .*your edits from before it are still on screen\.$/);
-    expect(text).toBe(`Saved 3 rules.${dictionaryConflictText("http://a", null, false, false)}`);
     expect(dictionarySavedText(3, "http://a", "http://a", false)).toBe("Saved 3 rules.");
     expect(dictionarySrc).toMatch(/dictionarySavedText\(result\.saved\.length, result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed\)/);
   });
@@ -155,17 +154,17 @@ describe("dictionaryLandedText", () => {
 
 describe("dictionaryConflictText", () => {
   it("keeps the reload wording when the backend did not move", () => {
-    expect(dictionaryConflictText("http://a", "http://a", false, false)).toBe(" The latest version has been reloaded.");
-    expect(dictionaryConflictText("http://a", null, true, true)).toBe(" Reloading the rules failed — use Retry below to load the latest version.");
-    expect(dictionaryConflictText(null, "http://b", true, false)).toBe(" Reloading the rules failed — use Refresh above to load the latest version.");
+    expect(dictionaryConflictText("http://a", "http://a", false, false, false)).toBe(" The latest version has been reloaded.");
+    expect(dictionaryConflictText("http://a", null, true, true, false)).toBe(" Reloading the rules failed — use Retry below to load the latest version.");
+    expect(dictionaryConflictText(null, "http://b", true, false, false)).toBe(" Reloading the rules failed — use Refresh above to load the latest version.");
   });
 
   it("names the server that reported the conflicts and the one whose rules are shown when a sync moved the backend", () => {
-    const text = dictionaryConflictText("http://a:8000", "http://b:8000", false, false);
+    const text = dictionaryConflictText("http://a:8000", "http://b:8000", false, false, false);
     expect(text).toContain("http://a:8000");
     expect(text).toContain("now points at http://b:8000, whose rules are shown");
     expect(text).not.toContain("latest version");
-    const failed = dictionaryConflictText("http://a:8000", "http://b:8000", true, true);
+    const failed = dictionaryConflictText("http://a:8000", "http://b:8000", true, true, false);
     expect(failed).toContain("now points at http://b:8000");
     expect(failed).toContain("Retry below");
   });
@@ -175,7 +174,7 @@ describe("dictionaryConflictText", () => {
 // save, or its address kept moving) leaves the pre-save edits on screen — no clause may claim a reload.
 describe("a post-save reload that did not commit", () => {
   it("never claims the rules were reloaded", () => {
-    const conflict = dictionaryConflictText("http://a:8000", null, false, false);
+    const conflict = dictionaryConflictText("http://a:8000", null, false, false, false);
     expect(conflict).not.toContain("has been reloaded");
     expect(conflict).toContain("were not reloaded");
     expect(conflict).not.toContain("latest version");
@@ -185,8 +184,19 @@ describe("a post-save reload that did not commit", () => {
     expect(landed).toContain("Check http://a:8000 for your changes");
   });
 
+  // Run #79 F14-1: a save that stored some rules and conflicted on others draws both notices; the
+  // "not reloaded" sentence goes on the Saved line only, once.
+  it("says it once when the Saved notice is drawn above the conflict notice", () => {
+    const saved = dictionarySavedText(3, "http://a", null, false);
+    const conflict = dictionaryConflictText("http://a", null, false, false, true);
+    const said = [saved, conflict].filter((t) => t.includes("were not reloaded"));
+    expect(said).toEqual([saved]);
+    expect(dictionarySrc).toMatch(/const savedShown = result\.saved\.length > 0 && !listPinned;/);
+    expect(dictionarySrc).toMatch(/\{savedShown && \(/);
+  });
+
   it("keeps the reload wording when the reload committed", () => {
-    expect(dictionaryConflictText("http://a", "http://a", false, false)).toBe(" The latest version has been reloaded.");
+    expect(dictionaryConflictText("http://a", "http://a", false, false, false)).toBe(" The latest version has been reloaded.");
     expect(dictionaryLandedText("http://a", "http://a", false, false)).toContain("reloaded from the server");
   });
 });
@@ -198,6 +208,6 @@ describe("Dictionary save wiring", () => {
     expect(dictionarySrc).toMatch(/setResult\(\{ \.\.\.res, savedTo, shownFrom \}\)/);
     // Every post-save banner line reads the move, not only "Saved N rules".
     expect(dictionarySrc).toMatch(/dictionaryLandedText\(result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed, retryBelow\)/);
-    expect(dictionarySrc).toMatch(/dictionaryConflictText\(result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed, retryBelow\)/);
+    expect(dictionarySrc).toMatch(/dictionaryConflictText\(result\.savedTo \?\? null, result\.shownFrom \?\? null, reloadFailed, retryBelow, savedShown\)/);
   });
 });

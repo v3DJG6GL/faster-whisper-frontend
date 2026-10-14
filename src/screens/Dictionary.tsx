@@ -1398,9 +1398,10 @@ function SaveBanner({
   const pinned = envPinnedOf(result);
   const listPinned = pinned.includes(RULE_LIST_SETTING);
   const otherPinned = pinned.filter((n) => n !== RULE_LIST_SETTING);
+  const savedShown = result.saved.length > 0 && !listPinned;
   return (
     <div className="space-y-2">
-      {result.saved.length > 0 && !listPinned && (
+      {savedShown && (
         <Notice tone="ok">
           {dictionarySavedText(result.saved.length, result.savedTo ?? null, result.shownFrom ?? null, reloadFailed)}
           {result.requires_restart ? " Some changes need a server restart to take effect." : ""}
@@ -1422,7 +1423,7 @@ function SaveBanner({
           {/* In the fetch-error view the reload is what failed, so "Reload again" is not offered.
               FetchError draws its own Retry only for a retryable failure (fetchRetryable); for any
               other the clause points at the header's Refresh instead (retryBelow says which). */}
-          {dictionaryConflictText(result.savedTo ?? null, result.shownFrom ?? null, reloadFailed, retryBelow)}
+          {dictionaryConflictText(result.savedTo ?? null, result.shownFrom ?? null, reloadFailed, retryBelow, savedShown)}
           {!reloadFailed && (
             <>
               {" "}

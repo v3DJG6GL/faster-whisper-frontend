@@ -106,8 +106,16 @@ export function dictionaryLandedText(savedTo: string | null, shownFrom: string |
 }
 
 /** The clause after "N rules changed on the server and were not saved". After a move the server that
- *  reported the conflicts is not the one whose rules were reloaded, so it names both. */
-export function dictionaryConflictText(savedTo: string | null, shownFrom: string | null, reloadFailed: boolean, retryBelow: boolean): string {
+ *  reported the conflicts is not the one whose rules were reloaded, so it names both. `savedShown`:
+ *  the "Saved N rules" notice is drawn above it and already says the rules were not reloaded, so the
+ *  banner does not say it twice. */
+export function dictionaryConflictText(
+  savedTo: string | null,
+  shownFrom: string | null,
+  reloadFailed: boolean,
+  retryBelow: boolean,
+  savedShown: boolean,
+): string {
   const retry = retryBelow ? "Retry below" : "Refresh above";
   const moved = savedElsewhere(savedTo, shownFrom);
   if (moved) {
@@ -116,5 +124,6 @@ export function dictionaryConflictText(savedTo: string | null, shownFrom: string
       : ` That server is ${moved.to} — this backend now points at ${moved.now}, whose rules are shown.`;
   }
   if (reloadFailed) return ` Reloading the rules failed — use ${retry} to load the latest version.`;
-  return shownFrom === null ? `${NOT_RELOADED}.` : " The latest version has been reloaded.";
+  if (shownFrom !== null) return " The latest version has been reloaded.";
+  return savedShown ? "" : `${NOT_RELOADED}.`;
 }
