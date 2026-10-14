@@ -135,6 +135,18 @@ export function isStorableServerUrl(raw: string): boolean {
   return t === "" || /^https?:\/\//i.test(t) || isSchemelessAddress(t);
 }
 
+/** An address that arrived verbatim (a sync pull, an imported file — and this device's own
+ *  config, which older builds wrote without canonicalising) → the form to STORE: cleaned the way
+ *  the parsers clean it, a lenient http(s) scheme canonicalised, a schemeless `host:8000` given
+ *  `http://`. "" when it carries a scheme this app does not speak. ONE spelling for the peer copy
+ *  and the local copy, so the comparisons that judge one against the other (the sync consent rows,
+ *  the restore dialog's "moved" key) never see the same host as two addresses. */
+export function serverUrlFromPeer(raw: string): string {
+  const t = canonicalHttpScheme(stripUrlNoise(raw));
+  if (!isStorableServerUrl(t)) return "";
+  return /^https?:\/\//i.test(t) || t === "" ? t : normalizeUrl(t) || t;
+}
+
 /** True for addresses that never leave the user's own machine or LAN, where plain http is the
  *  normal, expected setup: loopback, an mDNS/`.local` name, a bare hostname with no dot, and the
  *  private + link-local IPv4 ranges. Everything else is a route across networks the user does

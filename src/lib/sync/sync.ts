@@ -32,7 +32,7 @@ import {
   syncPush,
 } from "../api";
 import { configReady, configSaveHeld, evdevPermittedNow, onConfigSaveHoldCleared, retryHeldConfigSave } from "../persistence";
-import { canonicalHttpScheme, effectiveServerUrl, isStorableServerUrl, normalizeUrl, stripUrlNoise } from "../backends";
+import { effectiveServerUrl, normalizeUrl, serverUrlFromPeer } from "../backends";
 import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
@@ -1343,12 +1343,6 @@ const OVERLAY_STATS_METRICS = ["words", "audio", "both"] as const;
 const ENDPOINT_KINDS = ["stream", "batch"] as const;
 const RESPONSE_FORMATS = ["json", "verbose_json"] as const;
 const BACKEND_KINDS = ["auto", "full", "standard"] as const;
-
-function serverUrlFromPeer(raw: string): string {
-  const t = canonicalHttpScheme(stripUrlNoise(raw));
-  if (!isStorableServerUrl(t)) return "";
-  return /^https?:\/\//i.test(t) || t === "" ? t : normalizeUrl(t) || t;
-}
 
 export function sanitizeBackends(list: unknown): Backend[] {
   if (!Array.isArray(list)) return [];

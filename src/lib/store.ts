@@ -27,6 +27,7 @@ import { swap } from "./arr";
 import { hasOwn } from "./own";
 import { appRuleKey, trimLeadingInvisible, wellFormedAppRules } from "./sanitize";
 import { applyTheme } from "./theme";
+import { serverUrlFromPeer } from "./backends";
 
 // Derives `speaking` (green vs amber) from the RMS level stream centrally, so the
 // main-window surfaces (Home button, sidebar dot, waveforms) all agree with the chip
@@ -192,15 +193,25 @@ function wellFormedProfiles(v: unknown): Profile[] {
 
 function wellFormedBackends(v: unknown): Backend[] {
   if (!Array.isArray(v)) return [];
-  return v.filter(
-    (b): b is Backend =>
-      !!b && typeof b === "object" &&
-      typeof (b as Backend).id === "string" &&
-      typeof (b as Backend).serverUrl === "string" &&
-      // A backend id is used verbatim as a keyring account name; the reserved `__…__` namespace
-      // is our own snapshot stash. Same rejection the sync path makes.
-      !isReservedId((b as Backend).id),
-  );
+  return v
+    .filter(
+      (b): b is Backend =>
+        !!b && typeof b === "object" &&
+        typeof (b as Backend).id === "string" &&
+        typeof (b as Backend).serverUrl === "string" &&
+        // A backend id is used verbatim as a keyring account name; the reserved `__…__` namespace
+        // is our own snapshot stash. Same rejection the sync path makes.
+        !isReservedId((b as Backend).id),
+    )
+    .map((b) => {
+      // Older builds stored a lenient address (`http:/host:8000`) verbatim. The sync sanitizer
+      // canonicalises a peer's copy of it, so a local copy left lenient compared unequal to the
+      // very same host: every pull raised a "server-url" consent row and the restore dialog
+      // called the key "moved". Store it in the peer's spelling; one the sanitizer would blank
+      // (an unsupported scheme) stays verbatim, so its connect error still names it.
+      const serverUrl = serverUrlFromPeer(b.serverUrl) || b.serverUrl;
+      return serverUrl === b.serverUrl ? b : { ...b, serverUrl };
+    });
 }
 
 function isStringList(v: unknown): v is string[] {
