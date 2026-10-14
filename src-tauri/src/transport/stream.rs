@@ -280,6 +280,29 @@ enum FromReader {
     Closed,
 }
 
+/// The error a server Close frame means for the user, if any. Only application codes (4000–4999)
+/// speak: the backend refuses a handshake that way (`_refuse` in streaming/routes.py), while a
+/// Normal/Away close is the ordinary end. Silent when an `error` frame already said why.
+fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String> {
+    if error_seen || !(4000..5000).contains(&code) {
+        return None;
+    }
+    let fallback: String = match code {
+        // The server's own "no valid credential" names no remedy; this one does.
+        4401 => return Some("The server refused the API key — check it under Backends.".into()),
+        4503 => "Live dictation is disabled on this server.".into(),
+        4429 => "The server is busy (rate limit or too many sessions) — try again shortly.".into(),
+        4403 => "The server refused this app's origin.".into(),
+        4408 => "The server closed the connection: no audio arrived in time.".into(),
+        _ => format!("The server closed the connection (code {code})."),
+    };
+    let reason = reason.trim();
+    Some(super::bounded_server_text(
+        if reason.is_empty() { &fallback } else { reason },
+        super::MAX_ERROR_TEXT,
+    ))
+}
+
 /// Drive the stream until stopped or the socket closes. `on_event` is called for
 /// every server message; a terminal `Closed` (and an `Error` on failure) is
 /// ALWAYS emitted on every exit path so the UI can never get stuck. Every socket
@@ -499,6 +522,9 @@ pub async fn run<F>(
     // outer task (StreamSession::drop), and a bare JoinHandle dropped by that abort only DETACHES
     // the reader — which then keeps the socket alive answering server PINGs indefinitely.
     let reader = AbortOnDrop(tokio::spawn(async move {
+        // Whether an `error` frame already reached the UI: the mid-session revocation sends one
+        // and THEN closes 4401, and that close must not stack a second banner on it.
+        let error_seen = AtomicBool::new(false);
         loop {
             match read.next().await {
                 Some(Ok(Message::Text(t))) => {
@@ -508,6 +534,9 @@ pub async fn run<F>(
                     // stopping — bounded, so a server that never says `closing` does not park
                     // the reader on the drain's idle window.
                     let forward = |e| {
+                        if matches!(e, StreamEvent::Error(_)) {
+                            error_seen.store(true, Ordering::Relaxed);
+                        }
                         let _ = evt_tx.send(FromReader::Event(e));
                     };
                     match emit_message(t.as_str(), &forward) {
@@ -531,8 +560,23 @@ pub async fn run<F>(
                         }
                     }
                 }
-                Some(Ok(Message::Close(_))) | None => {
-                    tracing::info!("[stream] ws reader: close/eof");
+                Some(Ok(Message::Close(frame))) => {
+                    let (code, reason) = frame
+                        .as_ref()
+                        .map_or((1005, ""), |f| (u16::from(f.code), f.reason.as_str()));
+                    tracing::info!("[stream] ws reader: close {code}");
+                    // A refused handshake (key, disabled, busy, origin, idle) arrives as an
+                    // application close code with NO `error` frame first; a bare `Closed` reads
+                    // as a clean end, so the dictation dropped to idle with no word of why.
+                    if let Some(m) =
+                        close_frame_error(code, reason, error_seen.load(Ordering::Relaxed))
+                    {
+                        let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(m)));
+                    }
+                    break;
+                }
+                None => {
+                    tracing::info!("[stream] ws reader: eof");
                     break;
                 }
                 // Ping/Pong/Binary: ignored here. The PONG to a server PING is queued
@@ -1518,7 +1562,7 @@ mod handshake_auth_tests {
 
 #[cfg(test)]
 mod emit_message_tests {
-    use super::{emit_message, Frame, StreamEvent, UtteranceState};
+    use super::{close_frame_error, emit_message, Frame, StreamEvent, UtteranceState};
     use std::cell::RefCell;
 
     /// The `utterance` events one server text frame produces.
@@ -1587,6 +1631,27 @@ mod emit_message_tests {
         });
         assert_eq!(seen.into_inner(), vec![separator.to_string()]);
         assert!(frame == Frame::Continue);
+    }
+
+    #[test]
+    fn a_refused_handshake_close_reaches_the_user_once() {
+        let disabled = "live dictation is disabled on this server";
+        assert_eq!(
+            close_frame_error(4503, disabled, false).as_deref(),
+            Some(disabled)
+        );
+        assert_eq!(
+            close_frame_error(4401, "", false).as_deref(),
+            Some("The server refused the API key — check it under Backends.")
+        );
+        assert_eq!(
+            close_frame_error(4429, "", false).as_deref(),
+            Some("The server is busy (rate limit or too many sessions) — try again shortly.")
+        );
+        // The ordinary end stays quiet, and a close behind an `error` frame adds no second banner.
+        assert_eq!(close_frame_error(1000, "", false), None);
+        assert_eq!(close_frame_error(1001, "bye", false), None);
+        assert_eq!(close_frame_error(4401, "", true), None);
     }
 }
 
