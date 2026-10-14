@@ -3,7 +3,7 @@
 // summon and never re-run the refresh write gate that shows "List locked" / "re-pin one". Any
 // OTHER refusal must stay "error": the re-sync a "refused" triggers replaces the unsaved rows.
 import { describe, expect, it } from "vitest";
-import { quickAddSaveOutcome, type QuickAddSaveOutcome } from "./quickAddSave";
+import { quickAddRejectReason, quickAddSaveOutcome, type QuickAddSaveOutcome } from "./quickAddSave";
 import { envPinnedOf, RULE_LIST_SETTING, saveLanded } from "./pipelineMap";
 import type { PipelineSaveResult } from "./types";
 
@@ -41,7 +41,7 @@ const MATRIX: Array<[string, PipelineSaveResult, QuickAddSaveOutcome, QuickAddSa
   ["400 too many entries", reply({ status: 400, detail: "too many dictionary entries in one request (server cap: 5000 entries in total)" }), "error", "error", "error"],
   ["400 dictionary full", reply({ status: 400, detail: "this dictionary is full (server cap: 2000 entries) — delete some entries before adding new ones" }), "error", "error", "error"],
   ["401", reply({ status: 401, detail: "invalid API key" }), "error", "error", "error"],
-  ["422", reply({ status: 422, errors: [{ loc: "rules_patch", msg: "bad" }] }), "error", "error", "error"],
+  ["422", reply({ status: 422, errors: [{ loc: "rules_patch", msg: "bad" }] }), "error", "error", "rejected"],
   ["500", reply({ status: 500, detail: "internal error" }), "error", "error", "error"],
   ["502 proxy", reply({ status: 502, detail: "Bad Gateway" }), "error", "error", "error"],
   ["network (0)", reply({ status: 0, detail: "connection refused" }), "error", "error", "error"],
@@ -72,5 +72,18 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
 
   it("keeps the user's rows on a 403 that names no lock (a re-sync would drop the addition)", () => {
     expect(quickAddSaveOutcome(reply({ status: 403, detail: "Forbidden" }))).toBe("error");
+  });
+
+  it("does not retry a 422 forever: the server's schema refuses the rows, and says why", () => {
+    // Was "error": every summon re-PATCHed the same rows (one key outside the word-list pattern)
+    // and got the same 422, so every later mapping never reached the server, behind a bare "retry".
+    const res = reply({
+      status: 422,
+      errors: [{ loc: "body.rules_patch.my-words.map.don't.[key]", msg: "String should match pattern '^[\\w \\-.,!?ßẞÄÖÜäöü]{1,64}$'" }],
+    });
+    expect(quickAddSaveOutcome(res)).toBe("rejected");
+    expect(quickAddRejectReason(res)).toMatch(/^String should match pattern/);
+    expect(quickAddRejectReason(reply({ status: 422, errors: [{}], detail: "map key too long" }))).toBe("map key too long");
+    expect(quickAddRejectReason(reply({ status: 422 }))).toBe("The server refused a mapping in this list.");
   });
 });

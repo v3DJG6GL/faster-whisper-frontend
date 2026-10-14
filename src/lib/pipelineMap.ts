@@ -153,6 +153,33 @@ export function mapBodyFromRows(rows: MapRow[]): { map: Record<string, string> }
   return { map: Object.fromEntries([...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) };
 }
 
+/** The server's bound on both sides of a mapping (MapRule in settings/schema.py), in code points. */
+export const MAP_FIELD_MAX = 64;
+
+/** One character the server's MapRule key pattern `^[\w \-.,!?ßẞÄÖÜäöü]{1,64}$` takes. Pydantic
+ *  runs it on the Rust regex engine, whose Unicode `\w` is Alphabetic + marks + decimal digits +
+ *  connector punctuation + join controls — mirrored property for property, so nothing the server
+ *  takes is refused here (the listed umlauts are Alphabetic already). */
+const MAP_KEY_CHAR = /^[\p{Alphabetic}\p{M}\p{Nd}\p{Pc}\p{Join_Control} \-.,!?]$/u;
+
+/** Why the server would refuse this spoken-phrase → insert pair, or null when it takes it. The map
+ *  is PATCHed whole, so ONE pair the schema rejects (a 422) blocks every later save of the list —
+ *  an editor must refuse it up front, with this reason, rather than send it. */
+export function mapEntryProblem(k: string, v: string): string | null {
+  const key = [...k];
+  if (key.length === 0) return "Say a phrase first";
+  if (key.length > MAP_FIELD_MAX) return `The phrase is too long (at most ${MAP_FIELD_MAX} characters)`;
+  const bad = key.find((c) => !MAP_KEY_CHAR.test(c));
+  if (bad !== undefined) {
+    // An invisible character is named by its code point — quoting it would show nothing.
+    const hex = (bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+    const shown = bad === "\t" ? "A tab" : /[\p{C}\p{Z}]/u.test(bad) ? `U+${hex}` : `“${bad}”`;
+    return `${shown} can’t be in a spoken phrase (letters, digits, spaces and - . , ! ? only)`;
+  }
+  if ([...v].length > MAP_FIELD_MAX) return `The insert is too long (at most ${MAP_FIELD_MAX} characters)`;
+  return null;
+}
+
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
  *  (`compile_map`): longest-key-first, whole-word, case-insensitive, values inserted verbatim, ONE
  *  pass (no cascade), and every ß key also matches its derived ss spelling (ß→ss, ẞ→SS; a key

@@ -14,11 +14,15 @@ import type { PipelineSaveResult } from "./types";
  *    rule '…'" (an admin changed the pinned rule's type away from a map). Like "pinned", a retry
  *    can never land, so the caller re-syncs instead, and the refresh's write gate then shows
  *    "List locked" / read-only or the "re-pin one in the Dictionary" page.
+ *  - "rejected": a 422 — the server's schema refuses something IN the rows (a phrase outside the
+ *    word-list pattern, an over-long value). Re-sending the same rows can never land, so it is
+ *    not auto-retried; but the rows are the user's to fix, so unlike "refused" they are kept (no
+ *    re-sync): the next edit sends them again. quickAddRejectReason says what the server named.
  *  - "error": anything else — worth retrying, and the user's rows are kept. That includes a 403
  *    that names no lock (a WAF blocking the PATCH body but not the GET: a re-sync would pass the
- *    write gate and silently replace the unsaved rows), a 400 dictionary cap, a 422, a 5xx,
- *    offline, and a 401 (an expired or wrong key is fixable). */
-export type QuickAddSaveOutcome = "saved" | "pinned" | "refused" | "error";
+ *    write gate and silently replace the unsaved rows), a 400 dictionary cap, a 5xx, offline,
+ *    and a 401 (an expired or wrong key is fixable). */
+export type QuickAddSaveOutcome = "saved" | "pinned" | "refused" | "rejected" | "error";
 
 /** The quick_config PATCH's refusal texts for a rule this caller may not edit (403). */
 const LOCK_REFUSAL = /^(?:rule '.*' is locked and cannot be edited|the terminal rule cannot be edited|rule '.*' is not visible to your user)/;
@@ -35,5 +39,14 @@ export function quickAddSaveOutcome(res: PipelineSaveResult): QuickAddSaveOutcom
   const detail = typeof res.detail === "string" ? res.detail.trim() : "";
   if (res.status === 403 && (LOCK_REFUSAL.test(detail) || PAGE_REFUSAL.test(detail))) return "refused";
   if (res.status === 400 && GONE_RULE.test(detail)) return "refused";
+  if (res.status === 422) return "rejected";
   return "error";
+}
+
+/** What a "rejected" (422) reply names as the problem — the server's first validation message,
+ *  else its detail — for the save badge. Opaque server JSON, so coerced and bounded. */
+export function quickAddRejectReason(res: PipelineSaveResult): string {
+  const first = Array.isArray(res.errors) ? res.errors.find((e) => typeof e?.msg === "string" && e.msg.trim()) : undefined;
+  const text = first?.msg ?? (typeof res.detail === "string" ? res.detail : "");
+  return text.trim().slice(0, 200) || "The server refused a mapping in this list.";
 }

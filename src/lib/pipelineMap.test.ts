@@ -3,8 +3,8 @@
 // declared type is dropped rather than stringified into a corrected phrase or PATCHed back.
 import { describe, expect, it } from "vitest";
 import {
-  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapRowsFromRule, ruleCountOf, ruleListOf, ruleLockedFor,
-  ruleMapWritable, saveLanded,
+  applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapRowsFromRule, ruleCountOf, ruleListOf,
+  ruleLockedFor, ruleMapWritable, saveLanded,
 } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
 
@@ -76,6 +76,37 @@ describe("mapBodyFromRows", () => {
 // "show all" toggle can still reveal, `unshown` is what the render cap keeps
 // off screen forever. Conflating them told users the toggle would reveal rows
 // the screen never renders.
+describe("mapEntryProblem", () => {
+  // The server's MapRule: key ^[\w \-.,!?ßẞÄÖÜäöü]{1,64}$ (Rust-regex Unicode \w), value ≤ 64.
+  // One pair outside it 422s the whole-map PATCH, so Quick-Add must refuse it before sending.
+  it("refuses a phrase the server's word-list pattern rejects", () => {
+    for (const k of ["don't", "C++", "user@host", "a\tb", "x".repeat(65), "ä".repeat(65), "line\nbreak"]) {
+      expect(mapEntryProblem(k, ","), k).not.toBeNull();
+    }
+    expect(mapEntryProblem("", ",")).not.toBeNull();
+  });
+
+  it("takes what the pattern takes", () => {
+    for (const k of ["Grüße", "k8s", "hello world", " Prozent", "STRASSE ẞ", "snake_case", "Ausrufezeichen!", "x".repeat(64), "ä".repeat(64), "café", "日本語"]) {
+      expect(mapEntryProblem(k, ","), k).toBeNull();
+    }
+    // A decomposed accent is a combining mark — inside Rust's Unicode \w.
+    expect(mapEntryProblem("cafe\u0301", ",")).toBeNull();
+  });
+
+  it("bounds the value at 64 code points", () => {
+    expect(mapEntryProblem("comma", "x".repeat(64))).toBeNull();
+    expect(mapEntryProblem("comma", "\u{1F600}".repeat(64))).toBeNull(); // 128 UTF-16 units, 64 code points
+    expect(mapEntryProblem("comma", "x".repeat(65))).toMatch(/insert is too long/);
+  });
+
+  it("names the offending character, by code point when it is invisible", () => {
+    expect(mapEntryProblem("don't", "")).toMatch(/^“'” /);
+    expect(mapEntryProblem("a\tb", "")).toMatch(/^A tab /);
+    expect(mapEntryProblem("a\u00a0b", "")).toMatch(/^U\+00A0 /);
+  });
+});
+
 describe("collapseCounts", () => {
   it("splits the toggle-revealable rows from the ones past the render cap", () => {
     expect(collapseCounts(5000, 15, 500)).toEqual({ hidden: 485, unshown: 4500 });

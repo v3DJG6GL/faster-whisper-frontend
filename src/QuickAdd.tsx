@@ -14,14 +14,15 @@
 // Re-fetching on each summon re-syncs any out-of-band edits — adequate for a
 // single-user quick-capture surface (the Dictionary screen keeps explicit-save).
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Plus, X, Trash2, Loader2, Check, AlertTriangle, RefreshCw, BookA } from "lucide-react";
 import { Button, Kbd, TextInput } from "@/components/ui";
 import { Combobox } from "@/components/Combobox";
 import {
-  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, ruleListOf, ruleLockedFor, ruleMapWritable,
+  type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, ruleListOf, ruleLockedFor,
+  ruleMapWritable,
 } from "@/lib/pipelineMap";
-import { quickAddSaveOutcome } from "@/lib/quickAddSave";
+import { quickAddRejectReason, quickAddSaveOutcome } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
@@ -46,9 +47,9 @@ type Phase = "loading" | "nopin" | "error" | "ok";
 /** "pinned": the PATCH answered 2xx but the server's environment pins the rule list, so nothing
  *  changed — terminal, not a failure: a retry can never land, so it is neither auto-retried nor
  *  allowed to hold off the summon's re-sync (the rows the server really serves). */
-type SaveState = "idle" | "saving" | "saved" | "error" | "pinned";
+type SaveState = "idle" | "saving" | "saved" | "error" | "pinned" | "rejected";
 
-function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void }) {
+function SaveStatus({ state, reason, onRetry }: { state: SaveState; reason: string; onRetry: () => void }) {
   if (state === "saving")
     return <span className="flex items-center gap-1.5 text-[11.5px] text-faint"><Loader2 className="size-3.5 animate-spin" /> saving…</span>;
   if (state === "saved")
@@ -57,6 +58,12 @@ function SaveStatus({ state, onRetry }: { state: SaveState; onRetry: () => void 
     return (
       <span className="flex items-center gap-1.5 text-[11.5px] text-warn" title="The server's environment pins the rule list, so this change does not take effect">
         <AlertTriangle className="size-3.5" /> not applied
+      </span>
+    );
+  if (state === "rejected")
+    return (
+      <span className="flex items-center gap-1.5 text-[11.5px] text-warn" title={`The server refused this list: ${reason}`}>
+        <AlertTriangle className="size-3.5" /> not saved
       </span>
     );
   if (state === "error")
@@ -79,6 +86,11 @@ export default function QuickAdd() {
   const [find, setFind] = useState("");
   const [insert, setInsert] = useState("");
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  // What the server named when it rejected the rows (a 422) — the "not saved" badge's reason.
+  const [rejectReason, setRejectReason] = useState("");
+  // A list edit refused because the server's word-list schema would reject it (mapEntryProblem),
+  // and why — shown under that row until its next accepted edit.
+  const [rowProblem, setRowProblem] = useState<{ id: number; msg: string } | null>(null);
   // Bumped on each summon (and after each add) to remount the Combobox so its
   // `autoFocus` re-fires — focusing the find field for the next entry.
   const [showSeq, setShowSeq] = useState(0);
@@ -351,6 +363,7 @@ export default function QuickAdd() {
           setSaveState("idle");
           void refresh();
         } else {
+          if (outcome === "rejected") setRejectReason(quickAddRejectReason(res));
           setSaveState(outcome);
         }
       }
@@ -385,12 +398,15 @@ export default function QuickAdd() {
       // it. A PENDING save (timer armed), an IN-FLIGHT one (timer fired/null, saveState still
       // "saving" while the PATCH awaits), OR a FAILED one (saveState "error") all mean the local
       // rows are newer-than-server, so skip the re-sync (refresh also resets saveState to "idle",
-      // which would drop the only retry signal). Let the save flush / retry. A "pinned" save is
-      // not among them: the server will never take those rows, so re-sync to what it serves.
+      // which would drop the only retry signal). Let the save flush / retry. A "rejected" one (a
+      // 422) is among them too — its rows are the user's to fix, not to lose — but is never
+      // auto-retried: the same rows would only be rejected again. A "pinned" save is not among
+      // them: the server will never take those rows, so re-sync to what it serves.
       // Unconditionally, ahead of the branch below: the policy this window types under must
       // never be older than the last summon, whatever the save state is doing.
       void refreshLocalConfig();
-      if (saveTimer.current === null && saveStateRef.current !== "error" && saveStateRef.current !== "saving") {
+      const unsaved = saveStateRef.current === "error" || saveStateRef.current === "rejected" || saveStateRef.current === "saving";
+      if (saveTimer.current === null && !unsaved) {
         void refresh();
       } else {
         // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
@@ -484,8 +500,13 @@ export default function QuickAdd() {
     [scheduleSave],
   );
 
+  // A pair the server's word-list schema would reject is refused here, with the reason under
+  // the capture row: sent, its 422 would fail the whole-map PATCH — and every later save with it.
+  // A selection seed ("don't", "C++", a long phrase) is the usual way one arrives.
+  const addProblem = find.trim() ? mapEntryProblem(find, insert) : null;
   const addMapping = useCallback(() => {
     if (!find.trim()) return; // ignore a blank/whitespace-only spoken phrase
+    if (mapEntryProblem(find, insert)) return; // its reason is already on screen (addProblem)
     const k = find; // keep the key VERBATIM — leading/trailing spaces are meaningful (see pipelineMap)
     const v = insert;
     mutate((rs) => [{ id: nextRowId(), k, v }, ...rs]);
@@ -495,6 +516,23 @@ export default function QuickAdd() {
     setFocusInsert(false); // after "add another" the find field gets focus (capture the next word)
     setShowSeq((s) => s + 1); // remount Combobox → re-focus find for the next add
   }, [find, insert, mutate]);
+
+  // An inline list edit, refused (with its reason under the row) when it would turn a row the
+  // server takes into one it rejects. A row that is already out of bounds takes any edit, so it
+  // can be fixed a keystroke at a time. A blank phrase is never sent (mapBodyFromRows drops it).
+  const editRow = useCallback(
+    (row: MapRow, field: "k" | "v", value: string) => {
+      const next = { ...row, [field]: value };
+      const problem = next.k.trim() ? mapEntryProblem(next.k, next.v) : null;
+      if (problem && !(row.k.trim() && mapEntryProblem(row.k, row.v))) {
+        setRowProblem({ id: row.id, msg: problem });
+        return;
+      }
+      setRowProblem((p) => (p?.id === row.id ? null : p));
+      mutate((rs) => rs.map((r) => (r.id === row.id ? { ...r, [field]: value } : r)));
+    },
+    [mutate],
+  );
 
   const closeNow = useCallback(() => {
     if (saveTimer.current !== null) void flushSave(); // persist a debounced edit before hiding (flushSave cancels the timer itself)
@@ -564,7 +602,7 @@ export default function QuickAdd() {
           <span className="truncate font-display text-[15px] font-semibold text-text">{label}</span>
           <span className="font-mono text-[10px] uppercase tracking-wider text-faint">quick add</span>
           <span className="ml-auto flex items-center gap-2">
-            <SaveStatus state={saveState} onRetry={() => void flushSave()} />
+            <SaveStatus state={saveState} reason={rejectReason} onRetry={() => void flushSave()} />
             <button
               type="button"
               onClick={closeNow}
@@ -667,6 +705,11 @@ export default function QuickAdd() {
                   />
                 </div>
               </div>
+              {addProblem && (
+                <div role="status" className="mt-2 flex items-center gap-1.5 text-[11.5px] text-warn">
+                  <AlertTriangle className="size-3.5 shrink-0" /> {addProblem}
+                </div>
+              )}
             </div>
 
             {/* list head */}
@@ -681,33 +724,40 @@ export default function QuickAdd() {
                 <div className="px-2 py-8 text-center text-[13px] text-faint">No mappings yet — add your first above.</div>
               ) : (
                 shownRows.map((row) => (
-                  <div key={row.id} className="group flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-surface-2/40">
-                    <input
-                      value={row.k}
-                      aria-label="spoken phrase"
-                      spellCheck={false}
-                      autoComplete="off"
-                      onChange={(e) => mutate((rs) => rs.map((r) => (r.id === row.id ? { ...r, k: e.target.value } : r)))}
-                      className="ring-signal min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-[14px] text-text hover:bg-surface-2"
-                    />
-                    <span className="shrink-0 text-faint" aria-hidden>→</span>
-                    <input
-                      value={row.v}
-                      aria-label="inserted text"
-                      spellCheck={false}
-                      autoComplete="off"
-                      onChange={(e) => mutate((rs) => rs.map((r) => (r.id === row.id ? { ...r, v: e.target.value } : r)))}
-                      className="ring-signal w-[110px] shrink-0 rounded-md bg-transparent px-2 py-1 text-center font-mono text-[13px] text-text hover:bg-surface-2"
-                    />
-                    <button
-                      type="button"
-                      title="Remove mapping"
-                      onClick={() => mutate((rs) => rs.filter((r) => r.id !== row.id))}
-                      className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint opacity-0 transition-opacity hover:text-warn group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
+                  <Fragment key={row.id}>
+                    <div className="group flex items-center gap-2 rounded-lg px-2 py-1 hover:bg-surface-2/40">
+                      <input
+                        value={row.k}
+                        aria-label="spoken phrase"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => editRow(row, "k", e.target.value)}
+                        className="ring-signal min-w-0 flex-1 rounded-md bg-transparent px-2 py-1 text-[14px] text-text hover:bg-surface-2"
+                      />
+                      <span className="shrink-0 text-faint" aria-hidden>→</span>
+                      <input
+                        value={row.v}
+                        aria-label="inserted text"
+                        spellCheck={false}
+                        autoComplete="off"
+                        onChange={(e) => editRow(row, "v", e.target.value)}
+                        className="ring-signal w-[110px] shrink-0 rounded-md bg-transparent px-2 py-1 text-center font-mono text-[13px] text-text hover:bg-surface-2"
+                      />
+                      <button
+                        type="button"
+                        title="Remove mapping"
+                        onClick={() => mutate((rs) => rs.filter((r) => r.id !== row.id))}
+                        className="ring-signal grid size-7 shrink-0 place-items-center rounded-md text-faint opacity-0 transition-opacity hover:text-warn group-hover:opacity-100 focus-visible:opacity-100 group-focus-within:opacity-100"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </div>
+                    {rowProblem?.id === row.id && (
+                      <div role="status" className="flex items-center gap-1.5 px-4 pb-1 text-[11.5px] text-warn">
+                        <AlertTriangle className="size-3.5 shrink-0" /> {rowProblem.msg}
+                      </div>
+                    )}
+                  </Fragment>
                 ))
               )}
               {rows.length > shownRows.length && (
