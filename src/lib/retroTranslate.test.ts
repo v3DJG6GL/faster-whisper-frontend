@@ -464,16 +464,16 @@ describe("cancelTranslateRun", () => {
     // The run gone (its loop's finally dropped the ctl): nothing is cancelling.
     expect(isTranslateCancelled("rec-4")).toBe(false);
   });
-  it("both Cancel buttons re-render on a press and turn into a disabled Cancelling…", () => {
-    // The strip: the row reads the flag, disables its button, and swaps the % for the state.
+  it("both Cancel buttons re-render on a press and turn into an inert Cancelling…", () => {
+    // The strip: the row reads the flag, makes its button a no-op (not `disabled`, which would drop
+    // keyboard focus — TranslateProgressCard.cancelFocus.test.ts), and swaps the % for the state.
     expect(otherRunsSrc).toMatch(/const cancelling = run\.phase !== "done" && isTranslateCancelled\(key\)/);
-    expect(otherRunsSrc).toMatch(/disabled=\{cancelling\}/);
-    expect(otherRunsSrc).toMatch(/cancelTranslateRun\(key, cancelTextTranslation\) && rerender\(\)/);
+    expect(otherRunsSrc).toMatch(/!cancelling && cancelTranslateRun\(key, cancelTextTranslation\) && rerender\(\)/);
     expect(otherRunsSrc).toMatch(/cancelling \? "cancelling…"/);
     // The viewer card: same flag, through the card's cancelling prop.
     expect(viewerSrc).toMatch(/if \(cancelTranslateRun\(trKey, cancelTextTranslation\)\) rerenderCancelled\(\)/);
     expect(viewerSrc).toMatch(/cancelling=\{isTranslateCancelled\(trKey\)\}/);
-    expect(progressCardSrc).toMatch(/disabled=\{cancelling\}/);
+    expect(progressCardSrc).toMatch(/aria-disabled=\{cancelling \|\| undefined\}/);
     expect(progressCardSrc).toMatch(/cancelling && !done\s*\? "Cancelling…"/);
   });
 });
