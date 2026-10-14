@@ -133,7 +133,13 @@ mod imp {
         model: Option<String>,
         layout: Option<String>,
         variant: Option<String>,
+        /// XKB options (`caps:escape,lv3:ralt_alt`): the typer's Caps Lock and AltGr guards read
+        /// them off the compiled keymap, so a names-compiled keymap must carry them too.
+        options: Option<String>,
     }
+
+    /// (rules, model, layout, variant, options) to compile a keymap from.
+    type XkbNames = (String, String, String, String, Option<String>);
 
     fn layout_value(v: &str) -> Option<String> {
         let v = v.trim();
@@ -152,6 +158,8 @@ mod imp {
                 names.layout = layout_value(v);
             } else if let Some(v) = line.strip_prefix("variant:") {
                 names.variant = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("options:") {
+                names.options = layout_value(v);
             }
         }
         names
@@ -167,17 +175,19 @@ mod imp {
                 names.layout = layout_value(v);
             } else if let Some(v) = line.strip_prefix("X11 Variant:") {
                 names.variant = layout_value(v);
+            } else if let Some(v) = line.strip_prefix("X11 Options:") {
+                names.options = layout_value(v);
             }
         }
         names
     }
 
-    /// (rules, model, layout, variant) from the first query that named a layout — setxkbmap, else
-    /// localectl (asked only when setxkbmap named none) — or `None` when neither did.
+    /// (rules, model, layout, variant, options) from the first query that named a layout —
+    /// setxkbmap, else localectl (asked only when setxkbmap named none) — or `None` when neither did.
     fn resolve_layout(
         setxkbmap: LayoutNames,
         localectl: impl FnOnce() -> LayoutNames,
-    ) -> Option<(String, String, String, String)> {
+    ) -> Option<XkbNames> {
         let names = if setxkbmap.layout.is_some() {
             setxkbmap
         } else {
@@ -193,6 +203,7 @@ mod imp {
             names.model.unwrap_or_else(|| "pc105".to_string()),
             layout,
             names.variant.unwrap_or_default(),
+            names.options,
         ))
     }
 
@@ -227,12 +238,12 @@ mod imp {
         (!text.trim().is_empty()).then_some(text)
     }
 
-    /// The layout names as a fallback to the live keymap: (rules, model, layout, variant) from
-    /// `setxkbmap -query` (only the X rule names, see `live_keymap_text`), else the configured one
-    /// from `localectl status` — setxkbmap is optional on several distros. US only when neither
-    /// names a layout, and that is logged: a US charmap on a de/ch/fr machine types y↔z and wrong
-    /// symbols while every job reports success.
-    fn query_layout() -> ((String, String, String, String), KeymapSource) {
+    /// The layout names as a fallback to the live keymap: (rules, model, layout, variant,
+    /// options) from `setxkbmap -query` (only the X rule names, see `live_keymap_text`), else the
+    /// configured one from `localectl status` — setxkbmap is optional on several distros. US only
+    /// when neither names a layout, and that is logged: a US charmap on a de/ch/fr machine types
+    /// y↔z and wrong symbols while every job reports success.
+    fn query_layout() -> (XkbNames, KeymapSource) {
         static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         let setxkbmap = parse_setxkbmap(&query_text("setxkbmap", &["-query"]));
         let source = if setxkbmap.layout.is_some() {
@@ -256,6 +267,7 @@ mod imp {
                         "pc105".to_string(),
                         "us".to_string(),
                         String::new(),
+                        None,
                     ),
                     KeymapSource::UsDefault,
                 )
@@ -268,7 +280,7 @@ mod imp {
     fn compile_keymap(
         ctx: &xkb::Context,
         live: Option<String>,
-        names: impl FnOnce() -> ((String, String, String, String), KeymapSource),
+        names: impl FnOnce() -> (XkbNames, KeymapSource),
     ) -> Option<(xkb::Keymap, KeymapSource)> {
         if let Some(keymap) = live.and_then(|text| {
             xkb::Keymap::new_from_string(
@@ -280,14 +292,14 @@ mod imp {
         }) {
             return Some((keymap, KeymapSource::LiveKeymap));
         }
-        let ((rules, model, layout, variant), source) = names();
+        let ((rules, model, layout, variant, options), source) = names();
         let keymap = xkb::Keymap::new_from_names(
             ctx,
             &rules,
             &model,
             &layout,
             &variant,
-            None,
+            options,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )?;
         Some((keymap, source))
@@ -1536,7 +1548,8 @@ mod imp {
                     "evdev".to_string(),
                     "pc105".to_string(),
                     "ch".to_string(),
-                    "de_nodeadkeys".to_string()
+                    "de_nodeadkeys".to_string(),
+                    None
                 ))
             );
             // Neither names a layout: no silent US — the caller warns.
@@ -1544,6 +1557,32 @@ mod imp {
                 resolve_layout(parse_setxkbmap(""), LayoutNames::default),
                 None
             );
+        }
+
+        #[test]
+        fn the_names_fallback_carries_the_xkb_options_into_the_keymap() {
+            let sx = parse_setxkbmap(
+                "rules:      evdev\nmodel:      pc105\nlayout:     ch\nvariant:    de_nodeadkeys\noptions:    caps:escape,lv3:ralt_alt\n",
+            );
+            assert_eq!(sx.options.as_deref(), Some("caps:escape,lv3:ralt_alt"));
+            let lc = parse_localectl(
+                "   System Locale: LANG=de_CH.UTF-8\n       VC Keymap: ch\n      X11 Layout: ch\n       X11 Model: pc105\n     X11 Variant: de_nodeadkeys\n     X11 Options: caps:escape\n",
+            );
+            assert_eq!(lc.options.as_deref(), Some("caps:escape"));
+            // xkbcomp missing (no live keymap): localectl's names, options included, are compiled.
+            let names = resolve_layout(parse_setxkbmap(""), || lc).expect("localectl layout");
+            assert_eq!(names.4.as_deref(), Some("caps:escape"));
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let Some((keymap, _)) = compile_keymap(&ctx, None, || (names, KeymapSource::Localectl))
+            else {
+                eprintln!("skipped: no XKB data for `ch(de_nodeadkeys)`");
+                return;
+            };
+            // Caps types Escape here: no Caps Lock capitals, no Caps Lock taps.
+            assert!(!caps_usable(&keymap, 0));
+            assert!(charmap_from_keymap(&keymap, 0, None)
+                .values()
+                .all(|s| !s.lock));
         }
 
         #[test]
@@ -1577,6 +1616,7 @@ mod imp {
                         "pc105".to_string(),
                         "us".to_string(),
                         String::new(),
+                        None,
                     ),
                     KeymapSource::Setxkbmap,
                 )
