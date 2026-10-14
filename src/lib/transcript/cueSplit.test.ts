@@ -496,6 +496,22 @@ describe("wrapLines", () => {
     const parts = cutByShare("Il a dit « bonjour » à Paris", [1, 1]);
     expect(parts).toEqual(["Il a dit", "« bonjour » à Paris"]);
   });
+  it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
+    const t = "We met the people from Procter & Gamble at the big conference yesterday";
+    // At 38 the only seam keeping both lines within the cap is after the "&".
+    expect(wrapLines(t, 42, 2)).toEqual(["We met the people from Procter", "& Gamble at the big conference yesterday"]);
+    let s = 0;
+    const words = t.split(/(?= )/).map((word) => ({ word, start: s, end: (s += 0.4) }));
+    const r: BatchResult = { text: t, language: "en", words, segments: [{ start: 0, end: s, text: t }] };
+    for (const maxDur of [2, 3, 4]) {
+      const cues = buildCues(r, { length: "custom", custom: { cpl: 42, lines: 1, maxDur, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+      expect(cues.filter((c) => c.endsWith("&")), cues.join(" | ")).toEqual([]);
+    }
+    expect(cutByShare(t, [4, 6], "en")).toEqual(["We met the people from Procter", "& Gamble at the big conference yesterday"]);
+    expect(wrapLines("Tu viens ce soir avec nous au cinéma ou pas, vraiment ?", 30, 2))
+      .toEqual(["Tu viens ce soir avec nous", "au cinéma ou pas, vraiment ?"]);
+  });
   it("Arabic and Hindi sentence marks are seams like a Latin stop", () => {
     const ar = "هل أنت بخير اليوم؟ نعم أنا بخير والحمد لله";
     expect(cutByShare(ar, [1, 1], "ar")).toEqual(["هل أنت بخير اليوم؟", "نعم أنا بخير والحمد لله"]);

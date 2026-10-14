@@ -363,7 +363,8 @@ function breakScore(prev: string, next: string, lang?: string): number {
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
   else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev))) s -= 80;
-  if (CONJ.has(bare(next))) s += 20;
+  // A spaced "&" is an "and" (Procter & Gamble): the seam goes before it, as before "and".
+  if (CONJ.has(bare(next)) || next === "&") s += 20;
   return s;
 }
 
@@ -452,9 +453,11 @@ const LEAD_OR_STACKER = new RegExp(`[${LEADS}${STACKERS}]`);
 const VOWEL_TRAIL = new RegExp(`[${VOWEL_TRAILS}]`);
 const REPEAT_AT = new RegExp(`[${REPEATS}]`);
 /** A word of spaced text that is only closers, stops or TRAILS ("»", "?", Thai "บ่อย ๆ"):
- *  it stays with the word before it. */
-const LONE_CLOSER = new RegExp(`^[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}]+$`, "u");
-const LONE_CLOSER_AHEAD = new RegExp(`^[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}]+(?:\\s|$)`, "u");
+ *  it stays with the word before it. Not the symbol-like \p{Po} (& @ # * / \ § ¶): the "&" of
+ *  "Procter & Gamble" is a conjunction, and glued back it tore the name at "Procter & / Gamble". */
+const NOT_SYMBOL = "(?![&@#*/\\\\§¶])";
+const LONE_CLOSER = new RegExp(`^(?:${NOT_SYMBOL}[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}])+$`, "u");
+const LONE_CLOSER_AHEAD = new RegExp(`^(?:${NOT_SYMBOL}[\\p{Pe}\\p{Pf}\\p{Po}${TRAILS}])+(?:\\s|$)`, "u");
 /** A Burmese consonant killed by asat (န် ယ် င့်) or a Khmer one by bantoc (ប់): the final
  *  consonant of the syllable before it, so it sticks to that one — ရန်ကုန် wrapped as ရ / န်ကုန်. */
 const KILLED = "[\\u1000-\\u1021](?=\\u1037?\\u103a)|[\\u1780-\\u17a2](?=\\u17cb)";
@@ -669,7 +672,7 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
     const left = text.slice(ts[i - 1].from, ts[i - 1].to).trimEnd();
     const right = text.slice(at, ts[i].to).trim();
     if (ts[i - 1].opens || OPENER.test(edgeChar(left, true)) || /(?:^|[\s\p{Pe}\p{Pf}])[\p{Ps}\p{Pi}]+$/u.test(left)
-      || CLOSE_PUNCT.includes(text[at] || "\0") || /^(?:(?!["'])[\p{Pe}\p{Pf}\p{Po}])+["']*$/u.test(right)
+      || CLOSE_PUNCT.includes(text[at] || "\0") || /^(?:(?!["'&@#*/\\§¶])[\p{Pe}\p{Pf}\p{Po}])+["']*$/u.test(right)
       || (/[\p{Pe}\p{Pf}]'$/u.test(left) && /^(?:s|t|d|m|ll|re|ve)(?![\p{L}\p{N}])/iu.test(right))) s -= 1000;
     // Nor inside a unit, as wraps and cutByShare: Whisper times Thai/Lao/Burmese per decoded
     // token, so a "word" can be a lone tone mark, following vowel or killed consonant, and a
