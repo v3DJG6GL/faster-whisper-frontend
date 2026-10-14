@@ -283,14 +283,20 @@ enum FromReader {
     Closed,
 }
 
-/// The error a server Close frame means for the user, if any. Only application codes (4000–4999)
-/// speak: the backend refuses a handshake that way (`_refuse` in streaming/routes.py), while a
-/// Normal/Away close is the ordinary end. Silent when an `error` frame already said why.
+/// The error a server Close frame means for the user, if any. Application codes (4000–4999)
+/// speak: the backend refuses a handshake that way (`_refuse` in streaming/routes.py). So do the
+/// standard failure codes uvicorn closes a live socket with and no `error` frame: 1012 on a
+/// server restart, 1011 on a keepalive ping timeout (plus 1008/1009/1013). A Normal/Away/no-status
+/// close is the ordinary end. Silent when an `error` frame already said why.
 fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String> {
-    if error_seen || !(4000..5000).contains(&code) {
+    let speaks = (4000..5000).contains(&code) || matches!(code, 1008 | 1009 | 1011 | 1012 | 1013);
+    if error_seen || !speaks {
         return None;
     }
     let fallback: String = match code {
+        1012 => "The server restarted during dictation.".into(),
+        1011 => "The server closed the connection (internal error or keepalive timeout).".into(),
+        1013 => "The server is overloaded — try again shortly.".into(),
         // The server's own "no valid credential" names no remedy; this one does.
         4401 => return Some("The server refused the API key — check it under Backends.".into()),
         4503 => "Live dictation is disabled on this server.".into(),
@@ -1708,6 +1714,26 @@ mod emit_message_tests {
         assert_eq!(close_frame_error(1000, "", false), None);
         assert_eq!(close_frame_error(1001, "bye", false), None);
         assert_eq!(close_frame_error(4401, "", true), None);
+    }
+
+    /// uvicorn ends a live socket with a standard failure code and no `error` frame on a
+    /// restart (1012) or a keepalive timeout (1011): that must not settle as a quiet idle.
+    #[test]
+    fn a_server_restart_or_keepalive_close_mid_dictation_speaks() {
+        assert_eq!(
+            close_frame_error(1012, "", false).as_deref(),
+            Some("The server restarted during dictation.")
+        );
+        assert_eq!(
+            close_frame_error(1011, "keepalive ping timeout", false).as_deref(),
+            Some("keepalive ping timeout")
+        );
+        assert_eq!(
+            close_frame_error(1009, "", false).as_deref(),
+            Some("The server closed the connection (code 1009).")
+        );
+        assert_eq!(close_frame_error(1005, "", false), None);
+        assert_eq!(close_frame_error(1012, "", true), None);
     }
 }
 
