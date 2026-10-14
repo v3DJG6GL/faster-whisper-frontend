@@ -442,23 +442,27 @@ fn after_move(new: &Path) {
 /// the setting at where it is now. `moved` holds every (old, new) pair that moved this launch.
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
-/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when the file could not be read or
-/// a re-point it found could not land (REPOINT_PENDING is then left for the next launch).
+/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when a re-point it found could not
+/// land (REPOINT_PENDING is then left for the next launch).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<Vec<PathBuf>, ()> {
     let mut audio_bases = Vec::new();
-    // A read that fails for the reasons a write does (an AV or sync client holding the file, an
-    // I/O error right after the move) must retry too: every root carries MARKER now, so nothing
-    // else would ever bring a launch back here. No file at all has nothing to re-point.
-    let bytes = match std::fs::read(config) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(audio_bases),
+    // The loader's own read, so a brief AV or sync-client hold right after the move is ridden
+    // out the same way. No file at all has nothing to re-point.
+    let bytes = match crate::config::read_config_bytes(config) {
+        Ok(Some(bytes)) => bytes,
+        Ok(None) => return Ok(audio_bases),
         Err(e) => {
+            // Still unreadable after those retries: a permission fault (a root-owned file left
+            // by a sudo run) or a lasting lock, with nothing known to name the old folder.
+            // Stopping would stop every launch for good (the pending marker brings each one
+            // back here); going on lets config::load_outcome back the file up and start on
+            // defaults, so no setting naming the vacated folder is used either way.
             tracing::warn!(
-                "[migrate] could not read {} to re-point its moved folders ({e})",
+                "[migrate] could not read {} to re-point its moved folders ({e}); going on, the config loader recovers it",
                 config.display()
             );
-            mark_repoint_pending(config);
-            return Err(());
+            let _ = std::fs::remove_file(config.with_file_name(REPOINT_PENDING));
+            return Ok(audio_bases);
         }
     };
     // A "UTF-8 with BOM" file is not JSON to serde, so the BOM goes.
@@ -981,8 +985,11 @@ mod tests {
         assert!(!new.join(REPOINT_PENDING).exists());
     }
 
+    /// An unreadable config.json must not stop the launch: the pending marker would bring
+    /// every later launch back to the same failed read and stop it too, for good. The loader
+    /// recovers the file instead.
     #[test]
-    fn a_config_that_cannot_be_read_is_retried_and_a_missing_one_is_not() {
+    fn a_config_that_cannot_be_read_lets_the_launch_go_on_and_leaves_no_retry() {
         let base = scratch("read-fails");
         let new = base.join(NEW_ID);
         std::fs::create_dir_all(&new).unwrap();
@@ -993,10 +1000,15 @@ mod tests {
             Ok(vec![])
         );
         assert!(!new.join(REPOINT_PENDING).exists());
-        // Present but unreadable (a directory here; a held file on Windows): fails and marks.
+        // Present but unreadable (a directory here; a root-owned file in the field): goes on,
+        // and a marker an earlier launch left is cleared.
         std::fs::create_dir_all(new.join("config.json")).unwrap();
-        assert!(rewrite_config_paths(&new.join("config.json"), &moved).is_err());
-        assert!(new.join(REPOINT_PENDING).exists());
+        std::fs::write(new.join(REPOINT_PENDING), b"").unwrap();
+        assert_eq!(
+            rewrite_config_paths(&new.join("config.json"), &moved),
+            Ok(vec![])
+        );
+        assert!(!new.join(REPOINT_PENDING).exists());
     }
 
     #[test]

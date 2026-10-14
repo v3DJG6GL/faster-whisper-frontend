@@ -1011,15 +1011,21 @@ fn migrate_legacy(text: &str) -> Option<Config> {
 /// (unparseable → rebuilt) instead of their unreadable path, which never saves over the file and
 /// so paused sync on every launch for one stray byte.
 pub(crate) fn read_config_text(path: &Path) -> std::io::Result<Option<String>> {
+    Ok(read_config_bytes(path)?.map(|bytes| {
+        // A leading byte-order mark (an editor's "UTF-8 with BOM") is not JSON to serde,
+        // and would reset a valid file to defaults.
+        let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
+        String::from_utf8_lossy(bytes).into_owned()
+    }))
+}
+
+/// `read_config_text`'s retrying read, with the raw bytes (the identifier migration keeps them
+/// aside when they are not valid UTF-8).
+pub(crate) fn read_config_bytes(path: &Path) -> std::io::Result<Option<Vec<u8>>> {
     let mut attempt = 0;
     loop {
         match std::fs::read(path) {
-            Ok(bytes) => {
-                // A leading byte-order mark (an editor's "UTF-8 with BOM") is not JSON to serde,
-                // and would reset a valid file to defaults.
-                let bytes = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(&bytes);
-                return Ok(Some(String::from_utf8_lossy(bytes).into_owned()));
-            }
+            Ok(bytes) => return Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(e) => {
                 attempt += 1;
