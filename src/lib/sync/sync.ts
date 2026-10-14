@@ -2941,11 +2941,17 @@ async function storeSignature(cats: Record<SyncCategory, boolean>): Promise<Sync
       10_000,
       null as BackendKeyRead | null,
     );
-    // Same rule as composeBlob: an id the store reports ABSENT holds no key (a stale `hasApiKey`),
-    // which is what the store holds — only a failed id or a timeout leaves a rotation unknowable.
-    // Counting the absent one as unread asked on every backends conflict of every approval.
+    // An id the store reports ABSENT holds no key (a stale `hasApiKey`), which is what the store
+    // holds — only a timeout, or a failed id of a backend that claims a key, leaves a rotation
+    // unknowable. Counting the absent one as unread asked on every backends conflict of every
+    // approval; counting a keyless backend's failed id asked whenever the wallet was locked.
+    const failed =
+      read === null ||
+      !isPlainObject(read.keys) ||
+      !Array.isArray(read.unreadable) ||
+      s.backends.some((b) => b.hasApiKey && read.unreadable.includes(b.id));
     const prints: Record<string, string> = {};
-    if (keyReadFailedNowhere(read) && isPlainObject(read.keys)) {
+    if (!failed) {
       for (const [id, key] of Object.entries(read.keys)) prints[id] = keyPrint(String(key));
     } else {
       prints[KEYS_UNREAD] = "1";
