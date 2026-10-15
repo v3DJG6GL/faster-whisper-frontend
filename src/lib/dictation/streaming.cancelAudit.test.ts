@@ -1045,10 +1045,12 @@ describe("a translate a cancel abandoned stays out of the next session", () => {
   // reachable without Tauri, so pin the session-token checks around the translate awaits.
   // Up to the column-0 close: both signatures carry an `opts?: { … }` type literal, which
   // topLevelFunctions would take for the body.
+  // CRLF-normalized: a Windows checkout has no "\n}\n".
+  const src = streamingSrc.replace(/\r\n/g, "\n");
   const whole = (name: string) => {
-    const at = streamingSrc.indexOf(`async function ${name}(`);
+    const at = src.indexOf(`async function ${name}(`);
     expect(at, `${name} not found`).toBeGreaterThanOrEqual(0);
-    return streamingSrc.slice(at, streamingSrc.indexOf("\n}\n", at) + 2);
+    return src.slice(at, src.indexOf("\n}\n", at) + 2);
   };
   const fns = { translatePhrase: whole("translatePhrase"), maybeTranslate: whole("maybeTranslate") };
 

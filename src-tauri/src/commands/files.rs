@@ -631,8 +631,8 @@ fn decode_text_source(bytes: &[u8]) -> String {
         return String::from_utf8_lossy(rest).into_owned();
     }
     let utf16 = |rest: &[u8], from: fn([u8; 2]) -> u16| -> String {
-        // An odd trailing byte is dropped by chunks_exact.
-        let units = rest.chunks_exact(2).map(|c| from([c[0], c[1]]));
+        // An odd trailing byte is dropped by as_chunks.
+        let units = rest.as_chunks::<2>().0.iter().map(|&c| from(c));
         char::decode_utf16(units)
             .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER))
             .collect()
