@@ -4,7 +4,7 @@
 // edit's own push then found nothing to send. The merge must start from the live store.
 
 import { expect, it, vi } from "vitest";
-import { approvePendingReview, getPendingReview, pullNow, pushNow, resetSyncState } from "./sync";
+import { approvePendingReview, getPendingConflict, getPendingReview, pullNow, pushNow, resetSyncState } from "./sync";
 import { useApp } from "../store";
 import { DEFAULT_SETTINGS } from "../defaults";
 import { backend } from "./syncTestFixtures";
@@ -12,11 +12,12 @@ import type { SyncBlob } from "./syncTypes";
 
 /** pushNow runs only "in Tauri". `onPush` runs once, inside the next PUT (the user editing while
  *  it is on the wire); `onKeyRead` once, inside the next keyring read (the user editing while a
- *  compose waits on the wallet); `conflicts` answers PUTs (once each, in order) with a 409;
- *  `pull` answers the next GET. */
+ *  compose waits on the wallet); `fail` answers the next PUT with that status; `conflicts` answers
+ *  PUTs (once each, in order) with a 409; `pull` answers the next GET. */
 const api = vi.hoisted(() => ({
   pushes: 0,
   pushed: null as unknown,
+  fail: null as null | number,
   conflicts: [] as unknown[],
   onPush: null as null | (() => void),
   onKeyRead: null as null | (() => void),
@@ -40,6 +41,9 @@ vi.mock("../api", async (importOriginal) => ({
     const hook = api.onPush;
     api.onPush = null;
     hook?.();
+    const fail = api.fail;
+    api.fail = null;
+    if (fail !== null) return { ok: false, status: fail, error: `HTTP ${fail}` };
     const conflict = api.conflicts.shift();
     if (conflict) return { ok: false, status: 409, conflict };
     const v = args.baseVersion + 1;
@@ -148,4 +152,23 @@ it("a setting edited while an approval's compose waits on the keyring survives t
   // The follow-up push carries the edit on the adopted base, not the peer's value.
   await vi.waitFor(() => expect(api.pushes).toBe(pushesBefore + 1));
   expect((api.pushed as SyncBlob).chip?.chipScale).toBe(edited);
+});
+
+// The Sync tab shows `syncError` only while `syncUnsupported` is clear, and only a pull's or a
+// push's 200 cleared it: after an old server's 404 and a backend update, a push's conflict
+// notice stayed hidden behind "doesn't support settings sync".
+it("a push conflict clears an earlier 404's unsupported-server flag", async () => {
+  const { edited, remote } = await seed();
+  api.fail = 404;
+  await pushNow(true);
+  expect(useApp.getState().syncUnsupported).toBe(true);
+  // Both sides change the chip: a conflict, not an auto-merge (whose retried 200 clears it too).
+  editChipScale(edited);
+  remote.chip = { ...remote.chip, chipScale: edited === 1.5 ? 1.75 : 2 } as never;
+  api.conflicts = [{ version: 5, updated_ts: 5, device: "peer", blob: remote }];
+  await pushNow(true);
+  expect(getPendingConflict()).not.toBeNull();
+  const s = useApp.getState();
+  expect(s.syncUnsupported).toBe(false);
+  expect(s.syncError).toMatch(/resolve the conflict/);
 });

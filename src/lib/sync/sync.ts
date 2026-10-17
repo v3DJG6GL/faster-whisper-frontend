@@ -3330,6 +3330,9 @@ export async function pushNow(manual = false): Promise<void> {
         return;
       }
       if (res.status === 409 && res.conflict) {
+        // A conflict body is the sync API answering, as a pull's 200 is: an earlier 404's
+        // "doesn't support settings sync" must not hide the notices this arm raises.
+        setRuntime({ syncUnsupported: false });
         const remote = res.conflict;
         if (remote.blob !== null && !isPlainObject(remote.blob)) {
           handleTransportFailure(res.status, "The server sent settings this app cannot read.");
