@@ -462,7 +462,8 @@ pub(crate) fn migrated_counterpart(path: &Path) -> Option<PathBuf> {
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
 /// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when a re-point it found could not
-/// land (REPOINT_PENDING is then left for the next launch).
+/// land, or the file could not be read on the first launch to try (REPOINT_PENDING is then left
+/// for the next launch).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<Vec<PathBuf>, ()> {
     let mut audio_bases = Vec::new();
     // The loader's own read, so a brief AV or sync-client hold right after the move is ridden
@@ -471,20 +472,35 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
         Ok(Some(bytes)) => bytes,
         Ok(None) => return Ok(audio_bases),
         Err(e) => {
-            // Still unreadable after those retries: a permission fault (a root-owned file left
-            // by a sudo run) or a lock that outlasted them, with nothing known to name the old
-            // folder. Stopping would stop every launch for good (the pending marker brings each
-            // one back here), so the launch goes on. But the marker STAYS: a lock released a
+            // Still unreadable after those retries: a lock that outlasted them or a permission
+            // fault (a root-owned file left by a sudo run), with nothing known to name the old
+            // folder. The first launch to see it stops, like a failed write: a lock released a
             // moment later (an AV scan or sync client right after the move) lets the loader read
-            // the file cleanly, settings and all, still naming the vacated folder — and without
-            // the marker no later launch would re-point it. A lasting fault costs each launch
-            // this one bounded re-read; the marker clears itself once the file reads again,
-            // whether it still names the old folder or the loader replaced it with defaults.
+            // the file cleanly, settings and all, still naming the vacated folder, and the session
+            // would record into it, re-created, where the next launch's re-point cannot follow.
+            // A launch that finds the pending marker already there goes on instead: an earlier
+            // launch saw this fault too, so it is lasting, and stopping again would stop every
+            // launch for good. The marker STAYS either way (only it brings a later launch back
+            // here), so a lasting fault costs each launch one bounded re-read; it clears itself
+            // once the file reads again, whether it still names the old folder or the loader
+            // replaced it with defaults.
+            let pending = config.with_file_name(REPOINT_PENDING);
+            if !pending.exists() {
+                mark_repoint_pending(config);
+                // Stopped only with the retry armed: without the marker the next launch would
+                // stop here again.
+                if pending.exists() {
+                    tracing::warn!(
+                        "[migrate] could not read {} to re-point its moved folders ({e}); stopping, the next launch tries again",
+                        config.display()
+                    );
+                    return Err(());
+                }
+            }
             tracing::warn!(
                 "[migrate] could not read {} to re-point its moved folders ({e}); going on, the next launch tries again",
                 config.display()
             );
-            mark_repoint_pending(config);
             return Ok(audio_bases);
         }
     };
@@ -1008,14 +1024,30 @@ mod tests {
         assert!(!new.join(REPOINT_PENDING).exists());
     }
 
-    /// An unreadable config.json must not stop the launch: the pending marker would bring
-    /// every later launch back to the same failed read and stop it too, for good. It must not
-    /// drop the retry either: a hold that ends right after this read lets the loader start on
-    /// the settings that still name the vacated folder, and only the marker brings a later
-    /// launch back to re-point them. One rule for every read error, PermissionDenied included:
-    /// a lasting fault only costs each launch one bounded re-read until the file reads again.
+    /// A config.json unreadable for the first time stops the launch: a hold that ends right
+    /// after this read lets the loader start on the settings that still name the vacated folder,
+    /// and the session would record into it. The pending marker is left, so the next launch
+    /// retries.
     #[test]
-    fn a_config_that_cannot_be_read_lets_the_launch_go_on_and_retries_next_launch() {
+    fn a_config_that_cannot_be_read_stops_the_first_launch_with_the_retry_armed() {
+        let base = scratch("read-fails-once");
+        let new = base.join(NEW_ID);
+        let config = new.join("config.json");
+        // A directory here; a held or root-owned file in the field.
+        std::fs::create_dir_all(&config).unwrap();
+        let moved = [(base.join(LEGACY_ID), new.clone())];
+        assert_eq!(rewrite_config_paths(&config, &moved), Err(()));
+        assert!(new.join(REPOINT_PENDING).exists());
+    }
+
+    /// A config.json that is still unreadable when the pending marker is already there must not
+    /// stop the launch: an earlier launch saw the same fault, and stopping again would stop
+    /// every launch for good. It must not drop the retry either: only the marker brings a later
+    /// launch back to re-point the settings. One rule for every read error, PermissionDenied
+    /// included: a lasting fault costs one stopped launch, then each launch one bounded re-read
+    /// until the file reads again.
+    #[test]
+    fn a_config_that_cannot_be_read_stops_once_then_goes_on_and_retries_next_launch() {
         let base = scratch("read-fails");
         let new = base.join(NEW_ID);
         std::fs::create_dir_all(&new).unwrap();
@@ -1027,9 +1059,12 @@ mod tests {
         );
         assert!(!new.join(REPOINT_PENDING).exists());
         // Present but unreadable (a directory here; a held or root-owned file in the field):
-        // goes on, and leaves the marker for the next launch.
+        // the first launch stops and leaves the marker; the next, still unable to read it, goes
+        // on and keeps the marker for the launch after.
         let config = new.join("config.json");
         std::fs::create_dir_all(&config).unwrap();
+        assert_eq!(rewrite_config_paths(&config, &moved), Err(()));
+        assert!(new.join(REPOINT_PENDING).exists());
         assert_eq!(rewrite_config_paths(&config, &moved), Ok(vec![]));
         assert!(new.join(REPOINT_PENDING).exists());
         // The next launch reads it and re-points the setting, and the marker goes.
