@@ -1083,6 +1083,8 @@ const NO_LONGER_TRACKED = "the server no longer tracks this video";
 // A jobs-off server closes the progress entry right after the video ends but keeps no job row
 // to read the outcome (or media id) from: the video may well sit finished on the server.
 const NO_JOB_RECORD = "this server keeps no record of how the video ended — Try again downloads it once more";
+// The poll's two-hour deadline: the server may still be on it, but nothing here watches any more.
+const TOOK_TOO_LONG = "the video took too long — Try again downloads it once more";
 
 /** The transcript returned while its video was still downloading: keep
  *  polling the run's progress id (its own poller: every second while this
@@ -1139,7 +1141,11 @@ function awaitRunUrlVideo(
       return;
     }
     if (Date.now() - startedAt > 2 * 60 * 60 * 1000) {
+      // Settle the row like a closed entry does: left on its last "downloading"/"queued", its
+      // clock ran on and Try again never showed. A run's own id may have finished meanwhile.
       end();
+      if (!request && jobRow) settleFromJob(1, TOOK_TOO_LONG);
+      else paintSettled(null, TOOK_TOO_LONG);
       return;
     }
     if (skip > 0) {
@@ -1221,17 +1227,18 @@ function awaitRunUrlVideo(
   // Read the video's outcome off the job row: pull a finished one, else mark the row failed
   // so Try again shows (the row would otherwise stay at its last "downloading"). A transport
   // error is asked once more a poll later before it becomes the verdict.
-  function settleFromJob(retries: number) {
+  // `gone` = the reason when the row names no outcome of its own.
+  function settleFromJob(retries: number, gone = NO_LONGER_TRACKED) {
     void getJobResult({ serverUrl: ctx.serverUrl, backendId: ctx.backendId, jobId: pid })
       .catch((e): { kind: "error"; message: string } => ({ kind: "error", message: errorText(e, 200) }))
       .then((o) => {
         if (pulled || !registeredIds.has(rec.id)) return;
         if (o.kind === "error" && retries > 0) {
-          setTimeout(() => settleFromJob(retries - 1), 1000);
+          setTimeout(() => settleFromJob(retries - 1, gone), 1000);
           return;
         }
         const res = o.kind === "ok" ? o.value : null;
-        paintSettled(res, o.kind === "error" ? o.message : o.kind === "disabled" ? NO_JOB_RECORD : NO_LONGER_TRACKED);
+        paintSettled(res, o.kind === "error" ? o.message : o.kind === "disabled" ? NO_JOB_RECORD : gone);
       });
   }
   // The settled outcome: `res` names the video's media id (done) or its error, else the row
