@@ -408,17 +408,21 @@ fn migrate_dir(old: &Path, new: &Path, disposable: bool) -> Outcome {
 }
 
 /// Recursive copy. Skips what is meaningless or unreadable in a copied tree: the webview's
-/// lock files and any half-written `*.tmp`.
+/// lock files and any half-written `*.tmp`. Not an older build's finished `files/<id>.tmp` media
+/// copy: the old folder is removed after this, and that copy would go with it.
 fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
         let name = entry.file_name();
         let lossy = name.to_string_lossy();
-        if lossy == "LOCK" || lossy == "lockfile" || lossy.ends_with(".tmp") {
+        let (src, dst) = (entry.path(), to.join(&name));
+        if lossy == "LOCK"
+            || lossy == "lockfile"
+            || crate::store::transcripts::is_partial_copy(&src)
+        {
             continue;
         }
-        let (src, dst) = (entry.path(), to.join(&name));
         if entry.file_type()?.is_dir() {
             copy_tree(&src, &dst)?;
         } else {
@@ -906,10 +910,20 @@ mod tests {
         std::fs::write(from.join("EBWebView").join("LOCK"), b"").unwrap();
         std::fs::write(from.join("config.json.tmp"), b"").unwrap();
         std::fs::write(from.join("EBWebView").join("prefs"), b"p").unwrap();
+        // An older build's finished media copy of a `.tmp` source, and an in-progress one.
+        let id = "9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b";
+        std::fs::create_dir_all(from.join("audio").join("files")).unwrap();
+        std::fs::write(from.join("audio/files").join(format!("{id}.tmp")), b"a").unwrap();
+        std::fs::write(from.join("audio/files").join(format!("{id}.mp3.tmp")), b"").unwrap();
         copy_tree(&from, &to).unwrap();
         assert!(to.join("EBWebView").join("prefs").exists());
         assert!(!to.join("EBWebView").join("LOCK").exists());
         assert!(!to.join("config.json.tmp").exists());
+        assert!(to.join("audio/files").join(format!("{id}.tmp")).exists());
+        assert!(!to
+            .join("audio/files")
+            .join(format!("{id}.mp3.tmp"))
+            .exists());
     }
 
     #[test]

@@ -589,8 +589,8 @@ fn is_own_media(path: &Path) -> bool {
 /// Is this an in-progress `.tmp` copy (`<id>.<ext>.tmp`, or a download's
 /// `<id>.<ext>.<pid>-<seq>.tmp`) rather than a finished one? A bare `<uuid>.tmp` is the finished
 /// copy an older build kept of a transcribed `.tmp` source (see `media_copy_ext`): no in-progress
-/// name has a bare record id for its stem, so that one is swept and counted like any copy.
-fn is_partial_copy(path: &Path) -> bool {
+/// name has a bare record id for its stem, so that one is swept, counted and moved like any copy.
+pub(crate) fn is_partial_copy(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()) == Some("tmp") && !is_own_media(path)
 }
 
@@ -925,9 +925,8 @@ fn delete_record_media(
 }
 
 /// The extension a media copy of `src` keeps: the source's own, lowercased, when it is short and
-/// plain, else `bin`. Never `tmp`: a `.tmp` name reads as an in-progress copy (a folder move skips
-/// it), and the sweeps reclaim a final `<id>.tmp` only as older builds' leftover
-/// (`is_partial_copy`).
+/// plain, else `bin`. Never `tmp`: a `.tmp` name reads as an in-progress copy, and the sweeps and
+/// folder moves take a final `<id>.tmp` only as older builds' leftover (`is_partial_copy`).
 fn media_copy_ext(src: &Path) -> String {
     src.extension()
         .and_then(|e| e.to_str())

@@ -97,8 +97,9 @@ fn move_dir_contents(
         }
         // An in-progress media copy (`<id>.<ext>.tmp`, see save_transcript_media) finishes in
         // the old base and its record keeps a valid absolute path; moving it under the writer
-        // fails the copier's final rename and strands a `.tmp` every sweep skips forever.
-        if src.extension().and_then(|e| e.to_str()) == Some("tmp") {
+        // fails the copier's final rename and strands a `.tmp` every sweep skips forever. An
+        // older build's finished `<id>.tmp` copy moves like any other.
+        if crate::store::transcripts::is_partial_copy(&src) {
             continue;
         }
         let Some(name) = src.file_name() else {
@@ -843,11 +844,20 @@ mod tests {
         std::fs::create_dir_all(&from).unwrap();
         std::fs::write(from.join("a.wav"), b"riff").unwrap();
         std::fs::write(from.join("b.m4a.tmp"), b"partial").unwrap();
+        let id = "9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b";
+        std::fs::write(from.join(format!("{id}.mp3.tmp")), b"partial").unwrap();
+        std::fs::write(from.join(format!("{id}.tmp")), b"final").unwrap();
 
         let mut map = Vec::new();
         move_dir_contents(&from, &to, &mut map).unwrap();
 
         assert!(to.join("a.wav").is_file(), "regular media moves");
+        assert!(
+            to.join(format!("{id}.tmp")).is_file(),
+            "an older build's finished <id>.tmp copy moves"
+        );
+        assert!(from.join(format!("{id}.mp3.tmp")).is_file());
+        assert!(!to.join(format!("{id}.mp3.tmp")).exists());
         assert!(
             !to.join("b.m4a.tmp").exists(),
             "an in-flight .tmp is never moved"
@@ -856,8 +866,10 @@ mod tests {
             from.join("b.m4a.tmp").is_file(),
             "the .tmp stays in the old base for its writer"
         );
-        assert_eq!(map.len(), 1);
-        assert!(map[0].0.ends_with("a.wav") && map[0].1.ends_with("a.wav"));
+        assert_eq!(map.len(), 2);
+        assert!(map
+            .iter()
+            .any(|(old, new)| old.ends_with("a.wav") && new.ends_with("a.wav")));
 
         let _ = std::fs::remove_dir_all(&base);
     }
