@@ -1208,6 +1208,25 @@ fn divert_rewrite(persisted: bool, linux: bool, same_form: bool) -> Option<bool>
     (!durable || !same_form).then_some(!durable)
 }
 
+/// What `paste` does with the clipboard once the chord went out: a pasted (or withheld) insert
+/// books the restore of the user's prior clipboard; a failed one leaves the transcript there to
+/// paste by hand, under the chord-time divert's rule (`divert_rewrite`) — so a durable write of
+/// the same form is kept as it is, never re-written into a second Win+V history entry.
+#[derive(Debug, PartialEq)]
+enum AfterChord {
+    Restore,
+    /// Write the clipboard form; `fatal` as in `divert_rewrite`.
+    Rewrite(bool),
+    Keep,
+}
+
+fn after_chord(restore: bool, persisted: bool, linux: bool, same_form: bool) -> AfterChord {
+    if restore {
+        return AfterChord::Restore;
+    }
+    divert_rewrite(persisted, linux, same_form).map_or(AfterChord::Keep, AfterChord::Rewrite)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paste(
     enigo: &mut Enigo,
@@ -1502,25 +1521,32 @@ fn paste(
     // end-of-session "it's on the clipboard to paste manually" message, which documents this
     // skip-restore-on-failure contract. No-op when restore is off (`previous` is None).
     // A withheld insert restores either way: there is nothing in it to paste manually.
-    if res.is_ok() || withhold_on_divert {
-        restore_clipboard_later(previous);
-    } else if !persisted || clip_text != text {
-        // The local arboard Clipboard is dropped when this function returns — on X11/Wayland
+    match after_chord(
+        res.is_ok() || withhold_on_divert,
+        persisted,
+        cfg!(target_os = "linux"),
+        clip_text == text,
+    ) {
+        AfterChord::Restore => restore_clipboard_later(previous),
+        AfterChord::Keep => {}
+        // A Linux plain write's local arboard Clipboard is dropped when this function returns —
         // without a clipboard manager that destroys the selection. Hand it to the persistent
         // owner so "it's on the clipboard to paste manually" stays true — in its clipboard form,
-        // since the user now pastes it. After a persisted paste write the clipboard form (a
+        // since the user now pastes it. After a durable paste write the clipboard form (a
         // translated block without its field gap, or a plain phrase without its seam space) is
         // written over the pasted text, as the chord-time divert arm above does; if only that
-        // write fails, the pasted text still sits on a live owner.
-        if let Err(e) = persist_transcript(clip_text) {
-            if !persisted {
-                tracing::warn!(
-                    "[clip] paste failed and the clipboard hand-off failed too — the transcript may not stay on the clipboard: {e}"
-                );
-            } else {
-                tracing::warn!(
-                    "[clip] paste failed: the clipboard form could not replace the pasted text: {e}"
-                );
+        // write fails, the pasted text still sits on the clipboard.
+        AfterChord::Rewrite(fatal) => {
+            if let Err(e) = persist_transcript(clip_text) {
+                if fatal {
+                    tracing::warn!(
+                        "[clip] paste failed and the clipboard hand-off failed too — the transcript may not stay on the clipboard: {e}"
+                    );
+                } else {
+                    tracing::warn!(
+                        "[clip] paste failed: the clipboard form could not replace the pasted text: {e}"
+                    );
+                }
             }
         }
     }
@@ -1647,6 +1673,28 @@ mod tests {
         assert_eq!(divert_rewrite(true, true, false), Some(false));
         // A Linux plain write dies with its handle: the divert must persist, or nothing is there.
         assert_eq!(divert_rewrite(false, true, true), Some(true));
+    }
+
+    /// A failed paste keeps the transcript on the clipboard by the divert's rule: off Linux the
+    /// plain write already holds it, so re-writing the same text only duplicated it in the Win+V
+    /// history (and could log a false "may not stay on the clipboard").
+    #[test]
+    fn a_failed_paste_keeps_a_durable_write_of_the_same_form() {
+        use super::{after_chord, AfterChord};
+        // Windows/macOS plain write of the same form: nothing more to write.
+        assert_eq!(after_chord(false, false, false, true), AfterChord::Keep);
+        // A differing form is written over it; its failure still leaves the pasted text.
+        assert_eq!(
+            after_chord(false, false, false, false),
+            AfterChord::Rewrite(false)
+        );
+        // A Linux plain write dies with its handle: the hand-off is all there is.
+        assert_eq!(
+            after_chord(false, false, true, true),
+            AfterChord::Rewrite(true)
+        );
+        // A pasted or withheld insert restores the prior clipboard either way.
+        assert_eq!(after_chord(true, false, true, false), AfterChord::Restore);
     }
 
     /// Category Cf is invisible but reorders what the reader sees, and `char::is_control()` (Cc
