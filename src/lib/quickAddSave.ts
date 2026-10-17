@@ -1,8 +1,9 @@
 // The quick-add window's verdict on one whole-map PATCH reply (QuickAdd.tsx flushSave), and the
-// address it sends that PATCH to. Pure, so each is testable without mounting the standalone window.
+// list and address it sends that PATCH to. Pure, so each is testable without mounting the
+// standalone window.
 import { effectiveServerUrl, serverUrlFromPeer } from "./backends";
 import { envPinnedOf, saveLanded, RULE_LIST_SETTING } from "./pipelineMap";
-import type { AppSettings, Backend, PipelineSaveResult } from "./types";
+import type { AppSettings, Backend, Config, PipelineSaveResult } from "./types";
 
 /** Where quick-add connects for `backend`, read straight from config.json (this window has no
  *  store). The main store canonicalises an older build's address on load (wellFormedBackends)
@@ -12,6 +13,27 @@ import type { AppSettings, Backend, PipelineSaveResult } from "./types";
 export function quickAddServerUrl(backend: Backend, settings: AppSettings): string {
   const serverUrl = serverUrlFromPeer(backend.serverUrl) || backend.serverUrl;
   return effectiveServerUrl(serverUrl === backend.serverUrl ? backend : { ...backend, serverUrl }, settings);
+}
+
+/** The list quick-add PATCHes: the pinned slug on its backend, at that backend's address. */
+export type QuickAddSaveTarget = { serverUrl: string; backendId: string; slug: string };
+
+/** The save target `cfg` pins, or null when nothing is pinned or the pin names a backend the file
+ *  no longer has (removing a backend nulls the pin, but either way there is nothing to save to). */
+export function quickAddTargetOf(cfg: Config | null): QuickAddSaveTarget | null {
+  const pin = cfg?.settings.quickAddList ?? null;
+  const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
+  if (!pin || !backend) return null;
+  return { serverUrl: quickAddServerUrl(backend, cfg!.settings), backendId: backend.id, slug: pin.slug };
+}
+
+/** Has the pin moved off `current` (another list, another backend, a new address, or unpinned)?
+ *  The window's unsaved rows belong to `current`, so once it has they are no longer worth keeping
+ *  over a re-sync. No `current` (nothing loaded yet) is never a move. */
+export function quickAddTargetMoved(current: QuickAddSaveTarget | null, cfg: Config | null): boolean {
+  if (!current) return false;
+  const next = quickAddTargetOf(cfg);
+  return !next || next.serverUrl !== current.serverUrl || next.backendId !== current.backendId || next.slug !== current.slug;
 }
 
 /** - "saved": the PATCH landed (a 2xx, readable or not).

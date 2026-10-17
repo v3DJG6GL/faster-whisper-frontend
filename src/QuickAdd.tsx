@@ -22,7 +22,9 @@ import {
   type MapRow, nextRowId, mapRowsFromRule, mapBodyFromRows, applyMap, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem,
   mapRowTwinProblems, ruleListOf, ruleLockedFor, ruleMapWritable,
 } from "@/lib/pipelineMap";
-import { quickAddRejectReason, quickAddSaveOutcome, quickAddServerUrl } from "@/lib/quickAddSave";
+import {
+  type QuickAddSaveTarget, quickAddRejectReason, quickAddSaveOutcome, quickAddTargetMoved, quickAddTargetOf,
+} from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
 import {
@@ -41,7 +43,7 @@ import { imeComposing } from "@/lib/keys";
 const MAX_SHOWN_ROWS = 500;
 const MAX_RECENT_WORDS = 500;
 
-type Target = { serverUrl: string; backendId: string; slug: string };
+type Target = QuickAddSaveTarget;
 type Phase = "loading" | "nopin" | "error" | "ok";
 /** "pinned": the PATCH answered 2xx but the server's environment pins the rule list, so nothing
  *  changed — terminal, not a failure: a retry can never land, so it is neither auto-retried nor
@@ -192,25 +194,31 @@ export default function QuickAdd() {
    *  user added afterwards ("never type into this app") was then invisible to the correction
    *  path, which resolves against these refs. This read touches no server and never replaces
    *  `rows`, so unlike the rows re-sync it cannot clobber an unsaved edit — same reasoning that
-   *  already split out `fetchRecent`. */
-  const refreshLocalConfig = useCallback(async () => {
+   *  already split out `fetchRecent`.
+   *
+   *  Resolves true when the pin has moved off the list this window targets (re-pinned, its
+   *  backend removed, a new address): the summon then re-syncs even over unsaved rows, which
+   *  belong to the old list — kept, every later mapping went to the list the user had left. */
+  const refreshLocalConfig = useCallback(async (): Promise<boolean> => {
     try {
       // readConfig, not loadConfig: a mid-session read must never recover (rename the file to
       // .bak and adopt defaults) — an unreadable file rejects, and the refs keep their last read.
       const cfg = await readConfig();
       localReadFailed.current = false;
-      if (!cfg) return;
+      if (!cfg) return false;
       themeRef.current = cfg.settings.theme;
       applyAccentAndTheme(cfg.settings.accentHue, cfg.settings.accentMotion, cfg.settings.theme);
       generalRef.current = cfg.settings.general;
       // No store in this window: apply the same appRules floor as hydration (wellFormedAppRules)
       // so both injecting windows agree on which rules match.
       appRulesRef.current = wellFormedAppRules(cfg.appRules);
+      return quickAddTargetMoved(target.current, cfg);
     } catch (e) {
       // An unreadable file or an IPC failure must not be an unhandled rejection on a
       // hotkey-summoned window; the refs keep their last good read (no reset), logged once.
       if (!localReadFailed.current) console.error("quick-add local config refresh failed:", e);
       localReadFailed.current = true;
+      return false;
     }
   }, []);
 
@@ -227,19 +235,16 @@ export default function QuickAdd() {
         generalRef.current = cfg.settings.general;
         appRulesRef.current = wellFormedAppRules(cfg.appRules);
       }
-      const pin = cfg?.settings.quickAddList ?? null;
-      const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
-      if (!pin || !backend) {
-        target.current = null;
+      // Per-device address override wins for the connection (cfg is this
+      // window's own readConfig snapshot — the quick-add webview has no store).
+      const t = quickAddTargetOf(cfg);
+      target.current = t;
+      if (!t) {
         setPhase("nopin");
         return;
       }
-      // Per-device address override wins for the connection (cfg is this
-      // window's own readConfig snapshot — the quick-add webview has no store).
-      const url = quickAddServerUrl(backend, cfg!.settings);
-      target.current = { serverUrl: url, backendId: backend.id, slug: pin.slug };
       setPhase("loading");
-      const res = await getPipelineRules({ serverUrl: url, backendId: backend.id });
+      const res = await getPipelineRules({ serverUrl: t.serverUrl, backendId: t.backendId });
       if (gen !== loadGen.current) return; // a newer refresh won — don't clobber its rows/target
       if (!res.ok) {
         setFetchErr(res);
@@ -247,7 +252,7 @@ export default function QuickAdd() {
         return;
       }
       const rules = ruleListOf(res);
-      const rule = rules.find((r) => r.name === pin.slug && r.type === "callback:map") ?? null;
+      const rule = rules.find((r) => r.name === t.slug && r.type === "callback:map") ?? null;
       if (!rule) {
         // status -2: a LOCAL sentinel (like -1) — a real server 404 means the rules endpoint itself is missing.
         setFetchErr({ ok: false, status: -2, error: "The pinned list no longer exists on this server — re-pin one in the Dictionary." });
@@ -416,7 +421,7 @@ export default function QuickAdd() {
       // them: the server will never take those rows, so re-sync to what it serves.
       // Unconditionally, ahead of the branch below: the policy this window types under must
       // never be older than the last summon, whatever the save state is doing.
-      void refreshLocalConfig();
+      const targetMoved = refreshLocalConfig();
       const unsaved = saveStateRef.current === "error" || saveStateRef.current === "rejected" || saveStateRef.current === "saving";
       if (saveTimer.current === null && !unsaved) {
         void refresh();
@@ -425,16 +430,30 @@ export default function QuickAdd() {
         // is read-only, so keep it fresh regardless: one failed save used to freeze the
         // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
         void fetchRecent();
-        // Failed save: retry it now instead of waiting for a click on the tiny badge (the
-        // whole stuck state was invisible enough to ship). Only when no timer is armed — an
-        // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
-        // On success, re-sync fully — unless an edit arrived during the retry (timer re-armed),
-        // whose own flush now owns the state.
-        if (saveStateRef.current === "error") {
-          void flushSave().then((ok) => {
-            if (ok && saveTimer.current === null && sgen === summonGen.current) void refresh();
-          });
-        }
+        void targetMoved.then((moved) => {
+          if (sgen !== summonGen.current) return;
+          if (moved) {
+            // The unsaved rows are the list the user re-pinned away from: drop them and load the
+            // new one. Disarm the debounce and supersede any queued flight first — either would
+            // otherwise send these rows to the new target once refresh() has switched to it.
+            if (saveTimer.current) window.clearTimeout(saveTimer.current);
+            saveTimer.current = null;
+            ++saveSeq.current;
+            setSaveState("idle");
+            void refresh();
+            return;
+          }
+          // Failed save: retry it now instead of waiting for a click on the tiny badge (the
+          // whole stuck state was invisible enough to ship). Only when no timer is armed — an
+          // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
+          // On success, re-sync fully — unless an edit arrived during the retry (timer re-armed),
+          // whose own flush now owns the state.
+          if (saveStateRef.current === "error") {
+            void flushSave().then((ok) => {
+              if (ok && saveTimer.current === null && sgen === summonGen.current) void refresh();
+            });
+          }
+        });
       }
       // Seed from whatever the user highlighted in the source app. Got a word → fill it and
       // drop the cursor straight in "Insert" (it's captured). Nothing usable → fall back to
