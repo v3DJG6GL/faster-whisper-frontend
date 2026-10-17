@@ -129,6 +129,19 @@ describe("presets (v18, v31, v32)", () => {
     expect(v.run!.fetch).not.toContain("de-CH");
     expect(v.rows.flatMap((r) => r.badges).filter((b) => b.key === "cand:de-CH").map((b) => b.state)).toEqual(["off"]);
   });
+  it("a track left out under Custom while the spoken language was known stays out as a candidate once it is unknown", () => {
+    // The spoken language never is a target, so the language map cannot say it is off: only the
+    // snapshot's ex: pick does, and the candidate was never in that snapshot.
+    const inp = input({ spoken: "en", tracks: [tr("en", "en"), tr("de", "de")], targets: [] });
+    const [i1, st1] = apply(inp, flip(inp, initialSiteState(inp.targets), "ex:en"));
+    expect(st1.policy).toBe("custom");
+    expect(derive(i1, st1).run!.fetch).toEqual(["de"]);
+    const i2 = { ...i1, spoken: null };
+    const v = derive(i2, st1);
+    expect(v.rows.flatMap((r) => r.badges).filter((b) => /^(?:ex|cand):en$/.test(b.key ?? "")).map((b) => [b.key, b.state]))
+      .toEqual([["cand:en", "off"], ["ex:en", "off"]]);
+    expect(v.run!.fetch).toEqual(["de"]);
+  });
 });
 
 describe("badge clicks (v25, v27, v28)", () => {

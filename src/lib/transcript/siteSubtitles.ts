@@ -204,6 +204,9 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   const decide = (key: string | undefined, preset: BadgeState): BadgeState => {
     if (!custom || !key) return preset;
     if (st.sel && key in st.sel) return st.sel[key] ? "active" : "off";
+    // A candidate the snapshot never saw (the spoken language was known then) stays off when its
+    // twin on the language's row was picked off: lit, it downloaded the track that row left out.
+    if (st.sel && key.startsWith("cand:") && st.sel["ex:" + key.slice(5)] === false) return "off";
     return preset === "active" ? "active" : "off";
   };
   const mk = (b: Omit<SiteBadge, "state">, state0: BadgeState): SiteBadge => {
