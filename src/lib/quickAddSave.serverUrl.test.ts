@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { CONFIG_VERSION, useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { effectiveServerUrl } from "./backends";
-import { quickAddServerUrl, quickAddTargetMoved, quickAddTargetOf } from "./quickAddSave";
+import { quickAddServerUrl, quickAddTargetMoved, quickAddTargetOf, quickAddTargetOnSummon } from "./quickAddSave";
 import { backend } from "./sync/syncTestFixtures";
 import type { Config, QuickAddTarget } from "./types";
 
@@ -62,7 +62,28 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetMoved(loaded, cfg({ backendId: "b", slug: "my-words" }))).toBe(true);
     expect(quickAddTargetMoved(loaded, cfg(null))).toBe(true);
     expect(quickAddTargetMoved(loaded, cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "b" })]))).toBe(true); // backend removed
-    expect(quickAddTargetMoved(loaded, cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]))).toBe(true);
+  });
+
+  it("is no move when only the address changed, and the summon adopts the new address", () => {
+    // A save left on "error" by an unreachable address: the user fixes the address, and the
+    // summon used to read that as a re-pin and re-sync over the unsaved mapping it was holding.
+    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    expect(quickAddTargetMoved(loaded, readdressed)).toBe(false);
+    expect(quickAddTargetOnSummon(loaded, readdressed)).toEqual({
+      moved: false,
+      target: { serverUrl: "http://a2.lan:8000", backendId: "a", slug: "my-words" },
+    });
+    const overridden = cfg({ backendId: "a", slug: "my-words" });
+    overridden.settings.sync = { ...overridden.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    expect(quickAddTargetOnSummon(loaded, overridden)).toEqual({
+      moved: false,
+      target: { serverUrl: "http://100.64.0.5:8000", backendId: "a", slug: "my-words" },
+    });
+  });
+
+  it("keeps the loaded target on a move, and has none before anything was loaded", () => {
+    expect(quickAddTargetOnSummon(loaded, cfg({ backendId: "b", slug: "my-words" }))).toEqual({ moved: true, target: loaded });
+    expect(quickAddTargetOnSummon(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual({ moved: false, target: null });
   });
 
   it("is no move for the same pin, or before anything was loaded", () => {

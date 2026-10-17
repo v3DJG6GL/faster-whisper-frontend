@@ -27,13 +27,26 @@ export function quickAddTargetOf(cfg: Config | null): QuickAddSaveTarget | null 
   return { serverUrl: quickAddServerUrl(backend, cfg!.settings), backendId: backend.id, slug: pin.slug };
 }
 
-/** Has the pin moved off `current` (another list, another backend, a new address, or unpinned)?
- *  The window's unsaved rows belong to `current`, so once it has they are no longer worth keeping
- *  over a re-sync. No `current` (nothing loaded yet) is never a move. */
+/** Has the pin moved off `current` (another list, another backend, or unpinned)? The window's
+ *  unsaved rows belong to `current`, so once it has they are no longer worth keeping over a
+ *  re-sync. A new address alone is no move: it is the same list on the same server, reached
+ *  another way. No `current` (nothing loaded yet) is never a move. */
 export function quickAddTargetMoved(current: QuickAddSaveTarget | null, cfg: Config | null): boolean {
   if (!current) return false;
   const next = quickAddTargetOf(cfg);
-  return !next || next.serverUrl !== current.serverUrl || next.backendId !== current.backendId || next.slug !== current.slug;
+  return !next || next.backendId !== current.backendId || next.slug !== current.slug;
+}
+
+/** A summon's read of the pin against `current`, the list the window's rows belong to. Unless it
+ *  moved, `target` is `current` at the address the file names now: an unreachable address is the
+ *  usual reason a save is pending, and the user fixes it by editing Server URL or adding this
+ *  device's address, so the pending save must follow the list there, not retry the old one. */
+export function quickAddTargetOnSummon(
+  current: QuickAddSaveTarget | null,
+  cfg: Config | null,
+): { moved: boolean; target: QuickAddSaveTarget | null } {
+  if (quickAddTargetMoved(current, cfg)) return { moved: true, target: current };
+  return { moved: false, target: current && quickAddTargetOf(cfg) };
 }
 
 /** - "saved": the PATCH landed (a 2xx, readable or not).

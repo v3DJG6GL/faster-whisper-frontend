@@ -23,7 +23,7 @@ import {
   mapRowTwinProblems, ruleListOf, ruleLockedFor, ruleMapWritable,
 } from "@/lib/pipelineMap";
 import {
-  type QuickAddSaveTarget, quickAddRejectReason, quickAddSaveOutcome, quickAddTargetMoved, quickAddTargetOf,
+  type QuickAddSaveTarget, quickAddRejectReason, quickAddSaveOutcome, quickAddTargetOf, quickAddTargetOnSummon,
 } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
@@ -196,9 +196,10 @@ export default function QuickAdd() {
    *  `rows`, so unlike the rows re-sync it cannot clobber an unsaved edit — same reasoning that
    *  already split out `fetchRecent`.
    *
-   *  Resolves true when the pin has moved off the list this window targets (re-pinned, its
-   *  backend removed, a new address): the summon then re-syncs even over unsaved rows, which
-   *  belong to the old list — kept, every later mapping went to the list the user had left. */
+   *  Resolves true when the pin has moved off the list this window targets (re-pinned, or its
+   *  backend removed): the summon then re-syncs even over unsaved rows, which belong to the old
+   *  list — kept, every later mapping went to the list the user had left. The same list at a new
+   *  address is adopted here instead, rows kept, so the pending save retries the new address. */
   const refreshLocalConfig = useCallback(async (): Promise<boolean> => {
     try {
       // readConfig, not loadConfig: a mid-session read must never recover (rename the file to
@@ -212,7 +213,9 @@ export default function QuickAdd() {
       // No store in this window: apply the same appRules floor as hydration (wellFormedAppRules)
       // so both injecting windows agree on which rules match.
       appRulesRef.current = wellFormedAppRules(cfg.appRules);
-      return quickAddTargetMoved(target.current, cfg);
+      const { moved, target: next } = quickAddTargetOnSummon(target.current, cfg);
+      if (!moved) target.current = next;
+      return moved;
     } catch (e) {
       // An unreadable file or an IPC failure must not be an unhandled rejection on a
       // hotkey-summoned window; the refs keep their last good read (no reset), logged once.
