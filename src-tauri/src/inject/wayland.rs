@@ -808,13 +808,24 @@ mod imp {
     /// gestern Привет gesagt" lose "Привет", just because the Latin letters outnumber it — and,
     /// symmetrically, a Latin letter on a layout that types no basic Latin (Russian, Greek), so
     /// "Я купил новый iPhone вчера" keeps its "iPhone". Only stray Latin letters on a Latin
-    /// layout (an accent a US layout lacks) are left to the per-character skip.
+    /// layout (an accent a US layout lacks) are left to the per-character skip. Besides letters,
+    /// ANY ASCII digit the layout cannot type diverts (see [`unreachable_digit`]).
     fn divert_unreachable(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> bool {
         let (reachable, unreachable, caps_blocked) = letter_walk(text, map, caps);
-        unreachable > 0
+        let letters = unreachable > 0
             && (unreachable >= reachable
                 || caps_blocked
-                || unreachable_foreign_word(text, map, caps))
+                || unreachable_foreign_word(text, map, caps));
+        letters || unreachable_digit(text, map, caps)
+    }
+
+    /// Does `text` hold an ASCII digit the active layout cannot type? th, vn, la, kh and af carry
+    /// 0-9 only on the keypad, whose digit level needs NumLock, not Shift (Shift+KP_2 is KP_Down),
+    /// so the keymap scan leaves them out. Skipped per character, "năm 2024, lúc 10:30" would
+    /// land as "năm , lúc :" and report typed; a number is never a stray accent to drop.
+    fn unreachable_digit(text: &str, map: &HashMap<char, KeySpec>, caps: LiveCaps) -> bool {
+        text.chars()
+            .any(|c| c.is_ascii_digit() && typeable_keys(c, map, caps).is_none())
     }
 
     /// Does `text` hold a letter of a foreign word that the active layout cannot type? On any
@@ -1335,8 +1346,9 @@ mod imp {
                     let (reachable, unreachable) = letter_reach(&job.text, &charmap, caps);
                     if divert_unreachable(&job.text, &charmap, caps) {
                         tracing::warn!(
-                            "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout — putting the text on the clipboard instead of typing",
-                            reachable + unreachable
+                            "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout{} — putting the text on the clipboard instead of typing",
+                            reachable + unreachable,
+                            if unreachable_digit(&job.text, &charmap, caps) { ", nor is a digit" } else { "" }
                         );
                         // `own_window_focused` above is a main-thread round trip, so a cancel can
                         // land after the pre-job check. Re-ask right before the clipboard write,
@@ -1752,7 +1764,21 @@ mod imp {
             usable: true,
         };
 
+        /// a-z, plus the main-row digits (bare, untouched by Caps Lock) every Latin layout but
+        /// a keypad-digit one has.
         fn us_letters() -> HashMap<char, KeySpec> {
+            let digits = ('1'..='9').chain(['0']).enumerate().map(|(i, c)| {
+                let spec = KeySpec {
+                    keycode: 2 + i as i32,
+                    shift: false,
+                    altgr: false,
+                    lock: false,
+                    caps_safe: true,
+                    caps_keeps: true,
+                    dead: None,
+                };
+                (c, spec)
+            });
             ('a'..='z')
                 .enumerate()
                 .map(|(i, c)| {
@@ -1767,6 +1793,7 @@ mod imp {
                     };
                     (c, spec)
                 })
+                .chain(digits)
                 .collect()
         }
 
@@ -2242,7 +2269,8 @@ mod imp {
         /// A digit a layout carries only on the keypad (th, vn: no ASCII digits on the main row)
         /// sits on a KEYPAD-type key whose level 2 is reached by NumLock, not Shift: Shift+KP_2 is
         /// KP_Down. Registered as a Shift press, "2024" would select, paste (Shift+KP_Insert) and
-        /// move the cursor through the user's document.
+        /// move the cursor through the user's document. Left out instead, the digit must divert the
+        /// line, not vanish from it.
         #[test]
         fn a_keypad_only_digit_is_never_registered_as_a_shift_keypad_press() {
             let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
@@ -2261,13 +2289,17 @@ mod imp {
                 };
                 let map = charmap_from_keymap(&keymap, 0, None);
                 for d in '0'..='9' {
-                    if let Some(spec) = map.get(&d) {
-                        assert_eq!(
+                    match map.get(&d) {
+                        Some(spec) => assert_eq!(
                             typed_under(&keymap, spec, (false, spec.shift), false),
                             d,
                             "{layout}: {d} on keycode {}",
                             spec.keycode
-                        );
+                        ),
+                        None => assert!(
+                            divert_unreachable(&format!("{d}"), &map, CAPS_OFF),
+                            "{layout}: unreachable {d} must divert, not be skipped"
+                        ),
                     }
                 }
                 if layout == "us" {
@@ -2276,6 +2308,28 @@ mod imp {
                     assert_eq!((two.keycode, two.shift, two.altgr), (3, false, false));
                 }
             }
+        }
+
+        /// A layout whose every letter is reachable but whose digits are keypad-only (vn): the
+        /// numbers would vanish one by one from a line reported as typed, so the line diverts.
+        #[test]
+        fn an_unreachable_digit_diverts_the_line() {
+            let vn_like = |digits: bool| {
+                let mut map = latin_with(&[
+                    ('\u{103}', spec(3, false, None)),
+                    ('\u{fa}', spec(4, false, None)),
+                ]);
+                if !digits {
+                    map.retain(|c, _| !c.is_ascii_digit());
+                }
+                map
+            };
+            let text = "n\u{103}m 2024, l\u{fa}c 10:30";
+            assert_eq!(letter_reach(text, &vn_like(false), CAPS_OFF), (6, 0));
+            assert!(divert_unreachable(text, &vn_like(false), CAPS_OFF));
+            assert!(divert_unreachable("2024", &vn_like(false), CAPS_OFF));
+            // With main-row digits the line types as before.
+            assert!(!divert_unreachable(text, &vn_like(true), CAPS_OFF));
         }
 
         #[test]
