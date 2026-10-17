@@ -422,7 +422,7 @@ mod imp {
     /// presses whatever button holds focus there (Q31); a line break in the transcript types one
     /// just like the auto-Enter does.
     fn probes_focus_before(i: usize, name: &str) -> bool {
-        i > 0 && (i % 64 == 0 || name == "Return")
+        i > 0 && (i.is_multiple_of(64) || name == "Return")
     }
 
     /// Distinct symbols one uploaded keymap can hold: xkb keycodes run 8..=255.
