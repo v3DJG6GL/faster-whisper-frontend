@@ -367,12 +367,13 @@ mod tests {
     /// The new app's focus can land a resolver cycle BEFORE the departing app's deactivate
     /// (two processes, arbitrary order): rejected against the standing mark, it is replayed
     /// once that mark changes — an Electron app never sends the window:activate that would
-    /// otherwise bring it in.
+    /// otherwise bring it in. A busy terminal sends that deactivate late, well over a second
+    /// after the new app's focus.
     #[test]
     fn a_focus_rejected_before_the_departing_apps_deactivate_is_replayed_after_it() {
         use super::atspi::{note_activate, note_deactivate_bus, note_focus, replay_parked};
         use ::atspi::object_ref::ObjectRefOwned;
-        use std::time::Instant;
+        use std::time::{Duration, Instant};
         let el = |bus: &'static str| ObjectRefOwned::from_static_str_unchecked(bus, "/org/a11y/el");
         let current = |snap: &parking_lot::Mutex<super::Snapshot>| {
             let s = snap.lock();
@@ -389,7 +390,8 @@ mod tests {
         let mut parked = note_focus(&snap, "code".into(), Some(true), el(":1.2"));
         assert!(parked.is_some());
         assert_eq!(current(&snap).0, "org.kde.konsole");
-        // Cycle N+1: only the terminal's deactivate — the mark clears, E is replayed.
+        // A later cycle: only the busy terminal's deactivate, 1.8 s on — the mark clears, E is
+        // replayed.
         let mark = snap.lock().active_app.clone();
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
         replay_parked(
@@ -397,7 +399,7 @@ mod tests {
             &mut parked,
             mark.as_deref(),
             Some(":1.1"),
-            Instant::now(),
+            Instant::now() + Duration::from_millis(1800),
         );
         assert_eq!(
             current(&snap),
@@ -472,6 +474,21 @@ mod tests {
         let mark = snap.lock().active_app.clone();
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
         let later = Instant::now() + Duration::from_secs(120);
+        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"), later);
+        assert!(parked.is_none());
+        assert_eq!(
+            snap.lock().current.as_ref().map(|c| c.app_id.as_str()),
+            Some("org.kde.konsole")
+        );
+
+        // Past even a busy app's deactivate latency is no race either.
+        let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        note_activate(&snap, "org.kde.konsole".into(), Some(":1.1".into()));
+        let _ = note_focus(&snap, "org.kde.konsole".into(), Some(true), el(":1.1"));
+        let mut parked = note_focus(&snap, "slack".into(), Some(true), el(":1.5"));
+        let mark = snap.lock().active_app.clone();
+        assert!(!note_deactivate_bus(&snap, Some(":1.1")));
+        let later = Instant::now() + Duration::from_secs(6);
         replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"), later);
         assert!(parked.is_none());
         assert_eq!(

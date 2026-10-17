@@ -582,11 +582,13 @@ pub(super) struct Parked {
 }
 
 /// How long a parked focus stays replayable. The race it exists for (the new app's focus landing
-/// before the departing app's deactivate) settles within a resolver cycle or two. A focus parked
-/// longer ago is a background app's stray one (the "chromium ghost" the gate rejects), and
+/// before the departing app's deactivate) is bounded by when the departing app SENDS that
+/// deactivate, not by the resolver: it comes from the app's own UI thread, and a busy terminal
+/// streaming output takes well over the 1 s resolve budget to get to it. A focus parked longer
+/// than that slack is a background app's stray one (the "chromium ghost" the gate rejects), and
 /// replaying it on the next mark change — the user summoning Quick-Add minutes later — would make
 /// an app the user never focused `current`, then `last_other` with its per-app rule and selection.
-const PARK_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(1500);
+const PARK_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground
 /// (the moment right after a switch). A background app's stray focus while a DIFFERENT app is
