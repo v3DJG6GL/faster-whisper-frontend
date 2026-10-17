@@ -206,4 +206,31 @@ describe("ListPicker popover focus", () => {
     // The field itself keeps its press (caret placement, selection).
     expect(press(field)).toBe(false);
   });
+
+  it("a press on the listbox itself (its scrollbar) keeps its default, and its release refocuses the search field", () => {
+    render(false);
+    trigger.onKeyDown(key("ArrowDown") as never);
+    const tree = render(false);
+    const panel = (tree.props as { children: unknown[] }).children[1] as ReactElement<{
+      onMouseDown?: (e: unknown) => void;
+      onMouseUp?: () => void;
+    }>;
+    const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
+    let refocused = false;
+    input.props.ref.current = { focus: () => (refocused = true) };
+    const press = (target: unknown) => {
+      let prevented = false;
+      panel.props.onMouseDown?.({ target, preventDefault: () => (prevented = true) });
+      return prevented;
+    };
+    // WebKit drags an element's scrollbar only on a press that was not prevented.
+    expect(press({ id: "lp-list" })).toBe(false);
+    // A row still keeps focus in the field.
+    expect(press({ id: "lp-list-opt-0" })).toBe(true);
+    // The press dropped focus to <body>: the release hands it back, so Esc still closes the list.
+    const body = {};
+    vi.stubGlobal("document", { body, activeElement: body });
+    panel.props.onMouseUp?.();
+    expect(refocused).toBe(true);
+  });
 });

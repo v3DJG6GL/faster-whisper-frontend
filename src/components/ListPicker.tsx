@@ -352,9 +352,16 @@ export function ListPicker<R>({
             // hint line) must not move focus: it would land on <body> with the list still open,
             // and every key after it — Esc included — would miss onListKey and reach the window
             // (an editor's Esc closes the editor under the list). The search field keeps its own
-            // press for the caret and selection.
+            // press for the caret and selection — and so does the listbox itself (its rows are
+            // children, so a press on IT is its padding or scrollbar): WebKit hands a press to an
+            // element's scrollbar only when the mousedown was not prevented, so the scrollbar
+            // could not be dragged. The release then puts focus back in the search field.
             onMouseDown={(e) => {
-              if (e.target !== searchRef.current) e.preventDefault();
+              if (e.target !== searchRef.current && (e.target as Element).id !== listId) e.preventDefault();
+            }}
+            onMouseUp={() => {
+              const at = document.activeElement;
+              if (search && (!at || at === document.body)) searchRef.current?.focus();
             }}
             style={pos}
             className={POPOVER_PANEL}
