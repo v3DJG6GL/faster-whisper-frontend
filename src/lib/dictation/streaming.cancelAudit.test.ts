@@ -14,7 +14,8 @@ import { describe, expect, it } from "vitest";
 import streamingSrc from "./streaming.ts?raw";
 import transcribeRunSrc from "../transcribeRun.ts?raw";
 import dictationSrc from "./dictation.ts?raw";
-import { incompleteSurface, liveActivationOf, translationOutcome } from "./streaming";
+import overlaySrc from "../../Overlay.tsx?raw";
+import { incompleteFlashMessage, incompleteSurface, liveActivationOf, translationOutcome } from "./streaming";
 
 /** Blank out comments, strings and template literals — same length, so indexes
  *  into the original stay valid — so the brace scan can't be thrown off by a
@@ -540,6 +541,27 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(incompleteSurface(true, "hello", "none")).toBe("note");
     expect(incompleteSurface(true, "hello", "typed")).toBe("note");
     expect(incompleteSurface(true, "", "clipboard")).toBe("note");
+  });
+
+  it("the incomplete flash keeps the notice's cause and says nothing was transcribed", () => {
+    // stream://incomplete carries several causes; a restart or a lost connection after Stop
+    // must not be reported as a slow server.
+    expect(incompleteFlashMessage("The server did not finish the transcript in time; the last phrase may be missing.")).toBe(
+      "The server did not finish the transcript in time; nothing was transcribed.",
+    );
+    expect(incompleteFlashMessage("The server restarted during dictation — the last phrase may be missing.")).toBe(
+      "The server restarted during dictation; nothing was transcribed.",
+    );
+    expect(
+      incompleteFlashMessage("The connection to the server was lost (connection reset) — the last phrase may be missing."),
+    ).toBe("The connection to the server was lost (connection reset); nothing was transcribed.");
+    // A notice with no cause of its own keeps the old wording.
+    expect(incompleteFlashMessage(" — the last phrase may be missing.")).toBe(
+      "The server didn’t finish the transcript in time; nothing was transcribed.",
+    );
+    expect(mask(bodyAfter(streamingSrc, "function settleIdle("))).toContain("incompleteFlashMessage(sessionIncomplete)");
+    // The overlay's screen-reader line names no cause either: the note stands for all of them.
+    expect(overlaySrc).not.toContain("did not finish the transcript in time");
   });
 
   it("the incomplete flash never drops a queued fast re-press", () => {

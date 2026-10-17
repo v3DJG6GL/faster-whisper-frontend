@@ -1737,10 +1737,11 @@ function settleIdle(keepError = false): void {
     // (history, outcome "none", lease), and BEFORE the hold-start below. flashError voids a
     // queued fast re-press; this flash is not the press's failure, so keep it across the call
     // (the release path still voids it as usual) — the new session then replaces the error.
-    // Not the Rust notice itself: it says only the last phrase may be missing, which
+    // Not the Rust notice verbatim: it says only the last phrase may be missing, which
     // understates a session where nothing survived (the handler's warn keeps the raw text).
-    // Its own doorway line is the generic one; put this specific message back.
-    const msg = "The server didn’t finish the transcript in time; nothing was transcribed.";
+    // Its cause stays — a restart or a lost connection is not a slow server. Its own doorway
+    // line is the generic one; put this specific message back.
+    const msg = incompleteFlashMessage(sessionIncomplete);
     const queued = pendingHoldStart;
     flashError(msg);
     pendingHoldStart = queued;
@@ -1784,8 +1785,9 @@ export function setRouteHint(hint: "original" | null): void {
  *  translate-to picker. Read by settleIdle to stamp `sessionNote`; reset per session. */
 let sessionInsertSkipped = false;
 
-/** The stream://incomplete notice this session got (the Rust drain timed out before the
- *  server's last final), or null. Read by settleIdle — the closed tail's single end — to put
+/** The stream://incomplete notice this session got (the session ended after Stop before the
+ *  server's last final: the drain timed out, the server restarted, or the connection was lost),
+ *  or null. Read by settleIdle — the closed tail's single end — to put
  *  the warning where a user dictating into another app can see it: the main window's Logs
  *  doorway is hidden in the tray then. Reset per session, like `sessionInsertSkipped`. */
 let sessionIncomplete: string | null = null;
@@ -1801,6 +1803,19 @@ export function incompleteSurface(
 ): "flash" | "note" | null {
   if (!incomplete) return null;
   return !doc.trim() && outcome === "none" ? "flash" : "note";
+}
+
+/** The chip error for an incomplete session where nothing survived (`incompleteSurface` →
+ *  "flash"). The Rust notice names its own cause — the drain's idle window ran out, the server
+ *  restarted or closed on a keepalive timeout after Stop, or the connection was lost — and
+ *  ends by saying the last phrase may be missing, which understates a session where nothing
+ *  survived. Keep the cause, replace the ending. */
+export function incompleteFlashMessage(notice: string | null): string {
+  const cause = (notice ?? "")
+    .replace(/\s*[—;]\s*the last phrase may be missing\.?\s*$/i, "")
+    .trim()
+    .replace(/[.;]+$/, "");
+  return `${cause || "The server didn’t finish the transcript in time"}; nothing was transcribed.`;
 }
 
 /** Re-cap a session's targets once its Backend's caps are known (they were capped from whatever
@@ -3359,7 +3374,8 @@ async function ensureListeners(): Promise<void> {
     if (!inSession()) return;
     setDictation({ overridesIgnored: e.payload });
   });
-  // The Rust drain's idle window ran out before the server's last final: the session ended SHORT,
+  // The drain after Stop ended before the server's last final (its idle window ran out, the server
+  // restarted or hit a keepalive timeout, or the connection dropped): the session ended SHORT,
   // not failed. A WARNING only — everything committed before it is good, and the `closed` that
   // follows must still run the normal tail (stop-mode insert, the pending phrase-end Enter, the
   // clipboard restore). So none of the stream://error teardown here: no flashError, no

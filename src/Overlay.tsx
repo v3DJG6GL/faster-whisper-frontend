@@ -1358,7 +1358,9 @@ export default function Overlay() {
           {note === "incomplete"
             ? incompleteEndPhrase
               ? `${incompleteEndPhrase}. The last phrase may be missing`
-              : "The last phrase may be missing — the server did not finish the transcript in time"
+              : // No cause: the note stands for every incomplete end (a slow server, a restart,
+                // a lost connection), and the chip's own label names none either.
+                "The last phrase may be missing"
             : pulse === "typed"
               ? "Inserted"
               : pulse === "clipboard"
