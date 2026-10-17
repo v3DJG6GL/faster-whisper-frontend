@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem, mapRowTwinProblems,
-  mapRowsFromRule, mapRowsProblem, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
+  MAP_ENTRIES_MAX, mapRowsFromRule, mapRowsProblem, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
   type MapRow,
 } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
@@ -179,6 +179,15 @@ describe("mapRowsProblem (the Dictionary's Save gate)", () => {
 
   it("takes a valid map, an exact duplicate and an unfilled row", () => {
     expect(mapRowsProblem([{ id: 1, k: "komma", v: "," }, { id: 2, k: "komma", v: ";" }, { id: 3, k: "", v: "'" }, { id: 4, k: "punkt", v: "." }])).toBeNull();
+  });
+
+  it("holds the Save past the server's per-map entry cap, counting keys as they go on the wire", () => {
+    // MapRule.map's max_length: the server refuses a 10,001-key map whole.
+    expect(MAP_ENTRIES_MAX).toBe(10_000);
+    const full: MapRow[] = Array.from({ length: MAP_ENTRIES_MAX }, (_, i) => ({ id: i + 1, k: `w${i}`, v: "" }));
+    // At the cap, plus an exact duplicate and a blank row (neither adds a key), it still saves.
+    expect(mapRowsProblem([...full, { id: -1, k: "w0", v: "x" }, { id: -2, k: " ", v: "" }])).toBeNull();
+    expect(mapRowsProblem([{ id: 0, k: "one more", v: "" }, ...full])).toMatch(/list is too long \(at most 10,000 mappings\) — delete 1 to save/);
   });
 });
 

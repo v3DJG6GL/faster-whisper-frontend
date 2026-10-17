@@ -226,13 +226,25 @@ export function mapRowTwinProblems(rows: MapRow[]): Map<number, string> {
   return out;
 }
 
-/** The first reason the server would 422 a whole-map PATCH of `rows`, or null when it takes them:
+/** The server's cap on one map's entries (MapRule.map's max_length in settings/schema.py; the
+ *  quick-config PATCH refuses a map over it with a 400 before validating anything). plainMap's read
+ *  ceiling is deliberately looser: it only bounds enumeration and must never trim a list. */
+export const MAP_ENTRIES_MAX = 10_000;
+
+/** The first reason the server would refuse a whole-map PATCH of `rows`, or null when it takes them:
  *  a pair the schema rejects (a row already out of bounds — the editors refuse only the keystroke
- *  that would make one) or a case twin. Blank rows are never sent. */
+ *  that would make one), more keys than the map may hold, or a case twin. Blank rows are never sent,
+ *  and an exact duplicate is one key on the wire (mapBodyFromRows). */
 export function mapRowsProblem(rows: MapRow[]): string | null {
+  const keys = new Set<string>();
   for (const r of rows) {
-    const p = r.k.trim() ? mapEntryProblem(r.k, r.v) : null;
+    if (!r.k.trim()) continue;
+    const p = mapEntryProblem(r.k, r.v);
     if (p) return p;
+    keys.add(r.k);
+  }
+  if (keys.size > MAP_ENTRIES_MAX) {
+    return `The list is too long (at most ${MAP_ENTRIES_MAX.toLocaleString("en-US")} mappings) — delete ${keys.size - MAP_ENTRIES_MAX} to save`;
   }
   return mapRowTwinProblems(rows).values().next().value ?? null;
 }
