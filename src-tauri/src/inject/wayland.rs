@@ -729,7 +729,8 @@ mod imp {
     /// equivalent to `c` — the Vietnamese `vn` layout types ệ as ê then U+0323 (combining dot
     /// below), and has no ệ key. The base takes as many of `c`'s marks as a single key carries
     /// (NFC of base + that subset); every mark left over must have a key of its own, typed after
-    /// it in canonical order. `None` when no split is typeable.
+    /// it in canonical order. A char whose decomposition is one other char with no marks types as
+    /// that char. `None` when no split is typeable.
     fn key_sequence(c: char, map: &HashMap<char, KeySpec>) -> Option<Vec<(char, KeySpec)>> {
         if let Some(spec) = key_spec_for(c, map) {
             return Some(vec![(c, spec)]);
@@ -737,7 +738,14 @@ mod imp {
         let mut parts = std::iter::once(c).nfd();
         let base = parts.next()?;
         let marks: Vec<char> = parts.collect();
-        if marks.is_empty() || marks.len() > 3 {
+        if marks.is_empty() {
+            // A canonical singleton (U+037E Greek question mark = `;`, U+212A Kelvin = K, U+2126
+            // Ohm = Ω) is the very same text as its equivalent, so that char's key types it.
+            return (base != c)
+                .then(|| key_spec_for(base, map).map(|s| vec![(base, s)]))
+                .flatten();
+        }
+        if marks.len() > 3 {
             return None;
         }
         // Subsets of the marks the base key takes, the largest first (fewest separate keys).
@@ -2431,6 +2439,20 @@ mod imp {
             assert!(!probes_focus_before(31, 'a'));
             // The first character is covered by the check before the job.
             assert!(!probes_focus_before(0, '\n'));
+        }
+
+        #[test]
+        fn a_canonical_singleton_types_as_its_equivalent() {
+            // gr carries `;` but no U+037E Greek question mark, which is the same text.
+            let map = latin_with(&[(';', spec(39, false, None))]);
+            let keys = key_sequence('\u{37e}', &map).expect("Greek question mark typeable");
+            assert_eq!(keys.len(), 1);
+            assert_eq!((keys[0].0, keys[0].1.keycode), (';', 39));
+            // Kelvin sign = K.
+            let keys = key_sequence('\u{212a}', &map).expect("Kelvin sign typeable");
+            assert_eq!((keys[0].0, keys[0].1.keycode), ('K', map[&'K'].keycode));
+            // Its equivalent off the layout too: still unreachable.
+            assert!(key_sequence('\u{2126}', &map).is_none());
         }
 
         #[test]
