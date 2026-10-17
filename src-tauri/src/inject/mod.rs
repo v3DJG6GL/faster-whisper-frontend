@@ -1197,6 +1197,17 @@ fn paste_write_via_live_owner(remote_target: bool, linux: bool) -> bool {
     remote_target || linux
 }
 
+/// What the chord-time own-window divert in `paste` still writes: `None` when the paste write
+/// already IS the divert, else `Some(fatal)` to write the clipboard form over it, where `fatal`
+/// means that write failing leaves nothing on the clipboard. The paste write is durable when it
+/// went through the live owner (`persisted`) or off Linux, where the plain write outlives its
+/// `Clipboard` (see `paste_write_via_live_owner`); only a durable write survives the re-write
+/// failing, and only a differing form (`same_form` false) needs the re-write at all.
+fn divert_rewrite(persisted: bool, linux: bool, same_form: bool) -> Option<bool> {
+    let durable = persisted || !linux;
+    (!durable || !same_form).then_some(!durable)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn paste(
     enigo: &mut Enigo,
@@ -1421,17 +1432,21 @@ fn paste(
         // here, so it must persist via a live owner.
         // Believe the answer now that there is one. `NothingWritten` is safe here specifically
         // because no chord was pressed on this arm — the caller re-sends, and re-sending cannot
-        // duplicate text that was never typed. (The `set_text` above went through a local
-        // `Clipboard` that is dropped on return, so it is not a fallback.)
+        // duplicate text that was never typed. (On Linux a plain `set_text` above went through a
+        // local `Clipboard` that is dropped on return, so it is not a fallback. On Windows and
+        // macOS it outlives the handle, so it already IS the divert: a failed re-write there
+        // still leaves the transcript on the clipboard, and answering `NothingWritten` would
+        // drop the user's prior clipboard with no restore booked.)
         //
         // A clipboard form that differs from the pasted text (a translated block's field gap, a
-        // plain phrase's seam space) is written over it even after a persisted paste write: this
+        // plain phrase's seam space) is written over it even after a durable paste write: this
         // is a divert now, and the user pastes it. The second write is unavoidable — the paste
-        // write went out before the divert was known. If only IT fails, the gapped text still sits
-        // on a live owner: still a divert.
-        if !persisted || clip_text != text {
+        // write went out before the divert was known. If only IT fails, the pasted text still sits
+        // on the clipboard: still a divert. See `divert_rewrite`.
+        if let Some(fatal) = divert_rewrite(persisted, cfg!(target_os = "linux"), clip_text == text)
+        {
             if let Err(e) = persist_transcript(clip_text) {
-                if !persisted {
+                if fatal {
                     tracing::warn!(
                         "[clip] paste: clipboard divert failed, reporting nothing written: {e}"
                     );
@@ -1615,6 +1630,23 @@ mod tests {
         assert!(paste_write_via_live_owner(true, true));
         assert!(paste_write_via_live_owner(true, false));
         assert!(!paste_write_via_live_owner(false, false));
+    }
+
+    /// Off Linux the plain paste write outlives its `Clipboard`, so a chord-time divert keeps it:
+    /// re-writing the same text could only fail into a false "nothing written" that drops the
+    /// user's prior clipboard with no restore.
+    #[test]
+    fn a_durable_paste_write_is_the_divert() {
+        use super::divert_rewrite;
+        // Windows/macOS plain write: nothing to re-write, and a differing form's failure is not
+        // fatal.
+        assert_eq!(divert_rewrite(false, false, true), None);
+        assert_eq!(divert_rewrite(false, false, false), Some(false));
+        // Through the live owner, anywhere: the same.
+        assert_eq!(divert_rewrite(true, true, true), None);
+        assert_eq!(divert_rewrite(true, true, false), Some(false));
+        // A Linux plain write dies with its handle: the divert must persist, or nothing is there.
+        assert_eq!(divert_rewrite(false, true, true), Some(true));
     }
 
     /// Category Cf is invisible but reorders what the reader sees, and `char::is_control()` (Cc
