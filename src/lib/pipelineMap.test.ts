@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyMap, collapseCounts, envPinnedOf, mapBodyFromRows, mapEntryProblem, mapKeyTwinProblem, mapRowEditProblem, mapRowTwinProblems,
-  MAP_ENTRIES_MAX, mapRowsFromRule, mapRowsProblem, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
+  MAP_ENTRIES_MAX, mapRowsFromRule, mapRowsProblem, rulePatchProblem, ruleCountOf, ruleListOf, ruleLockedFor, ruleMapWritable, saveLanded,
   type MapRow,
 } from "./pipelineMap";
 import type { PipelineFetch, PipelineRule, PipelineRulesState, PipelineSaveResult } from "./types";
@@ -188,6 +188,39 @@ describe("mapRowsProblem (the Dictionary's Save gate)", () => {
     // At the cap, plus an exact duplicate and a blank row (neither adds a key), it still saves.
     expect(mapRowsProblem([...full, { id: -1, k: "w0", v: "x" }, { id: -2, k: " ", v: "" }])).toBeNull();
     expect(mapRowsProblem([{ id: 0, k: "one more", v: "" }, ...full])).toMatch(/list is too long \(at most 10,000 mappings\) — delete 1 to save/);
+  });
+});
+
+describe("rulePatchProblem (the Dictionary's Save gate for the other rule bodies)", () => {
+  // Each bound is settings/schema.py's: the server re-validates the whole merged list, so one of
+  // these sent beside a valid map edit 422s the whole save, the map edit included.
+  it("holds a lowercase word outside the server's pattern, or over its length", () => {
+    expect(rulePatchProblem({ pattern: "x", wordlist: ["und", "café"] })).toMatch(/^“é” can’t be in a lowercase word/);
+    expect(rulePatchProblem({ wordlist: ["don't"] })).toMatch(/^“'” /);
+    expect(rulePatchProblem({ wordlist: ["Mrs."] })).toMatch(/^“\.” /);
+    expect(rulePatchProblem({ wordlist: ["a b"] })).toMatch(/^U\+0020 /);
+    expect(rulePatchProblem({ wordlist: ["x".repeat(33)] })).toMatch(/too long for a lowercase word \(at most 32 letters\)/);
+    expect(rulePatchProblem({ wordlist: Array.from({ length: 2001 }, () => "und") })).toMatch(/Too many lowercase words \(at most 2,000\)/);
+  });
+
+  it("takes the words the server takes", () => {
+    expect(rulePatchProblem({ pattern: "x", wordlist: ["x".repeat(32), "Straße", "ÄÖÜäöü"] })).toBeNull();
+    expect(rulePatchProblem({ wordlist: Array.from({ length: 2000 }, () => "und") })).toBeNull();
+  });
+
+  it("holds an over-long pattern, or a regex-list entry field past its bound", () => {
+    expect(rulePatchProblem({ pattern: "a".repeat(513) })).toMatch(/^The pattern is too long \(at most 512 characters\)/);
+    expect(rulePatchProblem({ pattern: "a".repeat(512) })).toBeNull();
+    const entry = { pattern: "p", replacement: "r", label: "l", note: "n" };
+    expect(rulePatchProblem({ entries: [entry, { ...entry, pattern: "a".repeat(600) }] })).toMatch(/^Entry 2’s pattern is too long \(at most 512/);
+    expect(rulePatchProblem({ entries: [{ ...entry, replacement: "a".repeat(513) }] })).toMatch(/^Entry 1’s replacement is too long/);
+    expect(rulePatchProblem({ entries: [{ ...entry, label: "a".repeat(81) }] })).toMatch(/^Entry 1’s label is too long \(at most 80/);
+    expect(rulePatchProblem({ entries: [{ ...entry, note: "a".repeat(4001) }] })).toMatch(/^Entry 1’s note is too long \(at most 4,000/);
+    expect(rulePatchProblem({ entries: [{ ...entry, label: "a".repeat(80), note: "a".repeat(4000) }] })).toBeNull();
+  });
+
+  it("counts code points, as the server does", () => {
+    expect(rulePatchProblem({ pattern: "\u{1F600}".repeat(512) })).toBeNull(); // 1024 UTF-16 units
   });
 });
 

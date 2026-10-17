@@ -30,7 +30,7 @@ import { ReorderControls } from "@/components/ReorderControls";
 import { IS_LINUX } from "@/lib/platform";
 import {
   type MapRow, collapseCounts, nextRowId, mapRowsFromRule, mapBodyFromRows, mapEntryProblem, mapRowEditProblem, mapRowTwinProblems,
-  mapRowsProblem, ruleListOf, ruleCountOf, ruleLockedFor, envPinnedOf, saveLanded, RULE_LIST_SETTING,
+  mapRowsProblem, rulePatchProblem, ruleListOf, ruleCountOf, ruleLockedFor, envPinnedOf, saveLanded, RULE_LIST_SETTING,
 } from "@/lib/pipelineMap";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { swap } from "@/lib/arr";
@@ -976,12 +976,19 @@ export default function Dictionary() {
   // app://navigate unmounted this screen and threw them away in silence.
   const guard = useUnsavedGuard(dirty.length > 0);
   const dirtyNames = useMemo(() => new Set(dirty.map((r) => r.name)), [dirty]);
-  // Why the Save is held: a dirty word-mapping list the server would 422 (a pair its schema rejects,
-  // or a case twin). The PATCH carries every dirty rule, so one such list would fail them all.
+  // Why the Save is held: a dirty rule whose body the server would refuse — a word-mapping list
+  // with a pair its schema rejects, a case twin or too many keys; a lowercase word outside its
+  // pattern; an over-long pattern, replacement, label or note. The PATCH carries every dirty rule,
+  // so one such rule would fail them all.
   const saveBlocked = useMemo(() => {
     for (const r of dirty) {
-      if (r.type !== "callback:map" || !("map" in patchFor(r))) continue;
-      const problem = mapRowsProblem(edits[r.name]?.pairs ?? []);
+      const patch = patchFor(r);
+      const problem =
+        r.type === "callback:map"
+          ? "map" in patch
+            ? mapRowsProblem(edits[r.name]?.pairs ?? [])
+            : null
+          : rulePatchProblem(patch);
       if (problem) return `${ruleListLabel(r.label, r.name, 120)}: ${problem}`;
     }
     return null;

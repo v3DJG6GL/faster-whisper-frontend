@@ -170,14 +170,16 @@ export function mapEntryProblem(k: string, v: string): string | null {
   if (key.length === 0) return "Say a phrase first";
   if (key.length > MAP_FIELD_MAX) return `The phrase is too long (at most ${MAP_FIELD_MAX} characters)`;
   const bad = key.find((c) => !MAP_KEY_CHAR.test(c));
-  if (bad !== undefined) {
-    // An invisible character is named by its code point — quoting it would show nothing.
-    const hex = (bad.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
-    const shown = bad === "\t" ? "A tab" : /[\p{C}\p{Z}]/u.test(bad) ? `U+${hex}` : `“${bad}”`;
-    return `${shown} can’t be in a spoken phrase (letters, digits, spaces and - . , ! ? only)`;
-  }
+  if (bad !== undefined) return `${shownChar(bad)} can’t be in a spoken phrase (letters, digits, spaces and - . , ! ? only)`;
   if ([...v].length > MAP_FIELD_MAX) return `The insert is too long (at most ${MAP_FIELD_MAX} characters)`;
   return null;
+}
+
+/** One refused character as a reason names it. An invisible one is named by its code point —
+ *  quoting it would show nothing. */
+function shownChar(c: string): string {
+  const hex = (c.codePointAt(0) ?? 0).toString(16).toUpperCase().padStart(4, "0");
+  return c === "\t" ? "A tab" : /[\p{C}\p{Z}]/u.test(c) ? `U+${hex}` : `“${c}”`;
 }
 
 /** Why key `k` can't join the list beside `rows` (the row `selfId` it replaces excluded), or null.
@@ -247,6 +249,56 @@ export function mapRowsProblem(rows: MapRow[]): string | null {
     return `The list is too long (at most ${MAP_ENTRIES_MAX.toLocaleString("en-US")} mappings) — delete ${keys.size - MAP_ENTRIES_MAX} to save`;
   }
   return mapRowTwinProblems(rows).values().next().value ?? null;
+}
+
+/** The server's bounds on the other rule bodies the Dictionary edits (settings/schema.py), in code
+ *  points: the `pattern` of a lowercase-wordlist / dedup / upper rule and a regex-list entry's
+ *  pattern and replacement (RULE_PATTERN_MAX), an entry's label and note, and the lowercase word
+ *  list (LowercaseWordlistRule.wordlist: 1–32 letters each, at most 2000 words). */
+export const RULE_PATTERN_MAX = 512;
+export const ENTRY_LABEL_MAX = 80;
+export const ENTRY_NOTE_MAX = 4000;
+export const LOWERCASE_WORD_MAX = 32;
+export const LOWERCASE_WORDS_MAX = 2000;
+/** One character the server's lowercase-word pattern `^[A-Za-zÄÖÜäöüß]+$` takes. */
+const LOWERCASE_WORD_CHAR = /^[A-Za-zÄÖÜäöüß]$/;
+
+/** The first reason the server would 422 a rule PATCH carrying these body fields (`wordlist`,
+ *  `pattern`, `entries` — the map has mapRowsProblem), or null when it takes them. The PATCH carries
+ *  every dirty rule and the server re-validates the whole list, so ONE such field fails the whole
+ *  save: the Dictionary holds it with this reason, as it does for a map. */
+export function rulePatchProblem(patch: Record<string, unknown>): string | null {
+  const tooLong = (what: string, v: unknown, max: number) =>
+    typeof v === "string" && [...v].length > max ? `${what} is too long (at most ${max.toLocaleString("en-US")} characters)` : null;
+  const p = tooLong("The pattern", patch.pattern, RULE_PATTERN_MAX);
+  if (p) return p;
+  if (Array.isArray(patch.entries)) {
+    for (const [i, raw] of patch.entries.entries()) {
+      const e = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+      const n = `Entry ${i + 1}’s`;
+      const ep =
+        tooLong(`${n} pattern`, e.pattern, RULE_PATTERN_MAX) ??
+        tooLong(`${n} replacement`, e.replacement, RULE_PATTERN_MAX) ??
+        tooLong(`${n} label`, e.label, ENTRY_LABEL_MAX) ??
+        tooLong(`${n} note`, e.note, ENTRY_NOTE_MAX);
+      if (ep) return ep;
+    }
+  }
+  if (Array.isArray(patch.wordlist)) {
+    if (patch.wordlist.length > LOWERCASE_WORDS_MAX) {
+      return `Too many lowercase words (at most ${LOWERCASE_WORDS_MAX.toLocaleString("en-US")})`;
+    }
+    for (const w of patch.wordlist) {
+      if (typeof w !== "string") continue;
+      const chars = [...w];
+      if (chars.length > LOWERCASE_WORD_MAX) {
+        return `“${chars.slice(0, 16).join("")}…” is too long for a lowercase word (at most ${LOWERCASE_WORD_MAX} letters)`;
+      }
+      const bad = chars.find((c) => !LOWERCASE_WORD_CHAR.test(c));
+      if (bad !== undefined) return `${shownChar(bad)} can’t be in a lowercase word (letters A–Z, ÄÖÜ, äöü and ß only)`;
+    }
+  }
+  return null;
 }
 
 /** Apply a `callback:map` rule (the editor rows) to `text`, mirroring the backend's matcher
