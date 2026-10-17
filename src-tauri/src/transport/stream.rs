@@ -280,6 +280,13 @@ fn rms_f32(samples: &[f32]) -> f32 {
 /// or a signal that the socket closed / reached its terminal frame.
 enum FromReader {
     Event(StreamEvent),
+    /// A server Close frame that speaks (see [`close_frame_error`]): the close `code` and the
+    /// user-facing message. Kept apart from `Event` because the reader cannot tell the live phase
+    /// from the drain, and what it means differs between them (see [`server_close_event`]).
+    ServerClose {
+        code: u16,
+        message: String,
+    },
     Closed,
 }
 
@@ -310,6 +317,23 @@ fn close_frame_error(code: u16, reason: &str, error_seen: bool) -> Option<String
         if reason.is_empty() { &fallback } else { reason },
         super::MAX_ERROR_TEXT,
     ))
+}
+
+/// What a speaking server Close frame tells the UI. Live, it is an `Error`: the session died.
+/// During the drain after Stop, a restart (1012) or keepalive timeout (1011) costs at most the
+/// phrase still being finalized, the same loss as the drain's idle timeout, so it is the same
+/// non-fatal `Incomplete`: an `Error` would skip the UI's close tail (no stop-mode insert, no
+/// pending phrase-end Enter) and throw away everything already committed. Any other code (a
+/// refused handshake behind a quick tap that went straight to the drain) stays an `Error`.
+fn server_close_event(code: u16, message: String, draining: bool) -> StreamEvent {
+    if draining && matches!(code, 1011 | 1012) {
+        StreamEvent::Incomplete(format!(
+            "{} — the last phrase may be missing.",
+            message.trim_end_matches('.')
+        ))
+    } else {
+        StreamEvent::Error(message)
+    }
 }
 
 /// Drive the stream until stopped or the socket closes. `on_event` is called for
@@ -577,10 +601,10 @@ pub async fn run<F>(
                     // A refused handshake (key, disabled, busy, origin, idle) arrives as an
                     // application close code with NO `error` frame first; a bare `Closed` reads
                     // as a clean end, so the dictation dropped to idle with no word of why.
-                    if let Some(m) =
+                    if let Some(message) =
                         close_frame_error(code, reason, error_seen.load(Ordering::Relaxed))
                     {
-                        let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(m)));
+                        let _ = evt_tx.send(FromReader::ServerClose { code, message });
                     }
                     break;
                 }
@@ -674,6 +698,9 @@ pub async fn run<F>(
                     Some(FromReader::Event(e)) => {
                         if matches!(e, StreamEvent::Partial { .. }) { partials_seen += 1; }
                         forward_saved(e, save_dir, &detached.discard, &mut saved, &mut clips, &mut transcript_docs, &mut transcript_cur, &on_event);
+                    }
+                    Some(FromReader::ServerClose { code, message }) => {
+                        on_event(server_close_event(code, message, false));
                     }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
@@ -808,6 +835,9 @@ pub async fn run<F>(
             match next {
                 Err(_) => break true, // silence — dead or half-open
                 Ok(None) | Ok(Some(FromReader::Closed)) => break false,
+                Ok(Some(FromReader::ServerClose { code, message })) => {
+                    on_event(server_close_event(code, message, true));
+                }
                 Ok(Some(FromReader::Event(e))) => {
                     saw_frame = true;
                     forward_saved(
@@ -868,6 +898,10 @@ pub async fn run<F>(
                         &on_event,
                     );
                 }
+                Some(FromReader::ServerClose { code, message }) => {
+                    saw_error = true;
+                    on_event(server_close_event(code, message, draining));
+                }
                 Some(FromReader::Closed) | None => {
                     reader_closed = true;
                     break;
@@ -886,17 +920,23 @@ pub async fn run<F>(
     // (a write error can break the loop while a `Final` is already in the
     // channel). Without this, a mid-session socket death silently drops the
     // last phrase the server finished.
-    while let Ok(FromReader::Event(e)) = evt_rx.try_recv() {
-        forward_saved(
-            e,
-            save_dir,
-            &detached.discard,
-            &mut saved,
-            &mut clips,
-            &mut transcript_docs,
-            &mut transcript_cur,
-            &on_event,
-        );
+    loop {
+        match evt_rx.try_recv() {
+            Ok(FromReader::Event(e)) => forward_saved(
+                e,
+                save_dir,
+                &detached.discard,
+                &mut saved,
+                &mut clips,
+                &mut transcript_docs,
+                &mut transcript_cur,
+                &on_event,
+            ),
+            Ok(FromReader::ServerClose { code, message }) => {
+                on_event(server_close_event(code, message, draining));
+            }
+            Ok(FromReader::Closed) | Err(_) => break,
+        }
     }
 
     // We own the write half; the reader owns the read half. Once draining is done,
@@ -1734,6 +1774,112 @@ mod emit_message_tests {
         );
         assert_eq!(close_frame_error(1005, "", false), None);
         assert_eq!(close_frame_error(1012, "", true), None);
+    }
+}
+
+#[cfg(test)]
+mod server_close_tests {
+    use super::{run, StreamEvent, StreamParams};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::{mpsc, watch};
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+    use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+    use tokio_tungstenite::tungstenite::Message;
+
+    /// A one-session local server that reads text frames until one contains `trigger`, then
+    /// closes the socket with 1012 the way uvicorn does on a restart.
+    fn serve_restart_after(trigger: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut ws = tokio_tungstenite::tungstenite::accept(s).unwrap();
+            loop {
+                match ws.read() {
+                    Ok(Message::Text(t)) if t.as_str().contains(trigger) => break,
+                    Ok(_) => {}
+                    Err(_) => return,
+                }
+            }
+            let _ = ws.close(Some(CloseFrame {
+                code: CloseCode::Restart,
+                reason: "".into(),
+            }));
+            while ws.read().is_ok() {}
+        });
+        format!("ws://{addr}/v1/audio/transcriptions/stream")
+    }
+
+    fn params(ws_url: String) -> StreamParams {
+        StreamParams {
+            ws_url,
+            model: String::new(),
+            language: String::new(),
+            response_format: "json".into(),
+            prompt: None,
+            decode_overrides: None,
+            override_profile: None,
+            translate_expect: None,
+            client_job: None,
+            api_key: None,
+            in_rate: 16_000,
+            save_dir: None,
+            trim_silence: false,
+            per_utterance_clips: false,
+            detached: Arc::default(),
+        }
+    }
+
+    /// Runs one session against `ws_url` and returns the error/warning/close events it surfaced.
+    async fn session(ws_url: String, stopped: bool) -> Vec<String> {
+        let (pcm_tx, pcm_rx) = mpsc::unbounded_channel();
+        let (stop_tx, stop_rx) = watch::channel(false);
+        // Stopped: Stop lands before the connect (a quick tap), so the session goes straight to
+        // the drain, and the closed PCM channel lets it send flush/stop at once. Otherwise the
+        // capture stays open, so only the server can end the live phase.
+        let pcm_tx = (!stopped).then_some(pcm_tx);
+        if stopped {
+            stop_tx.send(true).unwrap();
+        }
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        run(params(ws_url), pcm_rx, stop_rx, move |e| {
+            let line = match e {
+                StreamEvent::Error(m) => format!("error: {m}"),
+                StreamEvent::Incomplete(m) => format!("incomplete: {m}"),
+                StreamEvent::Closed => "closed".into(),
+                _ => return,
+            };
+            sink.lock().unwrap().push(line);
+        })
+        .await;
+        drop((pcm_tx, stop_tx));
+        let out = seen.lock().unwrap().clone();
+        out
+    }
+
+    /// A restart while the drain waits for the last final costs that phrase only: it must be the
+    /// non-fatal warning, so the UI's close tail still types what was committed.
+    #[tokio::test]
+    async fn a_server_restart_after_stop_warns_instead_of_failing() {
+        let events = session(serve_restart_after(r#""type":"stop""#), true).await;
+        assert_eq!(
+            events,
+            [
+                "incomplete: The server restarted during dictation — the last phrase may be missing.",
+                "closed",
+            ]
+        );
+    }
+
+    /// The same close while the user is still dictating ends the session: that stays an error.
+    #[tokio::test]
+    async fn a_server_restart_mid_dictation_is_still_an_error() {
+        let events = session(serve_restart_after(r#""type":"config""#), false).await;
+        assert_eq!(
+            events,
+            ["error: The server restarted during dictation.", "closed"]
+        );
     }
 }
 
