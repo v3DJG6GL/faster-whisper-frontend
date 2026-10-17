@@ -21,8 +21,11 @@ on:
     branches: [master]
   pull_request:
 
+# The release bump push ("release: v…", see the `check` job's `if`) gets a group of its own:
+# sharing the per-ref group, it cancelled the in-progress run of the very commit being released,
+# so that commit's test suites never ran (release.yml runs only fmt + clippy).
 concurrency:
-  group: ci-${{ github.ref }}
+  group: "ci-${{ github.ref }}-${{ github.event_name == 'push' && startsWith(github.event.head_commit.message, 'release: v') && 'bump' || 'check' }}"
   cancel-in-progress: true
 
 jobs:
