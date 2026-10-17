@@ -239,8 +239,10 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
     const have = new Set([...(cues[i - 1]?.lines ?? []), ...(cues[i + 1]?.lines ?? [])].map(stripMarkup));
     return cues[i].lines.map(stripMarkup).every((l) => !l || have.has(l));
   };
+  // The 1e-6 slack: a cue of exactly 100 ms parses to a float difference a hair either side
+  // of 0.1 (1.1 − 1 > 0.1, 3723.5 − 3723.4 < 0.1), so it would count only by its position.
   const isFreeze = (c: RawCue, i: number): boolean =>
-    c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 && repeatsNeighbour(i);
+    c.start !== undefined && c.end !== undefined && c.end - c.start <= 0.1 + 1e-6 && repeatsNeighbour(i);
   // The rolling signature: without a freeze cue, a cue that only repeats the one before
   // is a line said twice, not a roll.
   // Only a freeze cue with text and a length counts: an empty cue (our export writes one for

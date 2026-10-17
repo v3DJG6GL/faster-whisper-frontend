@@ -536,6 +536,12 @@ describe("site subtitle cleanup", () => {
     expect(back.segments.map((s) => s.text)).toEqual(["Ich bin mit Gott", "aufgewachsen und [Musik]"]);
     expect(back.segments[1]).toMatchObject({ start: 3, end: 7.2 });
   });
+  it("a freeze cue of exactly 100 ms counts wherever it sits in the file", () => {
+    const vtt = "WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nIch bin mit Gott\n\n"
+      + "00:00:01.000 --> 00:00:01.100\nIch bin mit Gott\n\n"
+      + "00:00:01.100 --> 00:00:03.000\nIch bin mit Gott\naufgewachsen\n";
+    expect(parseImportedText("vtt", vtt).segments.map((s) => s.text)).toEqual(["Ich bin mit Gott", "aufgewachsen"]);
+  });
   it("broadcaster hyphenation rejoins, letter-spaced emphasis collapses, conjunctions keep their hyphen", () => {
     const back = parseImportedText("vtt", SRF);
     expect(back.segments.map((s) => s.text)).toEqual([
