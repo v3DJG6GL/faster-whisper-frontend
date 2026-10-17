@@ -196,10 +196,11 @@ export default function QuickAdd() {
    *  `rows`, so unlike the rows re-sync it cannot clobber an unsaved edit — same reasoning that
    *  already split out `fetchRecent`.
    *
-   *  Resolves true when the pin has moved off the list this window targets (re-pinned, or its
-   *  backend removed): the summon then re-syncs even over unsaved rows, which belong to the old
-   *  list — kept, every later mapping went to the list the user had left. The same list at a new
-   *  address is adopted here instead, rows kept, so the pending save retries the new address. */
+   *  Resolves true when the pin has moved off the list this window targets (re-pinned, its
+   *  backend removed, or its Server URL edited — maybe to another server): the summon then
+   *  re-syncs even over unsaved rows, which belong to the old list — kept, every later mapping
+   *  went to the list the user had left. The same list at a new address on this device only is
+   *  adopted here instead, rows kept, so the pending save retries the new address. */
   const refreshLocalConfig = useCallback(async (): Promise<boolean> => {
     try {
       // readConfig, not loadConfig: a mid-session read must never recover (rename the file to

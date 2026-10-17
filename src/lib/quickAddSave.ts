@@ -15,8 +15,10 @@ export function quickAddServerUrl(backend: Backend, settings: AppSettings): stri
   return effectiveServerUrl(serverUrl === backend.serverUrl ? backend : { ...backend, serverUrl }, settings);
 }
 
-/** The list quick-add PATCHes: the pinned slug on its backend, at that backend's address. */
-export type QuickAddSaveTarget = { serverUrl: string; backendId: string; slug: string };
+/** The list quick-add PATCHes: the pinned slug on its backend, at that backend's address.
+ *  `backendUrl` is the backend's own Server URL (canonical, without this device's address
+ *  override) — what quickAddTargetMoved tells a different server by. */
+export type QuickAddSaveTarget = { serverUrl: string; backendUrl: string; backendId: string; slug: string };
 
 /** The save target `cfg` pins, or null when nothing is pinned or the pin names a backend the file
  *  no longer has (removing a backend nulls the pin, but either way there is nothing to save to). */
@@ -24,23 +26,31 @@ export function quickAddTargetOf(cfg: Config | null): QuickAddSaveTarget | null 
   const pin = cfg?.settings.quickAddList ?? null;
   const backend = pin ? cfg!.backends.find((b) => b.id === pin.backendId) ?? null : null;
   if (!pin || !backend) return null;
-  return { serverUrl: quickAddServerUrl(backend, cfg!.settings), backendId: backend.id, slug: pin.slug };
+  return {
+    serverUrl: quickAddServerUrl(backend, cfg!.settings),
+    backendUrl: serverUrlFromPeer(backend.serverUrl) || backend.serverUrl,
+    backendId: backend.id,
+    slug: pin.slug,
+  };
 }
 
-/** Has the pin moved off `current` (another list, another backend, or unpinned)? The window's
- *  unsaved rows belong to `current`, so once it has they are no longer worth keeping over a
- *  re-sync. A new address alone is no move: it is the same list on the same server, reached
- *  another way. No `current` (nothing loaded yet) is never a move. */
+/** Has the pin moved off `current` (another list, another backend, another server, or
+ *  unpinned)? The window's unsaved rows belong to `current`, so once it has they are no longer
+ *  worth keeping over a re-sync. A new "Address on this device" alone is no move: it is the same
+ *  list on the same server, reached another way. An edited Server URL is one — it may name a
+ *  different server (the main store drops a re-addressed backend's connection as describing the
+ *  OLD server), and retrying there would replace that server's list of the same name with this
+ *  one's whole map. No `current` (nothing loaded yet) is never a move. */
 export function quickAddTargetMoved(current: QuickAddSaveTarget | null, cfg: Config | null): boolean {
   if (!current) return false;
   const next = quickAddTargetOf(cfg);
-  return !next || next.backendId !== current.backendId || next.slug !== current.slug;
+  return !next || next.backendId !== current.backendId || next.slug !== current.slug || next.backendUrl !== current.backendUrl;
 }
 
 /** A summon's read of the pin against `current`, the list the window's rows belong to. Unless it
  *  moved, `target` is `current` at the address the file names now: an unreachable address is the
- *  usual reason a save is pending, and the user fixes it by editing Server URL or adding this
- *  device's address, so the pending save must follow the list there, not retry the old one. */
+ *  usual reason a save is pending, and the user fixes it by adding (or changing) this device's
+ *  address, so the pending save must follow the list there, not retry the old one. */
 export function quickAddTargetOnSummon(
   current: QuickAddSaveTarget | null,
   cfg: Config | null,

@@ -52,7 +52,7 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
   const loaded = quickAddTargetOf(cfg({ backendId: "a", slug: "my-words" }));
 
   it("resolves the pinned list on its backend's address", () => {
-    expect(loaded).toEqual({ serverUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" });
+    expect(loaded).toEqual({ serverUrl: "http://a.lan:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" });
   });
 
   it("is a move when the pin names another list, another backend, or nothing", () => {
@@ -64,21 +64,26 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetMoved(loaded, cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "b" })]))).toBe(true); // backend removed
   });
 
-  it("is no move when only the address changed, and the summon adopts the new address", () => {
-    // A save left on "error" by an unreachable address: the user fixes the address, and the
-    // summon used to read that as a re-pin and re-sync over the unsaved mapping it was holding.
-    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
-    expect(quickAddTargetMoved(loaded, readdressed)).toBe(false);
-    expect(quickAddTargetOnSummon(loaded, readdressed)).toEqual({
-      moved: false,
-      target: { serverUrl: "http://a2.lan:8000", backendId: "a", slug: "my-words" },
-    });
+  it("is no move when only this device's address changed, and the summon adopts the new address", () => {
+    // A save left on "error" by an unreachable address: the user adds this device's address, and
+    // the summon used to read that as a re-pin and re-sync over the unsaved mapping it was holding.
     const overridden = cfg({ backendId: "a", slug: "my-words" });
     overridden.settings.sync = { ...overridden.settings.sync!, urlOverrides: { a: "http://100.64.0.5:8000" } };
+    expect(quickAddTargetMoved(loaded, overridden)).toBe(false);
     expect(quickAddTargetOnSummon(loaded, overridden)).toEqual({
       moved: false,
-      target: { serverUrl: "http://100.64.0.5:8000", backendId: "a", slug: "my-words" },
+      target: { serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" },
     });
+    // The legacy schemeless form of the same Server URL is the same server too.
+    const legacy = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "a.lan:8000" })]);
+    expect(quickAddTargetMoved(loaded, legacy)).toBe(false);
+  });
+
+  it("is a move when the backend's Server URL changed: it may be another server", () => {
+    // Retried there, the unsaved rows' whole map replaced that server's list of the same name.
+    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    expect(quickAddTargetMoved(loaded, readdressed)).toBe(true);
+    expect(quickAddTargetOnSummon(loaded, readdressed)).toEqual({ moved: true, target: loaded });
   });
 
   it("keeps the loaded target on a move, and has none before anything was loaded", () => {
