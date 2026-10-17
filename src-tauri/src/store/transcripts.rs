@@ -505,9 +505,16 @@ fn heal_media_paths_in(dirs: &[PathBuf], base: &Path) -> (bool, usize) {
     // there too, so parsing it here would be work for a record nobody loads.
     let tally = fix_records_in(dirs, "heal", Some(MAX_RECORD_BYTES), |key, old| {
         let old_path = std::path::Path::new(old);
-        // Only local absolute paths that are actually gone (a URL in
+        if !old_path.is_absolute() {
+            return None;
+        }
+        // A leftover of the old app folder still exists, but its file moved with the folder.
+        if let Some(moved) = crate::migrate_identifier::migrated_counterpart(old_path) {
+            return Some(moved.to_string_lossy().into_owned());
+        }
+        // Otherwise only local absolute paths that are actually gone (a URL in
         // `sourcePath` or a still-valid path is not ours to touch).
-        if !old_path.is_absolute() || old_path.exists() {
+        if old_path.exists() {
             return None;
         }
         let name = old_path.file_name()?;
@@ -1945,6 +1952,38 @@ mod tests {
             assert!(!rewrite_media_paths_in(std::slice::from_ref(&dir), &lookup));
         }
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The identifier migration's copy fallback can leave a held file behind in the old app
+    /// folder: the record must follow the moved copy, not keep playing the leftover.
+    #[test]
+    fn heal_re_points_a_leftover_of_the_migrated_app_folder_to_its_copy() {
+        use crate::migrate_identifier::{LEGACY_ID, MARKER, NEW_ID};
+        let root = std::env::temp_dir().join(format!("fwf-heal-legacy-{}", uuid::Uuid::new_v4()));
+        let (dir, old, new) = (
+            root.join("history"),
+            root.join(LEGACY_ID),
+            root.join(NEW_ID),
+        );
+        let rel = Path::new("audio").join("dictations").join("a.wav");
+        std::fs::create_dir_all(&dir).unwrap();
+        for app in [&old, &new] {
+            std::fs::create_dir_all(app.join(&rel).parent().unwrap()).unwrap();
+            std::fs::write(app.join(&rel), b"").unwrap();
+        }
+        let leftover = old.join(&rel);
+        let record = serde_json::json!({ "sourcePath": leftover }).to_string();
+        std::fs::write(dir.join("r.json"), &record).unwrap();
+        let dirs = std::slice::from_ref(&dir);
+        let base = new.join("audio");
+        // Not migrated (no marker): a folder that merely carries the old name is left alone.
+        assert_eq!(heal_media_paths_in(dirs, &base), (true, 0));
+        std::fs::write(new.join(MARKER), b"").unwrap();
+        assert_eq!(heal_media_paths_in(dirs, &base), (true, 1));
+        let healed: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join("r.json")).unwrap()).unwrap();
+        assert_eq!(healed["sourcePath"], serde_json::json!(new.join(&rel)));
         let _ = std::fs::remove_dir_all(&root);
     }
 

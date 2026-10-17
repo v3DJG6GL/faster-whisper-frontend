@@ -28,11 +28,11 @@
 use std::path::{Path, PathBuf};
 
 /// The identifier every release up to 0.1.114 shipped with.
-const LEGACY_ID: &str = "ch.informethic.faster-whisper-frontend";
+pub(crate) const LEGACY_ID: &str = "ch.informethic.faster-whisper-frontend";
 /// Must equal `identifier` in tauri.conf.json (a test below holds the two together).
-const NEW_ID: &str = "org.fasterwhisper.frontend";
+pub(crate) const NEW_ID: &str = "org.fasterwhisper.frontend";
 /// Dropped into each migrated folder; its presence means "do not look at the old one again".
-const MARKER: &str = ".migrated-from-legacy";
+pub(crate) const MARKER: &str = ".migrated-from-legacy";
 /// Left beside a config.json whose re-point failed (see `rewrite_config_paths`): every root then
 /// carries MARKER and nothing moves again, so this is what brings a later launch back to it.
 const REPOINT_PENDING: &str = ".migrate-repoint-pending";
@@ -401,7 +401,8 @@ fn migrate_dir(old: &Path, new: &Path, disposable: bool) -> Outcome {
         return Outcome::Failed;
     }
     let _ = std::fs::write(new.join(MARKER), b"");
-    // Best-effort: a leftover old folder is harmless now that the marker exists.
+    // Best-effort: a leftover old folder is harmless now that the marker exists, and the heal
+    // re-points records still naming a file in it to the copy (`migrated_counterpart`).
     let _ = std::fs::remove_dir_all(old);
     Outcome::Moved
 }
@@ -436,6 +437,24 @@ fn after_move(new: &Path) {
     // repair an audio-folder move uses. A custom audio folder elsewhere never moved, so its
     // paths are still valid and heal leaves them alone.
     let _ = std::fs::remove_file(new.join("audio").join(crate::commands::HEAL_STAMP));
+}
+
+/// Where `path`, inside an old app folder that has since been migrated, lives now: the same
+/// relative path under the new folder, when that exists. The heal needs it beyond its "re-find
+/// what is gone" rule: the copy fallback deletes the old folder best-effort, and the file that
+/// made `rename` fail (held by an AV scan, an indexer or a sync client) is the one most likely
+/// to survive that delete. A record still naming the surviving file would play a copy outside
+/// the audio base that no sweep or delete owns, while its real copy sits unreferenced.
+pub(crate) fn migrated_counterpart(path: &Path) -> Option<PathBuf> {
+    let old = path
+        .ancestors()
+        .find(|a| a.file_name().is_some_and(|n| n == LEGACY_ID))?;
+    let new = old.with_file_name(NEW_ID);
+    if !new.join(MARKER).exists() {
+        return None;
+    }
+    let moved = new.join(path.strip_prefix(old).ok()?);
+    moved.exists().then_some(moved)
 }
 
 /// A custom audio/log folder the user placed INSIDE an old app folder moved with it; point
