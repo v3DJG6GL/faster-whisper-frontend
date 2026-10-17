@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipTuckHold,
+  CANCEL_AFFORDANCE_DELAY_MS, PHASE_PERSIST_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckHold,
   currentPhase, nextProcessingSince, phaseClock, phaseElapsedMs, stepProcessingStamp, type ProcessingStamp,
 } from "./chipRules";
 import type { DictationPhase, DictationStatus } from "./types";
@@ -159,6 +159,24 @@ describe("chipTuckHold", () => {
   it("never holds a non-processing status", () => {
     expect(chipTuckHold({ peeked: true, status: "listening", phase: phase(), now: NOW })).toBe(false);
     expect(chipTuckHold({ peeked: true, status: "idle", now: NOW })).toBe(false);
+  });
+});
+
+describe("chipLabelHoldOpens", () => {
+  it("opens a collapsed chip while an end-of-session label's hold is up", () => {
+    // The pill collapsed when the user went quiet; the translate then failed fast at idle. The
+    // linger only ever held an OPEN pill, so the 2.6 s reason pulsed as a bare dot.
+    expect(chipExpansion({ status: "idle", speaking: false, expanded: false, now: NOW })).toBe(false);
+    expect(chipLabelHoldOpens({ holdUntil: NOW + 2600, peeked: false, now: NOW })).toBe(true);
+  });
+
+  it("does not open once the hold has run out, or with none stamped", () => {
+    expect(chipLabelHoldOpens({ holdUntil: NOW + 2600, peeked: false, now: NOW + 2600 })).toBe(false);
+    expect(chipLabelHoldOpens({ holdUntil: 0, peeked: false, now: NOW })).toBe(false);
+  });
+
+  it("leaves a chip tucked at the edge tucked", () => {
+    expect(chipLabelHoldOpens({ holdUntil: NOW + 2600, peeked: true, now: NOW })).toBe(false);
   });
 });
 

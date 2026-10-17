@@ -220,10 +220,15 @@ describe("collapseLingerMs — the docked chip holds only what is still showing"
     expect(collapseLingerMs(0, 2000, 14_000)).toBe(2000);
   });
   it("the chip's collapse effect keys on the live hold deadline, not the persistent payload", () => {
+    const hold = /const holdUntil = Math\.max\(([^)]*)\);/.exec(overlaySrc);
+    expect(hold).not.toBeNull();
+    expect(hold![1]).toContain("noteHoldUntil.current");
+    expect(hold![1]).toContain("pulseHoldUntil.current");
     const m = /const linger = collapseLingerMs\(([\s\S]*?)\);/.exec(overlaySrc);
     expect(m).not.toBeNull();
-    expect(m![1]).toContain("noteHoldUntil.current");
-    expect(m![1]).toContain("pulseHoldUntil.current");
+    expect(m![1]).toMatch(/^holdUntil,/);
+    // …and the same deadline OPENS a collapsed pill, so the label it holds is painted at all.
+    expect(overlaySrc).toMatch(/if \(chipLabelHoldOpens\(\{ holdUntil, peeked, now \}\)\) setExpanded\(true\);/);
     expect(overlaySrc).not.toMatch(/sessionNoteHoldMs\(state\)/);
     // Declared after the note effect, so a settle edge's stamp is in before the linger reads it.
     expect(overlaySrc.indexOf("const linger = collapseLingerMs(")).toBeGreaterThan(

@@ -16,7 +16,7 @@ import {
   type DictationTone,
 } from "@/lib/dictation/dictationVisual";
 import {
-  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipTuckHold, currentPhase,
+  CANCEL_AFFORDANCE_DELAY_MS, chipCancelVisible, chipExpansion, chipLabelHoldOpens, chipTuckHold, currentPhase,
   phaseClock, phaseElapsedMs, type ProcessingStamp, stepProcessingStamp,
 } from "@/lib/chipRules";
 import { applyAccentAndTheme, startAccentDrift, watchSystemTheme, DEFAULT_ACCENT_HUE } from "@/lib/theme";
@@ -938,14 +938,15 @@ export default function Overlay() {
     // session's reset, so an error flash clearing to idle seconds after the settle would hold
     // an empty pill for the full note hold. The payload deps only re-run this when a note
     // lands in a later write than the idle edge.
-    const linger = collapseLingerMs(
-      Math.max(noteHoldUntil.current, pulseHoldUntil.current),
-      state.partial ? COLLAPSE_LINGER_MS : 0,
-      Date.now(),
-    );
+    const holdUntil = Math.max(noteHoldUntil.current, pulseHoldUntil.current);
+    const now = Date.now();
+    // Holding is not enough when the pill is already a dot (it collapsed before the settle): open
+    // it for the hold, or the label is never painted (chipLabelHoldOpens).
+    if (chipLabelHoldOpens({ holdUntil, peeked, now })) setExpanded(true);
+    const linger = collapseLingerMs(holdUntil, state.partial ? COLLAPSE_LINGER_MS : 0, now);
     const t = setTimeout(() => setExpanded(false), linger);
     return () => clearTimeout(t);
-  }, [wantExpanded, state.partial, state.sessionNote, state.translateFailure, state.sessionOutcome]);
+  }, [wantExpanded, state.partial, state.sessionNote, state.translateFailure, state.sessionOutcome, peeked]);
 
   // Status dot colour: `vis` (the shared dictationVisual() mapping, computed above next to
   // srvBusy). The chip layers its own presentation on top: a tucked (peeked) dot is SOLID so

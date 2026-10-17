@@ -112,6 +112,16 @@ export function chipTuckHold(a: {
   return !(phase != null && persists(phase, a.now));
 }
 
+/** Must a collapsed chip OPEN to paint an end-of-session label (the untranslated reason, "not
+ *  inserted", "last phrase may be missing")? The label lives in the expanded body and nothing
+ *  expands the chip at idle (chipExpansion), so a pill that had collapsed before the settle (the
+ *  user went quiet first) showed only a pulsing dot for the whole hold. Yes while the hold the
+ *  note / pulse timers stamped (`holdUntil`) is still up — not for a chip tucked at the edge,
+ *  whose body never mounts and which the tuck rules keep from sliding out to flash an end state. */
+export function chipLabelHoldOpens(a: { holdUntil: number; peeked: boolean; now: number }): boolean {
+  return !a.peeked && a.holdUntil > a.now;
+}
+
 /** Should the ✕ be on screen?
  *
  *  `processingSince` is when the current processing run began (null when not
