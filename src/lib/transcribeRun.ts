@@ -1083,7 +1083,8 @@ const NO_LONGER_TRACKED = "the server no longer tracks this video";
 // A jobs-off server closes the progress entry right after the video ends but keeps no job row
 // to read the outcome (or media id) from: the video may well sit finished on the server.
 const NO_JOB_RECORD = "this server keeps no record of how the video ended — Try again downloads it once more";
-// The poll's two-hour deadline: the server may still be on it, but nothing here watches any more.
+// The poll's two-hour deadline on a run's own video: the server may still be on it, but nothing
+// here watches any more (an on-demand request is still watched — its answer settles the row).
 const TOOK_TOO_LONG = "the video took too long — Try again downloads it once more";
 
 /** The transcript returned while its video was still downloading: keep
@@ -1141,10 +1142,14 @@ function awaitRunUrlVideo(
       return;
     }
     if (Date.now() - startedAt > 2 * 60 * 60 * 1000) {
+      end();
+      // An on-demand request still open (its own, longer timeout) settles the row with its
+      // answer: failed here, Try again would start a second download beside the live one, and
+      // the first answer would then paint "done" over the new attempt.
+      if (request) return;
       // Settle the row like a closed entry does: left on its last "downloading"/"queued", its
       // clock ran on and Try again never showed. A run's own id may have finished meanwhile.
-      end();
-      if (!request && jobRow) settleFromJob(1, TOOK_TOO_LONG);
+      if (jobRow) settleFromJob(1, TOOK_TOO_LONG);
       else paintSettled(null, TOOK_TOO_LONG);
       return;
     }

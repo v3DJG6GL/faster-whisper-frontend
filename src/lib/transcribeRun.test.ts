@@ -1865,11 +1865,13 @@ describe("an on-demand video that finishes is pulled once", () => {
     expect(video?.vcodec).toBe("vp09.00.40.08");
   });
 
-  it("a request still out at the two-hour deadline ends the row failed with Try again", async () => {
+  it("a request still out at the two-hour deadline ends only the poll: its own answer settles the row", async () => {
+    // Failed at the deadline, Try again started a second download beside the live request.
     getTranscribeProgress.mockImplementation(() => Promise.resolve({
       stage: "downloading", video: { state: "queued" },
     } as import("./types").BatchProgress));
-    fetchUrlVideoOnDemand.mockImplementation(() => new Promise(() => {}));
+    let answer: (d: typeof dl) => void = () => {};
+    fetchUrlVideoOnDemand.mockImplementation(() => new Promise((r) => { answer = r; }));
     retryRunVideo(url, ctx);
     tick!(); await flush();
     expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
@@ -1883,9 +1885,10 @@ describe("an on-demand video that finishes is pulled once", () => {
     }
     expect(cleared).toBe(1);
     expect(getTranscribeProgress).toHaveBeenCalledTimes(1);
-    const video = useTranscribeRun.getState().stageMeta.downloading?.video;
-    expect(video?.state).toBe("failed");
-    expect(video?.error).toMatch(/took too long/);
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("queued");
+    answer(dl);
+    await vi.waitFor(() => expect(fetchUrlVideo).toHaveBeenCalledTimes(1));
+    expect(useTranscribeRun.getState().stageMeta.downloading?.video?.state).toBe("done");
   });
 
   it("a poll that sees done first pulls it, and the request's answer does not pull it again", async () => {
