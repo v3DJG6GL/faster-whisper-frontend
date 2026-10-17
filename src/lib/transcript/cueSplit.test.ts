@@ -575,6 +575,19 @@ describe("wrapLines", () => {
     }
     const mix = "Il a dit que 東京 avait 25 000 visiteurs hier soir, tu viens ?";
     for (const cpl of [12, 14, 16, 20]) expect(wrapLines(mix, cpl, 2).join(" "), String(cpl)).toBe(mix);
+    // Beside a CJK character, a guillemet or an opener it stays as written too, and no line breaks there.
+    for (const t of [
+      "Il a dit\u00a0: «\u00a0さようなら\u00a0» puis il est parti",
+      "Nous allons visiter le temple «\u00a0東京寺\u00a0» demain matin",
+      "Le mot x\u00a0(東京) est là",
+    ]) {
+      for (let cpl = 10; cpl <= 42; cpl++) {
+        const lines = wrapLines(t, cpl, 2);
+        // Every no-break space kept as written (a forced break inside 東京寺 drops nothing).
+        expect(lines.join("").replace(/ /g, ""), `${cpl}: ${JSON.stringify(lines)}`).toBe(t.replace(/ /g, ""));
+        expect(lines.some((l) => /^[\u00a0(]|[\u00a0(]$/.test(l)), `${cpl}: ${JSON.stringify(lines)}`).toBe(false);
+      }
+    }
     // A no-break run longer than a line still wraps at its spaces, losing none of its characters.
     const run = "東京 un deux trois quatre cinq six sept";
     expect(wrapLines(run, 13, 2).join("").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));

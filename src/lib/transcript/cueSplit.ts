@@ -540,6 +540,7 @@ const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
  *  them inside "25 000" and before ? ! : ; », and a cut or line break there split the number
  *  or opened a line with the mark. */
 const BREAK_SPACE = /[^\S\u00a0\u202f\u2007]/;
+const NO_BREAK_RUN = /^[\u00a0\u202f\u2007]+$/;
 const BREAK_SPACES = /[^\S\u00a0\u202f\u2007]+/;
 /** One code point of whitespace-free text with the opening brackets before it and the
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
@@ -1128,6 +1129,9 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     let w = w0;
     let idx = idx0;
     const gap = idx > end;
+    // Only no-break spaces before it (« さようなら », 東京 avait): no word break, as in a spaced
+    // line — it joins the token before it with them as written, never a break rejoined as " ".
+    const nb = gap && toks.length > 0 && NO_BREAK_RUN.test(t.slice(end, idx)) ? t.slice(end, idx) : "";
     end = idx + w.length;
     const k = toks.length - 1;
     // Its quote run (after any brackets, as in （"): at most six open, as in tokenUnits.
@@ -1162,15 +1166,19 @@ function mixedTokens(t: string, q?: QuoteCtx): { toks: string[]; gaps: boolean[]
     // is a closer in German/Danish usage („Hallo“, »Hallo«), and peeling it off left „Hallo /
     // “東京… on two lines.
     const open = k >= 0 && !gap ? /\p{Ps}+["']*$/u.exec(toks[k]) : null;
+    // Behind a no-break space (x (東京) the opener stays, and what it opens joins it: peeled
+    // off, the line ended on the no-break space.
+    const held = !!open && /[\u00a0\u202f\u2007]$/u.test(toks[k].slice(0, open.index));
     let from = idx;
-    if (open && open.index > 0) {
+    if (open && open.index > 0 && !held) {
       toks[k] = toks[k].slice(0, open.index);
       w = open[0] + w;
       from -= open[0].length;
     }
     const opened = quoted === k;
+    if (nb || held) toks[k] += nb + w;
     // A word mixing fullwidth and ASCII letters or digits ("ＰＳ5", "ＮＨＫnews") is one word.
-    if (
+    else if (
       k >= 0 && !gap
       && ((!opens && /^[\p{Pe}\p{Pf}\p{Po}]/u.test(w)) || /^[\p{Ps}\p{Pi}]+$/u.test(toks[k]) || opened
         || (/[０-９Ａ-Ｚａ-ｚ]$/u.test(toks[k]) && /^[A-Za-z0-9]/.test(w))
@@ -1196,13 +1204,30 @@ function wrapTokens(
   const cum = [0];
   toks.forEach((w, i) => cum.push(cum[i] + (gaps[i] ? 1 : 0) + w.length));
   const T = toks.length;
-  /** Length of the space-free run toks[i] belongs to (mixed tokenization only). */
-  const runLen: number[] = [];
-  for (let i = 0, start = 0; i <= T; i++) {
-    if (i === T || (i > 0 && gaps[i])) {
-      for (let k = start; k < i; k++) runLen[k] = cum[i] - cum[start] - (gaps[start] ? 1 : 0);
-      start = i;
+  /** Length of the space-free run at toks[i]'s first (runL) and last (runR) character (mixed
+   *  tokenization only). A no-break space inside a token ends a run too: the word of « 東京 » is
+   *  東京, a short one, as it was while the space split the tokens. */
+  const runL: number[] = [];
+  const runR: number[] = [];
+  {
+    let line = "";
+    toks.forEach((w, i) => { line += (gaps[i] ? " " : "") + w; });
+    const from: number[] = [];
+    for (let p = 0, st = 0; p < line.length; p++) {
+      if (/\s/.test(line[p])) st = p + 1;
+      from.push(st);
     }
+    const to: number[] = [];
+    for (let p = line.length - 1, e = line.length; p >= 0; p--) {
+      if (/\s/.test(line[p])) e = p;
+      to[p] = e;
+    }
+    toks.forEach((w, i) => {
+      const a = cum[i + 1] - w.length;
+      const z = cum[i + 1] - 1;
+      runL.push(to[a] - from[a]);
+      runR.push(to[z] - from[z]);
+    });
   }
   /** Some seam has no space: a CJK/Thai-like run of spaced text breaks inside. */
   const mixed = gaps.some((g, i) => i > 0 && !g);
@@ -1254,7 +1279,7 @@ function wrapTokens(
         // A phrase space between two longer runs ("…行った 楽しかった…") that keeps both lines
         // within the cap beats a balanced cut inside a CJK word. Not beside a short word or
         // number ("Tokyo", "2024 年"): that one stays balanced into its sentence.
-        if (mixed && a <= cpl && b <= cpl * (n - 1) && Math.min(runLen[i - 1], width(lo, i)) > 6 && runLen[i] > 6) {
+        if (mixed && a <= cpl && b <= cpl * (n - 1) && Math.min(runR[i - 1], width(lo, i)) > 6 && runL[i] > 6) {
           s += 5;
         }
       }
@@ -1263,7 +1288,7 @@ function wrapTokens(
       // balance or break score); when no space fits, every space seam already carries -1000.
       // A longer CJK run is a sentence, and its seams balance against the spaces (only a
       // phrase space between two longer runs gets the small bonus above).
-      else if (gaps.length && (runLen[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
+      else if (gaps.length && (runL[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
       // Right after a compound's hyphen (tokenUnits keeps it on the line it ends): the seam a
       // compound longer than a line wraps at, rather than one inside its parts. Not on a line
       // under a third of the target: the bonus left a stub ("s-") alone on one.
