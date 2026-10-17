@@ -462,10 +462,12 @@ export function Stepper({
   // value — an untouched focused field steps exactly like an unfocused one (an out-of-range own
   // value isn't clamped first, and a value that moved under the focus isn't stepped from stale
   // text). stepBy and the buttons' disabled bounds share it so they can't disagree about where a
-  // bound is.
+  // bound is. Retyping an inheriting field's value is no edit either, by commit()'s own rule:
+  // clamped as typed, an out-of-range inherited 500 retyped verbatim made ↑ pin 100 (max).
   const stepBase = (t: string, f: boolean, v: number) => {
     const n = parse(t);
-    return f && editedRef.current && Number.isFinite(n) ? round(clamp(n)) : v;
+    const same = inheriting && inherited !== undefined && (t === String(v) || round(n) === v);
+    return f && editedRef.current && Number.isFinite(n) && !same ? round(clamp(n)) : v;
   };
 
   function stopRepeat() {
