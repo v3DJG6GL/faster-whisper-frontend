@@ -916,6 +916,22 @@ fn delete_record_media(
     }
 }
 
+/// The extension a media copy of `src` keeps: the source's own, lowercased, when it is short and
+/// plain, else `bin`. Never `tmp`: every sweep takes a `.tmp` for an in-progress copy, so a final
+/// `<id>.tmp` would be skipped by the orphan sweep and the storage tally for good.
+fn media_copy_ext(src: &Path) -> String {
+    src.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase())
+        .filter(|e| {
+            !e.is_empty()
+                && e.len() <= 5
+                && e.bytes().all(|b| b.is_ascii_alphanumeric())
+                && e != "tmp"
+        })
+        .unwrap_or_else(|| "bin".into())
+}
+
 /// Copy a run's input audio into `<base>/files/<id>.<ext>`, so the
 /// workbench can still play it after the original moves. Verbatim copy, no
 /// transcode; over-cap sources return Ok(None) ("no copy" — not an error).
@@ -943,14 +959,7 @@ pub async fn save_transcript_media(
         }
         crate::audio::create_dir_private(&dir)
             .map_err(|e| format!("could not create the media folder: {e}"))?;
-        let ext = src
-            .extension()
-            .and_then(|e| e.to_str())
-            .map(|e| e.to_ascii_lowercase())
-            .filter(|e| {
-                !e.is_empty() && e.len() <= 5 && e.bytes().all(|b| b.is_ascii_alphanumeric())
-            })
-            .unwrap_or_else(|| "bin".into());
+        let ext = media_copy_ext(&src);
         let dest = dir.join(format!("{id}.{ext}"));
         let tmp = dir.join(format!("{id}.{ext}.tmp"));
         if let Err(e) = std::fs::copy(&src, &tmp) {
@@ -1343,6 +1352,17 @@ fn wipe_records(dir: &Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A `.tmp` source would leave a final copy every sweep takes for an in-progress one, never
+    /// reclaimed once its record goes.
+    #[test]
+    fn a_media_copy_never_keeps_a_tmp_extension() {
+        assert_eq!(media_copy_ext(Path::new("/home/u/capture.tmp")), "bin");
+        assert_eq!(media_copy_ext(Path::new("/home/u/capture.TMP")), "bin");
+        assert_eq!(media_copy_ext(Path::new("/home/u/talk.M4A")), "m4a");
+        assert_eq!(media_copy_ext(Path::new("/home/u/talk")), "bin");
+        assert_eq!(media_copy_ext(Path::new("/home/u/talk.toolong")), "bin");
+    }
 
     #[test]
     fn heal_keeps_video_and_audio_apart() {
