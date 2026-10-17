@@ -1100,7 +1100,9 @@ let beganInjection = false;
 // press Enter — instead of waiting for the backend's long-silence hard break (~20s, far too
 // late). `phraseDirty` = committed text typed since the last auto-Enter.
 let phraseDirty = false;
-// Whether the LAST delivered live phrase was diverted to the clipboard (focus moved, chord held).
+// Whether the LAST delivered live phrase went to the clipboard rather than the field: a typed
+// phrase Rust diverted (focus moved, chord held), or one the clipboard branch copied (a blocked or
+// non-editable window, a clipboard app rule).
 // Read IN the queue by every Enter producer: they arm off `phraseDirty` synchronously, before the
 // phrase task that diverts has run, so only this in-queue flag can stop them — the queued Enter
 // would otherwise submit the partial message or press Return in the new window.
@@ -2365,6 +2367,10 @@ async function ensureListeners(): Promise<void> {
               // restore puts the old snapshot back over it. Covers a fast paste→clipboard-only
               // switch with no pause between, which would otherwise leave clipDirty set from the paste.
               clipDirty = false;
+              // Nor an Enter or newline separator after it, like a typed phrase's divert: the
+              // phrase sits on the clipboard, and a Return now lands in whatever window the user
+              // moves to for pasting it — submitting that draft before the paste.
+              lastPhraseDiverted = true;
               // The phrase was DELIVERED — to the clipboard, not typed, but delivered: it is on
               // the clipboard for the user to paste, and they will. So it counts against the typed
               // baseline like a typed phrase does. Leaving `injectedText` behind here meant that

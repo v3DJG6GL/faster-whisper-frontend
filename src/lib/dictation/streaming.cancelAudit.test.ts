@@ -324,6 +324,15 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(mask(fns.clearPhraseEnd)).toContain("lastPhraseDiverted = false;");
   });
 
+  it("a phrase the clipboard branch copied disarms the per-phrase and tail Enter too", () => {
+    // A blocked / non-editable / clipboard-rule window: the phrase is copied, not typed, and the
+    // Enter tasks resolve the window focused when they run — the one the user moved to for the
+    // paste. Only the in-queue flag can stop that Return.
+    const copied = mask(bodyAfter(finalBody, "if (!t.isSelf && landed)"));
+    expect(copied).toContain("signalInsert(");
+    expect(copied).toContain("lastPhraseDiverted = true;");
+  });
+
   it("a translated block's gap follows the field's last typed phrase, not the typed baseline", () => {
     // `injectedText` is emptied by a hard break (the next block glued onto the last line) and
     // survives a landed Return (the next block opened with three more Returns).
