@@ -600,6 +600,18 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(block.indexOf("insertCfg !== cfg", copy)).toBeGreaterThan(copy);
   });
 
+  it("a failed end-of-session insert settles its bookkeeping before a re-press can start over the error", () => {
+    // "error" is not a busy status: a re-press during the visibility wait replaced insertCfg, and
+    // the timer's identity guard then skipped the failed session's History capture and outcome.
+    const settle = mask(bodyAfter(streamingSrc, "function settleToIdleAfterInjection("));
+    const drained = settle.indexOf("injectChain.then(");
+    const timer = settle.indexOf("setTimeout(");
+    const now = settle.search(/if \(insertCfg === cfg && useApp\.getState\(\)\.status ===\s+\) \{\s*settleIdle\(true\);\s*return;/);
+    expect(drained).toBeGreaterThanOrEqual(0);
+    expect(now, "the error settle must run in the drained callback").toBeGreaterThan(drained);
+    expect(now, "…before the visibility wait").toBeLessThan(timer);
+  });
+
   it("the stop-mode failed-insert recovery books the clipboard outcome before flashing", () => {
     // settleToIdleAfterInjection runs settleIdle(true) on the "error" status, so without the
     // booking History and the outcome report record "none" for text the chip says is on the clipboard.

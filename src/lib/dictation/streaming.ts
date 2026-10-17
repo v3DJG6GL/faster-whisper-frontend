@@ -1876,6 +1876,15 @@ function inSession(): boolean {
 // ERROR_LINGER_MS — see the guard inside.
 function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): void {
   void injectChain.then(() => {
+    // A failed end-of-session insert flashed "error" synchronously before its task returned, so
+    // settle it NOW, with no visibility wait: "error" is not a busy status, and a re-press during
+    // the wait would start a new session that replaces insertCfg — the timer below would then skip
+    // this session's History capture and usage outcome for good. No input event can land between
+    // that flash and this callback (microtasks only).
+    if (insertCfg === cfg && useApp.getState().status === "error") {
+      settleIdle(true);
+      return;
+    }
     const wait = Math.max(0, MIN_INJECT_VISIBLE_MS - (performance.now() - startedAt));
     setTimeout(() => {
       // Identity-check the session, not just the status: this `.then` was attached to THIS session's
@@ -1887,7 +1896,8 @@ function settleToIdleAfterInjection(startedAt: number, cfg: InsertCfg | null): v
       if (insertCfg === cfg && curStatus === "injecting") {
         settleIdle();
       } else if (insertCfg === cfg && curStatus === "error") {
-        // The inject failed and flashError is showing the message for ERROR_LINGER_MS.
+        // An error flashed during the wait (the drained-chain case settled above).
+        // flashError is showing the message for ERROR_LINGER_MS.
         // Run the same bookkeeping settleIdle does (lease, history, outcome, session fields)
         // but leave status/dictationError intact so the user can read the recovery hint.
         // flashError's own timer will clear to idle when it expires.
