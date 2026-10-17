@@ -1004,7 +1004,13 @@ export function SyncTab() {
         backendId: syncBackend.id,
       });
       if (!r.ok && r.status !== 404) {
-        useApp.getState().setSyncRuntime({ syncStatus: "error", syncError: deleteFailureMessage(r) });
+        // A real answer is the sync route answering: an earlier 404's "doesn't support settings
+        // sync" would hide this failure (the notice below shows only while that flag is clear).
+        useApp.getState().setSyncRuntime({
+          syncStatus: "error",
+          ...(r.status > 0 ? { syncUnsupported: false } : {}),
+          syncError: deleteFailureMessage(r),
+        });
         return;
       }
       await resetSyncState();

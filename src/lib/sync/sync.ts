@@ -3531,12 +3531,16 @@ function handleTransportFailure(status: number, error?: string): void {
       syncError: "This server doesn't support settings sync — update faster-whisper-backend.",
     });
   } else if (status === 401 || status === 403) {
-    setRuntime({ syncStatus: "error", syncError: "The server rejected the API key." });
+    // Any answer but a 404 is the sync route answering: the Sync tab hides `syncError` while an
+    // earlier 404's "doesn't support settings sync" stands, so this must clear it. Status 0 (no
+    // answer at all) tells nothing about the route and leaves it.
+    setRuntime({ syncStatus: "error", syncUnsupported: false, syncError: "The server rejected the API key." });
   } else {
     // An empty error page (a proxy's bare 502/503) carries no detail: still name the status, or
     // the Sync tab shows a warn dot with no notice.
     setRuntime({
       syncStatus: "error",
+      ...(status > 0 ? { syncUnsupported: false } : {}),
       syncError: error?.trim() || (status ? `Sync failed (HTTP ${status}).` : "Sync failed."),
     });
   }

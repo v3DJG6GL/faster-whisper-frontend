@@ -172,3 +172,28 @@ it("a push conflict clears an earlier 404's unsupported-server flag", async () =
   expect(s.syncUnsupported).toBe(false);
   expect(s.syncError).toMatch(/resolve the conflict/);
 });
+
+// The same for every other answer: after a backend update a wrong key's 401 (or a 5xx) stayed
+// hidden behind "update faster-whisper-backend". No answer at all (status 0) says nothing.
+it("an answered push failure after a 404 clears the unsupported-server flag, an unreachable one keeps it", async () => {
+  const { edited } = await seed();
+  editChipScale(edited);
+  api.fail = 404;
+  await pushNow(true);
+  expect(useApp.getState().syncUnsupported).toBe(true);
+  api.fail = 0;
+  await pushNow(true);
+  expect(useApp.getState().syncUnsupported).toBe(true);
+  api.fail = 401;
+  await pushNow(true);
+  let s = useApp.getState();
+  expect(s.syncUnsupported).toBe(false);
+  expect(s.syncError).toBe("The server rejected the API key.");
+  api.fail = 404;
+  await pushNow(true);
+  api.fail = 502;
+  await pushNow(true);
+  s = useApp.getState();
+  expect(s.syncUnsupported).toBe(false);
+  expect(s.syncError).toBe("HTTP 502");
+});
