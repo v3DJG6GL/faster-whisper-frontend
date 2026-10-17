@@ -202,9 +202,10 @@ export function cjkWrapsLines(lines: Iterable<string>): boolean {
 export function cjkWraps(s: string): boolean {
   return cjkWrapsLines(s.split("\n"));
 }
-/** Opening and closing quotation marks (“ ” ‘ ’ « »): General Punctuation, so not unspaced
- *  themselves, but Chinese text sets “ ” with no space around them. */
-const QUOTE_MARK = /[\p{Pi}\p{Pf}]/u;
+/** Opening and closing quotation marks (“ ” ‘ ’ « », and ASCII " ' — Po, which Whisper and
+ *  our exports write too): not unspaced themselves, but Chinese text sets them with no space
+ *  around. */
+const QUOTE_MARK = /[\p{Pi}\p{Pf}"']/u;
 /** Whether a wrapped line's end (`end`) or the next line's start is unspaced at a seam: its edge
  *  character, or — past a run of quotation marks there — the character beyond the run, so
  *  "他说：" / "“我们走吧。”" and "…。”" / "然后…" join like any CJK seam while "“hi”" / "然后"
@@ -213,7 +214,7 @@ export function seamUnspaced(s: string, end: boolean): boolean {
   const c = edgeChar(s, end);
   if (!QUOTE_MARK.test(c)) return unspacedChar(c);
   // Anchored to the run's first quote at the end, so a long run is scanned once.
-  const rest = end ? s.replace(/(?<![\p{Pi}\p{Pf}])[\p{Pi}\p{Pf}]+$/u, "") : s.replace(/^[\p{Pi}\p{Pf}]+/u, "");
+  const rest = end ? s.replace(/(?<![\p{Pi}\p{Pf}"'])[\p{Pi}\p{Pf}"']+$/u, "") : s.replace(/^[\p{Pi}\p{Pf}"']+/u, "");
   const n = edgeChar(rest, end);
   return !QUOTE_MARK.test(n) && unspacedChar(n);
 }

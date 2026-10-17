@@ -1319,6 +1319,20 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("然后\n“hi”", true)).toBe("然后 “hi”");
     expect(joinLineBreaks("你好，\n“”\n世界。", true)).toBe("你好， “” 世界。");
   });
+  it("with wraps, a seam on an ASCII quote is judged by the character past the quotes too", () => {
+    // " and ' are Po, not Pi/Pf: a seam on one used to keep a space between two CJK characters.
+    expect(joinLineBreaks('他说："我们走吧。"\n然后他们一起走了回家', true)).toBe('他说："我们走吧。"然后他们一起走了回家');
+    expect(joinLineBreaks('我看完了。\n"好的"他回答说', true)).toBe('我看完了。"好的"他回答说');
+    expect(joinLineBreaks("他说：'我们走吧。'\n然后他们走了", true)).toBe("他说：'我们走吧。'然后他们走了");
+    // Our own wrap of such a line joins back to it.
+    const t = '他说："我们走吧。"然后他们一起走了回家';
+    expect(joinLineBreaks(wrapLines(t, 12, 2).join("\n"), true)).toBe(t);
+    // A Latin neighbour past the quote keeps its space; a line of quotes only is no unspaced seam.
+    expect(joinLineBreaks('he said "hello"\n然后', true)).toBe('he said "hello" 然后');
+    expect(joinLineBreaks("the dogs'\n然后", true)).toBe("the dogs' 然后");
+    expect(joinLineBreaks('然后\n"hi"', true)).toBe('然后 "hi"');
+    expect(joinLineBreaks('你好，\n""\n世界。', true)).toBe('你好， "" 世界。');
+  });
   it("a long blank run before no line break stays fast", () => {
     const s = "x" + " ".repeat(60_000) + "y\nz";
     const t0 = performance.now();
