@@ -525,6 +525,24 @@ describe("wrapLines", () => {
     const parts = cutByShare("Il a dit « bonjour » à Paris", [1, 1]);
     expect(parts).toEqual(["Il a dit", "« bonjour » à Paris"]);
   });
+  it("a no-break space is no word break, and a line keeps it as written", () => {
+    // /\s/ matches U+00A0, U+202F and U+2007: "25 000" was cut and wrapped across its
+    // no-break space, and a wrapped line rewrote "viens ?" with a plain space.
+    const parts = cutByShare("Le prix est de 1 250 000 euros", [1, 1], "fr");
+    expect(parts.some((p) => p.includes("1 250 000")), JSON.stringify(parts)).toBe(true);
+    expect(parts.join(" ")).toBe("Le prix est de 1 250 000 euros");
+    const won = "Il a gagné 25 000 euros hier soir avec";
+    const lines = wrapLines(won, 13, 2, 0, undefined, "fr");
+    expect(lines.some((l) => l.includes("25 000")), JSON.stringify(lines)).toBe(true);
+    expect(lines.join(" ")).toBe(won);
+    const ask = "Tu viens ? Oui, je viens tout de suite";
+    const asked = wrapLines(ask, 12, 2, 0, undefined, "fr");
+    expect(asked.some((l) => l.includes("viens ?")), JSON.stringify(asked)).toBe(true);
+    expect(asked.join(" ")).toBe(ask);
+    // A no-break run longer than a line still wraps at its spaces, losing none of them.
+    const run = "un deux trois quatre cinq six sept";
+    expect(wrapLines(run, 13, 2).join(" ").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
+  });
   it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
     const t = "We met the people from Procter & Gamble at the big conference yesterday";
     // At 38 the only seam keeping both lines within the cap is after the "&".

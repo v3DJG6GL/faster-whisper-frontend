@@ -508,6 +508,11 @@ const MIXED_TOKEN = new RegExp(
   "gu",
 );
 const OPENER = new RegExp(`[${OPEN_PUNCT}]`, "u");
+/** A word break: whitespace but the no-break spaces (U+00A0, U+202F, U+2007) — French sets
+ *  them inside "25 000" and before ? ! : ; », and a cut or line break there split the number
+ *  or opened a line with the mark. */
+const BREAK_SPACE = /[^\S\u00a0\u202f\u2007]/;
+const BREAK_SPACES = /[^\S\u00a0\u202f\u2007]+/;
 /** One code point of whitespace-free text with the opening brackets before it and the
  *  closing brackets/stops after it — the unit unspaced text splits and wraps by, so no
  *  piece or line ends on 「 or starts with 」 or 。. Combining marks, variation selectors,
@@ -791,7 +796,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
     if (splitsUnit(text, i)) continue;
     if (
       spaced
-        ? /\s/.test(text[i])
+        ? BREAK_SPACE.test(text[i])
           // Seam judged by code point (edgeChar): an Ext-B character or a decomposed "が"
           // before i is unspaced too, as at every other seam.
           || (unspacedChar(edgeChar(text.slice(Math.max(0, i - 8), i), true))
@@ -844,12 +849,12 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevWord, { next: text.slice(i, i + 9).trimStart(), lang }))
             ? 16
             : CLAUSE.test(back) ? 9 : 0) +
-        (sylSpaced && /\s/.test(text[i]) ? 9 : 0) -
+        (sylSpaced && BREAK_SPACE.test(text[i]) ? 9 : 0) -
         // A seam inside a short CJK word of spaced text ("東京") is a fallback, as in wrapTokens.
-        (spaced && !sylSpaced && !/\s/.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
+        (spaced && !sylSpaced && !BREAK_SPACE.test(text[i]) && runAt(text, i) <= 6 ? 9 : 0) -
         // A space right before a lone closing mark or after a lone opening one (French
         // « bonjour », "Ça va ?", Thai "บ่อย ๆ"): the mark stays with its word.
-        (/\s/.test(text[i])
+        (BREAK_SPACE.test(text[i])
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
@@ -908,7 +913,11 @@ export function wrapLines(
   const toks: string[] = [];
   const gaps: boolean[] = [];
   if (spaced && !BREAKS_ANYWHERE.test(t)) {
-    const words = t.split(/\s+/);
+    // Split at word breaks only, so a no-break space stays inside its word as written (it was
+    // rejoined as a plain space); a no-break run longer than a line still splits at its spaces,
+    // since tokenUnits would drop them.
+    const words = t.split(BREAK_SPACES)
+      .flatMap((w) => (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]));
     words.forEach((w, k) => {
       const parts = w.length > cpl ? tokenUnits(w) : [w];
       toks.push(...parts);
