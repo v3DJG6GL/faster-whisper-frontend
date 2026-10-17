@@ -351,9 +351,14 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     const tid = keyTrack(b.key);
     return b.state === "active" && !!tid && !kept.has(tid);
   };
+  // What the cap overwrote in `snap`: under Custom a click restores it (flipWith), so the
+  // cap's grey and its machine-translation fill-in stay what they are on screen — temporary —
+  // instead of becoming the pick, and freeing a slot brings the cut track back.
+  const preCap: Record<string, boolean> = {};
   const capOff = (b: SiteBadge, fills: boolean) => {
     b.state = "idle";
     b.title = `Over the 8-subtitle download limit — ${fills ? "machine translation fills in" : "not downloaded"}`;
+    preCap[b.key!] = snap[b.key!];
     snap[b.key!] = false;
   };
   const cutOut = new Set<string>();
@@ -367,7 +372,10 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     // Side by side already translates a site language: that stays its source.
     const fills = bare && (tmap[code] === true || mtB.state === "active");
     for (const b of cut) capOff(b, fills);
-    if (fills && mtB.state !== "active") setMt(mtB, code, true);
+    if (fills && mtB.state !== "active") {
+      preCap[mtB.key!] = snap[mtB.key!];
+      setMt(mtB, code, true);
+    }
     else if (bare && !fills) {
       cutOut.add(code);
       setMt(mtB, code, false);
@@ -457,6 +465,7 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     tmap,
     codes,
     capped,
+    preCap,
     mtCapped,
   };
 }
@@ -558,9 +567,9 @@ export function flipChipPart(input: SiteSubsInput, st: SiteSubsState, key: strin
   return ch;
 }
 
-/** flip on an already-built `model(input, st)`. Only READS `m` (snap, codeOf, capped, mtCapped,
- *  tmap, targets, view.run) — derive's limit pass, which only retitles badges and chip parts,
- *  hands it its own model. */
+/** flip on an already-built `model(input, st)`. Only READS `m` (snap, preCap, codeOf, capped,
+ *  mtCapped, tmap, targets, view.run) — derive's limit pass, which only retitles badges and chip
+ *  parts, hands it its own model. */
 function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof model>, key: string): SiteChange {
   // A greyed over-cap badge (the download or the translation limit): switching it on would be
   // greyed again by the same cap, so the click would only flip a preset to Custom with nothing
@@ -569,7 +578,11 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   if ((mm && m.capped.has(mm[2])) || (key.startsWith("mt:") && m.mtCapped.has(key.slice(3)))) {
     return { state: st, targets: [...input.targets] };
   }
-  const next = { ...m.snap, [key]: !m.snap[key] };
+  // Already Custom: the pick under the 8-track cap is the one before it (preCap) — a click
+  // elsewhere, such as switching a track off to free a slot, must not save the cap's grey and
+  // fill-in. Entering Custom from a preset (pickPolicy) snapshots what is on screen instead.
+  const base = st.policy === "custom" ? { ...m.snap, ...m.preCap } : m.snap;
+  const next = { ...base, [key]: !m.snap[key] };
   // One site track can show twice — as the original row's candidate (cand:) and on its own
   // language's row (ex:) — and either lit badge downloads it: both flip together, or a
   // click shows it struck while the run still fetches it. The candidate has no language
@@ -605,7 +618,8 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
     return { state: st, targets: [...input.targets] };
   }
   if (c && ownProp(tg, c) && !next[key]) {
-    const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k]);
+    // A capped track kept on in the pick is no source this run: the cap greys it again.
+    const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k] && !m.capped.has(keyTrack(k) ?? ""));
     if (!left.length) {
       if (key.startsWith("mt:")) tg[c] = false;
       else {

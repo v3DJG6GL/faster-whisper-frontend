@@ -410,6 +410,24 @@ describe("tracks and switches", () => {
     // The site-only overflow languages still drop out.
     expect(v.chips.map((c) => c.code)).not.toContain("fi");
   });
+  it("under Custom the cap's grey stays temporary: freeing a slot brings the cut track back", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "sv"];
+    const inp = input({ tracks: [tr("de", "de"), tr("auto-de", "de", { kind: "auto" }), ...langs.map((l) => tr(l, l))], targets: ["sv"], site: "YouTube" });
+    const [i0, s0] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    expect(derive(i0, s0).rows.find((r) => r.code === "sv")!.badges.map((b) => b.state)).toEqual(["off", "active"]);
+    // Auto-generated on pushes Swedish past the cap: machine translation fills in.
+    const s1 = { ...s0, auto: true };
+    expect(derive(i0, s1).run!.mtTargets).toEqual(["sv"]);
+    // English off frees a slot: the Swedish subtitle picked is downloaded again, not translated.
+    const [i2, s2] = apply(i0, flip(i0, s1, "ex:en"));
+    expect(derive(i2, s2).run!.fetch).toContain("sv");
+    expect(derive(i2, s2).run!.mtTargets).not.toContain("sv");
+    // And auto-generated off again keeps that pick.
+    const v = derive(i2, { ...s2, auto: false });
+    expect(v.rows.find((r) => r.code === "sv")!.badges.map((b) => b.state)).toEqual(["off", "active"]);
+    expect(v.run!.fetch).toContain("sv");
+    expect(v.run!.mtTargets).not.toContain("sv");
+  });
   it("switching a site track on at a full download changes nothing — no machine translation in its place", () => {
     const langs = ["de", "fr", "es", "it", "pt", "nl", "ru", "pl", "ja"];
     const inp = input({ tracks: langs.map((l) => tr(l, l)), spoken: "en", targets: [], maxTargets: 3 });
