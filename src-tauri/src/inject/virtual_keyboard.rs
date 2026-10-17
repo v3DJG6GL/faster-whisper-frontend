@@ -356,10 +356,10 @@ mod imp {
                     // trip to the UI thread and that coupling is the accepted cost of this
                     // mechanism.
                     //
-                    // Also probed immediately before the FINAL key of an auto-Enter job whatever
-                    // the count: Return is the one keystroke that ACTS rather than inserts, so
-                    // firing it into our own window presses whatever button holds focus (Q31).
-                    let probe_here = (i > 0 && i % 64 == 0) || (auto_enter && i == last);
+                    // Also probed immediately before every Return whatever the count, a line
+                    // break in the text and the FINAL key of an auto-Enter job alike (see
+                    // `probes_focus_before`).
+                    let probe_here = probes_focus_before(i, name) || (auto_enter && i == last);
                     if probe_here && own_window_focused() {
                         tracing::info!("[vkbd] stopped: our own window took focus ({i} keys in)");
                         // The prefix already on screen stays — re-sending it would duplicate text
@@ -414,6 +414,15 @@ mod imp {
             })?;
             Ok(crate::inject::Landed::Yes)
         }
+    }
+
+    /// Whether the typing loop asks who holds focus before key `i` (keysym `name`) of the job:
+    /// every 64 keys (see the loop for the cadence), and before every Return whatever the count.
+    /// Return is the one keystroke that ACTS rather than inserts, so firing it into our own window
+    /// presses whatever button holds focus there (Q31); a line break in the transcript types one
+    /// just like the auto-Enter does.
+    fn probes_focus_before(i: usize, name: &str) -> bool {
+        i > 0 && (i % 64 == 0 || name == "Return")
     }
 
     /// Distinct symbols one uploaded keymap can hold: xkb keycodes run 8..=255.
@@ -517,8 +526,31 @@ mod imp {
 
     #[cfg(test)]
     mod tests {
-        use super::{build_keymap, keysym_name, split_batches, MAX_KEYMAP_SYMBOLS};
+        use super::{
+            build_keymap, keysym_name, probes_focus_before, split_batches, MAX_KEYMAP_SYMBOLS,
+        };
         use xkbcommon::xkb;
+
+        // A line break inside the transcript types Return, which presses whatever button holds
+        // focus in our own window: it is probed before like the auto-Enter, not only on the
+        // 64-key cadence. The very first key is covered by the check before the job.
+        #[test]
+        fn a_line_break_in_the_text_probes_focus_before_its_return() {
+            let order: Vec<String> = "Hi team,\nthanks\r"
+                .chars()
+                .filter_map(keysym_name)
+                .collect();
+            let probed: Vec<usize> = order
+                .iter()
+                .enumerate()
+                .filter(|&(i, name)| probes_focus_before(i, name))
+                .map(|(i, _)| i)
+                .collect();
+            assert_eq!(probed, [8, 15]);
+            assert!(probes_focus_before(64, "U0061"));
+            assert!(!probes_focus_before(63, "U0061"));
+            assert!(!probes_focus_before(0, "Return"));
+        }
 
         // A job with more distinct symbols than one keymap holds (a long CJK dictation) is typed
         // in batches instead of being rejected: each batch fits the keymap cap, and together they

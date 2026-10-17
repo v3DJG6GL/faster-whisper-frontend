@@ -715,6 +715,15 @@ mod imp {
         }
     }
 
+    /// Whether the portal typing loop asks who holds focus before typing `c`, `typed` characters
+    /// into the job: every 32 characters (see the loop for the cadence), and before every inline
+    /// line break whatever the count. A line break types as Return, the one keystroke that ACTS
+    /// rather than inserts, so a Return fired into our own window presses whatever button holds
+    /// focus there (Q31), the reason the trailing auto-Enter carries its own probe.
+    fn probes_focus_before(typed: usize, c: char) -> bool {
+        typed > 0 && (typed.is_multiple_of(32) || matches!(c, '\n' | '\r'))
+    }
+
     /// The keys that type `c`, each with the char it types: the char's own key when the layout
     /// has one, else a base char plus separately typed combining marks that are canonically
     /// equivalent to `c` — the Vietnamese `vn` layout types ệ as ê then U+0323 (combining dot
@@ -1458,7 +1467,7 @@ mod imp {
                     let Some(keys) = typeable_keys(c, &charmap, caps) else {
                         continue; // char not reachable on this layout — skip
                     };
-                    if typed.is_multiple_of(32) && typed > 0 && own_window_focused(app) {
+                    if probes_focus_before(typed, c) && own_window_focused(app) {
                         tracing::info!(
                             "[wayland-inject] stopped mid-typing: our own window took focus ({typed} chars in)"
                         );
@@ -1576,8 +1585,8 @@ mod imp {
                 // a cancel arriving there still pressed Return. (`virtual_keyboard.rs` closes the
                 // same gap with the per-key `injection_cancelled` check inside its typing loop.)
                 // The focus term is the sibling of the cancel term: the loop above probes every 32
-                // characters, so up to 32 characters plus this Enter can still follow a focus
-                // change — and an Enter is the one keystroke that ACTS rather than inserts, firing
+                // characters (and before each line break it types), so up to 32 characters plus
+                // this Enter can still follow a focus change — and an Enter is the one keystroke that ACTS rather than inserts, firing
                 // whatever button holds focus in our own window (Q31's finding, on the arm that
                 // reaches it after typing rather than bare).
                 if job.auto_enter
@@ -2405,6 +2414,23 @@ mod imp {
             assert!(key_sequence('\u{2014}', &map).is_none());
             // No space key at all: nothing to fall back to.
             assert!(key_sequence('\u{a0}', &us_letters()).is_none());
+        }
+
+        #[test]
+        fn a_line_break_in_the_text_probes_focus_before_its_return() {
+            // An inline line break types Return, which presses whatever button holds focus in our
+            // own window: it is probed before, not only on the 32-character cadence.
+            let probed: Vec<usize> = "Hi team,\nthanks\rsee you"
+                .chars()
+                .enumerate()
+                .filter(|&(typed, c)| probes_focus_before(typed, c))
+                .map(|(typed, _)| typed)
+                .collect();
+            assert_eq!(probed, [8, 15]);
+            assert!(probes_focus_before(32, 'a'));
+            assert!(!probes_focus_before(31, 'a'));
+            // The first character is covered by the check before the job.
+            assert!(!probes_focus_before(0, '\n'));
         }
 
         #[test]
