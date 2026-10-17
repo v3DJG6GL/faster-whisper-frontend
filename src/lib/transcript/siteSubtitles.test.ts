@@ -428,6 +428,19 @@ describe("tracks and switches", () => {
     expect(v.run!.fetch).toContain("sv");
     expect(v.run!.mtTargets).not.toContain("sv");
   });
+  it("under Custom the translation limit's grey stays temporary: a click elsewhere does not save it", () => {
+    const [ib, sb] = apply(input({ targets: [] }), pickPolicy(input({ targets: [] }), initialSiteState([]), "both"));
+    const [i0, s0] = apply(ib, pickPolicy(ib, sb, "custom"));
+    expect(derive(i0, s0).run!.mtTargets).toEqual(["en", "fr", "it"]);
+    // The server's limit drops to two: Italian's machine translation greys out.
+    const lim = { ...i0, maxTargets: 2 };
+    expect(badge(lim, s0, "it", "mt:it").state).toBe("idle");
+    // An unrelated click, then the limit lifted again: Italian is machine-translated as picked.
+    const [i1, s1] = apply(lim, flip(lim, s0, "ex:de-hoh"));
+    const up = { ...i1, maxTargets: undefined };
+    expect(badge(up, s1, "it", "mt:it").state).toBe("active");
+    expect(derive(up, s1).run!.mtTargets).toEqual(["en", "fr", "it"]);
+  });
   it("switching a site track on at a full download changes nothing — no machine translation in its place", () => {
     const langs = ["de", "fr", "es", "it", "pt", "nl", "ru", "pl", "ja"];
     const inp = input({ tracks: langs.map((l) => tr(l, l)), spoken: "en", targets: [], maxTargets: 3 });
