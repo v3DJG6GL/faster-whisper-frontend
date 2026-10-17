@@ -287,6 +287,10 @@ enum FromReader {
         code: u16,
         message: String,
     },
+    /// The socket failed under the reader (a reset without a closing handshake, an IO reset):
+    /// the bounded error text. Kept apart from `Event` for the same reason as `ServerClose`
+    /// (see [`read_error_event`]).
+    ReadError(String),
     Closed,
 }
 
@@ -329,6 +333,21 @@ fn server_close_event(code: u16, message: String, draining: bool) -> StreamEvent
     if draining && matches!(code, 1011 | 1012) {
         StreamEvent::Incomplete(format!(
             "{} — the last phrase may be missing.",
+            message.trim_end_matches('.')
+        ))
+    } else {
+        StreamEvent::Error(message)
+    }
+}
+
+/// What a failed socket read tells the UI. Live, it is an `Error`: the session died. During the
+/// drain after Stop it is the server lost with no close handshake (a killed or OOM-restarted
+/// container, a dropped NAT entry), which costs no more than the graceful restart in
+/// [`server_close_event`], so it is the same non-fatal `Incomplete` that keeps the committed text.
+fn read_error_event(message: String, draining: bool) -> StreamEvent {
+    if draining {
+        StreamEvent::Incomplete(format!(
+            "The connection to the server was lost ({}) — the last phrase may be missing.",
             message.trim_end_matches('.')
         ))
     } else {
@@ -617,8 +636,9 @@ pub async fn run<F>(
                 Some(Ok(_)) => {}
                 Some(Err(e)) => {
                     tracing::warn!("[stream] ws read error: {e}");
-                    let _ = evt_tx.send(FromReader::Event(StreamEvent::Error(
-                        super::bounded_server_text(&e.to_string(), super::MAX_ERROR_TEXT),
+                    let _ = evt_tx.send(FromReader::ReadError(super::bounded_server_text(
+                        &e.to_string(),
+                        super::MAX_ERROR_TEXT,
                     )));
                     break;
                 }
@@ -701,6 +721,9 @@ pub async fn run<F>(
                     }
                     Some(FromReader::ServerClose { code, message }) => {
                         on_event(server_close_event(code, message, false));
+                    }
+                    Some(FromReader::ReadError(message)) => {
+                        on_event(read_error_event(message, false));
                     }
                     // Server closed the socket (or the read errored, already surfaced
                     // above) — stop now; not draining, so fall through to Closed.
@@ -838,6 +861,9 @@ pub async fn run<F>(
                 Ok(Some(FromReader::ServerClose { code, message })) => {
                     on_event(server_close_event(code, message, true));
                 }
+                Ok(Some(FromReader::ReadError(message))) => {
+                    on_event(read_error_event(message, true));
+                }
                 Ok(Some(FromReader::Event(e))) => {
                     saw_frame = true;
                     forward_saved(
@@ -902,6 +928,10 @@ pub async fn run<F>(
                     saw_error = true;
                     on_event(server_close_event(code, message, draining));
                 }
+                Some(FromReader::ReadError(message)) => {
+                    saw_error = true;
+                    on_event(read_error_event(message, draining));
+                }
                 Some(FromReader::Closed) | None => {
                     reader_closed = true;
                     break;
@@ -934,6 +964,9 @@ pub async fn run<F>(
             ),
             Ok(FromReader::ServerClose { code, message }) => {
                 on_event(server_close_event(code, message, draining));
+            }
+            Ok(FromReader::ReadError(message)) => {
+                on_event(read_error_event(message, draining));
             }
             Ok(FromReader::Closed) | Err(_) => break,
         }
@@ -1810,6 +1843,27 @@ mod server_close_tests {
         format!("ws://{addr}/v1/audio/transcriptions/stream")
     }
 
+    /// A one-session local server that reads text frames until one contains `trigger`, then
+    /// drops the TCP connection with no close handshake, the way a killed container or a dropped
+    /// NAT entry ends it.
+    fn serve_drop_after(trigger: &'static str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (s, _) = listener.accept().unwrap();
+            let mut ws = tokio_tungstenite::tungstenite::accept(s).unwrap();
+            loop {
+                match ws.read() {
+                    Ok(Message::Text(t)) if t.as_str().contains(trigger) => break,
+                    Ok(_) => {}
+                    Err(_) => return,
+                }
+            }
+            let _ = ws.get_ref().shutdown(std::net::Shutdown::Both);
+        });
+        format!("ws://{addr}/v1/audio/transcriptions/stream")
+    }
+
     fn params(ws_url: String) -> StreamParams {
         StreamParams {
             ws_url,
@@ -1880,6 +1934,29 @@ mod server_close_tests {
             events,
             ["error: The server restarted during dictation.", "closed"]
         );
+    }
+
+    /// The server lost with no close handshake while the drain waits costs the same last phrase
+    /// as a graceful restart: the warning, not the error that drops everything committed.
+    #[tokio::test]
+    async fn a_lost_connection_after_stop_warns_instead_of_failing() {
+        let events = session(serve_drop_after(r#""type":"stop""#), true).await;
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(
+            events[0].starts_with("incomplete: The connection to the server was lost (")
+                && events[0].ends_with(") — the last phrase may be missing."),
+            "{events:?}"
+        );
+        assert_eq!(events[1], "closed");
+    }
+
+    /// The same loss while the user is still dictating ends the session: that stays an error.
+    #[tokio::test]
+    async fn a_lost_connection_mid_dictation_is_still_an_error() {
+        let events = session(serve_drop_after(r#""type":"config""#), false).await;
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(events[0].starts_with("error: "), "{events:?}");
+        assert_eq!(events[1], "closed");
     }
 }
 
