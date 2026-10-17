@@ -38,8 +38,8 @@ const MATRIX: Array<[string, PipelineSaveResult, QuickAddSaveOutcome, QuickAddSa
   ["403 another page's gate", reply({ status: 403, detail: "no access to /logs" }), "error", "refused", "error"],
   ["400 unknown slug", reply({ status: 400, detail: "unknown rule slug: 'my-words' (adding rules is not allowed)" }), "error", "error", "refused"],
   ["400 rule no longer a map", reply({ status: 400, detail: "field 'map' is not editable on rule 'my-words' (type=regex-list)" }), "error", "error", "refused"],
-  ["400 too many entries", reply({ status: 400, detail: "too many dictionary entries in one request (server cap: 5000 entries in total)" }), "error", "error", "error"],
-  ["400 dictionary full", reply({ status: 400, detail: "this dictionary is full (server cap: 2000 entries) — delete some entries before adding new ones" }), "error", "error", "error"],
+  ["400 too many entries", reply({ status: 400, detail: "too many dictionary entries in one request (server cap: 5000 entries in total)" }), "error", "error", "rejected"],
+  ["400 dictionary full", reply({ status: 400, detail: "this dictionary is full (server cap: 2000 entries) — delete some entries before adding new ones" }), "error", "error", "rejected"],
   ["401", reply({ status: 401, detail: "invalid API key" }), "error", "error", "error"],
   ["422", reply({ status: 422, errors: [{ loc: "rules_patch", msg: "bad" }] }), "error", "error", "rejected"],
   ["500", reply({ status: 500, detail: "internal error" }), "error", "error", "error"],
@@ -85,5 +85,14 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
     expect(quickAddRejectReason(res)).toMatch(/^String should match pattern/);
     expect(quickAddRejectReason(reply({ status: 422, errors: [{}], detail: "map key too long" }))).toBe("map key too long");
     expect(quickAddRejectReason(reply({ status: 422 }))).toBe("The server refused a mapping in this list.");
+  });
+
+  it("does not retry a full dictionary: the server's cap refuses the rows, and its reason is shown", () => {
+    // Was "error": a bare "retry" with no reason, and every summon re-PATCHed the same over-cap map.
+    const full = reply({ status: 400, detail: "this dictionary is full (server cap: 10000 entries) — delete some entries before adding new ones" });
+    expect(quickAddSaveOutcome(full)).toBe("rejected");
+    expect(quickAddRejectReason(full)).toMatch(/^this dictionary is full .* delete some entries/);
+    // Any other 400 stays retryable.
+    expect(quickAddSaveOutcome(reply({ status: 400, detail: "bad request" }))).toBe("error");
   });
 });
