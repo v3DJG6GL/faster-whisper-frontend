@@ -110,6 +110,21 @@ describe("buildCues", () => {
     }
   });
 
+  it("a title or ordinal behind an opening bracket or quote is no sentence end either", () => {
+    const short: CueOptions = { length: "short", timing: "same" };
+    for (const t of [
+      "Yesterday we finally went to visit our old friend (Dr. Martin Keller) at his home",
+      "Yesterday we finally went to visit her and she said “Mr. Keller is not at home”",
+      'Yesterday we finally went to visit her and she said "Prof. Keller is not at home"',
+    ]) {
+      const cues = buildCues(seg1(t, 0, 6), short, ["orig"]).cues.map((c) => c.text);
+      expect(cues.some((c) => /(?:Dr|Mr|Prof)\.$/.test(c)), JSON.stringify(cues)).toBe(false);
+    }
+    const de = "Wir haben uns damals im Sommer getroffen und zwar am Freitag (12. Mai) in einem kleinen Café am See";
+    const cues = buildCues(seg1(de, 0, 9, { language: "de" }), STD, ["orig"]).cues.map((c) => c.text);
+    expect(cues.some((c) => c.endsWith("(12.")), JSON.stringify(cues)).toBe(false);
+  });
+
   it("a segment that fits stays one cue with its exact bounds", () => {
     const { cues } = buildCues(seg1("Short line.", 1.25, 2.5), STD, ["orig"]);
     expect(cues).toHaveLength(1);
@@ -1449,6 +1464,12 @@ describe("cutByShare", () => {
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1]))
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
     expect(cutByShare("Am 3. Mai kaufen wir Obst und Birnen. Dann gehen wir alle nach Hause zurück.", [1, 3])[0]).not.toBe("Am 3.");
+    // Behind an opening bracket too: "(Dr." and "(3." end nothing, so the cut leaves them with what follows.
+    expect(cutByShare("We finally went to visit our old friend (Dr. Martin Keller) at his home", [1, 1], "en"))
+      .toEqual(["We finally went to visit our old", "friend (Dr. Martin Keller) at his home"]);
+    for (const l of ["de", undefined]) {
+      expect(cutByShare("Wir sehen uns am Dienstag (3. Mai) wieder im Büro und reden dann", [1, 1], l)[0]).not.toMatch(/\(3\.$/);
+    }
   });
   it("ends a sentence on 'no.' unless a number follows, and on a number unless the language dots ordinals", () => {
     expect(cutByShare("I said no. But tomorrow we go to the beach with everyone", [1, 2], "en"))

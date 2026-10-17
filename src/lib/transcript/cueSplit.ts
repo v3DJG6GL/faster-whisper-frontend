@@ -345,8 +345,10 @@ const DOTTED_ORDINAL = new Set([
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). */
 function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boolean {
-  const w = word.toLowerCase();
-  if (!SENT_END.test(w)) return false;
+  if (!SENT_END.test(word)) return false;
+  // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
+  // abbreviations, "(3." an ordinal, as their bare spellings are.
+  const w = word.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "");
   if (ABBREV.has(w) && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
@@ -839,7 +841,8 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       // used to slice and fold the whole prefix per candidate.
       const back = text.slice(Math.max(0, i - 9), i);
       const sp = back.lastIndexOf(" ");
-      const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase() : "";
+      // Past any opening brackets and quotes, so "(Dr." dangles as "Dr." does.
+      const prevWord = sp >= 0 || i <= 9 ? back.slice(sp + 1).toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "") : "";
       const s =
         -Math.abs(i - target) +
         // A stop after an abbreviation or an ordinal ("z.B.", "3.") ends no sentence, as in
