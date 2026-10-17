@@ -559,8 +559,9 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
  *  an opener the unit after it, a closing quote or bracket in the token's trailing
  *  punctuation, or a quote glued to a letter or digit, closes it („Hallo“ / „Hallo“, /
  *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote or a » ” that starts the
- *  token opens it (»…« / ”…”), so no line starts with “ ” ) or ends on „ » or ". */
-function tokenUnits(w: string): string[] {
+ *  token opens it (»…« / ”…”), so no line starts with “ ” ) or ends on „ » or ". `hyphen` false
+ *  leaves a compound's hyphen a unit of its own (wrapLines, when ending the line costs one). */
+function tokenUnits(w: string, hyphen = true): string[] {
   const out: string[] = [];
   let open = "";
   const u = units(w);
@@ -589,7 +590,7 @@ function tokenUnits(w: string): string[] {
         || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
         // A hyphen inside a compound ends its line: a line opened with "-" reads as a dialogue
         // dash. Not the non-breaking U+2011 nor a dash.
-        || (/^[-\u2010]$/.test(x) && /[\p{L}\p{N}]/u.test(last) && /^[\p{L}\p{N}]/u.test(u[k + 1] ?? ""))
+        || (hyphen && /^[-\u2010]$/.test(x) && /[\p{L}\p{N}]/u.test(last) && /^[\p{L}\p{N}]/u.test(u[k + 1] ?? ""))
         || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && !/\p{P}{6}$/u.test(prev)
           && !(/^(?:[\p{Pe}\p{Pf}]|["'])/u.test(x) ? /(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u : /(?:(?!["'])\p{Po}){3}$/u)
             .test(prev)))) out[out.length - 1] += x;
@@ -926,6 +927,17 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
 export function wrapLines(
   text: string, cpl: number, _lines: number, firstReserve = 0, q?: QuoteCtx, lang?: string,
 ): string[] {
+  const lines = wrapWith(text, cpl, firstReserve, q, lang, true);
+  // A compound's hyphen ends its line (tokenUnits), so a line opened with "-" never reads as a
+  // dialogue dash — unless the hyphen then misses the line by a character and its stub ("s-")
+  // costs a line of its own: the fewer lines win, the hyphen-final ones on a tie.
+  if (lines.length < 3 || !/[\p{L}\p{N}][-\u2010][\p{L}\p{N}]/u.test(text)) return lines;
+  const plain = wrapWith(text, cpl, firstReserve, q, lang, false);
+  return plain.length < lines.length ? plain : lines;
+}
+
+/** wrapLines with tokenUnits' `hyphen`. */
+function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx | undefined, lang: string | undefined, hyphen: boolean): string[] {
   const t = text.trim();
   const len = t.length + firstReserve;
   if (len <= cpl) return [t];
@@ -951,7 +963,7 @@ export function wrapLines(
     const words = t.split(BREAK_SPACES)
       .flatMap((w) => (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]));
     words.forEach((w, k) => {
-      const parts = w.length > cpl ? tokenUnits(w) : [w];
+      const parts = w.length > cpl ? tokenUnits(w, hyphen) : [w];
       toks.push(...parts);
       parts.forEach((_, j) => gaps.push(j === 0 && k > 0));
     });
@@ -968,7 +980,7 @@ export function wrapLines(
     m.toks.forEach((w, k) => {
       // A no-break run longer than a line splits at its spaces, as above: tokenUnits would drop them.
       (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]).forEach((x, i) => {
-        const parts = x.length > cpl ? tokenUnits(x) : [x];
+        const parts = x.length > cpl ? tokenUnits(x, hyphen) : [x];
         toks.push(...parts);
         if (spaced) parts.forEach((_, j) => gaps.push(j === 0 && (i > 0 || m.gaps[k])));
       });
@@ -977,7 +989,7 @@ export function wrapLines(
   if (toks.length < 2) {
     // One token: a spaced-script word pushed over only by the prefix stays whole, as in
     // wrapTokens; an unspaced run wraps per unit.
-    const u = tokenUnits(t);
+    const u = tokenUnits(t, hyphen);
     return u.length < 2 || (t.length <= cpl && !UNSPACED.test(t) && !BRK_SYL.test(t))
       ? [t]
       : wrapTokens(u, [], cpl, len, firstReserve);
@@ -1253,8 +1265,9 @@ function wrapTokens(
       // phrase space between two longer runs gets the small bonus above).
       else if (gaps.length && (runLen[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
       // Right after a compound's hyphen (tokenUnits keeps it on the line it ends): the seam a
-      // compound longer than a line wraps at, rather than one inside its parts.
-      if (!gaps[i] && /[\p{L}\p{N}][-\u2010]$/u.test(toks[i - 1]) && /^[\p{L}\p{N}]/u.test(toks[i])) s += 10;
+      // compound longer than a line wraps at, rather than one inside its parts. Not on a line
+      // under a third of the target: the bonus left a stub ("s-") alone on one.
+      if (!gaps[i] && a >= target / 3 && /[\p{L}\p{N}][-\u2010]$/u.test(toks[i - 1]) && /^[\p{L}\p{N}]/u.test(toks[i])) s += 10;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy
       if (s > best) {

@@ -853,6 +853,21 @@ describe("wrapLines", () => {
       }
     }
   });
+  it("a compound's hyphen never leaves a stub alone on a line nor costs one", () => {
+    const lines = wrapLines("Die Donaudampfschifffahrtsgesellschafts-Kapitänsmütze liegt", 20, 2);
+    expect(lines.some((l) => l.length <= 3), lines.join(" | ")).toBe(false);
+    expect(lines).toHaveLength(3);
+    // As many lines as the hyphen as a unit of its own takes (opening a line with it) at most.
+    const most: Record<string, [number, number]> = {
+      "Covid-19-Pandemiebekämpfungsmaßnahmen wurden heute gelockert": [17, 4],
+      "Die neue state-of-the-art-machine-learning-infrastructure heute": [21, 3],
+    };
+    for (const [t, [cpl, n]] of Object.entries(most)) {
+      const l = wrapLines(t, cpl, 2);
+      expect(l.length, l.join(" | ")).toBeLessThanOrEqual(n);
+      expect(l.some((x) => x.length <= 3 && /-$/.test(x)), l.join(" | ")).toBe(false);
+    }
+  });
   it("an over-long word of spaced text never takes more lines than kept whole on lines of its own", () => {
     const mail = "a".repeat(20) + "@" + "b".repeat(15) + ".com";
     for (const [t, cpl, most] of [
