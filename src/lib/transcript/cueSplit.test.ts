@@ -558,6 +558,27 @@ describe("wrapLines", () => {
     const run = "un deux trois quatre cinq six sept";
     expect(wrapLines(run, 13, 2).join(" ").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
   });
+  it("an own-timed translation and a line with a CJK run keep a no-break space too", () => {
+    // Their tokens (mixedTokens) split at every \s: an own-timed cue ended on "25" and the next
+    // opened with "000", and a line of mixed text broke there and wrote it back as a plain space.
+    const en = "The glacier behind me has lost almost forty percent of its volume since 1980, and twenty five thousand people live in the valley below it today.";
+    const W = "les gens du village voisin ont vu".split(" ");
+    for (const length of ["short", "standard"] as const) {
+      for (let a = 0; a <= W.length; a++) {
+        for (let b = 0; b <= 3; b++) {
+          const fr = `${W.slice(0, a).join(" ")} 25 000 ${"mots ".repeat(b)}personnes sont venues voir le glacier hier soir avec nous tous.`.trim();
+          const r = seg1(en, 10, 30, { segments: [{ start: 10, end: 30, text: " " + en, translations: { fr } }] });
+          const own = buildCues(r, { length, timing: "own" }, ["orig", "fr"]).own.fr.map((c) => c.text);
+          expect(own.join(" "), JSON.stringify(own)).toBe(fr);
+        }
+      }
+    }
+    const mix = "Il a dit que 東京 avait 25 000 visiteurs hier soir, tu viens ?";
+    for (const cpl of [12, 14, 16, 20]) expect(wrapLines(mix, cpl, 2).join(" "), String(cpl)).toBe(mix);
+    // A no-break run longer than a line still wraps at its spaces, losing none of its characters.
+    const run = "東京 un deux trois quatre cinq six sept";
+    expect(wrapLines(run, 13, 2).join("").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
+  });
   it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
     const t = "We met the people from Procter & Gamble at the big conference yesterday";
     // At 38 the only seam keeping both lines within the cap is after the "&".

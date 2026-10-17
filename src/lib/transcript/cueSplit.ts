@@ -499,13 +499,15 @@ const BRK_SYL = new RegExp(`[${SYLLABIC}]`, "u");
  *  "ＣＰＵ，ＧＰＵ" or the ： of "ＵＲＬ：" stays a clause seam; a run longer than a line still wraps per
  *  character through `tokenUnits`. Glued to ASCII letters or digits ("ＰＳ5", "ＮＨＫnews")
  *  it stays one word too (mixedTokens joins them): the seam between the two widths is no
- *  word break. */
+ *  word break. A no-break space (BREAK_SPACE) between two characters of a word is part of it:
+ *  "25 000" and "viens ?" are one token, so no own-timed cue or line breaks there. */
 const FULLWIDTH = "\\u3000-\\u303f\\uff00-\\uffef";
 const FW_ALNUM = "０-９Ａ-Ｚａ-ｚ";
+const WORD_CHAR = `[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]`;
 const MIXED_TOKEN = new RegExp(
   `[${OPEN_PUNCT}]*[${FW_ALNUM}]${UNIT_TAIL}(?:[${FW_ALNUM}]${UNIT_TAIL}|(?<=[０-９])[，．：](?=[０-９]))*[${CLOSE_PUNCT}]*`
     + `|[${OPEN_PUNCT}]*[${LEADS}]*(?:[\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}]|(?![\\s${OPEN_PUNCT}])[${FULLWIDTH}])${UNIT_TAIL}${CHOON}[${CLOSE_PUNCT}]*`
-    + `|[${OPEN_PUNCT}]*[^\\s${OPEN_PUNCT}\\p{Script=Han}\\p{Script=Hiragana}\\p{Script=Katakana}ー${SYLLABIC}${FULLWIDTH}]+`
+    + `|[${OPEN_PUNCT}]*${WORD_CHAR}+(?:[\\u00a0\\u202f\\u2007]+${WORD_CHAR}+)*`
     + `|[${OPEN_PUNCT}]+`,
   "gu",
 );
@@ -937,9 +939,12 @@ export function wrapLines(
   } else {
     const m = mixedTokens(t, q);
     m.toks.forEach((w, k) => {
-      const parts = w.length > cpl ? tokenUnits(w) : [w];
-      toks.push(...parts);
-      if (spaced) parts.forEach((_, j) => gaps.push(j === 0 && m.gaps[k]));
+      // A no-break run longer than a line splits at its spaces, as above: tokenUnits would drop them.
+      (w.length > cpl && /\s/.test(w) ? w.split(/\s+/) : [w]).forEach((x, i) => {
+        const parts = x.length > cpl ? tokenUnits(x) : [x];
+        toks.push(...parts);
+        if (spaced) parts.forEach((_, j) => gaps.push(j === 0 && (i > 0 || m.gaps[k])));
+      });
     });
   }
   if (toks.length < 2) {
