@@ -402,6 +402,21 @@ describe("plain text + errors", () => {
       expect(parseImportedText(format, out).segments.every((s) => !/\s/.test(s.text))).toBe(true);
     }
   });
+  it("srt/vtt: a CJK cue the export wrapped beside a glued number reads back without a space there", () => {
+    // The export wraps "2025年10月" / "17日" at a CJK|digit seam, which holds no space.
+    const text = "今日は2025年10月17日です。天気が良いですね、散歩に行きましょう。";
+    const ja: BatchResult = {
+      text,
+      language: "ja",
+      segments: [{ start: 0, end: 6, text }],
+      words: [...text].map((word, i) => ({ word, start: i * 0.2, end: i * 0.2 + 0.2 })),
+    };
+    for (const format of ["srt", "vtt"] as const) {
+      const out = generateExport(ja, { format, cues: { length: "standard", timing: "same" } });
+      expect(out).toContain("今日は2025年10月\n17日です。"); // the export did wrap there
+      expect(parseImportedText(format, out).segments.map((s) => s.text)).toEqual([text]);
+    }
+  });
   it("a times line holding a long blank run parses in linear time, to the same cues", () => {
     const ws = " ".repeat(100_000);
     const srt = `1\n00:00:01,000 --> 00:00:02,000\nHello\n \nx${ws}y\n\n2\n00:00:03,000${ws}-->${ws}00:00:04,000\nWorld\n`;

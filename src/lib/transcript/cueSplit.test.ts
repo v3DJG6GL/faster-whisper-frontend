@@ -1354,6 +1354,13 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("東京\nTokyo", true)).toBe("東京 Tokyo");
     expect(joinLineBreaks("Hello\nworld", true)).toBe("Hello world");
   });
+  it("with wraps, a number glued into CJK text joins its neighbour with nothing, either side", () => {
+    // wrapLines wraps "2025年10月17日" at a CJK|digit seam, which holds no space.
+    expect(joinLineBreaks("今日は2025年10月\n17日です。", true)).toBe("今日は2025年10月17日です。");
+    expect(joinLineBreaks("価格は100\n円です。", true)).toBe("価格は100円です。");
+    expect(joinLineBreaks("今日は2025年10月\n17日です。")).toBe("今日は2025年10月 17日です。");
+    expect(joinLineBreaks("Hello 2025\n17 times", true)).toBe("Hello 2025 17 times");
+  });
   it("cjkWraps: a quarter of the CJK lines carry 。，(or a ja 、) and no phrase space; ？！： alone, zh's enumeration 、 and phrase-spaced text do not wrap", () => {
     expect(cjkWraps("今日はとても\n良い天気ですね。")).toBe(true);
     expect(cjkWraps("我们今天去公园､\n散步然后")).toBe(true);

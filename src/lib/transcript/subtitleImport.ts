@@ -5,7 +5,7 @@
 
 import { languageCodeOf } from "../languages";
 import { safeDisplayText, stripControlChars } from "../sanitize";
-import { cjkWrapsLines, edgeChar, joinLineBreaks, seamUnspaced, unspacedChar } from "./cueSplit";
+import { cjkWrapsLines, edgeChar, joinLineBreaks, unspacedChar, wrapSeamUnspaced } from "./cueSplit";
 
 export interface ImportedText {
   segments: { start?: number; end?: number; text: string; speaker?: string }[];
@@ -106,7 +106,7 @@ function voiceName(raw: string): string {
 }
 
 /** A cue's (or paragraph's) lines as one: one space between two lines, or none at an unspaced
- *  seam (`seamUnspaced`) when the file wraps its CJK lines (`cjkWrapsLines`). Joined before the
+ *  seam (`wrapSeamUnspaced`) when the file wraps its CJK lines (`cjkWrapsLines`). Joined before the
  *  markup goes, so a tag split over two lines still strips; its edges are judged without tags. */
 function joinLines(lines: string[], wraps: boolean): string {
   if (!wraps) return lines.join(" ");
@@ -122,7 +122,7 @@ function joinLines(lines: string[], wraps: boolean): string {
       parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
       parts.push(l.trim());
       continue;
-    } else if (seamUnspaced(prev, true) && seamUnspaced(b.trimStart(), false)) {
+    } else if (wrapSeamUnspaced(prev, b.trimStart())) {
       parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
       parts.push(l.trimStart());
     } else parts.push(" ", l);

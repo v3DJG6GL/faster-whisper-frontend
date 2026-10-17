@@ -218,16 +218,24 @@ export function seamUnspaced(s: string, end: boolean): boolean {
   const n = edgeChar(rest, end);
   return !QUOTE_MARK.test(n) && unspacedChar(n);
 }
+/** Whether the break between a wrapped line ending in `before` and the next one starting with
+ *  `after` takes no space back in a text that wraps its CJK lines (`cjkWraps`): both edges are
+ *  unspaced (`seamUnspaced`), or one is and the other is an ASCII digit — wrapLines wraps a number
+ *  glued into CJK text at that seam ("2025年10月" / "17日"), and CJK text sets no space there. A
+ *  Latin word stays ambiguous (Whisper's "讨论 AI 的" loses its space at a wrap): it keeps one. */
+export function wrapSeamUnspaced(before: string, after: string): boolean {
+  const a = seamUnspaced(before, true);
+  const b = seamUnspaced(after, false);
+  return (a && b) || (a && /^[0-9]/.test(after)) || (b && /[0-9]$/.test(before));
+}
 /** Text with every line break (and the blanks around it) folded into one space — the
  *  subtitle import, the edit commit and every export flatten alike — or, with `wraps` (see
- *  `cjkWraps`), into nothing at an unspaced seam (`seamUnspaced`). A match starts only at a
+ *  `cjkWraps`), into nothing at an unspaced seam (`wrapSeamUnspaced`). A match starts only at a
  *  blank run's first character, so a long run is scanned once. */
 export function joinLineBreaks(s: string, wraps = false): string {
   if (!s.includes("\n")) return s;
   return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
-    wraps &&
-    seamUnspaced(str.slice(Math.max(0, off - 10), off), true) &&
-    seamUnspaced(str.slice(off + m.length, off + m.length + 4), false)
+    wraps && wrapSeamUnspaced(str.slice(Math.max(0, off - 10), off), str.slice(off + m.length, off + m.length + 4))
       ? ""
       : " ",
   );
