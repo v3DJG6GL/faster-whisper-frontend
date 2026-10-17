@@ -54,6 +54,23 @@ function tokenize(text: string): string[] {
  *  unspaced too, and one changed character used to collapse its timing into one word. */
 const UNSPACED_RE =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+/** CJK punctuation and fullwidth forms, and the kana marks ・ ー (Script=Common, so
+ *  UNSPACED_RE misses them): an unspaced run carries them with no space around. */
+const UNSPACED_PUNCT_RE = /[　-〿・ー＀-￯]/u;
+
+/** Whether the first (`end` false) or last code point of a token is unspaced. Judged by
+ *  whole code point, trailing combining marks skipped: a lone surrogate half of an astral
+ *  (CJK Ext-B) character or a decomposed "が"'s U+3099 matches no script class. */
+function unspacedEdge(s: string, end: boolean): boolean {
+  let c: string;
+  if (!end) c = s ? String.fromCodePoint(s.codePointAt(0)!) : "";
+  else {
+    const t = s.replace(/(?<!\p{M})\p{M}+$/u, "");
+    const lo = t.charCodeAt(t.length - 1);
+    c = t.slice(lo >= 0xdc00 && lo <= 0xdfff ? -2 : -1);
+  }
+  return UNSPACED_RE.test(c) || UNSPACED_PUNCT_RE.test(c);
+}
 
 /** Tokens of an edited text that holds an unspaced script (CJK, Thai…), cut where the
  *  original words were: splitting on whitespace yields one token per unspaced run, which
@@ -168,9 +185,10 @@ export function alignSegmentWords(
   const lead = (j: number, old?: TranscriptWord) =>
     !spacey ? "" : opens[j] || (old && /^\s/.test(old.word) && !midRun(j)) ? " " : "";
   /** Token j continues an unspaced run of the edit: Whisper's " 今日" keeps no space once
-   *  the user prepends "ああ" to it (karaoke renders words verbatim). */
+   *  the user prepends "ああ" to it (karaoke renders words verbatim) — nor after "コーヒー",
+   *  "ああ、", "「" or "𠮷". */
   const midRun = (j: number) =>
-    j > 0 && !opens[j] && UNSPACED_RE.test(newToks[j - 1].slice(-1)) && UNSPACED_RE.test(newToks[j][0]);
+    j > 0 && !opens[j] && unspacedEdge(newToks[j - 1], true) && unspacedEdge(newToks[j], false);
   const out: TranscriptWord[] = [];
   /** Emit new tokens [nj0,nj1) over the span of old words [oi0,oi1). */
   const flush = (oi0: number, oi1: number, nj0: number, nj1: number) => {

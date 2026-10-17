@@ -217,6 +217,28 @@ describe("alignSegmentWords", () => {
     const en = alignSegmentWords(LINE, "So Das ist so passiert im Velonavitest des TCS");
     expect(en.slice(1)).toEqual(LINE);
   });
+
+  it("drops the leading space mid-run after ー, CJK punctuation or an astral Han character", () => {
+    // ー 、 「 are Script=Common, and a per-UTF-16-unit look read 𠮷 as a lone surrogate:
+    // each kept Whisper's " 今日" inside the run.
+    const ja: TranscriptWord[] = [
+      { word: " 今日", start: 0, end: 1 },
+      { word: "は", start: 1, end: 1.2 },
+      { word: "晴れ", start: 1.2, end: 2 },
+    ];
+    const text = (edit: string) => alignSegmentWords(ja, edit).map((x) => x.word).join("").trim();
+    expect(text("コーヒー今日は晴れ")).toBe("コーヒー今日は晴れ");
+    expect(text("ああ、今日は晴れ")).toBe("ああ、今日は晴れ");
+    expect(text("「今日は晴れ")).toBe("「今日は晴れ");
+    expect(text("𠮷今日は晴れ")).toBe("𠮷今日は晴れ");
+    expect(text("ああ今日は晴れ")).toBe("ああ今日は晴れ");
+    // The matched word itself opening with an astral character.
+    const yoshi: TranscriptWord[] = [
+      { word: " 𠮷野", start: 0, end: 1 },
+      { word: "家", start: 1, end: 2 },
+    ];
+    expect(alignSegmentWords(yoshi, "あ𠮷野家").map((x) => x.word)).toEqual([" あ", "𠮷野", "家"]);
+  });
 });
 
 describe("segmentWordRanges", () => {
