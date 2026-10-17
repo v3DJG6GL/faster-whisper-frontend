@@ -430,10 +430,6 @@ export default function QuickAdd() {
       if (saveTimer.current === null && !unsaved) {
         void refresh();
       } else {
-        // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
-        // is read-only, so keep it fresh regardless: one failed save used to freeze the
-        // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
-        void fetchRecent();
         void targetMoved.then((moved) => {
           if (sgen !== summonGen.current) return;
           if (moved) {
@@ -447,6 +443,12 @@ export default function QuickAdd() {
             void refresh();
             return;
           }
+          // The rows re-sync is skipped to protect the unsaved edit — but the recent-words pool
+          // is read-only, so keep it fresh regardless: one failed save used to freeze the
+          // dropdown (and the retry badge) on every later summon until a manual retry succeeded.
+          // Only once the read above has adopted a new device address: fetched before it, the
+          // pool came from the old, unreachable one.
+          void fetchRecent();
           // Failed save: retry it now instead of waiting for a click on the tiny badge (the
           // whole stuck state was invisible enough to ship). Only when no timer is armed — an
           // armed timer flushes the newest rows itself, and a parallel retry would double-PATCH.
