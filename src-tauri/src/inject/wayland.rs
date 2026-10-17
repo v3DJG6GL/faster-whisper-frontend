@@ -466,7 +466,7 @@ mod imp {
         // AltGr glyphs (and AltGr dead-key prefixes) are registered only while those codes still
         // produce Caps_Lock / ISO_Level3_Shift; otherwise they stay unreachable.
         let caps_usable = caps_usable(keymap, group);
-        let mut replay = PressReplay::new(keymap);
+        let mut replay = PressReplay::new(keymap, group);
         let altgr_usable = key_produces(
             keymap,
             group,
@@ -895,10 +895,14 @@ mod imp {
     }
 
     impl PressReplay {
-        fn new(keymap: &xkb::Keymap) -> Self {
+        fn new(keymap: &xkb::Keymap, group: u32) -> Self {
             let mask = |name: &str| 1u32.checked_shl(keymap.mod_get_index(name)).unwrap_or(0);
-            // AltGr's modifier as the typer presses it: the fixed KEY_RIGHTALT code.
+            // AltGr's modifier as the typer presses it: the fixed KEY_RIGHTALT code, pressed in
+            // the group it types in. A fresh state sits in group 0, and on us,de that key is a
+            // plain Alt_R — Mod1, under which every de AltGr level replays its bare glyph and @ €
+            // drop out of the map.
             let mut state = xkb::State::new(keymap);
+            state.update_mask(0, 0, 0, 0, 0, group);
             state.update_key(
                 xkb::Keycode::new(KEY_RIGHTALT as u32 + EVDEV_OFFSET),
                 xkb::KeyDirection::Down,
@@ -2281,6 +2285,37 @@ mod imp {
             };
             assert!(typeable_keys('\u{df}', &map, stuck).is_none());
             assert!(divert_unreachable("Stra\u{df}e", &map, stuck));
+        }
+
+        /// On a multi-layout keymap whose first layout has no AltGr (us,de), the active de group's
+        /// AltGr glyphs are reached by the same RALT press the typer sends: "max@example.com"
+        /// must keep its @ instead of typing "maxexample.com".
+        #[test]
+        fn a_second_layouts_altgr_glyphs_are_typeable_when_the_first_has_no_altgr() {
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let Some(keymap) = xkb::Keymap::new_from_names(
+                &ctx,
+                "evdev",
+                "pc105",
+                "us,de",
+                ",",
+                None,
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            ) else {
+                eprintln!("skipped: no XKB data for `us,de`");
+                return;
+            };
+            let map = charmap_from_keymap(&keymap, 1, None);
+            for (c, keycode) in [('@', 16), ('\u{20ac}', 18)] {
+                let spec = map
+                    .get(&c)
+                    .unwrap_or_else(|| panic!("{c} missing from us,de group 1"));
+                assert_eq!(
+                    (spec.keycode, spec.altgr, spec.shift),
+                    (keycode, true, false),
+                    "{c}"
+                );
+            }
         }
 
         /// A digit a layout carries only on the keypad (th, vn: no ASCII digits on the main row)
