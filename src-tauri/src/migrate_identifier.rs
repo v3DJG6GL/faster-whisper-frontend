@@ -453,15 +453,19 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
         Ok(None) => return Ok(audio_bases),
         Err(e) => {
             // Still unreadable after those retries: a permission fault (a root-owned file left
-            // by a sudo run) or a lasting lock, with nothing known to name the old folder.
-            // Stopping would stop every launch for good (the pending marker brings each one
-            // back here); going on lets config::load_outcome back the file up and start on
-            // defaults, so no setting naming the vacated folder is used either way.
+            // by a sudo run) or a lock that outlasted them, with nothing known to name the old
+            // folder. Stopping would stop every launch for good (the pending marker brings each
+            // one back here), so the launch goes on. But the marker STAYS: a lock released a
+            // moment later (an AV scan or sync client right after the move) lets the loader read
+            // the file cleanly, settings and all, still naming the vacated folder — and without
+            // the marker no later launch would re-point it. A lasting fault costs each launch
+            // this one bounded re-read; the marker clears itself once the file reads again,
+            // whether it still names the old folder or the loader replaced it with defaults.
             tracing::warn!(
-                "[migrate] could not read {} to re-point its moved folders ({e}); going on, the config loader recovers it",
+                "[migrate] could not read {} to re-point its moved folders ({e}); going on, the next launch tries again",
                 config.display()
             );
-            let _ = std::fs::remove_file(config.with_file_name(REPOINT_PENDING));
+            mark_repoint_pending(config);
             return Ok(audio_bases);
         }
     };
@@ -986,10 +990,13 @@ mod tests {
     }
 
     /// An unreadable config.json must not stop the launch: the pending marker would bring
-    /// every later launch back to the same failed read and stop it too, for good. The loader
-    /// recovers the file instead.
+    /// every later launch back to the same failed read and stop it too, for good. It must not
+    /// drop the retry either: a hold that ends right after this read lets the loader start on
+    /// the settings that still name the vacated folder, and only the marker brings a later
+    /// launch back to re-point them. One rule for every read error, PermissionDenied included:
+    /// a lasting fault only costs each launch one bounded re-read until the file reads again.
     #[test]
-    fn a_config_that_cannot_be_read_lets_the_launch_go_on_and_leaves_no_retry() {
+    fn a_config_that_cannot_be_read_lets_the_launch_go_on_and_retries_next_launch() {
         let base = scratch("read-fails");
         let new = base.join(NEW_ID);
         std::fs::create_dir_all(&new).unwrap();
@@ -1000,13 +1007,21 @@ mod tests {
             Ok(vec![])
         );
         assert!(!new.join(REPOINT_PENDING).exists());
-        // Present but unreadable (a directory here; a root-owned file in the field): goes on,
-        // and a marker an earlier launch left is cleared.
-        std::fs::create_dir_all(new.join("config.json")).unwrap();
-        std::fs::write(new.join(REPOINT_PENDING), b"").unwrap();
+        // Present but unreadable (a directory here; a held or root-owned file in the field):
+        // goes on, and leaves the marker for the next launch.
+        let config = new.join("config.json");
+        std::fs::create_dir_all(&config).unwrap();
+        assert_eq!(rewrite_config_paths(&config, &moved), Ok(vec![]));
+        assert!(new.join(REPOINT_PENDING).exists());
+        // The next launch reads it and re-points the setting, and the marker goes.
+        std::fs::remove_dir(&config).unwrap();
+        let cfg = serde_json::json!({ "settings": {
+            "recording": { "audioBaseDir": base.join(LEGACY_ID).join("my-audio") },
+        }});
+        std::fs::write(&config, cfg.to_string()).unwrap();
         assert_eq!(
-            rewrite_config_paths(&new.join("config.json"), &moved),
-            Ok(vec![])
+            rewrite_config_paths(&config, &moved),
+            Ok(vec![new.join("my-audio")])
         );
         assert!(!new.join(REPOINT_PENDING).exists());
     }
