@@ -75,6 +75,21 @@ function listKeyHandler(node: unknown): ((e: unknown) => void) | null {
   return listKeyHandler(p.children);
 }
 
+/** The first element of `type` in the tree. */
+function findElement(node: unknown, type: string): ReactElement | null {
+  if (!node || typeof node !== "object") return null;
+  if (Array.isArray(node)) {
+    for (const n of node) {
+      const el = findElement(n, type);
+      if (el) return el;
+    }
+    return null;
+  }
+  const el = node as ReactElement<{ children?: unknown }>;
+  if (el.type === type) return el;
+  return el.props ? findElement(el.props.children, type) : null;
+}
+
 const key = (k: string) => ({ key: k, repeat: false, keyCode: 0, nativeEvent: {}, preventDefault() {}, stopPropagation() {} });
 
 beforeEach(() => {
@@ -167,5 +182,28 @@ describe("ListPicker trigger while the popover is open", () => {
     trigger.onKeyDown(key("ArrowDown") as never);
     render(true);
     expect(trigger["aria-expanded"]).toBe(false);
+  });
+});
+
+describe("ListPicker popover focus", () => {
+  it("a press on the panel's chrome keeps focus in the search field, so Esc still closes the list", () => {
+    render(false);
+    trigger.onKeyDown(key("ArrowDown") as never);
+    const tree = render(false);
+    const panel = (tree.props as { children: unknown[] }).children[1] as ReactElement<{
+      onMouseDown?: (e: unknown) => void;
+    }>;
+    const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
+    const field = {};
+    input.props.ref.current = field;
+    const press = (target: unknown) => {
+      let prevented = false;
+      panel.props.onMouseDown?.({ target, preventDefault: () => (prevented = true) });
+      return prevented;
+    };
+    // The magnifier, a section header, the hint line: focus would otherwise drop to <body>.
+    expect(press({})).toBe(true);
+    // The field itself keeps its press (caret placement, selection).
+    expect(press(field)).toBe(false);
   });
 });

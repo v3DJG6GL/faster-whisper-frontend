@@ -227,6 +227,7 @@ export function ListPicker<R>({
   const [triggerFocused, setTriggerFocused] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const rect = useAnchoredRect(triggerRef, open);
   // Without a search field the listbox takes focus once the popover is placed.
   const placed = open && rect !== null;
@@ -347,6 +348,14 @@ export function ListPicker<R>({
         createPortal(
           <div
             ref={popRef}
+            // A press on the panel's chrome (search bar padding, magnifier, a section header, the
+            // hint line) must not move focus: it would land on <body> with the list still open,
+            // and every key after it — Esc included — would miss onListKey and reach the window
+            // (an editor's Esc closes the editor under the list). The search field keeps its own
+            // press for the caret and selection.
+            onMouseDown={(e) => {
+              if (e.target !== searchRef.current) e.preventDefault();
+            }}
             style={pos}
             className={POPOVER_PANEL}
           >
@@ -354,6 +363,7 @@ export function ListPicker<R>({
               <div className="flex items-center gap-2 border-b border-line px-3 py-2.5 text-faint">
                 <Search className="size-4 shrink-0" aria-hidden />
                 <input
+                  ref={searchRef}
                   autoFocus
                   value={query}
                   onChange={(e) => {
