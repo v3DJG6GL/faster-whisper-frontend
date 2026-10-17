@@ -1557,6 +1557,20 @@ describe("cutByShare", () => {
     expect(cutByShare("Wir kaufen heute viel Obst z.B. Äpfel und Birnen. Dann gehen wir nach Hause.", [1, 1], "de"))
       .toEqual(["Wir kaufen heute viel Obst z.B. Äpfel und Birnen.", "Dann gehen wir nach Hause."]);
   });
+  it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
+    for (const t of [
+      "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
+      "We will meet tomorrow at 9 a.m. in the main office downstairs, and after that we will drive to the airport together",
+    ]) {
+      const cues = buildCues(seg1(t, 0, 12), STD, ["orig"]).cues.map((c) => c.text);
+      expect(cues.some((c) => /(?:U\.S|a\.m)\.$/.test(c)), JSON.stringify(cues)).toBe(false);
+    }
+    expect(cutByShare("Officials in the U.S. government said on Tuesday that the new rules apply", [1, 1], "en")[0])
+      .not.toMatch(/U\.S\.$/);
+    // Before a capital it still ends one.
+    expect(cutByShare("They moved to the U.S. The rest of the family stayed in Ireland for good", [1, 1], "en"))
+      .toEqual(["They moved to the U.S.", "The rest of the family stayed in Ireland for good"]);
+  });
   it("the cue split and the line wrap judge 'no.' and '12.' as the translation cut does", () => {
     const party = (x: string) => `When he asked me to come along to the party I said ${x} Then we went home and talked about the whole evening for hours`;
     const cuesOf = (r: BatchResult, tracks = ["orig"]) => buildCues(r, STD, tracks);

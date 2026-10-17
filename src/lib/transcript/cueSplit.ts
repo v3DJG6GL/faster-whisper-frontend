@@ -365,13 +365,15 @@ const DOTTED_ORDINAL = new Set([
  *  and the translation cut all know them. "no."/"nr." abbreviate only before a number
  *  ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
- *  an ordinal). */
+ *  an ordinal). A dotted initialism ("U.S.", "a.m.") ends one only before a capital: "the U.S.
+ *  government", "9 a.m. in the office" go on. */
 function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
   // abbreviations, "(3." an ordinal, as their bare spellings are.
   const w = word.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "");
   if (ABBREV.has(w) && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
+  if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
   return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
