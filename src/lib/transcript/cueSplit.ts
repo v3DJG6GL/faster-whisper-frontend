@@ -563,6 +563,9 @@ function tokenUnits(w: string): string[] {
       && ((k >= tail && /^(?:[\p{Pi}\p{Pf}\p{Pe}]|["'])+$/u.test(x)
           && !/(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u.test(prev))
         || (/^\p{Pi}+$/u.test(x) && /[\p{L}\p{N}]/u.test(last) && !BREAKS_ANYWHERE.test(last))
+        // A hyphen inside a compound ends its line: a line opened with "-" reads as a dialogue
+        // dash. Not the non-breaking U+2011 nor a dash.
+        || (/^[-\u2010]$/.test(x) && /[\p{L}\p{N}]/u.test(last) && /^[\p{L}\p{N}]/u.test(u[k + 1] ?? ""))
         || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && !/\p{P}{6}$/u.test(prev)
           && !(/^(?:[\p{Pe}\p{Pf}]|["'])/u.test(x) ? /(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u : /(?:(?!["'])\p{Po}){3}$/u)
             .test(prev)))) out[out.length - 1] += x;
@@ -1225,6 +1228,9 @@ function wrapTokens(
       // A longer CJK run is a sentence, and its seams balance against the spaces (only a
       // phrase space between two longer runs gets the small bonus above).
       else if (gaps.length && (runLen[i] <= 6 || BRK_SYL.test(edgeChar(toks[i], false)))) s -= 100;
+      // Right after a compound's hyphen (tokenUnits keeps it on the line it ends): the seam a
+      // compound longer than a line wraps at, rather than one inside its parts.
+      if (!gaps[i] && /[\p{L}\p{N}][-\u2010]$/u.test(toks[i - 1]) && /^[\p{L}\p{N}]/u.test(toks[i])) s += 10;
       s -= Math.abs(a - target) * 0.6;
       if (a <= b / (n - 1)) s += 4; // bottom-heavy
       if (s > best) {

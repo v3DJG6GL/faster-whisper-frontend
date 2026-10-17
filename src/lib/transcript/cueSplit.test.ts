@@ -833,6 +833,26 @@ describe("wrapLines", () => {
       expect(lines.some((l) => /^[.!]/.test(l))).toBe(false);
     }
   });
+  it("a hyphenated compound longer than a line wraps after a hyphen, never opening a line with it", () => {
+    // A line opened with "-" reads as the dialogue dash of a change of speaker.
+    for (let cpl = 28; cpl <= 42; cpl++) {
+      expect(wrapLines("Die Donaudampfschifffahrts-Gesellschaftskapitän heute", cpl, 2), String(cpl))
+        .toEqual(["Die Donaudampfschifffahrts-", "Gesellschaftskapitän heute"]);
+    }
+    expect(wrapLines("Die neue state-of-the-art-machine-learning-infrastructure heute", 28, 2))
+      .toEqual(["Die neue state-of-", "the-art-machine-learning-", "infrastructure heute"]);
+    expect(wrapLines("Wir sprechen über die state-of-the-art-machine-learning-infrastructure heute", 42, 2))
+      .toEqual(["Wir sprechen über die state-of-the-", "art-machine-learning-infrastructure heute"]);
+    const compounds = ["Bundesverfassungsgerichts-Entscheidung", "Arbeitnehmer-Entsendegesetz-Novelle", "Rindfleischetikettierungs-Überwachungsaufgaben"];
+    for (const c of compounds) {
+      for (const pre of ["Die", "Wir sprechen über die", "Gestern kam die neue"]) {
+        for (let cpl = 28; cpl <= 42; cpl++) {
+          const lines = wrapLines(`${pre} ${c} heute`, cpl, 2);
+          expect(lines.some((l) => l.startsWith("-")), lines.join(" | ")).toBe(false);
+        }
+      }
+    }
+  });
   it("an over-long word of spaced text never takes more lines than kept whole on lines of its own", () => {
     const mail = "a".repeat(20) + "@" + "b".repeat(15) + ".com";
     for (const [t, cpl, most] of [
