@@ -1361,6 +1361,28 @@ describe("joinLineBreaks", () => {
     expect(joinLineBreaks("今日は2025年10月\n17日です。")).toBe("今日は2025年10月 17日です。");
     expect(joinLineBreaks("Hello 2025\n17 times", true)).toBe("Hello 2025 17 times");
   });
+  it("with wraps, a number spaced on its far side (Whisper's spaced style) keeps its space at the seam", () => {
+    expect(joinLineBreaks("我们一共有 25\n个人。然后，", true)).toBe("我们一共有 25 个人。然后，");
+    expect(joinLineBreaks("我们一共有\n3 个人。然后，", true)).toBe("我们一共有 3 个人。然后，");
+    expect(joinLineBreaks("我们今天讨论的是第 3\n季度的计划，", true)).toBe("我们今天讨论的是第 3 季度的计划，");
+    // Glued on its far side, it still joins with nothing — also past a 4-digit run.
+    expect(joinLineBreaks("我们讨论的是\n2025年的计划，", true)).toBe("我们讨论的是2025年的计划，");
+    expect(joinLineBreaks("价格是1,000\n元。然后，", true)).toBe("价格是1,000元。然后，");
+    // Our own wrap of a spaced-number line joins back to it.
+    for (const [t, cpls] of [
+      ["我们一共有 25 个人参加了今天的会议，大家都很开心。", [10, 12, 13]],
+      ["这个会议室一共有 300 个座位，今天差不多都坐满了。", [16]],
+      ["他们公司今年一共卖出了 2000 台机器，比去年多了很多。", [13, 14, 16]],
+      ["我们今天一共有很多 365 个人然后，在湖边坐了很久很久。", [10, 12, 14, 16]],
+      ["我们今天要讨论的是 2025 年的计划，还有一些别的事情。", [10, 12, 14, 16]],
+    ] as const) {
+      for (const cpl of cpls) {
+        const j = wrapLines(t, cpl, 2).join("\n");
+        expect(j).toContain("\n");
+        expect(joinLineBreaks(j, cjkWraps(j))).toBe(t);
+      }
+    }
+  });
   it("cjkWraps: a quarter of the CJK lines carry 。，(or a ja 、) and no phrase space; ？！： alone, zh's enumeration 、 and phrase-spaced text do not wrap", () => {
     expect(cjkWraps("今日はとても\n良い天気ですね。")).toBe(true);
     expect(cjkWraps("我们今天去公园､\n散步然后")).toBe(true);

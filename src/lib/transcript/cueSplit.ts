@@ -218,24 +218,38 @@ export function seamUnspaced(s: string, end: boolean): boolean {
   const n = edgeChar(rest, end);
   return !QUOTE_MARK.test(n) && unspacedChar(n);
 }
+/** Whether the word at the edge of `s` (its end with `end`) — the run of characters that are
+ *  neither blank nor unspaced — is glued to an unspaced character on its far side: "是100" and
+ *  "17日" are, "有 25" and "300 个" (Whisper's spaced numbers) and a word at the text's edge are not. */
+function wordGlued(s: string, end: boolean): boolean {
+  const cs = Array.from(s);
+  if (!end) cs.reverse();
+  let i = cs.length;
+  while (i > 0 && !/\s/.test(cs[i - 1]) && !unspacedChar(cs[i - 1])) i--;
+  return i > 0 && !/\s/.test(cs[i - 1]);
+}
 /** Whether the break between a wrapped line ending in `before` and the next one starting with
  *  `after` takes no space back in a text that wraps its CJK lines (`cjkWraps`): both edges are
- *  unspaced (`seamUnspaced`), or one is and the other is an ASCII digit — wrapLines wraps a number
- *  glued into CJK text at that seam ("2025年10月" / "17日"), and CJK text sets no space there. A
- *  Latin word stays ambiguous (Whisper's "讨论 AI 的" loses its space at a wrap): it keeps one. */
+ *  unspaced (`seamUnspaced`), or one is and the other is an ASCII digit glued into the CJK text on
+ *  its far side too — wrapLines wraps such a number at that seam ("2025年10月" / "17日"), and CJK
+ *  text sets no space there. A number spaced on its far side ("有 25" / "个人", "有" / "300 个") is
+ *  Whisper's spaced style, whose wrap dropped a space: it keeps one, as a Latin word does (Whisper's
+ *  "讨论 AI 的" loses its space at a wrap). */
 export function wrapSeamUnspaced(before: string, after: string): boolean {
   const a = seamUnspaced(before, true);
   const b = seamUnspaced(after, false);
-  return (a && b) || (a && /^[0-9]/.test(after)) || (b && /[0-9]$/.test(before));
+  return (a && b) || (a && /^[0-9]/.test(after) && wordGlued(after, false))
+    || (b && /[0-9]$/.test(before) && wordGlued(before, true));
 }
 /** Text with every line break (and the blanks around it) folded into one space — the
  *  subtitle import, the edit commit and every export flatten alike — or, with `wraps` (see
  *  `cjkWraps`), into nothing at an unspaced seam (`wrapSeamUnspaced`). A match starts only at a
- *  blank run's first character, so a long run is scanned once. */
+ *  blank run's first character, so a long run is scanned once. Each side is seen 24 characters
+ *  deep: enough to see past a number at the seam to what it is glued to. */
 export function joinLineBreaks(s: string, wraps = false): string {
   if (!s.includes("\n")) return s;
   return s.replace(/(?<![^\S\n])[^\S\n]*\n\s*/g, (m: string, off: number, str: string) =>
-    wraps && wrapSeamUnspaced(str.slice(Math.max(0, off - 10), off), str.slice(off + m.length, off + m.length + 4))
+    wraps && wrapSeamUnspaced(str.slice(Math.max(0, off - 24), off), str.slice(off + m.length, off + m.length + 24))
       ? ""
       : " ",
   );
