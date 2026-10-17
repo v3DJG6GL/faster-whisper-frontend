@@ -2249,7 +2249,7 @@ mod clip_tests {
     /// none of a later utterance's.
     #[test]
     fn a_discarded_drain_cuts_no_clip() {
-        let dir = std::env::temp_dir().join(format!("fwf-discard-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fwf-clips-discard-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let mut saved = vec![0u8; 64_000];
         let (cutter, rx) = ClipCutter::new(&dir);
