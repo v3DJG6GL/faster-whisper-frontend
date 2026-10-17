@@ -372,6 +372,7 @@ mod tests {
     fn a_focus_rejected_before_the_departing_apps_deactivate_is_replayed_after_it() {
         use super::atspi::{note_activate, note_deactivate_bus, note_focus, replay_parked};
         use ::atspi::object_ref::ObjectRefOwned;
+        use std::time::Instant;
         let el = |bus: &'static str| ObjectRefOwned::from_static_str_unchecked(bus, "/org/a11y/el");
         let current = |snap: &parking_lot::Mutex<super::Snapshot>| {
             let s = snap.lock();
@@ -391,7 +392,13 @@ mod tests {
         // Cycle N+1: only the terminal's deactivate — the mark clears, E is replayed.
         let mark = snap.lock().active_app.clone();
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
-        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"));
+        replay_parked(
+            &snap,
+            &mut parked,
+            mark.as_deref(),
+            Some(":1.1"),
+            Instant::now(),
+        );
         assert_eq!(
             current(&snap),
             ("code".into(), Some(true), Some(":1.2".into()))
@@ -406,7 +413,7 @@ mod tests {
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
         parked = note_focus(&snap, "firefox".into(), Some(false), el(":1.3"));
         assert!(parked.is_none());
-        replay_parked(&snap, &mut parked, None, None);
+        replay_parked(&snap, &mut parked, None, None, Instant::now());
         assert_eq!(
             current(&snap),
             ("firefox".into(), Some(false), Some(":1.3".into()))
@@ -419,13 +426,58 @@ mod tests {
         let mut parked = note_focus(&snap, "code".into(), Some(true), el(":1.2"));
         let mark = snap.lock().active_app.clone();
         assert!(!note_deactivate_bus(&snap, Some(":1.9")));
-        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.9"));
+        replay_parked(
+            &snap,
+            &mut parked,
+            mark.as_deref(),
+            Some(":1.9"),
+            Instant::now(),
+        );
         assert!(parked.is_some());
-        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.2"));
+        replay_parked(
+            &snap,
+            &mut parked,
+            mark.as_deref(),
+            Some(":1.2"),
+            Instant::now(),
+        );
         assert!(parked.is_none());
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
-        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"));
+        replay_parked(
+            &snap,
+            &mut parked,
+            mark.as_deref(),
+            Some(":1.1"),
+            Instant::now(),
+        );
         assert_eq!(current(&snap).0, "org.kde.konsole");
+    }
+
+    /// A background app's stray focus parked long ago is no lost race: when the mark later
+    /// clears (the user summons our window, or leaves for an app without AT-SPI) it must not be
+    /// promoted to `current` — and from there to `last_other`, the app Quick-Add acts on.
+    #[test]
+    fn a_focus_parked_long_ago_is_dropped_not_replayed() {
+        use super::atspi::{note_activate, note_deactivate_bus, note_focus, replay_parked};
+        use ::atspi::object_ref::ObjectRefOwned;
+        use std::time::{Duration, Instant};
+        let el = |bus: &'static str| ObjectRefOwned::from_static_str_unchecked(bus, "/org/a11y/el");
+        let snap = parking_lot::Mutex::new(super::Snapshot::default());
+        note_activate(&snap, "org.kde.konsole".into(), Some(":1.1".into()));
+        let _ = note_focus(&snap, "org.kde.konsole".into(), Some(true), el(":1.1"));
+        // A background Electron app's stray focus: rejected and parked.
+        let mut parked = note_focus(&snap, "slack".into(), Some(true), el(":1.5"));
+        assert!(parked.is_some());
+        // Minutes later the terminal's deactivate clears the mark in a cycle of its own.
+        let mark = snap.lock().active_app.clone();
+        assert!(!note_deactivate_bus(&snap, Some(":1.1")));
+        let later = Instant::now() + Duration::from_secs(120);
+        replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"), later);
+        assert!(parked.is_none());
+        assert_eq!(
+            snap.lock().current.as_ref().map(|c| c.app_id.as_str()),
+            Some("org.kde.konsole")
+        );
     }
 
     #[test]

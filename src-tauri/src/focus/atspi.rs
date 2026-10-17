@@ -264,6 +264,7 @@ async fn run_once(snapshot: Guarded, deep: Arc<AtomicBool>) -> Result<(), String
                         &mut parked,
                         mark_before.as_deref(),
                         deact_bus.as_deref(),
+                        std::time::Instant::now(),
                     );
                 }
             }
@@ -576,7 +577,16 @@ pub(super) struct Parked {
     app_id: String,
     editable: Option<bool>,
     item: ObjectRefOwned,
+    /// When note_focus rejected it (see [`PARK_MAX_AGE`]).
+    at: std::time::Instant,
 }
+
+/// How long a parked focus stays replayable. The race it exists for (the new app's focus landing
+/// before the departing app's deactivate) settles within a resolver cycle or two. A focus parked
+/// longer ago is a background app's stray one (the "chromium ghost" the gate rejects), and
+/// replaying it on the next mark change — the user summoning Quick-Add minutes later — would make
+/// an app the user never focused `current`, then `last_other` with its per-app rule and selection.
+const PARK_MAX_AGE: std::time::Duration = std::time::Duration::from_millis(1500);
 
 /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground
 /// (the moment right after a switch). A background app's stray focus while a DIFFERENT app is
@@ -594,6 +604,7 @@ pub(super) fn note_focus(
                 app_id,
                 editable,
                 item: element,
+                at: std::time::Instant::now(),
             });
         }
     }
@@ -607,16 +618,21 @@ pub(super) fn note_focus(
 /// never emits window:activate, so nothing else would bring it into the snapshot until the
 /// user moves focus inside it. Once this cycle's window events changed the mark
 /// (`mark_before` → now), replay the parked focus through note_focus, once. An unchanged mark
-/// keeps it waiting; the parked app's own deactivate (by bus name) drops it as stale.
+/// keeps it waiting; the parked app's own deactivate (by bus name) drops it as stale, and so does
+/// age (`now` past [`PARK_MAX_AGE`]).
 pub(super) fn replay_parked(
     snapshot: &parking_lot::Mutex<super::Snapshot>,
     parked: &mut Option<Parked>,
     mark_before: Option<&str>,
     deactivated_bus: Option<&str>,
+    now: std::time::Instant,
 ) {
     let Some(p) = parked.take() else {
         return;
     };
+    if now.saturating_duration_since(p.at) > PARK_MAX_AGE {
+        return;
+    }
     if deactivated_bus.is_some() && p.item.name_as_str() == deactivated_bus {
         return;
     }
