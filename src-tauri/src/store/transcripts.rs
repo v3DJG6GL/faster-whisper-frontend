@@ -586,6 +586,14 @@ fn is_own_media(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Is this an in-progress `.tmp` copy (`<id>.<ext>.tmp`, or a download's
+/// `<id>.<ext>.<pid>-<seq>.tmp`) rather than a finished one? A bare `<uuid>.tmp` is the finished
+/// copy an older build kept of a transcribed `.tmp` source (see `media_copy_ext`): no in-progress
+/// name has a bare record id for its stem, so that one is swept and counted like any copy.
+fn is_partial_copy(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()) == Some("tmp") && !is_own_media(path)
+}
+
 /// Is this a recordings-folder file THIS app wrote (`dictation-*.wav` / `.txt`)? The one
 /// predicate the readout, the wipe and the per-record delete share, so a non-UTF-8 name is
 /// judged the same (lossily) by all three and the readout keeps matching the wipe.
@@ -614,7 +622,7 @@ fn owned_dir_tally(
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) == Some("tmp") || !own(&path) {
+            if is_partial_copy(&path) || !own(&path) {
                 continue;
             }
             if let Ok(m) = entry.metadata() {
@@ -917,8 +925,9 @@ fn delete_record_media(
 }
 
 /// The extension a media copy of `src` keeps: the source's own, lowercased, when it is short and
-/// plain, else `bin`. Never `tmp`: every sweep takes a `.tmp` for an in-progress copy, so a final
-/// `<id>.tmp` would be skipped by the orphan sweep and the storage tally for good.
+/// plain, else `bin`. Never `tmp`: a `.tmp` name reads as an in-progress copy (a folder move skips
+/// it), and the sweeps reclaim a final `<id>.tmp` only as older builds' leftover
+/// (`is_partial_copy`).
 fn media_copy_ext(src: &Path) -> String {
     src.extension()
         .and_then(|e| e.to_str())
@@ -1171,46 +1180,51 @@ fn sweep_orphan_media(app: &AppHandle, audio_base: Option<String>) {
     let Ok(dirs) = all_media_dirs(app, audio_base) else {
         return;
     };
-    let mut removed = 0;
-    for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            // An in-progress copy (`<id>.<ext>.tmp`, written on a blocking thread for up
-            // to MAX_MEDIA_BYTES = 10 GiB) is not an orphan: this sweep runs on every
-            // config save, and unlinking the tmp under the writer made its final rename
-            // fail — the record then silently lost its only playable audio.
-            if path.extension().and_then(|e| e.to_str()) == Some("tmp") {
-                // A media download tmp of another (so dead: single-instance) process has no
-                // writer left, and nothing else would ever reclaim it once its record is gone.
-                let stale = path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(crate::transport::batch::stale_download_tmp);
-                if stale && std::fs::remove_file(&path).is_ok() {
-                    removed += 1;
-                }
-                continue;
-            }
-            let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-                continue;
-            };
-            if !is_own_media(&path) {
-                continue;
-            }
-            // A stat error is not proof the record is gone: only a definite "absent" sweeps.
-            if matches!(records.join(format!("{stem}.json")).try_exists(), Ok(false))
-                && std::fs::remove_file(&path).is_ok()
-            {
-                removed += 1;
-            }
-        }
-    }
+    let removed: usize = dirs.iter().map(|d| sweep_orphans_in(d, &records)).sum();
     if removed > 0 {
         tracing::info!("[transcripts] media sweep: removed {removed} orphaned audio cop(y/ies)");
     }
+}
+
+/// `sweep_orphan_media` over one media folder `dir`, against the record store `records`.
+/// Returns how many files it removed.
+fn sweep_orphans_in(dir: &Path, records: &Path) -> usize {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        // An in-progress copy (`<id>.<ext>.tmp`, written on a blocking thread for up
+        // to MAX_MEDIA_BYTES = 10 GiB) is not an orphan: this sweep runs on every
+        // config save, and unlinking the tmp under the writer made its final rename
+        // fail — the record then silently lost its only playable audio.
+        if is_partial_copy(&path) {
+            // A media download tmp of another (so dead: single-instance) process has no
+            // writer left, and nothing else would ever reclaim it once its record is gone.
+            let stale = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(crate::transport::batch::stale_download_tmp);
+            if stale && std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if !is_own_media(&path) {
+            continue;
+        }
+        // A stat error is not proof the record is gone: only a definite "absent" sweeps.
+        if matches!(records.join(format!("{stem}.json")).try_exists(), Ok(false))
+            && std::fs::remove_file(&path).is_ok()
+        {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// Delete records older than `days` (0 = keep forever), with the same clamped mtime window as
@@ -1488,6 +1502,40 @@ mod tests {
         std::fs::write(dir.join("holiday video.mp4"), b"123456789").unwrap();
         assert_eq!(owned_dir_bytes(&dir, is_own_media), (5, 1));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An older build kept a transcribed `.tmp` source's copy as `<uuid>.tmp`: once its record
+    /// goes, the orphan sweep reclaims it and the readout counts it, while an in-progress copy
+    /// keeps its own handling.
+    #[test]
+    fn an_older_builds_bare_tmp_copy_is_swept_and_counted_like_any_copy() {
+        let base = std::env::temp_dir().join(format!("fwf-tmp-copy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (dir, records) = (base.join("files"), base.join("transcripts"));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&records).unwrap();
+        let orphan = "9f8a7b6c-1d2e-4f30-9a8b-7c6d5e4f3a2b";
+        let kept = "0f8b5c2e-6d1a-4c3b-9e7f-1a2b3c4d5e6f";
+        std::fs::write(records.join(format!("{kept}.json")), b"{}").unwrap();
+        std::fs::write(dir.join(format!("{orphan}.tmp")), b"123").unwrap();
+        std::fs::write(dir.join(format!("{kept}.tmp")), b"12345").unwrap();
+        let me = std::process::id();
+        let other = me.wrapping_add(1);
+        for partial in [
+            format!("{orphan}.mp3.tmp"),
+            format!("{orphan}.mp3.{me}-1.tmp"),
+            format!("{orphan}.mp3.{other}-1.tmp"),
+        ] {
+            std::fs::write(dir.join(partial), b"1234567").unwrap();
+        }
+        assert_eq!(owned_dir_bytes(&dir, is_own_media), (8, 2));
+        assert_eq!(sweep_orphans_in(&dir, &records), 2);
+        assert!(!dir.join(format!("{orphan}.tmp")).exists());
+        assert!(!dir.join(format!("{orphan}.mp3.{other}-1.tmp")).exists());
+        assert!(dir.join(format!("{kept}.tmp")).exists());
+        assert!(dir.join(format!("{orphan}.mp3.tmp")).exists());
+        assert!(dir.join(format!("{orphan}.mp3.{me}-1.tmp")).exists());
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
