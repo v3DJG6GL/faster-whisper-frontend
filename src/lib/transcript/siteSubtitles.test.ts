@@ -362,6 +362,24 @@ describe("tracks and switches", () => {
     const exSv = v.rows.find((r) => r.code === "sv")!.badges[1].key!;
     expect(flip(inp, st0, exSv)).toEqual({ state: st0, targets: inp.targets });
   });
+  it("Custom without machine translation: a row the cap cuts no longer reads 'from the site'", () => {
+    // No translation on the server: the input's targets stay empty, so no row is a target. Turning
+    // on auto-generated subtitles pushes pl over the cap; its row kept "from the site" beside the
+    // greyed badge of a track the run never downloads.
+    const langs = ["de", "en", "fr", "it", "es", "pt", "nl", "pl", "sv"];
+    const inp = input({ tracks: [tr("auto-de", "de", { kind: "auto" }), ...langs.map((l) => tr(l, l))], targets: [], site: "YouTube" });
+    const { state } = pickPolicy(inp, initialSiteState([]), "custom");
+    expect(derive(inp, state).rows.find((r) => r.code === "pl")!.sub).toBe("from the site");
+    const v = derive(inp, { ...state, auto: true });
+    expect(v.run!.fetch).toEqual(["auto-de", "de", "en", "fr", "it", "es", "pt", "nl"]);
+    const pl = v.rows.find((r) => r.code === "pl")!;
+    expect(pl.badges.map((b) => b.state)).toEqual(["off", "idle"]);
+    expect(pl.sub).toBe("over the download limit");
+    // A kept site language still reads as one, and the one never switched on stays off.
+    expect(v.rows.find((r) => r.code === "nl")!.sub).toBe("from the site");
+    expect(v.rows.find((r) => r.code === "sv")!.sub).toBe("off");
+    expect(v.run!.mtTargets).toEqual([]);
+  });
   it("a language you translate into keeps machine translation when the cap cuts its site track", () => {
     const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da"];
     const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: ["sv"] });

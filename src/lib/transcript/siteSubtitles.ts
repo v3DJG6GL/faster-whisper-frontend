@@ -359,7 +359,8 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
     const [mtB, ...exBs] = src.badges;
     const cut = exBs.filter(overCap);
     if (!cut.length) continue;
-    const bare = src.isTarget && !exBs.some((b) => b.state === "active" && !cut.includes(b));
+    const left = exBs.some((b) => b.state === "active" && !cut.includes(b));
+    const bare = src.isTarget && !left;
     // Side by side already translates a site language: that stays its source.
     const fills = bare && (tmap[code] === true || mtB.state === "active");
     for (const b of cut) capOff(b, fills);
@@ -368,6 +369,9 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
       cutOut.add(code);
       setMt(mtB, code, false);
     }
+    // A row that read "from the site" for tracks the cap now greys is cut out too: under
+    // Custom without machine translation no row is a target, and it kept claiming the site.
+    else if (!src.isTarget && !left) cutOut.add(code);
   }
   for (const r of rows) if (r.code && cutOut.has(r.code)) r.sub = "over the download limit";
   // The server machine-translates into at most `maxTargets` languages per run and drops the rest,
