@@ -461,9 +461,9 @@ pub(crate) fn migrated_counterpart(path: &Path) -> Option<PathBuf> {
 /// the setting at where it is now. `moved` holds every (old, new) pair that moved this launch.
 /// Edits the raw JSON rather than going through `config::load`, whose recovery path may
 /// rewrite a config it cannot parse. Returns the re-pointed audio base folders
-/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when a re-point it found could not
-/// land, or the file could not be read on the first launch to try (REPOINT_PENDING is then left
-/// for the next launch).
+/// (`audioBaseDir` / `recordingsDir`, not `logDir`), or `Err` when the file could not be read, or
+/// a re-point it found could not land, on the first launch to hit that fault (REPOINT_PENDING is
+/// then left for the next launch; see `repoint_fault_stops`).
 fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<Vec<PathBuf>, ()> {
     let mut audio_bases = Vec::new();
     // The loader's own read, so a brief AV or sync-client hold right after the move is ridden
@@ -478,24 +478,17 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
             // moment later (an AV scan or sync client right after the move) lets the loader read
             // the file cleanly, settings and all, still naming the vacated folder, and the session
             // would record into it, re-created, where the next launch's re-point cannot follow.
-            // A launch that finds the pending marker already there goes on instead: an earlier
-            // launch saw this fault too, so it is lasting, and stopping again would stop every
-            // launch for good. The marker STAYS either way (only it brings a later launch back
-            // here), so a lasting fault costs each launch one bounded re-read; it clears itself
-            // once the file reads again, whether it still names the old folder or the loader
-            // replaced it with defaults.
-            let pending = config.with_file_name(REPOINT_PENDING);
-            if !pending.exists() {
-                mark_repoint_pending(config);
-                // Stopped only with the retry armed: without the marker the next launch would
-                // stop here again.
-                if pending.exists() {
-                    tracing::warn!(
-                        "[migrate] could not read {} to re-point its moved folders ({e}); stopping, the next launch tries again",
-                        config.display()
-                    );
-                    return Err(());
-                }
+            // A launch whose marker says an earlier one could not read it either goes on (see
+            // `repoint_fault_stops`), so a lasting fault costs each launch one bounded re-read;
+            // the marker clears itself once the file reads again, whether it still names the old
+            // folder or the loader replaced it with defaults.
+            // Stopped only with the retry armed: without the marker no later launch comes back.
+            if repoint_fault_stops(config, REPOINT_READ) && pending_fault_is(config, REPOINT_READ) {
+                tracing::warn!(
+                    "[migrate] could not read {} to re-point its moved folders ({e}); stopping, the next launch tries again",
+                    config.display()
+                );
+                return Err(());
             }
             tracing::warn!(
                 "[migrate] could not read {} to re-point its moved folders ({e}); going on, the next launch tries again",
@@ -569,24 +562,34 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
                     "[migrate] config.json is not valid UTF-8 and its bytes could not be kept in {} ({e}); its moved folders are not re-pointed",
                     side.display()
                 );
-                mark_repoint_pending(config);
-                return Err(());
+                if repoint_fault_stops(config, REPOINT_COPY) {
+                    return Err(());
+                }
+                tracing::warn!(
+                    "[migrate] the same fault as last launch; going on, the next launch tries again"
+                );
+                return Ok(Vec::new());
             }
         }
         let written = serde_json::to_string_pretty(&json)
             .map_err(std::io::Error::other)
             .and_then(|out| crate::config::write_private_atomic(config, &out));
         // A failed write (a full disk, an AV or sync client holding config.json) leaves the
-        // settings naming the vacated folders: say so, fail so the caller keeps their heal
-        // stamps rather than trusting a re-point that never landed and stops the launch, and
-        // leave the pending marker so the next launch tries again.
+        // settings naming the vacated folders: say so, stop the launch, and leave the pending
+        // marker so the next launch tries again. Either way no base is returned, so the caller
+        // keeps their heal stamps rather than trusting a re-point that never landed.
         if let Err(e) = written {
             tracing::warn!(
                 "[migrate] could not write the re-pointed folders to {} ({e}); its settings still name the old folder",
                 config.display()
             );
-            mark_repoint_pending(config);
-            return Err(());
+            if repoint_fault_stops(config, REPOINT_WRITE) {
+                return Err(());
+            }
+            tracing::warn!(
+                "[migrate] the same fault as last launch; going on, the next launch tries again"
+            );
+            return Ok(Vec::new());
         }
         if lossy {
             tracing::warn!(
@@ -600,11 +603,39 @@ fn rewrite_config_paths(config: &Path, moved: &[(PathBuf, PathBuf)]) -> Result<V
     Ok(audio_bases)
 }
 
-/// Leave REPOINT_PENDING beside `config` so the next launch re-runs the re-point. Best effort:
-/// a folder that refuses even this empty file is logged, and the re-point waits for a move.
-fn mark_repoint_pending(config: &Path) {
+/// The re-point faults REPOINT_PENDING records, so a later launch can tell a lasting fault
+/// from a different one. An empty marker (an older build's) records none.
+const REPOINT_READ: &str = "read";
+const REPOINT_WRITE: &str = "write";
+const REPOINT_COPY: &str = "copy";
+
+/// Does this launch stop on the re-point fault `kind`? The first launch to hit it does, so a
+/// passing hold (an AV scan or sync client right after the move) cannot let the loader start on
+/// settings still naming the vacated folder. A launch whose marker already records the SAME fault
+/// goes on instead: an earlier launch hit it too, so it is lasting, and stopping again would stop
+/// every launch for good. A marker left by a DIFFERENT fault proves nothing about this one — a
+/// write that failed under a hold says nothing about the read failing under it now, which a
+/// moment later may read cleanly — so that launch stops. The marker STAYS either way, now
+/// recording `kind`: only it brings a later launch back here.
+fn repoint_fault_stops(config: &Path, kind: &str) -> bool {
+    if pending_fault_is(config, kind) {
+        return false;
+    }
+    mark_repoint_pending(config, kind);
+    true
+}
+
+/// Does REPOINT_PENDING beside `config` record the fault `kind`?
+fn pending_fault_is(config: &Path, kind: &str) -> bool {
+    std::fs::read(config.with_file_name(REPOINT_PENDING)).is_ok_and(|b| b == kind.as_bytes())
+}
+
+/// Leave REPOINT_PENDING beside `config`, recording the fault `kind`, so the next launch re-runs
+/// the re-point. Best effort: a folder that refuses even this small file is logged, and the
+/// re-point waits for a move.
+fn mark_repoint_pending(config: &Path, kind: &str) {
     let pending = config.with_file_name(REPOINT_PENDING);
-    if let Err(e) = std::fs::write(&pending, b"") {
+    if let Err(e) = std::fs::write(&pending, kind) {
         tracing::warn!(
             "[migrate] could not leave {} to retry the re-point next launch ({e})",
             pending.display()
@@ -1073,6 +1104,47 @@ mod tests {
             "recording": { "audioBaseDir": base.join(LEGACY_ID).join("my-audio") },
         }});
         std::fs::write(&config, cfg.to_string()).unwrap();
+        assert_eq!(
+            rewrite_config_paths(&config, &moved),
+            Ok(vec![new.join("my-audio")])
+        );
+        assert!(!new.join(REPOINT_PENDING).exists());
+    }
+
+    /// The pending marker proves a lasting fault only for the fault it records. A write that
+    /// failed under a hold, then a read failing under the same hold on the next launch, is no
+    /// lasting fault: the hold may end a moment later and let the loader start on the settings
+    /// still naming the vacated folder. A write failing again is one, and must not stop every
+    /// launch for good.
+    #[test]
+    fn a_re_point_fault_goes_on_only_when_an_earlier_launch_hit_the_same_one() {
+        let base = scratch("fault-kinds");
+        let (old, new) = (base.join(LEGACY_ID), base.join(NEW_ID));
+        std::fs::create_dir_all(&new).unwrap();
+        let cfg = serde_json::json!({ "settings": {
+            "recording": { "audioBaseDir": old.join("my-audio") },
+        }})
+        .to_string();
+        let config = new.join("config.json");
+        std::fs::write(&config, &cfg).unwrap();
+        // Blocks the atomic write's temp file, as a held config.json does on Windows.
+        let blocker = crate::transport::media::tmp_sibling(&config);
+        std::fs::create_dir_all(blocker.join("held")).unwrap();
+        let moved = [(old, new.clone())];
+        assert_eq!(rewrite_config_paths(&config, &moved), Err(()));
+        // The next launch cannot read it (a directory here; the same hold in the field): stops.
+        std::fs::remove_file(&config).unwrap();
+        std::fs::create_dir_all(&config).unwrap();
+        assert_eq!(rewrite_config_paths(&config, &moved), Err(()));
+        // Readable again but the write still fails: a different fault than last launch, stops.
+        std::fs::remove_dir(&config).unwrap();
+        std::fs::write(&config, &cfg).unwrap();
+        assert_eq!(rewrite_config_paths(&config, &moved), Err(()));
+        // The same write fault again: lasting, so the launch goes on with nothing re-pointed and
+        // the retry kept.
+        assert_eq!(rewrite_config_paths(&config, &moved), Ok(vec![]));
+        assert!(new.join(REPOINT_PENDING).exists());
+        std::fs::remove_dir_all(&blocker).unwrap();
         assert_eq!(
             rewrite_config_paths(&config, &moved),
             Ok(vec![new.join("my-audio")])
