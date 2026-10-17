@@ -272,6 +272,35 @@ describe("buildCues", () => {
     }
   });
 
+  it("a pause after a glued 」\" lands on the seam before the split-off opener", () => {
+    // The opener's clock sat at the end of 」": the pause fell on the seam after it (never cut),
+    // a cue ran over the silence and own timing lost the gap.
+    const ws = ["他说", "今天", "天气", "很好", "「真的", '」"', '再见"', "然后", "我们", "一起", "走了", "很远", "很远", "的路", "回家"];
+    let t = 0;
+    const words = ws.map((word, i) => {
+      const w = { word, start: t, end: t + 0.3 };
+      t = w.end + 0.05 + (i === 5 ? 2 : 0);
+      return w;
+    });
+    const text = ws.join("");
+    const r: BatchResult = { text, language: "zh", words, segments: [{ start: 0, end: t, text }] };
+    const [pauseFrom, pauseTo] = [words[5].end, words[6].start];
+    for (const length of ["short", "standard"] as const) {
+      const { cues } = buildCues(r, { length, timing: "same" }, ["orig"]);
+      const all = cues.map((c) => `${c.text} [${c.start}–${c.end}]`).join(" | ");
+      expect(cues.every((c) => c.end <= pauseFrom + 1e-9 || c.start >= pauseTo - 1e-9), all).toBe(true);
+      expect(cues.some((c) => c.text.startsWith('"再见"')), all).toBe(true);
+      expect(cues.map((c) => c.text).join("")).toBe(text);
+    }
+    const en = 'He said the weather today is nice, "really", goodbye, and then we walked a very long way home together';
+    const own = buildCues(
+      { ...r, segments: [{ start: 0, end: t, text, translations: { en } }] },
+      { length: "short", timing: "own" },
+      ["orig", "en"],
+    ).own.en;
+    expect(own.some((c, k) => k > 0 && c.start - own[k - 1].end > 1.9)).toBe(true);
+  });
+
   it("own timing: an opening bracket stays with the character it opens", () => {
     const ja = "iPhone の「新機能」と「新しい画面」と「便利な設定」と「速い通信」と「長い電池」と「明るい表示」について説明します";
     const r = seg1(LONG, 10, 30, { segments: [{ start: 10, end: 30, text: " " + LONG, translations: { ja } }] });

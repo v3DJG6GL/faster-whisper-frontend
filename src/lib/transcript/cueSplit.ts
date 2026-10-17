@@ -398,14 +398,21 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     const at = text.indexOf(tw, cur);
     // Only whitespace/punctuation may sit between consecutive words.
     if (at < 0 || !/^[\s\p{P}]*$/u.test(text.slice(cur, at))) return null;
-    if (out.length) out[out.length - 1].to = at;
+    if (out.length) {
+      const pv = out[out.length - 1];
+      pv.to = at;
+      // A split-off opener starts with the word it opens: a pause before that word then
+      // falls on the seam before the opener, the one a cut may take.
+      if (pv.opens) pv.s = pv.e = Math.max(pv.s, w.start);
+    }
     const tok: Tok = { from: at, to: at + tw.length, s: w.start, e: Math.max(w.start, w.end) };
     out.push(tok);
     cur = at + tw.length;
     // Whisper glues a quote to the word before it (」" ”"): when it opens the next quotation
     // (an even count of its kind so far, a later partner, a letter right after it), it is a
     // token of its own, so the cut never lands right after it. Its clock is a zero-length one
-    // at the word's end: a cue starting with it starts once that word is spoken.
+    // at the next word's start (the word's end until that word arrives): a cue starting with
+    // it starts once that word is spoken.
     const qm = /[\p{Pe}\p{Pf}](["'])$/u.exec(tw);
     if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
       flags ??= quoteFlags(text);
