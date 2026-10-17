@@ -1117,7 +1117,8 @@ let lastPhraseDiverted = false;
 // still owes it there. Keyed on the app, not the window: a window title changes as a terminal runs
 // or a chat switches, so two windows of one app share the gap. An unknown focus (null) matches
 // another null, the same way publishTarget dedupes and a null expectAppId trusts the target.
-// Session-scoped via clearPhraseEnd.
+// Every session, translated or not, keeps it: the per-phrase and hard-break Enter go only into an
+// app it holds. Session-scoped via clearPhraseEnd.
 const gapOwedApps = new Set<string | null>();
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
@@ -1214,6 +1215,10 @@ function enqueueAutoEnter(): void {
     // The phrase this Enter would follow went to the clipboard, not the field (set by its task,
     // which ran before this one — the chain is FIFO). Same reason as the carry.
     if (lastPhraseDiverted) return;
+    // Only into an app whose field ends in a typed phrase no Return has followed yet: focus that
+    // moved on after the phrase was typed would get a Return that submits the user's own draft
+    // there, and a field whose phrase already got its Return would get an empty submit.
+    if (!gapOwedApps.has(t.appId)) return;
     // The target decides: an app rule can turn Enter off for this window even when the
     // profile/global has it on (a chat client submits, an editor must not).
     if (!t.autoEnter) return;
@@ -2847,7 +2852,8 @@ async function ensureListeners(): Promise<void> {
           // Enter wins over the separator when this target wants it — the same precedence the
           // synchronous fork had, just evaluated against the window actually being typed into.
           if (t.autoEnter) {
-            if (dirtyAtBreak) await pressReturn(t, cfg);
+            // Into the app the phrase was typed into only, as enqueueAutoEnter.
+            if (dirtyAtBreak && gapOwedApps.has(t.appId)) await pressReturn(t, cfg);
             return;
           }
           if (!sep) return;

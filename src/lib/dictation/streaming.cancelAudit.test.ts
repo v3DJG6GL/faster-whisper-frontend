@@ -333,6 +333,17 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(copied).toContain("lastPhraseDiverted = true;");
   });
 
+  it("the per-phrase and hard-break Enter go only into the app the phrase was typed into", () => {
+    // Focus that moved on between the typed phrase and its Enter got the Return: it submitted the
+    // user's own draft in that window, and the dictated message never got its Enter.
+    const enter = mask(fns.enqueueAutoEnter);
+    const owed = enter.indexOf("if (!gapOwedApps.has(t.appId)) return;");
+    expect(owed, "auto-Enter task must stand down in an app that owes no Return").toBeGreaterThanOrEqual(0);
+    expect(owed).toBeLessThan(enter.indexOf("pressReturn("));
+    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    expect(boundary).toMatch(/if \(dirtyAtBreak && gapOwedApps\.has\(t\.appId\)\) await pressReturn\(t, cfg\);/);
+  });
+
   it("a translated block's gap follows the field's last typed phrase, not the typed baseline", () => {
     // `injectedText` is emptied by a hard break (the next block glued onto the last line) and
     // survives a landed Return (the next block opened with three more Returns).
