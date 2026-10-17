@@ -1300,6 +1300,24 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
       }
     }
   });
+  it("a quote Whisper glued after a colon or comma (说，\" 说：\" me:\") opens the next quotation: no cue ends on it", () => {
+    const zh1 = ["我", "昨天", "在", "学校", "遇到", "了", "老师", "他", "对", "我", "说", '，"', "你", "明天", "一定", "要", "早点", "来", "上课", '"'];
+    const zh2 = ["他", "说", '："', "今天", "天气", "很", "好", "我们", "一起", "去", "公园", "散步", "吧", '"'];
+    const en = [" I", " met", " my", " teacher", " at", " school", " yesterday", " and", " she", " told", ' me:"', "Come", " early",
+      " tomorrow", " to", ' class"'];
+    for (const r of [resOf(zh1, "zh"), resOf(zh2, "zh"), resOf(en, "en")]) {
+      for (const length of ["short", "standard"] as const) {
+        const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+        expect(texts.slice(0, -1).some((c) => /"$/.test(c)), texts.join(" | ")).toBe(false);
+        expect(texts.join("").replace(/\s/g, "")).toBe(r.text.replace(/\s/g, ""));
+      }
+    }
+    // A quote closing a quotation after its comma stays with it.
+    const close = resOf([" She", " said", ' "Come', ' here,"', " and", " then", " she", " left", " the", " room", " quickly", " without",
+      " another", " word"], "en");
+    const texts = buildCues(close, { length: "short", timing: "same" }, ["orig"]).cues.map((c) => c.text);
+    expect(texts.some((c) => c.endsWith('here,"')), texts.join(" | ")).toBe(true);
+  });
   it("a closing quote and an ASCII quote timed as one word start no cue, and the 's after them stays", () => {
     // Words on an even 0.35 s grid, as Whisper times them.
     const even = (ws: string[], language: string): BatchResult => {

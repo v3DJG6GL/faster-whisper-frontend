@@ -434,12 +434,12 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     const tok: Tok = { from: at, to: at + tw.length, s: w.start, e: Math.max(w.start, w.end) };
     out.push(tok);
     cur = at + tw.length;
-    // Whisper glues a quote to the word before it (」" ”"): when it opens the next quotation
-    // (an even count of its kind so far, a later partner, a letter right after it), it is a
-    // token of its own, so the cut never lands right after it. Its clock is a zero-length one
-    // at the next word's start (the word's end until that word arrives): a cue starting with
-    // it starts once that word is spoken.
-    const qm = /[\p{Pe}\p{Pf}](["'])$/u.exec(tw);
+    // Whisper glues a quote to the word before it (」" ”", or after a colon or comma: 说：" 说，"
+    // me:"): when it opens the next quotation (an even count of its kind so far, a later
+    // partner, a letter right after it), it is a token of its own, so the cut never lands right
+    // after it. Its clock is a zero-length one at the next word's start (the word's end until
+    // that word arrives): a cue starting with it starts once that word is spoken.
+    const qm = /(?:[\p{Pe}\p{Pf}]|(?!["'])\p{Po})(["'])$/u.exec(tw);
     if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
       flags ??= quoteFlags(text);
       const j = cur - 1;
