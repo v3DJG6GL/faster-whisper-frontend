@@ -177,6 +177,15 @@ export function collapseModifierSides(codes: string[]): string[] {
   return codes.map((c) => ownProp(SIDE_COLLAPSE, c) ?? c);
 }
 
+/** A chord the global-shortcut plugin can't register (Rust's codes_to_accelerator → None):
+ *  modifier-only, AltGr, or more than one non-modifier key. Only a low-level backend (evdev,
+ *  the Windows hook) fires it. An empty (unbound) chord needs nothing. */
+export function needsLowLevel(codes: string[]): boolean {
+  if (codes.length === 0) return false;
+  if (codes.includes("AltRight")) return true;
+  return codes.filter((c) => !MODIFIER_CODES.has(c)).length !== 1;
+}
+
 /** Windows/WebView2 synthesizes a phantom `ControlLeft` keydown just before
  *  `AltRight` on AltGr layouts (German/Swiss). The Windows backend drops that
  *  phantom in both feeds (scan 0x21D / injected raw input), so a captured

@@ -10,7 +10,7 @@ import { countSet } from "@/lib/decodeKeys";
 import { envDesc } from "@/lib/envDesc";
 import { isDirty, useUnsavedGuard } from "@/lib/useUnsavedGuard";
 import { HotkeyChips } from "@/components/HotkeyChips";
-import { startersClearOf } from "@/lib/starters";
+import { STARTERS_LOW_LEVEL_NOTE, startersClearOf, startersNeedLowLevelNote } from "@/lib/starters";
 import { TriggerTile } from "@/components/TriggerTile";
 import { DecodeFields } from "@/components/DecodeFields";
 import { LiveDictationFields } from "@/components/LiveDictationFields";
@@ -996,6 +996,9 @@ export default function Profiles() {
                   (tap <HotkeyChips codes={["ControlLeft", "MetaLeft"]} /> to start and stop). Keep them,
                   then edit anything.
                 </div>
+                {startersNeedLowLevelNote(IS_LINUX, evdev === null ? null : lowLevelActive) && (
+                  <Notice className="mt-2.5">{STARTERS_LOW_LEVEL_NOTE}</Notice>
+                )}
                 <div className="mt-4 flex items-center gap-2.5">
                   <Button
                     variant="accent"

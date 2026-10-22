@@ -9,6 +9,7 @@
 // a user-configured hands-free superset.
 
 import { conflicts, quickAddPeer } from "./hotkeyConflicts";
+import { needsLowLevel } from "./keys";
 import type { Profile } from "./types";
 
 /** Fresh draft objects each call — callers edit them before committing. */
@@ -43,4 +44,15 @@ export function startersClearOf(backendId: string | null, quickAddHotkey: string
   return starterProfiles(backendId).map((p) =>
     conflicts([...qa, p], collapseSides).length > 0 ? { ...p, hotkey: [] } : p,
   );
+}
+
+/** The starter chords are modifier-only, so on Linux without an active evdev backend the plugin
+ *  skips them with only a log line (the capture path refuses the same chord by hand). Both places
+ *  that offer the starters say so instead of committing shortcuts that silently never fire. */
+export const STARTERS_LOW_LEVEL_NOTE =
+  "These shortcuts are modifier-only: on Linux they need the evdev backend (Settings → Permissions), or bind them in your desktop’s shortcut settings.";
+
+/** Show STARTERS_LOW_LEVEL_NOTE? `lowLevelActive` null = evdevStatus hasn't answered yet (no flash). */
+export function startersNeedLowLevelNote(isLinux: boolean, lowLevelActive: boolean | null): boolean {
+  return isLinux && lowLevelActive === false && starterProfiles(null).some((p) => needsLowLevel(p.hotkey));
 }

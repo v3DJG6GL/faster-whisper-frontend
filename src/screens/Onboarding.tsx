@@ -24,11 +24,11 @@ import {
   applyBlob, carriesQuickAddPin, categorySelection, isPlainObject, migrateBlob, restorableCategories,
   sanitizeProfiles,
 } from "@/lib/sync/sync";
-import { startersClearOf } from "@/lib/starters";
+import { STARTERS_LOW_LEVEL_NOTE, startersClearOf, startersNeedLowLevelNote } from "@/lib/starters";
 import { useApp } from "@/lib/store";
 import { useHotkeyCapture } from "@/lib/useHotkeyCapture";
 import { quickAddListsOf } from "@/screens/onboardingLists";
-import { IS_WINDOWS } from "@/lib/platform";
+import { IS_LINUX, IS_WINDOWS } from "@/lib/platform";
 import { peerDeviceName, ruleListLabel, safeDisplayText } from "@/lib/sanitize";
 import {
   ChordFixNotices, ImportPreview, IncomingAddresses, SyncedCategoryChips, predictChordFix,
@@ -607,10 +607,15 @@ function StartersStep({
   // conservative reading.
   const [drafts, setDrafts] = useState<Profile[]>(() => startersClearOf(backendId, quickAddHotkey, !IS_WINDOWS));
   const [lowLevel, setLowLevel] = useState(IS_WINDOWS);
+  // The evdev note waits for evdevStatus's answer (no flash of it on a permitted setup).
+  const [lowLevelKnown, setLowLevelKnown] = useState(IS_WINDOWS);
   useEffect(() => {
     if (IS_WINDOWS) return;
     void evdevStatus()
-      .then((s) => setLowLevel(!!(s.permitted && evdevEnabled)))
+      .then((s) => {
+        setLowLevel(!!(s.permitted && evdevEnabled));
+        setLowLevelKnown(true);
+      })
       .catch(() => {});
   }, [evdevEnabled]);
 
@@ -637,6 +642,9 @@ function StartersStep({
           />
         ))}
       </div>
+      {startersNeedLowLevelNote(IS_LINUX, lowLevelKnown ? lowLevel : null) && (
+        <Notice className="mt-3 w-full max-w-[540px] text-left">{STARTERS_LOW_LEVEL_NOTE}</Notice>
+      )}
       <div className="mt-6 flex w-full max-w-[540px] justify-end">
         <Button variant="accent" onClick={() => onConfirm(drafts.filter((d) => d.hotkey.length > 0))}>
           Confirm & continue
