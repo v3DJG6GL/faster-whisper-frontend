@@ -188,12 +188,23 @@ pub struct BatchResult {
 pub struct TranslationInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     pub targets: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<String>,
+}
+
+/// `#[serde(default)]` covers only a MISSING key; an explicit `null` (speaches /
+/// faster-whisper-server send `"words": null` when word timestamps are off) would fail the
+/// whole decode after the server did all the work. Read it as the default too.
+fn null_as_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(d)?.unwrap_or_default())
 }
 
 /// The wire shape of a transcription payload — the POST's response body and,
@@ -208,15 +219,15 @@ pub(crate) struct VerboseJson {
     duration: Option<f64>,
     #[serde(default)]
     duration_after_vad: Option<f64>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     segments: Vec<Segment>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     words: Vec<Word>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     speakers: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     warnings: Vec<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     overrides_ignored: Vec<String>,
     #[serde(default)]
     source_media_id: Option<String>,
@@ -580,6 +591,24 @@ mod wire_field_tests {
     fn transcriptions_ask_for_segments_and_words_translations_for_neither() {
         assert_eq!(timestamp_granularities(false), &["segment", "word"]);
         assert!(timestamp_granularities(true).is_empty());
+    }
+
+    /// An explicit `null` list (speaches sends `"words": null` without word timestamps) reads
+    /// as empty instead of failing the whole decode.
+    #[test]
+    fn null_lists_read_as_empty() {
+        let raw = serde_json::json!({
+            "text": "a", "words": null, "speakers": null, "warnings": null,
+            "overrides_ignored": null, "translation": {"targets": null},
+            "segments": [{"start": 0.0, "end": 1.0, "text": "a"}]
+        });
+        let r = to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap());
+        assert!(r.words.is_empty() && r.speakers.is_empty() && r.warnings.is_empty());
+        assert_eq!(r.segments.len(), 1);
+        assert!(r.translation.unwrap().targets.is_empty());
+        let raw = serde_json::json!({"text": "a", "segments": null});
+        let r = to_batch_result(serde_json::from_value::<VerboseJson>(raw).unwrap());
+        assert!(r.segments.is_empty());
     }
 
     /// The translating model is provenance (stored, exported): kept whole up to the model-id
