@@ -258,7 +258,7 @@ export function BusyPanel({ stats, dense, scope, title, metric, rhythm, onRhythm
       )}
       {model.sent === "yes" && (
         <>
-          <LevelLegend lead={`${label} per ${L.slotWord} · quarters of your active slots`} breaks={model.breaks} counts={model.counts} unit={["slot", "slots"]} metric={metric} />
+          <LevelLegend lead={`${label} per ${L.slotWord} · quarters of your active slots`} breaks={model.breaks} floor={model.floor} counts={model.counts} unit={["slot", "slots"]} metric={metric} />
           <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-faint">
             <span><i className="mr-1.5 inline-block h-2 w-3 rounded-[1px] bg-line-strong align-[-1px]" aria-hidden />side bars: each {L.colUnit} (top) and {L.rowUnit} (right) against a flat {L.flatWord} · dashed tick = average</span>
             <span className="ml-auto">{tz}</span>

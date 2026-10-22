@@ -444,6 +444,14 @@ export function quantileBreaks(values: readonly number[]): Breaks {
   return b;
 }
 
+/** The smallest active value (> 0), or 0 when none: where the first shade really starts. Its
+ *  break is the step's MAX, so a legend that opened at the break could exclude a value it shades. */
+export function activeFloor(values: readonly number[]): number {
+  let lo = 0;
+  for (const v of values) if (typeof v === "number" && Number.isFinite(v) && v > 0 && (lo === 0 || v < lo)) lo = v;
+  return lo;
+}
+
 export function levelOf(v: number, b: Breaks): Level {
   return !(v > 0) ? 0 : v <= b[0] ? 1 : v <= b[1] ? 2 : v <= b[2] ? 3 : 4;
 }
@@ -455,7 +463,8 @@ export function levelOf(v: number, b: Breaks): Level {
  *  how many values sit in the top step: ties can leave it empty too (four days of 5 words
  *  are all ≤ b3), and then it reads `—` rather than `5+`. Bounds are compared as PRINTED: a
  *  range whose ends print alike reads as one value, and a first step that lies wholly below
- *  `lo` (a 0.03 s break under a 0.1 s floor) reads `<lo`, not `0.1s–0s`. */
+ *  `lo` (a 0.03 s break under a 0.1 s floor) reads `<lo`, not `0.1s–0s` — the grids take `lo`
+ *  from their smallest value (levelLegendLabels), so they never print it. */
 export function legendRanges(b: Breaks, fmt: (n: number) => string, lo = 1, top?: number): string[] {
   const range = (from: number, upper: number) => {
     const a = fmt(from);
@@ -512,6 +521,8 @@ export interface CalendarCell extends KindSplit {
 export interface CalendarModel {
   cells: CalendarCell[];
   breaks: Breaks;
+  /** The smallest active day's value (activeFloor): the legend's first step opens at or below it. */
+  floor: number;
   /** Days per level, index = level. */
   counts: [number, number, number, number, number];
 }
@@ -529,7 +540,8 @@ export function calendarModel(series: readonly UsageSeriesPoint[] | undefined, s
     byDay.set(p.day, cur);
   }
   const valueOf = (k: UsageKinds | undefined) => (k ? metricValue(k[scope], metric) : 0);
-  const breaks = quantileBreaks([...byDay.values()].map(valueOf));
+  const activeValues = [...byDay.values()].map(valueOf);
+  const breaks = quantileBreaks(activeValues);
   const cells: CalendarCell[] = [];
   const counts: CalendarModel["counts"] = [0, 0, 0, 0, 0];
   const start = Math.min(from, to);
@@ -541,7 +553,7 @@ export function calendarModel(series: readonly UsageSeriesPoint[] | undefined, s
     counts[level]++;
     cells.push({ day: d, kinds, value, level });
   }
-  return { cells, breaks, counts };
+  return { cells, breaks, floor: activeFloor(activeValues), counts };
 }
 
 export interface CalendarColumn {
@@ -651,6 +663,8 @@ export interface RhythmModel {
   /** rows × cols, row-major (index = row * cols + col). */
   cells: RhythmCell[];
   breaks: Breaks;
+  /** The smallest in-window active value (activeFloor), as CalendarModel.floor. */
+  floor: number;
   counts: [number, number, number, number, number];
   peak: RhythmCell | null;
   colTotals: number[];
@@ -918,7 +932,7 @@ export function rhythmModel(
   const rowIndex = index(rowTotals, rowOcc);
   const { y0: _y0, ...layout } = L;
   return {
-    layout, cells, breaks, counts, peak, colTotals, rowTotals, colIndex, colLive, rowIndex, sum, sent,
+    layout, cells, breaks, floor: activeFloor(active.map((c) => c.value)), counts, peak, colTotals, rowTotals, colIndex, colLive, rowIndex, sum, sent,
     occOf: (c) => (wd ? wd[c.row] : L.colOcc ? L.colOcc[c.col] : 1),
     occWord: (c) => (rhythm === "hours" ? DOW_LONG[c.row] : rhythm === "days" ? "month" : ""),
     phrase: rhythmPhrase(rhythm, cells.map((c) => c.value), colTotals, rowTotals, L.cols),

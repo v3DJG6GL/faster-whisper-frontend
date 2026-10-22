@@ -35,26 +35,29 @@ export function CellTip({ tip, boundsRef, children }: { tip: CellTipState | null
     </div>
   );
 }
-/** The legend's five labels for a grid's breaks, step counts and measure. */
-export function levelLegendLabels(breaks: [number, number, number], counts: readonly number[], metric: ChartMetric): string[] {
+/** The legend's five labels for a grid's breaks, step counts and measure. `floor` is the smallest
+ *  active value (the model's activeFloor); without it the first non-zero break stands in. */
+export function levelLegendLabels(breaks: [number, number, number], counts: readonly number[], metric: ChartMetric, floor?: number): string[] {
   // Duration quartiles can sit under ten seconds (processing time per day); the axis
   // formatter rounds those to "0s", which read as "1s–0s". Sub-ten-second bounds keep a
   // decimal, and the first active step opens at 0.1 s instead of 1 s when its break is below it
   // (an empty step's 0 break says nothing: legendRanges draws it as "—"). Below 0.1 s a bound
   // keeps one significant digit and the floor drops to the break's own decade (0.03 s opens at
   // 0.01 s): one decimal would print 0.03 s as "0s", so a later step would open below the one
-  // before it, and the top step would claim "0.1s+" for values the floor lifted it past.
+  // before it, and the top step would claim "0.1s+" for values the floor lifted it past. The
+  // floor follows the smallest VALUE, not the first break: that break is step 1's max, so a
+  // 0.3 s day under a 2 s break read "1s–2s", and a lone 0.03 s day (breaks 0,0,0) "0.1s+".
   const dur = isDurationMetric(metric);
   const fmt = (v: number) =>
     dur && v > 0 && v < 10 ? `${v < 0.1 ? Number(v.toPrecision(1)) : Math.round(v * 10) / 10}s` : metricTick(metric, v);
-  const firstBreak = breaks.find((v) => v > 0) ?? 0;
-  const lo = !dur || firstBreak >= 1 ? 1 : firstBreak >= 0.1 || firstBreak === 0 ? 0.1 : 10 ** Math.floor(Math.log10(firstBreak));
+  const least = floor !== undefined && floor > 0 ? floor : (breaks.find((v) => v > 0) ?? 0);
+  const lo = !dur || least >= 1 ? 1 : least >= 0.1 || least === 0 ? 0.1 : 10 ** Math.floor(Math.log10(least));
   return legendRanges(breaks, fmt, lo, counts[4]);
 }
 
 /** The five labelled steps: swatch, value range, count. Shared by both grids. */
-export function LevelLegend({ lead, breaks, counts, unit, metric }: { lead: string; breaks: [number, number, number]; counts: readonly number[]; unit: [string, string]; metric: ChartMetric }) {
-  const ranges = levelLegendLabels(breaks, counts, metric);
+export function LevelLegend({ lead, breaks, floor, counts, unit, metric }: { lead: string; breaks: [number, number, number]; floor: number; counts: readonly number[]; unit: [string, string]; metric: ChartMetric }) {
+  const ranges = levelLegendLabels(breaks, counts, metric, floor);
   return (
     <div className="mt-2.5 flex flex-wrap items-end gap-3.5 text-[11.5px] text-faint">
       <span>{lead}</span>

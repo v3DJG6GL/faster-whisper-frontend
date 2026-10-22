@@ -120,7 +120,7 @@ export function CalendarPanel({ dense, streaks, scope, withS, from, to, mark, fi
           ))}
         </div>
       </div>
-      <LevelLegend lead={`${label} per day · quarters of your active days in the year${mark ? " · dimmed days are outside the range" : ""}`} breaks={model.breaks} counts={model.counts} unit={["day", "days"]} metric={metric} />
+      <LevelLegend lead={`${label} per day · quarters of your active days in the year${mark ? " · dimmed days are outside the range" : ""}`} breaks={model.breaks} floor={model.floor} counts={model.counts} unit={["day", "days"]} metric={metric} />
     </Panel>
   );
 }
