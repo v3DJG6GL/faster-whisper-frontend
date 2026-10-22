@@ -367,9 +367,9 @@ mod media_tmp_tests {
 mod wire_field_tests {
     use super::{
         batch_decode_overrides, bound_language_check, bound_progress, bound_rung, bound_subtitles,
-        bound_tracks, is_format_id, is_track_id, standard_temperature, to_batch_result,
-        translate_to_field, url_language_body, BatchProgress, UrlLanguageCheck, UrlSubtitles,
-        VerboseJson, VideoRung,
+        bound_tracks, is_format_id, is_track_id, standard_temperature, timestamp_granularities,
+        to_batch_result, translate_to_field, url_language_body, BatchProgress, UrlLanguageCheck,
+        UrlSubtitles, VerboseJson, VideoRung,
     };
 
     #[test]
@@ -572,6 +572,14 @@ mod wire_field_tests {
         );
         assert_eq!(r.speakers[0].chars().count(), 65);
         assert_eq!(r.segments[0].text.chars().count(), 5000);
+    }
+
+    /// The granularity list picks what a strict OpenAI server fills in: `word` alone drops
+    /// `segments` (no cues, empty SRT/VTT). The translations route takes none at all.
+    #[test]
+    fn transcriptions_ask_for_segments_and_words_translations_for_neither() {
+        assert_eq!(timestamp_granularities(false), &["segment", "word"]);
+        assert!(timestamp_granularities(true).is_empty());
     }
 
     /// The translating model is provenance (stored, exported): kept whole up to the model-id
@@ -1294,6 +1302,20 @@ fn validate_media_url(source_url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The `timestamp_granularities[]` values a run asks for. The list picks which granularities
+/// get FILLED IN (OpenAI's default is `["segment"]`), so asking for `word` alone makes a strict
+/// server answer with words and no `segments` — no cue timeline, empty subtitle exports. Both
+/// are asked for; the full backend always emits segments and only reads `"word" in ...`.
+/// It is a transcriptions-only parameter, so it must never ride along on the OpenAI
+/// /v1/audio/translations route (a strict server 400s the run).
+fn timestamp_granularities(use_translations_route: bool) -> &'static [&'static str] {
+    if use_translations_route {
+        &[]
+    } else {
+        &["segment", "word"]
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn post(
     server_url: &str,
@@ -1320,13 +1342,8 @@ async fn post(
     form = form
         .text("model", model.to_string())
         .text("response_format", "verbose_json");
-    // Explicit word granularity: the full backend defaults words ON for
-    // verbose_json anyway (same wire result), and standard servers need the
-    // explicit ask. It is a transcriptions-only parameter, so it must never
-    // ride along on the OpenAI /v1/audio/translations route (a strict server
-    // 400s the run).
-    if !use_translations_route {
-        form = form.text("timestamp_granularities[]", "word");
+    for g in timestamp_granularities(use_translations_route) {
+        form = form.text("timestamp_granularities[]", *g);
     }
 
     // Computed once, up here, so the `task` exclusivity below reads the exact value that
