@@ -460,8 +460,10 @@ export interface LinkStemInfo {
 /** The save dialog's default file stem — the ONE builder every export (text
  *  formats, subtitle sidecars, audio, video) and History's quick export use.
  *
- *  A local file: the record's title, cleaned for every file system, else the
- *  file's own name (unchanged from before links existed).
+ *  A local file: the record's title, else the file's own name (records of
+ *  local files carry no title), either cleaned and bounded for every file
+ *  system — a long source name plus a track suffix and ".tmp" overran the
+ *  255-byte name cap.
  *
  *  A link (`path` is its URL): `<YYYY.MM.DD>_<HH.MM>_<site>___<title>` — the
  *  fetch date/time and the site lead so a folder of saved links sorts by
@@ -471,9 +473,7 @@ export interface LinkStemInfo {
  *  ("watch?v=…") is only the title's last resort, cleaned like any title. */
 export function exportStem(title: string | null | undefined, path: string, link?: LinkStemInfo): string {
   if (!isSourceUrl(path)) {
-    const clean = cleanStemPart(title);
-    if (clean) return clean;
-    return fileStem(path) || "transcript";
+    return cleanStemPart(title) || cleanStemPart(fileStem(path)) || "transcript";
   }
   let tail = "";
   try {

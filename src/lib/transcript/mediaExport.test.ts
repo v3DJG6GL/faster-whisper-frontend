@@ -312,6 +312,11 @@ describe("exportStem", () => {
     expect(exportStem("x".repeat(200), "/a.mp4")).toHaveLength(120);
     // The bound never splits an emoji into a lone surrogate.
     expect(exportStem("a".repeat(119) + "\u{1F600}" + "b", "/a.mp4")).toBe("a".repeat(119));
+    // The file's own name is bounded too: a sidecar's suffix plus ".tmp" fits the 255-byte name cap.
+    const long = exportStem(undefined, "/home/u/" + "会議".repeat(39) + ".mp4");
+    expect(new TextEncoder().encode(long + ".Machine-translation.de.srt.tmp").length).toBeLessThanOrEqual(255);
+    expect(long).toBe(exportStem("会議".repeat(39), "/home/u/x.mp4"));
+    expect(exportStem(undefined, "/tmp/a:b?.mkv")).toBe("a b");
     // The link info is ignored for a local file — its names stay as before.
     expect(exportStem("Talk", "/a.mp4", { createdAt: new Date(2026, 9, 4, 19, 34), extractor: "Youtube" })).toBe("Talk");
   });
