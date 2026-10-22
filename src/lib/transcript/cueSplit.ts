@@ -442,7 +442,8 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     out.push(tok);
     cur = at + tw.length;
     // Whisper glues a quote to the word before it (」" ”", after a colon or comma: 说：" 说，"
-    // me:", or a Latin word or number: AI"): when it opens the next quotation (an even count of its kind so far, a later
+    // me:", or a Latin word or number: AI", unless it may close an uncounted one: skippedOpener):
+    // when it opens the next quotation (an even count of its kind so far, a later
     // partner, a letter right after it), it is a token of its own, so the cut never lands right
     // after it. Its clock is a zero-length one at the next word's start (the word's end until
     // that word arrives): a cue starting with it starts once that word is spoken.
@@ -453,7 +454,7 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
       let n = 0;
       let later = false;
       for (let x = 0; x < text.length; x++) if (flags[x] && text[x] === qm[1]) { if (x < j) n++; else if (x > j) later = true; }
-      if (flags[j] && n % 2 === 0 && later) {
+      if (flags[j] && n % 2 === 0 && later && !(/[\p{L}\p{N}]/u.test(text[j - 1]) && skippedOpener(text, flags, j))) {
         tok.to = j;
         out.push({ from: j, to: cur, s: tok.e, e: tok.e, opens: true });
       }
@@ -1028,6 +1029,22 @@ function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
   return out;
 }
 
+/** Whether the counted quote at `j` of `t` may close a quotation whose opener quoteFlags did not
+ *  count as one between two ASCII letters or digits: one of its kind stands so in the Latin run
+ *  right before it — its letters and digits, and spaces for a " (RTX"Super", Apple"Vision Pro"; a
+ *  ' a word back is an apostrophe: I'm Mike'). Its count's parity is then off by one, so the
+ *  letter-or-digit branch that splits an opener off the word before it (quoteSeams, tokensOf)
+ *  leaves it joined backward. */
+function skippedOpener(t: string, flags: boolean[], j: number): boolean {
+  const c = t[j];
+  for (let k = j - 1; k > 0; k--) {
+    const x = t[k];
+    if (x === c) return !flags[k] && /[A-Za-z0-9]/.test(t[k - 1]) && /[A-Za-z0-9]/.test(t[k + 1]);
+    if (unspacedChar(x) || BRK_SYL.test(x) || !(/[\p{L}\p{N}]/u.test(x) || (c === '"' && x === " "))) return false;
+  }
+  return false;
+}
+
 /** Where each of `parts` — trimmed substrings of `whole`, in order (cues, cut parts) — starts
  *  in `whole`; -1 for an empty or unfound part. */
 function partsAt(whole: string, parts: string[]): number[] {
@@ -1073,8 +1090,8 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
  *  quotation: a typographic opener (”“ ’‘ »«, also after a closing ASCII quote) anywhere in
  *  the match, an ASCII quote only as the match's last character ("Hello""再见, “OK”"再见, also
- *  after a letter or digit: iPhone"新機能") and only when it opens (an even count of its kind so
- *  far and a later partner). Either
+ *  after a letter or digit: iPhone"新機能", unless it may close an uncounted one: skippedOpener)
+ *  and only when it opens (an even count of its kind so far and a later partner). Either
  *  needs a letter, digit or opener glued after it. Uncut, the opener rode on the text
  *  before it and a line or part ended on it. */
 function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
@@ -1091,7 +1108,8 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         const closer = /[\p{Pe}\p{Pf}]/u.test(p) || (flags[j - 1] && n[p] % 2 === 0);
         let e = -1;
         if (closer && /\p{Pi}/u.test(t[j])) for (e = j; e < end && /\p{Pi}/u.test(t[e]); ) e++;
-        else if ((closer || /[\p{L}\p{N}]/u.test(p)) && j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1) e = end;
+        else if (j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1
+          && (closer || (/[\p{L}\p{N}]/u.test(p) && !skippedOpener(t, flags, j)))) e = end;
         if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
           yield [t.slice(s, j), s];
           s = j;

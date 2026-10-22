@@ -716,6 +716,15 @@ describe("wrapLines", () => {
     expect(cutByShare("昨日の会議ではUSB-C'規格'について話し合いました", [1, 1], "ja").some((p) => /'$/.test(p))).toBe(false);
     expect(cutByShare('新款手机屏幕6.1"大小非常合适大家都很喜欢', [1, 1], "zh").some((p) => p.includes('6.1"'))).toBe(true);
     expect(cutByShare("我读了James'新书然后就走了大家都很喜欢", [1, 1], "zh").some((p) => p.includes("James'"))).toBe(true);
+    // Not one that may close a quotation opened between two letters, which no count sees (RTX"Super"):
+    // its count's parity is off, and split off it cut what it closes off — but a ' a word after
+    // an apostrophe (I'm) still opens.
+    expect(wrapLines('我们的产品叫RTX"Super"和"Ultra"两个版本', 12, 2)).toEqual(["我们的产品叫", 'RTX"Super"', '和"Ultra"两个版本']);
+    expect(wrapLines("我们的产品叫RTX'Super'和'Ultra'两个版本", 12, 2)).toEqual(["我们的产品叫", "RTX'Super'", "和'Ultra'两个版本"]);
+    expect(cutByShare('我们的产品叫RTX"Super"和"Ultra"两个版本', [1, 1])).toEqual(['我们的产品叫RTX"Super"', '和"Ultra"两个版本']);
+    expect(wrapLines('新しいApple"Vision Pro"と"iPhone"を発表しました', 10, 2)).toContain('Pro"');
+    expect(wrapLines('我们用的是Model"X"和Model"Y"两款车', 8, 2)).toContain('Model"X"');
+    expect(wrapLines("I'm Mike'新功能'很好用大家都很喜欢", 8, 2)).toEqual(["I'm Mike", "'新功能'很好", "用大家都很喜欢"]);
     // One after a bracket glued to a word (print(") moves onto what it opens with the bracket.
     expect(cutByShare('使用print("你好")函数', [1, 1])).toEqual(["使用print", '("你好")函数']);
     // The closing quote still joins what it closes, and an apostrophe (it's) is no quote.
@@ -1368,6 +1377,16 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
       for (const length of ["short", "standard"] as const) {
         const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
         expect(texts.some((c) => /AI"$/.test(c)), texts.join(" | ")).toBe(false);
+        expect(texts.join("")).toBe(r.text);
+      }
+    }
+    // Not one closing a quotation opened between two letters (RTX"Super"), which no count sees.
+    const zh4 = ["我们", "的", "产品", "叫", 'RTX"Super"', "和", '"Ultra"', "两个", "版本", "然后", "我们", "一起", "走了", "很远", "的路"];
+    for (const pauses of [{ 4: 0.8 }, { 5: 0.8 }] as Record<number, number>[]) {
+      const r = resOf(zh4, "zh", pauses);
+      for (const length of ["short", "standard"] as const) {
+        const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+        expect(texts[0], texts.join(" | ")).toBe('我们的产品叫RTX"Super"');
         expect(texts.join("")).toBe(r.text);
       }
     }
