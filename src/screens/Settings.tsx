@@ -231,6 +231,14 @@ export default function Settings() {
     setConfirming(null);
     setStoreMsg(null);
   }, [tab]);
+  // Arming re-reads the counts the confirm names: a dictation saved or a run finished while the
+  // tab sat open (or hidden in the tray) sends no event this screen hears, so the last read could
+  // promise "Delete 5 dictations" for a wipe that removes 50.
+  const armStoreAction = (kind: StoreKind) => {
+    setStoreMsg(null);
+    refreshStoreStats();
+    setConfirming(kind);
+  };
   // After the reset above, so a move that failed while away survives the trip back to the tab.
   const pendingMoveErr = useSyncExternalStore(subscribeBusy, () => moveError);
   useEffect(() => {
@@ -921,10 +929,7 @@ export default function Settings() {
                   size="sm"
                   variant="danger"
                   disabled={storeLocked}
-                  onClick={() => {
-                    setStoreMsg(null);
-                    setConfirming("dict");
-                  }}
+                  onClick={() => armStoreAction("dict")}
                 >
                   {deletingKind === "dict" ? "Deleting…" : "Delete…"}
                 </Button>
@@ -1005,10 +1010,7 @@ export default function Settings() {
                   size="sm"
                   variant="danger"
                   disabled={storeLocked}
-                  onClick={() => {
-                    setStoreMsg(null);
-                    setConfirming("files");
-                  }}
+                  onClick={() => armStoreAction("files")}
                 >
                   {deletingKind === "files" ? "Deleting…" : "Delete…"}
                 </Button>
@@ -1032,10 +1034,7 @@ export default function Settings() {
                   size="sm"
                   variant="danger"
                   disabled={storeLocked}
-                  onClick={() => {
-                    setStoreMsg(null);
-                    setConfirming("links");
-                  }}
+                  onClick={() => armStoreAction("links")}
                 >
                   {deletingKind === "links" ? "Deleting…" : "Delete…"}
                 </Button>
@@ -1059,10 +1058,7 @@ export default function Settings() {
                   size="sm"
                   variant="danger"
                   disabled={storeLocked}
-                  onClick={() => {
-                    setStoreMsg(null);
-                    setConfirming("video");
-                  }}
+                  onClick={() => armStoreAction("video")}
                 >
                   {deletingKind === "video" ? "Deleting…" : "Delete…"}
                 </Button>
@@ -1087,10 +1083,7 @@ export default function Settings() {
                   size="sm"
                   variant="danger"
                   disabled={storeLocked}
-                  onClick={() => {
-                    setStoreMsg(null);
-                    setConfirming("clear");
-                  }}
+                  onClick={() => armStoreAction("clear")}
                 >
                   {deletingKind === "clear" ? "Deleting…" : "Delete…"}
                 </Button>
