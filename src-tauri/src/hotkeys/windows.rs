@@ -112,6 +112,15 @@ pub fn stop_held_sessions(_app: &tauri::AppHandle) {}
 #[cfg_attr(not(windows), allow(dead_code))]
 const NUMPAD_ENTER: u16 = 0x0D | 0x0100;
 
+/// "NumpadEqual"'s id: VK_OEM_NEC_EQUAL, the NEC PC-98 key's VK. A PC layout reports the numpad
+/// "=" (HID 0x67, on Apple and other full-size keyboards) as VK_CLEAR instead — see
+/// `physical_key_id`.
+const VK_OEM_NEC_EQUAL: u16 = 0x92;
+
+/// The set-1 scan code (not extended) of the numpad "=" key.
+#[cfg_attr(not(windows), allow(dead_code))]
+const NUMPAD_EQUAL_SCAN: u16 = 0x59;
+
 /// Map a binding's `event.code` to a Windows virtual-key id (carrying left/right +
 /// AltGr, which arrives as `VK_RMENU`). None if the code isn't mappable. Must cover
 /// the same bindable set as `evdev::code_to_key` / keys.ts `codeToToken` —
@@ -152,7 +161,7 @@ fn code_to_vk(code: &str) -> Option<u16> {
         "NumpadDivide" => 0x6F,   // VK_DIVIDE
         "NumpadDecimal" => 0x6E,  // VK_DECIMAL
         "NumpadEnter" => NUMPAD_ENTER,
-        "NumpadEqual" => 0x92, // VK_OEM_NEC_EQUAL
+        "NumpadEqual" => VK_OEM_NEC_EQUAL,
         _ => {
             if let Some(l) = code.strip_prefix("Key") {
                 return offset_vk(l, b'A', b'Z', 0x41); // VK_A..VK_Z
@@ -250,12 +259,15 @@ fn letter_scan_from_vk(vk: u16) -> Option<u16> {
 }
 
 /// The scan position a PHYSICAL id stands for — letter ids (`physical_key_id`'s
-/// re-keyed VK_A..VK_Z) and `0x8000 | scan` ids. None = the id is a plain VK the OS
-/// key state can be asked about directly.
+/// re-keyed VK_A..VK_Z), the numpad "=" and `0x8000 | scan` ids. None = the id is a
+/// plain VK the OS key state can be asked about directly.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn physical_scan_of_id(id: u16) -> Option<u16> {
     if id & 0x8000 != 0 {
         return Some(id & 0x7FFF);
+    }
+    if id == VK_OEM_NEC_EQUAL {
+        return Some(NUMPAD_EQUAL_SCAN);
     }
     letter_scan_from_vk(id)
 }
@@ -276,6 +288,12 @@ fn physical_key_id(vk: u16, scan: u16, extended: bool) -> u16 {
     // the D position, ',' as Z. It is not a key, so it keeps its inert VK id.
     if vk == VK_PACKET || scan == 0 || extended {
         return vk;
+    }
+    // The numpad "=": a PC layout reports it as VK_CLEAR (kbd.h `T59 _EQ(CLEAR)`) in either
+    // NumLock state, so by its VK a "NumpadEqual" binding would never fire. Re-keyed by position
+    // too. Numpad5's VK_CLEAR with NumLock off (scan 0x4C) keeps its VK.
+    if vk == 0x0C && scan == NUMPAD_EQUAL_SCAN {
+        return VK_OEM_NEC_EQUAL;
     }
     if let Some(letter) = letter_vk_from_scan(scan) {
         return letter;
@@ -324,7 +342,7 @@ fn shift_masked_by_numpad(held: &std::collections::HashSet<u16>, numlock: bool) 
 mod imp {
     use super::{
         code_to_vk, physical_key_id, shift_masked_by_numpad, vk_to_evdev_mod, Running,
-        WinHookState, NUMPAD_ENTER,
+        WinHookState, NUMPAD_ENTER, NUMPAD_EQUAL_SCAN,
     };
     use crate::config::{ActivationType, Profile};
     use crate::hotkeys::chord_engine::{ChordKind, ChordSpec, Engine, Fire};
@@ -983,6 +1001,8 @@ mod imp {
             // capture. E0 set = the dedicated nav key — keep it. NumLock off keeps the
             // nav VKey: a saved Numpad-digit chord (the capture UI records the physical
             // "Numpad4" regardless of NumLock) is then inert until NumLock comes back on.
+            // The numpad "=" is VK_CLEAR in either NumLock state: `physical_key_id` re-keys it.
+            0x0C if !e0 && make_code == NUMPAD_EQUAL_SCAN => physical_key_id(0x0C, make_code, e0),
             0x0C | 0x21..=0x28 | 0x2D | 0x2E if !e0 && numlock_on() => numpad_from_scan(make_code)?,
             // Letters by physical position (layout-independent, evdev parity).
             other => physical_key_id(other, make_code, e0),
@@ -1621,6 +1641,20 @@ mod tests {
         assert_eq!(super::physical_key_id(0x20, 0x39, false), 0x20); // Space untouched
         assert_eq!(super::physical_key_id(0xE7, 0x20, false), 0xE7); // VK_PACKET ' ' ≠ D
         assert_eq!(super::physical_key_id(0xE7, 0x2C, false), 0xE7); // VK_PACKET ',' ≠ Z
+    }
+
+    // A PC layout reports the numpad "=" (scan 0x59) as VK_CLEAR on both feeds, so a
+    // "NumpadEqual" binding (VK_OEM_NEC_EQUAL) bound fine but never fired on Windows.
+    #[test]
+    fn the_numpad_equal_key_fires_a_numpad_equal_binding() {
+        let id = super::code_to_vk("NumpadEqual").unwrap();
+        assert_eq!(super::physical_key_id(0x0C, 0x59, false), id); // VK_CLEAR at KP=
+        assert_eq!(super::physical_key_id(0x92, 0x59, false), id); // a NEC layout's own VK
+        assert_eq!(super::physical_key_id(0x0C, 0x4C, false), 0x0C); // Numpad5, NumLock off
+        assert_eq!(super::physical_key_id(0xE7, 0x59, false), 0xE7); // VK_PACKET 'Y'
+
+        // The OS reconciler asks the layout what the key at scan 0x59 is, not VK 0x92.
+        assert_eq!(super::physical_scan_of_id(id), Some(0x59));
     }
 
     // The OS reconciler maps a physical id back to its scan position; the inverse
