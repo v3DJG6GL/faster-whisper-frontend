@@ -231,8 +231,9 @@ describe("tierWords (D68: the seven-word scale, collapsed from the middle)", () 
     expect(tierWords(4)).toEqual(["Highest", "High", "Low", "Lowest"]);
     expect(tierWords(5)).toEqual(["Highest", "High", "Medium", "Low", "Lowest"]);
     expect(tierWords(7)).toEqual(["Highest", "Very high", "High", "Medium", "Low", "Very low", "Lowest"]);
-    // Past seven the tail shows facts only.
-    expect(tierWords(9).slice(7)).toEqual([null, null]);
+    // Past seven the rungs above the last show facts only: "Lowest" stays on the last rung.
+    expect(tierWords(8)).toEqual(["Highest", "Very high", "High", "Medium", "Low", "Very low", null, "Lowest"]);
+    expect(tierWords(9).slice(6)).toEqual([null, null, "Lowest"]);
     expect(tierWords(0)).toEqual([]);
   });
 });

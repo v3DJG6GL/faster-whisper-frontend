@@ -217,13 +217,14 @@ export interface VideoRung {
 
 /** The seven-word quality scale, collapsed from the middle so no two rungs
  *  ever share a word: 7 → all seven, 5 → Highest/High/Medium/Low/Lowest,
- *  3 → Highest/Medium/Lowest, 1 → "Best available". Past seven the tail
- *  shows facts only. Returned in ladder order (best first). */
+ *  3 → Highest/Medium/Lowest, 1 → "Best available". Past seven the rungs
+ *  between "Very low" and the last ("Lowest") show facts only. Returned in
+ *  ladder order (best first). */
 export function tierWords(n: number): (string | null)[] {
   const scale = ["Highest", "Very high", "High", "Medium", "Low", "Very low", "Lowest"];
   if (n <= 0) return [];
   if (n === 1) return ["Best available"];
-  if (n >= scale.length) return scale.concat(Array(n - scale.length).fill(null));
+  if (n >= scale.length) return [...scale.slice(0, -1), ...Array(n - scale.length).fill(null), "Lowest"];
   // Which of the seven survive at each count: ends always, the middle word
   // only at odd counts, the "Very" pair only at six.
   const keep: Record<number, number[]> = {
