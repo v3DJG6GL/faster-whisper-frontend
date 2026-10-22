@@ -221,18 +221,15 @@ export function seamUnspaced(s: string, end: boolean): boolean {
 /** Whether the word at the edge of `s` (its end with `end`) — the run of characters that are
  *  neither blank nor unspaced — is glued to an unspaced character on its far side: "是100" and
  *  "17日" are, "有 25" and "300 个" (Whisper's spaced numbers) and a word at the text's edge are not.
- *  A word that fills a wrapped line of its own ("达到了" / "1234567890" / "元") is glued when the
- *  line past it starts (or ends) unspaced: a line break is the wrap's seam, not a blank. */
+ *  Nor is a word that fills a wrapped line of its own: our wrap of the glued "达到了1234567890元"
+ *  and of Whisper's spaced "达到了 1234567890 元" both read "达到了" / "1234567890" / "元", and the
+ *  spaced style keeps its spaces (the glued one regains two). */
 function wordGlued(s: string, end: boolean): boolean {
   const cs = Array.from(s);
   if (!end) cs.reverse();
   let i = cs.length;
   while (i > 0 && !/\s/.test(cs[i - 1]) && !unspacedChar(cs[i - 1])) i--;
-  if (i === 0) return false;
-  if (!/\s/.test(cs[i - 1])) return true;
-  let j = i;
-  while (j > 0 && /\s/.test(cs[j - 1])) j--;
-  return j > 0 && cs.slice(j, i).includes("\n") && unspacedChar(cs[j - 1]);
+  return i > 0 && !/\s/.test(cs[i - 1]);
 }
 /** Whether the break between a wrapped line ending in `before` and the next one starting with
  *  `after` takes no space back in a text that wraps its CJK lines (`cjkWraps`): both edges are
@@ -240,8 +237,7 @@ function wordGlued(s: string, end: boolean): boolean {
  *  the CJK text on its far side too — wrapLines wraps such a word at that seam ("2025年10月" /
  *  "17日", "今日はMicrosoft" / "の会議"), and CJK text sets no space there. A word spaced on its far
  *  side ("有 25" / "个人", "有" / "300 个", "讨论 AI" / "的") is Whisper's spaced style, whose wrap
- *  dropped a space: it keeps one. Either side may carry the line past the next one (`joinLines`,
- *  `joinLineBreaks`), so a word on a wrapped line of its own is judged by what follows it there. */
+ *  dropped a space: it keeps one, as a word on a wrapped line of its own does (`wordGlued`). */
 export function wrapSeamUnspaced(before: string, after: string): boolean {
   const a = seamUnspaced(before, true);
   const b = seamUnspaced(after, false);

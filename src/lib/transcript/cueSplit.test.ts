@@ -1477,27 +1477,31 @@ describe("joinLineBreaks", () => {
       }
     }
   });
-  it("with wraps, a Latin word glued into CJK text joins like a glued number; a word on a line of its own joins what it is glued to", () => {
+  it("with wraps, a Latin word glued into CJK text joins like a glued number; a word on a line of its own keeps its spaces", () => {
     expect(joinLineBreaks("今日はMicrosoft\nの会議です。", true)).toBe("今日はMicrosoftの会議です。");
     expect(joinLineBreaks("今日の会議で\nGoogleとApple\nの話を", true)).toBe("今日の会議でGoogleとAppleの話を");
     expect(joinLineBreaks("我们今天用\nChatGPT写代码，", true)).toBe("我们今天用ChatGPT写代码，");
+    // On a line of its own a word reads the same glued or in Whisper's spaced style: spaced wins.
     expect(joinLineBreaks("今年公司的总收入达到了\n1234567890\n元比去年增长了很多", true))
-      .toBe("今年公司的总收入达到了1234567890元比去年增长了很多");
-    expect(joinLineBreaks("我的电话号码是\n13812345678\n请打给我。", true)).toBe("我的电话号码是13812345678请打给我。");
+      .toBe("今年公司的总收入达到了 1234567890 元比去年增长了很多");
+    expect(joinLineBreaks("我的电话号码是\n13812345678\n请打给我。", true)).toBe("我的电话号码是 13812345678 请打给我。");
     // Whisper's spaced style keeps its spaces; a word at the text's edge and Latin text too.
     expect(joinLineBreaks("我们今天讨论 AI\n的发展，", true)).toBe("我们今天讨论 AI 的发展，");
     expect(joinLineBreaks("今日の会議で\nGoogle と Apple の話", true)).toBe("今日の会議で Google と Apple の話");
     expect(joinLineBreaks("我们一共有 25\n个人。然后，", true)).toBe("我们一共有 25 个人。然后，");
     expect(joinLineBreaks("東京\nTokyo", true)).toBe("東京 Tokyo");
     expect(joinLineBreaks("Hello\nworld\n2025", true)).toBe("Hello world 2025");
-    // Our own wrap of a glued word joins back to it.
+    // Our own wrap of a Whisper-spaced word onto a line of its own joins back to it with its
+    // spaces; the same wrap of a glued one cannot tell, and regains them.
     for (const [t, cpl] of [
-      ["今年公司的总收入达到了1234567890元比去年增长了很多", 16],
-      ["我的电话号码是13812345678请打给我", 13],
+      ["我们今天讨论的是 Kubernetes 集群的部署方案和监控。", 16],
+      ["今年公司的总收入达到了 1234567890 元比去年增长了很多。", 16],
+      ["我的电话号码是 13812345678 请打给我", 13],
     ] as const) {
       const j = wrapLines(t, cpl, 3).join("\n");
       expect(j.split("\n").length).toBeGreaterThan(2);
       expect(joinLineBreaks(j, true)).toBe(t);
+      expect(wrapLines(t.replace(/ /g, ""), cpl, 3).join("\n")).toBe(j);
     }
   });
   it("cjkWraps: a quarter of the CJK lines carry 。，(or a ja 、) and no phrase space; ？！： alone, zh's enumeration 、 and phrase-spaced text do not wrap", () => {

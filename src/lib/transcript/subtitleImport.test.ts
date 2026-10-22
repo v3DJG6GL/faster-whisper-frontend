@@ -417,16 +417,21 @@ describe("plain text + errors", () => {
       expect(parseImportedText(format, out).segments.map((s) => s.text)).toEqual([text]);
     }
   });
-  it("srt: a CJK cue wrapped beside a glued Latin word or a number on a line of its own reads back without a space there", () => {
+  it("srt: a CJK cue wrapped beside a glued Latin word reads back without a space there; a word on a line of its own keeps its spaces", () => {
     const srt = (body: string) => `1\n00:00:01,000 --> 00:00:02,000\n${body}\n`;
     for (const [body, text] of [
       ["今日はMicrosoft\nの会議です。", "今日はMicrosoftの会議です。"],
       ["我们今天用\nChatGPT写代码。", "我们今天用ChatGPT写代码。"],
       ["今日の会議で\nGoogleとApple\nの話をします。", "今日の会議でGoogleとAppleの話をします。"],
-      ["我的电话号码是\n13812345678\n请打给我。", "我的电话号码是13812345678请打给我。"],
-      // Whisper's spaced style keeps its space.
+      // Whisper's spaced style keeps its space, also around a word our wrap set on a line of its own.
       ["我们今天讨论 AI\n的发展。", "我们今天讨论 AI 的发展。"],
+      ["我的电话号码是\n13812345678\n请打给我。", "我的电话号码是 13812345678 请打给我。"],
     ]) expect(parseImportedText("srt", srt(body)).segments.map((s) => s.text)).toEqual([text]);
+    // Our export's wrap (wrapLines at 16) of Whisper's spaced style, in a file whose 。， say it wraps.
+    const bodies = ["我们今天讨论的是\nKubernetes\n集群的部署方案和监控。", "好的，我明白了。", "今年公司的总收入达到了\n1234567890\n元比去年增长了很多。", "然后，我们走吧。"];
+    const file = bodies.map((b, i) => `${i + 1}\n00:00:0${i + 1},000 --> 00:00:0${i + 2},000\n${b}\n`).join("\n");
+    expect(parseImportedText("srt", file).segments.map((s) => s.text))
+      .toEqual(["我们今天讨论的是 Kubernetes 集群的部署方案和监控。", "好的，我明白了。", "今年公司的总收入达到了 1234567890 元比去年增长了很多。", "然后，我们走吧。"]);
   });
   it("a times line holding a long blank run parses in linear time, to the same cues", () => {
     const ws = " ".repeat(100_000);
