@@ -411,6 +411,27 @@ fn clip_read_busy() -> bool {
     CLIP_READ_BUSY.load(Ordering::Acquire)
 }
 
+/// `paste`'s stuck-read wait plus the cancel re-check behind it. `Some` = bail before the write.
+/// The wait (≤ `CLIP_IDLE_WAIT` on Windows) sits after `paste`'s first cancel check, so a cancel
+/// that lands during it must be asked again here: otherwise the transcript the user discarded is
+/// still written, and on this path — the same stuck read made `paste` skip its prior read — there
+/// is no `previous` to restore. A cancel wins over a timed-out wait: it is a deliberate no-op
+/// (`Yes`), not a re-send.
+fn idle_wait_gate(wait: impl FnOnce() -> bool, cancelled: impl Fn() -> bool) -> Option<Landed> {
+    let idle = wait();
+    if cancelled() {
+        tracing::info!(
+            "[clip] paste: cancelled while waiting out a stuck clipboard read — skipping"
+        );
+        return Some(Landed::Yes);
+    }
+    if !idle {
+        tracing::warn!("[clip] paste: nothing written — the caller re-sends");
+        return Some(Landed::NothingWritten);
+    }
+    None
+}
+
 /// Wait (≤ `max`) for a stuck clipboard read to finish before writing. True = go ahead. Only
 /// Windows waits: there the clipboard is a lock (`OpenClipboard`) the stuck reader holds. On
 /// Linux a stuck read is a pending selection transfer that does not block a new owner, so this
@@ -1334,10 +1355,13 @@ fn paste(
     }
     // A clipboard read that outlived its cap still holds the clipboard (Windows). Writing now
     // would fail or race it; nothing is written yet, so reporting that is safe — the caller
-    // re-sends, and no chord has been pressed.
-    if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
-        tracing::warn!("[clip] paste: nothing written — the caller re-sends");
-        return Ok(Landed::NothingWritten);
+    // re-sends, and no chord has been pressed. The wait can last up to a second, so the cancel
+    // check above is asked again after it — see `idle_wait_gate`.
+    if let Some(landed) = idle_wait_gate(
+        || wait_clip_read_idle(CLIP_IDLE_WAIT),
+        || injection_cancelled(epoch),
+    ) {
+        return Ok(landed);
     }
     // A remote target's clipboard fetch is DEFERRED: the client requests the data only when
     // the remote app actually pastes — after the forwarded chord, i.e. after this function
@@ -1645,6 +1669,30 @@ fn paste_keystroke(enigo: &mut Enigo, chord: &[String]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::sanitize_injected;
+
+    /// `paste` asked about a cancel only BEFORE its stuck-read wait (up to 1s on Windows), so a
+    /// cancel during the wait still wrote the discarded transcript — with no prior read to restore.
+    #[test]
+    fn a_cancel_during_the_stuck_read_wait_writes_nothing() {
+        use super::{idle_wait_gate, Landed};
+        use std::cell::Cell;
+        for idle in [true, false] {
+            let cancelled = Cell::new(false);
+            let gate = idle_wait_gate(
+                || {
+                    cancelled.set(true); // the cancel lands while the wait runs
+                    idle
+                },
+                || cancelled.get(),
+            );
+            assert_eq!(gate, Some(Landed::Yes), "idle={idle}");
+        }
+        assert_eq!(
+            idle_wait_gate(|| false, || false),
+            Some(Landed::NothingWritten)
+        );
+        assert_eq!(idle_wait_gate(|| true, || false), None);
+    }
 
     /// A local Linux paste once used the plain write unless clipboard privacy was on, so with no
     /// clipboard manager the selection died with the function-local `Clipboard` before a slow
