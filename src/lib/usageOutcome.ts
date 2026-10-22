@@ -14,12 +14,14 @@
 // singleton queue, the debounced save and the flush loop.
 
 import { isTauri, loadUsageOutcomes, postUsageOutcomes, saveUsageOutcomes } from "./api";
+import { effectiveServerUrl } from "./backends";
 import { useApp } from "./store";
 import type { UsageOutcome } from "./types";
 
 export interface QueuedOutcome {
   backendId: string;
-  /** The address the session actually talked to (per-device override applied). */
+  /** The address the session actually talked to (per-device override applied). Only the
+   *  batching key now: a post goes to the backend's CURRENT address (flushPass). */
   serverUrl: string;
   outcome: UsageOutcome;
   queuedAt: number;
@@ -323,11 +325,17 @@ async function flushPass(): Promise<void> {
         const batch = nextBatch(queue, now);
         if (!batch) break;
         const ids = batch.items.map((x) => x.outcome.job_id);
-        // A backend the user removed can no longer be authenticated (its key left the
-        // keyring with it): its outcomes have nowhere to go.  Guard on configLoaded so
-        // the empty boot-time list doesn't look like "all backends removed."
+        // Rust resolves the key by backend id at call time, so a post goes to the backend's
+        // CURRENT address (as jobsReconcile's rowServerUrl): the address frozen at session start
+        // would hand the current key to a host the backend no longer points at. Until the config
+        // is in (or when it failed to load) there is no current address to check: keep the
+        // queue — the first refreshAll after hydrate flushes it again.
         const st = useApp.getState();
-        if (st.configLoaded && !st.configLoadFailed && !st.backends.some((b) => b.id === batch.backendId)) {
+        if (!st.configLoaded || st.configLoadFailed) break;
+        // A backend the user removed can no longer be authenticated (its key left the
+        // keyring with it): its outcomes have nowhere to go.
+        const backend = st.backends.find((b) => b.id === batch.backendId);
+        if (!backend) {
           queue = applyPost(queue, ids, "drop", now);
           persist();
           continue;
@@ -335,7 +343,7 @@ async function flushPass(): Promise<void> {
         let verdict: PostVerdict;
         try {
           const r = await postUsageOutcomes({
-            serverUrl: batch.serverUrl,
+            serverUrl: effectiveServerUrl(backend, st.settings),
             backendId: batch.backendId,
             outcomes: batch.items.map((x) => x.outcome),
           });

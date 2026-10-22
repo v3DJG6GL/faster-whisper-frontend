@@ -7,6 +7,17 @@ const post = vi.hoisted(() => ({
   // When set, a save stays pending until `saveRelease` runs it out.
   holdSaves: false,
   saveRelease: [] as (() => void)[],
+  // Every postUsageOutcomes call's args.
+  calls: [] as { serverUrl: string; backendId: string }[],
+}));
+// The store the flush reads: config loaded, backend "b" at "u" (its address never moved).
+const store = vi.hoisted(() => ({
+  state: {
+    configLoaded: true,
+    configLoadFailed: false,
+    backends: [{ id: "b", serverUrl: "u" }] as { id: string; serverUrl: string }[],
+    settings: { sync: { urlOverrides: {} as Record<string, string> } },
+  },
 }));
 vi.mock("./api", async (orig) => ({
   ...(await orig<typeof import("./api")>()),
@@ -16,9 +27,12 @@ vi.mock("./api", async (orig) => ({
     post.saves.push(q);
     return post.holdSaves ? new Promise<void>((res) => post.saveRelease.push(res)) : Promise.resolve();
   },
-  postUsageOutcomes: () => new Promise((res) => post.release.push(() => res({ ok: true, status: 200 }))),
+  postUsageOutcomes: (args: { serverUrl: string; backendId: string }) => {
+    post.calls.push({ serverUrl: args.serverUrl, backendId: args.backendId });
+    return new Promise((res) => post.release.push(() => res({ ok: true, status: 200 })));
+  },
 }));
-vi.mock("./store", () => ({ useApp: { getState: () => ({ configLoaded: false, configLoadFailed: false, backends: [] }) } }));
+vi.mock("./store", () => ({ useApp: { getState: () => store.state } }));
 
 import {
   EMPTY_QUEUE,
@@ -149,6 +163,65 @@ describe("flushOutcomes", () => {
     await second;
     expect(done).toBe(true);
     expect(post.release).toHaveLength(0); // the extra pass found nothing left to post
+  });
+});
+
+// The Rust command resolves the key by backend id when it runs: a post must go to the backend's
+// CURRENT address, or a repointed backend's new key reaches the host it was moved away from.
+describe("flushOutcomes posts to the backend's current address", () => {
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+  };
+  const reset = () => {
+    store.state.configLoaded = true;
+    store.state.backends = [{ id: "b", serverUrl: "u" }];
+    store.state.settings.sync.urlOverrides = {};
+  };
+
+  it("an outcome recorded at the old address is posted to the repointed one", async () => {
+    store.state.backends = [{ id: "b", serverUrl: "https://new.example" }];
+    try {
+      post.calls.length = 0;
+      enqueueOutcome("b", "http://old.example:8000", oc(hex(10)));
+      await settle();
+      expect(post.calls).toEqual([{ serverUrl: "https://new.example", backendId: "b" }]);
+    } finally {
+      while (post.release.length) post.release.shift()!();
+      await flushOutcomes();
+      reset();
+    }
+  });
+
+  it("this device's address override wins", async () => {
+    store.state.backends = [{ id: "b", serverUrl: "https://new.example" }];
+    store.state.settings.sync.urlOverrides = { b: "http://lan:9000" };
+    try {
+      post.calls.length = 0;
+      enqueueOutcome("b", "http://old.example:8000", oc(hex(11)));
+      await settle();
+      expect(post.calls).toEqual([{ serverUrl: "http://lan:9000", backendId: "b" }]);
+    } finally {
+      while (post.release.length) post.release.shift()!();
+      await flushOutcomes();
+      reset();
+    }
+  });
+
+  it("before the config loads nothing is posted and the outcome stays queued", async () => {
+    store.state.configLoaded = false;
+    try {
+      post.calls.length = 0;
+      enqueueOutcome("b", "http://old.example:8000", oc(hex(12)));
+      await settle();
+      expect(post.calls).toEqual([]);
+      store.state.configLoaded = true;
+      await Promise.race([flushOutcomes(), settle()]);
+      expect(post.calls).toEqual([{ serverUrl: "u", backendId: "b" }]);
+    } finally {
+      while (post.release.length) post.release.shift()!();
+      await flushOutcomes();
+      reset();
+    }
   });
 });
 
