@@ -567,7 +567,8 @@ const units = (s: string): string[] => s.match(CJK_UNIT) ?? [];
  *  an opener the unit after it, a closing quote or bracket in the token's trailing
  *  punctuation, or a quote glued to a letter or digit, closes it („Hallo“ / „Hallo“, /
  *  „…...“, / „…“-Verband / “…...” / (…...)), and an ASCII quote or a » ” that starts the
- *  token opens it (»…« / ”…”), so no line starts with “ ” ) or ends on „ » or ". `hyphen` false
+ *  token opens it (»…« / ”…”), as Spanish ¿ ¡ do (¿…? / ¡¡…!!), so no line starts with “ ” ) or
+ *  ends on „ » " or ¿. `hyphen` false
  *  leaves a compound's hyphen a unit of its own (wrapLines, when ending the line costs one). */
 function tokenUnits(w: string, hyphen = true): string[] {
   const out: string[] = [];
@@ -580,7 +581,7 @@ function tokenUnits(w: string, hyphen = true): string[] {
   // openers and quotes ("(word, """"word): a longer run (a hallucinated wall of quotes) opens
   // nothing and wraps three to a piece like other punctuation, so it cannot tear the word.
   const firstWord = u.findIndex((x) => /[\p{L}\p{N}]/u.test(x));
-  const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}\p{Pf}"']+$/u.test(x));
+  const lead = u.findIndex((x) => !/^[\p{Ps}\p{Pi}\p{Pf}"'¿¡]+$/u.test(x));
   const quoteOpens = lead !== -1 && lead <= 6;
   u.forEach((x, k) => {
     const prev = out[out.length - 1];
@@ -599,14 +600,15 @@ function tokenUnits(w: string, hyphen = true): string[] {
         // A hyphen inside a compound ends its line: a line opened with "-" reads as a dialogue
         // dash. Not the non-breaking U+2011 nor a dash.
         || (hyphen && /^[-\u2010]$/.test(x) && /[\p{L}\p{N}]/u.test(last) && /^[\p{L}\p{N}]/u.test(u[k + 1] ?? ""))
-        || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && !/\p{P}{6}$/u.test(prev)
+        // Spanish ¿ ¡ are Po but open what follows them (below), unless they end the token.
+        || (/^[\p{Pe}\p{Pf}\p{Po}]/u.test(x) && (k === u.length - 1 || !/^[¿¡]/u.test(x)) && !/\p{P}{6}$/u.test(prev)
           && !(/^(?:[\p{Pe}\p{Pf}]|["'])/u.test(x) ? /(?:[\p{Pi}\p{Pf}\p{Pe}]|["']){3}$/u : /(?:(?!["'])\p{Po}){3}$/u)
             .test(prev)))) out[out.length - 1] += x;
     // An ASCII quote (or a » ” — German »…«, Swedish ”…”) that starts the token or follows its
     // openers opens it: as a closer of nothing it ended a line on a bare " or ». One inside a
     // word (don't, 5'10") rides above.
     else if (
-      (/^[\p{Ps}\p{Pi}]+$/u.test(x) || ((k === 0 || open) && quoteOpens && k < firstWord && /^(?:["']|\p{Pf})$/u.test(x)))
+      (/^[\p{Ps}\p{Pi}¿¡]+$/u.test(x) || ((k === 0 || open) && quoteOpens && k < firstWord && /^(?:["']|\p{Pf})$/u.test(x)))
       && k < u.length - 1
     ) open += x;
     else {

@@ -663,6 +663,19 @@ describe("wrapLines", () => {
       "(グーグル)本社に行きました",
     ]);
   });
+  it("a Spanish ¿ or ¡ before a word longer than a line rides with it: no line ends on a bare ¿ or ¡", () => {
+    expect(wrapLines("Entonces ella me dijo ¿https://www.ejemplo.com/ruta/muy/larga/de/verdad/aqui?", 28, 2, 4)[0])
+      .toBe("Entonces ella me dijo");
+    expect(wrapLines("Dijo ¡¡Electroencefalografistas!!", 15, 2, 6)[0]).toBe("Dijo");
+    for (const word of ["¿https://www.ejemplo.com/ruta/muy/larga/de/verdad/aqui?", "¡¡Electroencefalografistas!!"])
+      for (const pre of ["Dijo", "Entonces ella me dijo", "Ella preguntó en voz alta otra vez"])
+        for (const reserve of [0, 4, 6])
+          for (let cpl = 13; cpl <= 42; cpl++) {
+            const lines = wrapLines(`${pre} ${word}`, cpl, 2, reserve);
+            expect(lines.some((l) => /[¿¡]$/.test(l))).toBe(false);
+            expect(lines.join("").replace(/\s/g, "")).toBe(`${pre}${word}`.replace(/\s/g, ""));
+          }
+  });
   it("a line never starts with the prolonged sound mark ー", () => {
     for (const [t, cpl] of [["コーヒーとケーキが大好きです", 4], ["東京 Google(グーグル)本社に行きました", 13]] as const) {
       const lines = wrapLines(t, cpl, 9);
