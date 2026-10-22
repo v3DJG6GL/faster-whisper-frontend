@@ -790,6 +790,16 @@ mod imp {
         None
     }
 
+    /// The transcript as the portal typing loop walks it: NFC. Each char is looked up on its own,
+    /// so a decomposed transcript (NFD "café" = e + U+0301, which the server does not normalize)
+    /// sent each combining mark as a char of its own — no key on most layouts, so it was skipped
+    /// silently and the bare letter typed ("cafe", й as и), and `letter_walk` never counted the
+    /// loss (a mark is not alphabetic). Composed, the letter reaches its own key, its dead key or
+    /// `key_sequence`'s base-plus-marks split. Canonically equivalent, so always the same text.
+    fn typing_form(text: &str) -> String {
+        text.nfc().collect()
+    }
+
     /// How many of `text`'s letters the active layout can type under `caps`, and how many it cannot —
     /// `(reachable, unreachable)`. Only letters count: digits, punctuation, symbols and emoji say
     /// nothing about whether the layout fits the transcript's script.
@@ -1363,13 +1373,16 @@ mod imp {
                     on: !job.paste && caps_lock_on(),
                     usable: caps_usable,
                 };
-                if !job.paste && !job.text.is_empty() {
-                    let (reachable, unreachable) = letter_reach(&job.text, &charmap, caps);
-                    if divert_unreachable(&job.text, &charmap, caps) {
+                // What the keys spell, in the form the layout can reach: the divert count and the
+                // typing loop below both walk this one string (see `typing_form`).
+                let text = typing_form(&job.text);
+                if !job.paste && !text.is_empty() {
+                    let (reachable, unreachable) = letter_reach(&text, &charmap, caps);
+                    if divert_unreachable(&text, &charmap, caps) {
                         tracing::warn!(
                             "[wayland-inject] {unreachable} of {} letter(s) are not on the active keyboard layout{} — putting the text on the clipboard instead of typing",
                             reachable + unreachable,
-                            if unreachable_digit(&job.text, &charmap, caps) { ", nor is a digit" } else { "" }
+                            if unreachable_digit(&text, &charmap, caps) { ", nor is a digit" } else { "" }
                         );
                         // `own_window_focused` above is a main-thread round trip, so a cancel can
                         // land after the pre-job check. Re-ask right before the clipboard write,
@@ -1447,7 +1460,7 @@ mod imp {
                 // Characters actually sent to the compositor, and the countdown to the next focus
                 // probe. See the probe below for why it is periodic rather than per character.
                 let mut typed: usize = 0;
-                for c in job.text.chars() {
+                for c in text.chars() {
                     // Between characters, not just before the job: this loop runs at roughly a
                     // hundred characters a second and follows the user's focus as they move.
                     if crate::inject::injection_cancelled(job.epoch) {
@@ -2536,6 +2549,41 @@ mod imp {
                 .map(|(ch, _)| ch)
                 .collect();
             assert_eq!(seq, ['\u{fc}', '\u{304}']);
+        }
+
+        /// A decomposed transcript lost its accents on the portal path: each combining mark was
+        /// looked up as a char of its own, missed, and was skipped — "cafe" for NFD "café".
+        #[test]
+        fn a_decomposed_transcript_types_its_accented_letters() {
+            type Press = (i32, bool, bool, Option<(i32, bool, bool)>);
+            let keys = |text: &str, map: &HashMap<char, KeySpec>| -> Vec<Vec<Press>> {
+                typing_form(text)
+                    .chars()
+                    .filter_map(|c| typeable_keys(c, map, CAPS_OFF))
+                    .map(|k| {
+                        k.into_iter()
+                            .map(|(s, _)| (s.keycode, s.shift, s.altgr, s.dead))
+                            .collect()
+                    })
+                    .collect()
+            };
+            // vn has a U+0323 key but no U+0302 one: NFD ệ typed ẹ.
+            let vn = latin_with(&[
+                ('\u{ea}', spec(3, false, None)),
+                ('\u{323}', spec(6, false, None)),
+            ]);
+            assert_eq!(keys("e\u{323}\u{302}", &vn), keys("\u{1ec7}", &vn));
+            assert_eq!(keys("e\u{323}\u{302}", &vn).len(), 1);
+            let Some(es) = real_charmap("es") else {
+                eprintln!("skipped: no XKB data or compose table for `es`");
+                return;
+            };
+            assert_eq!(keys("cafe\u{301}", &es), keys("caf\u{e9}", &es));
+            assert!(keys("cafe\u{301}", &es)[3][0].3.is_some());
+            if let Some(ru) = real_charmap("ru") {
+                assert_eq!(keys("\u{438}\u{306}", &ru), keys("\u{439}", &ru));
+                assert_eq!(keys("\u{438}\u{306}", &ru).len(), 1);
+            }
         }
 
         #[test]
