@@ -247,6 +247,70 @@ describe("apply: keep-local per gate", () => {
     expect(byId.get("pNew")!.enabled).toBe(false);
   });
 
+  it("profileHotkeys off: a profile the peer switches on, on another profile's chord here, is switched back off", async () => {
+    const own = ["ControlLeft", "AltLeft", "KeyD"];
+    useApp.setState({
+      profiles: [profile({ hotkey: own }), profile({ id: "p2", name: "Two", hotkey: own, enabled: false })],
+    });
+    gateOff("profileHotkeys");
+    await applyBlob(
+      {
+        profiles: {
+          list: [profile({ hotkey: own }), profile({ id: "p2", name: "Two", hotkey: ["F9"], enabled: true })],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const byId = new Map(useApp.getState().profiles.map((p) => [p.id, p]));
+    expect(byId.get("p2")!.hotkey).toEqual(own);
+    expect(byId.get("p1")!.enabled).toBe(true);
+    expect(byId.get("p2")!.enabled).toBe(false);
+  });
+
+  it("profileHotkeys off: a peer turning a designed nesting's hands-free member into hold switches that member off", async () => {
+    const hold = ["ControlLeft", "AltLeft"];
+    const free = ["ControlLeft", "AltLeft", "KeyD"];
+    useApp.setState({
+      profiles: [profile({ hotkey: hold }), profile({ id: "p2", name: "Two", hotkey: free, activation: "handsfree" })],
+    });
+    gateOff("profileHotkeys");
+    await applyBlob(
+      {
+        profiles: {
+          list: [profile({ hotkey: hold }), profile({ id: "p2", name: "Two", hotkey: free, activation: "hold" })],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const byId = new Map(useApp.getState().profiles.map((p) => [p.id, p]));
+    expect(byId.get("p1")!.enabled).toBe(true);
+    expect(byId.get("p2")!.enabled).toBe(false);
+  });
+
+  it("profileHotkeys off: a profile the peer switches on, on this device's own quick-add chord, is switched back off", async () => {
+    const qa = settings().general.quickAddHotkey;
+    useApp.setState({
+      profiles: [profile({ hotkey: ["F9"] }), profile({ id: "p2", name: "Two", hotkey: qa, enabled: false })],
+    });
+    gateOff("profileHotkeys");
+    await applyBlob(
+      {
+        profiles: {
+          list: [profile({ hotkey: ["F9"] }), profile({ id: "p2", name: "Two", hotkey: ["F10"], enabled: true })],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const st = useApp.getState();
+    const p2 = st.profiles.find((p) => p.id === "p2")!;
+    expect(p2.hotkey).toEqual(qa);
+    expect(p2.enabled).toBe(false);
+    expect(st.settings.general.quickAddHotkey).toEqual(qa);
+  });
+
   it("a gated-off clipboard-history setting never applies", async () => {
     gateOff("excludeFromClipboardHistory");
     await applyBlob(
