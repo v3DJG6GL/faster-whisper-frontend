@@ -642,7 +642,7 @@ function StartersStep({
           />
         ))}
       </div>
-      {startersNeedLowLevelNote(IS_LINUX, lowLevelKnown ? lowLevel : null) && (
+      {startersNeedLowLevelNote(IS_LINUX, lowLevelKnown ? lowLevel : null, drafts.map((d) => d.hotkey)) && (
         <Notice className="mt-3 w-full max-w-[540px] text-left">{STARTERS_LOW_LEVEL_NOTE}</Notice>
       )}
       <div className="mt-6 flex w-full max-w-[540px] justify-end">

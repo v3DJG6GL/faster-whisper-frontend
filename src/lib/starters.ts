@@ -52,7 +52,14 @@ export function startersClearOf(backendId: string | null, quickAddHotkey: string
 export const STARTERS_LOW_LEVEL_NOTE =
   "These shortcuts are modifier-only: on Linux they need the evdev backend (Settings → Permissions), or bind them in your desktop’s shortcut settings.";
 
-/** Show STARTERS_LOW_LEVEL_NOTE? `lowLevelActive` null = evdevStatus hasn't answered yet (no flash). */
-export function startersNeedLowLevelNote(isLinux: boolean, lowLevelActive: boolean | null): boolean {
-  return isLinux && lowLevelActive === false && starterProfiles(null).some((p) => needsLowLevel(p.hotkey));
+/** Show STARTERS_LOW_LEVEL_NOTE? `lowLevelActive` null = evdevStatus hasn't answered yet (no flash).
+ *  `hotkeys` = the chords the surface will commit: the onboarding step passes its editable drafts, so
+ *  once each is rebound to a chord the plugin can register (or left unbound) the note goes away.
+ *  Default = the fixed suggestion, which the Profiles card's "Keep these" commits. */
+export function startersNeedLowLevelNote(
+  isLinux: boolean,
+  lowLevelActive: boolean | null,
+  hotkeys: string[][] = starterProfiles(null).map((p) => p.hotkey),
+): boolean {
+  return isLinux && lowLevelActive === false && hotkeys.some(needsLowLevel);
 }

@@ -35,12 +35,22 @@ describe("starters low-level note", () => {
     expect(STARTERS_LOW_LEVEL_NOTE).toMatch(/evdev/);
   });
 
+  it("judges the chords being committed, not the fixed suggestion", () => {
+    // Onboarding's drafts rebound to plugin-registrable chords (the capture refuses modifier-only
+    // ones without evdev), or left unbound: nothing needs evdev, so no note.
+    expect(startersNeedLowLevelNote(true, false, [["ControlLeft", "F9"], ["ControlLeft", "F10"]])).toBe(false);
+    expect(startersNeedLowLevelNote(true, false, [[], ["ControlLeft", "KeyJ"]])).toBe(false);
+    expect(startersNeedLowLevelNote(true, false, [[], []])).toBe(false);
+    // One draft still modifier-only: the note stays.
+    expect(startersNeedLowLevelNote(true, false, [["ControlLeft", "F9"], ["ControlLeft", "MetaLeft"]])).toBe(true);
+  });
+
   it("the Profiles starters card and the onboarding starters step both render it", () => {
     expect(profilesSrc).toMatch(
       /startersNeedLowLevelNote\(IS_LINUX, evdev === null \? null : lowLevelActive\)[\s\S]{0,120}STARTERS_LOW_LEVEL_NOTE/,
     );
     expect(onboardingSrc).toMatch(
-      /startersNeedLowLevelNote\(IS_LINUX, lowLevelKnown \? lowLevel : null\)[\s\S]{0,160}STARTERS_LOW_LEVEL_NOTE/,
+      /startersNeedLowLevelNote\(IS_LINUX, lowLevelKnown \? lowLevel : null, drafts\.map\(\(d\) => d\.hotkey\)\)[\s\S]{0,160}STARTERS_LOW_LEVEL_NOTE/,
     );
   });
 });
