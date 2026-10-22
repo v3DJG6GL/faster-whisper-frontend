@@ -378,7 +378,7 @@ mod imp {
     }
 
     /// Build a character → (keycode, modifiers) map for the active layout, and whether
-    /// KEY_CAPSLOCK still produces Caps_Lock on it (see `caps_usable`). `composes: false` (a
+    /// a KEY_CAPSLOCK tap still toggles Caps Lock on it (see `caps_usable`). `composes: false` (a
     /// paste job, which only looks up the chord's ASCII letter) skips the compose table and the
     /// dead-key pass: they only add accented chars no key types directly.
     fn build_charmap(composes: bool) -> Option<(HashMap<char, KeySpec>, bool)> {
@@ -415,11 +415,22 @@ mod imp {
                 .any(|s| s.raw() == want)
     }
 
-    /// Does the fixed KEY_CAPSLOCK code still produce Caps_Lock? Not under `caps:escape` or
-    /// `caps:swapescape` — and Caps Lock can still be ON there (the Esc key, both Shifts), so the
-    /// typer must not tap KEY_CAPSLOCK to compensate for it either. See `caps_plan`.
+    /// Does a tap of the fixed KEY_CAPSLOCK code still toggle Caps Lock? Not under `caps:escape`
+    /// or `caps:swapescape` — and Caps Lock can still be ON there (the Esc key, both Shifts), so
+    /// the typer must not tap KEY_CAPSLOCK to compensate for it either. See `caps_plan`. The tap
+    /// is replayed, not just the keysym read: `caps:ctrl_modifier` keeps the Caps_Lock keysym but
+    /// makes the key a Ctrl, so a keysym test let the typer bracket Ü with Ctrl taps that lock
+    /// nothing and type ü.
     fn caps_usable(keymap: &xkb::Keymap, group: u32) -> bool {
-        key_produces(keymap, group, KEY_CAPSLOCK, xkb::keysyms::KEY_Caps_Lock)
+        if !key_produces(keymap, group, KEY_CAPSLOCK, xkb::keysyms::KEY_Caps_Lock) {
+            return false;
+        }
+        let mut state = xkb::State::new(keymap);
+        state.update_mask(0, 0, 0, 0, 0, group);
+        let key = xkb::Keycode::new(KEY_CAPSLOCK as u32 + EVDEV_OFFSET);
+        state.update_key(key, xkb::KeyDirection::Down);
+        state.update_key(key, xkb::KeyDirection::Up);
+        state.mod_name_is_active(xkb::MOD_NAME_CAPS, xkb::STATE_MODS_LOCKED)
     }
 
     /// The compose table the focused app most likely resolves dead keys with: the one for the
@@ -2092,6 +2103,29 @@ mod imp {
                 remapped.get(&'\u{fc}').is_some_and(|s| !s.lock),
                 "ü still typed"
             );
+        }
+
+        /// `caps:ctrl_modifier` keeps the Caps_Lock keysym but makes the key a Ctrl: a tap locks
+        /// nothing, so the lock-only capitals bracketed by one typed lowercase ("über" for "Über").
+        #[test]
+        fn caps_lock_capitals_are_dropped_when_the_caps_key_acts_as_ctrl() {
+            let ctx = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
+            let Some(ctrl) = xkb::Keymap::new_from_names(
+                &ctx,
+                "evdev",
+                "pc105",
+                "ch",
+                "de_nodeadkeys",
+                Some("caps:ctrl_modifier".into()),
+                xkb::KEYMAP_COMPILE_NO_FLAGS,
+            ) else {
+                eprintln!("skipped: no XKB data for `ch(de_nodeadkeys)`");
+                return;
+            };
+            assert!(!caps_usable(&ctrl, 0));
+            let map = charmap_from_keymap(&ctrl, 0, None);
+            assert!(map.values().all(|s| !s.lock), "a lock-only capital kept");
+            assert!(map.get(&'\u{fc}').is_some_and(|s| !s.lock), "ü still typed");
         }
 
         #[test]
