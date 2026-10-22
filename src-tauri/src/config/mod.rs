@@ -1128,6 +1128,45 @@ fn backup_unreadable(path: &Path) -> bool {
     }
 }
 
+/// `read_config_text`'s decode, for the launch load. Invalid UTF-8 still loads lossily (no reset,
+/// no paused sync), but a whole file re-encoded by a hand edit (ANSI/CP1252 Notepad) turns EVERY
+/// non-ASCII character into U+FFFD, and the next auto-save writes that over the only copy. So the
+/// raw bytes are kept first in `config.json.invalid-utf8.bak` — the identifier migration's name;
+/// not `.json.bak`, which the reset banner reads as "a config the loader reset". A copy already
+/// holding these bytes is reused; a different one (an earlier incident) is kept and the next
+/// numbered name is used.
+fn decode_keeping_invalid_utf8(path: &Path, bytes: &[u8]) -> String {
+    let body = bytes.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(bytes);
+    if std::str::from_utf8(body).is_err() {
+        let kept = (0..10).find_map(|n| {
+            let side = match n {
+                0 => path.with_extension("json.invalid-utf8.bak"),
+                n => path.with_extension(format!("json.invalid-utf8.{n}.bak")),
+            };
+            match crate::migrate_identifier::keep_private_copy(&side, bytes) {
+                Ok(()) => Some(Ok(side)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => std::fs::read(&side)
+                    .is_ok_and(|b| b == bytes)
+                    .then_some(Ok(side)),
+                Err(e) => Some(Err(e)),
+            }
+        });
+        match kept {
+            Some(Ok(side)) => tracing::warn!(
+                "[config] config.json is not valid UTF-8; loaded lossily, original bytes kept in {}",
+                side.display()
+            ),
+            Some(Err(e)) => tracing::warn!(
+                "[config] config.json is not valid UTF-8; loaded lossily, its original bytes could not be kept ({e})"
+            ),
+            None => tracing::warn!(
+                "[config] config.json is not valid UTF-8; loaded lossily, no free side-copy name left"
+            ),
+        }
+    }
+    String::from_utf8_lossy(body).into_owned()
+}
+
 /// Load config from `<dir>/config.json`, falling back to defaults if missing or invalid. A legacy
 /// (pre-v2) config is migrated losslessly and re-saved so the next load takes the fast path.
 ///
@@ -1149,8 +1188,8 @@ pub fn load_outcome(dir: &Path) -> (Config, bool) {
         .lock()
         .unwrap_or_else(|e| e.into_inner());
     let path = config_path(dir);
-    let text = match read_config_text(&path) {
-        Ok(Some(text)) => text,
+    let text = match read_config_bytes(&path) {
+        Ok(Some(bytes)) => decode_keeping_invalid_utf8(&path, &bytes),
         // First run / file genuinely absent — UNLESS a prior load this session already recovered
         // (the file was renamed out from under us), in which case keep reporting the reset.
         Ok(None) => return (Config::default(), *recovered),
@@ -1438,6 +1477,46 @@ mod tests {
         );
         // Nothing to rename and nothing to copy: the caller must learn no backup exists.
         assert!(!backup_unreadable(&dir.join("gone.json")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A config re-encoded as CP1252 by a hand edit still loads (lossily, no reset), but its
+    /// raw bytes are kept aside before an auto-save can write the U+FFFD text over them.
+    #[test]
+    fn a_non_utf8_config_loads_and_keeps_its_raw_bytes() {
+        let dir = std::env::temp_dir().join(format!("fwf-cfg-utf8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut json = serde_json::to_value(Config::default()).unwrap();
+        json["profiles"] = serde_json::json!([{
+            "id": "p1", "name": "MARKER", "activation": "hold", "enabled": true, "hotkey": []
+        }]);
+        let text = serde_json::to_string(&json).unwrap();
+        let (a, b) = text.split_once("MARKER").unwrap();
+        let raw = [a.as_bytes(), b"f\xFCr M\xFCller", b.as_bytes()].concat();
+        std::fs::write(dir.join("config.json"), &raw).unwrap();
+        let side = dir.join("config.json.invalid-utf8.bak");
+
+        let (cfg, _) = load_outcome(&dir);
+        assert_eq!(cfg.profiles[0].name, "f\u{FFFD}r M\u{FFFD}ller");
+        assert_eq!(std::fs::read(dir.join("config.json")).unwrap(), raw);
+        assert_eq!(std::fs::read(&side).unwrap(), raw);
+        // The next launch reuses the copy; a later, different incident gets its own.
+        let _ = load_outcome(&dir);
+        let other = [raw.as_slice(), b" "].concat();
+        std::fs::write(dir.join("config.json"), &other).unwrap();
+        let _ = load_outcome(&dir);
+        assert_eq!(std::fs::read(&side).unwrap(), raw);
+        assert_eq!(
+            std::fs::read(dir.join("config.json.invalid-utf8.1.bak")).unwrap(),
+            other
+        );
+        // Clean UTF-8 makes no side copy.
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("config.json"), text).unwrap();
+        let _ = load_outcome(&dir);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

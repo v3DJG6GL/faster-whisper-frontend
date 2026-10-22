@@ -649,7 +649,7 @@ fn mark_repoint_pending(config: &Path, kind: &str) {
 
 /// Keep `bytes` in a NEW owner-only file at `path` (`config::write_private` takes text only).
 /// `create_new` never follows a planted symlink and never overwrites an earlier copy.
-fn keep_private_copy(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) fn keep_private_copy(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create_new(true);
