@@ -86,6 +86,20 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetOnSummon(loaded, readdressed)).toEqual({ moved: true, target: loaded });
   });
 
+  it("is no move when the Server URL changed but this device's address override still sends the save there", () => {
+    const overrides = { a: "http://100.64.0.5:8000" };
+    const pinned = cfg({ backendId: "a", slug: "my-words" });
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: overrides };
+    const viaOverride = quickAddTargetOf(pinned);
+    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: overrides };
+    expect(quickAddTargetMoved(viaOverride, edited)).toBe(false);
+    expect(quickAddTargetOnSummon(viaOverride, edited)).toEqual({
+      moved: false,
+      target: { serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a2.lan:8000", backendId: "a", slug: "my-words" },
+    });
+  });
+
   it("keeps the loaded target on a move, and has none before anything was loaded", () => {
     expect(quickAddTargetOnSummon(loaded, cfg({ backendId: "b", slug: "my-words" }))).toEqual({ moved: true, target: loaded });
     expect(quickAddTargetOnSummon(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual({ moved: false, target: null });

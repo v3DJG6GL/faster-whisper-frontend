@@ -40,11 +40,18 @@ export function quickAddTargetOf(cfg: Config | null): QuickAddSaveTarget | null 
  *  list on the same server, reached another way. An edited Server URL is one — it may name a
  *  different server (the main store drops a re-addressed backend's connection as describing the
  *  OLD server), and retrying there would replace that server's list of the same name with this
- *  one's whole map. No `current` (nothing loaded yet) is never a move. */
+ *  one's whole map — unless this device's address override still sends the save where it was
+ *  going, where a retry reaches the very list the rows came from. No `current` (nothing loaded
+ *  yet) is never a move. */
 export function quickAddTargetMoved(current: QuickAddSaveTarget | null, cfg: Config | null): boolean {
   if (!current) return false;
   const next = quickAddTargetOf(cfg);
-  return !next || next.backendId !== current.backendId || next.slug !== current.slug || next.backendUrl !== current.backendUrl;
+  return (
+    !next ||
+    next.backendId !== current.backendId ||
+    next.slug !== current.slug ||
+    (next.backendUrl !== current.backendUrl && next.serverUrl !== current.serverUrl)
+  );
 }
 
 /** A summon's read of the pin against `current`, the list the window's rows belong to. Unless it
