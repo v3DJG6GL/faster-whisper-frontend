@@ -316,6 +316,23 @@ export function capCodePoints(s: string, max: number): string {
   return Array.from(s).slice(0, max).join("");
 }
 
+/** An edit `prev` → `next` held to `max` code points the way a native maxLength holds it: only
+ *  the inserted run is cut, so typing or pasting into a full field keeps the existing text
+ *  (capCodePoints on the whole string dropped the field's TAIL instead). An edit that doesn't
+ *  grow lands as-is, so a value stored over the cap can still shorten. */
+export function capEdit(prev: string, next: string, max: number): string {
+  if (next.length <= max) return next;
+  const n = Array.from(next);
+  const p = Array.from(prev);
+  if (n.length <= max || n.length <= p.length) return next;
+  let pre = 0;
+  while (pre < p.length && p[pre] === n[pre]) pre++;
+  let suf = 0;
+  while (suf < p.length - pre && suf < n.length - pre && p[p.length - 1 - suf] === n[n.length - 1 - suf]) suf++;
+  const inserted = n.slice(pre, n.length - suf).slice(0, Math.max(0, max - pre - suf));
+  return [...n.slice(0, pre), ...inserted, ...n.slice(n.length - suf)].join("");
+}
+
 /** `max` bounds the OUTPUT: the result is the unbounded result's first `max` chars, so a
  *  160-char snippet never walks a whole transcript (History renders one per row per
  *  keystroke). Bounding the input instead would not be equivalent — this only ever drops
