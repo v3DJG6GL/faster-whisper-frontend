@@ -167,6 +167,9 @@ export default function Settings() {
   // yet reads while busy) must not settle after the read the busy edge starts.
   const statsSeq = useRef(0);
   const haveStatsRef = useRef(false);
+  // The seq of the latest read that settled (landed, or failed and left the last counts up):
+  // an armed confirm waits for it to reach the read its arm started (`armSeq` below).
+  const [statsSettled, setStatsSettled] = useState(0);
   const refreshStoreStats = useCallback(() => {
     const my = ++statsSeq.current;
     void transcriptStoreStats(basePref)
@@ -174,8 +177,11 @@ export default function Settings() {
         if (my !== statsSeq.current) return;
         haveStatsRef.current = true;
         setStoreStats(st);
+        setStatsSettled(my);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (my === statsSeq.current) setStatsSettled(my);
+      });
   }, [basePref]);
   const dirBusy = useSyncExternalStore(subscribeBusy, () => busy.dir);
   // One store action in flight (`busy.store`): the confirm stays mounted until it settles, and a
@@ -233,12 +239,17 @@ export default function Settings() {
   }, [tab]);
   // Arming re-reads the counts the confirm names: a dictation saved or a run finished while the
   // tab sat open (or hidden in the tray) sends no event this screen hears, so the last read could
-  // promise "Delete 5 dictations" for a wipe that removes 50.
+  // promise "Delete 5 dictations" for a wipe that removes 50. The confirm reads "Counting…" and
+  // stays disabled until that read (or a later one) settles — else a quick second click ran the
+  // wipe under the old count while the folder walk was still going.
+  const [armSeq, setArmSeq] = useState(0);
   const armStoreAction = (kind: StoreKind) => {
     setStoreMsg(null);
     refreshStoreStats();
+    setArmSeq(statsSeq.current);
     setConfirming(kind);
   };
+  const storeCounting = statsSettled < armSeq;
   // After the reset above, so a move that failed while away survives the trip back to the tab.
   const pendingMoveErr = useSyncExternalStore(subscribeBusy, () => moveError);
   useEffect(() => {
@@ -911,14 +922,16 @@ export default function Settings() {
             >
               {confirming === "dict" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")} disabled={storeLocked}>
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("dict")} disabled={storeLocked || storeCounting}>
                     {deletingKind === "dict"
                       ? "Deleting…"
-                      : dictN > 0
-                        ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
-                        : dictAudioN > 0
-                          ? `Delete ${plural(dictAudioN, "audio file")}`
-                          : "Delete"}
+                      : storeCounting
+                        ? "Counting…"
+                        : dictN > 0
+                          ? `Delete ${plural(dictN, "dictation")}${dictAudioN > 0 ? ` + ${plural(dictAudioN, "audio file")}` : ""}`
+                          : dictAudioN > 0
+                            ? `Delete ${plural(dictAudioN, "audio file")}`
+                            : "Delete"}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -998,8 +1011,8 @@ export default function Settings() {
             >
               {confirming === "files" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("files")} disabled={storeLocked}>
-                    {deletingKind === "files" ? "Deleting…" : `Delete ${plural(storeStats?.fileMediaFiles ?? 0, "file")}`}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("files")} disabled={storeLocked || storeCounting}>
+                    {deletingKind === "files" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.fileMediaFiles ?? 0, "file")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -1022,8 +1035,8 @@ export default function Settings() {
             >
               {confirming === "links" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("links")} disabled={storeLocked}>
-                    {deletingKind === "links" ? "Deleting…" : `Delete ${plural(storeStats?.linkMediaFiles ?? 0, "file")}`}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("links")} disabled={storeLocked || storeCounting}>
+                    {deletingKind === "links" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.linkMediaFiles ?? 0, "file")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -1046,8 +1059,8 @@ export default function Settings() {
             >
               {confirming === "video" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("video")} disabled={storeLocked}>
-                    {deletingKind === "video" ? "Deleting…" : `Delete ${plural(storeStats?.videoMediaFiles ?? 0, "file")}`}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("video")} disabled={storeLocked || storeCounting}>
+                    {deletingKind === "video" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.videoMediaFiles ?? 0, "file")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
@@ -1071,8 +1084,8 @@ export default function Settings() {
             >
               {confirming === "clear" ? (
                 <span className="flex items-center gap-2">
-                  <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")} disabled={storeLocked}>
-                    {deletingKind === "clear" ? "Deleting…" : `Delete ${plural(storeStats?.fileCount ?? 0, "transcript")}`}
+                  <Button size="sm" variant="danger" onClick={() => runStoreAction("clear")} disabled={storeLocked || storeCounting}>
+                    {deletingKind === "clear" ? "Deleting…" : storeCounting ? "Counting…" : `Delete ${plural(storeStats?.fileCount ?? 0, "transcript")}`}
                   </Button>
                   <Button size="sm" variant="ghost" onClick={() => setConfirming(null)}>
                     Cancel
