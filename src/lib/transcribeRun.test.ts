@@ -869,6 +869,44 @@ describe("dropping a correction a re-translate was made from", () => {
     expect(stale("fromedit-8")).toEqual({ 0: true });
   });
   const fromEdit = (id: string) => useTranscribeRun.getState().translatedFromEdit[id] ?? {};
+  const twoLines = (id: string): TranscriptRecord => {
+    const rec = recOf(id);
+    rec.result!.text = "I red the book. It was god.";
+    rec.result!.segments!.push({ start: 1, end: 2, text: "It was god.", translations: { de: "Es war Gott." } });
+    return rec;
+  };
+
+  it("Discard keeps the stale mark of a line whose correction was reverted earlier", () => {
+    openHistoryRecord(twoLines("discard-1"));
+    setSegmentEdit("discard-1", 0, "I read the book");
+    mergeSegmentTranslations("discard-1", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    // Reverted: line 0 shows the original, its translation is still of the correction.
+    setSegmentEdit("discard-1", 0, null);
+    expect(stale("discard-1")).toEqual({ 0: true });
+    setSegmentEdit("discard-1", 1, "It was good.");
+    expect(stale("discard-1")).toEqual({ 0: true, 1: true });
+    clearEdits("discard-1");
+    expect(stale("discard-1")).toEqual({ 0: true });
+  });
+
+  it("Discard keeps the stale mark of an uncorrected line translated from older text", () => {
+    openHistoryRecord(twoLines("discard-2"));
+    mergeSegmentTranslations("discard-2", { 0: { de: "Ich las das Buch" } }, { targets: ["de"] }, undefined, { 0: "I read the book" });
+    expect(stale("discard-2")).toEqual({ 0: true });
+    setSegmentEdit("discard-2", 1, "It was good.");
+    clearEdits("discard-2");
+    expect(stale("discard-2")).toEqual({ 0: true });
+  });
+
+  it("Discard of a line corrected while its chunk was in flight leaves it fresh", () => {
+    openHistoryRecord(twoLines("discard-3"));
+    // Sent as the original; corrected before the answer landed.
+    setSegmentEdit("discard-3", 1, "It was good.");
+    mergeSegmentTranslations("discard-3", { 1: { de: "Es war Gott!" } }, { targets: ["de"] }, undefined, { 1: "It was god." });
+    expect(stale("discard-3")).toEqual({ 1: true });
+    clearEdits("discard-3");
+    expect(stale("discard-3")).toEqual({});
+  });
 
   it("a merge into a new language alone leaves the stale mark of the line's other languages", () => {
     openHistoryRecord(recOf("cover-1"));

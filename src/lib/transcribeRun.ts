@@ -1523,9 +1523,14 @@ export function clearEdits(key: string) {
     delete edits[key];
     delete speakerEdits[key];
     // Discarding the corrections restores the text the MT translated — except
-    // where a re-translate ran on a correction: those segments go stale.
-    const fromEdit = Object.keys(s.translatedFromEdit[key] ?? {});
-    if (fromEdit.length) translationsStale[key] = Object.fromEntries(fromEdit.map((i) => [Number(i), true as const]));
+    // where a re-translate ran on a correction: those segments go stale. Only the
+    // corrected lines change; an uncorrected line keeps its mark (a translation of
+    // a correction reverted earlier, or of text a line was sent as).
+    const stale = { ...s.translationsStale[key] };
+    const fromEdit = s.translatedFromEdit[key] ?? {};
+    for (const k of Object.keys(s.edits[key] ?? {})) delete stale[Number(k)];
+    for (const k of Object.keys(fromEdit)) stale[Number(k)] = true;
+    if (Object.keys(stale).length) translationsStale[key] = stale;
     else delete translationsStale[key];
     delete translatedFromEdit[key];
     return { edits, speakerEdits, translationsStale, translatedFromEdit };
