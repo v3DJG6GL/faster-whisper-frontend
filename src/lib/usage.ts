@@ -54,6 +54,10 @@ let yearGen = 0;
 // The view signature a fetch confirmed during this visit and no later fetch missed (null after a
 // reopen, a hidden pass or a miss): only a confirmed 365-day view may stand in for the calendar's year.
 let viewFreshSig: string | null = null;
+// The year signature a fetch (or a seed from the view) confirmed during this visit (null after a
+// reopen or a hidden pass). The view's confirmation says nothing about the year: the two fetches
+// land apart, so a year still unconfirmed under it may be the last visit's.
+let yearFreshSig: string | null = null;
 /** A direct page fetch (the show handler's, or a page mount's): `sentOutcomeCount()` at `at`, and
  *  `confirmed` settles to whether both documents landed. */
 type DirectFetch = { at: number; confirmed: Promise<boolean> };
@@ -81,6 +85,7 @@ export function openStatisticsPage(): () => void {
     // These fetches cover any hidden pass the previous visit missed.
     pageMissed = false;
     viewFreshSig = null;
+    yearFreshSig = null;
     const at = sentOutcomeCount();
     const view = refreshView(true).catch(() => {});
     const year = refreshYear(true, true).catch(() => {});
@@ -151,7 +156,8 @@ export function yearPageQuery(q: UsagePageQuery): UsagePageQuery | null {
 
 /** Fetch the calendar's year document beside the page's, under the same rules. `force`
  *  refetches a year it already has (the page reopening after the poll left it alone);
- *  `reopened` marks a kept same-query year failed on a miss, as refreshView's does. */
+ *  `reopened` marks a kept same-query year failed on a miss, as refreshView's does. A year not
+ *  confirmed this visit is treated both ways whoever asks: the kept one may be the last visit's. */
 async function refreshYear(force = false, reopened = false): Promise<void> {
   const s = useApp.getState();
   const backend = viewStatsBackend(s);
@@ -161,7 +167,8 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   const target = effectiveServerUrl(backend, s.settings);
   const tz = viewerTimeZone();
   const sig = viewSignature(backend, target, q, tz);
-  if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !force) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
+  const unconfirmed = sig !== yearFreshSig;
+  if (s.usageYear?.sig === sig && s.usageYear.stats && !s.usageYear.failed && !force && !unconfirmed) return; // the poll forces it; a filter change reuses it, mid-pass too (a failed, carried year is retried)
   const gen = yearGen;
   const cred = credentialGeneration(backend.id);
   const stats = await getUsageStats({ serverUrl: target, backendId: backend.id, query: toUsageQuery(q, tz) });
@@ -170,9 +177,12 @@ async function refreshYear(force = false, reopened = false): Promise<void> {
   if (!cur || cur.id !== backend.id || credentialGeneration(backend.id) !== cred) return; // see refreshOne
   const nq = yearPageQuery(now.usageViewQuery);
   if (!nq || viewSignature(cur, effectiveServerUrl(cur, now.settings), nq, tz) !== sig) return;
-  if (stats === null && now.usageYear?.sig === sig && (!reopened || yearGen !== gen)) return;
+  if (stats === null && now.usageYear?.sig === sig && (!(reopened || unconfirmed) || yearGen !== gen)) return;
   now.setUsageYear(sig, stats);
-  if (stats !== null) yearGen++;
+  if (stats !== null) {
+    yearGen++;
+    yearFreshSig = sig;
+  }
 }
 
 /** Coming back from 1 year: the page's own 365-day document — once a fetch this visit confirmed
@@ -188,6 +198,7 @@ function seedYearFromView(s = useApp.getState()): boolean {
   if (view?.sig !== sig || sig !== viewFreshSig || !view.stats || view.failed) return false;
   s.setUsageYear(sig, view.stats);
   yearGen++;
+  yearFreshSig = sig;
   return true;
 }
 
@@ -204,7 +215,7 @@ function pageConfirmed(s = useApp.getState()): boolean {
   const q = yearPageQuery(s.usageViewQuery);
   if (!q) return true;
   const year = s.usageYear;
-  return year?.sig === viewSignature(backend, target, q, tz) && !!year.stats && !year.failed;
+  return year?.sig === viewSignature(backend, target, q, tz) && year.sig === yearFreshSig && !!year.stats && !year.failed;
 }
 
 /** Fetch the Statistics page's document for the current query against the viewed
@@ -356,6 +367,7 @@ async function refreshAll(direct?: DirectFetch): Promise<void> {
         // edit): the show handler fetches the page's documents then.
         pageMissed = true;
         viewFreshSig = null;
+        yearFreshSig = null;
       }
     } while (rerunRequested); // re-reads the latest backends snapshot on the rerun
   } finally {
@@ -456,26 +468,28 @@ export function initUsageController(): void {
       ((state.profiles !== prev.profiles || state.settings.homeProfileId !== prev.settings.homeProfileId) &&
         viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id);
     if (viewMoved && statsPageShown()) {
-      // Nothing confirmed yet this visit (a reopen, a hidden pass or a miss cleared it): the
-      // store may still hold the LAST visit's documents for the query switched to — back to the
-      // range or stage filter used then, while the reopen fetch for the URL's query is out — so
-      // these fetches carry the reopen rule: refetch the year, and a miss marks both failed
-      // instead of keeping days-old numbers as current.
+      // No view confirmed yet this visit (a reopen, a hidden pass or a miss cleared it): the
+      // store may still hold the LAST visit's view for the query switched to — back to the range
+      // or stage filter used then, while the reopen fetch for the URL's query is out — so a miss
+      // marks it failed instead of keeping days-old numbers as current. refreshYear applies the
+      // same rule to a year not confirmed this visit, on its own confirmation: the view's says
+      // nothing about it.
       const unconfirmed = viewFreshSig === null;
       void refreshView(unconfirmed).catch(() => {});
       // On the 1 year / All presets nothing kept the year document current. Coming back from
       // 1 year, the polled 365-day view is that year (seeded, no fetch); otherwise — the All
       // preset, a stage filter changed alongside, a failed or missing view — it is refetched,
       // and like a reopen a miss marks the kept year failed rather than current. A sub-year →
-      // sub-year change still reuses the polled year.
+      // sub-year change still reuses the year polled this visit.
       const fromYear = !yearPageQuery(prev.usageViewQuery);
       if (!(fromYear && prev.usageViewQuery.range === "365" && seedYearFromView(state)))
-        void refreshYear(fromYear || unconfirmed, fromYear || unconfirmed).catch(() => {});
+        void refreshYear(fromYear, fromYear).catch(() => {});
     } else if (viewMoved && statsPagesOpen > 0) {
       // Moved while the window is hidden with the page open: record the miss the way a hidden
       // refreshAll pass does, so the show handler catches up even when no tick was skipped.
       pageMissed = true;
       viewFreshSig = null;
+      yearFreshSig = null;
     }
   });
 }

@@ -867,6 +867,65 @@ describe("usage poll gates", () => {
     }
   });
 
+  it("switching back to the last visit's query while only the reopen's year fetch is out refetches the kept year", async () => {
+    const ok = getUsageStats.getMockImplementation()!;
+    const last = { range: "7", with: ["vad"] } as const;
+    const pending: ((v: null) => void)[] = [];
+    let close = openStatisticsPage();
+    try {
+      useApp.setState({ usageViewQuery: { range: last.range, with: [...last.with] } });
+      await settle();
+      close(); // the last visit ends on 7 days + vad: its year stays in the store
+      const { usageYear } = useApp.getState();
+      expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
+      // The sidebar reopens on the default query: the view answers, the 365-day fetch hangs.
+      getUsageStats.mockImplementation((a) => (a.query.days === 365 ? new Promise<never>((r) => pending.push(r as never)) : ok(a)));
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      close = openStatisticsPage();
+      await settle();
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: last.range, with: [...last.with] } });
+      await settle();
+      expect(calls().page).toBe(2); // the view AND the year: the view's confirmation is not the year's
+      pending.splice(0).forEach((r) => r(null));
+      await settle();
+      expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
+    } finally {
+      pending.splice(0).forEach((r) => r(null));
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      await settle();
+    }
+  });
+
+  it("a poll that missed only the view leaves the year it confirmed reused by a range change, not refetched or failed", async () => {
+    const ok = getUsageStats.getMockImplementation()!;
+    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
+    const close = openStatisticsPage();
+    try {
+      await settle();
+      await vi.advanceTimersByTimeAsync(30_000); // a poll confirms the view and the year
+      await settle();
+      getUsageStats.mockImplementation(async (a) => (a.query.days === 90 ? (null as never) : ok(a)));
+      await vi.advanceTimersByTimeAsync(30_000); // the next poll misses the view only
+      await settle();
+      const { usageYear } = useApp.getState();
+      expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
+      getUsageStats.mockImplementation(async (a) => (page(a) ? (null as never) : ok(a)));
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: "7" as never, with: [] } });
+      await settle();
+      expect(calls().page).toBe(1); // the view only: the year was confirmed this visit
+      expect(useApp.getState().usageYear).toBe(usageYear);
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      await settle();
+    }
+  });
+
   it("a backend set to Standard clears its kept numbers once, instead of freezing them", async () => {
     await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
     await settle();
