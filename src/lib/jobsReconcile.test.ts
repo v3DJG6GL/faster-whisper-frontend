@@ -835,6 +835,32 @@ describe("reconcileJobs", () => {
     expect(records().find((r) => r.id === JOB_A)?.status).toBe("failed");
   });
 
+  it("a record deleted while the launch's ledger read failed is forgotten and cancelled by the late pass", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    loadJobsLedger.mockImplementation(() => Promise.reject("jobs ledger unreadable: Permission denied"));
+    await initJobReconcile();
+    const r = row(JOB_A, T0);
+    useTranscriptHistory.setState({ records: [{ schemaVersion: 1, kind: "file", id: JOB_A,
+      createdAt: new Date(r.startedAt).toISOString(), sourcePath: r.path, sourceName: r.path,
+      status: "failed", error: "timed out" }] });
+    deleteJob.mockClear();
+    deleteRecord(JOB_A);
+    // stopOrphan had no row to find yet.
+    expect(deleteJob).not.toHaveBeenCalled();
+    loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [r] }));
+    getJob.mockResolvedValue(ok({ jobId: JOB_A, state: "done", resultAvailable: true }));
+    getJobResult.mockResolvedValue(ok(RESULT));
+    saveJobsLedger.mockClear();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(deleteJob).toHaveBeenCalledWith(expect.objectContaining({ jobId: JOB_A }));
+    expect(ledgerRows().some((x) => x.jobId === JOB_A)).toBe(false);
+    // The saved ledger drops it too, so the next launch does not reconcile it back.
+    const saved = saveJobsLedger.mock.calls[saveJobsLedger.mock.calls.length - 1]?.[0] as { rows: LedgerRow[] } | undefined;
+    expect(saved?.rows.some((x) => x.jobId === JOB_A)).toBe(false);
+    expect(getJobResult).not.toHaveBeenCalled();
+    expect(records().some((x) => x.id === JOB_A)).toBe(false);
+  });
+
   it("a retry pass skips rows the pump persisted during this launch", async () => {
     loadJobsLedger.mockImplementation(() => Promise.resolve({ v: 1, rows: [row(JOB_B, T0)] }));
     getJob.mockResolvedValue({ kind: "error", message: "Could not connect" });

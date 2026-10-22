@@ -376,6 +376,15 @@ export async function reconcileJobs(): Promise<void> {
     for (const row of rows) {
       if (!mine(row)) continue;
       try {
+        // Stopped before the pass could see its row (a record deleted while the launch's ledger
+        // read failed): stopOrphan found nothing to forget or cancel, so do both here, or the
+        // row is saved again and the next launch lands the deleted record. A stop during one of
+        // the awaits below found the row in passRows and did both already.
+        if (stoppedIds.has(row.jobId)) {
+          await forgetRow(row.jobId);
+          void deleteJob({ serverUrl: rowServerUrl(row), backendId: row.backendId, jobId: row.jobId }).catch(() => {});
+          continue;
+        }
         // A backend that no longer exists (deleted, a sync pull) cannot be asked; the
         // server still holds the run for its TTL, but the app has no way to reach it.
         // Before the reachability skip: its row keeps the stored address, which another
