@@ -441,12 +441,12 @@ function tokensOf(text: string, words: { word: string; start: number; end: numbe
     const tok: Tok = { from: at, to: at + tw.length, s: w.start, e: Math.max(w.start, w.end) };
     out.push(tok);
     cur = at + tw.length;
-    // Whisper glues a quote to the word before it (」" ”", or after a colon or comma: 说：" 说，"
-    // me:"): when it opens the next quotation (an even count of its kind so far, a later
+    // Whisper glues a quote to the word before it (」" ”", after a colon or comma: 说：" 说，"
+    // me:", or a Latin word or number: AI"): when it opens the next quotation (an even count of its kind so far, a later
     // partner, a letter right after it), it is a token of its own, so the cut never lands right
     // after it. Its clock is a zero-length one at the next word's start (the word's end until
     // that word arrives): a cue starting with it starts once that word is spoken.
-    const qm = /(?:[\p{Pe}\p{Pf}]|(?!["'])\p{Po})(["'])$/u.exec(tw);
+    const qm = /(?:[\p{Pe}\p{Pf}\p{L}\p{N}]|(?!["'])\p{Po})(["'])$/u.exec(tw);
     if (qm && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(text.slice(cur, cur + 2), false))) {
       flags ??= quoteFlags(text);
       const j = cur - 1;
@@ -1072,8 +1072,9 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
 
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
  *  quotation: a typographic opener (”“ ’‘ »«, also after a closing ASCII quote) anywhere in
- *  the match, an ASCII quote only as the match's last character ("Hello""再见, “OK”"再见)
- *  and only when it opens (an even count of its kind so far and a later partner). Either
+ *  the match, an ASCII quote only as the match's last character ("Hello""再见, “OK”"再见, also
+ *  after a letter or digit: iPhone"新機能") and only when it opens (an even count of its kind so
+ *  far and a later partner). Either
  *  needs a letter, digit or opener glued after it. Uncut, the opener rode on the text
  *  before it and a line or part ended on it. */
 function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total: Record<string, number>): Generator<[string, number]> {
@@ -1090,7 +1091,7 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         const closer = /[\p{Pe}\p{Pf}]/u.test(p) || (flags[j - 1] && n[p] % 2 === 0);
         let e = -1;
         if (closer && /\p{Pi}/u.test(t[j])) for (e = j; e < end && /\p{Pi}/u.test(t[e]); ) e++;
-        else if (closer && j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1) e = end;
+        else if ((closer || /[\p{L}\p{N}]/u.test(p)) && j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1) e = end;
         if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
           yield [t.slice(s, j), s];
           s = j;

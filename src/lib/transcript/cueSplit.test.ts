@@ -708,6 +708,14 @@ describe("wrapLines", () => {
     expect(wrapLines('他说（"你好"）然后走了回家', 5, 2).some((l) => /["（]$/.test(l))).toBe(false);
     expect(cutByShare('私たちは"東京"と言いました', [1, 1, 1])).toEqual(["私たちは", '"東京"と', "言いました"]);
     expect(cutByShare("他说'你好'然后", [1, 1, 1])).toEqual(["他说", "'你好'", "然后"]);
+    // One glued to a Latin word or number before it opens too (iPhone"新機能"), not an inch mark (6.1")
+    // nor a lone possessive (James').
+    expect(wrapLines('私はiPhone"新機能"が好きです', 13, 2)).toEqual(["私はiPhone", '"新機能"が好きです']);
+    expect(cutByShare('私はiPhone"新機能"が好きです', [1, 1], "ja")).toEqual(["私はiPhone", '"新機能"が好きです']);
+    expect(cutByShare('我们公司最近推出了AI"助手"功能大家都很喜欢', [1, 1], "zh")).toEqual(["我们公司最近推出了AI", '"助手"功能大家都很喜欢']);
+    expect(cutByShare("昨日の会議ではUSB-C'規格'について話し合いました", [1, 1], "ja").some((p) => /'$/.test(p))).toBe(false);
+    expect(cutByShare('新款手机屏幕6.1"大小非常合适大家都很喜欢', [1, 1], "zh").some((p) => p.includes('6.1"'))).toBe(true);
+    expect(cutByShare("我读了James'新书然后就走了大家都很喜欢", [1, 1], "zh").some((p) => p.includes("James'"))).toBe(true);
     // One after a bracket glued to a word (print(") moves onto what it opens with the bracket.
     expect(cutByShare('使用print("你好")函数', [1, 1])).toEqual(["使用print", '("你好")函数']);
     // The closing quote still joins what it closes, and an apostrophe (it's) is no quote.
@@ -1351,6 +1359,16 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
         const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
         expect(texts.slice(0, -1).some((c) => /"$/.test(c)), texts.join(" | ")).toBe(false);
         expect(texts.join("").replace(/\s/g, "")).toBe(r.text.replace(/\s/g, ""));
+      }
+    }
+    // Or to a Latin word or number (AI").
+    const zh3 = ["我们", "公司", "最近", "推出", "了", 'AI"', "助手", '"', "功能", "大家", "都", "很", "喜欢", "然后", "我们", "一起", "走了"];
+    for (const pauses of [{}, { 5: 0.8 }]) {
+      const r = resOf(zh3, "zh", pauses);
+      for (const length of ["short", "standard"] as const) {
+        const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+        expect(texts.some((c) => /AI"$/.test(c)), texts.join(" | ")).toBe(false);
+        expect(texts.join("")).toBe(r.text);
       }
     }
     // A quote closing a quotation after its comma stays with it.
