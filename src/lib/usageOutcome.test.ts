@@ -33,6 +33,7 @@ vi.mock("./api", async (orig) => ({
   },
 }));
 vi.mock("./store", () => ({ useApp: { getState: () => store.state } }));
+vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 import {
   EMPTY_QUEUE,

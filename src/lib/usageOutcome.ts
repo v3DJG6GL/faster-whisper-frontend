@@ -15,6 +15,7 @@
 
 import { isTauri, loadUsageOutcomes, postUsageOutcomes, saveUsageOutcomes } from "./api";
 import { effectiveServerUrl } from "./backends";
+import { configReady } from "./persistence";
 import { useApp } from "./store";
 import type { UsageOutcome } from "./types";
 
@@ -277,7 +278,7 @@ function readPersisted(): Promise<void> {
   return loading;
 }
 
-/** Load the persisted queue (once) and post whatever is due. */
+/** Load the persisted queue (once) and post whatever is due once the config is in. */
 export async function initOutcomeQueue(): Promise<void> {
   if (!isTauri || loaded) return;
   await readPersisted();
@@ -286,6 +287,10 @@ export async function initOutcomeQueue(): Promise<void> {
   // SUCCESSFUL read: a failed one leaves the on-disk backlog as is, and every later save
   // first tries to read it again (startSave).
   if (loaded) persist();
+  // A flush before the config is in posts nothing (flushPass), and nothing flushes when it
+  // lands: the refreshAll that hydrate's backends trigger runs before setConfigLoaded. The
+  // queue file is usually read first, so wait here, or the backlog waits for the next poll.
+  await configReady;
   await flushOutcomes();
 }
 
@@ -329,7 +334,7 @@ async function flushPass(): Promise<void> {
         // CURRENT address (as jobsReconcile's rowServerUrl): the address frozen at session start
         // would hand the current key to a host the backend no longer points at. Until the config
         // is in (or when it failed to load) there is no current address to check: keep the
-        // queue — the first refreshAll after hydrate flushes it again.
+        // queue — initOutcomeQueue flushes it again once the config is in.
         const st = useApp.getState();
         if (!st.configLoaded || st.configLoadFailed) break;
         // A backend the user removed can no longer be authenticated (its key left the

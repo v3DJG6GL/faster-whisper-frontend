@@ -15,6 +15,7 @@ vi.mock("./api", async (importOriginal) => ({
   postUsageOutcomes: () => new Promise(() => {}),
 }));
 vi.mock("./store", () => ({ useApp: { getState: () => ({ configLoaded: false, configLoadFailed: false, backends: [] }) } }));
+vi.mock("./persistence", () => ({ configReady: Promise.resolve() }));
 
 const OLD = "a".repeat(32);
 const MINE = "b".repeat(32);
