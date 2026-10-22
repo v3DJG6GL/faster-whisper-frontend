@@ -1924,7 +1924,8 @@ export default function Transcribe() {
                             }}
                             inheritedModel={effectiveTranslationModel(undefined, backend?.translationOverrides?.model)}
                             caps={caps}
-                            exclude={knownSource}
+                            // While the panel holds the chips, the link's spoken language is never one.
+                            exclude={siteChips ? (siteInput?.spoken ?? knownSource) : knownSource}
                           >
                             <OverrideHeader
                               title="TRANSLATION_CONTEXT_SEGMENTS"

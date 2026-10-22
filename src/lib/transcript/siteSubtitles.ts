@@ -703,7 +703,9 @@ export function removeLanguage(input: SiteSubsInput, st: SiteSubsState, code: st
 }
 
 /** The translation chips' own picker while the panel is in charge: chips no longer in
- *  `next` switch their language off, new codes are added as languages (rows at the bottom). */
+ *  `next` switch their language off, new codes are added as languages (rows at the bottom) —
+ *  but never the link's spoken language, which is no row or chip: saved as a target, it would
+ *  hide in translateTo and surface once the panel lets go of the chips. */
 export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readonly string[]): SiteChange {
   const chips = model(input, st).view.chips.map((c) => c.code);
   let ch: SiteChange = { state: st, targets: [...input.targets] };
@@ -712,7 +714,7 @@ export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readon
     input = { ...input, targets: c.targets };
   };
   for (const code of chips) if (!next.includes(code)) step(toggleTarget(input, ch.state, code, false));
-  for (const code of next) if (!chips.includes(code)) step(addLanguage(input, ch.state, code));
+  for (const code of next) if (!chips.includes(code) && code !== input.spoken) step(addLanguage(input, ch.state, code));
   return ch;
 }
 

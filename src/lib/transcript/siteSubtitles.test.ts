@@ -723,6 +723,15 @@ describe("the chips' own picker and the frozen run (moved out of Transcribe)", (
     expect(st2.added).toEqual(["es"]);
     expect(setTargets(inp, st, ["en", "fr", "it"])).toEqual({ state: st, targets: ["en", "fr"] });
   });
+  it("setTargets: the link's spoken language is never saved as a hidden target", () => {
+    const inp = input({ tracks: [tr("en", "en")], spoken: "de", targets: ["fr"], maxTargets: 3 });
+    const st = initialSiteState(inp.targets);
+    const ch = setTargets(inp, st, ["fr", "en", "de"]);
+    expect(ch.targets).not.toContain("de");
+    expect(ch.state.added).not.toContain("de");
+    const v = derive({ ...inp, targets: ch.targets }, ch.state);
+    expect(ch.targets.every((c) => v.chips.some((x) => x.code === c))).toBe(true);
+  });
   it("setTargets under Custom: a dropped chip stops downloading its site track", () => {
     const inp = input();
     const [inp1, st1] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
