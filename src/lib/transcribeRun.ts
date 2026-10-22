@@ -1815,8 +1815,9 @@ export function setReattachStop(fn: (() => void) | null): void {
 
 /** Did the request lose contact with a server that may still be running its job? Our own
  *  wait ran out or the connection dropped mid-wait (reqwest's "error sending request",
- *  passed through by friendly_err), or a gateway gave up (502/504 — the proxy's answer, not
- *  the backend's). Never a connection that never came up ("Could not connect": the run's
+ *  passed through by friendly_err), or a gateway gave up (502/504, or Cloudflare's 524 origin
+ *  timeout — the proxy's answer, not the backend's; its 522/523 mean the origin never got the
+ *  request). Never a connection that never came up ("Could not connect": the run's
  *  one POST never reached the server, so no job exists), an over-limit refusal, another
  *  HTTP answer (a 503 "timed out waiting for a peer worker" is the backend speaking), or a
  *  malformed body ("decoding response"): the job is settled or was never started, and a
@@ -1825,7 +1826,7 @@ export function lostContact(e: unknown): boolean {
   if (uploadTooLarge(e)) return false;
   const cause = shortCause(e);
   if (cause === "timed out") return true;
-  if (cause === "HTTP 502" || cause === "HTTP 504") return true;
+  if (cause === "HTTP 502" || cause === "HTTP 504" || cause === "HTTP 524") return true;
   // Only outside an HTTP answer: a backend's 500 body may quote the phrase.
   return cause === "see the log" && String(e ?? "").includes("error sending request");
 }
