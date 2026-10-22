@@ -176,6 +176,12 @@ describe("appRuleKey", () => {
     expect(appRuleKey("kon\u200dsole")).toBe("konsole");
     expect(appRuleKey("\u200d konsole\u200c")).toBe("konsole");
   });
+  it("folds whitespace the way the audit row draws it, so a rule shown as the live id matches it", () => {
+    for (const id of ["Google  Chrome", "Google\u00a0Chrome", "Google\u3000Chrome", "Google\u2009\u2009Chrome"]) {
+      expect(safeIdentityText(id)).toBe("Google Chrome");
+      expect(appRuleKey(id)).toBe(appRuleKey("Google Chrome"));
+    }
+  });
   it("a joiner-only app id keys to nothing, so the well-formed filter drops it", () => {
     // Its stored id keeps the joiner, but a rule keyed "" would match every invisible-named app.
     const rule = { id: "r", appId: "\u200d", insertMethod: "direct" };

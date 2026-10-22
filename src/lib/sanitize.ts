@@ -295,8 +295,10 @@ export const ruleListLabel = (label: unknown, name: unknown, max = 80): string =
 export function appRuleKey(appId: unknown): string {
   // ZWNJ/ZWJ leave the COMPARISON key only (the stored key keeps them, see isInvisibleKeyChar):
   // `"kon\u200dsole"` renders as exactly `konsole` in the audit row yet never equalled the live id.
-  // Trimmed again: `"\u200d konsole"` leaves a leading space once the joiner goes.
-  return dropJoiners(normalizeAppId(appId)).trim().toLowerCase();
+  // Trimmed again: `"\u200d konsole"` leaves a leading space once the joiner goes. Whitespace
+  // runs fold to one ASCII space, as `safeIdentityText` draws them: `"Google\u00a0Chrome"` or a
+  // double space showed as exactly `Google Chrome` in the audit row yet never matched it.
+  return dropJoiners(normalizeAppId(appId)).replace(/\s+/g, " ").trim().toLowerCase();
 }
 
 /** A user/server-authored code (a language, an extractor key) cut to what is safe in a file

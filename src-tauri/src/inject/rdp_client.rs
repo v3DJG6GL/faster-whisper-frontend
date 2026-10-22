@@ -211,8 +211,10 @@ pub fn rule_override(app_id: &str) -> Option<bool> {
 /// deceptive-format characters dropped, 200 kept), then `normalizeAppId`'s invisible key
 /// characters dropped and the ends trimmed, lowercased. ZWNJ/ZWJ leave the comparison key too
 /// (`appRuleKey` drops them; the stored key keeps them): `"kon\u{200d}sole"` renders as exactly
-/// `konsole` yet would never equal the live id. Both the stored key and the live id go through
-/// it, so a rule matches here exactly when it matches on the paste path.
+/// `konsole` yet would never equal the live id. Whitespace runs fold to one ASCII space, as
+/// `appRuleKey` folds them (`char::is_whitespace` is JS `\s` minus U+0085 and U+FEFF, which both
+/// sides already drop). Both the stored key and the live id go through it, so a rule matches here
+/// exactly when it matches on the paste path.
 fn rule_key(s: &str) -> String {
     let shown: String = s
         .chars()
@@ -223,7 +225,10 @@ fn rule_key(s: &str) -> String {
         .chars()
         .filter(|&c| !is_invisible_key_char(c) && !matches!(c, '\u{200c}' | '\u{200d}'))
         .collect();
-    kept.trim().to_lowercase()
+    kept.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 /// sanitize.ts `isInvisibleKeyChar`: characters with no visible glyph that the deceptive-format
@@ -291,6 +296,21 @@ mod tests {
         assert_eq!(rule_key("x\u{034f}\u{2800}"), "x");
         assert_eq!(rule_key("kon\u{200d}sole"), "konsole");
         assert_eq!(rule_key("\u{200d} konsole"), "konsole");
+    }
+
+    /// An app id with a non-ASCII space or a whitespace run draws as the live id in the audit
+    /// row (`safeIdentityText` folds it) but kept its own key, so the rule never matched.
+    #[test]
+    fn rule_key_folds_whitespace_like_the_audit_row() {
+        use super::rule_key;
+        for id in [
+            "Google  Chrome",
+            "Google\u{a0}Chrome",
+            "Google\u{3000}Chrome",
+            "Google\u{2009}\u{2009}Chrome",
+        ] {
+            assert_eq!(rule_key(id), "google chrome", "{id:?}");
+        }
     }
 
     #[cfg(not(windows))]
