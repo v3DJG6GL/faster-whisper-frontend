@@ -73,6 +73,20 @@ pub(crate) async fn persist_off_runtime(text: String) -> Result<(), String> {
         .map_err(|e| e.to_string())?
 }
 
+/// `persist_off_runtime` for a write gated on a cancel: `cancelled` is asked again after the
+/// serving thread's stuck-read wait. `Ok(false)` = cancelled during it, nothing written — see
+/// `set_clipboard_persistent_unless`.
+async fn persist_off_runtime_unless(
+    text: String,
+    cancelled: impl Fn() -> bool + Send + 'static,
+) -> Result<bool, String> {
+    tokio::task::spawn_blocking(move || {
+        crate::inject::set_clipboard_persistent_unless(&text, cancelled)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// The body of the `inject_text` command (see [`crate::commands::inject_text`] for the
 /// parameters): the own-window, held-chord and focus guards, then the clipboard, paste or
 /// typing sink.
@@ -167,9 +181,11 @@ pub(crate) async fn inject_text(
         // event-loop round trip) must not install the transcript over the user's clipboard.
         // `cancel_wants_recovery` stays in the condition — an error abort wants its text kept,
         // unless the caller withheld it (nothing in it to recover).
-        if crate::inject::injection_cancelled(epoch)
-            && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
-        {
+        let discarded = move || {
+            crate::inject::injection_cancelled(epoch)
+                && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
+        };
+        if discarded() {
             tracing::info!("[inject] clipboard-only insert cancelled before the write — skipping");
             return Ok(InjectOutcome {
                 landed: true,
@@ -180,13 +196,24 @@ pub(crate) async fn inject_text(
             // The whole point of the handshake: this arm's `landed: true` used to be a constant,
             // and it is the arm that runs for every phrase when the insert method IS the
             // clipboard. Reporting false is safe here because no keystroke is ever synthesized on
-            // this path, so the caller's re-send cannot duplicate anything.
-            if let Err(e) = persist_off_runtime(clip_text.clone()).await {
-                tracing::warn!("[inject] clipboard-only insert failed: {e}");
-                return Ok(InjectOutcome {
-                    landed: false,
-                    diverted: false,
-                });
+            // this path, so the caller's re-send cannot duplicate anything. The cancel is asked
+            // again after the write's stuck-read wait (Windows, up to 1s): a cancel during it
+            // skips the write, as the gate above does.
+            match persist_off_runtime_unless(clip_text.clone(), discarded).await {
+                Err(e) => {
+                    tracing::warn!("[inject] clipboard-only insert failed: {e}");
+                    return Ok(InjectOutcome {
+                        landed: false,
+                        diverted: false,
+                    });
+                }
+                Ok(false) => {
+                    return Ok(InjectOutcome {
+                        landed: true,
+                        diverted: false,
+                    })
+                }
+                Ok(true) => {}
             }
             // Delivered: the session-end restore must not serve the snapshot over it.
             crate::inject::note_delivered_unless_user_cancelled(epoch);
@@ -377,9 +404,11 @@ pub(crate) async fn inject_text(
         // falling through and letting the write happen is what reproduces that recovery. Unless the
         // caller withheld it: a withheld insert has nothing to recover, so any cancel stops it here
         // with `landed: true`, as the clipboard-only arm and the paste write gate do.
-        if crate::inject::injection_cancelled(epoch)
-            && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
-        {
+        let discarded = move || {
+            crate::inject::injection_cancelled(epoch)
+                && (!crate::inject::cancel_wants_recovery(epoch) || withhold_on_divert)
+        };
+        if discarded() {
             tracing::info!("[inject] diverted to clipboard, but cancelled first — skipping");
             return Ok(InjectOutcome {
                 landed: true,
@@ -401,12 +430,22 @@ pub(crate) async fn inject_text(
             // The divert the ledger's D1 named as the data-loss path: on `landed: true` the
             // caller advances its baseline and the phrase leaves the re-send stream for good.
             // Nothing has been typed on this arm either, so `false` is both truthful and safe.
-            if let Err(e) = persist_off_runtime(clip_text.clone()).await {
-                tracing::warn!("[inject] divert to clipboard failed: {e}");
-                return Ok(InjectOutcome {
-                    landed: false,
-                    diverted: false,
-                });
+            // A cancel during the write's stuck-read wait skips it, as the gate above does.
+            match persist_off_runtime_unless(clip_text.clone(), discarded).await {
+                Err(e) => {
+                    tracing::warn!("[inject] divert to clipboard failed: {e}");
+                    return Ok(InjectOutcome {
+                        landed: false,
+                        diverted: false,
+                    });
+                }
+                Ok(false) => {
+                    return Ok(InjectOutcome {
+                        landed: true,
+                        diverted: false,
+                    })
+                }
+                Ok(true) => {}
             }
             // Delivered: the session-end restore must not serve the snapshot over it.
             crate::inject::note_delivered_unless_user_cancelled(epoch);

@@ -411,25 +411,49 @@ fn clip_read_busy() -> bool {
     CLIP_READ_BUSY.load(Ordering::Acquire)
 }
 
-/// `paste`'s stuck-read wait plus the cancel re-check behind it. `Some` = bail before the write.
-/// The wait (≤ `CLIP_IDLE_WAIT` on Windows) sits after `paste`'s first cancel check, so a cancel
-/// that lands during it must be asked again here: otherwise the transcript the user discarded is
-/// still written, and on this path — the same stuck read made `paste` skip its prior read — there
-/// is no `previous` to restore. A cancel wins over a timed-out wait: it is a deliberate no-op
-/// (`Yes`), not a re-send.
-fn idle_wait_gate(wait: impl FnOnce() -> bool, cancelled: impl Fn() -> bool) -> Option<Landed> {
+/// What a transcript write does after waiting out a stuck clipboard read.
+#[derive(Debug, PartialEq, Eq)]
+enum AfterIdleWait {
+    Write,
+    /// Cancelled during the wait: write nothing. Wins over `Stuck` — a deliberate no-op, not a
+    /// re-send.
+    Cancelled,
+    /// The read is still stuck: write nothing.
+    Stuck,
+}
+
+/// The stuck-read wait (≤ `CLIP_IDLE_WAIT` on Windows) plus the cancel re-check behind it, shared
+/// by `paste` and `persist_transcript_unless`. Their callers ask about a cancel BEFORE this wait,
+/// so a cancel that lands during it must be asked again here: otherwise the transcript the user
+/// discarded is still written, and on these paths — the same stuck read is the snapshot read that
+/// never came back — there is no prior clipboard to restore.
+fn after_idle_wait(wait: impl FnOnce() -> bool, cancelled: impl Fn() -> bool) -> AfterIdleWait {
     let idle = wait();
     if cancelled() {
-        tracing::info!(
-            "[clip] paste: cancelled while waiting out a stuck clipboard read — skipping"
-        );
-        return Some(Landed::Yes);
+        AfterIdleWait::Cancelled
+    } else if !idle {
+        AfterIdleWait::Stuck
+    } else {
+        AfterIdleWait::Write
     }
-    if !idle {
-        tracing::warn!("[clip] paste: nothing written — the caller re-sends");
-        return Some(Landed::NothingWritten);
+}
+
+/// `paste`'s stuck-read wait — see `after_idle_wait`. `Some` = bail before the write: a cancel is
+/// a deliberate no-op (`Yes`), a still-stuck read is `NothingWritten` (the caller re-sends).
+fn idle_wait_gate(wait: impl FnOnce() -> bool, cancelled: impl Fn() -> bool) -> Option<Landed> {
+    match after_idle_wait(wait, cancelled) {
+        AfterIdleWait::Cancelled => {
+            tracing::info!(
+                "[clip] paste: cancelled while waiting out a stuck clipboard read — skipping"
+            );
+            Some(Landed::Yes)
+        }
+        AfterIdleWait::Stuck => {
+            tracing::warn!("[clip] paste: nothing written — the caller re-sends");
+            Some(Landed::NothingWritten)
+        }
+        AfterIdleWait::Write => None,
     }
-    None
 }
 
 /// Wait (≤ `max`) for a stuck clipboard read to finish before writing. True = go ahead. Only
@@ -989,18 +1013,19 @@ fn write_transcript(cb: &mut arboard::Clipboard, text: &str) -> Result<(), arboa
 ///
 /// `report`, when present, receives the outcome AS SOON AS IT IS KNOWABLE and before this
 /// function blocks — see `set_clipboard_persistent` for why that split exists and what it can and
-/// cannot answer.
+/// cannot answer. Success is `Ok(true)` (written); `Ok(false)` is `persist_transcript_unless`'s
+/// cancelled skip, which never reaches this function.
 fn serve_clipboard_blocking(
     text: String,
     what: &str,
     exclude: bool,
-    report: Option<std::sync::mpsc::SyncSender<Result<(), String>>>,
+    report: Option<std::sync::mpsc::SyncSender<Result<bool, String>>>,
 ) {
     let tell = |r: Result<(), String>| {
         if let Some(tx) = report.as_ref() {
             // The caller may already have timed out and dropped the receiver; that is a normal
             // outcome, not an error — it means it decided to believe the optimistic answer.
-            let _ = tx.send(r);
+            let _ = tx.send(r.map(|()| true));
         }
     };
     #[cfg(target_os = "linux")]
@@ -1078,8 +1103,25 @@ fn serve_clipboard_blocking(
 /// This is a NEW clipboard write, so it supersedes a restore still waiting out its delay (see
 /// `RestoreSlot`): that restore would otherwise land on top of the text this call promises stays.
 pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
-    let _ = merge_pending_restore(None, take_pending_restore(), false);
-    persist_transcript(text)
+    set_clipboard_persistent_unless(text, || false).map(|_| ())
+}
+
+/// `set_clipboard_persistent` for a transcript write its caller gates on a cancel: `cancelled` is
+/// asked again after the serving thread's stuck-read wait (see `persist_transcript_unless`).
+/// `Ok(false)` = cancelled during that wait: nothing written, and the pending restore this took is
+/// booked again, since no new write superseded it.
+pub fn set_clipboard_persistent_unless(
+    text: &str,
+    cancelled: impl Fn() -> bool + Send + 'static,
+) -> Result<bool, String> {
+    let pending = take_pending_restore();
+    let r = persist_transcript_unless(text, cancelled);
+    if matches!(r, Ok(false)) {
+        restore_clipboard_later(pending);
+    } else {
+        let _ = merge_pending_restore(None, pending, false);
+    }
+    r
 }
 
 /// The body of `set_clipboard_persistent`, minus the pending-restore take — for `paste`, which
@@ -1094,17 +1136,30 @@ pub fn set_clipboard_persistent(text: &str) -> Result<(), String> {
 /// (`unnote_injected`), since an Err only ever comes back when nothing was served. A timeout keeps
 /// it — the write may still land.
 fn persist_transcript(text: &str) -> Result<(), String> {
+    persist_transcript_unless(text, || false).map(|_| ())
+}
+
+/// `persist_transcript`, re-asking `cancelled` after the serving thread's stuck-read wait (up to
+/// `CLIP_IDLE_WAIT` on Windows): the callers ask about a cancel only before this call, so a cancel
+/// landing during the wait would still install the discarded transcript — and when the stuck read
+/// is the session's snapshot read, nothing restores the user's clipboard after it (`paste` has the
+/// same check, `idle_wait_gate`). `Ok(false)` = cancelled, nothing written, the note taken back.
+fn persist_transcript_unless(
+    text: &str,
+    cancelled: impl Fn() -> bool + Send + 'static,
+) -> Result<bool, String> {
     let prev_note = note_injected(text);
     let noted = text;
     let text = clipboard_newlines(text, cfg!(windows)).into_owned();
     let exclude = clipboard_privacy();
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<bool, String>>(1);
     std::thread::spawn(move || {
-        if !wait_clip_read_idle(CLIP_IDLE_WAIT) {
-            let _ = tx.send(Err("a clipboard read is still stuck".to_string()));
-            return;
-        }
-        serve_clipboard_blocking(text, "transcript write", exclude, Some(tx))
+        serve_transcript(
+            || wait_clip_read_idle(CLIP_IDLE_WAIT),
+            cancelled,
+            |tx| serve_clipboard_blocking(text, "transcript write", exclude, Some(tx)),
+            tx,
+        )
     });
     // Normally sub-millisecond: this waits for a local connect, not for a paste. The bound exists
     // so a wedged compositor cannot park an injection, and it is long enough that a slow one still
@@ -1119,8 +1174,33 @@ fn persist_transcript(text: &str) -> Result<(), String> {
             unnote_injected(&LAST_INJECTED, prev_note, noted);
             Err(e)
         }
-        Ok(Ok(())) => Ok(()),
-        Err(_) => Ok(()),
+        Ok(Ok(false)) => {
+            unnote_injected(&LAST_INJECTED, prev_note, noted);
+            Ok(false)
+        }
+        Ok(Ok(true)) => Ok(true),
+        Err(_) => Ok(true),
+    }
+}
+
+/// `persist_transcript_unless`'s serving-thread body, with the wait and the write passed in.
+fn serve_transcript(
+    wait: impl FnOnce() -> bool,
+    cancelled: impl Fn() -> bool,
+    write: impl FnOnce(std::sync::mpsc::SyncSender<Result<bool, String>>),
+    tx: std::sync::mpsc::SyncSender<Result<bool, String>>,
+) {
+    match after_idle_wait(wait, cancelled) {
+        AfterIdleWait::Write => write(tx),
+        AfterIdleWait::Cancelled => {
+            tracing::info!(
+                "[clip] transcript write: cancelled while waiting out a stuck clipboard read — skipping"
+            );
+            let _ = tx.send(Ok(false));
+        }
+        AfterIdleWait::Stuck => {
+            let _ = tx.send(Err("a clipboard read is still stuck".to_string()));
+        }
     }
 }
 
@@ -1692,6 +1772,39 @@ mod tests {
             Some(Landed::NothingWritten)
         );
         assert_eq!(idle_wait_gate(|| true, || false), None);
+    }
+
+    /// `persist_transcript` (the clipboard-only insert and the mid-function divert write through
+    /// it) asked about a cancel only before its call, then waited out a stuck read (up to 1s on
+    /// Windows) and wrote: a cancel during the wait still installed the discarded transcript.
+    #[test]
+    fn a_cancel_during_the_persist_wait_writes_nothing() {
+        use super::serve_transcript;
+        use std::cell::Cell;
+        for idle in [true, false] {
+            let cancelled = Cell::new(false);
+            let writes = Cell::new(0);
+            let (tx, rx) = std::sync::mpsc::sync_channel(1);
+            serve_transcript(
+                || {
+                    cancelled.set(true); // the cancel lands while the wait runs
+                    idle
+                },
+                || cancelled.get(),
+                |_| writes.set(writes.get() + 1),
+                tx,
+            );
+            assert_eq!(writes.get(), 0, "idle={idle}");
+            assert_eq!(rx.recv(), Ok(Ok(false)), "idle={idle}");
+        }
+        // No cancel: an idle clipboard is written, a still-stuck read reports Err.
+        let writes = Cell::new(0);
+        let (tx, _rx) = std::sync::mpsc::sync_channel(1);
+        serve_transcript(|| true, || false, |_| writes.set(writes.get() + 1), tx);
+        assert_eq!(writes.get(), 1);
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        serve_transcript(|| false, || false, |_| unreachable!(), tx);
+        assert!(matches!(rx.recv(), Ok(Err(_))));
     }
 
     /// A local Linux paste once used the plain write unless clipboard privacy was on, so with no
