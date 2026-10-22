@@ -239,15 +239,22 @@ pub fn run() {
         // stream running with NOTHING able to stop it (both the global shortcut and the chip route
         // their stop/cancel through this webview), stranding the dictation until a force-quit. So
         // we intercept the close, keep the window (and its listeners) alive, and just hide it —
-        // reachable again via the tray "Show window"; truly quit via the tray "Quit". Other windows
-        // (the overlay chip) are left to close normally. With no tray to come back through (Linux
-        // without a StatusNotifierWatcher), closing main quits instead — the same clean exit as the
-        // tray "Quit" — rather than hiding the window out of reach.
+        // reachable again via the tray "Show window"; truly quit via the tray "Quit". The overlay
+        // chip's close is refused outright (see `close_policy`). With no tray to come back through
+        // (Linux without a StatusNotifierWatcher), closing main quits instead — the same clean exit
+        // as the tray "Quit" — rather than hiding the window out of reach.
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if close_policy(window.label()) == ClosePolicy::Keep {
+                    api.prevent_close();
+                    tracing::debug!(
+                        "[overlay] close request ignored (chipController owns the chip)"
+                    );
+                    return;
+                }
                 // main: keep the dictation state machine + listeners alive (see above).
                 // quickadd: keep it prewarmed so the next summon is instant.
-                if matches!(window.label(), "main" | "quickadd" | "langpick") {
+                if close_policy(window.label()) == ClosePolicy::Hide {
                     api.prevent_close();
                     if window.label() == "main" && tray::tray_missing() {
                         use tauri::Manager;
@@ -534,6 +541,54 @@ mod tests {
             cmd.get_args().collect::<Vec<_>>(),
             [std::ffi::OsStr::new("https://example.org")]
         );
+    }
+}
+
+/// What an OS/WM close (Alt+F4, compositor close) does to a window. Every window is created once
+/// and never re-created (aux_windows::visibility), so none may actually close.
+#[derive(Debug, PartialEq, Eq)]
+enum ClosePolicy {
+    /// Hide it (main quits instead when there is no tray to come back through).
+    Hide,
+    /// Ignore the request. The overlay chip: on Linux outside KDE-Wayland it takes focus when
+    /// clicked, and a destroyed chip silently stayed gone for the session (every overlay command
+    /// bails on a missing window). Not hidden either — chipController owns its visibility.
+    Keep,
+    /// Let it close.
+    Allow,
+}
+
+fn close_policy(label: &str) -> ClosePolicy {
+    match label {
+        "main" | "quickadd" | "langpick" => ClosePolicy::Hide,
+        "overlay" => ClosePolicy::Keep,
+        _ => ClosePolicy::Allow,
+    }
+}
+
+#[cfg(test)]
+mod close_policy_tests {
+    use super::{close_policy, ClosePolicy};
+
+    #[test]
+    fn the_overlay_chip_ignores_a_close_and_the_rest_hide() {
+        assert_eq!(close_policy("overlay"), ClosePolicy::Keep);
+        for l in ["main", "quickadd", "langpick"] {
+            assert_eq!(close_policy(l), ClosePolicy::Hide, "{l}");
+        }
+    }
+
+    /// "Created once, never closed": a window added to tauri.conf.json later needs a policy too.
+    #[test]
+    fn no_configured_window_may_close() {
+        let conf: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let windows = conf["app"]["windows"].as_array().unwrap();
+        assert!(!windows.is_empty());
+        for w in windows {
+            let label = w["label"].as_str().unwrap();
+            assert_ne!(close_policy(label), ClosePolicy::Allow, "{label}");
+        }
     }
 }
 
