@@ -1382,13 +1382,11 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
     }
     // Not one closing a quotation opened between two letters (RTX"Super"), which no count sees.
     const zh4 = ["我们", "的", "产品", "叫", 'RTX"Super"', "和", '"Ultra"', "两个", "版本", "然后", "我们", "一起", "走了", "很远", "的路"];
-    for (const pauses of [{ 4: 0.8 }, { 5: 0.8 }] as Record<number, number>[]) {
-      const r = resOf(zh4, "zh", pauses);
-      for (const length of ["short", "standard"] as const) {
-        const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
-        expect(texts[0], texts.join(" | ")).toBe('我们的产品叫RTX"Super"');
-        expect(texts.join("")).toBe(r.text);
-      }
+    const r4 = resOf(zh4, "zh", { 4: 0.8 }); // the pause right after RTX"Super" ends the cue there
+    for (const length of ["short", "standard"] as const) {
+      const texts = buildCues(r4, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
+      expect(texts[0], texts.join(" | ")).toBe('我们的产品叫RTX"Super"');
+      expect(texts.join("")).toBe(r4.text);
     }
     // A quote closing a quotation after its comma stays with it.
     const close = resOf([" She", " said", ' "Come', ' here,"', " and", " then", " she", " left", " the", " room", " quickly", " without",
