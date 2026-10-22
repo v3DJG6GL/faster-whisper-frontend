@@ -748,6 +748,41 @@ export function recordText(rec: TranscriptRecord, max = Infinity): string {
   return joinSegmentTexts(parts).slice(0, max);
 }
 
+/** A file/link/text run's machine-translated tracks as the viewer and the exports show them —
+ *  from `segments[].translations` (the viewer's Translate / Re-translate writes only those), one
+ *  text per language, each at most `max` chars. A record whose segments hold none falls back to
+ *  the whole-text `result.translations` snapshot (records from before per-segment tracks; on a
+ *  newer one that snapshot is the run's FIRST translation, stale after a re-translate). File-
+ *  borne and unvalidated on load: every value is type-guarded. */
+export function recordTranslationTexts(rec: TranscriptRecord, max = Infinity): string[] {
+  const segs: unknown = rec.result?.segments;
+  const byLang = new Map<string, string[]>();
+  const lens = new Map<string, number>();
+  if (Array.isArray(segs)) {
+    for (const seg of segs) {
+      const tr: unknown = (seg as { translations?: unknown } | null)?.translations;
+      if (!tr || typeof tr !== "object") continue;
+      for (const [code, v] of Object.entries(tr as Record<string, unknown>)) {
+        if (typeof v !== "string") continue;
+        const n = lens.get(code) ?? 0;
+        if (n >= max) continue;
+        const p = v.trim();
+        const parts = byLang.get(code) ?? [];
+        parts.push(p);
+        byLang.set(code, parts);
+        lens.set(code, n + p.length);
+      }
+    }
+  }
+  if (byLang.size > 0) return [...byLang.values()].map((parts) => joinSegmentTexts(parts).slice(0, max));
+  const rt: unknown = rec.result?.translations;
+  return rt && typeof rt === "object"
+    ? Object.values(rt as Record<string, unknown>)
+        .filter((v): v is string => typeof v === "string")
+        .map((v) => v.slice(0, max))
+    : [];
+}
+
 /** The record's language tracks, original first, or null when it has none.
  *
  *  Returns null for records written before per-language tracks existed: their

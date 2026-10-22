@@ -27,7 +27,7 @@ import { fmtDuration, fmtFull, fmtTimestamp, plural } from "@/lib/format";
 import { seekKeyTarget } from "@/lib/seekKeys";
 import { pickExportPath, readMediaFile, revealSaved, saveTextFile } from "@/lib/api";
 import {
-  appChipLabel, appLabel, currentRecord, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks,
+  appChipLabel, appLabel, currentRecord, deleteRecord, loadHistory, recordEditedResult, recordText, recordTracks, recordTranslationTexts,
   useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
 import { addFiles, openHistoryRecord, useTranscribeRun } from "@/lib/transcribeRun";
@@ -80,18 +80,13 @@ type Haystack = { name: string; appId: string; text: string };
 function haystackOf(r: TranscriptRecord, cache: WeakMap<TranscriptRecord, Haystack>): Haystack {
   const hit = cache.get(r);
   if (hit) return hit;
-  // The translated text a session injected, and a file/link/text run's batch
-  // translations, are shown and copied, so they are searchable too —
+  // The translated text a session injected, and a file/link/text run's translated
+  // tracks, are shown and copied, so they are searchable too —
   // type-guarded and bounded, the file is not validated on load.
   const translated = typeof r.translatedText === "string" ? "\n" + r.translatedText.slice(0, 20_000) : "";
-  const rt: unknown = r.result?.translations;
-  const fileTr =
-    rt && typeof rt === "object"
-      ? Object.values(rt as Record<string, unknown>)
-          .filter((v): v is string => typeof v === "string")
-          .map((v) => "\n" + v.slice(0, 20_000))
-          .join("")
-      : "";
+  const fileTr = recordTranslationTexts(r, 20_000)
+    .map((v) => "\n" + v)
+    .join("");
   const h: Haystack = {
     name: r.sourceName.toLowerCase(),
     appId: (r.appId ?? "").toLowerCase(),
