@@ -1,32 +1,5 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended",
-    ":semanticCommits",
-    ":dependencyDashboard"
-  ],
-  "timezone": "Etc/UTC",
-  "labels": ["dependencies"],
-  "rangeStrategy": "bump",
-  "automerge": true,
-  "automergeStrategy": "squash",
-
-  "platformAutomerge": false,
-
-  "osvVulnerabilityAlerts": true,
-
-  "lockFileMaintenance": { "enabled": true },
-
-  "minimumReleaseAge": "3 days",
-  "internalChecksFilter": "strict",
-  "vulnerabilityAlerts": {
-    "labels": ["security"],
-    "automerge": true,
-    "minimumReleaseAge": "3 days"
-  },
-
-  "ignoreDeps": ["gtk"],
-
   "customManagers": [
     {
       "customType": "regex",
