@@ -623,9 +623,16 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   if (c && ownProp(tg, c) && !next[key]) {
     // A capped track, or machine translation over the limit, kept on in the pick is no source
     // this run: its cap greys it again.
-    const capped = (k: string) => m.capped.has(keyTrack(k) ?? "") || (k.startsWith("mt:") && m.mtCapped.has(k.slice(3)));
-    const left = Object.keys(m.codeOf).filter((k) => m.codeOf[k] === c && next[k] && !capped(k));
-    if (!left.length) {
+    const leftIn = (x: ReturnType<typeof model>) => Object.keys(x.codeOf).some((k) => x.codeOf[k] === c && next[k]
+      && !x.capped.has(keyTrack(k) ?? "") && !(k.startsWith("mt:") && x.mtCapped.has(k.slice(3))));
+    // Unless the switch-off frees the slot that cap held (Custom restores its pick, preCap):
+    // ask the caps with the change in place before machine translation takes over.
+    let left = leftIn(m);
+    if (!left) {
+      const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+      left = leftIn(model({ ...input, targets: trial.targets }, trial.state));
+    }
+    if (!left) {
       if (key.startsWith("mt:")) tg[c] = false;
       else {
         next["mt:" + c] = true;
@@ -647,6 +654,9 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
 /** A preset resets every pick; Custom starts from a snapshot of what is on screen (v27). */
 export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: SitePolicy): SiteChange {
   if (policy !== "custom") return { state: { ...st, policy, sel: null }, targets: [...input.targets] };
+  // Custom clicked again: a re-snapshot would bake the caps' grey and fill-in into the pick
+  // (flipWith keeps them temporary through preCap) and drop picks of badges not shown now.
+  if (st.policy === "custom") return { state: st, targets: [...input.targets] };
   const m = model(input, st);
   return fromMap(input, { ...st, policy, sel: { ...m.snap } }, allTargets(m));
 }

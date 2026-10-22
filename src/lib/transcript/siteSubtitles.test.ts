@@ -428,6 +428,33 @@ describe("tracks and switches", () => {
     expect(v.run!.fetch).toContain("sv");
     expect(v.run!.mtTargets).not.toContain("sv");
   });
+  it("under Custom, switching off a language's fetched track that frees the slot of its capped twin downloads the twin — no machine translation", () => {
+    const inp = input({
+      tracks: [tr("de", "de"), tr("auto-de", "de", { kind: "auto" }), tr("ja", "ja"), ...["en", "fr", "it", "es", "pt"].map((l) => tr(l, l)), tr("ja-JP", "ja")],
+      targets: ["ja"],
+    });
+    const [i0, s0] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    const s1 = { ...s0, auto: true };
+    expect(derive(i0, s1).run!.fetch).not.toContain("ja-JP");
+    const [i2, s2] = apply(i0, flip(i0, s1, "ex:ja"));
+    const v = derive(i2, s2);
+    expect(v.run!.fetch).toContain("ja-JP");
+    expect(v.run!.mtTargets).not.toContain("ja");
+    expect(v.chips.find((c) => c.code === "ja")!.parts.map((p) => [p.key, p.on])).toEqual([["mt:ja", false], ["ex:ja-JP", true]]);
+  });
+  it("clicking the active Custom segment again keeps the pick: a cap's grey and fill-in stay temporary", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl"];
+    const inp = input({ tracks: [tr("de", "de"), tr("en-auto", "en", { kind: "auto" }), ...langs.map((l) => tr(l, l))], maxTargets: 3, targets: [] });
+    const [i0, s0] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    const s1 = { ...s0, auto: true };
+    expect(derive(i0, s1).run!.fetch).not.toContain("pl");
+    const again = pickPolicy(i0, s1, "custom");
+    const [i2, s2] = apply(i0, again);
+    const [i3, s3] = apply(i2, flip(i2, s2, "ex:en-auto"));
+    expect(derive(i3, s3).run!.fetch).toContain("pl");
+    expect(derive(i3, s3).run!.mtTargets).not.toContain("pl");
+    expect(again).toEqual({ state: s1, targets: i0.targets });
+  });
   it("under Custom the translation limit's grey stays temporary: a click elsewhere does not save it", () => {
     const [ib, sb] = apply(input({ targets: [] }), pickPolicy(input({ targets: [] }), initialSiteState([]), "both"));
     const [i0, s0] = apply(ib, pickPolicy(ib, sb, "custom"));
