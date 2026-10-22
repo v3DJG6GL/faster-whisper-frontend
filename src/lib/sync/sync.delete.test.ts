@@ -143,6 +143,9 @@ describe("deleteAnswerRuntime", () => {
     expect(deleteAnswerRuntime({ ok: false, status: 500 })).toMatchObject({ syncStatus: "error", syncUnsupported: false });
     expect("syncUnsupported" in deleteAnswerRuntime({ ok: false, status: 0 })).toBe(false);
   });
+  it("a successful delete clears an earlier 404's 'doesn't support settings sync'", () => {
+    expect(deleteAnswerRuntime({ ok: true, status: 200 })).toEqual({ syncUnsupported: false });
+  });
 });
 
 // A push parked on a slow/locked keyring (composeBlob's read, up to 10 s) must not still PUT once

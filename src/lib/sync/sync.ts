@@ -4824,15 +4824,17 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
  *  to `resetSyncState`. A 404 is NOT "already gone": the backend answers an empty store with 200
  *  `deleted: false`, so a 404 is the route itself missing (an old build, a proxy not forwarding
  *  it) — read as a pull's 404 is, and the local base kept, or a copy still stored there merges
- *  back with none. Any other answer is the sync route answering: an earlier 404's "doesn't
- *  support settings sync" would hide this failure (the Sync tab shows `syncError` only while
- *  that flag is clear). Status 0 (no answer at all) tells nothing about the route. */
+ *  back with none. Any other answer, success included, is the sync route answering and clears an
+ *  earlier 404's "doesn't support settings sync": that notice would hide a failure (the Sync tab
+ *  shows `syncError` only while the flag is clear) and contradict a success. Status 0 (no answer
+ *  at all) tells nothing about the route. */
 export function deleteAnswerRuntime(r: {
   ok: boolean;
   status: number;
   error?: string | null;
 }): Parameters<typeof setRuntime>[0] {
-  if (r.ok) return {};
+  // A 2xx is the sync route answering too; `resetSyncState` writes the rest of the status.
+  if (r.ok) return { syncUnsupported: false };
   return {
     syncStatus: "error",
     ...(r.status === 404 ? { syncUnsupported: true } : r.status > 0 ? { syncUnsupported: false } : {}),
