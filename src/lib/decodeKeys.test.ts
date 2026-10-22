@@ -337,6 +337,18 @@ describe("translation overrides through settings sync", () => {
     expect(clampTranslationOverrides([1])).toBeUndefined();
   });
 
+  it("model and glossary are capped by code points, never splitting a surrogate pair", () => {
+    const g = "a".repeat(3999) + "\u{1F600}";
+    const out = clampTranslationOverrides({ glossary: g })!.glossary!;
+    expect(out).toBe(g);
+    expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(out)).toBe(false);
+    const e = "\u{1F600}".repeat(4000);
+    expect(clampTranslationOverrides({ glossary: e })!.glossary).toBe(e);
+    const m = "m".repeat(199) + "\u{1F600}";
+    expect(clampTranslationOverrides({ model: m })!.model).toBe(m);
+    expect(clampTranslationOverrides({ glossary: "a".repeat(4001) })!.glossary).toHaveLength(4000);
+  });
+
   it("profiles and backends share the one clamp", () => {
     const t = { translateTo: ["de"], contextSegments: 4.4, glossary: "a = b", mode: "fluent", includeOriginal: true };
     const [p] = sanitizeProfiles([profile({ translationOverrides: t as never })]);

@@ -37,7 +37,7 @@ import { DEFAULT_PASTE_SHORTCUT, PASTE_PRESETS } from "../paste";
 import { IS_WINDOWS } from "../platform";
 import { hasOwn, ownProp } from "../own";
 import { sanitizeCueLimits } from "../transcript/cueSplit";
-import { appRuleKey, normalizeAppId, safeDisplayText, safeIdentityText } from "../sanitize";
+import { appRuleKey, capCodePoints, normalizeAppId, safeDisplayText, safeIdentityText } from "../sanitize";
 import { conflicts, QUICK_ADD_PEER_ID, withQuickAddPeer } from "../hotkeyConflicts";
 import { canonicalActivation } from "../types";
 import { TRANSLATION_MAX_TARGETS } from "../languages";
@@ -925,7 +925,9 @@ const CONTEXT_SEGMENTS_MAX = 10;
 /** The `translationOverrides` leaf, shared by the profile and backend sanitizers. Rust holds it as
  *  opaque JSON and forwards `contextSegments` into an `Option<u32>` IPC field on every dictation
  *  translation, so a fractional or negative value would fail that call — it is an integer 0–10
- *  (the server's TRANSLATION_CONTEXT_SEGMENTS range) or nothing. */
+ *  (the server's TRANSLATION_CONTEXT_SEGMENTS range) or nothing. `model`/`glossary` are cut by
+ *  code points like the server's caps: a UTF-16 cut can leave a lone surrogate that fails every
+ *  later `save_config`, and truncates an emoji-heavy glossary the server keeps whole. */
 export function clampTranslationOverrides(v: unknown): TranslationOverrides | undefined {
   if (!isPlainObject(v)) return undefined;
   const cs = v.contextSegments;
@@ -933,10 +935,10 @@ export function clampTranslationOverrides(v: unknown): TranslationOverrides | un
     translateTo: Array.isArray(v.translateTo)
       ? v.translateTo.filter((c: unknown): c is string => typeof c === "string").slice(0, TRANSLATION_MAX_TARGETS)
       : undefined,
-    model: typeof v.model === "string" ? v.model.slice(0, 200) : undefined,
+    model: typeof v.model === "string" ? capCodePoints(v.model, 200) : undefined,
     contextSegments:
       typeof cs === "number" && Number.isFinite(cs) ? Math.min(CONTEXT_SEGMENTS_MAX, Math.max(0, Math.round(cs))) : undefined,
-    glossary: typeof v.glossary === "string" ? v.glossary.slice(0, 4000) : undefined,
+    glossary: typeof v.glossary === "string" ? capCodePoints(v.glossary, 4000) : undefined,
     mode: v.mode === "fluent" || v.mode === "faithful" ? v.mode : undefined,
     includeOriginal: v.includeOriginal == null ? undefined : v.includeOriginal === true,
   };
