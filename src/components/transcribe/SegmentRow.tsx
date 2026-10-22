@@ -1,4 +1,4 @@
-import { memo, useState } from "react";
+import { memo, useCallback, useLayoutEffect, useRef, useState } from "react";
 import { LangTag } from "@/components/ui";
 import { fmtTimestamp } from "@/lib/format";
 import { stripControlChars } from "@/lib/sanitize";
@@ -16,7 +16,7 @@ export const SegmentRow = memo(function SegmentRow({
   seg, i, isActive, passed, activeWordIdx, passedWordIdx, range, words, showTs,
   showNames, colorize, editMode, reassignOpen, speakers, canSeek,
   translations, translationsKept, visLangsKey, origVisible, origLang, stale,
-  isFrontier,
+  isFrontier, recordKey,
   colorOf, displayName, seekTo, onToggleReassign, onReassign, onCommitEdit,
 }: {
   seg: EffSegment;
@@ -52,6 +52,9 @@ export const SegmentRow = memo(function SegmentRow({
   /** The "translation frontier": first row of the retro-translate run's
    *  in-flight chunk — teal-tinted with a "translating…" pending line. */
   isFrontier: boolean;
+  /** The transcript on screen: a switch to another one remounts the editable span, so the
+   *  correction typed into it is committed (see editableRef) instead of overwritten. */
+  recordKey: string;
   colorOf: (label: string) => string;
   displayName: (label: string) => string;
   seekTo: (t: number) => void;
@@ -62,6 +65,24 @@ export const SegmentRow = memo(function SegmentRow({
 }) {
   // Bumped when an edit commit changes the text on screen, to remount the editable span (see its onBlur).
   const [editRev, setEditRev] = useState(0);
+  // A correction typed since the last blur commit. A record switch the user did not click
+  // into (a batch run following its next finished file) unmounts the span without a blur —
+  // React suppresses events during commit — so the unmount commits it instead, through the
+  // PREVIOUS render's onCommitEdit: that one still stores under the old record. The ref is
+  // updated after commit, so the switching render's deletion still reads the old one.
+  const dirtyRef = useRef(false);
+  const commitRef = useRef({ i, onCommitEdit });
+  useLayoutEffect(() => {
+    commitRef.current = { i, onCommitEdit };
+  });
+  const editableRef = useCallback((el: HTMLSpanElement | null) => {
+    if (!el) return;
+    return () => {
+      if (!dirtyRef.current) return;
+      dirtyRef.current = false;
+      commitRef.current.onCommitEdit(commitRef.current.i, el.innerText ?? el.textContent ?? "");
+    };
+  }, []);
   // Word spans only on the ACTIVE segment — keeps the DOM light. Edited
   // segments stay karaoke too: their words are re-aligned to the corrected
   // text (wordAlign), so the timings still match what's on screen.
@@ -163,8 +184,13 @@ export const SegmentRow = memo(function SegmentRow({
           suppressContentEditableWarning
           role="textbox"
           aria-label={`Correct segment ${i + 1}`}
-          key={editRev}
+          key={`${recordKey}:${editRev}`}
+          ref={editableRef}
+          onInput={() => {
+            dirtyRef.current = true;
+          }}
           onBlur={(e) => {
+            dirtyRef.current = false;
             const el = e.currentTarget;
             // innerText, not textContent: a pasted line break lands as <br> or a
             // <div>, which textContent drops — gluing the words on either side.

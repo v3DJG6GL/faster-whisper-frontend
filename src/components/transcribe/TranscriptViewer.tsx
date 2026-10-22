@@ -2364,6 +2364,9 @@ export function TranscriptViewer({
                 origLang={origLang}
                 stale={!!fileStale[i]}
                 isFrontier={i === (trRun?.frontierIdx ?? -1)}
+                // path, not okey: okey moves path → id at run finish with the same transcript
+                // on screen, which must not remount a span mid-correction.
+                recordKey={path}
                 colorOf={colorOf}
                 displayName={displayName}
                 seekTo={seekTo}
