@@ -42,6 +42,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # NO bundled provider, plus an explicit direct dep on rustls/ring; lib.rs installs
 # ring as the process-wide provider at startup. One provider, no native toolchain.
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
+# The verifier reqwest's `rustls-no-provider` uses (OS trust store; already in the lock tree via
+# reqwest), direct so the live-dictation WebSocket trusts the same CAs as every HTTP route.
+rustls-platform-verifier = "0.7"
 
 # Microphone capture + the synthesised start/stop/error cues (audio/playback.rs plays them
 # straight through cpal -- rodio used to, but it pinned cpal to 0.17, whose ALSA worker

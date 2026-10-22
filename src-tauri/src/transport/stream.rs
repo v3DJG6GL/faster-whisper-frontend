@@ -442,7 +442,12 @@ pub async fn run<F>(
         .max_message_size(Some(MAX_WS_MESSAGE));
     let connect = tokio::time::timeout(
         CONNECT_TIMEOUT,
-        tokio_tungstenite::connect_async_with_config(request, Some(ws_config), false),
+        tokio_tungstenite::connect_async_tls_with_config(
+            request,
+            Some(ws_config),
+            false,
+            ws_tls_connector(),
+        ),
     );
     tokio::pin!(connect);
     let (ws, _resp) = loop {
@@ -1619,6 +1624,32 @@ mod http_to_ws_tests {
     }
 }
 
+/// The TLS connector for wss://. tokio-tungstenite's own default (`connector: None`) trusts the
+/// Mozilla bundle ONLY, while reqwest's `rustls-no-provider` verifies with the OS trust store — so
+/// a backend with an mkcert / Caddy-internal / step-ca / enterprise-CA certificate passed Test
+/// connection, batch and file runs and then failed every live dictation with UnknownIssuer. This
+/// mirrors reqwest's platform verifier so both halves of the transport trust the same CAs. Built
+/// once; if the platform verifier cannot be built, `None` keeps the old webpki-roots behaviour.
+fn ws_tls_connector() -> Option<tokio_tungstenite::Connector> {
+    static CONFIG: std::sync::OnceLock<Option<Arc<rustls::ClientConfig>>> =
+        std::sync::OnceLock::new();
+    CONFIG
+        .get_or_init(|| {
+            use rustls_platform_verifier::ConfigVerifierExt;
+            match rustls::ClientConfig::with_platform_verifier() {
+                Ok(cfg) => Some(Arc::new(cfg)),
+                Err(e) => {
+                    tracing::warn!(
+                        "[stream] platform TLS verifier unavailable ({e}); using bundled roots"
+                    );
+                    None
+                }
+            }
+        })
+        .clone()
+        .map(tokio_tungstenite::Connector::Rustls)
+}
+
 #[cfg(test)]
 mod handshake_auth_tests {
     use super::handshake_auth_headers;
@@ -2423,5 +2454,21 @@ mod clip_tests {
             "Hallo Welt Komma\n"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod ws_tls_tests {
+    use super::ws_tls_connector;
+
+    /// wss:// must go through the platform verifier like reqwest does, never tokio-tungstenite's
+    /// `connector: None` default (Mozilla roots only — an OS-trusted private CA fails there).
+    #[test]
+    fn wss_uses_the_platform_verifier_connector() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        assert!(matches!(
+            ws_tls_connector(),
+            Some(tokio_tungstenite::Connector::Rustls(_))
+        ));
     }
 }
