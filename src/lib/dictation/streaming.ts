@@ -1117,8 +1117,8 @@ let lastPhraseDiverted = false;
 // still owes it there. Keyed on the app, not the window: a window title changes as a terminal runs
 // or a chat switches, so two windows of one app share the gap. An unknown focus (null) matches
 // another null, the same way publishTarget dedupes and a null expectAppId trusts the target.
-// Every session, translated or not, keeps it: the per-phrase and hard-break Enter go only into an
-// app it holds. Session-scoped via clearPhraseEnd.
+// Every session, translated or not, keeps it: the per-phrase and hard-break Enter and the
+// hard-break separator go only into an app it holds. Session-scoped via clearPhraseEnd.
 const gapOwedApps = new Set<string | null>();
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
@@ -2856,6 +2856,10 @@ async function ensureListeners(): Promise<void> {
             if (dirtyAtBreak && gapOwedApps.has(t.appId)) await pressReturn(t, cfg);
             return;
           }
+          // The separator likewise: it joins two phrases in the field the last one was typed into.
+          // Focus that moved on since would get a " " in the user's own draft, or a newline
+          // separator's Return that submits it.
+          if (!gapOwedApps.has(t.appId)) return;
           if (!sep) return;
           // One text part of the separator: a plain separator whole, or a run of text between the
           // line breaks of a multi-line one ("\n" is always a real Return, see pressReturn's callers).

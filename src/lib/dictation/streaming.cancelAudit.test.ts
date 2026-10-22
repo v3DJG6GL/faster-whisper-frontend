@@ -344,6 +344,17 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(boundary).toMatch(/if \(dirtyAtBreak && gapOwedApps\.has\(t\.appId\)\) await pressReturn\(t, cfg\);/);
   });
 
+  it("the hard-break separator goes only into the app the phrase was typed into", () => {
+    // With Enter off, the separator took the window focused at the hard break: a " " landed in
+    // the user's own draft there, and a newline separator's Return submitted it.
+    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    const autoEnter = boundary.indexOf("if (t.autoEnter)");
+    const owed = boundary.indexOf("if (!gapOwedApps.has(t.appId)) return;", autoEnter);
+    expect(owed, "separator must stand down in an app that owes no gap").toBeGreaterThan(autoEnter);
+    expect(owed).toBeLessThan(boundary.indexOf("const sendSepText"));
+    expect(owed).toBeLessThan(boundary.indexOf("const parts = sep"));
+  });
+
   it("a translated block's gap follows the field's last typed phrase, not the typed baseline", () => {
     // `injectedText` is emptied by a hard break (the next block glued onto the last line) and
     // survives a landed Return (the next block opened with three more Returns).
