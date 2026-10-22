@@ -1121,11 +1121,15 @@ export function disableConflictingProfiles(
   /** evdev is this device's live hotkey backend (enabled in the settings being applied AND
    *  permitted): it registers side-distinct chords, like the Windows hook. */
   evdevLive = false,
+  /** Profiles in an INBOUND list whose chord is nevertheless this device's own ("Profile
+   *  shortcuts" off re-pins every known profile's chord) — treated like a local list's. */
+  localChordIds: ReadonlySet<string> = new Set(),
 ): { profiles: Profile[]; rejectQuickAddHotkey: boolean } {
   const peers = withQuickAddPeer(profiles, quickAddHotkey);
   const order = new Map(peers.map((p, i) => [p.id, i]));
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
+  const chordIsLocal = (id: string) => !profilesAreInbound || localChordIds.has(id);
   // Collapse modifier SIDES only where the registrar does — the save gate's own rule
   // (persistence.ts): the Windows low-level hook (hotkeys/windows.rs, VK_LCONTROL ≠ VK_RCONTROL)
   // and a live evdev backend register side-distinct chords, and collapsing anyway disabled a
@@ -1143,13 +1147,19 @@ export function disableConflictingProfiles(
     // instead. The peer still cannot be disabled, so the save gate stays un-tripped either way.
     const self = order.get(c.profileId) ?? 0;
     const other = order.get(c.otherId) ?? 0;
+    //
+    // The same holds per profile when the list arrived but its chords did not: with "Profile
+    // shortcuts" off every known profile carries this device's chord, so a collision there is
+    // the incoming chord's fault, whatever the list order.
     if (c.otherId === QUICK_ADD_PEER_ID) {
-      if (profilesAreInbound) disable.add(c.profileId);
-      else rejectQuickAddHotkey = true;
-    } else if (profilesAreInbound && self > other) {
-      // Profile against profile only for an inbound list: this device's own list already passed
-      // its save gate, so a pull that brings no profiles has nothing new to collide there.
-      disable.add(c.profileId);
+      if (chordIsLocal(c.profileId)) rejectQuickAddHotkey = true;
+      else disable.add(c.profileId);
+    } else if (c.profileId !== QUICK_ADD_PEER_ID) {
+      // Two local chords already passed this device's save gate together: nothing new collides.
+      const selfLocal = chordIsLocal(c.profileId);
+      const otherLocal = chordIsLocal(c.otherId);
+      if (selfLocal !== otherLocal) disable.add(selfLocal ? c.otherId : c.profileId);
+      else if (!selfLocal && self > other) disable.add(c.profileId);
     }
   }
   disable.delete(QUICK_ADD_PEER_ID);
@@ -2142,6 +2152,8 @@ export async function applyBlob(
       nextSettings.general.quickAddHotkey,
       inboundProfiles !== null,
       nextSettings.general.evdevEnabled === true && evdevPermittedNow(),
+      // "Profile shortcuts" off re-pinned every known profile to THIS device's chord above.
+      inboundProfiles !== null && !gates.profileHotkeys ? new Set(st.profiles.map((p) => p.id)) : undefined,
     );
     nextProfiles = resolved.profiles;
     if (resolved.rejectQuickAddHotkey) {

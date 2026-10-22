@@ -211,6 +211,42 @@ describe("apply: keep-local per gate", () => {
     expect(g.startMinimized).toBe(true); // non-gated applied
   });
 
+  it("profileHotkeys off: an incoming quick-add chord matching a local profile chord is rejected, not the profile disabled", async () => {
+    const own = ["ControlLeft", "AltLeft", "KeyD"];
+    useApp.setState({ profiles: [profile({ hotkey: own })] });
+    gateOff("profileHotkeys");
+    const localQa = useApp.getState().settings.general.quickAddHotkey;
+    await applyBlob(
+      {
+        profiles: { list: [profile({ hotkey: ["F9"] })], homeProfileId: null } as never,
+        dictionary: { quickAddHotkey: own } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const st = useApp.getState();
+    expect(st.profiles[0].hotkey).toEqual(own);
+    expect(st.profiles[0].enabled).toBe(true);
+    expect(st.settings.general.quickAddHotkey).toEqual(localQa);
+  });
+
+  it("profileHotkeys off: a new peer profile on this device's own chord is the one switched off, whatever the order", async () => {
+    const own = ["ControlLeft", "AltLeft", "KeyD"];
+    useApp.setState({ profiles: [profile({ hotkey: own })] });
+    gateOff("profileHotkeys");
+    await applyBlob(
+      {
+        profiles: {
+          list: [profile({ id: "pNew", name: "New", hotkey: own }), profile({ hotkey: ["F9"] })],
+          homeProfileId: null,
+        } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const byId = new Map(useApp.getState().profiles.map((p) => [p.id, p]));
+    expect(byId.get("p1")!.enabled).toBe(true);
+    expect(byId.get("pNew")!.enabled).toBe(false);
+  });
+
   it("a gated-off clipboard-history setting never applies", async () => {
     gateOff("excludeFromClipboardHistory");
     await applyBlob(
