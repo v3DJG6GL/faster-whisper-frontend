@@ -105,6 +105,10 @@ export function Combobox({
   const activeRef = useRef<HTMLLIElement | null>(null);
   // Set when ArrowDown is pressed before suggestions have loaded — see below.
   const wantFirstRef = useRef(false);
+  // A press on the listbox itself (its scrollbar or padding) is let through — WebKit drags an
+  // element's scrollbar only on a press that was not prevented — so the input blurs: that blur
+  // must not close the list, and the release (wherever it lands) puts focus back.
+  const pressInListRef = useRef(false);
 
   const query = typed ? value : "";
   const candidates = disabled ? [] : rank(suggestions, query);
@@ -211,14 +215,32 @@ export function Combobox({
         // Preserve the typed filter: clearing it here would discard a half-typed
         // query when the user clicks the field after Escape.
         onClick={() => { if (!disabled) setOpen(true); }}
-        onBlur={() => { wantFirstRef.current = false; setOpen(false); setActive(-1); setTyped(false); }}
+        onBlur={() => {
+          if (pressInListRef.current) return;
+          wantFirstRef.current = false; setOpen(false); setActive(-1); setTyped(false);
+        }}
         onKeyDown={onKeyDown}
       />
       {showPopover && box &&
         createPortal(
           <div
-            // Keep the input focused for any mouse interaction inside the popover.
-            onMouseDown={(e) => e.preventDefault()}
+            // Keep the input focused for any mouse interaction inside the popover — except a press
+            // on the listbox itself (see pressInListRef).
+            onMouseDown={(e) => {
+              if ((e.target as Element).id !== listId) {
+                e.preventDefault();
+                return;
+              }
+              pressInListRef.current = true;
+              document.addEventListener(
+                "mouseup",
+                () => {
+                  pressInListRef.current = false;
+                  if (document.activeElement !== inputRef.current) inputRef.current?.focus({ preventScroll: true });
+                },
+                { once: true, capture: true },
+              );
+            }}
             // At least the input's width, growing for a long suggestion as before, but never past the
             // viewport's right edge (popoverBox's own width would truncate every wider row).
             style={{

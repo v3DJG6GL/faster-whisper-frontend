@@ -355,13 +355,23 @@ export function ListPicker<R>({
             // press for the caret and selection — and so does the listbox itself (its rows are
             // children, so a press on IT is its padding or scrollbar): WebKit hands a press to an
             // element's scrollbar only when the mousedown was not prevented, so the scrollbar
-            // could not be dragged. The release then puts focus back in the search field.
+            // could not be dragged. That press moves focus off the search field (to <body>, or to
+            // the listbox where a scroller takes focus), so the release puts it back — wherever it
+            // lands: a scrollbar drag often ends outside the panel, where no panel handler hears it.
             onMouseDown={(e) => {
-              if (e.target !== searchRef.current && (e.target as Element).id !== listId) e.preventDefault();
-            }}
-            onMouseUp={() => {
-              const at = document.activeElement;
-              if (search && (!at || at === document.body)) searchRef.current?.focus();
+              if (e.target === searchRef.current) return;
+              if ((e.target as Element).id !== listId) {
+                e.preventDefault();
+                return;
+              }
+              if (!search) return; // the listbox holds focus and keys itself
+              document.addEventListener(
+                "mouseup",
+                () => {
+                  if (document.activeElement !== searchRef.current) searchRef.current?.focus({ preventScroll: true });
+                },
+                { once: true, capture: true },
+              );
             }}
             style={pos}
             className={POPOVER_PANEL}

@@ -207,30 +207,49 @@ describe("ListPicker popover focus", () => {
     expect(press(field)).toBe(false);
   });
 
-  it("a press on the listbox itself (its scrollbar) keeps its default, and its release refocuses the search field", () => {
+  // The press dropped focus off the field: the release hands it back, so Esc still closes the list
+  // — wherever the release lands (a scrollbar drag often ends outside the panel) and wherever
+  // focus went (<body>, or the listbox where a scroller takes focus).
+  it.each([
+    ["on <body>", "body"],
+    ["on the listbox", "list"],
+  ])("a press on the listbox itself keeps its default; a release anywhere refocuses the search field (focus %s)", (_n, where) => {
+    const body = {};
+    const list = { id: "lp-list" };
+    const ups: { fn: () => void; opts: unknown }[] = [];
+    const doc = {
+      body,
+      activeElement: where === "body" ? body : list,
+      addEventListener: (type: string, fn: () => void, opts: unknown) => {
+        if (type === "mouseup") ups.push({ fn, opts });
+      },
+    };
+    vi.stubGlobal("document", doc);
     render(false);
     trigger.onKeyDown(key("ArrowDown") as never);
     const tree = render(false);
     const panel = (tree.props as { children: unknown[] }).children[1] as ReactElement<{
       onMouseDown?: (e: unknown) => void;
-      onMouseUp?: () => void;
+      onMouseUp?: unknown;
     }>;
     const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
-    let refocused = false;
-    input.props.ref.current = { focus: () => (refocused = true) };
+    let refocused = 0;
+    input.props.ref.current = { focus: () => refocused++ };
     const press = (target: unknown) => {
       let prevented = false;
       panel.props.onMouseDown?.({ target, preventDefault: () => (prevented = true) });
       return prevented;
     };
-    // WebKit drags an element's scrollbar only on a press that was not prevented.
-    expect(press({ id: "lp-list" })).toBe(false);
-    // A row still keeps focus in the field.
+    // A row still keeps focus in the field, and arms nothing.
     expect(press({ id: "lp-list-opt-0" })).toBe(true);
-    // The press dropped focus to <body>: the release hands it back, so Esc still closes the list.
-    const body = {};
-    vi.stubGlobal("document", { body, activeElement: body });
-    panel.props.onMouseUp?.();
-    expect(refocused).toBe(true);
+    expect(ups).toHaveLength(0);
+    // WebKit drags an element's scrollbar only on a press that was not prevented.
+    expect(press(list)).toBe(false);
+    // No panel-scoped release handler: a release outside the panel never reaches one.
+    expect(panel.props.onMouseUp).toBeUndefined();
+    expect(ups).toHaveLength(1);
+    expect(ups[0].opts).toEqual({ once: true, capture: true });
+    ups[0].fn();
+    expect(refocused).toBe(1);
   });
 });
