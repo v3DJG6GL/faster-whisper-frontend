@@ -1363,7 +1363,7 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
     }
     // Or to a Latin word or number (AI").
     const zh3 = ["我们", "公司", "最近", "推出", "了", 'AI"', "助手", '"', "功能", "大家", "都", "很", "喜欢", "然后", "我们", "一起", "走了"];
-    for (const pauses of [{}, { 5: 0.8 }]) {
+    for (const pauses of [{}, { 5: 0.8 }] as Record<number, number>[]) {
       const r = resOf(zh3, "zh", pauses);
       for (const length of ["short", "standard"] as const) {
         const texts = buildCues(r, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
