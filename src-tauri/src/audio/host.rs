@@ -25,9 +25,17 @@ pub fn default_output() -> Option<Device> {
 pub fn input_by_id(id: &DeviceId) -> Option<Device> {
     #[cfg(target_os = "linux")]
     if id.host() == HostId::Alsa {
-        // `devices()` also lists playback-only hw devices, so filter like the branch below; an
-        // output-only match must read as missing so the caller falls back with a notice.
-        return alsa_host()?.device_by_id(id).filter(|d| d.supports_input());
+        let host = alsa_host()?;
+        // Exact id first: cpal's `device_by_id` canonicalizes "sysdefault:CARD=X" to
+        // "sysdefault:CARD=X,DEV=0", which ALSA's hint list never contains — so every sysdefault
+        // pin (the Shared path, and every mic row when no sound server runs) read as unplugged.
+        if let Some(d) = exact_id(host.input_devices().ok()?, id, |d| d.id().ok()) {
+            return Some(d);
+        }
+        // Shorthand ids ("hw:USB") still go through cpal's canonical form. `devices()` also lists
+        // playback-only hw devices, so filter like the branch below; an output-only match must
+        // read as missing so the caller falls back with a notice.
+        return host.device_by_id(id).filter(|d| d.supports_input());
     }
     with_host(|h| {
         if h.id() != id.host() {
@@ -35,6 +43,18 @@ pub fn input_by_id(id: &DeviceId) -> Option<Device> {
         }
         h.device_by_id(id).filter(|d| d.supports_input())
     })
+}
+
+/// The first item whose id is exactly `wanted`.
+#[cfg(target_os = "linux")]
+fn exact_id<T>(
+    items: impl IntoIterator<Item = T>,
+    wanted: &DeviceId,
+    id_of: impl Fn(&T) -> Option<DeviceId>,
+) -> Option<T> {
+    items
+        .into_iter()
+        .find(|d| id_of(d).as_ref() == Some(wanted))
 }
 
 /// Every input device of the host the inventory lists directly: WASAPI / CoreAudio, or on Linux
@@ -121,4 +141,56 @@ fn with_pulse<R>(f: impl Fn(&cpal::Host) -> Option<R>) -> Option<R> {
         *slot = None;
     }
     None
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+
+    /// ALSA's hint list names the shared path "sysdefault:CARD=USB" with no DEV part; the pin the
+    /// app hands out is that exact string and must be found as-is (cpal's lookup searched for
+    /// "sysdefault:CARD=USB,DEV=0" and missed it).
+    #[test]
+    fn a_sysdefault_pin_matches_its_enumerated_id_exactly() {
+        let hints = [
+            "default",
+            "sysdefault:CARD=USB",
+            "hw:CARD=USB,DEV=0",
+            "plughw:CARD=USB,DEV=0",
+            "dsnoop:CARD=USB,DEV=0",
+        ]
+        .map(|h| DeviceId::new(HostId::Alsa, h));
+        let pick = |w: &str| {
+            exact_id(hints.iter(), &DeviceId::new(HostId::Alsa, w), |d| {
+                Some((*d).clone())
+            })
+        };
+        assert_eq!(
+            pick("sysdefault:CARD=USB").map(|d| d.id().to_string()),
+            Some("sysdefault:CARD=USB".into())
+        );
+        assert_eq!(
+            pick("hw:CARD=USB,DEV=0").map(|d| d.id().to_string()),
+            Some("hw:CARD=USB,DEV=0".into())
+        );
+        assert!(pick("sysdefault:CARD=PCH").is_none());
+    }
+
+    /// Hardware check: every enumerated sysdefault input resolves through `input_by_id`.
+    #[test]
+    #[ignore = "needs an ALSA capture card"]
+    fn live_sysdefault_inputs_resolve() {
+        let ids: Vec<DeviceId> = native_inputs().iter().filter_map(|d| d.id().ok()).collect();
+        let sys: Vec<&DeviceId> = ids
+            .iter()
+            .filter(|i| i.id().starts_with("sysdefault:CARD="))
+            .collect();
+        assert!(
+            !sys.is_empty(),
+            "no sysdefault input on this machine: {ids:?}"
+        );
+        for id in sys {
+            assert!(input_by_id(id).is_some(), "{id} read as unplugged");
+        }
+    }
 }
