@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   approvePendingReview,
+  deleteAnswerRuntime,
   deleteFailureMessage,
   dismissSyncConflict,
   getPendingConflict,
@@ -124,6 +125,23 @@ describe("deleteFailureMessage", () => {
     const msg = deleteFailureMessage({ ok: false, status: 0, error: "bad\u0007\u202Etext" });
     expect(msg).not.toContain("\u0007");
     expect(msg).not.toContain("\u202E");
+  });
+});
+
+// The backend answers an empty store with 200 `deleted: false`: a 404 is the sync ROUTE missing,
+// so it must not reset the local base as if the copy were gone.
+describe("deleteAnswerRuntime", () => {
+  it("a 404 is 'sync unsupported, nothing deleted', not success", () => {
+    const patch = deleteAnswerRuntime({ ok: false, status: 404, error: "Not Found" });
+    expect(patch).toEqual({
+      syncStatus: "error",
+      syncUnsupported: true,
+      syncError: "This server doesn't support settings sync — nothing was deleted.",
+    });
+  });
+  it("any other answer clears an earlier 404's flag; no answer leaves it", () => {
+    expect(deleteAnswerRuntime({ ok: false, status: 500 })).toMatchObject({ syncStatus: "error", syncUnsupported: false });
+    expect("syncUnsupported" in deleteAnswerRuntime({ ok: false, status: 0 })).toBe(false);
   });
 });
 

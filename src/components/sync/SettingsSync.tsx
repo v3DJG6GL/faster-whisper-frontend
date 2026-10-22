@@ -30,8 +30,8 @@ import {
   approvePendingReview,
   backendKeyFates,
   consentDetailCap,
+  deleteAnswerRuntime,
   dismissSyncConflict,
-  deleteFailureMessage,
   disableConflictingProfiles,
   getPendingConflict,
   getPendingReview,
@@ -1003,16 +1003,8 @@ export function SyncTab() {
         serverUrl: effectiveServerUrl(syncBackend, useApp.getState().settings),
         backendId: syncBackend.id,
       });
-      if (!r.ok && r.status !== 404) {
-        // A real answer is the sync route answering: an earlier 404's "doesn't support settings
-        // sync" would hide this failure (the notice below shows only while that flag is clear).
-        useApp.getState().setSyncRuntime({
-          syncStatus: "error",
-          ...(r.status > 0 ? { syncUnsupported: false } : {}),
-          syncError: deleteFailureMessage(r),
-        });
-        return;
-      }
+      useApp.getState().setSyncRuntime(deleteAnswerRuntime(r));
+      if (!r.ok) return;
       await resetSyncState();
     } catch (e) {
       console.error("delete server copy failed", e);

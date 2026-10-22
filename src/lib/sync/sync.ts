@@ -4814,7 +4814,30 @@ export function deleteFailureMessage(r: { ok: boolean; status: number; error?: s
   if (r.status === 0) {
     return `Could not reach the server — the stored settings were not deleted.${detail ? ` (${detail})` : ""}`;
   }
+  if (r.status === 404) {
+    return "This server doesn't support settings sync — nothing was deleted.";
+  }
   return `The server refused to delete the stored settings (${r.status}).${detail ? ` ${detail}` : ""}`;
+}
+
+/** The sync status "Delete server copy" writes for the server's answer; only an `ok` one goes on
+ *  to `resetSyncState`. A 404 is NOT "already gone": the backend answers an empty store with 200
+ *  `deleted: false`, so a 404 is the route itself missing (an old build, a proxy not forwarding
+ *  it) — read as a pull's 404 is, and the local base kept, or a copy still stored there merges
+ *  back with none. Any other answer is the sync route answering: an earlier 404's "doesn't
+ *  support settings sync" would hide this failure (the Sync tab shows `syncError` only while
+ *  that flag is clear). Status 0 (no answer at all) tells nothing about the route. */
+export function deleteAnswerRuntime(r: {
+  ok: boolean;
+  status: number;
+  error?: string | null;
+}): Parameters<typeof setRuntime>[0] {
+  if (r.ok) return {};
+  return {
+    syncStatus: "error",
+    ...(r.status === 404 ? { syncUnsupported: true } : r.status > 0 ? { syncUnsupported: false } : {}),
+    syncError: deleteFailureMessage(r),
+  };
 }
 
 /** For the Sync tab's "Delete server copy": forget local bookkeeping so the
