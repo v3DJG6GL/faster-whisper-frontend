@@ -220,26 +220,33 @@ export function seamUnspaced(s: string, end: boolean): boolean {
 }
 /** Whether the word at the edge of `s` (its end with `end`) — the run of characters that are
  *  neither blank nor unspaced — is glued to an unspaced character on its far side: "是100" and
- *  "17日" are, "有 25" and "300 个" (Whisper's spaced numbers) and a word at the text's edge are not. */
+ *  "17日" are, "有 25" and "300 个" (Whisper's spaced numbers) and a word at the text's edge are not.
+ *  A word that fills a wrapped line of its own ("达到了" / "1234567890" / "元") is glued when the
+ *  line past it starts (or ends) unspaced: a line break is the wrap's seam, not a blank. */
 function wordGlued(s: string, end: boolean): boolean {
   const cs = Array.from(s);
   if (!end) cs.reverse();
   let i = cs.length;
   while (i > 0 && !/\s/.test(cs[i - 1]) && !unspacedChar(cs[i - 1])) i--;
-  return i > 0 && !/\s/.test(cs[i - 1]);
+  if (i === 0) return false;
+  if (!/\s/.test(cs[i - 1])) return true;
+  let j = i;
+  while (j > 0 && /\s/.test(cs[j - 1])) j--;
+  return j > 0 && cs.slice(j, i).includes("\n") && unspacedChar(cs[j - 1]);
 }
 /** Whether the break between a wrapped line ending in `before` and the next one starting with
  *  `after` takes no space back in a text that wraps its CJK lines (`cjkWraps`): both edges are
- *  unspaced (`seamUnspaced`), or one is and the other is an ASCII digit glued into the CJK text on
- *  its far side too — wrapLines wraps such a number at that seam ("2025年10月" / "17日"), and CJK
- *  text sets no space there. A number spaced on its far side ("有 25" / "个人", "有" / "300 个") is
- *  Whisper's spaced style, whose wrap dropped a space: it keeps one, as a Latin word does (Whisper's
- *  "讨论 AI 的" loses its space at a wrap). */
+ *  unspaced (`seamUnspaced`), or one is and the other is a letter or digit of a word glued into
+ *  the CJK text on its far side too — wrapLines wraps such a word at that seam ("2025年10月" /
+ *  "17日", "今日はMicrosoft" / "の会議"), and CJK text sets no space there. A word spaced on its far
+ *  side ("有 25" / "个人", "有" / "300 个", "讨论 AI" / "的") is Whisper's spaced style, whose wrap
+ *  dropped a space: it keeps one. Either side may carry the line past the next one (`joinLines`,
+ *  `joinLineBreaks`), so a word on a wrapped line of its own is judged by what follows it there. */
 export function wrapSeamUnspaced(before: string, after: string): boolean {
   const a = seamUnspaced(before, true);
   const b = seamUnspaced(after, false);
-  return (a && b) || (a && /^[0-9]/.test(after) && wordGlued(after, false))
-    || (b && /[0-9]$/.test(before) && wordGlued(before, true));
+  return (a && b) || (a && /^[\p{L}\p{N}]/u.test(after) && wordGlued(after, false))
+    || (b && /[\p{L}\p{N}]$/u.test(before) && wordGlued(before, true));
 }
 /** Text with every line break (and the blanks around it) folded into one space — the
  *  subtitle import, the edit commit and every export flatten alike — or, with `wraps` (see

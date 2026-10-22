@@ -112,9 +112,13 @@ function joinLines(lines: string[], wraps: boolean): string {
   if (!wraps) return lines.join(" ");
   // Each seam judged from the previous line's own end (its last line with text, tags aside),
   // never by re-scanning what is joined so far: a paragraph of every line in a file stays linear.
+  // Each side also sees one line further (a number wrapped onto a line of its own is judged by
+  // what it is glued to past the line break).
   const parts: string[] = [];
   let prev = "";
-  for (const l of lines) {
+  let prev2 = "";
+  for (let k = 0; k < lines.length; k++) {
+    const l = lines[k];
     const b = bareLine(l);
     if (parts.length === 0) parts.push(l);
     else if (!b.trim()) {
@@ -122,12 +126,17 @@ function joinLines(lines: string[], wraps: boolean): string {
       parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
       parts.push(l.trim());
       continue;
-    } else if (wrapSeamUnspaced(prev, b.trimStart())) {
+    } else if (
+      wrapSeamUnspaced(
+        prev2 ? `${prev2}\n${prev}` : prev,
+        k + 1 < lines.length ? `${b.trimStart()}\n${bareLine(lines[k + 1])}` : b.trimStart(),
+      )
+    ) {
       parts[parts.length - 1] = parts[parts.length - 1].trimEnd();
       parts.push(l.trimStart());
     } else parts.push(" ", l);
     const t = b.trimEnd();
-    if (t) prev = t;
+    if (t) [prev2, prev] = [prev, t];
   }
   return parts.join("");
 }

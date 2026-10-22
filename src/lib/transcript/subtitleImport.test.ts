@@ -417,6 +417,17 @@ describe("plain text + errors", () => {
       expect(parseImportedText(format, out).segments.map((s) => s.text)).toEqual([text]);
     }
   });
+  it("srt: a CJK cue wrapped beside a glued Latin word or a number on a line of its own reads back without a space there", () => {
+    const srt = (body: string) => `1\n00:00:01,000 --> 00:00:02,000\n${body}\n`;
+    for (const [body, text] of [
+      ["今日はMicrosoft\nの会議です。", "今日はMicrosoftの会議です。"],
+      ["我们今天用\nChatGPT写代码。", "我们今天用ChatGPT写代码。"],
+      ["今日の会議で\nGoogleとApple\nの話をします。", "今日の会議でGoogleとAppleの話をします。"],
+      ["我的电话号码是\n13812345678\n请打给我。", "我的电话号码是13812345678请打给我。"],
+      // Whisper's spaced style keeps its space.
+      ["我们今天讨论 AI\n的发展。", "我们今天讨论 AI 的发展。"],
+    ]) expect(parseImportedText("srt", srt(body)).segments.map((s) => s.text)).toEqual([text]);
+  });
   it("a times line holding a long blank run parses in linear time, to the same cues", () => {
     const ws = " ".repeat(100_000);
     const srt = `1\n00:00:01,000 --> 00:00:02,000\nHello\n \nx${ws}y\n\n2\n00:00:03,000${ws}-->${ws}00:00:04,000\nWorld\n`;
