@@ -833,6 +833,40 @@ describe("usage poll gates", () => {
     }
   });
 
+  it("switching back to the last visit's query before the reopen fetch lands marks its kept documents failed on a miss", async () => {
+    const ok = getUsageStats.getMockImplementation()!;
+    const page = (a: { query: Record<string, unknown> }) => !(a.query.days === TREND_DAYS && Object.keys(a.query).length <= 2);
+    const last = { range: "7", with: ["vad"] } as const;
+    let close = openStatisticsPage();
+    try {
+      useApp.setState({ usageViewQuery: { range: last.range, with: [...last.with] } });
+      await settle();
+      close(); // the last visit ends on 7 days + vad: its view and year stay in the store
+      const { usageView, usageYear } = useApp.getState();
+      expect(usageView?.stats && !usageView.failed).toBeTruthy();
+      expect(usageYear?.stats && !usageYear.failed).toBeTruthy();
+      // The sidebar reopens on the default query; the server hangs, then misses.
+      const pending: ((v: null) => void)[] = [];
+      getUsageStats.mockImplementation((a) => (page(a) ? new Promise<never>((r) => pending.push(r as never)) : ok(a)));
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      close = openStatisticsPage();
+      await settle();
+      getUsageStats.mockClear();
+      useApp.setState({ usageViewQuery: { range: last.range, with: [...last.with] } });
+      await settle();
+      expect(calls().page).toBe(2); // the view AND the year: the kept year was never confirmed this visit
+      pending.splice(0).forEach((r) => r(null));
+      await settle();
+      expect(useApp.getState().usageView).toEqual({ sig: usageView!.sig, stats: usageView!.stats, failed: true });
+      expect(useApp.getState().usageYear).toEqual({ sig: usageYear!.sig, stats: usageYear!.stats, failed: true });
+    } finally {
+      getUsageStats.mockImplementation(ok);
+      close();
+      useApp.setState({ usageViewQuery: { range: "90", with: [] } });
+      await settle();
+    }
+  });
+
   it("a backend set to Standard clears its kept numbers once, instead of freezing them", async () => {
     await vi.advanceTimersByTimeAsync(30_000); // settle any pass the previous case left pending
     await settle();

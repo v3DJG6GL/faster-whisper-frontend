@@ -456,7 +456,13 @@ export function initUsageController(): void {
       ((state.profiles !== prev.profiles || state.settings.homeProfileId !== prev.settings.homeProfileId) &&
         viewStatsBackend(state)?.id !== viewStatsBackend(prev)?.id);
     if (viewMoved && statsPageShown()) {
-      void refreshView().catch(() => {});
+      // Nothing confirmed yet this visit (a reopen, a hidden pass or a miss cleared it): the
+      // store may still hold the LAST visit's documents for the query switched to — back to the
+      // range or stage filter used then, while the reopen fetch for the URL's query is out — so
+      // these fetches carry the reopen rule: refetch the year, and a miss marks both failed
+      // instead of keeping days-old numbers as current.
+      const unconfirmed = viewFreshSig === null;
+      void refreshView(unconfirmed).catch(() => {});
       // On the 1 year / All presets nothing kept the year document current. Coming back from
       // 1 year, the polled 365-day view is that year (seeded, no fetch); otherwise — the All
       // preset, a stage filter changed alongside, a failed or missing view — it is refetched,
@@ -464,7 +470,7 @@ export function initUsageController(): void {
       // sub-year change still reuses the polled year.
       const fromYear = !yearPageQuery(prev.usageViewQuery);
       if (!(fromYear && prev.usageViewQuery.range === "365" && seedYearFromView(state)))
-        void refreshYear(fromYear, fromYear).catch(() => {});
+        void refreshYear(fromYear || unconfirmed, fromYear || unconfirmed).catch(() => {});
     } else if (viewMoved && statsPagesOpen > 0) {
       // Moved while the window is hidden with the page open: record the miss the way a hidden
       // refreshAll pass does, so the show handler catches up even when no tick was skipped.
