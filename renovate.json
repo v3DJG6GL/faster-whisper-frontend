@@ -15,7 +15,7 @@
 
   "osvVulnerabilityAlerts": true,
 
-  "lockFileMaintenance": { "enabled": false },
+  "lockFileMaintenance": { "enabled": true },
 
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
