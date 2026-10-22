@@ -215,8 +215,14 @@ export function Combobox({
         // Preserve the typed filter: clearing it here would discard a half-typed
         // query when the user clicks the field after Escape.
         onClick={() => { if (!disabled) setOpen(true); }}
-        onBlur={() => {
-          if (pressInListRef.current) return;
+        onBlur={(e) => {
+          // A press on the listbox blurs only for the scrollbar drag, and the release refocuses.
+          // Keep that blur from parents too: ModelPicker commits its draft on any bubbled blur
+          // that leaves its subtree, and the portaled list is outside it.
+          if (pressInListRef.current) {
+            e.stopPropagation();
+            return;
+          }
           wantFirstRef.current = false; setOpen(false); setActive(-1); setTyped(false);
         }}
         onKeyDown={onKeyDown}

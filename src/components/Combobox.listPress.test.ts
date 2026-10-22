@@ -80,7 +80,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("Combobox suggestion list press", () => {
-  it("a press on the listbox itself keeps its default, keeps the list open through the blur, and refocuses on release", () => {
+  it("a press on the listbox itself keeps its default, keeps the list open through a blur its parents never see, and refocuses on release", () => {
     render();
     (inputOf(render()).props.onFocus as () => void)(); // opens the list
     let tree = render();
@@ -102,8 +102,12 @@ describe("Combobox suggestion list press", () => {
     expect(ups).toHaveLength(1);
     expect(ups[0].opts).toEqual({ once: true, capture: true });
 
-    // That press blurs the input: the list must stay open for the drag.
-    (input.props.onBlur as () => void)();
+    // That press blurs the input: the list must stay open for the drag, and the blur must not
+    // reach a parent's focusout handler (ModelPicker would commit a half-typed filter mid-pick).
+    let stopped = 0;
+    const blur = { stopPropagation: () => stopped++ };
+    (input.props.onBlur as (e: unknown) => void)(blur);
+    expect(stopped).toBe(1);
     tree = render();
     expect(listOf(tree)).not.toBeNull();
 
@@ -111,8 +115,9 @@ describe("Combobox suggestion list press", () => {
     ups[0].fn();
     expect(refocused).toBe(1);
 
-    // An ordinary blur afterwards closes the list again.
-    (inputOf(tree).props.onBlur as () => void)();
+    // An ordinary blur afterwards closes the list again, and bubbles as usual.
+    (inputOf(tree).props.onBlur as (e: unknown) => void)(blur);
+    expect(stopped).toBe(1);
     expect(listOf(render())).toBeNull();
   });
 });
