@@ -74,6 +74,15 @@ describe("describeTransportError", () => {
     expect(key.hint).toContain("API key");
   });
 
+  it("a translate 400 whose body mentions 'disabled' is a failure, not 'translation turned off'", () => {
+    const r = describeTransportError(
+      "translate",
+      "HTTP 400: translation model foo/bar:Q4 is not in the local HF cache and LOCAL_FILES_ONLY is set — download it once with LOCAL_FILES_ONLY disabled",
+      "GPU box",
+    );
+    expect(r.title).toBe("Translation failed on GPU box (HTTP 400).");
+  });
+
   it("a 403 saying a feature is not enabled names the server's switch, not the API key", () => {
     const off = describeTransportError(
       "transcribe", new Error("HTTP 403: URL download is not enabled on this server"), "GPU box",

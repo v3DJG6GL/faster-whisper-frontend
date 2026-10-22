@@ -126,11 +126,13 @@ export function describeTransportError(
   const http = /HTTP (\d{3})/.exec(msg);
   if (http) {
     const code = Number(http[1]);
-    // Only a body that SAYS so is "turned off": a bare 403 on a translate job is the
+    // Only a 403 whose body SAYS so is "turned off": a bare 403 on a translate job is the
     // server refusing the key (missing, wrong, or without translate permission), and
-    // telling that user to "enable translation" sent them after the wrong problem.
+    // telling that user to "enable translation" sent them after the wrong problem. Any other
+    // status is a failure of an enabled feature — a 400 naming LOCAL_FILES_ONLY "disabled"
+    // (an uncached model on an offline server) is not the switch.
     const off = /\b(disabled|not enabled)\b/i.test(msg);
-    if (kind === "translate" && off) {
+    if (kind === "translate" && code === 403 && off) {
       return {
         title: `Translation is turned off on ${label}.`,
         hint: "Enable it there, or pick another backend.",
