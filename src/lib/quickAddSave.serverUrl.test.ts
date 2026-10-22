@@ -96,8 +96,27 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetMoved(viaOverride, edited)).toBe(false);
     expect(quickAddTargetOnSummon(viaOverride, edited)).toEqual({
       moved: false,
-      target: { serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a2.lan:8000", backendId: "a", slug: "my-words" },
+      target: { serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" },
     });
+  });
+
+  it("is a move when a Server URL edit the override masked is followed by dropping the override", () => {
+    // Two summons, each no move on its own, used to add up to the move one summon is refused: the
+    // first adopted b.lan as where the rows came from, so the second saw no Server URL change and
+    // the next save replaced b.lan's list of the same name with a.lan's whole map.
+    const overrides = { a: "http://100.64.0.5:8000" };
+    const pinned = cfg({ backendId: "a", slug: "my-words" });
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: overrides };
+    const viaOverride = quickAddTargetOf(pinned);
+    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: overrides };
+    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+
+    const s1 = quickAddTargetOnSummon(viaOverride, edited);
+    expect(s1.moved).toBe(false);
+    const s2 = quickAddTargetOnSummon(s1.target, dropped);
+    expect(s2).toEqual({ moved: true, target: viaOverride });
+    expect(quickAddTargetOnSummon(viaOverride, dropped).moved).toBe(true);
   });
 
   it("keeps the loaded target on a move, and has none before anything was loaded", () => {

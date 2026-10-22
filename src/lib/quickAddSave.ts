@@ -17,7 +17,8 @@ export function quickAddServerUrl(backend: Backend, settings: AppSettings): stri
 
 /** The list quick-add PATCHes: the pinned slug on its backend, at that backend's address.
  *  `backendUrl` is the backend's own Server URL (canonical, without this device's address
- *  override) — what quickAddTargetMoved tells a different server by. */
+ *  override) that the window's rows were loaded under — what quickAddTargetMoved tells a
+ *  different server by. Only a load (refresh) sets it; a summon keeps it. */
 export type QuickAddSaveTarget = { serverUrl: string; backendUrl: string; backendId: string; slug: string };
 
 /** The save target `cfg` pins, or null when nothing is pinned or the pin names a backend the file
@@ -57,13 +58,17 @@ export function quickAddTargetMoved(current: QuickAddSaveTarget | null, cfg: Con
 /** A summon's read of the pin against `current`, the list the window's rows belong to. Unless it
  *  moved, `target` is `current` at the address the file names now: an unreachable address is the
  *  usual reason a save is pending, and the user fixes it by adding (or changing) this device's
- *  address, so the pending save must follow the list there, not retry the old one. */
+ *  address, so the pending save must follow the list there, not retry the old one. It keeps
+ *  `current.backendUrl`, though: adopting an edited Server URL that the override still masked
+ *  would let a later summon without the override pass as no move, and two accepted summons
+ *  would add up to the very move one summon is refused. */
 export function quickAddTargetOnSummon(
   current: QuickAddSaveTarget | null,
   cfg: Config | null,
 ): { moved: boolean; target: QuickAddSaveTarget | null } {
   if (quickAddTargetMoved(current, cfg)) return { moved: true, target: current };
-  return { moved: false, target: current && quickAddTargetOf(cfg) };
+  const next = quickAddTargetOf(cfg);
+  return { moved: false, target: current && next && { ...next, backendUrl: current.backendUrl } };
 }
 
 /** - "saved": the PATCH landed (a 2xx, readable or not).
