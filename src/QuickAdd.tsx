@@ -24,6 +24,7 @@ import {
 } from "@/lib/pipelineMap";
 import {
   type QuickAddSaveTarget, quickAddRejectReason, quickAddSaveOutcome, quickAddTargetOnLoad, quickAddTargetOnSummon,
+  selectionEdges,
 } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
@@ -864,8 +865,8 @@ async function replaceSelectionAfterClose(
   // double-click grabs (Word / browsers) and the line break a triple-click grabs. A paste /
   // clipboard route puts that back verbatim; only the typing method would turn an edge newline
   // into a real Enter, so there the edges are spaces/tabs only and anything else is a skip.
-  const lead = (method === "direct" ? /^[ \t\u00a0]*/ : /^\s*/).exec(current)![0];
-  const trail = (method === "direct" ? /[ \t\u00a0]*$/ : /\s*$/).exec(current)![0];
+  // (Linear scans: the re-read is up to 64K characters of whatever is selected now.)
+  const { lead, trail } = selectionEdges(current, method === "direct");
   if (current.slice(lead.length, Math.max(lead.length, current.length - trail.length)) !== original) {
     console.info("[quick-add] correct-on-close skipped: selection changed or edge line break on a typed route");
     return;

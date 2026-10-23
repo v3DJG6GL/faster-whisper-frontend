@@ -3,7 +3,7 @@
 // summon and never re-run the refresh write gate that shows "List locked" / "re-pin one". Any
 // OTHER refusal must stay "error": the re-sync a "refused" triggers replaces the unsaved rows.
 import { describe, expect, it } from "vitest";
-import { quickAddRejectReason, quickAddSaveOutcome, type QuickAddSaveOutcome } from "./quickAddSave";
+import { quickAddRejectReason, quickAddSaveOutcome, selectionEdges, type QuickAddSaveOutcome } from "./quickAddSave";
 import { envPinnedOf, RULE_LIST_SETTING, saveLanded } from "./pipelineMap";
 import type { PipelineSaveResult } from "./types";
 
@@ -94,5 +94,37 @@ describe("quickAddSaveOutcome reply-shape matrix", () => {
     expect(quickAddRejectReason(full)).toMatch(/^this dictionary is full .* delete some entries/);
     // Any other 400 stays retryable.
     expect(quickAddSaveOutcome(reply({ status: 400, detail: "bad request" }))).toBe("error");
+  });
+});
+
+/** Pre-fix QuickAdd.tsx replaceSelectionAfterClose: the edges by `$`-anchored regex. */
+function regexEdges(current: string, typed: boolean): { lead: string; trail: string } {
+  return {
+    lead: (typed ? /^[ \t\u00a0]*/ : /^\s*/).exec(current)![0],
+    trail: (typed ? /[ \t\u00a0]*$/ : /\s*$/).exec(current)![0],
+  };
+}
+
+describe("selectionEdges (correct-on-close edge whitespace)", () => {
+  const SHAPES = [
+    "word", " word", "word ", "  word\t", "\u00a0word\u00a0", "word\n", "\nword\r\n", " \n word \n ",
+    "word\n ", " \nword", "\u2003word\u3000", "\ufeffword\u2028", "two words", "a  \t  b", "", " ", "\n", " \t\n\u00a0 ",
+  ];
+  for (const typed of [false, true]) {
+    for (const shape of SHAPES) {
+      it(`${typed ? "typed" : "paste"} route, ${JSON.stringify(shape)}: same edges as the pre-fix regexes`, () => {
+        expect(selectionEdges(shape, typed)).toEqual(regexEdges(shape, typed));
+      });
+    }
+  }
+
+  it("a 64K selection with a long blank run inside is read in linear time", () => {
+    // Was quadratic: `/\s*$/` retried at every position of the run — seconds of a frozen window.
+    const current = "a" + " ".repeat(64 * 1024 - 2) + "b";
+    for (const typed of [false, true]) {
+      const t0 = performance.now();
+      expect(selectionEdges(current, typed)).toEqual({ lead: "", trail: "" });
+      expect(performance.now() - t0).toBeLessThan(100);
+    }
   });
 });

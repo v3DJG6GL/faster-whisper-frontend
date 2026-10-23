@@ -1,6 +1,7 @@
-// The quick-add window's verdict on one whole-map PATCH reply (QuickAdd.tsx flushSave), and the
-// list and address it sends that PATCH to. Pure, so each is testable without mounting the
-// standalone window.
+// The quick-add window's verdict on one whole-map PATCH reply (QuickAdd.tsx flushSave), the
+// list and address it sends that PATCH to, and the edge whitespace its correct-on-close puts
+// back around the corrected word. Pure, so each is testable without mounting the standalone
+// window.
 import { effectiveServerUrl, serverUrlFromPeer } from "./backends";
 import { envPinnedOf, saveLanded, RULE_LIST_SETTING } from "./pipelineMap";
 import type { AppSettings, Backend, Config, PipelineSaveResult } from "./types";
@@ -140,4 +141,27 @@ export function quickAddRejectReason(res: PipelineSaveResult): string {
   const first = Array.isArray(res.errors) ? res.errors.find((e) => typeof e?.msg === "string" && e.msg.trim()) : undefined;
   const text = first?.msg ?? (typeof res.detail === "string" ? res.detail : "");
   return text.trim().slice(0, 200) || "The server refused a mapping in this list.";
+}
+
+/** The edge characters the typing route may carry back: a space, tab or no-break space. A line
+ *  break is not one — typing would turn it into a real Enter. */
+const TYPED_EDGE = " \t\u00a0";
+
+/** The leading and trailing whitespace of `current`, the live selection correct-on-close
+ *  replaces (QuickAdd.tsx replaceSelectionAfterClose): any whitespace on a paste / clipboard
+ *  route, only spaces, tabs and no-break spaces when `typed`. Plain scans, not a `$`-anchored
+ *  `/\s*$/`: that one retries at every position of a blank run that something follows, which is
+ *  quadratic, and the re-read selection is up to 64K characters (focus/mod.rs SEL_MAX) of
+ *  whatever the user selected meanwhile — seconds of a frozen window on a padded terminal
+ *  region. trimStart / trimEnd strip exactly `\s`'s set (WhiteSpace and LineTerminator). An
+ *  all-blank `current` is both edges at once, as the regexes had it. */
+export function selectionEdges(current: string, typed: boolean): { lead: string; trail: string } {
+  if (!typed) {
+    return { lead: current.slice(0, current.length - current.trimStart().length), trail: current.slice(current.trimEnd().length) };
+  }
+  let start = 0;
+  while (start < current.length && TYPED_EDGE.includes(current[start])) start++;
+  let end = current.length;
+  while (end > 0 && TYPED_EDGE.includes(current[end - 1])) end--;
+  return { lead: current.slice(0, start), trail: current.slice(end) };
 }
