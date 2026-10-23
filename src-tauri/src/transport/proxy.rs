@@ -5,6 +5,8 @@
 //! runs passed. The decision here is reqwest's own (hyper-util's `Matcher`: the
 //! HTTP(S)_PROXY / ALL_PROXY / NO_PROXY env vars, then the Windows / macOS proxy settings), so
 //! both halves of the transport go the same way; the socket then tunnels with HTTP CONNECT.
+//! A loopback server is always dialled directly by both halves, as WinINet and CFNetwork do,
+//! because hyper-util's system matcher has no such bypass and a proxy cannot reach our loopback.
 
 use hyper_util::client::proxy::matcher::Matcher;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -31,6 +33,60 @@ impl Proxy {
     }
 }
 
+/// A loopback host: `localhost` / `*.localhost`, 127.0.0.0/8, or `::1` (bracketed or not). Both
+/// the HTTP client and the WebSocket send these direct whatever the proxy settings say.
+pub(super) fn is_loopback_host(host: &str) -> bool {
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    let host = host.to_ascii_lowercase();
+    let host = host.strip_suffix('.').unwrap_or(&host);
+    host == "localhost" || host.ends_with(".localhost")
+}
+
+/// The shared HTTP client's proxy: `Matcher::from_system()` read once, as reqwest's implicit
+/// system proxy read it once per client, with loopback going direct. Adding any proxy turns that
+/// implicit one off in reqwest, so this is the client's whole proxy decision.
+pub(super) fn system_client_proxy() -> reqwest::Proxy {
+    client_proxy(Matcher::from_system())
+}
+
+fn client_proxy(matcher: Matcher) -> reqwest::Proxy {
+    reqwest::Proxy::custom(move |url| {
+        if is_loopback_host(url.host_str()?) {
+            return None;
+        }
+        let hit = matcher.intercept(&url.as_str().parse().ok()?)?;
+        // hyper-util moved the login out of the URI; reqwest reads it back only from the returned
+        // URL's userinfo, so it goes back there or every proxied request would lose its login.
+        let mut proxy = reqwest::Url::parse(&hit.uri().to_string()).ok()?;
+        let login = match hit.raw_auth() {
+            Some((user, pass)) => Some((user.to_owned(), pass.to_owned())),
+            None => hit.basic_auth().and_then(decode_basic),
+        };
+        if let Some((user, pass)) = login {
+            proxy.set_username(&user).ok()?;
+            proxy.set_password(Some(&pass)).ok()?;
+        }
+        Some(proxy)
+    })
+}
+
+/// `Basic base64(user:pass)` back to its parts. Exact: RFC 7617 bars `:` from the user-id, and
+/// reqwest re-encodes the pair into the very same header.
+fn decode_basic(header: &HeaderValue) -> Option<(String, String)> {
+    use base64::Engine;
+    let encoded = header.to_str().ok()?.strip_prefix("Basic ")?;
+    let decoded = base64::prelude::BASE64_STANDARD.decode(encoded).ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (user, pass) = decoded.split_once(':')?;
+    Some((user.to_owned(), pass.to_owned()))
+}
+
 /// The system proxy for the stream URL, if one applies — `Matcher::from_system()` read fresh per
 /// connect, as reqwest reads it per client.
 pub(super) fn system_route(ws_url: &str) -> Option<Proxy> {
@@ -38,7 +94,8 @@ pub(super) fn system_route(ws_url: &str) -> Option<Proxy> {
 }
 
 /// The proxy `matcher` sends `ws_url` through, if any. ws:// is matched as http:// and wss:// as
-/// https://, so HTTP_PROXY / HTTPS_PROXY split the same way they do for the HTTP routes.
+/// https://, so HTTP_PROXY / HTTPS_PROXY split the same way they do for the HTTP routes. A
+/// loopback server is never proxied (see [`is_loopback_host`]).
 ///
 /// Only a plain http:// proxy is dialled. An https:// proxy (TLS to the proxy itself) or a SOCKS one
 /// would need a second TLS layer or a SOCKS handshake this route does not have — and reqwest here
@@ -51,6 +108,9 @@ fn route(matcher: &Matcher, ws_url: &str) -> Option<Proxy> {
         "ws" => "http",
         _ => return None,
     };
+    if is_loopback_host(url.host_str()?) {
+        return None;
+    }
     let target: Uri = format!(
         "{scheme}://{}:{}/",
         url.host_str()?,
@@ -179,7 +239,7 @@ const MAX_CONNECT_REPLY: usize = 8192;
 
 #[cfg(test)]
 mod tests {
-    use super::{connect, route, Matcher};
+    use super::{client_proxy, connect, is_loopback_host, route, Matcher};
     use futures_util::{SinkExt, StreamExt};
     use std::sync::{Arc, Mutex};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -203,7 +263,7 @@ mod tests {
     }
 
     /// A one-shot fake HTTP proxy: records the CONNECT request head, answers with `reply`, and on a
-    /// 200 pipes the client through to whatever the CONNECT line names.
+    /// 200 pipes the client through to the loopback port the CONNECT line names.
     async fn fake_proxy(reply: &'static str) -> (String, Arc<Mutex<String>>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -225,8 +285,13 @@ mod tests {
             if !reply.starts_with("HTTP/1.1 200") {
                 return;
             }
-            let target = head.split(' ').nth(1).unwrap().to_string();
-            let mut upstream = tokio::net::TcpStream::connect(target).await.unwrap();
+            // Loopback is never proxied, so the tests name the server `echo.test`; only the port
+            // is real.
+            let target = head.split(' ').nth(1).unwrap();
+            let port = target.rsplit(':').next().unwrap();
+            let mut upstream = tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+                .await
+                .unwrap();
             let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
         });
         (format!("http://{addr}"), seen)
@@ -248,12 +313,15 @@ mod tests {
     async fn the_websocket_handshake_completes_through_a_connect_tunnel() {
         let server = echo_server().await;
         let (proxy, seen) = fake_proxy("HTTP/1.1 200 Connection established\r\n\r\n").await;
-        let ws_url = format!("ws://{server}/v1/audio/transcriptions/stream");
+        let ws_url = format!(
+            "ws://echo.test:{}/v1/audio/transcriptions/stream",
+            server.port()
+        );
         let matcher = Matcher::builder().all(proxy.as_str()).build();
         assert_eq!(round_trip(&ws_url, &matcher).await.unwrap(), "hello");
         let head = seen.lock().unwrap().clone();
         assert!(
-            head.starts_with(&format!("CONNECT {server} HTTP/1.1\r\n")),
+            head.starts_with(&format!("CONNECT echo.test:{} HTTP/1.1\r\n", server.port())),
             "{head}"
         );
         assert!(
@@ -266,7 +334,7 @@ mod tests {
     async fn the_proxy_login_rides_the_connect_as_basic() {
         let server = echo_server().await;
         let (proxy, seen) = fake_proxy("HTTP/1.1 200 Connection established\r\n\r\n").await;
-        let ws_url = format!("ws://{server}/x");
+        let ws_url = format!("ws://echo.test:{}/x", server.port());
         let with_login = proxy.replace("http://", "http://u:p@");
         let matcher = Matcher::builder().all(with_login.as_str()).build();
         assert_eq!(round_trip(&ws_url, &matcher).await.unwrap(), "hello");
@@ -288,6 +356,13 @@ mod tests {
             .build();
         assert!(route(&matcher, &ws_url).is_none());
         assert_eq!(round_trip(&ws_url, &matcher).await.unwrap(), "hello");
+        // A non-loopback NO_PROXY host too, so the exemption is not just the loopback bypass.
+        let matcher = Matcher::builder()
+            .all("http://127.0.0.1:9")
+            .no("gpu-box.test")
+            .build();
+        assert!(route(&matcher, "ws://gpu-box.test:8000/x").is_none());
+        assert!(route(&matcher, "ws://other.test:8000/x").is_some());
         // And with nothing configured at all.
         let server = echo_server().await;
         let ws_url = format!("ws://{server}/x");
@@ -349,5 +424,151 @@ mod tests {
             let matcher = Matcher::builder().all(p).build();
             assert!(route(&matcher, "wss://h/x").is_none(), "{p}");
         }
+    }
+
+    #[test]
+    fn loopback_hosts_are_recognised() {
+        for h in [
+            "localhost",
+            "LocalHost",
+            "localhost.",
+            "app.localhost",
+            "127.0.0.1",
+            "127.4.5.6",
+            "127.255.255.255",
+            "::1",
+            "[::1]",
+        ] {
+            assert!(is_loopback_host(h), "{h}");
+        }
+        for h in [
+            "localhost.example.com",
+            "mylocalhost",
+            "127.example",
+            "::2",
+            "[::2]",
+            "128.0.0.1",
+            "126.255.255.255",
+            "0.0.0.0",
+            "gpu-box",
+            "",
+        ] {
+            assert!(!is_loopback_host(h), "{h}");
+        }
+    }
+
+    /// A system proxy has no implicit loopback bypass in hyper-util, so the route adds it.
+    #[test]
+    fn a_loopback_server_is_never_proxied() {
+        let matcher = Matcher::builder()
+            .http("http://proxy.test:3128")
+            .https("http://proxy.test:3128")
+            .build();
+        for url in [
+            "ws://localhost:8000/x",
+            "ws://127.0.0.1:8000/x",
+            "ws://127.4.5.6:8000/x",
+            "ws://[::1]:8000/x",
+            "wss://localhost/x",
+        ] {
+            assert!(route(&matcher, url).is_none(), "{url}");
+        }
+        let p = route(&matcher, "ws://gpu-box:8000/x").unwrap();
+        assert_eq!(p.display(), "http://proxy.test:3128");
+    }
+
+    /// A one-shot HTTP/1.1 listener: records the request head, answers `ok`.
+    async fn http_ok() -> (std::net::SocketAddr, Arc<Mutex<String>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(String::new()));
+        let sink = seen.clone();
+        tokio::spawn(async move {
+            let (mut s, _) = listener.accept().await.unwrap();
+            let mut head = Vec::new();
+            let mut byte = [0u8; 1];
+            while !head.ends_with(b"\r\n\r\n") {
+                if s.read(&mut byte).await.unwrap() == 0 {
+                    return;
+                }
+                head.push(byte[0]);
+            }
+            *sink.lock().unwrap() = String::from_utf8(head).unwrap();
+            let _ = s
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok")
+                .await;
+        });
+        (addr, seen)
+    }
+
+    fn client_via(matcher: Matcher) -> reqwest::Client {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        reqwest::Client::builder()
+            .proxy(client_proxy(matcher))
+            .build()
+            .unwrap()
+    }
+
+    /// The HTTP client forwards through the system proxy with the proxy's login intact — the very
+    /// header the WebSocket's CONNECT carries — even when user and password need percent-encoding.
+    #[tokio::test]
+    async fn the_client_proxies_a_remote_host_with_its_login() {
+        let (proxy, seen) = http_ok().await;
+        let proxy_url = format!("http://al%40ice:p%40ss%3Aw%25rd@{proxy}");
+        let expected = Matcher::builder()
+            .all(proxy_url.as_str())
+            .build()
+            .intercept(&"http://gpu-box.test/".parse().unwrap())
+            .unwrap()
+            .basic_auth()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        let client = client_via(Matcher::builder().all(proxy_url.as_str()).build());
+        let body = client
+            .get("http://gpu-box.test:8000/health")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body, "ok");
+        let head = seen.lock().unwrap().to_ascii_lowercase();
+        assert!(
+            head.starts_with("get http://gpu-box.test:8000/health http/1.1\r\n"),
+            "{head}"
+        );
+        assert!(
+            head.contains(&format!("proxy-authorization: {expected}\r\n")),
+            "{head}"
+        );
+    }
+
+    /// Loopback goes straight to the server even with a (dead) proxy configured for everything,
+    /// and NO_PROXY still exempts a host the system matcher lists.
+    #[tokio::test]
+    async fn the_client_reaches_loopback_and_no_proxy_hosts_directly() {
+        let (server, seen) = http_ok().await;
+        let client = client_via(Matcher::builder().all("http://u:p@127.0.0.1:9").build());
+        let url = format!("http://localhost:{}/health", server.port());
+        assert_eq!(
+            client.get(url).send().await.unwrap().text().await.unwrap(),
+            "ok"
+        );
+        let head = seen.lock().unwrap().to_ascii_lowercase();
+        assert!(head.starts_with("get /health http/1.1\r\n"), "{head}");
+        assert!(!head.contains("proxy-authorization"), "{head}");
+
+        let (proxy, via_proxy) = http_ok().await;
+        let matcher = Matcher::builder()
+            .all(format!("http://{proxy}").as_str())
+            .no("gpu-box.test")
+            .build();
+        let client = client_via(matcher);
+        let err = client.get("http://gpu-box.test:8000/").send().await;
+        assert!(err.is_err(), "a NO_PROXY host must not reach the proxy");
+        assert!(via_proxy.lock().unwrap().is_empty());
     }
 }

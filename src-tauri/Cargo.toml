@@ -43,6 +43,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # directly otherwise. The version reqwest already pulls in; `client-proxy-system` is what
 # `system-proxy` above turns on in it anyway.
 hyper-util = { version = "0.1.21", features = ["client-proxy", "client-proxy-system"] }
+# Decodes the system proxy's Basic login back into the URL userinfo reqwest's custom proxy reads
+# (transport/proxy.rs). The version reqwest and hyper-util already pull in.
+base64 = "0.23"
 # reqwest 0.13 renamed `rustls-tls` -> `rustls`, and that new feature brings the
 # aws-lc-rs provider (a C/NASM native build the Windows runner lacks, and a second
 # crypto stack beside the ring that tokio-tungstenite already uses). So: TLS with

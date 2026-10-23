@@ -668,6 +668,9 @@ pub fn client() -> reqwest::Client {
                     "faster-whisper-frontend/",
                     env!("CARGO_PKG_VERSION")
                 ))
+                // The system / env proxy, but a loopback server always direct: hyper-util's system
+                // matcher, which reqwest's implicit proxy is, has no loopback bypass of its own.
+                .proxy(proxy::system_client_proxy())
                 // Never follow a redirect to a DIFFERENT host. reqwest strips `Authorization` on a
                 // cross-host hop, but it does NOT strip the request BODY, and 307/308 replay method
                 // + body verbatim to the `Location` host — and the sync push's body is the settings
