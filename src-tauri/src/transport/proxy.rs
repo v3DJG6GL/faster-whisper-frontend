@@ -432,28 +432,53 @@ fn route(matcher: &Matcher, rules: &BypassRules, ws_url: &str) -> Option<Proxy> 
 /// Opens the stream socket: a CONNECT tunnel through `proxy` when there is one, then the same TLS +
 /// WebSocket handshake either way; no proxy is exactly the direct `connect_async` path. The error
 /// names the proxy (never its login) when the proxy is what failed.
+///
+/// A proxy that answers the CONNECT with a refusal other than 407 gets one direct attempt: a
+/// stock Squid (`deny CONNECT !SSL_ports`) refuses a tunnel to any port but 443, so a ws:// server
+/// on 8000 failed here while the HTTP routes, forwarded rather than tunnelled, passed. A 407 (a
+/// login to fix) and a proxy that cannot be reached or answers garbage still fail as they did.
 pub(super) async fn connect(
     request: Request,
     config: WebSocketConfig,
     tls: Option<Connector>,
     proxy: Option<&Proxy>,
 ) -> Result<(WebSocketStream<MaybeTlsStream<TcpStream>>, Response), String> {
-    let Some(proxy) = proxy else {
-        return tokio_tungstenite::connect_async_tls_with_config(request, Some(config), false, tls)
+    let direct = |request, tls| async move {
+        tokio_tungstenite::connect_async_tls_with_config(request, Some(config), false, tls)
             .await
-            .map_err(|e| e.to_string());
+            .map_err(|e| e.to_string())
     };
-    let stream = tunnel(proxy).await?;
+    let Some(proxy) = proxy else {
+        return direct(request, tls).await;
+    };
+    let stream = match tunnel(proxy).await {
+        Ok(stream) => stream,
+        Err(Tunnel::Refused(why)) => {
+            tracing::warn!("[stream] {why}; connecting directly");
+            return direct(request, tls)
+                .await
+                .map_err(|e| format!("{e} (directly, after {why})"));
+        }
+        Err(Tunnel::Failed(why)) => return Err(why),
+    };
     tokio_tungstenite::client_async_tls_with_config(request, stream, Some(config), tls)
         .await
         .map_err(|e| format!("{e} (through the proxy {})", proxy.display()))
+}
+
+/// Why [`tunnel`] has no stream; both carry the user-facing text, naming the proxy.
+enum Tunnel {
+    /// The proxy answered the CONNECT with a non-2xx status other than 407.
+    Refused(String),
+    /// Anything else: unreachable, a 407, a broken or non-HTTP reply.
+    Failed(String),
 }
 
 /// The CONNECT handshake, by hand: hyper-util's `Tunnel` would do it, but it hides `TunnelError`
 /// and folds every non-407 refusal into "unsuccessful", so the user could never be told the proxy
 /// answered 403. The proxy's port defaults to 80 when the URL names none, as reqwest's connector
 /// does.
-async fn tunnel(proxy: &Proxy) -> Result<TcpStream, String> {
+async fn tunnel(proxy: &Proxy) -> Result<TcpStream, Tunnel> {
     let shown = proxy.display();
     let host = proxy.uri.host().unwrap_or_default();
     let host = host
@@ -463,7 +488,7 @@ async fn tunnel(proxy: &Proxy) -> Result<TcpStream, String> {
     let port = proxy.uri.port_u16().unwrap_or(80);
     let mut stream = TcpStream::connect((host, port))
         .await
-        .map_err(|e| format!("could not reach the proxy {shown}: {e}"))?;
+        .map_err(|e| Tunnel::Failed(format!("could not reach the proxy {shown}: {e}")))?;
     let target = format!(
         "{}:{}",
         proxy.target.host().unwrap_or_default(),
@@ -476,7 +501,9 @@ async fn tunnel(proxy: &Proxy) -> Result<TcpStream, String> {
         head.extend_from_slice(b"\r\n");
     }
     head.extend_from_slice(b"\r\n");
-    let io_err = |e: std::io::Error| format!("the tunnel through the proxy {shown} failed: {e}");
+    let io_err = |e: std::io::Error| {
+        Tunnel::Failed(format!("the tunnel through the proxy {shown} failed: {e}"))
+    };
     stream.write_all(&head).await.map_err(io_err)?;
 
     // One byte at a time so nothing past the reply's blank line is consumed: every byte after it
@@ -486,14 +513,14 @@ async fn tunnel(proxy: &Proxy) -> Result<TcpStream, String> {
     let mut byte = [0u8; 1];
     while !reply.ends_with(b"\r\n\r\n") {
         if reply.len() >= MAX_CONNECT_REPLY {
-            return Err(format!(
+            return Err(Tunnel::Failed(format!(
                 "the proxy {shown} sent an oversized reply to the tunnel request"
-            ));
+            )));
         }
         if stream.read(&mut byte).await.map_err(io_err)? == 0 {
-            return Err(format!(
+            return Err(Tunnel::Failed(format!(
                 "the proxy {shown} closed the connection before opening the tunnel"
-            ));
+            )));
         }
         reply.push(byte[0]);
     }
@@ -504,21 +531,21 @@ async fn tunnel(proxy: &Proxy) -> Result<TcpStream, String> {
     let code = parts.next().and_then(|c| c.parse::<u16>().ok());
     match code {
         Some(200..=299) if version.starts_with("HTTP/1.") => Ok(stream),
-        Some(407) if proxy.auth.is_some() => {
-            Err(format!("the proxy {shown} rejected its login (407)"))
-        }
-        Some(407) => Err(format!(
+        Some(407) if proxy.auth.is_some() => Err(Tunnel::Failed(format!(
+            "the proxy {shown} rejected its login (407)"
+        ))),
+        Some(407) => Err(Tunnel::Failed(format!(
             "the proxy {shown} requires a login (407); put it in the proxy URL as user:password@"
-        )),
+        ))),
         Some(code) => {
             let reason = super::bounded_server_text(parts.next().unwrap_or_default(), 60);
-            Err(format!(
+            Err(Tunnel::Refused(format!(
                 "the proxy {shown} refused to open a tunnel to the server ({code} {reason})"
-            ))
+            )))
         }
-        None => Err(format!(
+        None => Err(Tunnel::Failed(format!(
             "the proxy {shown} answered the tunnel request with something other than HTTP"
-        )),
+        ))),
     }
 }
 
@@ -681,7 +708,45 @@ mod tests {
         assert!(!err.contains("s3cret") && !err.contains("alice"), "{err}");
     }
 
-    /// Any other refusal keeps its status, so a proxy policy block reads as one.
+    /// A stock Squid (`deny CONNECT !SSL_ports`) answers 403 to a CONNECT for the server's port
+    /// 8000 while it forward-proxies the HTTP routes fine: dictation then tries the server
+    /// directly once instead of failing where Test connection passed.
+    #[tokio::test]
+    async fn a_refused_tunnel_falls_back_to_a_direct_connection() {
+        let server = echo_server().await;
+        let (proxy, seen) = fake_proxy("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").await;
+        let matcher = Matcher::builder().all(proxy.as_str()).build();
+        // Loopback is never routed, so the route is taken for a made-up name on the same port and
+        // the direct attempt dials the real loopback server.
+        let route = route(&matcher, &format!("ws://echo.test:{}/x", server.port())).unwrap();
+        let request = format!("ws://{server}/x").into_client_request().unwrap();
+        let (mut ws, _) = connect(request, WebSocketConfig::default(), None, Some(&route))
+            .await
+            .unwrap();
+        ws.send(Message::Text("hello".into())).await.unwrap();
+        assert!(matches!(ws.next().await, Some(Ok(Message::Text(t))) if t == "hello"));
+        assert!(seen.lock().unwrap().starts_with("CONNECT "));
+    }
+
+    /// A 407 is a login to fix, not a policy to route around: no direct attempt, even when the
+    /// server could be reached.
+    #[tokio::test]
+    async fn a_407_does_not_fall_back_to_direct() {
+        let server = echo_server().await;
+        let (proxy, _) =
+            fake_proxy("HTTP/1.1 407 Proxy Authentication Required\r\nContent-Length: 0\r\n\r\n")
+                .await;
+        let matcher = Matcher::builder().all(proxy.as_str()).build();
+        let route = route(&matcher, &format!("ws://echo.test:{}/x", server.port())).unwrap();
+        let request = format!("ws://{server}/x").into_client_request().unwrap();
+        let err = connect(request, WebSocketConfig::default(), None, Some(&route))
+            .await
+            .unwrap_err();
+        assert!(err.contains(&proxy) && err.contains("407"), "{err}");
+    }
+
+    /// When the direct attempt after a refusal fails too, the error still carries the proxy's
+    /// status, so a proxy policy block reads as one.
     #[tokio::test]
     async fn a_refused_tunnel_keeps_the_proxy_status() {
         let (proxy, _) = fake_proxy("HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n").await;
