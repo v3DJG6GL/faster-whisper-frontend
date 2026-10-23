@@ -18,8 +18,8 @@ export function quickAddServerUrl(backend: Backend, settings: AppSettings): stri
 /** The list quick-add PATCHes: the pinned slug on its backend, at that backend's address.
  *  `backendUrl` is the backend's own Server URL (canonical, without this device's address
  *  override) that the window's rows were loaded under — what quickAddTargetMoved tells a
- *  different server by. Only a load (refresh) sets it — and keeps it too at the same address, or
- *  while this device's address override is in force; a summon always keeps it. */
+ *  different server by. Only a load (refresh) sets it — and keeps it too while this device's
+ *  address override is in force; a summon always keeps it. */
 export type QuickAddSaveTarget = { serverUrl: string; backendUrl: string; backendId: string; slug: string };
 
 /** The save target `cfg` pins, or null when nothing is pinned or the pin names a backend the file
@@ -37,19 +37,22 @@ export function quickAddTargetOf(cfg: Config | null): QuickAddSaveTarget | null 
 }
 
 /** The target a load (refresh) fetches the rows from. A reload of the same list keeps
- *  `prev.backendUrl` at the same address, and also whenever this device's address override is in
- *  force after the reload, whether that override is new, at a new address or unchanged: the rows came
- *  through the override, so a Server URL edit it masks is not where they came from (an override
+ *  `prev.backendUrl` whenever this device's address override is in force after the reload,
+ *  whether that override is new, at a new address or unchanged: the rows came through the
+ *  override, so a Server URL edit it masks is not where they came from (an override
  *  added or re-addressed alongside it proves nothing either way — the summon already treats that
  *  pair as a possible move). Recorded instead, a later summon that drops the override would pass
  *  as no move, and its retry would replace that other server's list of the same name with this
- *  one's whole map. Kept, a real move merely counts as one later and drops the pending rows. */
+ *  one's whole map. Kept, a real move merely counts as one later and drops the pending rows.
+ *  Without an override the reload fetched the rows from the file's own Server URL, so that is
+ *  recorded, even at the address `prev` reached through an override: kept, the older URL turned
+ *  the "Address on this device" that recovers a failed save into a move. */
 export function quickAddTargetOnLoad(prev: QuickAddSaveTarget | null, cfg: Config | null): QuickAddSaveTarget | null {
   const next = quickAddTargetOf(cfg);
   if (!prev || !next || next.backendId !== prev.backendId || next.slug !== prev.slug) return next;
   // serverUrl differs from backendUrl only while an override replaces the Server URL.
   const overriddenNow = next.serverUrl !== next.backendUrl;
-  return next.serverUrl === prev.serverUrl || overriddenNow ? { ...next, backendUrl: prev.backendUrl } : next;
+  return overriddenNow ? { ...next, backendUrl: prev.backendUrl } : next;
 }
 
 /** Has the pin moved off `current` (another list, another backend, another server, or

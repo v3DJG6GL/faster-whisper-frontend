@@ -197,6 +197,27 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     expect(quickAddTargetOnLoad(quickAddTargetOf(pinned), readdressed)).toEqual(quickAddTargetOf(readdressed));
   });
 
+  it("adopts the file's Server URL on a reload at the override's old address once the override is dropped", () => {
+    // Loaded from old.lan through the VPN override; the user drops it and sets the Server URL to the
+    // VPN address. The reload (same address, no override) kept old.lan as where the rows came from,
+    // so once a save failed, the "Address on this device" that recovers it read as a move and the
+    // pending rows were thrown away.
+    const pinned = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://old.lan:8000" })]);
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: { a: "http://vpn.x:8000" } };
+    const viaOverride = quickAddTargetOf(pinned);
+    expect(viaOverride).toEqual({ serverUrl: "http://vpn.x:8000", backendUrl: "http://old.lan:8000", backendId: "a", slug: "my-words" });
+    const promoted = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://vpn.x:8000" })]);
+    const reloaded = quickAddTargetOnLoad(viaOverride, promoted);
+    expect(reloaded).toEqual({ serverUrl: "http://vpn.x:8000", backendUrl: "http://vpn.x:8000", backendId: "a", slug: "my-words" });
+    // The save to vpn.x fails ("error"); the user adds this device's address lan.y.
+    const recovered = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://vpn.x:8000" })]);
+    recovered.settings.sync = { ...recovered.settings.sync!, urlOverrides: { a: "http://lan.y:8000" } };
+    expect(quickAddTargetOnSummon(reloaded, recovered)).toEqual({
+      moved: false,
+      target: { serverUrl: "http://lan.y:8000", backendUrl: "http://vpn.x:8000", backendId: "a", slug: "my-words" },
+    });
+  });
+
   it("adopts the file's Server URL on a first load, a new address, or another list", () => {
     expect(quickAddTargetOnLoad(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual(loaded);
     const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
