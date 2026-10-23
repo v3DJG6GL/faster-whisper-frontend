@@ -2042,6 +2042,39 @@ describe("cutByShare", () => {
       }
     }
   });
+  it("German and Luxembourgish keep a name's initial at the text's start or after a comma or a full stop with the name too", () => {
+    // The rule that a capitalised word before the letter says nothing of a name in German
+    // ("Plan B. Dann") also caught the initial with no word before it: "F." / "Scott Fitzgerald …",
+    // "Im Jahr 1924, J." / "Edgar Hoover …" under de and lb.
+    const ROWS: [text: string, shares: number[], cpl: number, cut: string, wrap: string][] = [
+      ["F. Scott Fitzgerald schrieb das Buch", [1, 1], 26,
+        "F. Scott Fitzgerald | schrieb das Buch", "F. Scott Fitzgerald | schrieb das Buch"],
+      ["J. Edgar Hoover leitete das Büro fast fünfzig Jahre lang bis zu seinem Tod", [1, 3], 22,
+        "J. Edgar Hoover | leitete das Büro fast fünfzig Jahre lang bis zu seinem Tod",
+        "J. Edgar Hoover | leitete das Büro | fast fünfzig Jahre | lang bis zu seinem Tod"],
+      ["Im Jahr 1924, J. Edgar Hoover wurde Direktor", [1, 1], 28,
+        "Im Jahr 1924, | J. Edgar Hoover wurde Direktor", "Im Jahr 1924, J. Edgar | Hoover wurde Direktor"],
+      ["Er sagte es. J. Edgar Hoover wurde Direktor", [1, 1], 40,
+        "Er sagte es. | J. Edgar Hoover wurde Direktor", "Er sagte es. | J. Edgar Hoover wurde Direktor"],
+    ];
+    for (const [t, shares, cpl, cut, wrap] of ROWS) {
+      for (const l of ["de", "lb"]) {
+        expect(cutByShare(t, shares, l).join(" | "), `${t} (${l})`).toBe(cut);
+        expect(wrapLines(t, cpl, 2, 0, undefined, l).join(" | "), `${t} (${l})`).toBe(wrap);
+      }
+    }
+    // A capitalised noun before the letter, or a sentence opener after it, still ends one there.
+    for (const l of ["de", "lb"]) {
+      const plan = "Wir brauchen jetzt Plan B. Dann gehen wir alle nach Hause";
+      expect(cutByShare(plan, [1, 1], l).join(" | ")).toBe("Wir brauchen jetzt Plan B. | Dann gehen wir alle nach Hause");
+      expect(wrapLines(plan, 32, 2, 0, undefined, l).join(" | ")).toBe("Wir brauchen jetzt Plan B. | Dann gehen wir alle nach Hause");
+      expect(cutByShare("B. Dann gehen wir heute Abend nach Hause", [1, 1], l).join(" | "))
+        .toBe("B. | Dann gehen wir heute Abend nach Hause");
+      const answer = "Antwort: A. Wie bist du darauf gekommen";
+      expect(cutByShare(answer, [1, 1], l).join(" | ")).toBe("Antwort: A. | Wie bist du darauf gekommen");
+      expect(wrapLines(answer, 30, 2, 0, undefined, l).join(" | ")).toBe("Antwort: A. | Wie bist du darauf gekommen");
+    }
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
