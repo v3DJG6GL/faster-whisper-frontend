@@ -406,7 +406,7 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
     const typed = delivered.indexOf("sessionTyped = true;");
     expect(typed, "the typed branch of the delivered block").toBeGreaterThanOrEqual(0);
-    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+if \(opensBlock\) \{\s+gapOwedApps\.add\(t\.appId\);/);
+    expect(delivered.slice(typed)).toMatch(/^sessionTyped = true;\s+lastPhraseDiverted = false;\s+gapOwedApps\.add\(t\.appId\);/);
     expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("gapOwedApps");
     // Paid by a Return that landed: the quiet-timer Enter, and the hard break's Enter or newline
     // separator — all through pressReturn, which pays after its injectText, under the session
@@ -433,9 +433,10 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(final).toMatch(/const block = phrase\.text\.trim\(\);\s+const opensBlock = !sessionTranslation \|\| block !== \s+;\s+const typeOut = sessionTranslation\s+\? \(block \? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP :\s+\) \+ block :\s+\)\s+: phrase\.text;/);
     // The gap is never typed without a block after it.
     expect(final).not.toMatch(/sessionTranslation\s+\? \(gapOwedApps\.has\(t\.appId\) \? PHRASE_GAP/);
-    // It neither owes a gap nor moves the Enter's app: only a phrase that opens a block does.
+    // It neither owes a gap nor moves the Enter's app: only a phrase that opens a block reaches
+    // the delivered block that does.
     const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
-    expect(delivered).toMatch(/if \(opensBlock\) \{\s+gapOwedApps\.add\(t\.appId\);\s+lastTypedApp = t\.appId;\s+\}/);
+    expect(final).toMatch(/: phrase\.text;\s+if \(!opensBlock\) \{\s+injectedText = target;\s+return;\s+\}/);
     expect(delivered.match(/gapOwedApps\.add\(/g) ?? []).toHaveLength(1);
     expect(delivered.match(/lastTypedApp = /g) ?? []).toHaveLength(1);
     // …nor pays one: the only pay site stays pressReturn's landed Return.
@@ -469,6 +470,40 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(seam({ text: " Hallo\n" }, true, new Set(["app"]), { appId: "app" }, gap).typeOut).toBe(gap + "Hallo");
     expect(seam({ text: " Hallo\n" }, true, new Set(), { appId: "app" }, gap).typeOut).toBe("Hallo");
     expect(seam({ text: "\n" }, false, new Set(["app"]), { appId: "app" }, gap).typeOut).toBe("\n");
+  });
+
+  it("a translated whitespace-only final sends no insert, so a divert's Enter stays stood down", () => {
+    // Rust answers an empty text `landed` before any focus or chord check, so sending it booked a
+    // typed paste: lastPhraseDiverted cleared (the quiet-timer Enter then submitted the field
+    // without the block just diverted to the clipboard), a "typed" pulse, and a snapshot plus a
+    // restore debt that put the user's old clipboard back over that diverted block.
+    const final = mask(finalBody);
+    const exit = final.indexOf("if (!opensBlock) {");
+    expect(exit, "the empty block must leave the task before its insert").toBeGreaterThanOrEqual(0);
+    expect(exit).toBeGreaterThan(final.indexOf(": phrase.text;"));
+    expect(exit).toBeLessThan(final.indexOf("await beginInjection()"));
+    expect(exit).toBeLessThan(final.indexOf("injectText({ text: typeOut,"));
+    // Only the baseline moves: none of a delivered paste's bookkeeping runs for it.
+    const body = mask(bodyAfter(finalBody, "if (!opensBlock) "));
+    expect(body).toMatch(/^\{\s+injectedText = target;\s+return;\s+\}$/);
+    // Run the seam rule and the exit as plain JS: every output_suffix final returns there, gap
+    // owed or not, and a real block or an untranslated phrase falls through to the insert.
+    const start = finalBody.indexOf("const block = phrase.text.trim();");
+    const end = finalBody.indexOf("if (!opensBlock) ", start);
+    const exitSrc = `${finalBody.slice(start, end)}if (!opensBlock) ${bodyAfter(finalBody, "if (!opensBlock) ")}`;
+    const run = new Function(
+      "phrase", "sessionTranslation", "gapOwedApps", "t", "PHRASE_GAP", "target",
+      `let injectedText = "typed";\nconst out = (() => {\n${exitSrc}\nreturn "insert";\n})();\nreturn { out, injectedText };`,
+    ) as (phrase: { text: string }, sessionTranslation: boolean, gapOwedApps: Set<string>, t: { appId: string }, gap: string, target: string) => { out: string | undefined; injectedText: string };
+    for (const suffix of ["\n", " ", " \n"]) {
+      for (const owed of [new Set<string>(), new Set(["app"])]) {
+        const r = run({ text: suffix }, true, owed, { appId: "app" }, "\n\n\n", "typed\n");
+        expect(r.out, `${JSON.stringify(suffix)} with ${owed.size ? "a" : "no"} gap owed`).toBeUndefined();
+        expect(r.injectedText).toBe("typed\n");
+      }
+    }
+    expect(run({ text: " Hallo\n" }, true, new Set(), { appId: "app" }, "\n\n\n", "typed Hallo").out).toBe("insert");
+    expect(run({ text: "\n" }, false, new Set(), { appId: "app" }, "\n\n\n", "typed\n").out).toBe("insert");
   });
 
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {

@@ -2562,14 +2562,25 @@ async function ensureListeners(): Promise<void> {
             // empty submits in a chat box), and not the suffix either. A typed "\n" is still a
             // Return that submits in a chat box, yet it would leave the gap owed, so the next
             // block opened four line breaks down. A block trims the same suffix away, so the
-            // field reads the same whether or not the server split it into its own final. It
-            // neither owes nor pays a gap below, and Rust answers the empty insert `landed`, so
-            // the baseline still advances past it.
+            // field reads the same whether or not the server split it into its own final.
             const block = phrase.text.trim();
             const opensBlock = !sessionTranslation || block !== "";
             const typeOut = sessionTranslation
               ? (block ? (gapOwedApps.has(t.appId) ? PHRASE_GAP : "") + block : "")
               : phrase.text;
+            // So it is no insert at all: only the baseline moves past it. Sent anyway, Rust answers
+            // an empty text `landed` before it looks at focus or the chord, and the task booked
+            // that as a typed paste: a snapshot and a restore debt for a paste that never happened
+            // (the restore then put the user's old clipboard back over a block diverted just
+            // before it), a green "typed" pulse, and `lastPhraseDiverted` cleared, so the Enter
+            // that divert stood down submitted the field without the block on the clipboard. It
+            // owes and pays no gap, and books no record: its text is whitespace, so is its
+            // utterance's delta. No carry is pending here either: a carry is real text, which
+            // makes the block non-empty.
+            if (!opensBlock) {
+              injectedText = target;
+              return;
+            }
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
             // stays un-advanced), and booking it here appended its translation to history twice.
@@ -2755,10 +2766,8 @@ async function ensureListeners(): Promise<void> {
               } else {
                 sessionTyped = true;
                 lastPhraseDiverted = false;
-                if (opensBlock) {
-                  gapOwedApps.add(t.appId);
-                  lastTypedApp = t.appId;
-                }
+                gapOwedApps.add(t.appId);
+                lastTypedApp = t.appId;
                 signalInsert("typed");
               }
               // Everything past the baseline went out with this insert, carry included — so did
