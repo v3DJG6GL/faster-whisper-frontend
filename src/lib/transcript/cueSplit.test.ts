@@ -1794,6 +1794,37 @@ describe("cutByShare", () => {
     expect(wrapLines("Hier j'ai vu M. Dupont à la gare du nord", 30, 2, 0, undefined, "fr"))
       .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
   });
+  it("a lowercase unit before a lowercase word ends no sentence and stays with its number in the cut, the wrap and the cue split", () => {
+    // Every lowercase unit ended a sentence: "about 300 m." / "away from …", and a Lithuanian
+    // date ("1995 m. birželio", year + month) drew a 1:2 cut onto itself.
+    const cues = (t: string, lang: string, cpl: number) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang, words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const away = "about 300 m. away from the house we were in";
+    for (const parts of [cutByShare(away, [1, 1], "en"), wrapLines(away, 26, 2, 0, undefined, "en"), cues(away, "en", 26)])
+      expect(parts).toEqual(["about 300 m. away", "from the house we were in"]);
+    expect(wrapLines("It is about 5 m. long and quite heavy", 18, 2, 0, undefined, "en"))
+      .toEqual(["It is about", "5 m. long", "and quite heavy"]);
+    const long = "It is about 5 m. long and quite heavy now.";
+    expect(cutByShare(long, [1, 1], "en")).toEqual(["It is about 5 m. long", "and quite heavy now."]);
+    expect(cues(long, "en", 24)).toEqual(["It is about 5 m. long", "and quite heavy now."]);
+    const lt = "Mano sesuo gimė 1995 m. birželio mėnesį Kaune";
+    expect(cutByShare(lt, [1, 2], "lt")).toEqual(["Mano sesuo gimė", "1995 m. birželio mėnesį Kaune"]);
+    // Nor is the unit torn from its number ("1995" / "m. birželio …", "took 5" / "ms.").
+    expect(wrapLines(lt, 30, 2, 0, undefined, "lt")).toEqual(["Mano sesuo gimė 1995 m.", "birželio mėnesį Kaune"]);
+    expect(cues(lt, "lt", 30)).toEqual(["Mano sesuo gimė 1995 m.", "birželio mėnesį Kaune"]);
+    expect(cutByShare("We waited and it took 5 ms.", [5, 1], "en")).toEqual(["We waited and it took", "5 ms."]);
+    // Before a capital the unit still ends one, and the titles stay with the name.
+    const next = "The tower is about 300 m. The next one is taller";
+    for (const parts of [cutByShare(next, [1, 1], "en"), wrapLines(next, 30, 2, 0, undefined, "en"), cues(next, "en", 30)])
+      expect(parts).toEqual(["The tower is about 300 m.", "The next one is taller"]);
+    expect(cutByShare("Hier j'ai vu M. Dupont à la gare du nord", [1, 2], "fr"))
+      .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
+  });
   it("a name's initials stay inside the name in the cut, the wrap and the cue split; \"a plan B.\" still ends a sentence", () => {
     // A lone capital and its stop counted as a sentence end: "John F." / "Kennedy …".
     const cues = (t: string) => {

@@ -376,22 +376,32 @@ const DOTTED_ORDINAL = new Set([
   "de", "da", "nb", "nn", "no", "fi", "is", "fo", "cs", "sk", "pl", "hu", "tr", "sl", "hr", "sr", "bs", "et", "lv",
 ]);
 
+/** A lowercase "m." or "ms.": the unit ("300 m.", "5 ms."), not the title "M." or "Ms.". */
+const isUnit = (raw: string): boolean => raw === "m." || raw === "ms.";
+/** A number running on into its unit ("1995 | m. birželio", "5 | ms."): the seam dangles as one
+ *  after an article does — the unit itself no longer holds the word after it. */
+const beforeUnit = (prev: string, next: string): boolean =>
+  /\d$/.test(prev) && /^ms?\.(?![\p{L}\p{N}])/u.test(next);
+
 /** `cut` = the text after the stop, the track's language and the word before `word`, as the cue
  *  split, the line wrap and the translation cut all know them. "no."/"nr." abbreviate only
  *  before a number ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
- *  an ordinal). A dotted initialism ("U.S.", "a.m.") ends one only before a capital: "the U.S.
- *  government", "9 a.m. in the office" go on. A name's initial goes on before a capital when a
- *  capitalised word or another initial comes before it or another initial after it ("John F.
- *  Kennedy", "J. K. Rowling"); "a plan B. Then" ends one. */
+ *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
+ *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on. A
+ *  name's initial goes on before a capital when a capitalised word or another initial comes
+ *  before it or another initial after it ("John F. Kennedy", "J. K. Rowling"); "a plan B. Then"
+ *  ends one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
   // abbreviations, "(3." an ordinal, as their bare spellings are.
   const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
   const w = raw.toLowerCase();
-  // Only the capitalised "M." and "Ms." are titles: "300 m." and "5 ms." are units, and end one.
-  const unit = (w === "m." || w === "ms.") && /^\p{Ll}/u.test(raw);
+  // Only the capitalised "M." and "Ms." are titles: "300 m." and "5 ms." are units, which end
+  // one only before a capital or the end of the text, as a dotted initialism does below.
+  const unit = isUnit(raw);
+  if (unit && cut && /^\p{Ll}/u.test(cut.next)) return false;
   if (ABBREV.has(w) && !unit && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
   if (
@@ -411,7 +421,8 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
   if (!SENT_END.test(word) || isSentenceEnd(word, cut)) return false;
   const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
   const w = raw.toLowerCase();
-  return TITLE_ABBREV.has(w) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw);
+  // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
+  return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw);
 }
 
 /** A capitalised word running on into a name's initial ("John | F. Kennedy"): the seam inside the
@@ -432,7 +443,7 @@ function breakScore(prev: string, next: string, lang?: string, before?: string):
   else if (!quoted && CLAUSE.test(prev)) s += 40;
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
-  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, cut) || beforeInitial(prev, next)) s -= 80;
+  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, cut) || beforeInitial(prev, next) || beforeUnit(prev, next)) s -= 80;
   // A spaced "&" is an "and" (Procter & Gamble): the seam goes before it, as before "and".
   if (CONJ.has(bare(next)) || next === "&") s += 20;
   return s;
@@ -950,7 +961,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevCased, cut.next) ? 12 : 0) -
+        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevCased, cut.next) || beforeUnit(prevCased, cut.next) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
         (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {
