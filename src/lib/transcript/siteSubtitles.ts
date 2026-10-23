@@ -623,15 +623,19 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
   if (c && ownProp(tg, c) && !next[key]) {
     // A capped track, or machine translation over the limit, kept on in the pick is no source
     // this run: its cap greys it again.
-    const leftIn = (x: ReturnType<typeof model>) => Object.keys(x.codeOf).some((k) => x.codeOf[k] === c && next[k]
+    const leftIn = (x: ReturnType<typeof model>, mt = true) => Object.keys(x.codeOf).some((k) => x.codeOf[k] === c
+      && next[k] && (mt || !k.startsWith("mt:"))
       && !x.capped.has(keyTrack(k) ?? "") && !(k.startsWith("mt:") && x.mtCapped.has(k.slice(3))));
     // Unless the switch-off frees the slot that cap held (Custom restores its pick, preCap):
-    // ask the caps with the change in place before machine translation takes over. A slot the
-    // limit hands back by taking it from another language's only source is not freed (strands).
+    // ask the caps with the change in place before machine translation takes over. A site
+    // track the freed download slot brings in serves the language outright (its own MT may
+    // stay greyed); a slot the translation limit hands back by taking it from another
+    // language's only source is not freed (strands).
     let left = leftIn(m);
     if (!left) {
       const trial = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
-      left = leftIn(model({ ...input, targets: trial.targets }, trial.state)) && !strands(input, st, m, next, tg, c);
+      const a = model({ ...input, targets: trial.targets }, trial.state);
+      left = leftIn(a, false) || (leftIn(a) && !strands(input, st, m, next, tg, c));
     }
     if (!left) {
       if (key.startsWith("mt:")) tg[c] = false;

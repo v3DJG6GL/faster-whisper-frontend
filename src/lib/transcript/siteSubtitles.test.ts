@@ -583,6 +583,26 @@ describe("tracks and switches", () => {
     expect(w.chips.map((c) => c.code)).toEqual(["ko"]);
     expect(w.chips.filter((c) => !c.parts.some((p) => p.on)).map((c) => c.code)).toEqual([]);
   });
+  it("switching off a site track keeps its language when the freed download slot brings in its capped twin", () => {
+    // ko's MT holds the one translation slot, es's MT is kept on under it; auto-generated
+    // tracks push es2 over the 8-track cap. Switching es1 off frees the slot for es2.
+    const auto = (id: string, lang: string) => tr(id, lang, { kind: "auto" });
+    const fill = ["fr", "it", "pt", "nl", "sv"].map((l) => tr(l + "1", l));
+    let i = input({
+      tracks: [tr("es1", "es"), tr("ko1", "ko"), ...fill, auto("fra", "fr"), auto("ita", "it"), tr("es2", "es")],
+      spoken: "en", targets: ["es", "ko"], maxTargets: 1,
+    });
+    let st = initialSiteState(i.targets);
+    for (const key of ["mt:es", "ex:ko1"]) [i, st] = apply(i, flip(i, st, key));
+    st = { ...st, auto: true };
+    expect(derive(i, st).run!.fetch).not.toContain("es2");
+    [i, st] = apply(i, flip(i, st, "ex:es1"));
+    expect(i.targets).toContain("es");
+    const v = derive(i, st);
+    expect(v.run!.fetch).toContain("es2");
+    expect(v.run!.mtTargets).toEqual(["ko"]);
+    expect(v.chips.find((c) => c.code === "es")!.parts.map((p) => [p.key, p.on])).toEqual([["mt:es", false], ["ex:es2", true]]);
+  });
   it("switching machine translation on at a full translation limit changes nothing", () => {
     // Prefer: es is covered by its site track, its MT badge idle; ja holds the one slot.
     const inp = input({ tracks: [tr("en", "en"), tr("es", "es")], spoken: "en", targets: ["ja"], maxTargets: 1 });
