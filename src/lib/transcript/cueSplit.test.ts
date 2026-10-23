@@ -2135,6 +2135,50 @@ describe("cutByShare", () => {
     expect(cutByShare("They moved to the U.S. The rest of the family stayed in Ireland for good", [1, 1], "en"))
       .toEqual(["They moved to the U.S.", "The rest of the family stayed in Ireland for good"]);
   });
+  it("a name's compact initials or a capital initialism before a capital ends no sentence unless a sentence opener follows", () => {
+    // Only spaced initials were held ("J. K. Rowling"): "J.K.", "C.S.", "J.R.R." and "U.S." before
+    // a capital read as a sentence end, so the cut, the wrap and the cue split tore them off the name.
+    const cues = (t: string, lang?: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const ROWS: [text: string, cpl: number, cut: string, wrap: string, cue: string][] = [
+      ["The new book by J.K. Rowling came out last week", 30,
+        "The new book by J.K. Rowling | came out last week", "The new book by J.K. Rowling | came out last week",
+        "The new book by J.K. Rowling | came out last week"],
+      ["C.S. Lewis wrote it in the summer of that year", 26,
+        "C.S. Lewis wrote it | in the summer of that year", "C.S. Lewis wrote it | in the summer of that year",
+        "C.S. Lewis wrote it | in the summer of that year"],
+      ["We all read The Hobbit by J.R.R. Tolkien last winter", 30,
+        "We all read The Hobbit | by J.R.R. Tolkien last winter", "We all read The Hobbit | by J.R.R. Tolkien last winter",
+        "We all read The Hobbit | by J.R.R. Tolkien last winter"],
+      ["Soldiers of the U.S. Army arrived in the town today", 30,
+        "Soldiers of the U.S. Army | arrived in the town today", "Soldiers of the U.S. Army | arrived in the town today",
+        "Soldiers of the U.S. Army | arrived in the town today"],
+      // A sentence opener after it, or the text's end, still ends one; a lowercase word runs on.
+      ["We moved to the U.S. Then we bought a small house there", 30,
+        "We moved to the U.S. | Then we bought a small house there", "We moved to the U.S. Then | we bought a small house there",
+        "We moved to the U.S. | Then we bought | a small house there"],
+      ["We lived in the U.S. My wife still works there now", 30,
+        "We lived in the U.S. | My wife still works there now", "We lived in the U.S. | My wife still works there now",
+        "We lived in the U.S. | My wife still works there now"],
+      ["He grew up in a small town in the U.S.", 24,
+        "He grew up in a small | town in the U.S.", "He grew up in a small | town in the U.S.", "He grew up in a small | town in the U.S."],
+      ["Officials in the U.S. government said on Tuesday that the new rules apply", 32,
+        "Officials in the U.S. government said | on Tuesday that the new rules apply",
+        "Officials in the U.S. | government said on Tuesday | that the new rules apply",
+        "Officials in the U.S. | government said on Tuesday | that the new rules apply"],
+    ];
+    for (const [t, cpl, cut, wrap, cue] of ROWS) {
+      for (const l of ["en", undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
+      }
+    }
+  });
   it("the cue split and the line wrap judge 'no.' and '12.' as the translation cut does", () => {
     const party = (x: string) => `When he asked me to come along to the party I said ${x} Then we went home and talked about the whole evening for hours`;
     const cuesOf = (r: BatchResult, tracks = ["orig"]) => buildCues(r, STD, tracks);

@@ -367,6 +367,8 @@ interface SentenceCut { next: string; lang?: string; prev?: string }
 /** A capital and its stop: an initial ("F."), or a letter that ends a sentence ("plan B."). Not
  *  the Roman numerals I, V and X: "World War I. After that" ends one. */
 const INITIAL = /^(?![IVX])\p{Lu}\.$/u;
+/** Capitals each with its stop, written together: a name's initials ("J.K.") or an initialism ("U.S."). */
+const CAP_INITIALS = /^(?:\p{Lu}\.){2,}$/u;
 /** The word before text[..at), within a bounded look-back. */
 const wordBefore = (text: string, at: number): string =>
   text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
@@ -459,10 +461,12 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  before a number ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
- *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on. A
- *  name's initial goes on before a capital when another initial comes before or after it ("J. K.
- *  Rowling"), a capitalised word, a clause or sentence mark or the text's start before it ("John
- *  F. Kennedy", "In 1924, J. Edgar"), the capitalised word not in German or Luxembourgish, which
+ *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on;
+ *  an all-capital one ("J.K.", "U.S.") before a capital only before a sentence opener as well:
+ *  "J.K. Rowling" and "the U.S. Army" go on, "the U.S. Then" ends one. A name's initial goes on
+ *  before a capital when another initial comes before or after it ("J. K. Rowling"), a
+ *  capitalised word, a clause or sentence mark or the text's start before it ("John F.
+ *  Kennedy", "In 1924, J. Edgar"), the capitalised word not in German or Luxembourgish, which
  *  capitalise every noun, and none before a sentence opener (nameBefore): "a plan B. Then",
  *  "Option B. Then", "Plan B. What", "Plan B. Dann" and "Answer: A. How" end one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
@@ -477,6 +481,10 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (unit && cut && /^\p{Ll}/u.test(cut.next)) return false;
   if (ABBREV.has(w) && !unit && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
+  // A name's compact initials ("J.K. Rowling", "J.R.R. Tolkien") or a capital initialism ("the
+  // U.S. Army") before a capital: held as a name's initial at the text's start is, unless the
+  // word after it opens a sentence ("the U.S. Then", "in the U.S. My wife").
+  if (cut && CAP_INITIALS.test(raw) && /^\p{Lu}/u.test(cut.next) && nameBefore("", cut.next, cut.lang)) return false;
   if (
     cut && INITIAL.test(raw) && /^\p{Lu}/u.test(cut.next) &&
     (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
@@ -486,16 +494,17 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
 }
 
-/** Whether `word` is a title or number abbreviation, a dotted ordinal or a name's initial, that
- *  isSentenceEnd holds no sentence end here ("Ms. Johnson", "Nr. 5", "am 3. Mai", "John F.
- *  Kennedy"): it dangles as an article does. Judged by isSentenceEnd, not listed in NOBREAK: "I
- *  said no. Then" ends one. */
+/** Whether `word` is a title or number abbreviation, a dotted ordinal or a name's initial or
+ *  initials, that isSentenceEnd holds no sentence end here ("Ms. Johnson", "Nr. 5", "am 3. Mai",
+ *  "John F. Kennedy", "J.K. Rowling"): it dangles as an article does. Judged by isSentenceEnd,
+ *  not listed in NOBREAK: "I said no. Then" ends one. */
 function heldAbbrev(word: string, cut: SentenceCut): boolean {
   if (!SENT_END.test(word) || isSentenceEnd(word, cut)) return false;
   const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
   const w = raw.toLowerCase();
   // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
-  return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw);
+  return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw) ||
+    (CAP_INITIALS.test(raw) && /^\p{Lu}/u.test(cut.next));
 }
 
 /** A capitalised word running on into a name's initial ("John | F. Kennedy"): the seam inside the
