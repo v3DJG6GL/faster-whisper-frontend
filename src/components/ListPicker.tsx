@@ -358,9 +358,11 @@ export function ListPicker<R>({
             // could not be dragged. That press moves focus off the search field (to <body>, or to
             // the listbox where a scroller takes focus), so the release puts it back — wherever it
             // lands: a scrollbar drag often ends outside the panel, where no panel handler hears it.
+            // Only a primary press arms that: a right-click's context menu can swallow its mouseup
+            // (WebKitGTK), and the armed release would then pull focus back from the next field.
             onMouseDown={(e) => {
               if (e.target === searchRef.current) return;
-              if ((e.target as Element).id !== listId) {
+              if (e.button !== 0 || (e.target as Element).id !== listId) {
                 e.preventDefault();
                 return;
               }

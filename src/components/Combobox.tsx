@@ -231,9 +231,11 @@ export function Combobox({
         createPortal(
           <div
             // Keep the input focused for any mouse interaction inside the popover — except a press
-            // on the listbox itself (see pressInListRef).
+            // on the listbox itself (see pressInListRef). Only a primary press arms the refocus: a
+            // right-click's context menu can swallow its mouseup (WebKitGTK), and the armed release
+            // would then pull focus back from the next field the user clicks.
             onMouseDown={(e) => {
-              if ((e.target as Element).id !== listId) {
+              if (e.button !== 0 || (e.target as Element).id !== listId) {
                 e.preventDefault();
                 return;
               }

@@ -91,7 +91,7 @@ describe("Combobox suggestion list press", () => {
 
     const press = (target: unknown) => {
       let prevented = false;
-      (panelOf(tree).props.onMouseDown as (e: unknown) => void)({ target, preventDefault: () => (prevented = true) });
+      (panelOf(tree).props.onMouseDown as (e: unknown) => void)({ button: 0, target, preventDefault: () => (prevented = true) });
       return prevented;
     };
     // The footer and the rows' chrome still keep focus in the input, and arm nothing.
@@ -118,6 +118,30 @@ describe("Combobox suggestion list press", () => {
     // An ordinary blur afterwards closes the list again, and bubbles as usual.
     (inputOf(tree).props.onBlur as (e: unknown) => void)(blur);
     expect(stopped).toBe(1);
+    expect(listOf(render())).toBeNull();
+  });
+
+  // WebKitGTK's context menu takes the pointer grab on mousedown, so that button's mouseup never
+  // reaches the page: an armed release would fire on the next click and pull focus back from it.
+  it.each([
+    ["right", 2],
+    ["middle", 1],
+  ])("a %s press on the listbox arms nothing and keeps focus in the input", (_n, button) => {
+    render();
+    (inputOf(render()).props.onFocus as () => void)();
+    const tree = render();
+    let prevented = false;
+    (panelOf(tree).props.onMouseDown as (e: unknown) => void)({
+      button,
+      target: { id: "cb-list" },
+      preventDefault: () => (prevented = true),
+    });
+    expect(prevented).toBe(true);
+    expect(ups).toHaveLength(0);
+    // Nothing marks a list press, so a later blur closes the list and reaches the parents.
+    let stopped = 0;
+    (inputOf(tree).props.onBlur as (e: unknown) => void)({ stopPropagation: () => stopped++ });
+    expect(stopped).toBe(0);
     expect(listOf(render())).toBeNull();
   });
 });

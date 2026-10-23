@@ -196,9 +196,9 @@ describe("ListPicker popover focus", () => {
     const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
     const field = {};
     input.props.ref.current = field;
-    const press = (target: unknown) => {
+    const press = (target: unknown, button = 0) => {
       let prevented = false;
-      panel.props.onMouseDown?.({ target, preventDefault: () => (prevented = true) });
+      panel.props.onMouseDown?.({ button, target, preventDefault: () => (prevented = true) });
       return prevented;
     };
     // The magnifier, a section header, the hint line: focus would otherwise drop to <body>.
@@ -235,13 +235,18 @@ describe("ListPicker popover focus", () => {
     const input = findElement(panel, "input") as ReactElement<{ ref: { current: unknown } }>;
     let refocused = 0;
     input.props.ref.current = { focus: () => refocused++ };
-    const press = (target: unknown) => {
+    const press = (target: unknown, button = 0) => {
       let prevented = false;
-      panel.props.onMouseDown?.({ target, preventDefault: () => (prevented = true) });
+      panel.props.onMouseDown?.({ button, target, preventDefault: () => (prevented = true) });
       return prevented;
     };
     // A row still keeps focus in the field, and arms nothing.
     expect(press({ id: "lp-list-opt-0" })).toBe(true);
+    expect(ups).toHaveLength(0);
+    // So does a right or middle press on the listbox: WebKitGTK's context menu can swallow its
+    // mouseup, and an armed release would pull focus back from the next field the user clicks.
+    expect(press(list, 2)).toBe(true);
+    expect(press(list, 1)).toBe(true);
     expect(ups).toHaveLength(0);
     // WebKit drags an element's scrollbar only on a press that was not prevented.
     expect(press(list)).toBe(false);
