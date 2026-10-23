@@ -254,25 +254,32 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   };
   const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
   const textLines = (c: RawCue): string[] => c.lines.filter((l) => stripMarkup(l));
+  const contiguousAfter = (prev: RawCue, cue: RawCue): boolean =>
+    prev.start !== undefined && prev.end !== undefined && cue.start !== undefined
+    && cue.start >= prev.start && cue.start <= prev.end + 0.25;
   // The rolling signature: without a freeze cue, a cue that only repeats the one before
   // is a line said twice, not a roll.
   // Only a freeze cue with text and a length counts: an empty cue (our export writes one for
   // an empty segment) "repeats" its neighbours vacuously, and a zero-length repeat is our
   // own export's segment, not a 10 ms freeze — either would make any file look rolling.
-  // And only one that bridges a roll: a real freeze repeats the cue before AND opens the next
-  // cue with text, which adds a line. A Whisper repeat (a doubled or tripled 50 ms "Thank
-  // you.") does neither, and counting it would strip every line the file repeats across a cue
+  // And only one that bridges a roll: a real freeze repeats the last line(s) of the cue with
+  // text before it AND the next cue with text, right after it, opens with them and adds a
+  // line. A Whisper repeat (a doubled or tripled 50 ms "Thank you.") adds nothing, a short
+  // fragment that only opens the next cue repeats nothing before it, and a cue far later is
+  // no roll — counting any of them would strip every line the file repeats across a cue
   // boundary. One bridge is enough: a short auto-caption file may roll only once.
   const bridgesRoll = (i: number): boolean => {
-    const next = cues.slice(i + 1).find(hasText);
-    if (!next) return false;
-    const [mine, theirs] = [textLines(cues[i]), textLines(next)];
-    return theirs.length > mine.length && leadOverlap(mine, theirs) === mine.length;
+    // Index scans, not slices: a Whisper tail of thousands of short repeats asks for each.
+    let b = i - 1;
+    while (b >= 0 && !hasText(cues[b])) b--;
+    let n = i + 1;
+    while (n < cues.length && !hasText(cues[n])) n++;
+    if (b < 0 || n >= cues.length || !contiguousAfter(cues[i], cues[n])) return false;
+    const [before, mine, after] = [textLines(cues[b]), textLines(cues[i]), textLines(cues[n])];
+    return leadOverlap(before, mine) === mine.length
+      && after.length > mine.length && leadOverlap(mine, after) === mine.length;
   };
   const rolling = cues.some((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c) && bridgesRoll(i));
-  const contiguousAfter = (prev: RawCue, cue: RawCue): boolean =>
-    prev.start !== undefined && prev.end !== undefined && cue.start !== undefined
-    && cue.start >= prev.start && cue.start <= prev.end + 0.25;
   // The roll-up signature, judged on the whole file: one cue cannot tell a roll from a word
   // said twice across a cue boundary, but in a roll-up file MOST contiguous multi-line cues
   // open with the line(s) before, and in an ordinary file only the odd one does. A three-

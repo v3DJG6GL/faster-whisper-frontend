@@ -604,6 +604,82 @@ describe("site subtitle cleanup", () => {
       "Thank you.", "Thank you.", "Wait.", "Wait. Did you hear?", "Bye.", "Bye.",
     ]);
   });
+  it("a short cue that only opens a later cue does not make a whole file rolling", () => {
+    // "Right." repeats nothing before it, and the cue it opens starts ten seconds later.
+    const srt =
+      "1\n00:00:01,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:03,000\nThank you.\n\n"
+      + "3\n00:00:05,000 --> 00:00:06,000\nWait.\n\n4\n00:00:06,000 --> 00:00:08,000\nWait.\nDid you hear that?\n\n"
+      + "5\n00:00:20,000 --> 00:00:20,050\nRight.\n\n6\n00:00:30,000 --> 00:00:32,000\nRight.\nLet's go.\n";
+    expect(parseImportedText("srt", srt).segments).toMatchObject([
+      { start: 1, end: 2, text: "Thank you." },
+      { start: 2, end: 3, text: "Thank you." },
+      { start: 5, end: 6, text: "Wait." },
+      { start: 6, end: 8, text: "Wait. Did you hear that?" },
+      { start: 20, end: 20.05, text: "Right." },
+      { start: 30, end: 32, text: "Right. Let's go." },
+    ]);
+    // A 50 ms Whisper fragment repeating only the NEXT cue's first wrapped line, right after it.
+    const next =
+      "1\n00:00:01,000 --> 00:00:02,000\nThank you.\n\n2\n00:00:02,000 --> 00:00:03,000\nThank you.\n\n"
+      + "3\n00:00:05,000 --> 00:00:05,050\nWait.\n\n4\n00:00:05,050 --> 00:00:08,000\nWait.\nDid you hear that noise?\n";
+    expect(parseImportedText("srt", next).segments.map((s) => s.text)).toEqual([
+      "Thank you.", "Thank you.", "Wait.", "Wait. Did you hear that noise?",
+    ]);
+  });
+  it("rolling-caption shape matrix against the two-freeze rule it replaced", () => {
+    const c = (start: number, end: number, ...lines: string[]) => ({ start, end, lines });
+    const rows: { name: string; cues: ReturnType<typeof c>[]; want: [number, number, string][] }[] = [
+      // Unchanged from the two-freeze rule: a freeze that repeats nothing before it, one whose
+      // roll comes far later, a single 50 ms repeat, and a file that rolls several times.
+      {
+        name: "short cue opening a far later cue",
+        cues: [c(1, 2, "Thank you."), c(2, 3, "Thank you."), c(5, 6, "Wait."), c(6, 8, "Wait.", "Did you hear that?"), c(20, 20.05, "Right."), c(30, 32, "Right.", "Let's go.")],
+        want: [[1, 2, "Thank you."], [2, 3, "Thank you."], [5, 6, "Wait."], [6, 8, "Wait.|Did you hear that?"], [20, 20.05, "Right."], [30, 32, "Right.|Let's go."]],
+      },
+      {
+        name: "short cue opening only the next cue",
+        cues: [c(1, 2, "Thank you."), c(2, 3, "Thank you."), c(5, 5.05, "Wait."), c(5.05, 8, "Wait.", "Did you hear that noise?")],
+        want: [[1, 2, "Thank you."], [2, 3, "Thank you."], [5, 5.05, "Wait."], [5.05, 8, "Wait.|Did you hear that noise?"]],
+      },
+      {
+        name: "freeze whose roll comes ten seconds later",
+        cues: [c(0, 2, "hello there"), c(2, 2.01, "hello there"), c(10, 12, "hello there", "how are you"), c(12, 14, "Bye."), c(14, 16, "Bye.")],
+        want: [[0, 2, "hello there"], [2, 2.01, "hello there"], [10, 12, "hello there|how are you"], [12, 14, "Bye."], [14, 16, "Bye."]],
+      },
+      {
+        name: "rolls several times",
+        cues: [c(0, 2, "hello there"), c(2, 2.01, "hello there"), c(2.01, 4, "hello there", "how are you"), c(4, 4.01, "how are you"), c(4.01, 6, "how are you", "fine thanks")],
+        want: [[0, 2, "hello there"], [2.01, 4, "how are you"], [4.01, 6, "fine thanks"]],
+      },
+      // Changed on purpose: a single roll (YouTube's short file, an empty cue in between) now
+      // dedupes, and a tripled Whisper repeat no longer counts as two freezes.
+      {
+        name: "rolls once",
+        cues: [c(0, 2, "hello there"), c(2, 2.01, "hello there"), c(2.01, 4, "hello there", "how are you")],
+        want: [[0, 2, "hello there"], [2.01, 4, "how are you"]],
+      },
+      {
+        name: "rolls once over an empty cue",
+        cues: [c(0, 2, "hello"), c(2, 2.01, "hello"), c(2.01, 2.01), c(2.01, 4, "hello", "there")],
+        want: [[0, 2, "hello"], [2.01, 4, "there"]],
+      },
+      {
+        name: "tripled 50 ms repeat",
+        cues: [c(1, 2, "Thank you."), c(2, 2.05, "Thank you."), c(2.05, 2.1, "Thank you."), c(3, 5, "Wait."), c(5, 7, "Wait.", "Did you hear?")],
+        want: [[1, 2, "Thank you."], [2, 2.05, "Thank you."], [2.05, 2.1, "Thank you."], [3, 5, "Wait."], [5, 7, "Wait.|Did you hear?"]],
+      },
+      // Accepted ambiguity: our export of "Okay." / 50 ms "Okay." / "Okay. So let's start…" has
+      // exactly YouTube's single-roll shape, so it reads as rolling (the two-freeze rule kept all).
+      {
+        name: "export shape indistinguishable from a single roll",
+        cues: [c(0, 2, "Okay."), c(2, 2.05, "Okay."), c(2.05, 6, "Okay.", "So let's start"), c(6, 8, "Thank you."), c(8, 10, "Thank you.")],
+        want: [[0, 2, "Okay."], [2.05, 6, "So let's start"], [6, 10, "Thank you."]],
+      },
+    ];
+    for (const { name, cues, want } of rows) {
+      expect([name, dedupeRollingCues(cues).map((x) => [x.start, x.end, x.lines.join("|")])]).toEqual([name, want]);
+    }
+  });
   it("broadcaster hyphenation rejoins, letter-spaced emphasis collapses, conjunctions keep their hyphen", () => {
     const back = parseImportedText("vtt", SRF);
     expect(back.segments.map((s) => s.text)).toEqual([
