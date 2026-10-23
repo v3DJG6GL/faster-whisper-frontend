@@ -33,15 +33,26 @@ impl Proxy {
     }
 }
 
-/// A loopback host: `localhost` / `*.localhost`, 127.0.0.0/8, or `::1` (bracketed or not). Both
-/// the HTTP client and the WebSocket send these direct whatever the proxy settings say.
+/// A this-host address: `localhost` / `*.localhost`, 127.0.0.0/8, `::1`, the unspecified
+/// 0.0.0.0/8 and `::` (the bind-all address uvicorn prints, which `isLocalAddress` in backends.ts
+/// also counts as this host), and an IPv4-mapped `::ffff:` form of any of those (bracketed or
+/// not). Both the HTTP client and the WebSocket send these direct whatever the proxy settings say:
+/// through a proxy they would dial the proxy's own host.
 pub(super) fn is_loopback_host(host: &str) -> bool {
+    use std::net::IpAddr;
     let host = host
         .strip_prefix('[')
         .and_then(|h| h.strip_suffix(']'))
         .unwrap_or(host);
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        return ip.is_loopback();
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        let ip = match ip {
+            IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+            v4 => v4,
+        };
+        return match ip {
+            IpAddr::V4(v4) => v4.is_loopback() || v4.octets()[0] == 0,
+            IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        };
     }
     let host = host.to_ascii_lowercase();
     let host = host.strip_suffix('.').unwrap_or(&host);
@@ -439,6 +450,12 @@ mod tests {
             "127.255.255.255",
             "::1",
             "[::1]",
+            "0.0.0.0",
+            "0.1.2.3",
+            "::",
+            "[::]",
+            "[::ffff:127.0.0.1]",
+            "::ffff:0.0.0.0",
         ] {
             assert!(is_loopback_host(h), "{h}");
         }
@@ -450,7 +467,10 @@ mod tests {
             "[::2]",
             "128.0.0.1",
             "126.255.255.255",
-            "0.0.0.0",
+            "1.0.0.0",
+            "10.0.0.1",
+            "192.168.1.5",
+            "[::ffff:10.0.0.1]",
             "gpu-box",
             "",
         ] {
