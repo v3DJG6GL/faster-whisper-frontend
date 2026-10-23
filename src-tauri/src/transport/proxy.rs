@@ -59,19 +59,28 @@ pub(super) fn is_loopback_host(host: &str) -> bool {
     host == "localhost" || host.ends_with(".localhost")
 }
 
-/// The shared HTTP client's proxy: `Matcher::from_system()` read once, as reqwest's implicit
-/// system proxy read it once per client, with loopback going direct. Adding any proxy turns that
-/// implicit one off in reqwest, so this is the client's whole proxy decision.
+/// The shared HTTP client's proxy, with loopback going direct. Adding any proxy turns reqwest's
+/// implicit system one off, so this is the client's whole proxy decision.
+///
+/// `Matcher::from_system()` is read per decision, not once: the client lives as long as the app,
+/// so a Windows / macOS proxy switched on, off or changed while it runs reached dictation (see
+/// [`system_route`]) but not the HTTP routes until a restart. A read is a few env lookups plus
+/// one registry key (Windows) or one SCDynamicStore copy (macOS), noise next to a request.
+///
+/// A pooled keep-alive connection still keeps the route it was opened on: hyper-util pools by the
+/// server's scheme + host + port, not by the proxy, so the new setting applies to the next new
+/// connection — after the 90 s idle timeout, a server close, or for another server.
 pub(super) fn system_client_proxy() -> reqwest::Proxy {
-    client_proxy(Matcher::from_system())
+    client_proxy(Matcher::from_system)
 }
 
-fn client_proxy(matcher: Matcher) -> reqwest::Proxy {
+/// `source` is asked for the matcher on every decision (tests pass a fixed one).
+fn client_proxy(source: impl Fn() -> Matcher + Send + Sync + 'static) -> reqwest::Proxy {
     reqwest::Proxy::custom(move |url| {
         if is_loopback_host(url.host_str()?) {
             return None;
         }
-        let hit = matcher.intercept(&url.as_str().parse().ok()?)?;
+        let hit = source().intercept(&url.as_str().parse().ok()?)?;
         // hyper-util moved the login out of the URI; reqwest reads it back only from the returned
         // URL's userinfo, so it goes back there or every proxied request would lose its login.
         let mut proxy = reqwest::Url::parse(&hit.uri().to_string()).ok()?;
@@ -100,7 +109,7 @@ fn decode_basic(header: &HeaderValue) -> Option<(String, String)> {
 }
 
 /// The system proxy for the stream URL, if one applies — `Matcher::from_system()` read fresh per
-/// connect, as reqwest reads it per client.
+/// connect, as the HTTP client reads it per decision ([`system_client_proxy`]).
 pub(super) fn system_route(ws_url: &str) -> Option<Proxy> {
     route(&Matcher::from_system(), ws_url)
 }
@@ -522,12 +531,44 @@ mod tests {
         (addr, seen)
     }
 
-    fn client_via(matcher: Matcher) -> reqwest::Client {
+    fn client_via(source: impl Fn() -> Matcher + Send + Sync + 'static) -> reqwest::Client {
         let _ = rustls::crypto::ring::default_provider().install_default();
         reqwest::Client::builder()
-            .proxy(client_proxy(matcher))
+            .proxy(client_proxy(source))
             .build()
             .unwrap()
+    }
+
+    /// The one client lives as long as the app, so a system proxy switched on or off while it runs
+    /// must reach its next request — as it reaches the next dictation — not wait for a restart.
+    #[tokio::test]
+    async fn the_client_follows_a_proxy_switched_on_and_off_after_it_was_built() {
+        let setting: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let read = setting.clone();
+        let client = client_via(move || match read.lock().unwrap().as_deref() {
+            Some(proxy) => Matcher::builder().all(proxy).build(),
+            None => Matcher::builder().build(),
+        });
+        let url = "http://gpu-box.test:8000/health";
+        let err = client.get(url).send().await.unwrap_err();
+        assert!(format!("{err:?}").contains("dns error"), "{err:?}");
+
+        let (proxy, seen) = http_ok().await;
+        *setting.lock().unwrap() = Some(format!("http://{proxy}"));
+        let body = client.get(url).send().await.unwrap().text().await.unwrap();
+        assert_eq!(body, "ok");
+        let head = seen.lock().unwrap().to_ascii_lowercase();
+        assert!(
+            head.starts_with("get http://gpu-box.test:8000/health"),
+            "{head}"
+        );
+
+        // The fake proxy answered with `Connection: close`, so no pooled connection carries the
+        // old route over; switched off, the request resolves the server itself again (a dns
+        // error for this made-up host — a stale proxy route would be refused at the proxy's port).
+        *setting.lock().unwrap() = None;
+        let err = client.get(url).send().await.unwrap_err();
+        assert!(format!("{err:?}").contains("dns error"), "{err:?}");
     }
 
     /// The HTTP client forwards through the system proxy with the proxy's login intact — the very
@@ -546,7 +587,7 @@ mod tests {
             .to_str()
             .unwrap()
             .to_ascii_lowercase();
-        let client = client_via(Matcher::builder().all(proxy_url.as_str()).build());
+        let client = client_via(move || Matcher::builder().all(proxy_url.as_str()).build());
         let body = client
             .get("http://gpu-box.test:8000/health")
             .send()
@@ -574,7 +615,7 @@ mod tests {
         use base64::Engine;
         let (proxy, seen) = http_ok().await;
         let proxy_url = format!("http://a%2541%40b:x%259Fy%3A%40z@{proxy}");
-        let client = client_via(Matcher::builder().all(proxy_url.as_str()).build());
+        let client = client_via(move || Matcher::builder().all(proxy_url.as_str()).build());
         let body = client
             .get("http://gpu-box.test:8000/health")
             .send()
@@ -600,7 +641,7 @@ mod tests {
     #[tokio::test]
     async fn the_client_reaches_loopback_and_no_proxy_hosts_directly() {
         let (server, seen) = http_ok().await;
-        let client = client_via(Matcher::builder().all("http://u:p@127.0.0.1:9").build());
+        let client = client_via(move || Matcher::builder().all("http://u:p@127.0.0.1:9").build());
         let url = format!("http://localhost:{}/health", server.port());
         assert_eq!(
             client.get(url).send().await.unwrap().text().await.unwrap(),
@@ -611,11 +652,12 @@ mod tests {
         assert!(!head.contains("proxy-authorization"), "{head}");
 
         let (proxy, via_proxy) = http_ok().await;
-        let matcher = Matcher::builder()
-            .all(format!("http://{proxy}").as_str())
-            .no("gpu-box.test")
-            .build();
-        let client = client_via(matcher);
+        let client = client_via(move || {
+            Matcher::builder()
+                .all(format!("http://{proxy}").as_str())
+                .no("gpu-box.test")
+                .build()
+        });
         let err = client.get("http://gpu-box.test:8000/").send().await;
         assert!(err.is_err(), "a NO_PROXY host must not reach the proxy");
         assert!(via_proxy.lock().unwrap().is_empty());
