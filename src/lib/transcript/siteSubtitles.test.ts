@@ -394,8 +394,9 @@ describe("tracks and switches", () => {
     expect(v.run!.mtTargets).toEqual([]);
   });
   it("a language you translate into keeps machine translation when the cap cuts its site track", () => {
+    // Eight targets with a site track each, plus the transcript's: Swedish, last in site order, is cut.
     const langs = ["en", "fr", "it", "es", "pt", "nl", "pl", "sv", "fi", "da"];
-    const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: ["sv"] });
+    const inp = input({ tracks: [...langs.map((l) => tr(l, l)), tr("de", "de")], targets: langs.slice(0, 8) });
     const v = derive(inp, initialSiteState(inp.targets));
     expect(v.run!.fetch).not.toContain("sv");
     expect(v.run!.mtTargets).toEqual(["sv"]);
@@ -409,6 +410,22 @@ describe("tracks and switches", () => {
     expect(chip.parts[1].title).toMatch(/8-subtitle download limit/);
     // The site-only overflow languages still drop out.
     expect(v.chips.map((c) => c.code)).not.toContain("fi");
+  });
+  it("the download cap keeps the tracks of the languages you translate into ahead of the site's others", () => {
+    // Ten site languages, one asked for — and it is the last: site order alone filled the cap
+    // with eight nobody asked for and machine-translated Japanese despite its human track.
+    const langs = ["ar", "bg", "cs", "da", "de", "el", "es", "fi", "fr", "ja"];
+    const inp = input({ tracks: langs.map((l) => tr(l, l)), spoken: "en", targets: ["ja"] });
+    const v = derive(inp, initialSiteState(inp.targets));
+    expect(v.run!.fetch).toEqual(["ar", "bg", "cs", "da", "de", "el", "es", "ja"]);
+    expect(v.run!.mtTargets).toEqual([]);
+    const [mt, ex] = v.rows.find((r) => r.code === "ja")!.badges;
+    expect([mt.state, ex.state]).toEqual(["idle", "active"]);
+    expect(ex.title).not.toMatch(/download limit/);
+    // The site's own languages fill the rest in its order; the overflow drops out.
+    expect(v.rows.find((r) => r.code === "fi")!.sub).toBe("over the download limit");
+    // Without machine translation on the server the frozen run still downloads Japanese.
+    expect(frozenSiteRun(v.run!, inp.tracks, false).tracks!.map((t) => t.id)).toContain("ja");
   });
   it("under Custom the cap's grey stays temporary: freeing a slot brings the cut track back", () => {
     const langs = ["en", "fr", "it", "es", "pt", "nl", "sv"];

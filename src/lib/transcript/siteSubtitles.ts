@@ -333,12 +333,15 @@ function model(input: SiteSubsInput, st: SiteSubsState) {
   }
   // Every wanted language has its badges by now (a target can lack a row), so `shown` is complete.
   for (const c of targets) langSources(c);
-  // A run downloads at most 8 tracks, kept in the site's order — and the transcript's own
-  // track is always one of them (cut off, the run would transcribe after all).
+  // A run downloads at most 8 tracks — the transcript's own track always (cut off, the run would
+  // transcribe after all), then the original language's and those of the languages you translate
+  // into, then what the site brings besides, each in the site's order: kept by site order alone,
+  // a site with many languages filled the cap with unasked ones and machine-translated yours.
   const ids = avail.filter((t) => shown.has(t.id)).map((t) => t.id);
-  const kept = new Set([
-    ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => id !== transcriptTrackId),
-  ].slice(0, 8));
+  const asked = new Set(avail.filter((t) => t.code === sp || tmap[t.code] === true).map((t) => t.id));
+  const kept = new Set(uniq([
+    ...ids.filter((id) => id === transcriptTrackId), ...ids.filter((id) => asked.has(id)), ...ids,
+  ]).slice(0, 8));
   const fetch = ids.filter((id) => kept.has(id));
   // A lit badge over the cap would claim a track the run never downloads: it greys out. A
   // language you translate into that it leaves without a source gets machine translation (the
