@@ -837,6 +837,24 @@ pub(crate) fn sink_gate(
     }
 }
 
+/// The per-step gate of a typing loop (the `direct` segments here, the Wayland portal characters):
+/// [`sink_gate`] on a step that probes focus, the cancel alone on one that does not. The probe also
+/// runs right before every line break's Return, so a cancel read before it let a cancel landing
+/// during it still press that Return (or type a whole further chunk) for the dropped transcript.
+pub(crate) fn typing_gate(
+    probe: bool,
+    own_window: impl FnOnce() -> bool,
+    cancelled: impl FnOnce() -> bool,
+) -> SinkGate {
+    if probe {
+        sink_gate(own_window, cancelled)
+    } else if cancelled() {
+        SinkGate::Cancelled
+    } else {
+        SinkGate::Proceed
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn inject(
     text: &str,
@@ -888,35 +906,39 @@ pub fn inject(
                     .into_iter()
                     .enumerate()
                 {
-                    // Before EVERY segment, the first included: at i == 0 this covers the gap
-                    // across `Enigo::new` and the focus probe above, as `paste` does at its
-                    // clipboard-write check.
-                    if injection_cancelled(epoch) {
-                        tracing::info!("[inject] cancelled mid-typing — stopping");
-                        return Ok(Landed::Yes);
-                    }
-                    if i > 0 {
-                        // Focus is re-asked per segment, not only before the first one: a 512-char
-                        // chunk is tens of milliseconds of typing, so a click into one of our own
-                        // windows part-way through a long transcript otherwise lands every
-                        // remaining chunk in that window's field.
-                        //
-                        // `Yes`, NOT `NothingWritten` — the segments before this one really did
-                        // land, and claiming otherwise makes the caller re-send the whole phrase
-                        // on top of them (P16's duplicate-text hazard). The untyped tail is
-                        // dropped, which is the same trade the mid-typing cancel above makes.
-                        //
-                        // One probe per segment, and each is an event-loop round trip (~0.1ms) — a
-                        // rounding error against `enigo.text()`. What it does add is a dependency
-                        // on the UI thread being responsive: if that stalls, typing stalls here.
-                        // Accepted, and consistent with the guards at the entry and the sinks,
-                        // which have always made the same unbounded call.
-                        if own_window_focused() {
+                    // The cancel is read before EVERY segment, the first included: at i == 0 this
+                    // covers the gap across `Enigo::new` and the focus probe above, as `paste`
+                    // does at its clipboard-write check. On a probed segment it is read AFTER the
+                    // probe (`typing_gate`): a cancel landing during the probe's main-thread round
+                    // trip otherwise still typed this segment, a line break's Return included.
+                    //
+                    // Focus is re-asked per segment (i > 0), not only before the first one: a
+                    // 512-char chunk is tens of milliseconds of typing, so a click into one of our
+                    // own windows part-way through a long transcript otherwise lands every
+                    // remaining chunk in that window's field.
+                    //
+                    // `Yes`, NOT `NothingWritten`, on both stops — the segments before this one
+                    // really did land, and claiming otherwise makes the caller re-send the whole
+                    // phrase on top of them (P16's duplicate-text hazard). The untyped tail is
+                    // dropped.
+                    //
+                    // One probe per segment, and each is an event-loop round trip (~0.1ms) — a
+                    // rounding error against `enigo.text()`. What it does add is a dependency on
+                    // the UI thread being responsive: if that stalls, typing stalls here.
+                    // Accepted, and consistent with the guards at the entry and the sinks, which
+                    // have always made the same unbounded call.
+                    match typing_gate(i > 0, own_window_focused, || injection_cancelled(epoch)) {
+                        SinkGate::Cancelled => {
+                            tracing::info!("[inject] cancelled mid-typing — stopping");
+                            return Ok(Landed::Yes);
+                        }
+                        SinkGate::OwnWindow => {
                             tracing::info!(
                                 "[inject] stopped mid-typing: our own window took focus"
                             );
                             return Ok(Landed::Yes);
                         }
+                        SinkGate::Proceed => {}
                     }
                     match seg {
                         TypeSeg::Text(chunk) => enigo.text(chunk),
@@ -1831,6 +1853,44 @@ mod tests {
         }
         assert_eq!(sink_gate(|| true, || false), SinkGate::OwnWindow);
         assert_eq!(sink_gate(|| false, || false), SinkGate::Proceed);
+    }
+
+    /// The typing loops (the `direct` segments, the Wayland portal characters) read the cancel
+    /// BEFORE their per-step own-window probe, and that probe sits right in front of every line
+    /// break: a cancel from the hotkey, the tray or an error abort landing during it still pressed
+    /// the cancelled transcript's Return, which submits a chat or form.
+    #[test]
+    fn a_cancel_during_the_typing_probe_stops_the_line_break() {
+        use super::{typing_gate, typing_segments, SinkGate, TypeSeg};
+        use std::cell::Cell;
+        let cancelled = Cell::new(false);
+        let mut pressed = Vec::new();
+        // The `direct` loop's shape: probe before every segment but the first.
+        for (i, seg) in typing_segments("Hi team,\nthanks", 512)
+            .into_iter()
+            .enumerate()
+        {
+            let gate = typing_gate(
+                i > 0,
+                || {
+                    cancelled.set(true); // the cancel lands while the probe runs
+                    false // focus stayed in the target app
+                },
+                || cancelled.get(),
+            );
+            if gate != SinkGate::Proceed {
+                assert_eq!(gate, SinkGate::Cancelled);
+                break;
+            }
+            pressed.push(seg);
+        }
+        assert_eq!(pressed, vec![TypeSeg::Text("Hi team,")]);
+
+        // A step that does not probe still reads the cancel, and never asks for focus.
+        let probe = || -> bool { panic!("no probe on this step") };
+        assert_eq!(typing_gate(false, probe, || true), SinkGate::Cancelled);
+        assert_eq!(typing_gate(false, probe, || false), SinkGate::Proceed);
+        assert_eq!(typing_gate(true, || true, || false), SinkGate::OwnWindow);
     }
 
     /// `persist_transcript` (the clipboard-only insert and the mid-function divert write through

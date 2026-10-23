@@ -53,7 +53,7 @@ pub struct WaylandTyper(pub Mutex<Option<mpsc::Sender<Job>>>);
 #[cfg(target_os = "linux")]
 mod imp {
     use super::{Job, WaylandTyper};
-    use crate::inject::{sink_gate, SinkGate};
+    use crate::inject::{sink_gate, typing_gate, SinkGate};
     use ashpd::desktop::{
         remote_desktop::{DeviceType, KeyState, RemoteDesktop, SelectDevicesOptions},
         PersistMode,
@@ -1481,15 +1481,12 @@ mod imp {
                 // probe. See the probe below for why it is periodic rather than per character.
                 let mut typed: usize = 0;
                 for c in text.chars() {
-                    // Between characters, not just before the job: this loop runs at roughly a
-                    // hundred characters a second and follows the user's focus as they move.
-                    if crate::inject::injection_cancelled(job.epoch) {
-                        tracing::info!("[wayland-inject] cancelled mid-typing — stopping");
-                        // RETURN, not break: `break` fell through to the unconditional auto-Enter
-                        // below, so a cancelled transcript was truncated mid-sentence and then
-                        // SUBMITTED. The virtual-keyboard path already returns here.
-                        return Ok(crate::inject::Landed::Yes);
-                    }
+                    // The cancel is read between characters, not just before the job: this loop
+                    // runs at roughly a hundred characters a second and follows the user's focus
+                    // as they move. On a probed character it is read AFTER the probe below
+                    // (`typing_gate`): a cancel landing during the probe's main-thread round trip
+                    // otherwise still typed that character, a line break's Return included.
+                    //
                     // Follow focus the same way, for the same reason: this loop runs for SECONDS
                     // on a long transcript, and a click into one of our own windows part-way
                     // through otherwise lands every remaining character there. The X11/Windows
@@ -1500,7 +1497,7 @@ mod imp {
                     //
                     // The already-typed prefix stays: re-sending it would duplicate text on screen
                     // (hazard P16), so the untyped tail is dropped and this reports `Yes` — the
-                    // same trade Q32 settled for the mid-typing cancel right above.
+                    // same trade Q32 settled for the mid-typing cancel.
                     //
                     // Below the `typeable_keys` lookup, not above it: an unreachable character
                     // `continue`s without advancing `typed`, so a probe placed above re-fired on
@@ -1509,14 +1506,31 @@ mod imp {
                     // Each key with its Caps plan up front: a char one of whose keys would need a
                     // Caps Lock tap on a keymap that remapped KEY_CAPSLOCK is skipped whole, never
                     // left half typed (see `caps_plan`).
+                    // An unreachable character types nothing, so its cancel is read at the next
+                    // character that does.
                     let Some(keys) = typeable_keys(c, &charmap, caps) else {
                         continue; // char not reachable on this layout — skip
                     };
-                    if probes_focus_before(typed, c) && own_window_focused(app) {
-                        tracing::info!(
-                            "[wayland-inject] stopped mid-typing: our own window took focus ({typed} chars in)"
-                        );
-                        return Ok(crate::inject::Landed::Yes);
+                    match typing_gate(
+                        probes_focus_before(typed, c),
+                        || own_window_focused(app),
+                        || crate::inject::injection_cancelled(job.epoch),
+                    ) {
+                        SinkGate::Cancelled => {
+                            tracing::info!("[wayland-inject] cancelled mid-typing — stopping");
+                            // RETURN, not break: `break` fell through to the unconditional
+                            // auto-Enter below, so a cancelled transcript was truncated
+                            // mid-sentence and then SUBMITTED. The virtual-keyboard path already
+                            // returns here.
+                            return Ok(crate::inject::Landed::Yes);
+                        }
+                        SinkGate::OwnWindow => {
+                            tracing::info!(
+                                "[wayland-inject] stopped mid-typing: our own window took focus ({typed} chars in)"
+                            );
+                            return Ok(crate::inject::Landed::Yes);
+                        }
+                        SinkGate::Proceed => {}
                     }
                     // Counted HERE, the moment this character is committed to being typed — not at
                     // the bottom of the body. The `spec.lock` case below (a capital reachable only
