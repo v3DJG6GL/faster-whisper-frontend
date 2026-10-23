@@ -16,6 +16,7 @@ import transcribeRunSrc from "../transcribeRun.ts?raw";
 import dictationSrc from "./dictation.ts?raw";
 import overlaySrc from "../../Overlay.tsx?raw";
 import { incompleteFlashMessage, incompleteSurface, liveActivationOf, translationOutcome } from "./streaming";
+import { commonPrefixLen } from "./typedBaseline";
 
 /** Blank out comments, strings and template literals — same length, so indexes
  *  into the original stay valid — so the brace scan can't be thrown off by a
@@ -512,14 +513,14 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // phrase, and its typed booking cleared lastPhraseDiverted, so the quiet-timer Enter pressed a
     // second one — in the window the user moved to so they could paste.
     const final = mask(finalBody);
-    const hold = final.search(/const spacingOnly = !typeOut\.trim\(\);\s+if \(spacingOnly && lastPhraseDiverted\) return;/);
+    const hold = final.search(/const spacingOnly = !typeOut\.trim\(\);\s+if \(spacingOnly && lastPhraseDiverted\) \{\s+injectedText = target;\s+return;\s+\}/);
     expect(hold, "a suffix-only final must stand down with a diverted phrase").toBeGreaterThanOrEqual(0);
     expect(hold).toBeGreaterThan(final.indexOf("if (!opensBlock) {"));
     expect(hold).toBeLessThan(final.indexOf("await beginInjection()"));
     expect(hold).toBeLessThan(final.indexOf("injectText({ text: typeOut,"));
     // Run the statements from the seam rule to the snapshot gate as plain JS: the task leaves
-    // before any snapshot or insert, with the baseline where it was (the whitespace goes out with
-    // the next delivered insert); without a divert, or with words, it falls through to the insert.
+    // before any snapshot or insert, with the baseline moved past the whitespace (dropped, see the
+    // next test); without a divert, or with words, it falls through to the insert.
     const start = finalBody.indexOf("const block = phrase.text.trim();");
     const end = finalBody.indexOf("if (t.method === \"paste\" && t.restoreClipboard && !clipDirty", start);
     expect(end, "the phrase's snapshot gate moved — update streaming.cancelAudit.test.ts").toBeGreaterThan(start);
@@ -530,12 +531,64 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     for (const suffix of ["\n", " ", " \n"]) {
       const r = run({ text: suffix }, false, new Set(["app"]), { appId: "app" }, "\n\n\n", "typed" + suffix, true);
       expect(r.out, `${JSON.stringify(suffix)} after a divert`).toBeUndefined();
-      expect(r.injectedText).toBe("typed");
+      expect(r.injectedText).toBe("typed" + suffix);
       expect(run({ text: suffix }, false, new Set(["app"]), { appId: "app" }, "\n\n\n", "typed" + suffix, false).out).toBe("insert");
     }
     expect(run({ text: " Next phrase." }, false, new Set(), { appId: "app" }, "\n\n\n", "typed Next phrase.", true).out).toBe("insert");
     // The stand-down it keeps is the one every Enter producer reads.
     expect(mask(fns.enqueueAutoEnter)).toContain("if (lastPhraseDiverted) return;");
+  });
+
+  it("an untranslated suffix-only final a divert stood down is dropped, so the next phrase opens without its Return", () => {
+    // The stand-down kept the baseline short of the "\n", and the next phrase typed it first:
+    // "\n Next." in one insert, a Return submitting the window that phrase went to — in the window
+    // the user moved to so they could paste the diverted phrase. Dropped, the next phrase types its
+    // own seam alone, as it does when the suffix comes in the diverted phrase's own final.
+    const start = finalBody.indexOf("const block = phrase.text.trim();");
+    const end = finalBody.indexOf("if (t.method === \"paste\" && t.restoreClipboard && !clipDirty", start);
+    expect(end, "the phrase's snapshot gate moved — update streaming.cancelAudit.test.ts").toBeGreaterThan(start);
+    const run = new Function(
+      "phrase", "sessionTranslation", "gapOwedApps", "t", "PHRASE_GAP", "target", "lastPhraseDiverted",
+      `let injectedText = "typed";\nconst out = (() => {\n${finalBody.slice(start, end)}\nreturn "insert";\n})();\nreturn { out, injectedText };`,
+    ) as (phrase: { text: string }, sessionTranslation: boolean, gapOwedApps: Set<string>, t: { appId: string }, gap: string, target: string, lastPhraseDiverted: boolean) => { out: string | undefined; injectedText: string };
+    for (const suffix of ["\n", " \n"]) {
+      const r = run({ text: suffix }, false, new Set(["app"]), { appId: "app" }, "\n\n\n", "typed" + suffix, true);
+      expect(r.out, `${JSON.stringify(suffix)} after a divert`).toBeUndefined();
+      // The next phrase's insert: the document past the typed baseline.
+      const next = "typed" + suffix + " Next.";
+      expect(next.slice(commonPrefixLen(r.injectedText, next)), `the phrase after ${JSON.stringify(suffix)}`).toBe(" Next.");
+    }
+  });
+
+  it("an untranslated suffix-only final withheld at the sink is dropped, so the next phrase opens without its Return", () => {
+    // Withheld (focus moved, the chord still held) Rust answers `landed: false, diverted: false`;
+    // our own window taking focus during the await answers the same. The skipped arm owed it like a
+    // phrase with words, so the next phrase typed "\n Next." — a Return ahead of it, in whatever
+    // window focus had moved to.
+    const tail = finalBody.slice(finalBody.indexOf("const delivered = !t.isSelf && landed;"));
+    const deliveredBlock = bodyAfter(tail, "if (delivered) ");
+    const afterAt = tail.indexOf(deliveredBlock) + deliveredBlock.length;
+    expect(tail.slice(afterAt).trimStart().startsWith("else {"), "the delivered block's skipped arm moved — update streaming.cancelAudit.test.ts").toBe(true);
+    const skipped = bodyAfter(tail.slice(afterAt), "else");
+    const src = tail.slice(0, afterAt + tail.slice(afterAt).indexOf(skipped) + skipped.length);
+    const run = new Function(
+      "t", "landed", "diverted", "spacingOnly", "target", "uttRec", "uttFrom", "oweUtterance",
+      `let injectedText = "typed";\n${src}\nreturn injectedText;`,
+    ) as (t: { isSelf: boolean; method: string; appId: string }, landed: boolean, diverted: boolean, spacingOnly: boolean, target: string, uttRec: null, uttFrom: number, oweUtterance: (rec: null, from: number) => void) => string;
+    const t = { isSelf: false, method: "paste", appId: "app" };
+    const owed: number[] = [];
+    const owe = (_rec: null, from: number) => {
+      owed.push(from);
+    };
+    for (const suffix of ["\n", " \n"]) {
+      const baseline = run(t, false, false, true, "typed" + suffix, null, 5, owe);
+      const next = "typed" + suffix + " Next.";
+      expect(next.slice(commonPrefixLen(baseline, next)), `the phrase after a withheld ${JSON.stringify(suffix)}`).toBe(" Next.");
+    }
+    // A skipped phrase with words is still owed: the baseline waits for the next delivered insert.
+    owed.length = 0;
+    expect(run(t, false, false, false, "typed Words.", null, 5, owe)).toBe("typed");
+    expect(owed).toEqual([5]);
   });
 
   it("an untranslated suffix-only final that types books no typed phrase, so a paid Enter is not re-armed", () => {

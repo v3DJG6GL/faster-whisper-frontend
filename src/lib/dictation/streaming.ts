@@ -2606,10 +2606,17 @@ async function ensureListeners(): Promise<void> {
             // While the last phrase sits on the clipboard its Enter is stood down, and the suffix
             // stands down with it, before the snapshot and the insert: a "\n" typed now is a Return
             // submitting the field without the diverted phrase, in the window the user went to
-            // paste it into. The baseline stays put, so the whitespace goes out with the next
-            // delivered insert.
+            // paste it into. It is dropped, not owed, like the translated sibling above and a
+            // withheld hard-break separator: the baseline moves past it. Left owed, it went out
+            // first in the next phrase's insert ("\n Next.") — the same Return, one phrase later,
+            // ahead of that phrase in the window it is typed into. Only whitespace lies past the
+            // baseline here, so nothing else is owed: an owed phrase or a carry is real text, which
+            // makes typeOut non-blank.
             const spacingOnly = !typeOut.trim();
-            if (spacingOnly && lastPhraseDiverted) return;
+            if (spacingOnly && lastPhraseDiverted) {
+              injectedText = target;
+              return;
+            }
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
             // stays un-advanced), and booking it here appended its translation to history twice.
@@ -2663,12 +2670,13 @@ async function ensureListeners(): Promise<void> {
             // and a divert made that the clipboard's owner over the user's copy, or over the phrase
             // diverted just before it that they were told to paste, then stood the tail's Enter
             // down for it. Like the hard-break separator it has nothing to recover, so it is
-            // withheld instead. Withheld before anything is written, Rust answers `landed: false`:
-            // the baseline stays un-advanced and the whitespace goes out with the next delivered
-            // insert. Withheld at the paste chord (our own window took focus after the paste
-            // write), it answers `landed: true, diverted: false` and restores the clipboard
-            // itself: the task cannot tell that from a typed one, so it advances past whitespace
-            // that never landed, and the delivered block below books no typed phrase for it.
+            // withheld instead. Withheld before anything is written, Rust answers `landed: false`,
+            // and the whitespace is dropped (see the skipped arm below), never re-sent ahead of
+            // the next phrase into the window focus moved to. Withheld at the paste chord (our
+            // own window took focus after the paste write), it answers `landed: true, diverted:
+            // false` and restores the clipboard itself: the task cannot tell that from a typed
+            // one, so it advances past whitespace that never landed, and the delivered block
+            // below books no typed phrase for it.
             const clipForm = sessionTranslation ? block : typeOut.trim();
             const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
             try {
@@ -2814,6 +2822,12 @@ async function ensureListeners(): Promise<void> {
             } else {
               // Skipped (our own window, or the sink refused with nothing written): the baseline
               // and the carry stay un-advanced, so the next delivered insert re-sends this phrase.
+              // Not the server's suffix alone, withheld (focus moved, the chord still held) or
+              // skipped in our own window during the await: it is dropped like the stand-down
+              // above. Re-sent, its "\n" was a Return ahead of the next phrase, in whatever window
+              // that phrase goes to. No carry or owed phrase rides with it (spacingOnly), and its
+              // utterance's delta is whitespace, so it owes no record either.
+              if (spacingOnly) injectedText = target;
               oweUtterance(uttRec, uttFrom);
             }
           }
