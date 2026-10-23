@@ -868,6 +868,34 @@ describe("dropping a correction a re-translate was made from", () => {
     setSegmentEdit("fromedit-8", 0, null);
     expect(stale("fromedit-8")).toEqual({ 0: true });
   });
+  it("a new correction after the revert or Discard, then its revert or Discard, keeps the line stale", () => {
+    // Revert, re-correct, Discard.
+    openHistoryRecord(recOf("recorrect-1"));
+    setSegmentEdit("recorrect-1", 0, "I read the book");
+    mergeSegmentTranslations("recorrect-1", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    setSegmentEdit("recorrect-1", 0, null);
+    setSegmentEdit("recorrect-1", 0, "I read a book");
+    clearEdits("recorrect-1");
+    expect(stale("recorrect-1")).toEqual({ 0: true });
+
+    // Revert, re-correct, revert.
+    openHistoryRecord(recOf("recorrect-2"));
+    setSegmentEdit("recorrect-2", 0, "I read the book");
+    mergeSegmentTranslations("recorrect-2", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    setSegmentEdit("recorrect-2", 0, null);
+    setSegmentEdit("recorrect-2", 0, "I read a book");
+    setSegmentEdit("recorrect-2", 0, null);
+    expect(stale("recorrect-2")).toEqual({ 0: true });
+
+    // Discard, re-correct, Discard.
+    openHistoryRecord(recOf("recorrect-3"));
+    setSegmentEdit("recorrect-3", 0, "I read the book");
+    mergeSegmentTranslations("recorrect-3", { 0: { de: "Ich lese das Buch" } }, { targets: ["de"] });
+    clearEdits("recorrect-3");
+    setSegmentEdit("recorrect-3", 0, "I read a book");
+    clearEdits("recorrect-3");
+    expect(stale("recorrect-3")).toEqual({ 0: true });
+  });
   const fromEdit = (id: string) => useTranscribeRun.getState().translatedFromEdit[id] ?? {};
   const twoLines = (id: string): TranscriptRecord => {
     const rec = recOf(id);
