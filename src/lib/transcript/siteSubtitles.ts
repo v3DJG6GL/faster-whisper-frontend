@@ -671,8 +671,11 @@ export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: Site
 
 /** "Translate into" for one language: picking it means machine-translating into it. */
 export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: string, on?: boolean): SiteChange {
-  const m = model(input, st);
-  const want = on ?? !m.targets.includes(code);
+  // Switching on reads only the target map: the model (a whole render) is built only to tell
+  // whether the language is on now or to find its site tracks to drop — Add language and
+  // freeAdds' trial per row switch on.
+  const m = on === true ? null : model(input, st);
+  const want = m ? (on ?? !m.targets.includes(code)) : true;
   let next = st;
   if (st.sel) {
     const sel = { ...st.sel, ["mt:" + code]: want };
@@ -681,7 +684,7 @@ export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: stri
     // a track's candidate twin on the Original row, which has no language in codeOf. Also
     // when no candidate badge shows now: a pick taken while the spoken language was unknown
     // would light it again once it is unknown again.
-    if (!want) {
+    if (m && !want) {
       for (const k of Object.keys(m.codeOf)) {
         if (m.codeOf[k] !== code) continue;
         sel[k] = false;
@@ -691,7 +694,7 @@ export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: stri
     }
     next = { ...st, sel };
   }
-  return fromMap(input, next, { ...m.tmap, [code]: want });
+  return fromMap(input, next, { ...(m ? m.tmap : targetMap(input, st)), [code]: want });
 }
 
 /** "Add language": a machine-translated language, its row at the bottom. */
@@ -727,11 +730,11 @@ export function setTargets(input: SiteSubsInput, st: SiteSubsState, next: readon
 }
 
 /** The site languages the translation chips' picker may add although machine translation is
- *  at the server's limit: trialled through setTargets, a language qualifies only when it then
- *  keeps an active site source and no extra machine translation runs. Under Generate (site
- *  tracks idle) or past the download limit it would be a chip with nothing behind it. Costs one
- *  derive per candidate, so ask only at the limit; `view` = derive(input, st) when the caller
- *  already has it. */
+ *  at the server's limit: trialled as the picker adds it (setTargets), a language qualifies
+ *  only when it then keeps an active site source and no extra machine translation runs. Under
+ *  Generate (site tracks idle) or past the download limit it would be a chip with nothing behind
+ *  it. Costs one model pass per candidate, so ask only at the limit; `view` = derive(input, st)
+ *  when the caller already has it. */
 export function freeAdds(input: SiteSubsInput, st: SiteSubsState, view: SiteSubsView = derive(input, st)): string[] {
   const chips = view.chips.map((c) => c.code);
   const before = mtUsed(view);
@@ -739,7 +742,9 @@ export function freeAdds(input: SiteSubsInput, st: SiteSubsState, view: SiteSubs
   for (const r of view.rows) {
     if (!r.code || chips.includes(r.code)) continue;
     if (!r.badges.some((b) => b.kind === "existing" || b.kind === "auto")) continue;
-    const ch = setTargets(input, st, [...chips, r.code]);
+    // setTargets(input, st, [...chips, r.code]) as the picker calls it: with every chip kept and
+    // r.code no spoken language (no row), that is this one addLanguage, minus setTargets' model pass.
+    const ch = addLanguage(input, st, r.code);
     // The trial's titles do not matter: model, not derive, spares derive's limit pass.
     const v = model({ ...input, targets: ch.targets }, ch.state).view;
     const chip = v.chips.find((c) => c.code === r.code);

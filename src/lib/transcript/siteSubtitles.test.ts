@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
+  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, toggleTarget,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
@@ -656,6 +656,39 @@ describe("tracks and switches", () => {
     // Generate: the site track stays idle, so es would need the full machine translation.
     const [i2, s2] = apply(i1, pickPolicy(i1, s1, "generate"));
     expect(freeAdds(i2, s2)).not.toContain("es");
+  });
+  it("freeAdds trials each row as the chips' picker adds it, on a link with a long auto track list", () => {
+    // freeAdds ran setTargets per row, and toggleTarget built a whole model to switch a language
+    // on: three model passes per row, which a link with ~160 auto tracks at the translation
+    // limit paid on every render. Each shortcut gives what the long way gives.
+    const codes = Array.from({ length: 200 }, (_, n) => String.fromCharCode(97 + Math.floor(n / 26), 97 + (n % 26)))
+      .filter((c) => !["de", "en", "es", "fr"].includes(c));
+    const tracks = [...codes.slice(0, 160).map((l) => tr("a-" + l, l, { kind: "auto" })), ...codes.slice(150, 170).map((l) => tr("m-" + l, l))];
+    const inp = input({ tracks, spoken: "en", targets: ["de", "fr", "es"], maxTargets: 3 });
+    const s0 = { ...initialSiteState(inp.targets), auto: true };
+    for (const policy of ["both", "custom"] as const) {
+      const [i, st] = apply(inp, pickPolicy(inp, s0, policy));
+      const view = derive(i, st);
+      const chips = view.chips.map((c) => c.code);
+      expect(mtUsed(view), policy).toBe(3);
+      const rows = view.rows.filter((r) => r.code && !chips.includes(r.code) && r.badges.some((b) => b.kind === "existing" || b.kind === "auto"));
+      expect(rows.length, policy).toBeGreaterThan(150);
+      if (policy === "both") {
+        // The whole trial as the picker runs it: setTargets, then derive (whose limit pass only
+        // retitles). Under Prefer or Custom each such derive probes every idle row: too slow here.
+        const want = rows.map((r) => r.code!).filter((c) => {
+          const ch = setTargets(i, st, [...chips, c]);
+          const v = derive({ ...i, targets: ch.targets }, ch.state);
+          return v.chips.find((x) => x.code === c)?.parts.some((p) => p.on && p.kind !== "mt") && mtUsed(v) <= mtUsed(view);
+        });
+        expect(want).toHaveLength(rows.length);
+        expect(freeAdds(i, st, view)).toEqual(want);
+      } else {
+        // Under Custom no row's language is a target yet, so the plain toggle, which builds the
+        // model, switches each on too: switching on without it gives the same change.
+        for (const r of rows) expect(toggleTarget(i, st, r.code!, true), r.code!).toEqual(toggleTarget(i, st, r.code!));
+      }
+    }
   });
   it("a preset gives the translation slot to a language with no other source first", () => {
     // de is a target the site covers; fr was added and only machine translation can bring it.
