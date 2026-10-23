@@ -506,6 +506,27 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(run({ text: "\n" }, false, new Set(), { appId: "app" }, "\n\n\n", "typed\n").out).toBe("insert");
   });
 
+  it("a live phrase resolved to our own window is owed before its translate, not translated for nothing", () => {
+    // An own-window insert is never delivered, so the baseline never moves: translating it first
+    // re-translated everything since focus came to us on every final (GPU work growing per phrase,
+    // the queue held up to the live ceiling, a timeout raising the "translation failed" doorway).
+    const final = mask(finalBody);
+    const exit = /^if \(t\.isSelf\) \{\s+oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/;
+    for (const [open, translate] of [
+      ["if (phraseClip.length > 0 && grew) {", "translatePhrase(phraseClip"],
+      ["if (toType.length > 0 || carried) {", "translatePhrase(body"],
+    ] as const) {
+      const at = final.indexOf(open);
+      const call = final.indexOf(translate);
+      expect(at, `${open} moved — update streaming.cancelAudit.test.ts`).toBeGreaterThanOrEqual(0);
+      expect(call).toBeGreaterThan(at);
+      // First thing in the branch: nothing is translated, copied or typed for it, and the
+      // baseline and the carry stay put for the next delivered insert to re-send.
+      expect(final.slice(at + open.length, call).trimStart(), `${translate} must follow the own-window exit`).toMatch(exit);
+    }
+    expect(final.match(/if \(t\.isSelf\) \{\s+oweUtterance\(uttRec, uttFrom\);\s+return;\s+\}/g) ?? []).toHaveLength(2);
+  });
+
     it("a delivered clipboard phrase advances the typed baseline (guarded by clipFrom)", () => {
     const block = bodyAfter(finalBody, "if (!t.isSelf && landed)");
     expect(block).toContain("commonPrefixLen(injectedText, target) >= clipFrom");

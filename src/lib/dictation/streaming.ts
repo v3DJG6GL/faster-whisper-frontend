@@ -2413,6 +2413,13 @@ async function ensureListeners(): Promise<void> {
           // final (the flush final the drain emits at hands-free end), so a clipboard hands-free session that ends
           // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
           if (phraseClip.length > 0 && grew) {
+            // Our own window: the guard copies nothing there, so the window is owed before its
+            // translate rather than translated for a copy that never happens (the typed branch
+            // below says why that costs). A later final's copy re-sends the whole window.
+            if (t.isSelf) {
+              oweUtterance(uttRec, uttFrom);
+              return;
+            }
             // T2T live: translate the outbound copy only; clipBaseline and the
             // grew guard keep working in original text.
             const { text: clipOut, translated, byLang } = await translatePhrase(phraseClip, cfg, {
@@ -2540,6 +2547,19 @@ async function ensureListeners(): Promise<void> {
           // is worth an insert — an empty re-sent final is the first chance to type it.
           const carried = carryText;
           if (toType.length > 0 || carried) {
+            // Our own window holds focus: Rust's guard writes nothing there and the insert is
+            // never delivered (`delivered` below), so the phrase is skipped BEFORE its translate,
+            // not after. Translated first, every final re-translated everything past the un-moved
+            // baseline (all the phrases since focus came to us, the carry included) for text
+            // nobody would read: GPU work that grew with each phrase, the serial queue held for up
+            // to the live ceiling each time, and a timeout raising the "translation failed"
+            // doorway — and focus leaving us during it diverted the block to a clipboard write
+            // nothing booked. The baseline and the carry stay put, so the next delivered insert
+            // re-sends it all, as before.
+            if (t.isSelf) {
+              oweUtterance(uttRec, uttFrom);
+              return;
+            }
             const body = withCarry(carried, carrySep, toType);
             // T2T live: translate the outbound copy only. injectedText still
             // advances by the ORIGINAL document below, so per-phrase diffing,
@@ -2702,8 +2722,9 @@ async function ensureListeners(): Promise<void> {
             // window (guard-skipped, !t.isSelf) clobbered nothing either.
             //
             // `landed` is the SINK's answer, and `t.isSelf` is the answer we resolved ~1s earlier.
-            // Both are needed. `t.isSelf` covers a start-time skip; `landed` covers the case this
-            // block used to get wrong — our own window taking focus DURING the insert, where
+            // Both are needed. `t.isSelf` covers a start-time skip (the task returns for one before
+            // its translate, above; it stays here so `delivered` reads whole); `landed` covers the
+            // case this block used to get wrong — our own window taking focus DURING the insert, where
             // `t.isSelf` is false because we really did resolve another window, and Rust's skip is
             // indistinguishable from success. Booking that phrase advanced `injectedText`, so the
             // next final's common-prefix slice skipped it and it was dropped for good — with a
