@@ -406,12 +406,17 @@ const SENT_OPENER = new Map(Object.entries({
     "não em para com sem",
 }).map(([l, ws]) => [l, new Set(ws.split(" "))]));
 const ANY_OPENER = new Set([...SENT_OPENER.values()].flatMap((ws) => [...ws]));
+/** The words a Romance elision stands for ("c'" = "ce", "l'" = "le"/"la"), by its letters. Not
+ *  "d'" or "o'": a surname's prefix (D'Angelo, O'Brien), so the initial before it is held. */
+const ELIDED: Record<string, string[]> = {
+  j: ["je"], c: ["ce"], l: ["le", "la", "lo"], qu: ["que"], n: ["ne"], s: ["se", "si"], m: ["me"], t: ["te"],
+};
 
 /** The word `before` a capital and its stop makes it a name's initial: another initial ("J. K.
  *  Rowling") in every language, a capitalised word ("John F. Kennedy") not in a language that
  *  capitalises its nouns ("Plan B. Dann") nor when `after` (the text after the stop) opens with a
- *  sentence opener ("Option B. Then"). A word ending on a clause mark is no first name: "Answer:
- *  A. How" ends one. */
+ *  sentence opener ("Option B. Then"), a contraction or elision of one too ("Plan B. I'm", "Plan
+ *  B. C'est"). A word ending on a clause mark is no first name: "Answer: A. How" ends one. */
 function nameBefore(before: string, after: string, lang?: string): boolean {
   const b = before.replace(/^[^\p{L}\p{N}]+/u, "");
   if (INITIAL.test(b)) return true;
@@ -419,7 +424,13 @@ function nameBefore(before: string, after: string, lang?: string): boolean {
   const base = primarySubtag(lang);
   if (NOUN_CAPS.has(base)) return false;
   const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
-  return !(SENT_OPENER.get(base) ?? ANY_OPENER).has(w);
+  const opener = SENT_OPENER.get(base) ?? ANY_OPENER;
+  if (opener.has(w)) return false;
+  // A contraction opens one as its pronoun does ("Plan B. I'm", "Gate B. You'll", "Option B.
+  // We're"), an elision as its article or pronoun does ("Plan B. C'est", "J'ai", "L'idée").
+  const head = w.replace(/'(?:m|ll|ve|d|re|s)$/, "");
+  const el = /^(j|c|l|qu|n|s|m|t)'\p{L}/u.exec(w)?.[1];
+  return !((head !== "" && opener.has(head)) || (el !== undefined && ELIDED[el].some((x) => opener.has(x))));
 }
 
 /** Languages that write an ordinal with a dot ("am 3. Mai"), by base subtag. */

@@ -1983,6 +1983,36 @@ describe("cutByShare", () => {
       }
     }
   });
+  it("a letter after a capitalised noun ends a sentence before a contracted or elided opener; a name's apostrophe surname stays held", () => {
+    // Only the opener as listed counted ("it's", "that's"): "I'm", "You'll", "We're" and the
+    // elided "C'est", "J'ai", "L'idea" read as a surname, so the cut and the wrap took the
+    // opener's first word onto the line with "B.".
+    const ROWS: [text: string, lang: string, cut: string, wrap: string][] = [
+      ["We went with Plan B. I'm sure it was right", "en",
+        "We went with Plan B. | I'm sure it was right", "We went with Plan B. | I'm sure it was right"],
+      ["We picked Gate B. You'll board at noon", "en",
+        "We picked Gate B. | You'll board at noon", "We picked Gate B. | You'll board at noon"],
+      ["We went with Option B. We're sure of it", "en",
+        "We went with Option B. | We're sure of it", "We went with Option B. | We're sure of it"],
+      ["On a choisi le Plan B. C'est la bonne idée", "fr",
+        "On a choisi le Plan B. | C'est la bonne idée", "On a choisi le Plan B. | C'est la bonne idée"],
+      ["On a choisi le Plan B. J'ai une bonne idée", "fr",
+        "On a choisi le Plan B. | J'ai une bonne idée", "On a choisi le Plan B. | J'ai une bonne idée"],
+      ["Usiamo il Piano B. L'idea è sempre la stessa", "it",
+        "Usiamo il Piano B. | L'idea è sempre la stessa", "Usiamo il Piano B. | L'idea è sempre la stessa"],
+      // A surname with an apostrophe keeps its initial, as before.
+      ["We met Robert B. D'Angelo at the big party", "en",
+        "We met Robert B. D'Angelo | at the big party", "We met Robert B. D'Angelo | at the big party"],
+      ["We met Mary J. O'Brien at the old airport", "en",
+        "We met Mary J. O'Brien | at the old airport", "We met Mary J. O'Brien | at the old airport"],
+    ];
+    for (const [t, lang, cut, wrap] of ROWS) {
+      for (const l of [lang, undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, 30, 2, 0, undefined, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap]);
+      }
+    }
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
