@@ -605,6 +605,11 @@ describe("wrapLines", () => {
       expect(lines.some((l) => /^[!  ]|[  ]$/.test(l)), JSON.stringify(lines)).toBe(false);
     }
   });
+  it("a whole cue that is one such no-break-joined word keeps it whole under a speaker name", () => {
+    // As the only token, it took wrapWith's own one-token branch, which still wrapped per unit:
+    // "京a" / "vaitxx", the no-break space deleted and the word cut where it holds.
+    expect(wrapLines("京 avaitxx", 10, 2, 4)).toEqual(["京 avaitxx"]);
+  });
   it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
     const t = "We met the people from Procter & Gamble at the big conference yesterday";
     // At 38 the only seam keeping both lines within the cap is after the "&".

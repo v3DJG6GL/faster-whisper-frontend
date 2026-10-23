@@ -1119,9 +1119,11 @@ function wrapWith(text: string, cpl: number, firstReserve: number, q: QuoteCtx |
   }
   if (toks.length < 2) {
     // One token: a spaced-script word pushed over only by the prefix stays whole, as in
-    // wrapTokens; an unspaced run wraps per unit.
+    // wrapTokens; an unspaced run wraps per unit. A token holding a no-break space ("京 avait")
+    // stays whole too, as in wrapTokens: units drop whitespace, so the per-unit wrap deleted it
+    // and cut where it holds.
     const u = tokenUnits(t, hyphen);
-    return u.length < 2 || (t.length <= cpl && !UNSPACED.test(t) && !BRK_SYL.test(t))
+    return u.length < 2 || (t.length <= cpl && (/\s/.test(t) || (!UNSPACED.test(t) && !BRK_SYL.test(t))))
       ? [t]
       : wrapTokens(u, [], cpl, len, firstReserve);
   }
