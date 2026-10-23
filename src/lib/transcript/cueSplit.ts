@@ -67,6 +67,12 @@ export interface QuoteCtx {
    *  its edge by them (an inch mark after the 6 of the cue before), as the segment's own count does. */
   prev?: string;
   next?: string;
+  /** Whether, in the segment after the text, a ” closes a “ (no “ or „ first) and a ’ closes a
+   *  ‘ (singleCloses): quoteSeams moves a “ or ‘ glued to a word onto the quotation it opens only
+   *  when its closer comes, and a cue cut inside the quotation holds none. */
+  closes?: { double?: true; single?: true };
+  /** Whether a German „ or ‚ before the text is still open: its “ or ‘ closes it, opening nothing. */
+  lowOpen?: { double?: true; single?: true };
 }
 
 export interface CueGrid {
@@ -1239,6 +1245,12 @@ function quotesIn(whole: string): (at: number, e: number) => QuoteCtx | undefine
   /** Counted quotes of each kind before index i. */
   let dq: number[] | null = null;
   const sq = [0];
+  /** From index i on: whether a ” / a closing ’ comes first (QuoteCtx.closes); before i:
+   *  whether a „ / ‚ is open (QuoteCtx.lowOpen). */
+  const dc: boolean[] = [];
+  const sc: boolean[] = [];
+  const ld = [false];
+  const ls = [false];
   const L = whole.length;
   return (at, e) => {
     if (!dq) {
@@ -1247,12 +1259,22 @@ function quotesIn(whole: string): (at: number, e: number) => QuoteCtx | undefine
       for (let j = 0; j < L; j++) {
         dq.push(dq[j] + (f[j] && whole[j] === '"' ? 1 : 0));
         sq.push(sq[j] + (f[j] && whole[j] === "'" ? 1 : 0));
+        ld.push(whole[j] === "\u201e" || (ld[j] && whole[j] !== "\u201c"));
+        ls.push(whole[j] === "\u201a" || (ls[j] && whole[j] !== "\u2018"));
+      }
+      dc[L] = sc[L] = false;
+      for (let j = L - 1; j >= 0; j--) {
+        const c = whole[j];
+        dc[j] = c === "\u201d" || (c !== "\u201c" && c !== "\u201e" && dc[j + 1]);
+        sc[j] = c === "\u2018" || c === "\u201a" ? false : closingSingle(whole, j) || sc[j + 1];
       }
     }
     const q: QuoteCtx = { before: { '"': dq[at], "'": sq[at] }, after: { '"': dq[L] - dq[e], "'": sq[L] - sq[e] } };
     if (/[A-Za-z0-9]/.test(whole[at - 1] ?? "")) q.prev = whole[at - 1];
     if (/[A-Za-z0-9]/.test(whole[e] ?? "")) q.next = whole[e];
-    return q.before['"'] + q.before["'"] + q.after['"'] + q.after["'"] || q.prev || q.next ? q : undefined;
+    if (dc[e] || sc[e]) q.closes = { ...(dc[e] ? { double: true } : {}), ...(sc[e] ? { single: true } : {}) };
+    if (ld[at] || ls[at]) q.lowOpen = { ...(ld[at] ? { double: true } : {}), ...(ls[at] ? { single: true } : {}) };
+    return q.before['"'] + q.before["'"] + q.after['"'] + q.after["'"] || q.prev || q.next || q.closes || q.lowOpen ? q : undefined;
   };
 }
 
@@ -1263,14 +1285,28 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
   return partsAt(whole, parts).map((at, k) => (at < 0 ? undefined : qa(at, at + parts[k].length)));
 }
 
-/** Whether a ’ from `t[from]` on closes a ‘ before it: none of ‘ or ‚ comes first, and an
- *  apostrophe between two Latin letters (it’s, don’t) closes nothing. */
-function singleCloses(t: string, from: number): boolean {
+/** Whether `t[k]` is a ’ that may close a ‘: an apostrophe between two Latin letters (it’s,
+ *  don’t) closes nothing. `next` = the character after `t` (a cue's QuoteCtx.next). */
+function closingSingle(t: string, k: number, next?: string): boolean {
+  return t[k] === "\u2019" && !(/\p{Script=Latin}/u.test(t[k - 1] ?? "") && /\p{Script=Latin}/u.test(t[k + 1] ?? next ?? ""));
+}
+
+/** Whether a ’ from `t[from]` on closes a ‘ before it: none of ‘ or ‚ comes first
+ *  (closingSingle); undefined when `t` ends first. */
+function singleCloses(t: string, from: number, next?: string): boolean | undefined {
   for (let k = from; k < t.length; k++) {
     if (t[k] === "\u2018" || t[k] === "\u201a") return false;
-    if (t[k] === "\u2019" && !(/\p{Script=Latin}/u.test(t[k - 1]) && /\p{Script=Latin}/u.test(t[k + 1] ?? ""))) return true;
+    if (closingSingle(t, k, next)) return true;
   }
-  return false;
+  return undefined;
+}
+
+/** Whether a German low opener `low` („ or ‚) is open at `t[j]`, a “ or ‘: it comes after the
+ *  last of `t[j]`'s kind before j; with neither in `t`, the segment's (`open`, QuoteCtx.lowOpen). */
+function lowOpenAt(t: string, j: number, low: string, open: true | undefined): boolean {
+  const l = t.lastIndexOf(low, j);
+  const h = t.lastIndexOf(t[j], j - 1);
+  return l < 0 && h < 0 ? !!open : l > h;
 }
 
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
@@ -1298,12 +1334,18 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         else if (j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1
           && (closer || (/[\p{L}\p{N}]/u.test(p) && !skippedOpener(t, flags, j, q)))) e = end;
         // A typographic “ glued to a word or number ("2024“春晚”", iPhone“灵动岛”) opens when a ”
-        // closes it: German and Czech close with “ („Hallo“東京) and never write ”.
-        else if (j === end - 1 && t[j] === "\u201c" && /[\p{L}\p{N}]/u.test(p) && /^[^\u201c\u201e]*\u201d/u.test(t.slice(end))) e = end;
+        // closes it: German and Czech close with “ („Hallo“東京) and never write ”, nor when it
+        // closes an open „ (a ” comes later: „Hallo“東京 … ”ok”).
+        // A cue cut inside the quotation holds neither: its segment decides (QuoteCtx).
+        else if (j === end - 1 && t[j] === "\u201c" && /[\p{L}\p{N}]/u.test(p)
+          && (/[\u201c\u201e\u201d]/u.exec(t.slice(end))?.[0] === "\u201d"
+            || (!/[\u201c\u201e\u201d]/u.test(t.slice(end)) && !!q?.closes?.double))
+          && !lowOpenAt(t, j, "\u201e", q?.lowOpen?.double)) e = end;
         // So does a ‘ (Chinese nests a quotation in one: iPhone‘灵动岛’) when a ’ closes it — not
         // one closing a German ‚ (‚Hallo‘東京), nor an apostrophe between Latin letters (it’s).
-        else if (j === end - 1 && t[j] === "\u2018" && /[\p{L}\p{N}]/u.test(p) && singleCloses(t, end)
-          && t.lastIndexOf("\u201a", j) <= t.lastIndexOf("\u2018", j - 1)) e = end;
+        else if (j === end - 1 && t[j] === "\u2018" && /[\p{L}\p{N}]/u.test(p)
+          && (singleCloses(t, end, q?.next) ?? !!q?.closes?.single)
+          && !lowOpenAt(t, j, "\u201a", q?.lowOpen?.single)) e = end;
         if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
           yield [t.slice(s, j), s];
           s = j;

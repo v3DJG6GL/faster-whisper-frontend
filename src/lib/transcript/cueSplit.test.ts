@@ -784,6 +784,81 @@ describe("wrapLines", () => {
     expect(wrapLines("Er sagte ‚Hallo‘東京ist schön ok’ dann", 8, 4, 0, undefined, "de"))
       .toEqual(["Er sagte", "‚Hallo‘", "東京ist", "schön", "ok’ dann"]);
   });
+  /** A segment of the words of `ws` ("|"-separated: unspaced zh, a Latin word timed with a space
+   *  before it; else spaced), 0.35 s each, a 1.5 s pause after word `pause`. */
+  const timedSeg = (ws: string, pause: number, lang = "zh", translations?: Record<string, string>): BatchResult => {
+    let t = 0;
+    const zh = lang === "zh";
+    const words = ws.split(zh ? "|" : " ").map((w, i) => {
+      const o = { word: (!zh || (i && /^[A-Za-z“‘]/.test(w)) ? " " : "") + w, start: t, end: t + 0.3 };
+      t += 0.35 + (i === pause ? 1.5 : 0);
+      return o;
+    });
+    const text = zh ? ws.replace(/\|/g, "") : ws;
+    return { text, language: lang, words, segments: [{ start: 0, end: t, text: " " + text, ...(translations ? { translations } : {}) }] };
+  };
+  const zhSeg = (ws: string, pause: number) => timedSeg(ws, pause);
+  /** Each cue's lines at `cpl` as the export wraps them (its QuoteCtx), joined by " / ". */
+  const cueWraps = (r: BatchResult, cpl: number, track = "orig", timing: "same" | "own" = "same") => {
+    const g = buildCues(r, { ...STD, timing }, [track]);
+    const list = track === "orig" ? g.cues : timing === "own" ? g.own[track] : g.cues;
+    return list.map((c) => {
+      const mine = track === "orig" || timing === "own";
+      return wrapLines(mine ? c.text : c.tr[track], cpl, 3, 0, mine ? c.q : c.trq?.[track], "zh").join(" / ");
+    });
+  };
+  it("a typographic “ or ‘ glued to a Latin word rides with the quotation its closer ends in a later cue (QuoteCtx.closes)", () => {
+    // The closer was looked for in the cue's own text only: cut inside the quotation, the cue's
+    // line ended on "iPhone“" although the segment closes it.
+    for (const [o, c] of [["“", "”"], ["‘", "’"]]) {
+      const r = zhSeg(`他|说|我|买|了|iPhone|${o}灵|动|岛|功|能|真|的|非|常|好|用|而|且|很|方|便|它${c}|然|后|走|了`, 16);
+      expect(cueWraps(r, 8)[0]).toBe(`他说我买了 / iPhone / ${o}灵动岛功能 / 真的非常好用`);
+      expect(cueWraps(r, 12)[0]).toBe(`他说我买了iPhone / ${o}灵动岛功能真的非常好用`);
+      expect(cueWraps(r, 16)[0]).toBe(`他说我买了iPhone / ${o}灵动岛功能真的非常好用`);
+    }
+  });
+  it("a translation part cut inside a typographic “…” or ‘…’ quotation wraps its opener with it (QuoteCtx.closes)", () => {
+    // cutByShare (same timing) or an own-timed stretch: the part's lines ended on "iPhone“" alike.
+    for (const [o, c] of [["“", "”"], ["‘", "’"]]) {
+      const en = "The glacier behind me has lost almost forty percent of its volume since nineteen eighty and the scientists say so";
+      const zh = `我们讨论的是新出的iPhone${o}灵动岛功能真的很好用这个设计大家都很喜欢${c}然后我们继续聊天了`;
+      const tr = timedSeg(en, 8, "en", { zh });
+      for (const timing of ["same", "own"] as const) {
+        expect(cueWraps(tr, 8, "zh", timing)[0], timing).toBe(`我们讨论的是新 / 出的iPhone / ${o}灵动岛功能`);
+      }
+    }
+  });
+  it("shape matrix: a typographic “ or ‘ whose closer is in no later cue stays as before", () => {
+    // No closer anywhere, an apostrophe (it’s) or a ‘ before the next ’ (rock‘n’roll): no quotation opens.
+    const tail = "|而|且|很|方|便|它|然|后|走|了";
+    const head = "他|说|我|买|了|iPhone|“灵|动|岛|功|能|真|的|非|常|好|用";
+    for (const [ws, first] of [
+      [head + tail, "他说我买了iPhone“"],
+      [head.replace("“", "‘") + "|而|且|it’s|很|方|便|然|后|走|了", "他说我买了iPhone‘"],
+      [head.replace("“", "‘") + "|喜|欢|rock|‘n’|roll|方|便|’|然|后", "他说我买了iPhone‘"],
+    ]) {
+      expect(cueWraps(zhSeg(ws, 16), 12)[0]).toBe(`${first} / 灵动岛功能真的非常好用`);
+    }
+    // A ‘ closing a German ‚ of an earlier cue, a ’ in a later cue: it stays on what it closes.
+    const de = "他|说|‚|你|好|朋|友|们|大|家|都|很|好|我|们|Hallo‘|东|京|很|好";
+    expect(cueWraps(zhSeg(de + "|而|且|很|方|便|它|真|的|非|常|好|用|ok’|然|后|走|了", 14), 8)[1]).toBe("Hallo‘东 / 京很好而且很方");
+    // German „Hallo“ and ‚Hallo‘ in spaced text, their cue cut before a later ” or ’.
+    const g = (t: string, cpl: number) => buildCues(timedSeg(t, 6, "de"), STD, ["orig"]).cues
+      .map((c) => wrapLines(c.text, cpl, 3, 0, c.q, "de").join(" / "));
+    const rest = " wir alle zusammen nach Hause und wir haben dort sehr lange gegessen";
+    const hallo = g("Er sagte „Hallo“東京に行きました und dann gingen" + rest + " ”ok” sagte er", 8);
+    expect(hallo[0]).toBe("Er sagte / „Hallo“ / 東京に行きました / und / dann / gingen / wir");
+    expect(g("Er sagte ‚Hallo‘東京ist schön und dann gingen" + rest + " ok’ dann", 8)[0])
+      .toBe("Er / sagte / ‚Hallo‘ / 東京ist / schön / und dann / gingen");
+  });
+  it("a “ or ‘ closing an open German „ or ‚ never opens, though a ” or ’ comes later (QuoteCtx.lowOpen)", () => {
+    // The ‚ in an earlier cue: the ‘ read the ’ in its own cue as its closer.
+    const de = "他|说|‚|你|好|朋|友|们|大|家|都|很|好|我|们|Hallo‘|东|京|很|好";
+    expect(cueWraps(zhSeg(de + "|ok’|然|后|走|了", 14), 8)[1]).toBe("Hallo‘ / 东京很好 / ok’然后走了");
+    // In one text: the “ closing „ read a later ” as its closer.
+    expect(wrapLines("Er sagte „Hallo“東京に行きました und dann ”ok” sagte er", 8, 3, 0, undefined, "de"))
+      .toEqual(["Er sagte", "„Hallo“", "東京に行きました", "und dann", "”ok”", "sagte er"]);
+  });
   it("a German closing quote stays on its word before a glued CJK run", () => {
     expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
   });
