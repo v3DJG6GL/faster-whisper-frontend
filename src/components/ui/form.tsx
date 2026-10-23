@@ -294,8 +294,9 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 /** Lists with at least this many options get a search field. */
 const SELECT_SEARCH_MIN = 9;
 
-/** A single-choice dropdown: the app's ListPicker under a FieldTrigger face, as wide as its
- *  field. Picking the current option again changes nothing (no onChange). A value that matches
+/** A single-choice dropdown: the app's ListPicker under a FieldTrigger face. Its list is at least
+ *  as wide as the field and grows to the longest option (leftward under a right-aligned field),
+ *  truncating only at the window's edge. Picking the current option again changes nothing (no onChange). A value that matches
  *  no option shows the first option, as a native select did. */
 export function Select<T extends string>({
   value,
@@ -354,6 +355,7 @@ export function Select<T extends string>({
         )}
         search={search}
         minWidth={0}
+        fit
         placeholder="Search"
         keys={
           <>

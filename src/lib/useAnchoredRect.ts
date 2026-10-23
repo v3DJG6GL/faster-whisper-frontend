@@ -63,10 +63,22 @@ export function useAnchoredRect(ref: RefObject<HTMLElement | null>, open: boolea
  * `minRoom` and there is more above; never narrower than the anchor nor than `minWidth`, kept
  * 8 px inside the viewport. `align: "end"` lines its right edge up with the anchor's. `room` is
  * the height left on the chosen side (for capping a list).
+ *
+ * `grow`: the width is the content's (`max-content`), that floor its `minWidth`, so a long row
+ * widens the popover instead of being cut to the anchor's width. It grows toward the side with
+ * more room — leftward from the anchor's right edge when the anchor sits in the viewport's right
+ * half (a settings row's right-aligned field), else rightward from its left edge — and
+ * `maxWidth` stops it 8 px short of that side's viewport edge, where its rows truncate as a last
+ * resort. `align` is ignored then.
  */
 export function popoverBox(
   rect: AnchorRect,
-  { minWidth, minRoom = 320, align = "start" }: { minWidth: number; minRoom?: number; align?: "start" | "end" },
+  {
+    minWidth,
+    minRoom = 320,
+    align = "start",
+    grow = false,
+  }: { minWidth: number; minRoom?: number; align?: "start" | "end"; grow?: boolean },
 ): { style: CSSProperties; room: number } {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
@@ -74,6 +86,19 @@ export function popoverBox(
   const below = vh - rect.bottom - 12;
   const above = rect.top - 12;
   const up = below < minRoom && above > below;
+  const vertical = up ? { bottom: vh - rect.top + 4 } : { top: rect.bottom + 4 };
+  if (grow) {
+    // Pinned by `right`, the browser grows it leftward. The inset is clamped like the fixed-width
+    // `left` below, so the floor always fits between it and the far side's 8 px margin.
+    const leftward = rect.left + rect.width / 2 > vw / 2;
+    const inset = Math.max(8, Math.min(leftward ? vw - rect.left - rect.width : rect.left, vw - width - 8));
+    const edge = leftward ? { right: inset } : { left: inset };
+    const maxWidth = vw - inset - 8;
+    return {
+      room: up ? above : below,
+      style: { position: "fixed", ...edge, width: "max-content", minWidth: width, maxWidth, zIndex: 70, ...vertical },
+    };
+  }
   const left = align === "end" ? rect.left + rect.width - width : rect.left;
   return {
     room: up ? above : below,
@@ -82,7 +107,7 @@ export function popoverBox(
       left: Math.max(8, Math.min(left, vw - width - 8)),
       width,
       zIndex: 70,
-      ...(up ? { bottom: vh - rect.top + 4 } : { top: rect.bottom + 4 }),
+      ...vertical,
     },
   };
 }

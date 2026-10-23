@@ -193,6 +193,7 @@ export function ListPicker<R>({
   disabled,
   search = true,
   minWidth = MIN_WIDTH,
+  fit = false,
 }: {
   /** The list's accessible name ("Spoken language"). */
   label: string;
@@ -219,6 +220,9 @@ export function ListPicker<R>({
   search?: boolean;
   /** Popover width floor (px); it is never narrower than the trigger. */
   minWidth?: number;
+  /** Size the popover to its widest row (popoverBox `grow`) instead of the floor, so a narrow
+   *  trigger's options aren't cut short; it keeps the width it opened at while a search filters. */
+  fit?: boolean;
 }) {
   const listId = `${useId()}-list`;
   const [open, setOpen] = useState(false);
@@ -234,6 +238,18 @@ export function ListPicker<R>({
   useEffect(() => {
     if (placed && !search) document.getElementById(listId)?.focus({ preventScroll: true });
   }, [placed, search, listId]);
+  // A `fit` popover's width as it first rendered (every row, no query yet), held from then on:
+  // left at max-content, each search keystroke would resize it to the rows that still match and
+  // move the search field under the caret (leftward-growing, its whole left edge). Measuring
+  // the width it already shows changes nothing on screen. The computed width, not the bounding
+  // box: the opening animation scales the panel, and a box read mid-pop is a few px short, which
+  // would cut the longest row. Rounded up for the same reason.
+  const [fitWidth, setFitWidth] = useState<number | null>(null);
+  useEffect(() => {
+    if (!fit) return;
+    const el = popRef.current;
+    setFitWidth(placed && el ? Math.ceil(parseFloat(getComputedStyle(el).width)) || null : null);
+  }, [fit, placed]);
 
   const groups = open ? sections(query) : [];
   const flat = groups.flatMap((g) => g.rows);
@@ -307,9 +323,9 @@ export function ListPicker<R>({
   let pos: CSSProperties | null = null;
   let listMax = MAX_LIST;
   if (rect) {
-    const box = popoverBox(rect, { minWidth });
+    const box = popoverBox(rect, { minWidth, grow: fit });
     listMax = Math.max(120, Math.min(MAX_LIST, box.room - (search ? CHROME : CHROME_BARE)));
-    pos = box.style;
+    pos = fit && fitWidth !== null ? { ...box.style, width: fitWidth } : box.style;
   }
 
   return (
