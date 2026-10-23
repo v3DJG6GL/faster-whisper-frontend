@@ -346,9 +346,21 @@ let clipByLang: Record<string, string> | undefined;
  *  final), at a hard break, and on a server that never sent an ordinal — its finals all lack one,
  *  so each would look like a release. Not on an `open` or a partial: that utterance can still end
  *  `dropped` (a cough, an "ähm" the server strips) with the words still held, and the server
- *  releases only between utterances, so real new speech always lands its ordinal final first. */
-type ClosedClipWindow = { baseline: string; booked: ClipBooking | null; byLang: Record<string, string> | undefined };
+ *  releases only between utterances, so real new speech always lands its ordinal final first.
+ *  `landed` (set by the close link, from `clipLanded`): a clipboard copy of the window landed.
+ *  Only such a window reopens. A TYPED window (paste/direct, with focus then moving to a
+ *  clipboard-routed app) is in a field already and its translation booked by the typed path:
+ *  reopening it copied the typed phrase again and booked its translation and tracks twice. */
+type ClosedClipWindow = {
+  baseline: string;
+  booked: ClipBooking | null;
+  byLang: Record<string, string> | undefined;
+  landed: boolean;
+};
 let clipClosed: ClosedClipWindow | null = null;
+/** A clipboard copy landed in the current window — recorded on the window a pause closes (see
+ *  ClosedClipWindow.landed) and reset with it, in the same queued links as `clipBooked`. */
+let clipLanded = false;
 /** An ordinal `final` arrived this session, so a final without one really is a release. */
 let clipOrdinalSeen = false;
 // Insertion config captured at dictation start.
@@ -1343,7 +1355,7 @@ function bumpPhraseEnd(deferred = false): void {
     const closing: ClosedClipWindow | null | undefined =
       committedDoc !== clipBaseline
         ? clipOrdinalSeen
-          ? { baseline: clipBaseline, booked: null, byLang: undefined }
+          ? { baseline: clipBaseline, booked: null, byLang: undefined, landed: false }
           : null
         : undefined;
     if (closing !== undefined) clipClosed = closing;
@@ -1372,8 +1384,10 @@ function bumpPhraseEnd(deferred = false): void {
         if (closing) {
           closing.booked = clipBooked;
           closing.byLang = clipByLang;
+          closing.landed = clipLanded;
         }
         clipBooked = null;
+        clipLanded = false;
         flushClipByLang();
       });
     }
@@ -1399,6 +1413,7 @@ function clearPhraseEnd(): void {
   clipDirty = false;
   clipBaseline = "";
   clipBooked = null;
+  clipLanded = false;
   clipClosed = null;
   clipOrdinalSeen = false;
   flushClipByLang();
@@ -2315,18 +2330,23 @@ async function ensureListeners(): Promise<void> {
       //     prefixes a space) so the first phrase has none; inner spacing preserved. Never revise.
       // A release final with no new speech since the pause extends the window that pause closed
       // (see clipClosed): it copies the whole phrase with its held-back words, and the window
-      // closes again behind it. An ordinal final is new speech and ends that chance.
+      // closes again behind it. An ordinal final is new speech and ends that chance. Both starts
+      // are read now: whether the release reopens hangs on whether a copy landed in the closed
+      // window (ClosedClipWindow.landed), which only its queued close link knows. The baseline
+      // moves either way — the release closes its window behind it, reopened or not.
       if (typeof e.payload.utterance === "number") clipOrdinalSeen = true;
       const reopen = ordinal === null ? clipClosed : null;
       if (ordinal !== null) clipClosed = null;
-      const clipStartRaw = commonPrefixLen(reopen ? reopen.baseline : clipBaseline, committedDoc);
+      const plainStartRaw = commonPrefixLen(clipBaseline, committedDoc);
+      const reopenStartRaw = reopen ? commonPrefixLen(reopen.baseline, committedDoc) : plainStartRaw;
       if (reopen) clipBaseline = committedDoc;
-      const phraseClip = committedDoc.slice(clipStartRaw).trim();
+      const plainClip = committedDoc.slice(plainStartRaw).trim();
+      const reopenClip = committedDoc.slice(reopenStartRaw).trim();
       const target = committedDoc.replace(/^\s+/, "");
       // Where the clipboard window starts, in `target` coordinates (the document minus its
       // leading whitespace) — so the clipboard branch can ask "was everything BEFORE this window
       // already delivered?" against the typed baseline, which lives in those coordinates.
-      const clipFrom = Math.max(0, clipStartRaw - (committedDoc.length - target.length));
+      const lead = committedDoc.length - target.length;
       // Did the document GROW vs the last final? Distinguishes a real new phrase from a re-sent
       // `final` (the flush final the drain emits at hands-free end). Advanced synchronously per final and
       // kept SEPARATE from the typed baseline (injectedText), so re-sent-final detection stays correct
@@ -2378,6 +2398,12 @@ async function ensureListeners(): Promise<void> {
         // instead (types nothing, recoverable) rather than typing with the chord down.
         const useClipboard = holdCoerced(insertCfg?.activation, t.method);
         if (useClipboard) {
+          // A release reopens the closed window only when a copy of it landed (the pause's close
+          // link has run, FIFO, and recorded that). After a typed window the release copies its own
+          // words alone: the typed phrase is in its field already, its translation booked.
+          const live = reopen?.landed ? reopen : null;
+          const phraseClip = live ? reopenClip : plainClip;
+          const clipFrom = Math.max(0, (live ? reopenStartRaw : plainStartRaw) - lead);
           // Clipboard: copy just the current hard-break window (everything since your last pause) —
           // never the whole session — so the clipboard doesn't pile up. Each copy flashes the chip's
           // clipboard glyph PER PHRASE (mirroring the typed green pulse) so a hands-free session shows
@@ -2424,9 +2450,9 @@ async function ensureListeners(): Promise<void> {
             if (translated && !t.isSelf && landed) {
               // Reopened by a release final: the pause's link closed this window (FIFO, so it has
               // run and recorded what it closed). Replace that booking, not append after it.
-              if (reopen) {
-                clipBooked = reopen.booked;
-                if (byLang) unbookClipByLang(reopen.byLang);
+              if (live) {
+                clipBooked = live.booked;
+                if (byLang) unbookClipByLang(live.byLang);
               }
               clipBooked ??= { text: sessionTranslatedText, ctxLen: sessionPhraseContext.length };
               sessionPhraseContext.length = clipBooked.ctxLen;
@@ -2442,21 +2468,26 @@ async function ensureListeners(): Promise<void> {
               // books the final version into sessionByLang once per window (see clipByLang: the
               // queued pause / hard-break links, clearPhraseEnd and settleIdle).
               if (byLang) clipByLang = byLang;
-              // ...and close it again, re-recorded for a further release.
+              // ...and close it again, re-recorded for a further release. A release that did not
+              // reopen closes its own window too: the baseline already moved past it.
               if (reopen) {
-                reopen.booked = clipBooked;
-                if (byLang) reopen.byLang = byLang;
+                if (live) {
+                  live.booked = clipBooked;
+                  if (byLang) live.byLang = byLang;
+                }
                 clipBooked = null;
                 flushClipByLang();
               }
             }
             if (!t.isSelf && landed) {
+              // A release's own window is already closed (above, or by the baseline it moved).
+              if (!reopen) clipLanded = true;
               sessionClipboard = true;
               signalInsert("clipboard");
               // The copy re-sends its whole window, so an earlier phrase of it skipped in our own
               // window went out with it.
               bookOwedUtterances("clipboard", { kind: "window", from: clipFrom });
-              bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!reopen);
+              bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!live);
               // The clipboard now holds THIS clipboard-only transcript (what the user wants to
               // paste), not our earlier paste transcript — so we no longer owe a restore. Clear
               // clipDirty so neither the per-phrase restore (bumpPhraseEnd) nor the end-of-session
@@ -2878,6 +2909,7 @@ async function ensureListeners(): Promise<void> {
         // break has booked into it (see bumpPhraseEnd's queued close, which this timer-cancel
         // pre-empts).
         clipBooked = null;
+        clipLanded = false;
         flushClipByLang();
         if (cfg?.live) {
           noteDivergence("boundary", injectedText, docAtBreak, null);

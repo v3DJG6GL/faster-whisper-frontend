@@ -843,27 +843,27 @@ describe("work that must wait for the queue or the cancel", () => {
     const keep = timer.indexOf("clipClosed = closing");
     expect(keep, "the timer must record the window it closes").toBeGreaterThanOrEqual(0);
     expect(timer.indexOf("baseline: clipBaseline")).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
-    expect(timer).toMatch(/clipOrdinalSeen\s+\?\s+\{ baseline: clipBaseline, booked: null, byLang: undefined \}/);
+    expect(timer).toMatch(/clipOrdinalSeen\s+\?\s+\{ baseline: clipBaseline, booked: null, byLang: undefined, landed: false \}/);
     expect(keep).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
     // Its queued close link records what it closed before closing it.
     const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
-    expect(link).toMatch(/closing\.booked = clipBooked;\s+closing\.byLang = clipByLang;\s+\}\s+clipBooked = null;\s+flushClipByLang\(\);/);
+    expect(link).toMatch(/closing\.booked = clipBooked;\s+closing\.byLang = clipByLang;\s+closing\.landed = clipLanded;\s+\}\s+clipBooked = null;\s+clipLanded = false;\s+flushClipByLang\(\);/);
     // A release final (no ordinal) copies from the closed window's baseline and leaves it closed.
     const final = mask(finalBody);
     expect(final).toMatch(/const reopen = ordinal === null \? clipClosed : null;/);
     expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
-    expect(final).toMatch(/const clipStartRaw = commonPrefixLen\(reopen \? reopen\.baseline : clipBaseline, committedDoc\);\s+if \(reopen\) clipBaseline = committedDoc;/);
+    expect(final).toMatch(/const plainStartRaw = commonPrefixLen\(clipBaseline, committedDoc\);\s+const reopenStartRaw = reopen \? commonPrefixLen\(reopen\.baseline, committedDoc\) : plainStartRaw;\s+if \(reopen\) clipBaseline = committedDoc;/);
     // Its translation REPLACES the closed window's booking and per-language tracks, then closes
     // the window again with the new booking recorded for a further release.
     const booking = mask(bodyAfter(finalBody, "if (translated && !t.isSelf && landed) "));
-    const restore = booking.indexOf("clipBooked = reopen.booked;");
+    const restore = booking.indexOf("clipBooked = live.booked;");
     expect(restore, "a reopening release must restore the closed window's booking").toBeGreaterThanOrEqual(0);
     expect(restore).toBeLessThan(booking.indexOf("clipBooked ??="));
-    expect(booking).toContain("if (byLang) unbookClipByLang(reopen.byLang);");
-    const reclose = booking.indexOf("reopen.booked = clipBooked;");
+    expect(booking).toContain("if (byLang) unbookClipByLang(live.byLang);");
+    const reclose = booking.indexOf("live.booked = clipBooked;");
     expect(reclose).toBeGreaterThan(booking.indexOf("if (byLang) clipByLang = byLang;"));
-    expect(booking.slice(reclose)).toMatch(/^reopen\.booked = clipBooked;\s+if \(byLang\) reopen\.byLang = byLang;\s+clipBooked = null;\s+flushClipByLang\(\);/);
-    expect(finalBody).toContain('bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!reopen);');
+    expect(booking.slice(reclose)).toMatch(/^live\.booked = clipBooked;\s+if \(byLang\) live\.byLang = byLang;\s+\}\s+clipBooked = null;\s+flushClipByLang\(\);/);
+    expect(finalBody).toContain('bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!live);');
     // Its History record takes the whole window's translation when the window is exactly its text.
     const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
     expect(book).toMatch(/const whole =\s+reopened && !own && phrase\.translated && sessionTranslation != null && sent\.trim\(\) === \(r\.result\?\.text \?\?\s+\)\.trim\(\);/);
@@ -885,6 +885,37 @@ describe("work that must wait for the queue or the cancel", () => {
     const final = mask(bodyAfter(streamingSrc, '"stream://final"'));
     expect(final.match(/clipClosed = null;/g)).toEqual(["clipClosed = null;"]);
     expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
+  });
+
+  it("a release reopens only a closed window a clipboard copy landed in, not a typed one", () => {
+    // A typed window (paste/direct) closed by the pause, then focus on a clipboard-routed app
+    // before the release: reopening copied the already-typed phrase again and re-booked its
+    // translation on top of the typed path's booking — History and every track held it twice.
+    const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+    // The pause's link records whether a copy landed in the window it closes, and resets the flag
+    // with the window — as does a hard break's link and every start and abandon.
+    expect(streamingSrc).toMatch(/type ClosedClipWindow = \{[^}]*landed: boolean;[^}]*\};/);
+    const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
+    expect(link).toContain("closing.landed = clipLanded;");
+    expect(link.indexOf("clipLanded = false;")).toBeGreaterThan(link.indexOf("closing.landed = clipLanded;"));
+    const boundaryLink = mask(bodyAfter(bodyAfter(streamingSrc, '"stream://boundary"'), "injectChain = injectChain.then(() =>"));
+    expect(boundaryLink).toMatch(/clipBooked = null;\s+clipLanded = false;/);
+    expect(mask(fns.clearPhraseEnd)).toContain("clipLanded = false;");
+    // Only a landed clipboard copy outside a release marks the window.
+    const task = mask(bodyAfter(finalBody, "if (useClipboard) "));
+    expect(task.match(/clipLanded = true;/g)).toEqual(["clipLanded = true;"]);
+    expect(mask(bodyAfter(task, "if (!t.isSelf && landed) "))).toMatch(/^\{\s+if \(!reopen\) clipLanded = true;/);
+    // The task decides in the queue, after that link, which window it copies and books.
+    expect(task).toMatch(
+      /const live = reopen\?\.landed \? reopen : null;\s+const phraseClip = live \? reopenClip : plainClip;\s+const clipFrom = Math\.max\(0, \(live \? reopenStartRaw : plainStartRaw\) - lead\);/,
+    );
+    expect(task.indexOf("const live =")).toBeLessThan(task.indexOf("translatePhrase(phraseClip"));
+    const booking = mask(bodyAfter(task, "if (translated && !t.isSelf && landed) "));
+    expect(booking).not.toContain("reopen.booked");
+    expect(booking).not.toContain("reopen.byLang");
+    // A release that did not reopen still closes its own window: the baseline already moved.
+    expect(booking).toMatch(/if \(reopen\) \{\s+if \(live\) \{[^}]*\}\s+clipBooked = null;\s+flushClipByLang\(\);\s+\}/);
+    expect(mask(finalBody)).not.toMatch(/\bconst phraseClip = committedDoc/);
   });
 
   it("a hard break closes the clipboard window in its chained link, not synchronously", () => {
