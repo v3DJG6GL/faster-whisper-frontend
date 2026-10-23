@@ -1,7 +1,7 @@
 // One test per D86 decision-log rule (memory cue-splitting.md, v25…v39).
 import { describe, expect, it } from "vitest";
 import {
-  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, setSubs, toggleTarget,
+  addLanguage, attachSiteTracks, derive, freeAdds, frozenSiteRun, mtUsed, setTargets, linkSpoken, spokenPill, siteTimedTracks, siteWord, flip, flipChipPart, initialSiteState, listedLanguages, pickPolicy, removeLanguage, setSubs, toggleTarget, writeTargets,
   type SiteChange, type SiteSubsInput, type SiteSubsState,
 } from "./siteSubtitles";
 import type { SiteTrackInfo } from "../urlSource";
@@ -633,6 +633,18 @@ describe("tracks and switches", () => {
     [i, st] = apply(i, pickPolicy(i, st, "generate"));
     expect(i.targets).toEqual(["de", "fr"]);
     expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["de", "fr"]));
+  });
+  it("a language Custom promoted is yours once the Translation switch writes the targets again: a later preset keeps it", () => {
+    // Off, then on with the seed bringing en back: still counted as promoted, a preset cut it
+    // from the saved list and the switch (targets.length > 0) turned itself off.
+    const inp = input({ tracks: [tr("de", "de"), tr("en", "en")], spoken: "de", targets: ["ja"], maxTargets: 3 });
+    let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    expect(i.targets).toEqual(["ja", "en"]);
+    expect(st.promoted).toEqual(["en"]);
+    [i, st] = apply(i, writeTargets(st, []));
+    [i, st] = apply(i, writeTargets(st, ["en"]));
+    [i, st] = apply(i, pickPolicy(i, st, "prefer"));
+    expect(i.targets).toEqual(["en"]);
   });
   it("switching off a site track drops its language when the translation limit leaves no slot", () => {
     // Prefer: es comes from the site, its MT badge idle — it never counted against the limit.

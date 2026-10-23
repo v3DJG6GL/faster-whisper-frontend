@@ -700,6 +700,13 @@ export function setSubs(input: SiteSubsInput, st: SiteSubsState, subs: boolean):
   return { state: { ...st, subs, ...(subs ? {} : { promoted: [] }) }, targets: [...input.targets] };
 }
 
+/** The Processing card wrote the targets itself (its Translation switch, Whisper's translate, the
+ *  plain picker): every one is yours from then on, none one Custom only promoted — kept as such,
+ *  a target the switch seeded again was cut by a later preset and the switch turned itself off. */
+export function writeTargets(st: SiteSubsState, targets: readonly string[]): SiteChange {
+  return { state: st.promoted.length ? { ...st, promoted: [] } : st, targets: [...targets] };
+}
+
 /** "Translate into" for one language: picking it means machine-translating into it. */
 export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: string, on?: boolean): SiteChange {
   // Switching on reads only the target map: the model (a whole render) is built only to tell

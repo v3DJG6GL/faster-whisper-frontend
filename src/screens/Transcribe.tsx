@@ -9,7 +9,7 @@ import { Button, Card, DisclosureCard, MicroLabel, Notice, PageHeader, Segmented
 import { DecodeFields } from "@/components/DecodeFields";
 import { SpokenLanguageRow, useLinkLanguage } from "@/components/transcribe/SpokenLanguageRow";
 import { SiteSubtitlesPanel } from "@/components/transcribe/SiteSubtitlesPanel";
-import { derive, flipChipPart, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
+import { derive, flipChipPart, freeAdds, frozenSiteRun, initialSiteState, mtUsed, setTargets, writeTargets, type SiteChange, type SiteSubsState } from "@/lib/transcript/siteSubtitles";
 import { siteDisplayName } from "@/lib/transcript/mediaExport";
 import { maxTranslationTargets, translationTargetInfo } from "@/lib/capabilities";
 import { SpokenLanguagePicker } from "@/components/LanguagePicker";
@@ -651,6 +651,9 @@ export default function Transcribe() {
       persistOptions({ translateTo: ch.targets });
     }
   };
+  /** The card writing the targets itself (the Translation switch, Whisper's translate, the plain
+   *  picker): none stays one Custom only promoted, for a later preset to cut (writeTargets). */
+  const ownTargets = (next: string[]) => setSiteState((s) => s && writeTargets(s, next).state);
   const siteMtUsed = siteView ? mtUsed(siteView) : 0;
   const siteMtLimit = maxTranslationTargets(caps);
   // Asked only at the limit (one trial model per site language).
@@ -1020,6 +1023,7 @@ export default function Transcribe() {
     setTranslate(v);
     if (v && translateTo.length) {
       setTranslateTo([]);
+      ownTargets([]);
       if (!isStandard) setTranslateExclNotice("t2t");
       persistOptions({ translate: v, translateTo: [] });
     } else {
@@ -1927,6 +1931,7 @@ export default function Transcribe() {
                             targets={siteChips?.targets ?? translateTo}
                             onTargetsChange={siteChips?.onTargetsChange ?? ((next) => {
                               setTranslateTo(next);
+                              ownTargets(next);
                               persistOptions({ translateTo: next });
                             })}
                             chipParts={siteChips?.parts}
@@ -1998,6 +2003,7 @@ export default function Transcribe() {
                             max: maxTranslationTargets(caps),
                           });
                           setTranslateTo(next);
+                          ownTargets(next);
                           if (translate) {
                             setTranslate(false);
                             setTranslateExclNotice("whisper");
@@ -2008,6 +2014,7 @@ export default function Transcribe() {
                           }
                         } else {
                           setTranslateTo([]);
+                          ownTargets([]);
                           setTranslateExclNotice(null);
                           persistOptions({ translateTo: [] });
                         }
