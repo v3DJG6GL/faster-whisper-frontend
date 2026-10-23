@@ -342,11 +342,11 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // Focus that moved on between the typed phrase and its Enter got the Return: it submitted the
     // user's own draft in that window, and the dictated message never got its Enter.
     const enter = mask(fns.enqueueAutoEnter);
-    const owed = enter.indexOf("if (!gapOwedApps.has(t.appId)) return;");
+    const owed = enter.indexOf("if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;");
     expect(owed, "auto-Enter task must stand down in an app that owes no Return").toBeGreaterThanOrEqual(0);
     expect(owed).toBeLessThan(enter.indexOf("pressReturn("));
     const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
-    expect(boundary).toMatch(/if \(dirtyAtBreak && gapOwedApps\.has\(t\.appId\)\) await pressReturn\(t, cfg\);/);
+    expect(boundary).toMatch(/if \(dirtyAtBreak && t\.appId === lastTypedApp && gapOwedApps\.has\(t\.appId\)\) await pressReturn\(t, cfg\);/);
   });
 
   it("the hard-break separator goes only into the app the phrase was typed into", () => {
@@ -354,10 +354,29 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     // the user's own draft there, and a newline separator's Return submitted it.
     const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
     const autoEnter = boundary.indexOf("if (t.autoEnter)");
-    const owed = boundary.indexOf("if (!gapOwedApps.has(t.appId)) return;", autoEnter);
+    const owed = boundary.indexOf("if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;", autoEnter);
     expect(owed, "separator must stand down in an app that owes no gap").toBeGreaterThan(autoEnter);
     expect(owed).toBeLessThan(boundary.indexOf("const sendSepText"));
     expect(owed).toBeLessThan(boundary.indexOf("const parts = sep"));
+  });
+
+  it("the Enter and the separator follow the LAST typed phrase's app, not every app still owed", () => {
+    // gapOwedApps holds every app typed into since its last Return. With Enter off and a plain
+    // separator nothing pays it, so after phrases in A then B, clicking back into A to write a
+    // draft got the separator — or a newline separator's Return submitting that draft — at the
+    // next hard break. The extra key is the app the last typed phrase went into.
+    expect(mask(streamingSrc)).toMatch(/\nlet lastTypedApp: string \| null \| undefined;/);
+    // Set only by a phrase typed into the field, right where it starts owing its gap.
+    const delivered = mask(bodyAfter(finalBody, "if (delivered) "));
+    expect(delivered).toMatch(/gapOwedApps\.add\(t\.appId\);\s+lastTypedApp = t\.appId;/);
+    expect(mask(bodyAfter(finalBody, "if (delivered && diverted) "))).not.toContain("lastTypedApp");
+    expect(mask(streamingSrc).match(/\blastTypedApp = t\.appId;/g) ?? [], "the one set site").toHaveLength(1);
+    // Every start and abandon resets it with the Set.
+    expect(mask(fns.clearPhraseEnd)).toMatch(/gapOwedApps\.clear\(\);\s+lastTypedApp = undefined;/);
+    // All three Return/separator producers test it.
+    expect(mask(fns.enqueueAutoEnter)).toContain("t.appId !== lastTypedApp");
+    const boundary = mask(bodyAfter(boundaryBody, "enqueueInject(async () =>"));
+    expect(boundary.match(/lastTypedApp/g) ?? []).toHaveLength(2);
   });
 
   it("a translated block's gap follows the field's last typed phrase, not the typed baseline", () => {

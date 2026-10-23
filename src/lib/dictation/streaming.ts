@@ -1120,6 +1120,14 @@ let lastPhraseDiverted = false;
 // Every session, translated or not, keeps it: the per-phrase and hard-break Enter and the
 // hard-break separator go only into an app it holds. Session-scoped via clearPhraseEnd.
 const gapOwedApps = new Set<string | null>();
+// The app (resolveTarget's appId) the LAST typed phrase went into; undefined = none yet this
+// session. The per-phrase and hard-break Enter and the hard-break separator follow THAT phrase, so
+// they key on this as well as on gapOwedApps: the Set is the right key for the translated gap
+// (A, B, A still owes A its gap) but holds every app typed into since its last Return, so with
+// Enter off and a plain separator nothing ever pays A, and clicking back into A to write a draft
+// got the separator (or a newline separator's Return that submits it) at the next hard break.
+// Session-scoped via clearPhraseEnd.
+let lastTypedApp: string | null | undefined;
 // Live PASTE only: the clipboard currently holds a pasted phrase (the transcript), so it owes a
 // restore back to the user's snapshot. Set when a phrase is actually pasted, cleared once we put
 // the original back. Drives per-phrase restore so the clipboard is the user's between phrases —
@@ -1217,8 +1225,10 @@ function enqueueAutoEnter(): void {
     if (lastPhraseDiverted) return;
     // Only into an app whose field ends in a typed phrase no Return has followed yet: focus that
     // moved on after the phrase was typed would get a Return that submits the user's own draft
-    // there, and a field whose phrase already got its Return would get an empty submit.
-    if (!gapOwedApps.has(t.appId)) return;
+    // there, and a field whose phrase already got its Return would get an empty submit. The LAST
+    // phrase's app, not any app still owed one: an earlier app typed into before focus moved on
+    // holds the user's own draft by now.
+    if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;
     // The target decides: an app rule can turn Enter off for this window even when the
     // profile/global has it on (a chat client submits, an editor must not).
     if (!t.autoEnter) return;
@@ -1327,6 +1337,7 @@ function clearPhraseEnd(): void {
   phraseDirty = false;
   lastPhraseDiverted = false;
   gapOwedApps.clear();
+  lastTypedApp = undefined;
   clipDirty = false;
   clipBaseline = "";
   clipBooked = null;
@@ -2613,6 +2624,7 @@ async function ensureListeners(): Promise<void> {
                 sessionTyped = true;
                 lastPhraseDiverted = false;
                 gapOwedApps.add(t.appId);
+                lastTypedApp = t.appId;
                 signalInsert("typed");
               }
               // Everything past the baseline went out with this insert, carry included — so did
@@ -2853,13 +2865,14 @@ async function ensureListeners(): Promise<void> {
           // synchronous fork had, just evaluated against the window actually being typed into.
           if (t.autoEnter) {
             // Into the app the phrase was typed into only, as enqueueAutoEnter.
-            if (dirtyAtBreak && gapOwedApps.has(t.appId)) await pressReturn(t, cfg);
+            if (dirtyAtBreak && t.appId === lastTypedApp && gapOwedApps.has(t.appId)) await pressReturn(t, cfg);
             return;
           }
           // The separator likewise: it joins two phrases in the field the last one was typed into.
           // Focus that moved on since would get a " " in the user's own draft, or a newline
-          // separator's Return that submits it.
-          if (!gapOwedApps.has(t.appId)) return;
+          // separator's Return that submits it — also in an app typed into EARLIER this session
+          // that no Return has paid since (Enter off, a plain separator): see lastTypedApp.
+          if (t.appId !== lastTypedApp || !gapOwedApps.has(t.appId)) return;
           if (!sep) return;
           // One text part of the separator: a plain separator whole, or a run of text between the
           // line breaks of a multi-line one ("\n" is always a real Return, see pressReturn's callers).
