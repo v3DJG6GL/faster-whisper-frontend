@@ -1121,17 +1121,31 @@ export function disableConflictingProfiles(
   /** evdev is this device's live hotkey backend (enabled in the settings being applied AND
    *  permitted): it registers side-distinct chords, like the Windows hook. */
   evdevLive = false,
-  /** Profiles in an INBOUND list whose binding is nevertheless this device's own ("Profile
-   *  shortcuts" off re-pins every known profile's chord) — treated like a local list's. Own
-   *  means everything `conflicts()` reads: the chord AND the enabled state and activation kind,
-   *  which still arrive from the peer — only then did the pair pass this device's save gate. */
-  localChordIds: ReadonlySet<string> = new Set(),
+  /** Profiles in an INBOUND list whose CHORD is nevertheless this device's own ("Profile
+   *  shortcuts" off re-pins every known profile's chord), keyed by id as this device holds them.
+   *  One counts as local only where the rest of what `conflicts()` reads for the pair, which
+   *  still arrives from the peer, is this device's too — only then did the pair pass its save
+   *  gate. Against another profile that is the enabled state AND the activation kind (which
+   *  decides a designed nesting); against the quick-add chord it is the enabled state alone,
+   *  since the quick-add peer nests with nothing and activation cannot make or break that pair. */
+  localBindings: ReadonlyMap<string, Profile> = new Map(),
 ): { profiles: Profile[]; rejectQuickAddHotkey: boolean } {
   const peers = withQuickAddPeer(profiles, quickAddHotkey);
   const order = new Map(peers.map((p, i) => [p.id, i]));
+  const byId = new Map(profiles.map((p) => [p.id, p]));
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
-  const chordIsLocal = (id: string) => !profilesAreInbound || localChordIds.has(id);
+  const chordIsLocal = (id: string, kindMatters: boolean) => {
+    if (!profilesAreInbound) return true;
+    const mine = localBindings.get(id);
+    const p = byId.get(id);
+    return (
+      mine !== undefined &&
+      p !== undefined &&
+      mine.enabled === p.enabled &&
+      (!kindMatters || mine.activation === p.activation)
+    );
+  };
   // Collapse modifier SIDES only where the registrar does — the save gate's own rule
   // (persistence.ts): the Windows low-level hook (hotkeys/windows.rs, VK_LCONTROL ≠ VK_RCONTROL)
   // and a live evdev backend register side-distinct chords, and collapsing anyway disabled a
@@ -1154,12 +1168,12 @@ export function disableConflictingProfiles(
     // shortcuts" off every known profile carries this device's chord, so a collision there is
     // the incoming chord's fault, whatever the list order.
     if (c.otherId === QUICK_ADD_PEER_ID) {
-      if (chordIsLocal(c.profileId)) rejectQuickAddHotkey = true;
+      if (chordIsLocal(c.profileId, false)) rejectQuickAddHotkey = true;
       else disable.add(c.profileId);
     } else if (c.profileId !== QUICK_ADD_PEER_ID) {
       // Two local bindings already passed this device's save gate together: nothing new collides.
-      const selfLocal = chordIsLocal(c.profileId);
-      const otherLocal = chordIsLocal(c.otherId);
+      const selfLocal = chordIsLocal(c.profileId, true);
+      const otherLocal = chordIsLocal(c.otherId, true);
       if (selfLocal !== otherLocal) disable.add(selfLocal ? c.otherId : c.profileId);
       else if (!selfLocal && self > other) disable.add(c.profileId);
     }
@@ -2151,26 +2165,14 @@ export async function applyBlob(
     // local gate is left alone so a genuine local mistake still stops the write.
     //
     // "Profile shortcuts" off re-pinned every known profile to THIS device's chord above — but a
-    // peer can still switch one on, or change its kind (which decides a designed nesting), so
-    // only a profile whose enabled state and activation are also this device's counts as local.
-    const localBinding = new Map(st.profiles.map((p) => [p.id, p]));
-    const localChordIds =
-      inboundProfiles !== null && !gates.profileHotkeys
-        ? new Set(
-            nextProfiles
-              .filter((p) => {
-                const mine = localBinding.get(p.id);
-                return mine !== undefined && mine.enabled === p.enabled && mine.activation === p.activation;
-              })
-              .map((p) => p.id),
-          )
-        : undefined;
+    // peer can still switch one on, or change its kind, so the pass compares those against this
+    // device's copy before counting the binding as local.
     const resolved = disableConflictingProfiles(
       nextProfiles,
       nextSettings.general.quickAddHotkey,
       inboundProfiles !== null,
       nextSettings.general.evdevEnabled === true && evdevPermittedNow(),
-      localChordIds,
+      inboundProfiles !== null && !gates.profileHotkeys ? new Map(st.profiles.map((p) => [p.id, p])) : undefined,
     );
     nextProfiles = resolved.profiles;
     if (resolved.rejectQuickAddHotkey) {
