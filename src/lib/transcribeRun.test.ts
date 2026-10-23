@@ -83,7 +83,7 @@ vi.mock("./api", async (importOriginal) => {
 import {
   activeRailIndex, axisLayout, clearEdits, flushPersistEdits, setOrphanWatch, startRun, foldProgress, forgetRecord, mergeSegmentTranslations, openHistoryRecord,
   setSegmentEdit,
-  overallOf, etaSecOf, planOf, planTimeline, unitsFraction,
+  overallOf, etaSecOf, planOf, planTimeline, unitsFraction, chunkedProgress,
   linkPrefetchFor, linkTranslateTo, railIndex, railOf, railStages, selectPath, setRename, SKIPPED_EXPLANATIONS, skippedStages, stagePick,
   useTranscribeRun, type RailStage,
   assembleTranslatedSegments,
@@ -2804,6 +2804,94 @@ describe("translateParsed joins a text source like the TXT export", () => {
     } finally {
       useApp.setState({ caps: before });
     }
+  });
+});
+
+describe("a text source translated in several requests reads as one run", () => {
+  // Every chunk is its own one-stage plan on the server under the run's one progress id: its
+  // polls and its receipt describe that chunk alone.
+  const ctx = { backendId: "b1", serverUrl: "http://x", model: "m", language: "", standard: false };
+  const queue: QueueItem[] = [{ path: "/film.srt", status: "running", kind: "text" }];
+  afterEach(() => {
+    translateText.mockReset();
+    useTranscribeRun.setState({ queue: [], progress: null, textChunk: null });
+  });
+
+  it("the second of three chunks at half way is 60 % of the file, with no ETA yet", () => {
+    const frame = { done: 400, len: 400, total: 1000, sentAt: 0, prev: null };
+    const poll = {
+      stage: "translating", progress: 0.5, overall: 0.5, etaS: 20,
+      plan: [{
+        stage: "translating", state: "active" as const, estS: 40, elapsedS: 20,
+        units: [
+          { target: "de", state: "done" as const, tookS: 20 },
+          { target: "fr", state: "running" as const, progress: 0.5, estS: 20 },
+        ],
+      }],
+    };
+    const p = chunkedProgress(poll, frame);
+    expect(overallOf({ queue, progress: p })).toBeCloseTo(0.6, 5);
+    expect(p?.progress).toBeCloseTo(0.6, 5);
+    // Two more chunks' worth of work is not in the server's 20 s.
+    expect(etaSecOf(p)).toBeNull();
+    // A language this chunk finished is still running for the file; the chunk's seconds go.
+    expect(p?.plan?.[0].estS).toBeNull();
+    expect(p?.plan?.[0].units?.map((u) => [u.state, u.progress, u.estS ?? null, u.tookS ?? null])).toEqual([
+      ["running", 0.8, null, null],
+      ["running", 0.6, null, null],
+    ]);
+  });
+
+  it("the last chunk's ETA is the run's, and a poll older than the chunk counts for nothing", () => {
+    const last = { done: 800, len: 200, total: 1000, sentAt: 0, prev: null };
+    const p = chunkedProgress({ stage: "translating", overall: 0.5, etaS: 5 }, last);
+    expect(overallOf({ queue, progress: p })).toBeCloseTo(0.9, 5);
+    expect(etaSecOf(p)).toBe(5);
+    // The store still holds the previous chunk's last poll: the new chunk has done nothing yet.
+    const prev = { stage: "translating", overall: 0.95, etaS: 1 };
+    const stale = chunkedProgress(prev, { done: 400, len: 400, total: 1000, sentAt: 0, prev });
+    expect(overallOf({ queue, progress: stale })).toBeCloseTo(0.4, 5);
+    expect(etaSecOf(stale)).toBeNull();
+    // One request for the whole source: the server's numbers, verbatim.
+    const one = { stage: "translating", overall: 0.5, etaS: 7 };
+    expect(chunkedProgress(one, { done: 0, len: 300, total: 300, sentAt: 0, prev: null })).toBe(one);
+  });
+
+  it("the sidebar badge scales the same way", () => {
+    useTranscribeRun.setState({
+      queue,
+      progress: { stage: "translating", overall: 0.5 },
+      textChunk: { done: 400, len: 400, total: 1000, sentAt: 0, prev: null },
+    });
+    expect(runBadgeFraction(useTranscribeRun.getState())).toBeCloseTo(0.6, 5);
+  });
+
+  it("each chunk records where it sits, and the receipt sums the chunks' times", async () => {
+    const frames: unknown[] = [];
+    const took = [10, 12, 3];
+    translateText.mockImplementation((a) => {
+      const { done, len, total } = useTranscribeRun.getState().textChunk ?? {};
+      frames.push({ done, len, total });
+      const t = took[frames.length - 1];
+      return Promise.resolve({
+        results: a.texts.map((x) => ({ de: x })),
+        plan: [{
+          stage: "translating", state: "done", tookS: t, model: `m${frames.length}`,
+          units: [{ target: "de", state: "done", tookS: t }],
+        }],
+      });
+    });
+    const segments = Array.from({ length: 1000 }, (_, i) => ({ text: `cue ${i}` }));
+    const r = await translateParsed({ segments }, { translateTo: ["de"] }, ctx);
+    expect(frames).toEqual([
+      { done: 0, len: 400, total: 1000 },
+      { done: 400, len: 400, total: 1000 },
+      { done: 800, len: 200, total: 1000 },
+    ]);
+    expect(r.plan?.[0].tookS).toBe(25);
+    expect(r.plan?.[0].units?.[0].tookS).toBe(25);
+    // Every other field is the last chunk's.
+    expect(r.plan?.[0].model).toBe("m3");
   });
 });
 

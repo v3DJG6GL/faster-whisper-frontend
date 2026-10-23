@@ -35,7 +35,7 @@ import { useDebounced } from "@/lib/useDebounced";
 import { fmtBytes, fmtDurationExact, fmtTimestamp, plural } from "@/lib/format";
 import { pickAudioFiles, isTauri, urlPreview } from "@/lib/api";
 import {
-  activeRailIndex, addFiles, axisLayout, cancelRun, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
+  activeRailIndex, addFiles, axisLayout, cancelRun, chunkedProgress, etaSecOf, overallOf, planOf, planTimeline, railStages, runBadgeFraction, unitsFraction,
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
@@ -261,7 +261,11 @@ export default function Transcribe() {
   const files = useTranscribeRun((s) => s.files);
   const queue = useTranscribeRun((s) => s.queue);
   const selectedPath = useTranscribeRun((s) => s.selectedPath);
-  const progress = useTranscribeRun((s) => s.progress);
+  const rawProgress = useTranscribeRun((s) => s.progress);
+  const textChunk = useTranscribeRun((s) => s.textChunk);
+  // A text source translated in several requests: each poll describes the chunk in flight,
+  // so the panel reads it scaled to the whole file.
+  const progress = useMemo(() => chunkedProgress(rawProgress, textChunk), [rawProgress, textChunk]);
   const stageTimes = useTranscribeRun((s) => s.stageTimes);
   const stageMeta = useTranscribeRun((s) => s.stageMeta);
   const lastOptions = useTranscribeRun((s) => s.lastOptions);

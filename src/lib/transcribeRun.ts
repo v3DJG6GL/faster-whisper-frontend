@@ -310,6 +310,96 @@ export function planOf(progress: BatchProgress | null, result?: BatchResult | nu
   return progress?.plan?.length ? progress.plan : null;
 }
 
+/** Where the chunk in flight sits in a text source translated in several requests
+ *  (translateParsed): every chunk is its own one-stage plan on the server under the run's one
+ *  progress id, so each poll's numbers describe that chunk alone. */
+export interface TextChunkFrame {
+  /** Segments the earlier chunks translated. */
+  done: number;
+  /** Segments in the chunk in flight. */
+  len: number;
+  /** Segments in the whole source. */
+  total: number;
+  /** ms epoch when the chunk's request left: a poll sent before it describes an earlier chunk. */
+  sentAt: number;
+  /** The store's progress when the chunk left: until a newer poll replaces it, it is the
+   *  previous chunk's last word and says nothing about this one. */
+  prev: BatchProgress | null;
+}
+
+/** The live poll scaled from the chunk in flight to the whole text source, as the viewer's
+ *  chunked retro-translate scales its card (retroTranslate.ts): every fraction becomes
+ *  (done + fraction × len) / total, and a language this chunk finished is still running for
+ *  the run. The server's seconds (ETA, stage and per-language estimates and times) cover this
+ *  chunk only, so they are dropped rather than shown as the run's — the ETA comes back on the
+ *  last chunk, where the chunk's remainder is the run's. Unchanged without a frame or for a
+ *  source that fits one request. */
+export function chunkedProgress(
+  p: BatchProgress | null,
+  f: TextChunkFrame | null | undefined,
+): BatchProgress | null {
+  if (!p || !f || (f.done <= 0 && f.len >= f.total)) return p;
+  const stale = p === f.prev;
+  const remain = f.done + f.len < f.total;
+  const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
+  const whole = (x: number) =>
+    clamp01((f.done + (stale ? 0 : clamp01(x)) * f.len) / Math.max(1, f.total));
+  const units = (us: PlanUnit[] | null | undefined) =>
+    us?.map((u): PlanUnit => {
+      if (u.instant || u.state === "instant" || u.state === "failed") return u;
+      const frac = whole(u.state === "done" ? 1 : u.state === "running" ? (u.progress ?? 0) : 0);
+      const state = frac >= 1 ? "done" : frac > 0 ? "running" : u.state;
+      return { ...u, state, progress: frac, estS: null, tookS: null };
+    });
+  return {
+    ...p,
+    ...(typeof p.overall === "number" ? { overall: whole(p.overall) } : {}),
+    ...(typeof p.progress === "number" ? { progress: whole(p.progress) } : {}),
+    etaS: remain || stale ? null : p.etaS,
+    ...(p.plan
+      ? {
+          plan: p.plan.map((st): PlanStage =>
+            st.stage !== "translating"
+              ? st
+              : {
+                  ...st,
+                  state: remain && st.state === "done" ? "active" : st.state,
+                  estS: null,
+                  tookS: null,
+                  elapsedS: null,
+                  ...(st.units ? { units: units(st.units) } : {}),
+                },
+          ),
+        }
+      : {}),
+  };
+}
+
+/** The run's receipt from its chunks' receipts: each chunk is its own one-stage plan on the
+ *  server, so a stage's took_s — and each language's — is summed across them; every other
+ *  field is the last chunk's. */
+export function mergeChunkPlans(prev: PlanStage[] | undefined, next: PlanStage[]): PlanStage[] {
+  if (!prev?.length) return next;
+  const sum = (a?: number | null, b?: number | null) =>
+    typeof a === "number" && typeof b === "number" ? a + b : b;
+  return next.map((st) => {
+    const was = prev.find((p) => p.stage === st.stage);
+    if (!was) return st;
+    return {
+      ...st,
+      tookS: sum(was.tookS, st.tookS),
+      ...(st.units
+        ? {
+            units: st.units.map((u) => {
+              const w = was.units?.find((x) => x.target === u.target);
+              return w ? { ...u, tookS: sum(w.tookS, u.tookS) } : u;
+            }),
+          }
+        : {}),
+    };
+  });
+}
+
 /** One lane of the translate segment on the timeline strip. */
 export interface TimelineLane {
   target: string;
@@ -548,6 +638,9 @@ export interface TranscribeRunState {
   lastRunPath: string | null;
   /** Live server progress of the RUNNING file (null between files). */
   progress: BatchProgress | null;
+  /** A text source's chunk in flight, which `progress` describes alone (chunkedProgress
+   *  scales it to the whole file); null for every other run. */
+  textChunk: TextChunkFrame | null;
   /** Wall-clock spans of the RUNNING file's stages (reset per file). */
   stageTimes: Partial<Record<RailStage, StageTime>>;
   /** Model/device chips per stage of the RUNNING file (reset per file). */
@@ -627,6 +720,7 @@ export const useTranscribeRun = create<TranscribeRunState>(() => ({
   selectedPath: null,
   lastRunPath: null,
   progress: null,
+  textChunk: null,
   stageTimes: {},
   stageMeta: {},
   renames: {},
@@ -1898,6 +1992,7 @@ export function reattachRun(row: LedgerRow, serverUrlOf: () => string): number {
     lastOverrides: row.overrides ?? {},
     urlMeta: row.urlMeta ? { ...s.urlMeta, [row.path]: { ...s.urlMeta[row.path], ...row.urlMeta } } : s.urlMeta,
     progress: null,
+    textChunk: null,
     stageMeta: {},
     stageTimes: { [first]: { start: row.startedAt } },
     running: true,
@@ -2068,6 +2163,10 @@ export async function translateParsed(
     // function returns, so without this a feature-length file kept POSTing chunk after
     // chunk for minutes after Cancel. The partial result is discarded by the pump.
     if (epoch !== undefined && epoch !== get().epoch) break;
+    // The run panel reads every poll of this chunk against where it sits in the whole source.
+    set((s) => ({
+      textChunk: { done: at, len: end - at, total: parsed.segments.length, sentAt: Date.now(), prev: s.progress },
+    }));
     const r = await translateText({
       serverUrl: ctx.serverUrl,
       backendId: ctx.backendId,
@@ -2092,9 +2191,8 @@ export async function translateParsed(
     model = model ?? r.model;
     // An auto-detect answer names no source (""): it never becomes the parsed language.
     source = source || r.source || undefined;
-    // The last chunk's receipt stands for the run (each chunk is its own
-    // one-stage plan on the server).
-    if (r.plan?.length) plan = r.plan;
+    // Each chunk is its own one-stage plan on the server: the run's receipt sums their times.
+    if (r.plan?.length) plan = mergeChunkPlans(plan, r.plan);
   }
   const segments = assembleTranslatedSegments(parsed.segments, results, keptAll);
   return {
@@ -2392,6 +2490,7 @@ async function pump(
       railFileSeq += 1;
       set({
         progress: null,
+        textChunk: null,
         lastRunPath: next.path,
         stageMeta: {},
         stageTimes: { [first]: { start: fileT0 } },
@@ -2413,6 +2512,7 @@ async function pump(
         ? window.setInterval(() => {
             if (pollInFlight) return; // don't stack concurrent polls
             const seq = ++pollSeq;
+            const sentAt = Date.now();
             pollInFlight = true;
             getTranscribeProgress({
               serverUrl: ctx.serverUrl,
@@ -2420,6 +2520,10 @@ async function pump(
               progressId: pid,
             })
               .then((p) => {
+                // A text source's next chunk shares the id: a poll sent before that chunk
+                // left is the previous chunk's news, and would scale onto this one's frame.
+                const chunk = get().textChunk;
+                if (chunk && sentAt < chunk.sentAt) return;
                 if (!pollingDone && epoch === get().epoch && seq === pollSeq) foldProgress(p);
               })
               .catch(() => {})
@@ -2626,9 +2730,9 @@ export function startRun(options: TranscribeOptions | undefined,
 }
 
 /** The sidebar badge's fraction — the same server number the run panel's header shows, so
- *  the two can never disagree. */
+ *  the two can never disagree (a chunked text source's scaled to the whole file there too). */
 export function runBadgeFraction(s: TranscribeRunState): number | null {
-  return overallOf(s);
+  return overallOf({ queue: s.queue, progress: chunkedProgress(s.progress, s.textChunk) });
 }
 
 /** The item the completed run panel describes: the file the PUMP ran last (it stamps
