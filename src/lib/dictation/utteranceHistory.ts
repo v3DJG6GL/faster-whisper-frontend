@@ -75,10 +75,10 @@ type InsertTranslation = Pick<
  *  bookUtteranceInsert stamps it): `delta` is the text this final added to the record, `sent`
  *  what the insert carried, `phrase` that insert's translate, `session` the session's
  *  translation (null = none, nothing to say). Only an insert that carried exactly this final's
- *  words, or a reopened window that is exactly the record's text, speaks for its translation. */
+ *  words, or exactly the record's whole text, speaks for its translation. */
 export function utteranceInsertTranslation(
   r: Pick<TranscriptRecord, "result" | "insertMethod" | "translatedText" | "translations" | "translationTargets" | "includeOriginal">,
-  ins: { sent: string; delta: string; phrase: { text: string; translated: boolean; byLang?: Record<string, string> }; reopened?: boolean },
+  ins: { sent: string; delta: string; phrase: { text: string; translated: boolean; byLang?: Record<string, string> } },
   session: { targets: readonly string[]; failure?: string } | null,
 ): InsertTranslation {
   if (!session) return {};
@@ -87,10 +87,12 @@ export function utteranceInsertTranslation(
   const delta = ins.delta.trim();
   const text = (r.result?.text ?? "").trim();
   if (sent !== delta) {
-    // A release final that reopened its clipboard window (see streaming.ts's clipClosed) re-sent
-    // the whole window, not its own words: when that window is exactly this record's text, its
-    // translation covers the record's earlier words too and replaces theirs.
-    return ins.reopened && phrase.translated && sent === text
+    // An insert that carried this record's whole text, not just this final's words — a release
+    // final's clipboard copy of its whole window (reopened, see streaming.ts's clipClosed, or
+    // never closed because the session stopped inside the pause), or a record skipped in our own
+    // window and then typed whole: its translation covers the record's earlier words too and
+    // replaces theirs.
+    return phrase.translated && sent === text
       ? {
           translatedText: phrase.text.trim(),
           translations: phrase.byLang ?? r.translations,

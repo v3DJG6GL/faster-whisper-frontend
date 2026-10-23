@@ -118,6 +118,23 @@ describe("utteranceInsertTranslation", () => {
     );
     expect(out.translatedText).toBe("Bonjour le");
   });
+
+  it("a release that copies its still-open clipboard window, exactly the record's text, books that window's translation", () => {
+    // Stopped inside the pause: the window never closed, so the release re-sent all of it.
+    const r = {
+      result: { text: "Hello the world" },
+      insertMethod: "clipboard" as const,
+      translatedText: "Bonjour le",
+      translations: { fr: "Bonjour le" },
+    };
+    const out = utteranceInsertTranslation(
+      r,
+      { sent: "Hello the world", delta: " world", phrase: { text: "Bonjour le monde", translated: true, byLang: { fr: "Bonjour le monde" } } },
+      fr,
+    );
+    expect(out.translatedText).toBe("Bonjour le monde");
+    expect(out.translations).toEqual({ fr: "Bonjour le monde" });
+  });
 });
 
 describe("routeUtteranceClip", () => {

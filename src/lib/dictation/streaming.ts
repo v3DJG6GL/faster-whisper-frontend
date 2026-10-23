@@ -1030,16 +1030,15 @@ function attachUtteranceClip(id: string, clip: UtteranceClip): void {
 }
 
 /** Per-utterance sessions: stamp what one live insert did onto its utterance's record — where
- *  the text went and, when the insert carried exactly that final's text, its translation
- *  (utteranceInsertTranslation). An insert that carried more (a clipboard window spanning
- *  utterances, a hard-break carry, a retype after an own-window skip) books only where it went:
- *  that translation is not this record's alone. */
+ *  the text went and, when the insert carried exactly that final's text or exactly the record's
+ *  whole text, its translation (utteranceInsertTranslation). An insert that carried other text
+ *  too (a clipboard window spanning utterances, a hard-break carry, a retype after an own-window
+ *  skip) books only where it went: that translation is not this record's alone. */
 function bookUtteranceInsert(
   rec: { id: string | null; delta: string } | null,
   how: "typed" | "clipboard",
   sent: string,
   phrase: PhraseOut,
-  reopened = false,
 ): void {
   // A final that added no text (a re-sent or flush final) reports its utterance's EARLIER record,
   // already booked or owed by the final that wrote it: re-stamping it would relabel a clipboard
@@ -1051,7 +1050,7 @@ function bookUtteranceInsert(
   patchRecord(rec.id, (r) => ({
     ...r,
     insertMethod: r.insertMethod === "typed" ? "typed" : how,
-    ...utteranceInsertTranslation(r, { sent, delta: rec.delta, phrase, reopened }, session),
+    ...utteranceInsertTranslation(r, { sent, delta: rec.delta, phrase }, session),
   }));
 }
 
@@ -2502,7 +2501,7 @@ async function ensureListeners(): Promise<void> {
               // The copy re-sends its whole window, so an earlier phrase of it skipped in our own
               // window went out with it.
               bookOwedUtterances("clipboard", { kind: "window", from: clipFrom });
-              bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!live);
+              bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang });
               // The clipboard now holds THIS clipboard-only transcript (what the user wants to
               // paste), not our earlier paste transcript — so we no longer owe a restore. Clear
               // clipDirty so neither the per-phrase restore (bumpPhraseEnd) nor the end-of-session
