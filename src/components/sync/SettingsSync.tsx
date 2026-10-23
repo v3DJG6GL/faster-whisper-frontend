@@ -679,7 +679,7 @@ export function predictChordFix(
   const before = wouldProfiles.slice(0, MAX_PREVIEW_PEERS);
   // evdevEnabled is machine-local (never synced), so the apply decides side-collapse on this.
   const evdevLive = useApp.getState().settings.general.evdevEnabled === true && evdevPermittedNow();
-  const resolved = disableConflictingProfiles(before, wouldQa, profilesAreInbound, evdevLive);
+  const resolved = disableConflictingProfiles(before, wouldQa, profilesAreInbound, evdevLive, undefined, localQa);
   return {
     switchedOff: resolved.profiles
       .filter((p, i) => p.enabled === false && before[i]?.enabled !== false)

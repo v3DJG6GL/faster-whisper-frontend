@@ -1129,9 +1129,11 @@ export function disableConflictingProfiles(
    *  decides a designed nesting); against the quick-add chord it is the enabled state alone,
    *  since the quick-add peer nests with nothing and activation cannot make or break that pair. */
   localBindings: ReadonlyMap<string, Profile> = new Map(),
+  /** This device's own quick-add chord — what the caller installs in place of a rejected
+   *  incoming one. Defaults to `quickAddHotkey` (the chord is not incoming). */
+  localQuickAddHotkey: string[] = quickAddHotkey,
 ): { profiles: Profile[]; rejectQuickAddHotkey: boolean } {
-  const peers = withQuickAddPeer(profiles, quickAddHotkey);
-  const order = new Map(peers.map((p, i) => [p.id, i]));
+  const order = new Map(profiles.map((p, i) => [p.id, i]));
   const byId = new Map(profiles.map((p) => [p.id, p]));
   const disable = new Set<string>();
   let rejectQuickAddHotkey = false;
@@ -1150,27 +1152,37 @@ export function disableConflictingProfiles(
   // (persistence.ts): the Windows low-level hook (hotkeys/windows.rs, VK_LCONTROL ≠ VK_RCONTROL)
   // and a live evdev backend register side-distinct chords, and collapsing anyway disabled a
   // working LCtrl+Space / RCtrl+Space pair on every pull — persisted, and pushed back out.
-  for (const c of conflicts(peers, !IS_WINDOWS && !evdevLive)) {
-    // Keep whichever came first — the quick-add peer always wins, since it is a single global
-    // chord the user may have bound locally, not one of many list entries.
-    //
-    // …but only when the profiles it beats came from the same blob. `dictionary` has no consent
-    // arm, so a blob carrying ONLY `dictionary.quickAddHotkey` reaches this with the user's own
-    // local profile list, and the unconditional win then switches those profiles off and
-    // persists that — worst case `["ControlLeft"]`, a strict subset of virtually every real
-    // chord, which disables dictation app-wide with nothing malformed to point at and no
-    // banner. When the collision is remote-chord-vs-local-profiles, drop the incoming chord
-    // instead. The peer still cannot be disabled, so the save gate stays un-tripped either way.
-    const self = order.get(c.profileId) ?? 0;
-    const other = order.get(c.otherId) ?? 0;
-    //
-    // The same holds per profile when the list arrived but its chords did not: with "Profile
-    // shortcuts" off every known profile carries this device's chord, so a collision there is
-    // the incoming chord's fault, whatever the list order.
+  const collapseSides = !IS_WINDOWS && !evdevLive;
+  let found = conflicts(withQuickAddPeer(profiles, quickAddHotkey), collapseSides);
+  // The quick-add peer always wins, since it is a single global chord the user may have bound
+  // locally, not one of many list entries…
+  //
+  // …but only when the profiles it beats came from the same blob. `dictionary` has no consent
+  // arm, so a blob carrying ONLY `dictionary.quickAddHotkey` reaches this with the user's own
+  // local profile list, and the unconditional win then switches those profiles off and
+  // persists that — worst case `["ControlLeft"]`, a strict subset of virtually every real
+  // chord, which disables dictation app-wide with nothing malformed to point at and no
+  // banner. When the collision is remote-chord-vs-local-profiles, drop the incoming chord
+  // instead. The peer still cannot be disabled, so the save gate stays un-tripped either way.
+  //
+  // The same holds per profile when the list arrived but its chords did not: with "Profile
+  // shortcuts" off every known profile carries this device's chord, so a collision there is
+  // the incoming chord's fault, whatever the list order.
+  if (found.some((c) => c.otherId === QUICK_ADD_PEER_ID && chordIsLocal(c.profileId, false))) {
+    rejectQuickAddHotkey = true;
+    // Settle the rest against the chord that will actually be installed: an inbound profile on
+    // this device's own chord collides with it, while one that only met the dropped chord does not.
+    found = conflicts(withQuickAddPeer(profiles, localQuickAddHotkey), collapseSides);
+  }
+  for (const c of found) {
     if (c.otherId === QUICK_ADD_PEER_ID) {
-      if (chordIsLocal(c.profileId, false)) rejectQuickAddHotkey = true;
-      else disable.add(c.profileId);
+      // A local binding already passed this device's save gate beside its own chord, and is
+      // never against an incoming one here (that chord was rejected above).
+      if (!chordIsLocal(c.profileId, false)) disable.add(c.profileId);
     } else if (c.profileId !== QUICK_ADD_PEER_ID) {
+      // Between two inbound bindings keep whichever came first.
+      const self = order.get(c.profileId) ?? 0;
+      const other = order.get(c.otherId) ?? 0;
       // Two local bindings already passed this device's save gate together: nothing new collides.
       const selfLocal = chordIsLocal(c.profileId, true);
       const otherLocal = chordIsLocal(c.otherId, true);
@@ -2173,6 +2185,7 @@ export async function applyBlob(
       inboundProfiles !== null,
       nextSettings.general.evdevEnabled === true && evdevPermittedNow(),
       inboundProfiles !== null && !gates.profileHotkeys ? new Map(st.profiles.map((p) => [p.id, p])) : undefined,
+      settings.general.quickAddHotkey,
     );
     nextProfiles = resolved.profiles;
     if (resolved.rejectQuickAddHotkey) {

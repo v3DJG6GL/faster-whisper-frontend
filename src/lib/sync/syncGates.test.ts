@@ -248,6 +248,54 @@ describe("apply: keep-local per gate", () => {
     expect(st.settings.general.quickAddHotkey).toEqual(localQa);
   });
 
+  it("profileHotkeys off: a new peer profile on this device's quick-add chord is switched off when the incoming quick-add chord is rejected", async () => {
+    const own = ["ControlLeft", "AltLeft", "KeyD"];
+    useApp.setState({ profiles: [profile({ hotkey: own })] });
+    gateOff("profileHotkeys");
+    const localQa = useApp.getState().settings.general.quickAddHotkey;
+    await applyBlob(
+      {
+        profiles: {
+          list: [profile({ hotkey: ["F9"] }), profile({ id: "pNew", name: "New", hotkey: localQa })],
+          homeProfileId: null,
+        } as never,
+        dictionary: { quickAddHotkey: own } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const st = useApp.getState();
+    const byId = new Map(st.profiles.map((p) => [p.id, p]));
+    expect(st.settings.general.quickAddHotkey).toEqual(localQa);
+    expect(byId.get("p1")!.enabled).toBe(true);
+    expect(byId.get("pNew")!.enabled).toBe(false);
+  });
+
+  it("profileHotkeys off: a new peer profile that met only the rejected incoming quick-add chord stays on", async () => {
+    const own = ["ControlLeft", "AltLeft", "KeyD"];
+    useApp.setState({ profiles: [profile({ hotkey: own })] });
+    gateOff("profileHotkeys");
+    const localQa = useApp.getState().settings.general.quickAddHotkey;
+    await applyBlob(
+      {
+        profiles: {
+          list: [
+            profile({ hotkey: ["F9"] }),
+            // Hands-free over p1's hold chord is a designed nesting; it shadows only the quick-add chord.
+            profile({ id: "pNew", name: "New", hotkey: [...own, "KeyE"], activation: "handsfree" }),
+          ],
+          homeProfileId: null,
+        } as never,
+        dictionary: { quickAddHotkey: own } as never,
+      },
+      { ...CATS_ALL, backends: false },
+    );
+    const st = useApp.getState();
+    const byId = new Map(st.profiles.map((p) => [p.id, p]));
+    expect(st.settings.general.quickAddHotkey).toEqual(localQa);
+    expect(byId.get("p1")!.enabled).toBe(true);
+    expect(byId.get("pNew")!.enabled).toBe(true);
+  });
+
   it("profileHotkeys off: a new peer profile on this device's own chord is the one switched off, whatever the order", async () => {
     const own = ["ControlLeft", "AltLeft", "KeyD"];
     useApp.setState({ profiles: [profile({ hotkey: own })] });
