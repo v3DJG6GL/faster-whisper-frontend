@@ -72,13 +72,14 @@ type InsertTranslation = Pick<
 >;
 
 /** What one live insert says about its utterance record's translation (streaming.ts's
- *  bookUtteranceInsert stamps it): `delta` is the text this final added to the record, `sent`
- *  what the insert carried, `phrase` that insert's translate, `session` the session's
+ *  bookUtteranceInsert stamps it): `delta` is the text this final added to the record, `first`
+ *  whether this final opened the record (streaming.ts's recordUtteranceFinal), `sent` what the
+ *  insert carried, `phrase` that insert's translate, `session` the session's
  *  translation (null = none, nothing to say). Only an insert that carried exactly this final's
  *  words, or exactly the record's whole text, speaks for its translation. */
 export function utteranceInsertTranslation(
   r: Pick<TranscriptRecord, "result" | "insertMethod" | "translatedText" | "translations" | "translationTargets" | "includeOriginal">,
-  ins: { sent: string; delta: string; phrase: { text: string; translated: boolean; byLang?: Record<string, string> } },
+  ins: { sent: string; delta: string; first?: boolean; phrase: { text: string; translated: boolean; byLang?: Record<string, string> } },
   session: { targets: readonly string[]; failure?: string } | null,
 ): InsertTranslation {
   if (!session) return {};
@@ -107,10 +108,11 @@ export function utteranceInsertTranslation(
   // in our own window, or a copy that did not land): this final's translation alone is not the
   // record's, and booked as its translatedText History would copy and search only the held-back
   // word. Book nothing, so the copy falls back to the whole original: a failed translate already
-  // booked its own failure, and the others claim none. Position tells these apart from the
-  // record's own insert still in flight (its booking can arrive after the release's words were
-  // appended): those words start the record's text, a release's never do.
-  if (!r.translatedText && text !== delta && !text.startsWith(delta)) return {};
+  // booked its own failure, and the others claim none. The final that opened the record (`first`)
+  // still books: its insert is the record's own, and its booking can arrive after a release's
+  // words were appended. Not told apart by text — a release's words can repeat the record's
+  // opening ("No. No.", or "I" after "It works and").
+  if (!r.translatedText && !ins.first) return {};
   // A release final's own words: its translation joins the record's per language — a
   // multi-block phrase ("<fr>\n\n<de>") cannot take one space after the whole text.
   const out = appendTranslation({ text: r.translatedText, tracks: r.translations }, phrase.text, phrase.byLang, {

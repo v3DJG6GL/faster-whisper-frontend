@@ -971,8 +971,10 @@ function recordMeta(meta: NonNullable<typeof sessionMeta>) {
 /** Per-utterance sessions: book one `final` into History right away. An ordinal final opens
  *  its utterance's record; a release final (no ordinal) appends the held-back words it carries
  *  to the last utterance's — or creates that record, when the utterance's own final carried no
- *  text. Returns the record the final's insert reports to, and the text this final added. */
-function recordUtteranceFinal(ordinal: number | null): { id: string | null; delta: string } {
+ *  text. Returns the record the final's insert reports to, whether this final opened it (`first`:
+ *  its insert's translation is the record's own, see utteranceInsertTranslation), and the text
+ *  this final added. */
+function recordUtteranceFinal(ordinal: number | null): { id: string | null; first: boolean; delta: string } {
   const delta = finalDelta(committedDoc, utteranceDocEnd);
   utteranceDocEnd = committedDoc.length;
   const now = Date.now();
@@ -987,13 +989,13 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; delt
   }
   const utt = lastUtterance;
   const meta = historyMeta();
-  if (!utt || !meta || !delta.trim()) return { id: utt?.id ?? null, delta };
+  if (!utt || !meta || !delta.trim()) return { id: utt?.id ?? null, first: false, delta };
   if (utt.id) {
     patchRecord(utt.id, (r) => {
       const text = appendDelta(r.result?.text ?? "", delta);
       return { ...r, result: { ...r.result, text }, wordCount: text.split(/\s+/).filter(Boolean).length };
     });
-    return { id: utt.id, delta };
+    return { id: utt.id, first: false, delta };
   }
   try {
     utt.id = recordDictation({
@@ -1010,13 +1012,13 @@ function recordUtteranceFinal(ordinal: number | null): { id: string | null; delt
     });
   } catch (e) {
     console.error("dictation history capture failed:", e);
-    return { id: null, delta };
+    return { id: null, first: false, delta };
   }
   if (utt.clip) {
     attachUtteranceClip(utt.id, utt.clip);
     if (utteranceByOrdinal.get(utt.ordinal) === utt) utteranceByOrdinal.delete(utt.ordinal);
   }
-  return { id: utt.id, delta };
+  return { id: utt.id, first: true, delta };
 }
 
 /** Link an utterance's clip to its record; the clip's length is the record's duration. */
@@ -1035,7 +1037,7 @@ function attachUtteranceClip(id: string, clip: UtteranceClip): void {
  *  too (a clipboard window spanning utterances, a hard-break carry, a retype after an own-window
  *  skip) books only where it went: that translation is not this record's alone. */
 function bookUtteranceInsert(
-  rec: { id: string | null; delta: string } | null,
+  rec: { id: string | null; first: boolean; delta: string } | null,
   how: "typed" | "clipboard",
   sent: string,
   phrase: PhraseOut,
@@ -1050,7 +1052,7 @@ function bookUtteranceInsert(
   patchRecord(rec.id, (r) => ({
     ...r,
     insertMethod: r.insertMethod === "typed" ? "typed" : how,
-    ...utteranceInsertTranslation(r, { sent, delta: rec.delta, phrase }, session),
+    ...utteranceInsertTranslation(r, { sent, delta: rec.delta, first: rec.first, phrase }, session),
   }));
 }
 

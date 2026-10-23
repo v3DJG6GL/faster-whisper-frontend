@@ -137,10 +137,36 @@ describe("utteranceInsertTranslation", () => {
     const r = { result: { text: "Hello the world" }, insertMethod: "none" as const };
     const out = utteranceInsertTranslation(
       r,
-      { sent: "Hello the", delta: " Hello the", phrase: { text: "Bonjour le", translated: true, byLang: { fr: "Bonjour le" } } },
+      { sent: "Hello the", delta: " Hello the", first: true, phrase: { text: "Bonjour le", translated: true, byLang: { fr: "Bonjour le" } } },
       fr,
     );
     expect(out.translatedText).toBe("Bonjour le");
+  });
+
+  it("a release that repeats its utterance's words books no translation of them alone", () => {
+    // "No. No.": the ordinal insert's translate timed out (the record holds its failure, no
+    // translation), then the release's held-back "No." translated. The record's text starts
+    // with it, but this final did not open the record.
+    const r = { result: { text: "No. No." }, insertMethod: "typed" as const };
+    const out = utteranceInsertTranslation(
+      r,
+      { sent: "No.", delta: " No.", first: false, phrase: { text: "Non.", translated: true, byLang: { fr: "Non." } } },
+      fr,
+    );
+    expect(out.translatedText).toBeUndefined();
+    expect(out).toEqual({});
+  });
+
+  it("a release word that opens its utterance's first word books no translation of it alone", () => {
+    // "It works and" went out untranslated; the held-back " I" is a character prefix of "It".
+    const r = { result: { text: "It works and I" }, insertMethod: "typed" as const };
+    const out = utteranceInsertTranslation(
+      r,
+      { sent: "I", delta: " I", first: false, phrase: { text: "je", translated: true, byLang: { fr: "je" } } },
+      fr,
+    );
+    expect(out.translatedText).toBeUndefined();
+    expect(out).toEqual({});
   });
 
   it("a release that copies its still-open clipboard window, exactly the record's text, books that window's translation", () => {
