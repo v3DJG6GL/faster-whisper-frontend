@@ -1897,6 +1897,23 @@ describe("cutByShare", () => {
       expect(wrapLines(jfk, 32, 2, 0, undefined, lang)).toEqual(["Yesterday we met John F. Kennedy", "at the old airport"]);
     }
   });
+  it("a translation cut keeps a first name of nine letters or more with its initial, as it does \"John\"", () => {
+    // The cut read the word before a seam from a 9-character window, which held no word before
+    // "Christopher": the cut ended on the first name and the next part opened on "F.".
+    for (const name of ["John", "Christopher", "Alexander", "Elizabeth"]) {
+      const t = `Yesterday we met ${name} F. Kennedy at the old airport`;
+      for (const lang of ["en", undefined])
+        expect(cutByShare(t, [1, 1], lang)).toEqual([`Yesterday we met ${name} F. Kennedy`, "at the old airport"]);
+      for (const l of wrapLines(t, 40, 2, 0, undefined, "en")) expect(l).not.toMatch(new RegExp(`${name}$`));
+    }
+    expect(cutByShare("We spoke with Christopher F. Kennedy about it", [1, 1], "en"))
+      .toEqual(["We spoke with Christopher F. Kennedy", "about it"]);
+    expect(cutByShare("We met President Christopher F. Smith yesterday", [27, 20], "en"))
+      .toEqual(["We met President Christopher F. Smith", "yesterday"]);
+    // A number of nine characters or more stays with its unit the same way.
+    expect(cutByShare("They ran exactly 1,000,000 m. in that long year", [1, 1], "en"))
+      .toEqual(["They ran exactly 1,000,000 m.", "in that long year"]);
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",

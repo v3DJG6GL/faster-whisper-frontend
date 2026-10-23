@@ -978,6 +978,10 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       // isSentenceEnd, which tells the title "M." from the unit "m.".
       const prevCased = sp >= 0 || i <= 9 ? back.slice(sp + 1).replace(/^[^\p{L}\p{N}]+/u, "") : "";
       const prevWord = prevCased.toLowerCase();
+      // A first name or a number may outrun that window ("Christopher | F. Kennedy", "1,000,000 |
+      // m."): the name and unit tests read the whole word, from the wider look-back, as the cue
+      // split and the wrap do — an empty word held nothing there.
+      const prevWhole = prevCased || (i <= 9 ? "" : wordBefore(text, i).replace(/^[^\p{L}\p{N}]+/u, ""));
       // The next 24 chars: the initial of beforeInitial and the word after it ("B. Danach").
       const cut = { next: text.slice(i, i + 24).trimStart(), lang, prev: prevWord ? wordBefore(text, i - back.length + sp + 1) : undefined };
       const s =
@@ -998,7 +1002,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevCased, cut.next, cut.next.split(/\s+/)[1] ?? "", lang) || beforeUnit(prevCased, cut.next) ? 12 : 0) -
+        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevWhole, cut.next, cut.next.split(/\s+/)[1] ?? "", lang) || beforeUnit(prevWhole, cut.next) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
         (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {
