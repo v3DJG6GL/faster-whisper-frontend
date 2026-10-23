@@ -481,14 +481,14 @@ mod tests {
             Some("org.kde.konsole")
         );
 
-        // Past even a busy app's deactivate latency is no race either.
+        // Past even a busy app's deactivate latency (PARK_MAX_AGE, 2 s) is no race either.
         let snap = parking_lot::Mutex::new(super::Snapshot::default());
         note_activate(&snap, "org.kde.konsole".into(), Some(":1.1".into()));
         let _ = note_focus(&snap, "org.kde.konsole".into(), Some(true), el(":1.1"));
         let mut parked = note_focus(&snap, "slack".into(), Some(true), el(":1.5"));
         let mark = snap.lock().active_app.clone();
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
-        let later = Instant::now() + Duration::from_secs(6);
+        let later = Instant::now() + Duration::from_secs(3);
         replay_parked(&snap, &mut parked, mark.as_deref(), Some(":1.1"), later);
         assert!(parked.is_none());
         assert_eq!(

@@ -588,7 +588,9 @@ pub(super) struct Parked {
 /// than that slack is a background app's stray one (the "chromium ghost" the gate rejects), and
 /// replaying it on the next mark change — the user summoning Quick-Add minutes later — would make
 /// an app the user never focused `current`, then `last_other` with its per-app rule and selection.
-const PARK_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(5);
+/// 2 s (was 5 s): twice the resolve budget still covers a busy terminal's late deactivate, while a
+/// stray background focus stays replayable for less than half as long.
+const PARK_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// An element focus. Accept ONLY from the foreground app, or when none is marked foreground
 /// (the moment right after a switch). A background app's stray focus while a DIFFERENT app is
