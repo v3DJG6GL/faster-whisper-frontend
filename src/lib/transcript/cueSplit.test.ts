@@ -1794,6 +1794,34 @@ describe("cutByShare", () => {
     expect(wrapLines("Hier j'ai vu M. Dupont à la gare du nord", 30, 2, 0, undefined, "fr"))
       .toEqual(["Hier j'ai vu", "M. Dupont à la gare du nord"]);
   });
+  it("a name's initials stay inside the name in the cut, the wrap and the cue split; \"a plan B.\" still ends a sentence", () => {
+    // A lone capital and its stop counted as a sentence end: "John F." / "Kennedy …".
+    const cues = (t: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: "en", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 42, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const jfk = "Yesterday we met John F. Kennedy at the old airport";
+    for (const parts of [cutByShare(jfk, [1, 1], "en"), wrapLines(jfk, 32, 2, 0, undefined, "en"), cues(jfk)])
+      expect(parts).toEqual(["Yesterday we met John F. Kennedy", "at the old airport"]);
+    const jkr = "The book by J. K. Rowling sold many copies worldwide";
+    for (const parts of [cutByShare(jkr, [1, 1], "en"), wrapLines(jkr, 32, 2, 0, undefined, "en"), cues(jkr)])
+      expect(parts).toEqual(["The book by J. K. Rowling", "sold many copies worldwide"]);
+    expect(cutByShare("Later George W. Bush gave a speech at the old airport", [1, 1], "en"))
+      .toEqual(["Later George W. Bush gave", "a speech at the old airport"]);
+    // A letter after a lowercase word, and a Roman numeral, end a sentence as before.
+    for (const [t, first] of [
+      ["We need a plan B. Then we leave the city tonight", "We need a plan B."],
+      ["Take some vitamin C. Then you will feel much better", "Take some vitamin C."],
+      ["It started before World War I. After that the town grew", "It started before World War I."],
+    ] as const) {
+      expect(cutByShare(t, [1, 1], "en")[0]).toBe(first);
+      expect(wrapLines(t, 32, 2, 0, undefined, "en")[0]).toBe(first);
+      expect(cues(t)[0]).toBe(first);
+    }
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
@@ -2066,6 +2094,8 @@ describe("shape matrix: cues, their lines and translation cuts", () => {
     ["w quote", "He said, \"Go home now.\" Then we all left the place", 42, 2, 0, "He said, \"Go home now.\" / Then we all left the place"],
     ["w Mr.", "Yesterday I met Mr. Johnson at the station", 30, 2, 0, "Yesterday I met / Mr. Johnson at the station"],
     ["w Ms.", "Yesterday I met Ms. Johnson at the station", 30, 2, 0, "Yesterday I met / Ms. Johnson at the station"],
+    ["w John F.", "Yesterday we met John F. Kennedy at the old airport", 32, 2, 0, "Yesterday we met John F. Kennedy / at the old airport"],
+    ["w plan B.", "We need a plan B. Then we leave the city tonight", 32, 2, 0, "We need a plan B. / Then we leave the city tonight"],
     ["w de", "Wir sprechen heute über Verantwortungsbewusstsein und Zusammengehörigkeitsgefühl.", 42, 2, 0, "Wir sprechen heute / über Verantwortungsbewusstsein / und Zusammengehörigkeitsgefühl."],
     ["w zh 。」", "他说：「我们走吧。」然后大家一起离开了这个地方", 16, 2, 0, "他说：「我们走吧。」然 / 后大家一起离开了这个地方"],
     ["w ja 。」", "彼は「もう帰ろう。」と言った。それから皆で", 13, 2, 0, "彼は「もう帰ろう。」 / と言った。それから皆で"],

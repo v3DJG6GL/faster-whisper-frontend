@@ -362,18 +362,29 @@ const CLAUSE = /[,;:–—、，；：،؛፣፤၊៖]["'»”’)\]」』）�
 const quoteGoesOn = (before: string, after: string): boolean =>
   /[」』）】〉》]$/u.test(before) && /^(?:と|って)/u.test(after);
 
+/** What isSentenceEnd knows around the stop: see there. */
+interface SentenceCut { next: string; lang?: string; prev?: string }
+/** A capital and its stop: an initial ("F."), or a letter that ends a sentence ("plan B."). Not
+ *  the Roman numerals I, V and X: "World War I. After that" ends one. */
+const INITIAL = /^(?![IVX])\p{Lu}\.$/u;
+/** The word before text[..at), within a bounded look-back. */
+const wordBefore = (text: string, at: number): string =>
+  text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
+
 /** Languages that write an ordinal with a dot ("am 3. Mai"), by base subtag. */
 const DOTTED_ORDINAL = new Set([
   "de", "da", "nb", "nn", "no", "fi", "is", "fo", "cs", "sk", "pl", "hu", "tr", "sl", "hr", "sr", "bs", "et", "lv",
 ]);
 
-/** `cut` = the text after the stop and the track's language, as the cue split, the line wrap
- *  and the translation cut all know them. "no."/"nr." abbreviate only before a number
- *  ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
+/** `cut` = the text after the stop, the track's language and the word before `word`, as the cue
+ *  split, the line wrap and the translation cut all know them. "no."/"nr." abbreviate only
+ *  before a number ("No. 5") — "I said no." and "Yo creo que no." end a sentence — and "12." is an ordinal
  *  only in a language that dots them ("He was 12." ends one; an unknown language or "und":
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") ends one only before a capital: "the U.S.
- *  government", "9 a.m. in the office" go on. */
-function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boolean {
+ *  government", "9 a.m. in the office" go on. A name's initial goes on before a capital when a
+ *  capitalised word or another initial comes before it or another initial after it ("John F.
+ *  Kennedy", "J. K. Rowling"); "a plan B. Then" ends one. */
+function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
   // abbreviations, "(3." an ordinal, as their bare spellings are.
@@ -383,31 +394,45 @@ function isSentenceEnd(word: string, cut?: { next: string; lang?: string }): boo
   const unit = (w === "m." || w === "ms.") && /^\p{Ll}/u.test(raw);
   if (ABBREV.has(w) && !unit && !(cut && (w === "no." || w === "nr.") && !/^\d/.test(cut.next))) return false;
   if (cut && /^(?:\p{L}\.){2,}$/u.test(w) && /^\p{Ll}/u.test(cut.next)) return false;
+  if (
+    cut && INITIAL.test(raw) && /^\p{Lu}/u.test(cut.next) &&
+    (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || /^[^\p{L}\p{N}]*\p{Lu}/u.test(cut.prev ?? ""))
+  ) return false;
   const base = primarySubtag(cut?.lang);
   if (base && base !== "und" && !DOTTED_ORDINAL.has(base)) return true;
   return !/^\d{1,2}\.$/.test(w); // German ordinal "3." (a year "1980." still ends a sentence)
 }
 
-/** Whether `word` is a title or number abbreviation, or a dotted ordinal, that isSentenceEnd
- *  holds no sentence end here ("Ms. Johnson", "Nr. 5", "am 3. Mai"): it dangles as an article
- *  does. Judged by isSentenceEnd, not listed in NOBREAK: "I said no. Then" ends one. */
-function heldAbbrev(word: string, cut: { next: string; lang?: string }): boolean {
+/** Whether `word` is a title or number abbreviation, a dotted ordinal or a name's initial, that
+ *  isSentenceEnd holds no sentence end here ("Ms. Johnson", "Nr. 5", "am 3. Mai", "John F.
+ *  Kennedy"): it dangles as an article does. Judged by isSentenceEnd, not listed in NOBREAK: "I
+ *  said no. Then" ends one. */
+function heldAbbrev(word: string, cut: SentenceCut): boolean {
   if (!SENT_END.test(word) || isSentenceEnd(word, cut)) return false;
-  const w = word.toLowerCase().replace(/^[^\p{L}\p{N}]+/u, "");
-  return TITLE_ABBREV.has(w) || /^\d{1,2}\.$/.test(w);
+  const raw = word.replace(/^[^\p{L}\p{N}]+/u, "");
+  const w = raw.toLowerCase();
+  return TITLE_ABBREV.has(w) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw);
 }
+
+/** A capitalised word running on into a name's initial ("John | F. Kennedy"): the seam inside the
+ *  name dangles as the one after the initial does. "a plan | B." does not. */
+const beforeInitial = (prev: string, next: string): boolean =>
+  /^[^\p{L}\p{N}]*\p{Lu}/u.test(prev) && !SENT_END.test(prev) && !CLAUSE.test(prev) &&
+  INITIAL.test(next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, ""));
 
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
 
-/** Score of breaking between `prev` and `next` (words as written) in a text of `lang`. */
-function breakScore(prev: string, next: string, lang?: string): number {
+/** Score of breaking between `prev` and `next` (words as written) in a text of `lang`; `before` =
+ *  the word before `prev`. */
+function breakScore(prev: string, next: string, lang?: string, before?: string): number {
   let s = 0;
   const quoted = quoteGoesOn(prev, next);
-  if (!quoted && isSentenceEnd(prev, { next, lang })) s += 100;
+  const cut = { next, lang, prev: before };
+  if (!quoted && isSentenceEnd(prev, cut)) s += 100;
   else if (!quoted && CLAUSE.test(prev)) s += 40;
   // A word the clause or sentence ends on ("turn the lights on,") dangles nothing: bare()
   // drops its comma, so only a word running on into the next one counts ("Mr." still does).
-  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, { next, lang })) s -= 80;
+  else if (NOBREAK.has(prev.toLowerCase()) || NOBREAK.has(bare(prev)) || heldAbbrev(prev, cut) || beforeInitial(prev, next)) s -= 80;
   // A spaced "&" is an "and" (Procter & Gamble): the seam goes before it, as before "and".
   if (CONJ.has(bare(next)) || next === "&") s += 20;
   return s;
@@ -732,6 +757,7 @@ function splitTokens(text: string, ts: Tok[], L: Budget): Tok[][] {
       text.slice(ts[i - 1].from, ts[i - 1].to).trim(),
       text.slice(ts[i].from, ts[i].to).trim(),
       L.lang,
+      wordBefore(text, ts[i - 1].from),
     ));
     s += gap >= 0.5 ? 150 : 120 * Math.max(gap, 0);
     // Between two syllables of a Thai/Lao/Khmer/Burmese run (no space): a fallback seam, so
@@ -905,13 +931,14 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
       // isSentenceEnd, which tells the title "M." from the unit "m.".
       const prevCased = sp >= 0 || i <= 9 ? back.slice(sp + 1).replace(/^[^\p{L}\p{N}]+/u, "") : "";
       const prevWord = prevCased.toLowerCase();
+      const cut = { next: text.slice(i, i + 9).trimStart(), lang, prev: prevWord ? wordBefore(text, i - back.length + sp + 1) : undefined };
       const s =
         -Math.abs(i - target) +
         // A stop after an abbreviation or an ordinal ("z.B.", "3.") ends no sentence, as in
         // breakScore — judged on the word before the cut when there is one.
         (quoteGoesOn(back, text.slice(i, i + 2))
           ? 0
-          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevCased, { next: text.slice(i, i + 9).trimStart(), lang }))
+          : SENT_END.test(back) && (!prevWord || isSentenceEnd(prevCased, cut))
             ? 16
             : CLAUSE.test(back) ? 9 : 0) +
         (sylSpaced && BREAK_SPACE.test(text[i]) ? 9 : 0) -
@@ -923,7 +950,7 @@ export function cutByShare(text: string, shares: number[], lang?: string): strin
           && (LONE_CLOSER_AHEAD.test(text.slice(i + 1, i + 9)) || /(?:^|\s)[\p{Ps}\p{Pi}]+$/u.test(back))
           ? 20
           : 0) -
-        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, { next: text.slice(i, i + 9).trimStart(), lang }) ? 12 : 0) -
+        (NOBREAK.has(prevWord) || heldAbbrev(prevCased, cut) || beforeInitial(prevCased, cut.next) ? 12 : 0) -
         // A part of one character (the ま of また, a lone 京) is a fallback, not a balance.
         (oneCp(prev, i) || (k === nCuts - 1 && oneCp(i, text.length)) ? 9 : 0);
       if (s > best) {
@@ -1317,7 +1344,7 @@ function wrapTokens(
       if (a > cpl) s -= 2000 + 50 * (a - cpl);
       if (b > cpl * (n - 1)) s -= 1000;
       if (gaps[i]) {
-        s += breakScore(toks[i - 1], toks[i], lang) * 0.3;
+        s += breakScore(toks[i - 1], toks[i], lang, i >= 2 && gaps[i - 1] ? toks[i - 2] : undefined) * 0.3;
         // Never beside a lone mark of spaced punctuation (French « bonjour », "Ça va ?", Thai
         // "บ่อย ๆ"): it
         // stays with its word — below the over-cap penalties, so a forced cut still happens,
