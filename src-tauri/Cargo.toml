@@ -185,6 +185,7 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_DataExchange",
     "Win32_System_LibraryLoader",
     "Win32_System_Memory",
+    "Win32_System_Registry",
     "Win32_System_Threading",
     "Win32_UI_Accessibility",
     "Win32_UI_Input",
@@ -192,6 +193,12 @@ windows-sys = { version = "0.61", features = [
     "Win32_UI_Shell",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# The proxy ExceptionsList / ExcludeSimpleHostnames hyper-util's system matcher never reads
+# (transport/proxy.rs), from the same SCDynamicStore it reads the proxy from. The version
+# hyper-util's `client-proxy-system` already pulls in, so this adds no new crate.
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = "0.7"
 
 # NOTE: `time` is pinned to 0.3.47 in Cargo.lock. time 0.3.48 introduced a trait
 # impl that collides (E0119) with `cookie` 0.18.1 (a transitive Tauri dep). Do not

@@ -1342,6 +1342,7 @@ dependencies = [
  "serde",
  "serde_json",
  "symphonia",
+ "system-configuration",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
