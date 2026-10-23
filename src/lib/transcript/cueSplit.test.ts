@@ -722,6 +722,12 @@ describe("wrapLines", () => {
     expect(wrapLines('我们的产品叫RTX"Super"和"Ultra"两个版本', 12, 2)).toEqual(["我们的产品叫", 'RTX"Super"', '和"Ultra"两个版本']);
     expect(wrapLines("我们的产品叫RTX'Super'和'Ultra'两个版本", 12, 2)).toEqual(["我们的产品叫", "RTX'Super'", "和'Ultra'两个版本"]);
     expect(cutByShare('我们的产品叫RTX"Super"和"Ultra"两个版本', [1, 1])).toEqual(['我们的产品叫RTX"Super"', '和"Ultra"两个版本']);
+    // Also in a cue cut right after RTX: its leading " is judged by the X before it, as in the segment.
+    const afterRtx = { before: { '"': 0, "'": 0 }, after: { '"': 0, "'": 0 }, prev: "X" };
+    for (const cpl of [8, 10, 12, 13]) {
+      const lines = wrapLines('"Super"和"Ultra"两个版本然后我们一起走了', cpl, 2, 0, afterRtx, "zh");
+      expect(lines[0], lines.join(" | ")).toBe('"Super"');
+    }
     expect(wrapLines('新しいApple"Vision Pro"と"iPhone"を発表しました', 10, 2)).toContain('Pro"');
     expect(wrapLines('我们用的是Model"X"和Model"Y"两款车', 8, 2)).toContain('Model"X"');
     expect(wrapLines("I'm Mike'新功能'很好用大家都很喜欢", 8, 2)).toEqual(["I'm Mike", "'新功能'很好", "用大家都很喜欢"]);
@@ -1387,6 +1393,15 @@ describe("buildCues keeps quotation marks with what they open and close", () => 
       const texts = buildCues(r4, { length, timing: "same" }, ["orig"]).cues.map((c) => c.text);
       expect(texts[0], texts.join(" | ")).toBe('我们的产品叫RTX"Super"');
       expect(texts.join("")).toBe(r4.text);
+    }
+    // Nor in the cue a pause after RTX starts with "Super", wrapped with its quotes.
+    const zh5 = ["我们", "的", "产品", "叫", "RTX", '"Super"', "和", '"Ultra"', "两个", "版本", "然后", "我们", "一起", "走了", "很远", "的路"];
+    const cue = buildCues(resOf(zh5, "zh", { 4: 0.8 }), { length: "standard", timing: "same" }, ["orig"]).cues
+      .find((c) => c.text.startsWith('"Super"'));
+    expect(cue).toBeDefined();
+    for (const cpl of [8, 10, 12, 13]) {
+      const lines = wrapLines(cue!.text, cpl, 2, 0, cue!.q, "zh");
+      expect(lines[0], lines.join(" | ")).toBe('"Super"');
     }
     // A quote closing a quotation after its comma stays with it.
     const close = resOf([" She", " said", ' "Come', ' here,"', " and", " then", " she", " left", " the", " room", " quickly", " without",

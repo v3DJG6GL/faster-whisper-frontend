@@ -1030,12 +1030,13 @@ function quoteFlags(t: string, q?: QuoteCtx): boolean[] {
  *  right before it — its letters and digits, and spaces for a " (RTX"Super", Apple"Vision Pro"; a
  *  ' a word back is an apostrophe: I'm Mike'). Its count's parity is then off by one, so the
  *  letter-or-digit branch that splits an opener off the word before it (quoteSeams, tokensOf)
- *  leaves it joined backward. */
-function skippedOpener(t: string, flags: boolean[], j: number): boolean {
+ *  leaves it joined backward. `q` as quoteFlags: a cue's first character is judged by its
+ *  segment's character before it ("Super"和 cut after RTX). */
+function skippedOpener(t: string, flags: boolean[], j: number, q?: QuoteCtx): boolean {
   const c = t[j];
-  for (let k = j - 1; k > 0; k--) {
+  for (let k = j - 1; k >= 0; k--) {
     const x = t[k];
-    if (x === c) return !flags[k] && /[A-Za-z0-9]/.test(t[k - 1]) && /[A-Za-z0-9]/.test(t[k + 1]);
+    if (x === c) return !flags[k] && /[A-Za-z0-9]/.test(t[k - 1] ?? q?.prev ?? "") && /[A-Za-z0-9]/.test(t[k + 1]);
     if (unspacedChar(x) || BRK_SYL.test(x) || !(/[\p{L}\p{N}]/u.test(x) || (c === '"' && x === " "))) return false;
   }
   return false;
@@ -1105,7 +1106,7 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         let e = -1;
         if (closer && /\p{Pi}/u.test(t[j])) for (e = j; e < end && /\p{Pi}/u.test(t[e]); ) e++;
         else if (j === end - 1 && flags[j] && n[t[j]] % 2 === 0 && total[t[j]] > n[t[j]] + 1
-          && (closer || (/[\p{L}\p{N}]/u.test(p) && !skippedOpener(t, flags, j)))) e = end;
+          && (closer || (/[\p{L}\p{N}]/u.test(p) && !skippedOpener(t, flags, j, q)))) e = end;
         if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
           yield [t.slice(s, j), s];
           s = j;
