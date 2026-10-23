@@ -224,8 +224,8 @@ export interface RawCue {
 /** YouTube's auto captions "roll": every cue repeats the previous cue's last line above its
  *  new one, and a 10 ms cue freezes the text between them — imported raw that is every line
  *  two or three times. Drop a ≤100 ms cue that only repeats a neighbour, strip leading lines
- *  a contiguous cue repeats from the cue before, and — only in a file that has such a
- *  freeze cue — extend that cue when nothing new is left: an ordinary file may say
+ *  a contiguous cue repeats from the cue before, and — only in a file that has two or more
+ *  such freeze cues — extend that cue when nothing new is left: an ordinary file may say
  *  "Thank you." twice back to back, and both lines stay. Broadcast roll-up captions have no
  *  freeze cue but open most multi-line cues with the line(s) before; such a file gets the
  *  leading-line strip too. Ordinary files pass through unchanged — a word said at the end of one cue
@@ -248,8 +248,11 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
   // Only a freeze cue with text and a length counts: an empty cue (our export writes one for
   // an empty segment) "repeats" its neighbours vacuously, and a zero-length repeat is our
   // own export's segment, not a 10 ms freeze — either would make any file look rolling.
+  // At least two: a rolling file freezes between nearly every pair of cues, while one short
+  // cue repeating its neighbour (a Whisper SRT's doubled "Thank you.") would otherwise strip
+  // every line the whole file repeats across a cue boundary.
   const hasText = (c: RawCue): boolean => c.lines.some((l) => stripMarkup(l));
-  const rolling = cues.some((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c));
+  const rolling = cues.filter((c, i) => isFreeze(c, i) && c.end! > c.start! && hasText(c)).length >= 2;
   /** How many leading lines of `lines` repeat the last lines of `before` (markup-free and
    *  whitespace-collapsed): 1 for a two-line roll-up, 2 for a three-line one. */
   const leadOverlap = (before: string[], lines: string[]): number => {
