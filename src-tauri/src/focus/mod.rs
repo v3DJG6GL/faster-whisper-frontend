@@ -390,7 +390,7 @@ mod tests {
         let mut parked = note_focus(&snap, "code".into(), Some(true), el(":1.2"));
         assert!(parked.is_some());
         assert_eq!(current(&snap).0, "org.kde.konsole");
-        // A later cycle: only the busy terminal's deactivate, 1.8 s on — the mark clears, E is
+        // A later cycle: only the busy terminal's deactivate, 1.2 s on — the mark clears, E is
         // replayed.
         let mark = snap.lock().active_app.clone();
         assert!(!note_deactivate_bus(&snap, Some(":1.1")));
@@ -399,7 +399,7 @@ mod tests {
             &mut parked,
             mark.as_deref(),
             Some(":1.1"),
-            Instant::now() + Duration::from_millis(1800),
+            Instant::now() + Duration::from_millis(1200),
         );
         assert_eq!(
             current(&snap),
