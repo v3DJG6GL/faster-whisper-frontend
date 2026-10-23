@@ -597,6 +597,29 @@ describe("tracks and switches", () => {
     expect(i.targets).toEqual(expect.arrayContaining(["ja", "ko", "pl"]));
     expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["ja", "ko", "pl"]));
   });
+  it("a language picked again by a badge or chip-part click stays a target when a preset takes over, as through toggleTarget", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl"];
+    const inp = input({ tracks: [tr("de", "de"), ...langs.map((l) => tr(l, l))], targets: ["ja"], maxTargets: 3 });
+    type Step = (i: SiteSubsInput, st: SiteSubsState) => SiteChange;
+    const drop: Step = (i, st) => flip(i, st, "mt:pl");
+    // Custom, pl's site track off (machine translation takes over), then its MT off: pl drops.
+    const start: Step[] = [(i, st) => pickPolicy(i, st, "custom"), (i, st) => flip(i, st, "ex:pl"), drop];
+    const repicks: Step[] = [
+      (i, st) => flip(i, st, "mt:pl"),
+      (i, st) => flipChipPart(i, st, "mt:pl"),
+      (i, st) => flip(i, st, "ex:pl"),
+      (i, st) => toggleTarget(i, st, "pl", true),
+    ];
+    for (const repick of repicks) {
+      let [i, st] = [inp, initialSiteState(inp.targets)];
+      for (const step of [...start, repick, (i2: SiteSubsInput, s2: SiteSubsState) => pickPolicy(i2, s2, "generate")]) {
+        [i, st] = apply(i, step(i, st));
+      }
+      expect(i.targets).toEqual(["ja", "pl"]);
+      expect(derive(i, st).run!.mtTargets).toEqual(["ja", "pl", "en"]);
+      expect(derive(i, st).rows.find((r) => r.code === "pl")!.sub).toBe("translation target");
+    }
+  });
   it("a language Custom promoted is yours once the site subtitles are switched off: a later preset keeps it", () => {
     // With the switch off the plain picker owns the chips, and a promoted fr there is an ordinary
     // target the run machine-translates; a preset after switching back on took it out of the list.

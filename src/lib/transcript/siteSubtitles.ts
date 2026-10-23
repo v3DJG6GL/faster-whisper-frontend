@@ -670,7 +670,10 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
       }
     }
   }
-  const ch = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+  // A dropped language a click makes wanted again is picked yourself, as through toggleTarget:
+  // no longer one Custom only promoted — a preset keeps it.
+  const promoted = own && next[key] && !m.targets.includes(own) ? st.promoted.filter((x) => x !== own) : st.promoted;
+  const ch = fromMap(input, { ...st, policy: "custom", sel: next, promoted }, tg);
   return st.policy === "custom" ? ch : promote(input, m, ch);
 }
 
