@@ -62,10 +62,17 @@ export interface SiteSubsState {
   /** The translation targets when the link appeared — the first rows, in that order, so a
    *  row never moves or vanishes while you work (v25). */
   initial: string[];
+  /** The languages entering Custom wrote into the targets only because the preset wanted them
+   *  (the site brings them) — not ones you picked. A preset takes them back out: kept as targets
+   *  they outranked the site's other languages at the translation limit, and one past it stayed
+   *  a chip with no source instead of dropping out. Picking one yourself (toggleTarget) keeps it. */
+  promoted: string[];
 }
 
 export function initialSiteState(targets: readonly string[]): SiteSubsState {
-  return { subs: true, auto: false, policy: "prefer", sel: null, off: [], added: [], removed: [], initial: [...targets] };
+  return {
+    subs: true, auto: false, policy: "prefer", sel: null, off: [], added: [], removed: [], initial: [...targets], promoted: [],
+  };
 }
 
 export type BadgeState = "active" | "idle" | "off";
@@ -527,6 +534,13 @@ function allTargets(m: ReturnType<typeof model>): Record<string, boolean> {
   return tg;
 }
 
+/** A change that enters Custom from a preset, with the languages it promoted remembered: those
+ *  the preset wanted that were no target — not one a click itself made wanted again. */
+function promote(input: SiteSubsInput, m: ReturnType<typeof model>, ch: SiteChange): SiteChange {
+  const promoted = m.targets.filter((c) => !input.targets.includes(c) && ch.targets.includes(c));
+  return { ...ch, state: { ...ch.state, promoted } };
+}
+
 /** Would this click strand a language under the translation limit? Asks the limit with the
  *  change in place: `c`'s machine translation greyed, or another language newly greyed while it
  *  stays wanted with no source at all (every badge off — a dead MT click). A language the limit
@@ -656,17 +670,24 @@ function flipWith(input: SiteSubsInput, st: SiteSubsState, m: ReturnType<typeof 
       }
     }
   }
-  return fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+  const ch = fromMap(input, { ...st, policy: "custom", sel: next }, tg);
+  return st.policy === "custom" ? ch : promote(input, m, ch);
 }
 
-/** A preset resets every pick; Custom starts from a snapshot of what is on screen (v27). */
+/** A preset resets every pick — and takes out the targets entering Custom only promoted, so it
+ *  ranks those like any other site language; Custom starts from a snapshot of what is on screen (v27). */
 export function pickPolicy(input: SiteSubsInput, st: SiteSubsState, policy: SitePolicy): SiteChange {
-  if (policy !== "custom") return { state: { ...st, policy, sel: null }, targets: [...input.targets] };
+  if (policy !== "custom") {
+    return {
+      state: { ...st, policy, sel: null, promoted: [] },
+      targets: input.targets.filter((c) => !st.promoted.includes(c)),
+    };
+  }
   // Custom clicked again: a re-snapshot would bake the caps' grey and fill-in into the pick
   // (flipWith keeps them temporary through preCap) and drop picks of badges not shown now.
   if (st.policy === "custom") return { state: st, targets: [...input.targets] };
   const m = model(input, st);
-  return fromMap(input, { ...st, policy, sel: { ...m.snap } }, allTargets(m));
+  return promote(input, m, fromMap(input, { ...st, policy, sel: { ...m.snap } }, allTargets(m)));
 }
 
 /** "Translate into" for one language: picking it means machine-translating into it. */
@@ -676,7 +697,8 @@ export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: stri
   // freeAdds' trial per row switch on.
   const m = on === true ? null : model(input, st);
   const want = m ? (on ?? !m.targets.includes(code)) : true;
-  let next = st;
+  // Picked (or dropped) yourself: no longer a language Custom only promoted — a preset keeps it.
+  let next = st.promoted.includes(code) ? { ...st, promoted: st.promoted.filter((x) => x !== code) } : st;
   if (st.sel) {
     const sel = { ...st.sel, ["mt:" + code]: want };
     // Dropping a language drops its site tracks too: under Custom a stale pick of one
@@ -692,7 +714,7 @@ export function toggleTarget(input: SiteSubsInput, st: SiteSubsState, code: stri
         if (tid) sel["cand:" + tid] = false;
       }
     }
-    next = { ...st, sel };
+    next = { ...next, sel };
   }
   return fromMap(input, next, { ...(m ? m.tmap : targetMap(input, st)), [code]: want });
 }

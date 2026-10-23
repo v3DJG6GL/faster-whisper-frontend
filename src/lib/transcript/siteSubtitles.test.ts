@@ -564,6 +564,39 @@ describe("tracks and switches", () => {
     const [i2, st2] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "generate"));
     expect(derive({ ...i2, maxTargets: undefined }, st2).run!.mtTargets).toHaveLength(13);
   });
+  it("back under a preset, the site languages entering Custom wrote into the targets rank as the site's again", () => {
+    // Entering Custom (the segment or a badge click) wrote every site language into the targets.
+    // Under Generate they kept outranking the site's others at the translation limit as if you
+    // had picked them, and the ones past it stayed chips with no source at all.
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl"];
+    const inp = input({ tracks: [tr("de", "de"), ...langs.map((l) => tr(l, l))], targets: ["ja"], maxTargets: 3 });
+    const s0 = initialSiteState(inp.targets);
+    const [ig, sg] = apply(inp, pickPolicy(inp, s0, "generate"));
+    for (const enter of [pickPolicy(inp, s0, "custom"), flip(inp, s0, "ex:it")]) {
+      const [i1, s1] = apply(inp, enter);
+      expect(i1.targets).toEqual(["ja", ...langs]);
+      const [i2, s2] = apply(i1, pickPolicy(i1, s1, "generate"));
+      const v = derive(i2, s2);
+      expect(v.chips.filter((c) => !c.parts.some((p) => p.on)).map((c) => c.code)).toEqual([]);
+      expect(v.rows.find((r) => r.code === "pl")!.sub).toBe("over the translation limit");
+      // As if Custom had never been entered.
+      expect(i2.targets).toEqual(["ja"]);
+      expect(v.chips.map((c) => c.code)).toEqual(derive(ig, sg).chips.map((c) => c.code));
+      expect(v.run!.mtTargets).toEqual(["ja", "en", "fr"]);
+    }
+  });
+  it("a language you pick yourself under Custom stays a target when a preset takes over", () => {
+    const langs = ["en", "fr", "it", "es", "pt", "nl", "pl"];
+    const inp = input({ tracks: [tr("de", "de"), ...langs.map((l) => tr(l, l))], targets: ["ja"], maxTargets: 3 });
+    let [i, st] = apply(inp, pickPolicy(inp, initialSiteState(inp.targets), "custom"));
+    // Added through "Add language", and a site language switched off and picked again.
+    [i, st] = apply(i, addLanguage(i, st, "ko"));
+    [i, st] = apply(i, toggleTarget(i, st, "pl", false));
+    [i, st] = apply(i, toggleTarget(i, st, "pl", true));
+    [i, st] = apply(i, pickPolicy(i, st, "generate"));
+    expect(i.targets).toEqual(expect.arrayContaining(["ja", "ko", "pl"]));
+    expect(derive(i, st).chips.map((c) => c.code)).toEqual(expect.arrayContaining(["ja", "ko", "pl"]));
+  });
   it("switching off a site track drops its language when the translation limit leaves no slot", () => {
     // Prefer: es comes from the site, its MT badge idle — it never counted against the limit.
     const inp = input({ tracks: [tr("de", "de"), tr("es", "es")], targets: ["ja"], maxTargets: 1 });
