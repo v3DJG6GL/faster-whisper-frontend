@@ -2013,6 +2013,35 @@ describe("cutByShare", () => {
       }
     }
   });
+  it("a name's initial at the text's start or after a comma or a full stop stays with the name; an opener after it still ends a sentence", () => {
+    // With no word before the initial, or one ending on a clause or sentence mark, "J." read as a
+    // sentence end: "In 1924, J." / "Edgar Hoover …", a cut or line of a lone "J." or "F.".
+    const ROWS: [text: string, shares: number[], cpl: number, cut: string][] = [
+      ["In 1924, J. Edgar Hoover became the director of the bureau", [1, 1], 28,
+        "In 1924, J. Edgar Hoover became | the director of the bureau"],
+      ["He said it. J. Edgar Hoover became the director", [1, 1], 40, "He said it. | J. Edgar Hoover became the director"],
+      ["J. Edgar Hoover ran the bureau for nearly fifty years until he died", [1, 3], 22,
+        "J. Edgar Hoover | ran the bureau for nearly fifty years until he died"],
+      ["F. Scott Fitzgerald wrote it", [1, 1], 26, "F. Scott Fitzgerald | wrote it"],
+    ];
+    for (const [t, shares, cpl, cut] of ROWS) {
+      for (const l of ["en", undefined]) {
+        expect(cutByShare(t, shares, l).join(" | "), `${t} (${l ?? "no language"})`).toBe(cut);
+        const lines = wrapLines(t, cpl, 2, 0, undefined, l);
+        expect(lines.some((x) => /(?:^|\s)[JF]\.$/.test(x)), `${t} (${l ?? "no language"}): ${JSON.stringify(lines)}`).toBe(false);
+      }
+    }
+    // A sentence opener after the letter still ends one there.
+    for (const [t, want] of [
+      ["Answer: A. How did you get that one", "Answer: A. | How did you get that one"],
+      ["B. Then we leave the city tonight", "B. | Then we leave the city tonight"],
+    ] as const) {
+      for (const l of ["en", undefined]) {
+        expect(cutByShare(t, [1, 1], l).join(" | ")).toBe(want);
+        expect(wrapLines(t, 30, 2, 0, undefined, l).join(" | ")).toBe(want);
+      }
+    }
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",

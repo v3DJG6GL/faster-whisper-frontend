@@ -416,11 +416,15 @@ const ELIDED: Record<string, string[]> = {
  *  Rowling") in every language, a capitalised word ("John F. Kennedy") not in a language that
  *  capitalises its nouns ("Plan B. Dann") nor when `after` (the text after the stop) opens with a
  *  sentence opener ("Option B. Then"), a contraction or elision of one too ("Plan B. I'm", "Plan
- *  B. C'est"). A word ending on a clause mark is no first name: "Answer: A. How" ends one. */
+ *  B. C'est"). With no word before it, or one ending on a clause or sentence mark, the opener
+ *  alone decides: "In 1924, J. Edgar Hoover" and a text-initial "F. Scott" hold, "Answer: A. How"
+ *  and a text-initial "B. Then" end one. */
 function nameBefore(before: string, after: string, lang?: string): boolean {
   const b = before.replace(/^[^\p{L}\p{N}]+/u, "");
   if (INITIAL.test(b)) return true;
-  if (!/^\p{Lu}/u.test(b) || CLAUSE.test(b)) return false;
+  // No word before it (the text's start) or one that ends a clause or sentence ("In 1924, J.
+  // Edgar", "He said it. J. Edgar"): only the word after tells a name from a sentence end.
+  if (b !== "" && !CLAUSE.test(b) && !SENT_END.test(b) && !/^\p{Lu}/u.test(b)) return false;
   const base = primarySubtag(lang);
   if (NOUN_CAPS.has(base)) return false;
   const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
@@ -452,10 +456,10 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  an ordinal). A dotted initialism ("U.S.", "a.m.") and a unit ("300 m.", "5 ms.") end one
  *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on. A
  *  name's initial goes on before a capital when another initial comes before or after it ("J. K.
- *  Rowling") or a capitalised word before it ("John F. Kennedy"), that one not in German or
- *  Luxembourgish, which capitalise every noun, nor before a sentence opener or after a clause
- *  mark (nameBefore): "a plan B. Then", "Option B. Then", "Plan B. What", "Plan B. Dann" and
- *  "Answer: A. How" end one. */
+ *  Rowling"), a capitalised word, a clause or sentence mark or the text's start before it ("John
+ *  F. Kennedy", "In 1924, J. Edgar"), that one not in German or Luxembourgish, which capitalise
+ *  every noun, nor before a sentence opener (nameBefore): "a plan B. Then", "Option B. Then",
+ *  "Plan B. What", "Plan B. Dann" and "Answer: A. How" end one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are
