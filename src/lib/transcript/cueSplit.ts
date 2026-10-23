@@ -377,26 +377,45 @@ const wordAfter = (text: string, at: number): string => text.slice(at, at + 24).
  *  ("Plan B. Dann") says nothing of a name there. */
 const NOUN_CAPS = new Set(["de", "lb"]);
 /** Closed-class words that open a sentence but hardly ever a surname, by base language ("Option
- *  B. Then", "Gate A. The plane" end one); a language not listed checks against them all. */
+ *  B. Then", "Gate A. The plane", "Plan B. What", "Gate B. Your flight" end one): articles,
+ *  pronouns, conjunctions, question words, possessives, quantifiers, common prepositions and
+ *  answers. A word that is also a common surname stays out (Son, Su, Sim, Im, Como, Dove,
+ *  Haar), so the name's initial before it is still held. A language not listed checks against
+ *  them all. */
 const SENT_OPENER = new Map(Object.entries({
-  en: "the a an then after but so and or we i it it's this that that's there there's he she they you if when now next later",
-  de: "der die das dann danach aber und wir ich es er sie du wenn jetzt ein eine man",
-  fr: "le la les puis mais et nous je il elle on ensuite alors un une ce",
-  es: "el la los las luego pero y nosotros yo él ella ellos entonces después un una si",
-  it: "il lo la le gli poi ma e noi io lui lei loro allora dopo un una se",
-  nl: "de het een dan daarna maar en wij we ik hij zij ze je als nu",
-  pt: "o a os as então depois mas e nós eu ele ela eles um uma se",
+  en: "the a an then after but so and or we i it it's this that that's there there's he she they you if when now next later " +
+    "what what's how why where who which my your our his her their its many some all " +
+    "yes no okay ok please let's well in for on at with",
+  de: "der die das dann danach aber und wir ich es er sie du wenn jetzt ein eine man " +
+    "was wie warum wo wer welche welcher welches wann mein meine dein deine unser unsere ihre " +
+    "ja nein bitte in mit für auf nach",
+  fr: "le la les puis mais et nous je il elle on ensuite alors un une ce " +
+    "que quoi comment pourquoi où qui quel quelle quand mon mes sa ses notre nos votre vos leur leurs " +
+    "oui non dans pour sur avec chez sans",
+  es: "el la los las luego pero y nosotros yo él ella ellos entonces después un una si " +
+    "qué cómo por dónde quién cuál cuándo cuando mi mis tus sus nuestro nuestra " +
+    "sí no en para con sobre",
+  it: "il lo la le gli poi ma e noi io lui lei loro allora dopo un una se " +
+    "che cosa come perché quale quando mio mia miei tuo tua suo sua nostro nostra " +
+    "sì no in per con",
+  nl: "de het een dan daarna maar en wij we ik hij zij ze je als nu " +
+    "wat waarom waar wie welke wanneer mijn jouw ons onze zijn " +
+    "ja nee in op met voor",
+  pt: "o a os as então depois mas e nós eu ele ela eles um uma se " +
+    "que quê porque onde quem qual quando meu minha meus minhas seu sua nosso nossa " +
+    "não em para com sem",
 }).map(([l, ws]) => [l, new Set(ws.split(" "))]));
 const ANY_OPENER = new Set([...SENT_OPENER.values()].flatMap((ws) => [...ws]));
 
 /** The word `before` a capital and its stop makes it a name's initial: another initial ("J. K.
  *  Rowling") in every language, a capitalised word ("John F. Kennedy") not in a language that
  *  capitalises its nouns ("Plan B. Dann") nor when `after` (the text after the stop) opens with a
- *  sentence opener ("Option B. Then"). */
+ *  sentence opener ("Option B. Then"). A word ending on a clause mark is no first name: "Answer:
+ *  A. How" ends one. */
 function nameBefore(before: string, after: string, lang?: string): boolean {
   const b = before.replace(/^[^\p{L}\p{N}]+/u, "");
   if (INITIAL.test(b)) return true;
-  if (!/^\p{Lu}/u.test(b)) return false;
+  if (!/^\p{Lu}/u.test(b) || CLAUSE.test(b)) return false;
   const base = primarySubtag(lang);
   if (NOUN_CAPS.has(base)) return false;
   const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
@@ -423,8 +442,9 @@ const beforeUnit = (prev: string, next: string): boolean =>
  *  only before a capital: "the U.S. government", "9 a.m. in the office", "300 m. away" go on. A
  *  name's initial goes on before a capital when another initial comes before or after it ("J. K.
  *  Rowling") or a capitalised word before it ("John F. Kennedy"), that one not in German or
- *  Luxembourgish, which capitalise every noun, nor before a sentence opener (nameBefore): "a
- *  plan B. Then", "Option B. Then" and "Plan B. Dann" end one. */
+ *  Luxembourgish, which capitalise every noun, nor before a sentence opener or after a clause
+ *  mark (nameBefore): "a plan B. Then", "Option B. Then", "Plan B. What", "Plan B. Dann" and
+ *  "Answer: A. How" end one. */
 function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   if (!SENT_END.test(word)) return false;
   // Judged past the opening brackets and quotes glued to its front: "(Dr." and "“Mr." are

@@ -1914,6 +1914,70 @@ describe("cutByShare", () => {
     expect(cutByShare("They ran exactly 1,000,000 m. in that long year", [1, 1], "en"))
       .toEqual(["They ran exactly 1,000,000 m.", "in that long year"]);
   });
+  it("shape matrix: a letter after a capitalised noun ends a sentence before a question word, a possessive or a quantifier, and after a clause mark", () => {
+    // Only a short opener list ended the sentence ("Option B. Then"): "Plan B. What", "Gate B. Your
+    // flight" and "Vitamin C. Many" were held as a name's initial, and "Answer:" read as a first
+    // name. Each row is the cut, the wrap and the cue split as they were before initials were
+    // held; the name rows below them stay held.
+    const cues = (t: string, lang?: string) => {
+      const ws = t.split(" ");
+      const words = ws.map((w, i) => ({ word: " " + w, start: i * 0.3, end: i * 0.3 + 0.27 }));
+      const r: BatchResult = { text: t, language: lang ?? "", words, segments: [{ start: 0, end: ws.length * 0.3, text: " " + t }] };
+      return buildCues(r, { length: "custom", custom: { cpl: 32, lines: 1, maxDur: 7, cps: 17 }, timing: "same" }, ["orig"])
+        .cues.map((c) => c.text);
+    };
+    const ROWS: [text: string, lang: string, cpl: number, cut: string, wrap: string, cue: string][] = [
+      ["First choose Option B. What happens next is up to you", "en", 30,
+        "First choose Option B. | What happens next is up to you", "First choose Option B. | What happens next is up to you",
+        "First choose Option B. | What happens next is up to you"],
+      ["We go with Plan B. My brother will drive us home now", "en", 30,
+        "We go with Plan B. | My brother will drive us home now", "We go with Plan B. My brother | will drive us home now",
+        "We go with Plan B. | My brother will | drive us home now"],
+      ["Take Vitamin C. Many people feel much better after", "en", 30,
+        "Take Vitamin C. | Many people feel much better after", "Take Vitamin C. Many | people feel much better after",
+        "Take Vitamin C. | Many people feel | much better after"],
+      ["The answer is Answer: A. How did you get that one", "en", 30,
+        "The answer is Answer: A. | How did you get that one", "The answer is Answer: A. | How did you get that one",
+        "The answer is Answer: A. | How did you get that one"],
+      ["We are going with Plan B. What do we do next, team?", "en", 30,
+        "We are going with Plan B. | What do we do next, team?", "We are going with Plan B. | What do we do next, team?",
+        "We are going with Plan B. | What do we do next, team?"],
+      ["Please go to Gate B. Your flight leaves at nine tonight.", "en", 24,
+        "Please go to Gate B. | Your flight leaves at nine tonight.", "Please go to Gate B. | Your flight | leaves at nine tonight.",
+        "Please go to Gate B. | Your flight leaves | at nine tonight."],
+      ["Nous prenons le Plan B. Pourquoi pas demain matin ensemble", "fr", 30,
+        "Nous prenons le Plan B. | Pourquoi pas demain matin ensemble", "Nous prenons le Plan B. | Pourquoi pas | demain matin ensemble",
+        "Nous prenons le Plan B. | Pourquoi pas demain | matin ensemble"],
+      ["Usamos el Plan B. Por eso llegamos muy tarde a casa", "es", 30,
+        "Usamos el Plan B. | Por eso llegamos muy tarde a casa", "Usamos el Plan B. Por eso | llegamos muy tarde a casa",
+        "Usamos el Plan B. | Por eso llegamos | muy tarde a casa"],
+      ["Usiamo il Piano B. Come sempre arriviamo tardi a casa", "it", 30,
+        "Usiamo il Piano B. | Come sempre arriviamo tardi a casa", "Usiamo il Piano B. Come | sempre arriviamo tardi a casa",
+        "Usiamo il Piano B. | Come sempre arriviamo | tardi a casa"],
+      ["We kiezen Plan B. Waarom niet morgen samen met hen", "nl", 30,
+        "We kiezen Plan B. | Waarom niet morgen samen met hen", "We kiezen Plan B. Waarom | niet morgen samen met hen",
+        "We kiezen Plan B. | Waarom niet morgen samen met hen"],
+      ["Vamos com o Plano B. Quando chegamos já era muito tarde", "pt", 30,
+        "Vamos com o Plano B. | Quando chegamos já era muito tarde", "Vamos com o Plano B. Quando | chegamos já era muito tarde",
+        "Vamos com o Plano B. | Quando chegamos | já era muito tarde"],
+      // A name's initials stay held.
+      ["Yesterday we met John F. Kennedy at the old airport", "en", 32,
+        "Yesterday we met John F. Kennedy | at the old airport", "Yesterday we met John F. Kennedy | at the old airport",
+        "Yesterday we met John F. Kennedy | at the old airport"],
+      ["The book by J. K. Rowling sold many copies worldwide", "en", 32,
+        "The book by J. K. Rowling | sold many copies worldwide", "The book by J. K. Rowling | sold many copies worldwide",
+        "The book by J. K. Rowling | sold many copies worldwide"],
+      ["Yesterday we met Christopher F. Kennedy at the old airport", "en", 40,
+        "Yesterday we met Christopher F. Kennedy | at the old airport", "Yesterday we met Christopher F. Kennedy | at the old airport",
+        "Yesterday we met | Christopher F. Kennedy | at the old airport"],
+    ];
+    for (const [t, lang, cpl, cut, wrap, cue] of ROWS) {
+      for (const l of [lang, undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, cpl, 2, 0, undefined, l), cues(t, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap, cue]);
+      }
+    }
+  });
   it("a dotted initialism before a lowercase word ends no sentence: the cue split and the cut run on past it", () => {
     for (const t of [
       "Officials in the U.S. government said on Tuesday that the new rules would take effect next spring, according to reports",
