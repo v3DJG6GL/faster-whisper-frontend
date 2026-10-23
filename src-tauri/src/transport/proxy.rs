@@ -69,8 +69,9 @@ fn client_proxy(matcher: Matcher) -> reqwest::Proxy {
             None => hit.basic_auth().and_then(decode_basic),
         };
         if let Some((user, pass)) = login {
-            proxy.set_username(&user).ok()?;
-            proxy.set_password(Some(&pass)).ok()?;
+            // reqwest percent-decodes this URL once more, and the url crate never escapes `%`.
+            proxy.set_username(&user.replace('%', "%25")).ok()?;
+            proxy.set_password(Some(&pass.replace('%', "%25"))).ok()?;
         }
         Some(proxy)
     })
@@ -542,6 +543,34 @@ mod tests {
         );
         assert!(
             head.contains(&format!("proxy-authorization: {expected}\r\n")),
+            "{head}"
+        );
+    }
+
+    /// A `%` in the login reaches the proxy as a `%`: the system matcher hands it over decoded and
+    /// reqwest's custom proxy decodes the returned URL once more, so `%41` must not become `A`.
+    #[tokio::test]
+    async fn a_percent_in_the_proxy_login_survives_the_second_decode() {
+        use base64::Engine;
+        let (proxy, seen) = http_ok().await;
+        let proxy_url = format!("http://a%2541%40b:x%259Fy%3A%40z@{proxy}");
+        let client = client_via(Matcher::builder().all(proxy_url.as_str()).build());
+        let body = client
+            .get("http://gpu-box.test:8000/health")
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(body, "ok");
+        let expected = base64::prelude::BASE64_STANDARD.encode("a%41@b:x%9Fy:@z");
+        let head = seen.lock().unwrap().clone();
+        assert!(
+            head.to_ascii_lowercase().contains(&format!(
+                "proxy-authorization: basic {}\r\n",
+                expected.to_ascii_lowercase()
+            )),
             "{head}"
         );
     }
