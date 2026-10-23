@@ -649,6 +649,46 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(block).toContain("injectedText = target");
   });
 
+  it("a clipboard final that only appends the output_suffix neither re-translates nor re-copies its window", async () => {
+    // `grew` is true for a suffix-only final, so the clipboard branch translated and copied its
+    // window again: the phrase already on the clipboard (or, for a release after the pause, the
+    // closed window it reopens) back over whatever the user copied since, with another "copied"
+    // pulse — and a failed re-translate put the original back over the translation.
+    // Runs the clipboard branch as plain JS, two finals of one window in a row.
+    const branch = bodyAfter(finalBody, "if (useClipboard) ");
+    const run = new Function(
+      "reopen", "reopenClip", "plainClip", "reopenStartRaw", "plainStartRaw", "lead", "grew", "target", "base", "commonPrefixLen", "t", "calls",
+      `const cfg = {};\nconst insertCfg = cfg;\nconst uttRec = null, uttFrom = 0, queuedAtEnqueue = 0, utterance = null;\n` +
+        `let injectedText = base, clipLanded = false, sessionClipboard = false, clipDirty = false, lastPhraseDiverted = false;\n` +
+        `const translatePhrase = async (text) => { calls.push("translate " + text); return { text, translated: false }; };\n` +
+        `const copyForTarget = async (text) => { calls.push("copy " + text); return { landed: true }; };\n` +
+        `const signalInsert = (k) => calls.push("pulse " + k);\n` +
+        `const oweUtterance = () => {}, bookOwedUtterances = () => {}, bookUtteranceInsert = () => {}, noteDivergence = () => {}, logLine = () => {}, flashError = () => {}, teardownAfterFatalInject = () => {};\n` +
+        `return (async () => ${branch})().then(() => injectedText);`,
+    ) as (reopen: { landed: boolean } | null, reopenClip: string, plainClip: string, reopenStartRaw: number, plainStartRaw: number, lead: number, grew: boolean, target: string, base: string, cpl: typeof commonPrefixLen, t: { isSelf: boolean }, calls: string[]) => Promise<string>;
+    const t = { isSelf: false };
+    // " Hello world." copied; the server's "\n" then arrives in its own final, in the open window
+    // and as a release that reopens the window the pause closed.
+    for (const reopen of [null, { landed: true }]) {
+      const calls: string[] = [];
+      const base = await run(null, "Hello world.", "Hello world.", 0, 0, 1, true, "Hello world.", "", commonPrefixLen, t, calls);
+      expect(calls).toEqual(["translate Hello world.", "copy Hello world.", "pulse clipboard"]);
+      calls.length = 0;
+      const after = await run(reopen, "Hello world.", "Hello world.", 0, 0, 1, true, "Hello world.\n", base, commonPrefixLen, t, calls);
+      expect(calls, `the suffix final ${reopen ? "reopening the closed window" : "in the open window"}`).toEqual([]);
+      // Dropped, not owed: a later typed phrase opens without its Return.
+      expect(after).toBe("Hello world.\n");
+      // The next phrase with words copies its window as before.
+      await run(null, "", "Hello world.\n Next.", 0, 0, 1, true, "Hello world.\n Next.", after, commonPrefixLen, t, calls);
+      expect(calls).toEqual(["translate Hello world.\n Next.", "copy Hello world.\n Next.", "pulse clipboard"]);
+    }
+    // Real text past the baseline (a phrase skipped in our own window) still copies the window
+    // with the suffix final, which delivers it.
+    const calls: string[] = [];
+    expect(await run(null, "", "Hello world.", 0, 0, 1, true, "Hello world.\n", "", commonPrefixLen, t, calls)).toBe("Hello world.\n");
+    expect(calls).toEqual(["translate Hello world.", "copy Hello world.", "pulse clipboard"]);
+  });
+
   it("a release final (no utterance ordinal) doesn't end the open utterance", () => {
     expect(finalBody).toContain('if (typeof e.payload.utterance === "number" || pending.state === null) endUtterance();');
   });

@@ -2412,7 +2412,19 @@ async function ensureListeners(): Promise<void> {
           // would be a false confirmation). `grew` is the document-grew guard: false for a re-sent
           // final (the flush final the drain emits at hands-free end), so a clipboard hands-free session that ends
           // mid-speech doesn't re-copy + re-pulse the last phrase on the re-sent final.
-          if (phraseClip.length > 0 && grew) {
+          //
+          // Nor on a final that only appends the server's output_suffix ("\n" or " ") to text
+          // already delivered: `grew` is true for it, yet the window it would copy is the one on
+          // the clipboard already (or, after the pause, the closed window a release reopens). The
+          // copy put that old phrase back over whatever the user copied since, with another
+          // "copied" pulse, and a translated one re-ran the GPU translate, whose failure put the
+          // original back over the translation. It is dropped like the typed branch's suffix:
+          // only the baseline moves past it, so a later typed phrase opens without its Return.
+          // Real text past the baseline (a phrase skipped in our own window) still copies the
+          // window, which delivers it.
+          if (grew && !target.slice(commonPrefixLen(injectedText, target)).trim()) {
+            injectedText = target;
+          } else if (phraseClip.length > 0 && grew) {
             // Our own window: the guard copies nothing there, so the window is owed before its
             // translate rather than translated for a copy that never happens (the typed branch
             // below says why that costs). A later final's copy re-sends the whole window.
