@@ -39,7 +39,7 @@ import {
   removeFile as removeFileAction, resetForInputChange, retryFile, selectPath,
   setUrlMeta, SKIPPED_EXPLANATIONS, skippedStages, stageFiles, stagePick, startRun, useTranscribeRun,
   type RunContext, type StepState, settledPanelItem, runTotals, itemSourceKind } from "@/lib/transcribeRun";
-import { displayLabel, extractorPill, formatLabel, frozenLinkSpoken, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
+import { displayLabel, extractorPill, formatLabel, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, pickRung, stripMediaUrlNoise, type UrlPreview, urlHost } from "@/lib/urlSource";
 import {
   loadHistory, useTranscriptHistory, type TranscriptRecord,
 } from "@/lib/transcript/transcriptHistory";
@@ -609,7 +609,7 @@ export default function Transcribe() {
     enabled: caps?.url_language_check_enabled === true && caps?.url_subtitles_enabled === true
       && !!urlPreviewData?.subtitle_tracks?.length && !linkTooLongWhy,
     model: model.trim() || backend?.model?.trim(),
-    screen: spoken.value,
+    screen: linkScreenSpoken(spoken.value, decodeDefaults?.language?.value),
   });
   /** The previewed link's site ("YouTube"): the source words of its subtitles and the spoken pill. */
   const previewSite = urlPreviewData ? siteDisplayName(draftUrl ?? "", urlPreviewData.extractor) : "";

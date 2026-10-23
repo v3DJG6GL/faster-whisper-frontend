@@ -9,7 +9,7 @@
 import { stripUrlNoise } from "./backends";
 import { safeDisplayText } from "./sanitize";
 import { fmtDuration, fmtDurationExact } from "./format";
-import { MULTI_LANGUAGE } from "./languages";
+import { languageCodeOf, MULTI_LANGUAGE, namedLanguage } from "./languages";
 import type { LinkSpoken } from "./transcript/siteSubtitles";
 
 /** Is this queue key a media link rather than a filesystem path?
@@ -133,6 +133,16 @@ export function frozenLinkSpoken(sp: Pick<LinkSpoken, "value" | "source">): stri
   if (sp.source === "edited") return sp.value;
   if ((sp.source === "detected" || sp.source === "site") && sp.value !== MULTI_LANGUAGE) return sp.value;
   return undefined;
+}
+
+/** The screen language a link card starts from. Under Default ("") a link sends no language
+ *  (frozenLinkSpoken), so its run takes the server's DEFAULT_LANGUAGE: the card, the site-subtitle
+ *  plan and the automatic language check start from that language too, not from auto-detect.
+ *  It stays a screen value, so Add still lets the link follow the screen. */
+export function linkScreenSpoken(screenValue: string, serverLanguage: unknown): string {
+  if (screenValue !== "") return screenValue;
+  const s = languageCodeOf(typeof serverLanguage === "string" ? serverLanguage.trim() : "");
+  return namedLanguage(s) ? s : "";
 }
 
 /** Server preview of a pasted link (POST /v1/audio/url-preview). All string

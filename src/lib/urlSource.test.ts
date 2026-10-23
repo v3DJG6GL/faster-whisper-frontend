@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayLabel, extractorPill, frozenLinkSpoken, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, stripMediaUrlNoise, urlHost } from "./urlSource";
+import { displayLabel, extractorPill, frozenLinkSpoken, isSourceUrl, linkRefusal, linkScreenSpoken, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, stripMediaUrlNoise, urlHost } from "./urlSource";
 import { stripUrlNoise } from "./backends";
 import { MULTI_LANGUAGE } from "./languages";
 import { linkSpoken } from "./transcript/siteSubtitles";
@@ -300,5 +300,38 @@ describe("frozenLinkSpoken", () => {
       expect(sp.source === "screen" || sp.source === null).toBe(true);
       expect(frozenLinkSpoken(sp)).toBeUndefined();
     }
+  });
+});
+
+describe("linkScreenSpoken", () => {
+  const card = (screen: string, serverLanguage: unknown) =>
+    linkSpoken({ siteLanguage: null, check: { state: "idle" }, screen: linkScreenSpoken(screen, serverLanguage), edited: null });
+
+  it("shows the server's default language on a link card under a Default screen, and keeps it following the screen", () => {
+    const sp = card("", "de");
+    expect(sp.value).toBe("de");
+    expect(sp.spoken).toBe("de");
+    expect(sp.source).toBe("screen");
+    expect(frozenLinkSpoken(sp)).toBeUndefined();
+    expect(linkScreenSpoken("", " German ")).toBe("de");
+  });
+  it("stays auto-detect under a Default screen when the server names no language", () => {
+    for (const server of [undefined, null, "", "  ", "auto", 3]) {
+      expect(linkScreenSpoken("", server)).toBe("");
+      const sp = card("", server);
+      expect(sp.value).toBe("auto");
+      expect(sp.spoken).toBeNull();
+      expect(frozenLinkSpoken(sp)).toBeUndefined();
+    }
+  });
+  it("leaves the screen's own pick alone", () => {
+    expect(linkScreenSpoken("fr", "de")).toBe("fr");
+    expect(linkScreenSpoken("auto", "de")).toBe("auto");
+    expect(linkScreenSpoken(MULTI_LANGUAGE, "de")).toBe(MULTI_LANGUAGE);
+  });
+  it("still freezes an explicit Auto-detect pick on the card under a Default screen", () => {
+    const sp = linkSpoken({ siteLanguage: null, check: { state: "idle" }, screen: linkScreenSpoken("", "de"), edited: "auto" });
+    expect(sp.source).toBe("edited");
+    expect(frozenLinkSpoken(sp)).toBe("auto");
   });
 });
