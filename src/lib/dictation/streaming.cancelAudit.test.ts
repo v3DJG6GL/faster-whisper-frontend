@@ -226,6 +226,20 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(link).toMatch(/\binjectedText =\s+;/);
   });
 
+  it("the hard-break carry is bounded like bankedDoc, and an overflow carries no records", () => {
+    // A server looping final/boundary while nothing lands grew the carry by a whole document per
+    // break, with no ceiling, and every joinCarry copied all of it.
+    const link = bodyAfter(boundaryBody, "injectChain = injectChain.then(() =>");
+    const remainder = link.indexOf("untypedRemainder(");
+    const cap = link.search(/if \(rest\.trim\(\) && carryText\.length \+ carrySep\.length \+ rest\.length > MAX_BANKED_DOC\) \{\s+logLine\("warn",/);
+    const append = link.indexOf("carryText = carryText ? joinCarry(");
+    expect(cap, "the carry's ceiling moved — update streaming.cancelAudit.test.ts").toBeGreaterThan(remainder);
+    expect(append).toBeGreaterThan(cap);
+    // The overflow empties `rest`, so neither the append nor the records' move into the carry runs.
+    expect(bodyAfter(link.slice(cap), "MAX_BANKED_DOC)")).toMatch(/\brest = "";/);
+    expect(link.slice(cap)).toContain('{ kind: "break", carried: !!rest.trim() }');
+  });
+
   it("the separator task stands down while a carry is pending", () => {
     const task = bodyAfter(boundaryBody, "enqueueInject(async () =>");
     const skip = task.indexOf("if (carryText) return");

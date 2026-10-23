@@ -310,7 +310,8 @@ let seenDoc = "";
 // insert. Live mode types as it goes, so it doesn't read this back.
 let bankedDoc = "";
 /** Ceiling on `bankedDoc`, matching Rust's `MAX_SIDECAR_BYTES` on the same per-boundary
- *  accumulation — see the bank site for why the frontend copy needed its own. */
+ *  accumulation — see the bank site for why the frontend copy needed its own. The hard-break
+ *  carry (`carryText`) accumulates the same way and shares it. */
 const MAX_BANKED_DOC = 8 * 1024 * 1024;
 // Clipboard-only phrase boundary. committedDoc grows across phrases until the backend's long-silence
 // hard break — which can be many seconds away, far too late to feel like "just my last phrase". So we
@@ -2938,7 +2939,15 @@ async function ensureListeners(): Promise<void> {
           // trimEnd only: when part of this document WAS typed, the remainder's leading space is
           // the seam to that typed text ("A" typed, " B" not) and must survive. A remainder with
           // no typed text before it has none anyway (docAtBreak is stripped, like `target`).
-          const rest = untypedRemainder(injectedText, docAtBreak).trimEnd();
+          let rest = untypedRemainder(injectedText, docAtBreak).trimEnd();
+          // Bounded like bankedDoc, for the same server looping final/boundary while nothing
+          // lands (our own window focused, every paste refused): unbounded, the carry grew by a
+          // whole document per break, and each joinCarry copied all of it. The overflow is
+          // dropped, not the session; its records are not carried either.
+          if (rest.trim() && carryText.length + carrySep.length + rest.length > MAX_BANKED_DOC) {
+            logLine("warn", "dictation", `hard break: dropped ${rest.length} untyped chars, the carry is at its ceiling (${carryText.length} pending)`);
+            rest = "";
+          }
           if (rest.trim()) {
             // Several breaks in a row with nothing typed between them stack up in order, each
             // pair joined by the separator of the break between them.
