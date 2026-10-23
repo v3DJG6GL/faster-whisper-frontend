@@ -6,7 +6,6 @@
 // viewer). Nothing else changes — only display and transport dispatch branch
 // on kind, via isSourceUrl().
 
-import { stripUrlNoise } from "./backends";
 import { safeDisplayText } from "./sanitize";
 import { fmtDuration, fmtDurationExact } from "./format";
 import { languageCodeOf, MULTI_LANGUAGE, namedLanguage } from "./languages";
@@ -20,13 +19,39 @@ export function isSourceUrl(s: string): boolean {
   return /^https?:\/\//i.test(s);
 }
 
+// One character a pasted media link loses at its edges: whitespace, C0, NEL, Unicode Cf.
+// eslint-disable-next-line no-control-regex
+const MEDIA_EDGE = /^[\x00-\x20\s\u0085\p{Cf}]$/u;
+// eslint-disable-next-line no-control-regex
+const MEDIA_EDGE_LEAD = /^[\x00-\x20\s\u0085\p{Cf}]*/u;
+
+/** `raw` without its MEDIA_EDGE runs at both ends. A scan from the end, not a `[…]+$` replace:
+ *  that one retries from every position inside an inner whitespace run, so a paste with a long
+ *  blank stretch before more text cost seconds on each render of the link field. The leading
+ *  run is anchored, so its regex stays linear. Steps by code point, as the `u` flag does: an
+ *  astral Cf (U+E0001) is one character, a lone surrogate none of the class. */
+function trimMediaEdges(raw: string): string {
+  const lead = MEDIA_EDGE_LEAD.exec(raw)![0].length;
+  let end = raw.length;
+  while (end > lead) {
+    const low = raw.charCodeAt(end - 1);
+    const high = end - 2 >= lead ? raw.charCodeAt(end - 2) : 0;
+    const w = low >= 0xdc00 && low <= 0xdfff && high >= 0xd800 && high <= 0xdbff ? 2 : 1;
+    if (!MEDIA_EDGE.test(raw.slice(end - w, end))) break;
+    end -= w;
+  }
+  return raw.slice(lead, end);
+}
+
 /** A pasted MEDIA link's edges, cleared of whitespace and of the invisible format characters
  *  web pages and chat clients add to copied text (U+200B, U+FEFF, U+2060, U+00AD — Unicode Cf),
- *  then stripUrlNoise. Only the edges: inside the link nothing changes. A SERVER address keeps
- *  stripUrlNoise alone (exactly the Rust transport's trim, which keeps U+FEFF). */
+ *  then what stripUrlNoise does. Only the edges: inside the link nothing changes. A SERVER
+ *  address keeps stripUrlNoise alone (exactly the Rust transport's trim, which keeps U+FEFF).
+ *  Once these edges are clear, stripUrlNoise's own edge trims (a subset of this class) find
+ *  nothing and only its inner tab/line-break deletion is left, done here directly: its `[…]+$`
+ *  trims carry the same quadratic cost on an inner whitespace run. */
 export function stripMediaUrlNoise(raw: string): string {
-  // eslint-disable-next-line no-control-regex
-  return stripUrlNoise(raw.replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, ""));
+  return trimMediaEdges(raw).replace(/[\t\n\r]/g, "");
 }
 
 /** Does this pasted text hold more than one link — a link, then whitespace or an invisible
@@ -41,8 +66,7 @@ export function stripMediaUrlNoise(raw: string): string {
  *  them (a rich-text copy's U+00A0, an IME's U+3000, a BOM, a zero-width space). Text that does
  *  not start with a link is not "several links" — it is text before a link. */
 export function pastesSeveralLinks(raw: string): boolean {
-  // eslint-disable-next-line no-control-regex
-  const t = raw.replace(/[\n\r]/g, "").replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, "");
+  const t = trimMediaEdges(raw.replace(/[\n\r]/g, ""));
   return (
     /^https?:\/\//i.test(t) &&
     /[\t\v\f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\p{Cf}]https?:\/\//iu.test(t)

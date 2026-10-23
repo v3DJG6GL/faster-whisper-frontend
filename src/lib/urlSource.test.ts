@@ -335,3 +335,63 @@ describe("linkScreenSpoken", () => {
     expect(frozenLinkSpoken(sp)).toBe("auto");
   });
 });
+
+describe("media link edge trim", () => {
+  // The regex trims this file replaced, kept as the reference the scan must match exactly.
+  /* eslint-disable no-control-regex */
+  const oldStrip = (raw: string) => stripUrlNoise(raw.replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, ""));
+  const oldTrim = (raw: string) => raw.replace(/[\n\r]/g, "").replace(/^[\x00-\x20\s\u0085\p{Cf}]+|[\x00-\x20\s\u0085\p{Cf}]+$/gu, "");
+  /* eslint-enable no-control-regex */
+
+  it("stays linear on a long whitespace run inside the paste", () => {
+    const shapes: [string, string | null][] = [
+      ["https://a.b/" + " ".repeat(200000) + "x", null],
+      ["https://a.b/" + "\t \u00a0".repeat(70000) + "x", null],
+      // Trailing blanks only: the edges trim away and a link is left.
+      ["https://a.b/x" + " ".repeat(200000), "https://a.b/x"],
+    ];
+    for (const [raw, wantUrl] of shapes) {
+      const t0 = performance.now();
+      const url = normalizeMediaUrl(raw);
+      const several = pastesSeveralLinks(raw);
+      const stripped = stripMediaUrlNoise(raw);
+      expect(performance.now() - t0).toBeLessThan(200);
+      expect(url).toBe(wantUrl);
+      expect(several).toBe(false);
+      expect(stripped.endsWith("x")).toBe(true);
+    }
+    expect(stripMediaUrlNoise("https://a.b/x" + " ".repeat(200000))).toBe("https://a.b/x");
+  });
+  it("trims exactly what the regex trims did", () => {
+    const shapes = [
+      "",
+      " ",
+      " \t\n\r\v\f\u0085\u00a0\u3000\u200b\ufeff\u2060\u00ad ",
+      "https://a/x",
+      "  https://a/x  ",
+      "\u200b\ufeff https://a/x \u2060\u00ad\u2028",
+      "\u0000\u001fhttps://a/x\u0001\u0020",
+      "https://a/x\u{E0001}",
+      "\u{E0001}https://a/x\u{E0020}\u{E0001}",
+      "https://a/\ud83d\ude00",
+      "https://a/x\ud800",
+      "https://a/x\udc00 ",
+      "\udc00 https://a/x",
+      "https://a/x\ud800\udc00\u200b",
+      "https://a/x\udc00\udc00",
+      "https://a/x \t\n https://b/y\t",
+      "ht\ttps://a/x\r\n",
+      "\t\u200b\t",
+      "https://a/My File.mp3\u3000\u3000",
+      "x" + " ".repeat(50) + "y" + "\u200b".repeat(50),
+    ];
+    for (const raw of shapes) {
+      expect([raw, stripMediaUrlNoise(raw)]).toEqual([raw, oldStrip(raw)]);
+      expect([raw, pastesSeveralLinks(raw)]).toEqual([
+        raw,
+        /^https?:\/\//i.test(oldTrim(raw)) &&
+          /[\t\v\f \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\p{Cf}]https?:\/\//iu.test(oldTrim(raw)),
+      ]);
+    }
+  });
+});
