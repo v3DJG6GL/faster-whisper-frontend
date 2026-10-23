@@ -1076,9 +1076,25 @@ export function TranscriptViewer({
   // hands in a fresh result object.
   useEffect(() => {
     setShowFullText(false);
-    // An open rename editor belongs to the previous record: its blur would commit A's draft onto B's speaker.
+  }, [path, okey]);
+  // An open rename editor belongs to the previous record: its blur would commit A's draft onto
+  // B's speaker, so a switch closes it. A switch the user did not click into (a batch run
+  // following its next finished file) unmounts the input with no blur — React suppresses events
+  // during commit — so the draft is committed here, under the PREVIOUS record, as a blur would
+  // have. okey moving path → id at run finish keeps the same transcript on screen: no switch.
+  const renameRecordRef = useRef({ path, okey });
+  useEffect(() => {
+    const prev = renameRecordRef.current;
+    renameRecordRef.current = { path, okey };
+    if (prev.path === path && prev.okey === path && okey !== path) return;
+    if (editingSpeaker) {
+      const prevRenames = useTranscribeRun.getState().renames[prev.okey] ?? {};
+      const name = renameToCommit(renameDraft, ownProp(prevRenames, editingSpeaker));
+      if (name !== null) setRename(prev.okey, editingSpeaker, name);
+    }
     setEditingSpeaker(null);
     setRenameDraft("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the draft is read, not a trigger: commit on a record switch only
   }, [path, okey]);
 
   // Translate-panel state belongs to the PREVIOUS record's backend — a record
