@@ -1268,11 +1268,21 @@ function quoteCtxs(whole: string, parts: string[]): (QuoteCtx | undefined)[] {
   return partsAt(whole, parts).map((at, k) => (at < 0 ? undefined : qa(at, at + parts[k].length)));
 }
 
+/** Whether a ’ from `t[from]` on closes a ‘ before it: none of ‘ or ‚ comes first, and an
+ *  apostrophe between two Latin letters (it’s, don’t) closes nothing. */
+function singleCloses(t: string, from: number): boolean {
+  for (let k = from; k < t.length; k++) {
+    if (t[k] === "\u2018" || t[k] === "\u201a") return false;
+    if (t[k] === "\u2019" && !(/\p{Script=Latin}/u.test(t[k - 1]) && /\p{Script=Latin}/u.test(t[k + 1] ?? ""))) return true;
+  }
+  return false;
+}
+
 /** MIXED_TOKEN matches, each cut where a closing quote is glued to the opener of the next
  *  quotation: a typographic opener (”“ ’‘ »«, also after a closing ASCII quote) anywhere in
  *  the match, an ASCII quote only as the match's last character ("Hello""再见, “OK”"再见, also
  *  after a letter or digit: iPhone"新機能", unless it may close an uncounted one: skippedOpener;
- *  a typographic “ there too when a ” closes it later: iPhone“灵动岛”)
+ *  a typographic “ or ‘ there too when a ” or ’ closes it later: iPhone“灵动岛”, iPhone‘灵动岛’)
  *  and only when it opens (an even count of its kind so far and a later partner). Either
  *  needs a letter, digit or opener glued after it. Uncut, the opener rode on the text
  *  before it and a line or part ended on it. */
@@ -1295,6 +1305,10 @@ function* quoteSeams(t: string, flags: boolean[], q: QuoteCtx | undefined, total
         // A typographic “ glued to a word or number ("2024“春晚”", iPhone“灵动岛”) opens when a ”
         // closes it: German and Czech close with “ („Hallo“東京) and never write ”.
         else if (j === end - 1 && t[j] === "\u201c" && /[\p{L}\p{N}]/u.test(p) && /^[^\u201c\u201e]*\u201d/u.test(t.slice(end))) e = end;
+        // So does a ‘ (Chinese nests a quotation in one: iPhone‘灵动岛’) when a ’ closes it — not
+        // one closing a German ‚ (‚Hallo‘東京), nor an apostrophe between Latin letters (it’s).
+        else if (j === end - 1 && t[j] === "\u2018" && /[\p{L}\p{N}]/u.test(p) && singleCloses(t, end)
+          && t.lastIndexOf("\u201a", j) <= t.lastIndexOf("\u2018", j - 1)) e = end;
         if (e >= 0 && /[\p{L}\p{N}\p{Ps}\p{Pi}]/u.test(edgeChar(t.slice(e, e + 2), false))) {
           yield [t.slice(s, j), s];
           s = j;

@@ -748,6 +748,42 @@ describe("wrapLines", () => {
     expect(cutByShare(unclosed, [1, 2], "zh")).toEqual(["他们在2024“", "春晚上表演了节目和很多东西"]);
     expect(wrapLines(unclosed, 8, 2, 0, undefined, "zh")).toEqual(["他们在2024“", "春晚上表演了", "节目和很多东西"]);
   });
+  it("shape matrix: a typographic ‘ glued to a Latin word or number in CJK text rides with what it opens when a ’ closes it", () => {
+    // Only “ moved off the word: Chinese nests a quotation in ‘…’, and a line or part ended on "iPhone‘".
+    for (const [t, lang, shares, cpl, cut, wrap] of [
+      ["他说iPhone‘灵动岛’很好用我们都喜欢", "zh", [1, 2], 8, ["他说iPhone", "‘灵动岛’很好用我们都喜欢"],
+        ["他说iPhone", "‘灵动岛’很", "好用我们都喜欢"]],
+      ["他说：“我买了iPhone‘灵动岛’功能真的很好用啊。”", "zh", [1, 1], 9, ["他说：“我买了iPhone", "‘灵动岛’功能真的很好用啊。”"],
+        ["他说：“我买了", "iPhone", "‘灵动岛’功能", "真的很好用啊。”"]],
+      ["2024‘春晚’节目真的很精彩大家都在看", "zh", [1, 1, 1, 1], 6, ["2024", "‘春晚’节目", "真的很精彩", "大家都在看"],
+        ["2024", "‘春晚’节", "目真的很精", "彩大家都在看"]],
+      // Unchanged: the “ arm, a ‘ no ’ closes, a German ‚…‘ or „…‚…‘, a ‘ after a space, and an
+      // apostrophe between Latin letters, which closes nothing (it’s, iPhone’s).
+      ["他用iPhone“灵动岛”功能真的很好用啊", "zh", [1, 2], 8, ["他用iPhone", "“灵动岛”功能真的很好用啊"],
+        ["他用iPhone", "“灵动岛”功", "能真的很好用啊"]],
+      ["他说iPhone‘灵动岛很好用我们都喜欢", "zh", [1, 2], 9, ["他说iPhone‘", "灵动岛很好用我们都喜欢"],
+        ["他说", "iPhone‘灵动", "岛很好用我们都喜欢"]],
+      ["Er sagte ‚Hallo‘東京ist schön und groß", "de", [1, 1], 8, ["Er sagte ‚Hallo‘東", "京ist schön und groß"],
+        ["Er sagte", "‚Hallo‘", "東京ist", "schön", "und groß"]],
+      ["Er sagte „Hallo‚東京‘ist schön und groß", "de", [1, 1], 8, ["Er sagte „Hallo‚東", "京‘ist schön und groß"],
+        ["Er sagte", "„Hallo", "‚東京‘ist", "schön", "und groß"]],
+      ["We love rock ‘n’ roll music and 東京 nights", "en", [1, 1], 12, ["We love rock ‘n’ roll", "music and 東京 nights"],
+        ["We love", "rock ‘n’", "roll music", "and 東京", "nights"]],
+      ["he said ‘it’s fine’ and left for 東京 today", "en", [1, 1], 12, ["he said ‘it’s fine’", "and left for 東京 today"],
+        ["he said", "‘it’s fine’", "and left", "for 東京 today"]],
+      ["music from the ‘90s is great in 東京 today", "en", [1, 1], 12, ["music from the ‘90s", "is great in 東京 today"],
+        ["music", "from the", "‘90s is", "great", "in 東京 today"]],
+      ["他说iPhone’s相机很好用我们都喜欢它’", "zh", [1, 2], 8, ["他说iPhone’s", "相机很好用我们都喜欢它’"],
+        ["他说", "iPhone’s", "相机很好用我", "们都喜欢它’"]],
+    ] as const) {
+      expect(cutByShare(t, [...shares], lang)).toEqual(cut);
+      expect(wrapLines(t, cpl, 4, 0, undefined, lang)).toEqual(wrap);
+    }
+    // Nor a German ‚…‘ with a ’ later in the text: the ‘ closes the ‚.
+    expect(cutByShare("Er sagte ‚Hallo‘東京ist schön ok’ dann", [1, 1], "de")).toEqual(["Er sagte ‚Hallo‘東", "京ist schön ok’ dann"]);
+    expect(wrapLines("Er sagte ‚Hallo‘東京ist schön ok’ dann", 8, 4, 0, undefined, "de"))
+      .toEqual(["Er sagte", "‚Hallo‘", "東京ist", "schön", "ok’ dann"]);
+  });
   it("a German closing quote stays on its word before a glued CJK run", () => {
     expect(wrapLines("Er sagte „Hallo“東京に行きました", 14, 2)).toEqual(["Er sagte", "„Hallo“", "東京に行きました"]);
   });
