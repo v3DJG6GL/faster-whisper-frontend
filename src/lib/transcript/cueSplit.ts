@@ -445,6 +445,9 @@ function nameBefore(before: string, after: string, lang?: string): boolean {
   // Only a capitalised word says nothing of a name in German or Luxembourgish ("Plan B. Dann"):
   // with no word before the initial, or a mark ending it, the opener decides there too.
   if (NOUN_CAPS.has(base) && b !== "" && !CLAUSE.test(b) && !SENT_END.test(b)) return false;
+  // Another initial after it makes a name, as in isSentenceEnd: stripped, "Mary | J. A. Smith"
+  // read its "A." as the article opening a sentence.
+  if (/^\p{Lu}\.$/u.test(after.split(/\s/)[0])) return true;
   const w = after.split(/\s/)[0].replace(/’/g, "'").replace(/^[^\p{L}]+|[^\p{L}']+$/gu, "").toLowerCase();
   const opener = SENT_OPENER.get(base) ?? ANY_OPENER;
   if (opener.has(w)) return false;

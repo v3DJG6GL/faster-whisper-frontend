@@ -1964,6 +1964,34 @@ describe("cutByShare", () => {
       expect(wrapLines(t, cpl, 4, 0, undefined, "en")).toEqual(wrap);
     }
   });
+  it("shape matrix: a first name keeps its initials when the second one is A. or I.", () => {
+    // The seam before the first initial asked the word after it for a sentence opener: "A." and
+    // "I." stripped to the article and the pronoun, so "Mary" | "J. A. Smith" lost its hold.
+    for (const [t, cut, wrap] of [
+      ["The film starred Mary J. A. Smith and later moved to a new town",
+        ["The film starred Mary J. A. Smith", "and later moved to a new town"],
+        ["The film starred", "Mary J. A. Smith", "and later moved to a new town"]],
+      ["The film starred Mary J. I. Smith and later moved to a new town",
+        ["The film starred Mary J. I. Smith", "and later moved to a new town"],
+        ["The film starred", "Mary J. I. Smith", "and later moved to a new town"]],
+      ["We later met Lisa M. I. Brown at the old airport",
+        ["We later met Lisa M. I. Brown", "at the old airport"],
+        ["We later met Lisa M. I. Brown", "at the old airport"]],
+      // Unchanged: any other second initial, and an opener with no stop after a single initial.
+      ["The film starred Mary J. K. Smith and later moved to a new town",
+        ["The film starred Mary J. K. Smith", "and later moved to a new town"],
+        ["The film starred", "Mary J. K. Smith", "and later moved to a new town"]],
+      ["We go to Gate B. A bus takes us to the plane",
+        ["We go to Gate B.", "A bus takes us to the plane"],
+        ["We go to Gate B.", "A bus takes us to the plane"]],
+      ["First choose Option B. I think it is the best one",
+        ["First choose Option B.", "I think it is the best one"],
+        ["First choose Option B.", "I think it is the best one"]],
+    ] as const) {
+      expect(cutByShare(t, [3, 4], "en")).toEqual(cut);
+      expect(wrapLines(t, 32, 4, 0, undefined, "en")).toEqual(wrap);
+    }
+  });
   it("shape matrix: a letter after a capitalised noun ends a sentence before a question word, a possessive or a quantifier, and after a clause mark", () => {
     // Only a short opener list ended the sentence ("Option B. Then"): "Plan B. What", "Gate B. Your
     // flight" and "Vitamin C. Many" were held as a name's initial, and "Answer:" read as a first
