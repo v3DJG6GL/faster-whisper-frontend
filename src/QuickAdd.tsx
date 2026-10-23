@@ -23,7 +23,7 @@ import {
   mapRowTwinProblems, ruleListOf, ruleLockedFor, ruleMapWritable,
 } from "@/lib/pipelineMap";
 import {
-  type QuickAddSaveTarget, quickAddRejectReason, quickAddSaveOutcome, quickAddTargetOf, quickAddTargetOnSummon,
+  type QuickAddSaveTarget, quickAddRejectReason, quickAddSaveOutcome, quickAddTargetOnLoad, quickAddTargetOnSummon,
 } from "@/lib/quickAddSave";
 import { ruleDotColor } from "@/lib/ruleColor";
 import { ruleListLabel, wellFormedAppRules } from "@/lib/sanitize";
@@ -241,7 +241,7 @@ export default function QuickAdd() {
       }
       // Per-device address override wins for the connection (cfg is this
       // window's own readConfig snapshot — the quick-add webview has no store).
-      const t = quickAddTargetOf(cfg);
+      const t = quickAddTargetOnLoad(target.current, cfg);
       target.current = t;
       if (!t) {
         setPhase("nopin");

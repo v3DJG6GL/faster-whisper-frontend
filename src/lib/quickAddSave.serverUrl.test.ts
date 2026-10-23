@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { CONFIG_VERSION, useApp } from "./store";
 import { DEFAULT_SETTINGS } from "./defaults";
 import { effectiveServerUrl } from "./backends";
-import { quickAddServerUrl, quickAddTargetMoved, quickAddTargetOf, quickAddTargetOnSummon } from "./quickAddSave";
+import { quickAddServerUrl, quickAddTargetMoved, quickAddTargetOf, quickAddTargetOnLoad, quickAddTargetOnSummon } from "./quickAddSave";
 import { backend } from "./sync/syncTestFixtures";
 import type { Config, QuickAddTarget } from "./types";
 
@@ -117,6 +117,31 @@ describe("quickAddTargetMoved (a re-pin while quick-add holds unsaved rows)", ()
     const s2 = quickAddTargetOnSummon(s1.target, dropped);
     expect(s2).toEqual({ moved: true, target: viaOverride });
     expect(quickAddTargetOnSummon(viaOverride, dropped).moved).toBe(true);
+  });
+
+  it("is a move when a reload under the override is followed by dropping it", () => {
+    // A summon with nothing pending reloads the rows from the override (still a.lan's server),
+    // but the load recorded the masked b.lan as where they came from: once a save there failed,
+    // dropping the override passed as no move and the retry replaced b.lan's list of the same name.
+    const overrides = { a: "http://100.64.0.5:8000" };
+    const pinned = cfg({ backendId: "a", slug: "my-words" });
+    pinned.settings.sync = { ...pinned.settings.sync!, urlOverrides: overrides };
+    const viaOverride = quickAddTargetOf(pinned);
+    const edited = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+    edited.settings.sync = { ...edited.settings.sync!, urlOverrides: overrides };
+    const dropped = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://b.lan:8000" })]);
+
+    const reloaded = quickAddTargetOnLoad(viaOverride, edited);
+    expect(reloaded).toEqual({ serverUrl: "http://100.64.0.5:8000", backendUrl: "http://a.lan:8000", backendId: "a", slug: "my-words" });
+    expect(quickAddTargetOnSummon(reloaded, dropped)).toEqual({ moved: true, target: reloaded });
+  });
+
+  it("adopts the file's Server URL on a first load, a new address, or another list", () => {
+    expect(quickAddTargetOnLoad(null, cfg({ backendId: "a", slug: "my-words" }))).toEqual(loaded);
+    const readdressed = cfg({ backendId: "a", slug: "my-words" }, [backend({ id: "a", serverUrl: "http://a2.lan:8000" })]);
+    expect(quickAddTargetOnLoad(loaded, readdressed)).toEqual(quickAddTargetOf(readdressed));
+    expect(quickAddTargetOnLoad(loaded, cfg({ backendId: "b", slug: "my-words" }))?.backendUrl).toBe("http://b.lan:8000");
+    expect(quickAddTargetOnLoad(loaded, cfg(null))).toBeNull();
   });
 
   it("keeps the loaded target on a move, and has none before anything was loaded", () => {
