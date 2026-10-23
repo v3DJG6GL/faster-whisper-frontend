@@ -1400,11 +1400,16 @@ export default function Transcribe() {
                   setRunOverrides(overrides ?? {});
                   // The seed never targets the known source; keep that true when the
                   // source changes AFTER seeding (a de→de stage is a no-op run). Not while
-                  // the site-subtitle panel holds the chips: their source is the link's
-                  // spoken language (chipSource), and translateTo is the panel's mirror —
-                  // pruning by the screen's would silently drop a valid chip for good. The
-                  // re-prune effect catches up when the panel lets go.
-                  if (siteChips) {
+                  // the site-subtitle panel holds the chips for a link with its OWN spoken
+                  // language (edited, detected or the site's): their source is that language
+                  // (chipSource), and translateTo is the panel's mirror — pruning by the
+                  // screen's would silently drop a valid chip for good. The re-prune effect
+                  // catches up when the panel lets go. A link that only follows the screen
+                  // speaks the new screen language, so the prune is right there: skipping it
+                  // left that language as a hidden target (a de→de copy track on the run).
+                  const linkOwnsSpoken =
+                    linkLang.sp.source === "edited" || linkLang.sp.source === "detected" || linkLang.sp.source === "site";
+                  if (siteChips && linkOwnsSpoken) {
                     persistScoped({ language: lang });
                     return;
                   }
