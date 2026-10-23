@@ -830,6 +830,51 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(base).toBeLessThan(timer.indexOf("injectChain = injectChain.then("));
   });
 
+  it("a release final after the pause re-copies the closed clipboard window with its held-back words", () => {
+    // The server releases held words ("neue" before "Zeile", a trailing "Komma") only after a hard
+    // break, its 5 s idle release or a stop — long after the quiet timer moved the baseline and
+    // closed the window. The release then replaced "Das ist das" on the clipboard with "neue."
+    // alone, and booked its translation as a window of its own.
+    const finalBody = bodyAfter(streamingSrc, '"stream://final"');
+    const boundaryBody = bodyAfter(streamingSrc, '"stream://boundary"');
+    const timer = mask(fns.bumpPhraseEnd);
+    // The timer keeps the window it closes, from the baseline BEFORE it moves, and only when the
+    // session has seen ordinals (an old server's finals all look like releases).
+    const keep = timer.indexOf("clipClosed = closing");
+    expect(keep, "the timer must record the window it closes").toBeGreaterThanOrEqual(0);
+    expect(timer.indexOf("baseline: clipBaseline")).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
+    expect(timer).toMatch(/clipOrdinalSeen\s+\?\s+\{ baseline: clipBaseline, booked: null, byLang: undefined \}/);
+    expect(keep).toBeLessThan(timer.indexOf("clipBaseline = committedDoc"));
+    // Its queued close link records what it closed before closing it.
+    const link = mask(bodyAfter(fns.bumpPhraseEnd, "injectChain = injectChain.then(async () =>"));
+    expect(link).toMatch(/closing\.booked = clipBooked;\s+closing\.byLang = clipByLang;\s+\}\s+clipBooked = null;\s+flushClipByLang\(\);/);
+    // A release final (no ordinal) copies from the closed window's baseline and leaves it closed.
+    const final = mask(finalBody);
+    expect(final).toMatch(/const reopen = ordinal === null \? clipClosed : null;/);
+    expect(final).toMatch(/if \(ordinal !== null\) clipClosed = null;/);
+    expect(final).toMatch(/const clipStartRaw = commonPrefixLen\(reopen \? reopen\.baseline : clipBaseline, committedDoc\);\s+if \(reopen\) clipBaseline = committedDoc;/);
+    // Its translation REPLACES the closed window's booking and per-language tracks, then closes
+    // the window again with the new booking recorded for a further release.
+    const booking = mask(bodyAfter(finalBody, "if (translated && !t.isSelf && landed) "));
+    const restore = booking.indexOf("clipBooked = reopen.booked;");
+    expect(restore, "a reopening release must restore the closed window's booking").toBeGreaterThanOrEqual(0);
+    expect(restore).toBeLessThan(booking.indexOf("clipBooked ??="));
+    expect(booking).toContain("if (byLang) unbookClipByLang(reopen.byLang);");
+    const reclose = booking.indexOf("reopen.booked = clipBooked;");
+    expect(reclose).toBeGreaterThan(booking.indexOf("if (byLang) clipByLang = byLang;"));
+    expect(booking.slice(reclose)).toMatch(/^reopen\.booked = clipBooked;\s+if \(byLang\) reopen\.byLang = byLang;\s+clipBooked = null;\s+flushClipByLang\(\);/);
+    expect(finalBody).toContain('bookUtteranceInsert(uttRec, "clipboard", phraseClip, { text: clipOut, translated, byLang }, !!reopen);');
+    // Its History record takes the whole window's translation when the window is exactly its text.
+    const book = mask(bodyAfter(streamingSrc.slice(streamingSrc.indexOf("function bookUtteranceInsert(")), "): void"));
+    expect(book).toMatch(/const whole =\s+reopened && !own && phrase\.translated && sessionTranslation != null && sent\.trim\(\) === \(r\.result\?\.text \?\?\s+\)\.trim\(\);/);
+    expect(book).toMatch(/\.\.\.\(whole\s+\? \{\s+translatedText: phrase\.text\.trim\(\),/);
+    // New speech ends the chance: a partial, an `open`, a hard break; every start and abandon.
+    expect(mask(bodyAfter(streamingSrc, '"stream://partial"'))).toContain("clipClosed = null;");
+    expect(mask(bodyAfter(streamingSrc, '"stream://utterance"'))).toMatch(/if \(state ===\s+\) clipClosed = null;/);
+    expect(mask(boundaryBody)).toMatch(/clipBaseline =\s+;\s+clipClosed = null;/);
+    expect(mask(fns.clearPhraseEnd)).toMatch(/clipClosed = null;\s+clipOrdinalSeen = false;/);
+  });
+
   it("a hard break closes the clipboard window in its chained link, not synchronously", () => {
     const boundary = bodyAfter(streamingSrc, '"stream://boundary"');
     const link = mask(bodyAfter(boundary, "injectChain = injectChain.then(() =>"));
