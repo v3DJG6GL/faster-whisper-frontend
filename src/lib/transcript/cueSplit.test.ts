@@ -2025,6 +2025,51 @@ describe("cutByShare", () => {
       expect(wrapLines(t, 32, 4, 0, undefined, "en")).toEqual(wrap);
     }
   });
+  it("shape matrix: an I., V. or X. right before another initial is a name's first initial; before a word it is a Roman numeral", () => {
+    // Only the I/V/X after another initial was a name's: "by I." | "M. Pei", "Vladimir V." | "I." | "Lenin".
+    for (const [t, shares, cpl, cut, wrap] of [
+      ["The building was designed by I. M. Pei and it opened later", [1, 1], 32,
+        ["The building was designed", "by I. M. Pei and it opened later"],
+        ["The building was designed", "by I. M. Pei and it opened later"]],
+      ["The writer V. S. Naipaul won the Nobel prize", [1, 1], 36,
+        ["The writer V. S. Naipaul", "won the Nobel prize"],
+        ["The writer V. S. Naipaul", "won the Nobel prize"]],
+      ["In 1917 Vladimir V. I. Lenin took power in Russia", [1, 1, 1], 28,
+        ["In 1917", "Vladimir V. I. Lenin took", "power in Russia"],
+        ["In 1917 Vladimir V. I. Lenin", "took power in Russia"]],
+      ["We read a poem by X. J. Kennedy in class today", [1, 1], 20,
+        ["We read a poem by X. J. Kennedy", "in class today"],
+        ["We read a poem", "by X. J. Kennedy", "in class today"]],
+      // Unchanged: no initial after the numeral, and the initials that were held already.
+      ["The architect J. M. Pei and it opened later", [1, 1], 24,
+        ["The architect J. M. Pei", "and it opened later"],
+        ["The architect J. M. Pei", "and it opened later"]],
+      ["It started before World War I. After that the town grew", [1, 1], 24,
+        ["It started before World War I.", "After that the town grew"],
+        ["It started before", "World War I.", "After that the town grew"]],
+      ["We watched Henry V. Then we all went home for dinner", [1, 1], 24,
+        ["We watched Henry V.", "Then we all went home for dinner"],
+        ["We watched Henry V.", "Then we all", "went home for dinner"]],
+      ["We watched Henry V. A new king was crowned that year", [1, 1], 24,
+        ["We watched Henry V.", "A new king was crowned that year"],
+        ["We watched Henry V.", "A new king was", "crowned that year"]],
+      ["We watched Louis XIV. Then we all went home for dinner", [1, 1], 24,
+        ["We watched Louis XIV.", "Then we all went home for dinner"],
+        ["We watched Louis XIV.", "Then we all", "went home for dinner"]],
+      ["Now please read Part I. A summary follows after this", [1, 1], 24,
+        ["Now please read Part I.", "A summary follows after this"],
+        ["Now please read Part I.", "A summary", "follows after this"]],
+      ["We later met Mary J. A. Smith at the old airport", [1, 1], 32,
+        ["We later met Mary J. A. Smith", "at the old airport"],
+        ["We later met Mary J. A. Smith", "at the old airport"]],
+      ["The leader was J. V. Stalin and then everyone left the room", [1, 1], 24,
+        ["The leader was J. V. Stalin and", "then everyone left the room"],
+        ["The leader was", "J. V. Stalin and then", "everyone left the room"]],
+    ] as const) {
+      expect(cutByShare(t, [...shares], "en")).toEqual(cut);
+      expect(wrapLines(t, cpl, 4, 0, undefined, "en")).toEqual(wrap);
+    }
+  });
   it("shape matrix: a letter after a capitalised noun ends a sentence before a question word, a possessive or a quantifier, and after a clause mark", () => {
     // Only a short opener list ended the sentence ("Option B. Then"): "Plan B. What", "Gate B. Your
     // flight" and "Vitamin C. Many" were held as a name's initial, and "Answer:" read as a first

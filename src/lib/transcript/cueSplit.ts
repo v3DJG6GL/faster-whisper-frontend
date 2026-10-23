@@ -376,10 +376,13 @@ const CAP_INITIALS = /^(?:\p{Lu}\.){2,}$/u;
 const PLACE_INITIALS = new Set(["U.S.", "U.S.A.", "U.K.", "D.C.", "N.Y.", "N.Y.C.", "L.A.", "E.U.", "U.N.", "U.A.E.", "U.S.S.R."]);
 /** A name's initial ("F.") or compact initials ("J.K.", "R.R."), as written: not a place initialism. */
 const nameInitials = (raw: string): boolean => INITIAL.test(raw) || (CAP_INITIALS.test(raw) && !PLACE_INITIALS.has(raw));
-/** An I, V or X and its stop right after another initial is a name's ("J. V. Stalin", "Lisa M. I.
- *  Brown"): a Roman numeral follows a word ("World War I.", "Henry V."). `prev` = the word before. */
-const initialAfter = (raw: string, prev?: string): boolean =>
-  /^[IVX]\.$/.test(raw) && INITIAL.test((prev ?? "").replace(/^[^\p{L}\p{N}]+/u, ""));
+/** An I, V or X and its stop right after another initial ("J. V. Stalin", "Lisa M. I. Brown", the
+ *  "I." of "V. I. Lenin") or right before one ("V. S. Naipaul", "I. M. Pei") is a name's: a Roman
+ *  numeral follows a word and no initial follows it ("World War I. After", "Henry V. A new king").
+ *  `prev` = the word before, `next` the text after. */
+const initialAfter = (raw: string, prev?: string, next = ""): boolean =>
+  /^[IVX]\.$/.test(raw) &&
+  (/^\p{Lu}\.$/u.test((prev ?? "").replace(/^[^\p{L}\p{N}]+/u, "")) || /^\p{Lu}\.(?:\s|$)/u.test(next));
 /** The word before text[..at), within a bounded look-back. */
 const wordBefore = (text: string, at: number): string =>
   text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
@@ -504,7 +507,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   // name's initials: before a capital it ends one after any word ("Washington D.C. Today", "the
   // U.S. These days", "in den U.S.A. Seine", "the U.S. Army").
   if (
-    cut && (nameInitials(raw) || initialAfter(raw, cut.prev)) && /^\p{Lu}/u.test(cut.next) &&
+    cut && (nameInitials(raw) || initialAfter(raw, cut.prev, cut.next)) && /^\p{Lu}/u.test(cut.next) &&
     (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
   ) return false;
   const base = primarySubtag(cut?.lang);
@@ -524,17 +527,19 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
   const w = raw.toLowerCase();
   // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
   return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw) ||
-    ((nameInitials(raw) || initialAfter(raw, cut.prev)) && /^\p{Lu}/u.test(cut.next));
+    ((nameInitials(raw) || initialAfter(raw, cut.prev, cut.next)) && /^\p{Lu}/u.test(cut.next));
 }
 
 /** A capitalised word running on into a name's initial or compact initials ("John | F. Kennedy",
- *  "George | R.R. Martin"): the seam inside the name dangles as the one after the initials does.
+ *  "George | R.R. Martin", "Vladimir | V. I. Lenin"): the seam inside the name dangles as the one
+ *  after the initials does.
  *  "a plan | B.", "the | U.S. Army", "Option | B. Then" and "Plan | B. Dann" do not (nameBefore),
  *  nor a place initialism, which is no name's ("Washington | D.C. Today").
  *  `after` = the text after the initials, `lang` the track's. */
 const beforeInitial = (prev: string, next: string, after: string, lang?: string): boolean => {
   const x = next.split(/\s/)[0].replace(/^[^\p{L}\p{N}]+/u, "");
-  return !SENT_END.test(prev) && !CLAUSE.test(prev) && nameInitials(x) && nameBefore(prev, after, lang);
+  return !SENT_END.test(prev) && !CLAUSE.test(prev) && (nameInitials(x) || initialAfter(x, prev, after)) &&
+    nameBefore(prev, after, lang);
 };
 
 const bare = (w: string) => w.toLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}'.]+$/gu, "");
