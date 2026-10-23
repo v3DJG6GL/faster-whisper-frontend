@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendChunk, appendDelta, finalDelta, mergeTracks, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
+import { appendChunk, appendDelta, appendTranslation, finalDelta, mergeTracks, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
 
 describe("finalDelta", () => {
   it("is what the document gained since the previous final", () => {
@@ -41,6 +41,40 @@ describe("appendChunk / mergeTracks", () => {
 
   it("takes a language code spelled like an inherited member", () => {
     expect(mergeTracks(undefined, { constructor: "x" })?.constructor).toBe("x");
+  });
+});
+
+describe("appendTranslation", () => {
+  // A hands-free session typed an utterance's ordinal final, then the server's release final
+  // handed it the held-back word. The record's text is what History copies and searches.
+  it("a two-target session keeps each language's release words on its own line", () => {
+    const first = { fr: "Bonjour le", de: "Hallo die" };
+    const out = appendTranslation({ text: "Bonjour le\n\nHallo die", tracks: first }, "monde\n\nWelt", { fr: "monde", de: "Welt" }, {
+      targets: ["fr", "de"],
+    });
+    expect(out.text).toBe("Bonjour le monde\n\nHallo die Welt");
+    expect(out.tracks).toEqual({ fr: "Bonjour le monde", de: "Hallo die Welt" });
+  });
+
+  it("the original kept above one target stays its own block", () => {
+    const out = appendTranslation({ text: "Hello the\n\nBonjour le", tracks: { fr: "Bonjour le" } }, "world\n\nmonde", { fr: "monde" }, {
+      targets: ["fr"],
+      original: "Hello the world",
+    });
+    expect(out.text).toBe("Hello the world\n\nBonjour le monde");
+  });
+
+  it("one track joins with a space", () => {
+    const out = appendTranslation({ text: "Bonjour le", tracks: { fr: "Bonjour le" } }, " monde ", { fr: "monde" }, { targets: ["fr"] });
+    expect(out.text).toBe("Bonjour le monde");
+    expect(out.tracks).toEqual({ fr: "Bonjour le monde" });
+  });
+
+  it("a release that opens the record's translation is its phrase as typed", () => {
+    const out = appendTranslation({ text: undefined, tracks: undefined }, "monde\n\nWelt", { fr: "monde", de: "Welt" }, {
+      targets: ["fr", "de"],
+    });
+    expect(out.text).toBe("monde\n\nWelt");
   });
 });
 

@@ -1,5 +1,7 @@
 // Text bookkeeping for per-utterance History records (live hands-free sessions write one
 // record per finished utterance — streaming.ts). Pure, so the seams are testable.
+import { hasOwn } from "../own";
+import { joinTranslationBlocks } from "./dictationTranslate";
 
 /** What one `final` adds to the document: everything past where the previous final ended.
  *  The server keeps a document append-only, so this is the utterance's own text — or, for a
@@ -36,6 +38,31 @@ export function mergeTracks(
     if (text.trim()) out[lang] = appendChunk(out[lang], text);
   }
   return Object.keys(out).length ? out : prev;
+}
+
+/** A release final's translation joined onto its utterance's record: the record's text and
+ *  per-language tracks after it. One track takes `appendChunk`'s space ("Bonjour le" + "monde").
+ *  A phrase typed as several blocks — two or more targets, or the original kept above one —
+ *  cannot: a space after the whole text put the French word on the German line ("Bonjour
+ *  le\n\nHallo die monde\n\nWelt"), and that text is what History copies and searches. So it is
+ *  rebuilt from the merged tracks, in the record's target order and joined the way the phrase was
+ *  typed (`original` = the record's whole original text, when the session includes it). */
+export function appendTranslation(
+  prev: { text: string | undefined; tracks: Record<string, string> | undefined },
+  chunk: string,
+  add: Record<string, string> | undefined,
+  o: { targets: readonly string[]; original?: string },
+): { text: string; tracks: Record<string, string> | undefined } {
+  const tracks = mergeTracks(prev.tracks, add);
+  // Without the earlier tracks (or this chunk's) the merged map is not the whole record: a
+  // rebuild from it would drop text, so join as before.
+  if (!prev.text || !prev.tracks || !add || !tracks) return { text: appendChunk(prev.text, chunk), tracks };
+  const langs = [
+    ...o.targets.filter((l) => hasOwn(tracks, l)),
+    ...Object.keys(tracks).filter((l) => !o.targets.includes(l)),
+  ];
+  if (langs.length + (o.original != null ? 1 : 0) < 2) return { text: appendChunk(prev.text, chunk), tracks };
+  return { text: joinTranslationBlocks(langs.map((l) => tracks[l]), o.original), tracks };
 }
 
 /** A per-utterance clip: its .wav and measured length (null = unmeasured). */

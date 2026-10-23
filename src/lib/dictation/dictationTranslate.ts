@@ -131,6 +131,13 @@ export interface DictationTranslateRequest {
   onProgress?: (p: BatchProgress) => void;
 }
 
+/** A translated phrase as it is typed: one block per language, blank-line separated, the
+ *  original first when the session includes it — the transcript itself may contain single line
+ *  breaks, so a lone \n wouldn't read as a boundary. */
+export function joinTranslationBlocks(parts: readonly string[], original?: string): string {
+  return (original != null ? [original.trim(), ...parts] : parts).join("\n\n");
+}
+
 export interface DictationTranslateResult {
   /** The translation, or the ORIGINAL text on any failure — the user's words
    *  must still land. */
@@ -362,10 +369,8 @@ export async function runDictationTranslate(
     }
     const parts = Object.values(byLang);
     if (!parts.length) throw new EmptyTranslation("empty translation");
-    // One block per language, blank-line separated — the transcript itself may
-    // contain single line breaks, so a lone \n wouldn't read as a boundary.
     return {
-      text: (req.includeOriginal ? [original.trim(), ...parts] : parts).join("\n\n"),
+      text: joinTranslationBlocks(parts, req.includeOriginal ? original : undefined),
       ok: true,
       byLang,
     };

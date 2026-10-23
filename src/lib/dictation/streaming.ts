@@ -24,7 +24,7 @@
 import { useApp } from "../store";
 import { translateFailureDoorway } from "../errors";
 import { attachRecordingPath, patchRecord, recordDictation } from "../transcript/transcriptHistory";
-import { appendChunk, appendDelta, finalDelta, mergeTracks, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
+import { appendDelta, appendTranslation, finalDelta, routeUtteranceClip, type UtteranceClip, type UtteranceEntry } from "./utteranceHistory";
 import { enqueueOutcome } from "../usageOutcome";
 import { backendPrompt, effectiveLanguage, effectiveOverrideProfile, effectiveServerUrl, effectiveTranslationModel } from "../backends";
 import { authoredChipTag } from "../profileTag";
@@ -1052,6 +1052,15 @@ function bookUtteranceInsert(
     // translation covers the record's earlier words too and replaces theirs.
     const whole =
       reopened && !own && phrase.translated && sessionTranslation != null && sent.trim() === (r.result?.text ?? "").trim();
+    // A release final's own words: its translation joins the record's per language — a
+    // multi-block phrase ("<fr>\n\n<de>") cannot take one space after the whole text.
+    const appended =
+      own && phrase.translated
+        ? appendTranslation({ text: r.translatedText, tracks: r.translations }, phrase.text, phrase.byLang, {
+            targets: r.translationTargets ?? sessionTranslation?.targets ?? [],
+            original: r.includeOriginal ? (r.result?.text ?? "") : undefined,
+          })
+        : null;
     return {
       ...r,
       insertMethod: r.insertMethod === "typed" ? "typed" : how,
@@ -1064,10 +1073,10 @@ function bookUtteranceInsert(
           }
         : !own
           ? {}
-          : phrase.translated
+          : appended
             ? {
-                translatedText: appendChunk(r.translatedText, phrase.text),
-                translations: mergeTracks(r.translations, phrase.byLang),
+                translatedText: appended.text,
+                translations: appended.tracks,
                 translationInjected: true,
                 translationAttempted: true,
               }
