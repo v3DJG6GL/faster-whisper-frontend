@@ -565,6 +565,14 @@ describe("site subtitle cleanup", () => {
       "Das hat mit Vertrauen zu tun, Ein- und Ausgang, Vor- oder Nachteil.",
     ]);
   });
+  it("broadcaster hyphenation rejoins through a colour or italic tag around each line", () => {
+    const srt = (a: string, b: string) => parseImportedText("srt", `1\n00:00:01,000 --> 00:00:03,000\n${a}\n${b}\n`).segments[0].text;
+    expect(srt('<font color="#ffff00">Ein journa-</font>', '<font color="#ffff00">listischer Text</font>')).toBe("Ein journalistischer Text");
+    expect(srt("<i>Ein journa-</i>", "<i>listischer Text</i>")).toBe("Ein journalistischer Text");
+    expect(srt("<i>Ein journa- </i>", "<i>listischer Text</i>")).toBe("Ein journalistischer Text");
+    // A conjunction after the tag still keeps the hyphen.
+    expect(srt("<i>Ein- </i>", "<i>und Ausgang</i>")).toBe("Ein- und Ausgang");
+  });
   it("character references decode after the tags go: &nbsp; is a space, &lt;i&gt; stays text", () => {
     const vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nper Re-Prompting&nbsp; vergleichen,&nbsp;&nbsp;\nTom &amp; Jerry &#39;&#x263A;&#39; &lt;i&gt; &bogus;\n";
     expect(parseImportedText("vtt", vtt).segments[0].text).toBe("per Re-Prompting vergleichen, Tom & Jerry '\u263A' <i> &bogus;");

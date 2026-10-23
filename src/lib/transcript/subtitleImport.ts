@@ -309,6 +309,13 @@ export function dedupeRollingCues(cues: RawCue[]): RawCue[] {
 
 /** "Ein- und Ausgang" keeps its hyphen: the next line opens with a conjunction. */
 const KEEPS_HYPHEN = /^(?:und|oder|bis|and|or)(?![\p{L}\p{N}])/iu;
+/** One piece of bareLine's markup: a tag, an inline timestamp, an ASS override block. */
+const MARKUP_PIECE = String.raw`${MARKUP_TAG.source}|<\d+:\d+(?::\d+)?(?:\.\d+)?>|\{\\[^}]{0,64}\}`;
+/** A line's last hyphen and the markup after it: a line wrapped in its own tag (`<i>journa-</i>`)
+ *  ends on the tag, not on the hyphen. */
+const HYPHEN_THEN_MARKUP = new RegExp(String.raw`-((?:${MARKUP_PIECE}|\s)*)$`, "iu");
+/** The markup of that tail, or a blank between its pieces ("$1" drops the blank). */
+const MARKUP_OR_BLANK = new RegExp(String.raw`(${MARKUP_PIECE})|\s+`, "giu");
 /** Three or more single cased letters spaced apart ("m i t") — broadcaster emphasis. */
 const LETTER_SPACED = /(?<![\p{L}\p{N}])(?:[\p{Lu}\p{Ll}] ){2,}[\p{Lu}\p{Ll}](?![\p{L}\p{N}])/gu;
 /** A tag or a letter-spaced run: the cue lines still hold their markup, and a tag's name is
@@ -338,8 +345,11 @@ export function fixBroadcasterText(lines: string[]): string[] {
   for (const raw of lines) {
     const line = raw.trim();
     const prev = out[out.length - 1];
-    if (prev !== undefined && /\p{Ll}-$/u.test(prev) && /^\p{Ll}/u.test(line) && !KEEPS_HYPHEN.test(line)) {
-      out[out.length - 1] = prev.slice(0, -1) + line;
+    // Judged on the lines without their markup: broadcaster files often wrap each line in its
+    // own colour or italic tag, and the raw line then ends on "</font>", the next opens with "<font".
+    const bare = bareLine(line).trimStart();
+    if (prev !== undefined && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare)) {
+      out[out.length - 1] = prev.replace(HYPHEN_THEN_MARKUP, (_, tail: string) => tail.replace(MARKUP_OR_BLANK, "$1")) + line;
     } else {
       out.push(line);
     }
