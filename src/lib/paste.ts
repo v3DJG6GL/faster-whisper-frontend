@@ -2,12 +2,21 @@
 // editor. Stored as KeyboardEvent.code chords; the Rust paste paths map them to evdev
 // keycodes (Wayland) / enigo keys (X11). Terminals (Konsole, kitty…) need Ctrl+Shift+V.
 
+import { IS_LINUX } from "./platform";
+
 export const DEFAULT_PASTE_SHORTCUT = ["ControlLeft", "KeyV"];
 
 export const PASTE_PRESETS: { value: string; label: string; codes: string[] }[] = [
   { value: "ctrl-v", label: "Ctrl + V", codes: ["ControlLeft", "KeyV"] },
   { value: "ctrl-shift-v", label: "Ctrl + Shift + V (terminals)", codes: ["ControlLeft", "ShiftLeft", "KeyV"] },
-  { value: "shift-insert", label: "Shift + Insert", codes: ["ShiftLeft", "Insert"] },
+  // On Linux many terminals (xterm, VTE, Konsole) paste the PRIMARY selection — whatever the
+  // mouse last highlighted — on Shift+Insert, while the app only fills the CLIPBOARD, so there a
+  // terminal would get the wrong text. Only the label warns; the stored chord is the same.
+  {
+    value: "shift-insert",
+    label: IS_LINUX ? "Shift + Insert (not in terminals)" : "Shift + Insert",
+    codes: ["ShiftLeft", "Insert"],
+  },
 ];
 
 /** The preset key for a chord (falls back to ctrl-v if unrecognized). */
