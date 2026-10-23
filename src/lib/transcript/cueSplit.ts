@@ -376,6 +376,10 @@ const CAP_INITIALS = /^(?:\p{Lu}\.){2,}$/u;
 const PLACE_INITIALS = new Set(["U.S.", "U.S.A.", "U.K.", "D.C.", "N.Y.", "N.Y.C.", "L.A.", "E.U.", "U.N.", "U.A.E.", "U.S.S.R."]);
 /** A name's initial ("F.") or compact initials ("J.K.", "R.R."), as written: not a place initialism. */
 const nameInitials = (raw: string): boolean => INITIAL.test(raw) || (CAP_INITIALS.test(raw) && !PLACE_INITIALS.has(raw));
+/** An I, V or X and its stop right after another initial is a name's ("J. V. Stalin", "Lisa M. I.
+ *  Brown"): a Roman numeral follows a word ("World War I.", "Henry V."). `prev` = the word before. */
+const initialAfter = (raw: string, prev?: string): boolean =>
+  /^[IVX]\.$/.test(raw) && INITIAL.test((prev ?? "").replace(/^[^\p{L}\p{N}]+/u, ""));
 /** The word before text[..at), within a bounded look-back. */
 const wordBefore = (text: string, at: number): string =>
   text.slice(Math.max(0, at - 24), at).trimEnd().split(/\s/).pop() ?? "";
@@ -497,7 +501,7 @@ function isSentenceEnd(word: string, cut?: SentenceCut): boolean {
   // name's initials: before a capital it ends one after any word ("Washington D.C. Today", "the
   // U.S. These days", "in den U.S.A. Seine", "the U.S. Army").
   if (
-    cut && nameInitials(raw) && /^\p{Lu}/u.test(cut.next) &&
+    cut && (nameInitials(raw) || initialAfter(raw, cut.prev)) && /^\p{Lu}/u.test(cut.next) &&
     (/^\p{Lu}\.(?:\s|$)/u.test(cut.next) || nameBefore(cut.prev ?? "", cut.next, cut.lang))
   ) return false;
   const base = primarySubtag(cut?.lang);
@@ -517,7 +521,7 @@ function heldAbbrev(word: string, cut: SentenceCut): boolean {
   const w = raw.toLowerCase();
   // A unit running on ("300 m. away") is no title either: held, it came back as "300 | m. away".
   return (TITLE_ABBREV.has(w) && !isUnit(raw)) || /^\d{1,2}\.$/.test(w) || INITIAL.test(raw) ||
-    (nameInitials(raw) && /^\p{Lu}/u.test(cut.next));
+    ((nameInitials(raw) || initialAfter(raw, cut.prev)) && /^\p{Lu}/u.test(cut.next));
 }
 
 /** A capitalised word running on into a name's initial or compact initials ("John | F. Kennedy",

@@ -1931,6 +1931,39 @@ describe("cutByShare", () => {
     expect(cutByShare("They ran exactly 1,000,000 m. in that long year", [1, 1], "en"))
       .toEqual(["They ran exactly 1,000,000 m.", "in that long year"]);
   });
+  it("shape matrix: an I., V. or X. right after another initial is a name's initial; after a word it is a Roman numeral", () => {
+    // The Roman-numeral carve-out also took the I/V/X of a name: "J. V." | "Stalin …".
+    for (const [t, shares, cpl, cut, wrap] of [
+      ["The leader was J. V. Stalin and then everyone left the room", [3, 4], 24,
+        ["The leader was J. V. Stalin", "and then everyone left the room"],
+        ["The leader was", "J. V. Stalin and then", "everyone left the room"]],
+      ["We later met Lisa M. I. Brown at the old airport", [1, 1], 20,
+        ["We later met Lisa M. I. Brown", "at the old airport"],
+        ["We later met", "Lisa M. I. Brown", "at the old airport"]],
+      ["Yesterday we met John F. X. Kennedy at the old airport", [1, 1], 26,
+        ["Yesterday we met John F. X. Kennedy", "at the old airport"],
+        ["Yesterday we met", "John F. X. Kennedy", "at the old airport"]],
+      // Unchanged: a Roman numeral after a word, and a lone "I." after an ordinary word, end one.
+      ["It started before World War I. After that the town grew", [1, 1], 32,
+        ["It started before World War I.", "After that the town grew"],
+        ["It started before World War I.", "After that the town grew"]],
+      ["We watched Henry V. Then we all went home for dinner", [1, 1], 32,
+        ["We watched Henry V.", "Then we all went home for dinner"],
+        ["We watched Henry V.", "Then we all went home for dinner"]],
+      ["Now please read Chapter X. The next one is very short", [1, 1], 32,
+        ["Now please read Chapter X.", "The next one is very short"],
+        ["Now please read Chapter X.", "The next one is very short"]],
+      ["Now please read Part I. The next one is very short", [1, 1], 32,
+        ["Now please read Part I.", "The next one is very short"],
+        ["Now please read Part I.", "The next one is very short"]],
+      ["Nobody else wanted to go and so did I. Then we left", [1, 1], 24,
+        ["Nobody else wanted to go and so did I.", "Then we left"],
+        ["Nobody else wanted to go", "and so did I.", "Then we left"]],
+    ] as const) {
+      expect(cutByShare(t, [...shares], "en")).toEqual(cut);
+      expect(wrapLines(t, cpl, 4, 0, undefined, "en")).toEqual(wrap);
+    }
+  });
   it("shape matrix: a letter after a capitalised noun ends a sentence before a question word, a possessive or a quantifier, and after a clause mark", () => {
     // Only a short opener list ended the sentence ("Option B. Then"): "Plan B. What", "Gate B. Your
     // flight" and "Vitamin C. Many" were held as a name's initial, and "Answer:" read as a first
