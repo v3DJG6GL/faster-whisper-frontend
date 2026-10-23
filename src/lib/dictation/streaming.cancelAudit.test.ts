@@ -96,12 +96,17 @@ function bodyAfter(src: string, anchor: string): string {
  *  task and the separator. */
 const SNAPSHOT_GATE = /t\.method ===\s+&& t\.restoreClipboard && !clipDirty && !t\.isSelf/;
 
-/** Every top-level `function name(...) {...}` in a module, by name. */
+/** Every top-level `function name(...) {...}` in a module, by name. Cached per source: each call
+ *  scans the whole module, and a test calling it several times timed out under a loaded gate. */
+const fnsCache = new Map<string, Record<string, string>>();
 function topLevelFunctions(src: string): Record<string, string> {
+  const hit = fnsCache.get(src);
+  if (hit) return hit;
   const out: Record<string, string> = {};
   const re = /^(?:export )?(?:async )?function (\w+)\s*\(/gm;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src)) !== null) out[m[1]] = bodyAfter(src, m[0]);
+  fnsCache.set(src, out);
   return out;
 }
 
