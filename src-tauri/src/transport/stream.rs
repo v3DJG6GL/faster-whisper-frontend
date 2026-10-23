@@ -522,8 +522,9 @@ pub async fn run<F>(
         Ok(r) => r,
         Err(e) => fail!(format!("Resampler init failed: {e}")),
     };
-    // If Stop already arrived during connect (a quick tap), skip straight to draining
-    // so we flush + stop the empty session and close cleanly without sending audio.
+    // If Stop already arrived during connect (a quick tap, or a phrase shorter than the handshake),
+    // skip straight to draining: it sends (and saves) whatever capture queued meanwhile, then
+    // flush + stop.
     let mut draining = stop_requested;
     let saving = params.save_dir.is_some();
     let trim = saving && params.trim_silence;
@@ -674,16 +675,15 @@ pub async fn run<F>(
                     Some(chunk) => {
                         let bytes = resampler.push(&chunk);
                         if !bytes.is_empty() {
-                            if trim {
-                                // Advance the speech detector from this chunk's RMS (same scaling +
-                                // thresholds as the chip); the gate keeps audio only while "speaking"
-                                // and prepends the buffered lead-in on each silence→speech edge.
-                                let lvl = crate::audio::chip_level(rms_f32(&chunk));
-                                gated.clear();
-                                gate.push(lvl, &bytes, &mut gated);
-                                save_capped(&mut saved, &gated, &mut saved_capped);
-                            } else if saving {
-                                save_capped(&mut saved, &bytes, &mut saved_capped);
+                            if saving {
+                                save_chunk(
+                                    trim.then_some(&mut gate),
+                                    &chunk,
+                                    &bytes,
+                                    &mut gated,
+                                    &mut saved,
+                                    &mut saved_capped,
+                                );
                             }
                             let n = bytes.len() as u64;
                             match tokio::time::timeout(
@@ -781,7 +781,6 @@ pub async fn run<F>(
         // buffer; the cap exists so a cpal Stream drop that stalls (device yanked, wedged audio
         // service) cannot starve the flush/stop sends below out of the whole write budget.
         const PCM_DRAIN_CAP: Duration = Duration::from_secs(2);
-        let keep_tail = drain_keeps_tail(saving, trim, &saved);
         if tokio::time::timeout(DRAIN_WRITE_DEADLINE, async {
             // Drain the PCM the capture thread queued but the main loop hadn't consumed when the stop
             // signal won the (non-biased) select — push it through the resampler and send it, so the
@@ -791,9 +790,9 @@ pub async fn run<F>(
             // BEFORE ws_stop, so the capture thread is already exiting and drops its sender within
             // ~one buffer. The drain has its own sub-cap (PCM_DRAIN_CAP, one flat deadline so a
             // trickle of chunks can't extend it) so the flush/stop frames below always run under
-            // the remaining DRAIN_WRITE_DEADLINE budget. Saved (when recording) like the flush tail
-            // below: the end-of-stream sliver isn't speech-gated, so under trim it is kept only
-            // behind speech the gate already kept (`keep_tail`).
+            // the remaining DRAIN_WRITE_DEADLINE budget. Saved (when recording) through the speech
+            // gate exactly like the live loop: after a Stop during connect the WHOLE phrase is
+            // queued here, and the live loop never saw any of it.
             let pcm_deadline = tokio::time::Instant::now() + PCM_DRAIN_CAP;
             loop {
                 let chunk = match tokio::time::timeout_at(pcm_deadline, pcm_rx.recv()).await {
@@ -806,8 +805,15 @@ pub async fn run<F>(
                 };
                 let bytes = resampler.push(&chunk);
                 if !bytes.is_empty() {
-                    if keep_tail {
-                        save_capped(&mut saved, &bytes, &mut saved_capped);
+                    if saving {
+                        save_chunk(
+                            trim.then_some(&mut gate),
+                            &chunk,
+                            &bytes,
+                            &mut gated,
+                            &mut saved,
+                            &mut saved_capped,
+                        );
                     }
                     let _ = write.send(Message::Binary(bytes.into())).await;
                 }
@@ -817,7 +823,7 @@ pub async fn run<F>(
             // (or the saved recording). The trailing zeros resample to a soft decay, not a click.
             let tail = resampler.flush();
             if !tail.is_empty() {
-                if keep_tail {
+                if drain_keeps_tail(saving, trim, &saved) {
                     save_capped(&mut saved, &tail, &mut saved_capped);
                 }
                 let _ = write.send(Message::Binary(tail.into())).await;
@@ -1057,9 +1063,30 @@ impl Drop for AbortOnDrop {
     }
 }
 
-/// Whether the drain's ungated tail (the queued capture chunks and the resampler flush) joins the
-/// saved recording. Under silence-trim only behind speech the gate already kept: the flush tail is
-/// almost never empty, so a silent tap otherwise wrote a ~21 ms `.wav` no history record names.
+/// Append one resampled capture chunk to the saved recording copy. With `gate` (silence-trim) the
+/// speech detector advances from the chunk's RMS (same scaling + thresholds as the chip) and keeps
+/// audio only while "speaking", prepending the buffered lead-in on each silence→speech edge.
+fn save_chunk(
+    gate: Option<&mut crate::audio::SpeechGate>,
+    chunk: &[f32],
+    bytes: &[u8],
+    gated: &mut Vec<u8>,
+    saved: &mut Vec<u8>,
+    capped: &mut bool,
+) {
+    match gate {
+        Some(gate) => {
+            gated.clear();
+            gate.push(crate::audio::chip_level(rms_f32(chunk)), bytes, gated);
+            save_capped(saved, gated, capped);
+        }
+        None => save_capped(saved, bytes, capped),
+    }
+}
+
+/// Whether the drain's ungated resampler flush tail joins the saved recording. Under silence-trim
+/// only behind speech the gate already kept: the flush tail is almost never empty, so a silent tap
+/// otherwise wrote a ~21 ms `.wav` no history record names.
 fn drain_keeps_tail(saving: bool, trim: bool, saved: &[u8]) -> bool {
     saving && (!trim || !saved.is_empty())
 }
@@ -1988,6 +2015,60 @@ mod server_close_tests {
         assert_eq!(events.len(), 2, "{events:?}");
         assert!(events[0].starts_with("error: "), "{events:?}");
         assert_eq!(events[1], "closed");
+    }
+
+    /// Runs one silence-trimmed recording session whose Stop lands before the connect, with
+    /// `chunks` already queued by capture, and returns the durations of the recordings it saved.
+    async fn saved_after_stop_during_connect(tag: &str, chunks: Vec<Vec<f32>>) -> Vec<u64> {
+        let dir = std::env::temp_dir().join(format!("fwf-drain-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let (pcm_tx, pcm_rx) = mpsc::unbounded_channel();
+        for c in chunks {
+            pcm_tx.send(c).unwrap();
+        }
+        drop(pcm_tx);
+        let (stop_tx, stop_rx) = watch::channel(false);
+        stop_tx.send(true).unwrap();
+        let mut p = params(serve_restart_after(r#""type":"stop""#));
+        p.save_dir = Some(dir.clone());
+        p.trim_silence = true;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        run(p, pcm_rx, stop_rx, move |e| {
+            if let StreamEvent::RecordingSaved { duration_ms, .. } = e {
+                sink.lock().unwrap().push(duration_ms);
+            }
+        })
+        .await;
+        drop(stop_tx);
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = seen.lock().unwrap().clone();
+        out
+    }
+
+    /// A phrase shorter than the handshake sits whole in the PCM channel when the drain starts.
+    /// It is transcribed, so with "Keep audio recordings" + trim it must be saved too: the drain
+    /// runs it through the speech gate instead of dropping it as an ungated tail.
+    #[tokio::test]
+    async fn a_phrase_queued_during_connect_is_saved_under_trim() {
+        let loud: Vec<Vec<f32>> = (0..16)
+            .map(|k| {
+                (0..1000)
+                    .map(|i| 0.5 * ((k * 1000 + i) as f32 * 0.2).sin())
+                    .collect()
+            })
+            .collect();
+        let saved = saved_after_stop_during_connect("loud", loud).await;
+        assert_eq!(saved.len(), 1, "{saved:?}");
+        assert!((900..=1100).contains(&saved[0]), "{saved:?}");
+    }
+
+    /// The same queue of silence still saves nothing: the gate, not the drain, decides.
+    #[tokio::test]
+    async fn a_silent_tap_queued_during_connect_saves_nothing_under_trim() {
+        let silent = vec![vec![0.0f32; 1000]; 16];
+        let saved = saved_after_stop_during_connect("silent", silent).await;
+        assert!(saved.is_empty(), "{saved:?}");
     }
 }
 
