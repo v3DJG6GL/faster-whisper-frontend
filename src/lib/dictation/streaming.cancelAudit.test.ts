@@ -506,6 +506,69 @@ describe("live typed baseline: the hard-break carry and clipboard delivery", () 
     expect(run({ text: "\n" }, false, new Set(), { appId: "app" }, "\n\n\n", "typed\n").out).toBe("insert");
   });
 
+  it("an untranslated suffix-only final after a divert sends no insert, so the divert's Enter stays stood down", () => {
+    // An untranslated final that only appends the server's output_suffix still reached the insert
+    // after a phrase went to the clipboard: its "\n" was a Return submitting the field without that
+    // phrase, and its typed booking cleared lastPhraseDiverted, so the quiet-timer Enter pressed a
+    // second one — in the window the user moved to so they could paste.
+    const final = mask(finalBody);
+    const hold = final.search(/const spacingOnly = !typeOut\.trim\(\);\s+if \(spacingOnly && lastPhraseDiverted\) return;/);
+    expect(hold, "a suffix-only final must stand down with a diverted phrase").toBeGreaterThanOrEqual(0);
+    expect(hold).toBeGreaterThan(final.indexOf("if (!opensBlock) {"));
+    expect(hold).toBeLessThan(final.indexOf("await beginInjection()"));
+    expect(hold).toBeLessThan(final.indexOf("injectText({ text: typeOut,"));
+    // Run the statements from the seam rule to the snapshot gate as plain JS: the task leaves
+    // before any snapshot or insert, with the baseline where it was (the whitespace goes out with
+    // the next delivered insert); without a divert, or with words, it falls through to the insert.
+    const start = finalBody.indexOf("const block = phrase.text.trim();");
+    const end = finalBody.indexOf("if (t.method === \"paste\" && t.restoreClipboard && !clipDirty", start);
+    expect(end, "the phrase's snapshot gate moved — update streaming.cancelAudit.test.ts").toBeGreaterThan(start);
+    const run = new Function(
+      "phrase", "sessionTranslation", "gapOwedApps", "t", "PHRASE_GAP", "target", "lastPhraseDiverted",
+      `let injectedText = "typed";\nconst out = (() => {\n${finalBody.slice(start, end)}\nreturn "insert";\n})();\nreturn { out, injectedText };`,
+    ) as (phrase: { text: string }, sessionTranslation: boolean, gapOwedApps: Set<string>, t: { appId: string }, gap: string, target: string, lastPhraseDiverted: boolean) => { out: string | undefined; injectedText: string };
+    for (const suffix of ["\n", " ", " \n"]) {
+      const r = run({ text: suffix }, false, new Set(["app"]), { appId: "app" }, "\n\n\n", "typed" + suffix, true);
+      expect(r.out, `${JSON.stringify(suffix)} after a divert`).toBeUndefined();
+      expect(r.injectedText).toBe("typed");
+      expect(run({ text: suffix }, false, new Set(["app"]), { appId: "app" }, "\n\n\n", "typed" + suffix, false).out).toBe("insert");
+    }
+    expect(run({ text: " Next phrase." }, false, new Set(), { appId: "app" }, "\n\n\n", "typed Next phrase.", true).out).toBe("insert");
+    // The stand-down it keeps is the one every Enter producer reads.
+    expect(mask(fns.enqueueAutoEnter)).toContain("if (lastPhraseDiverted) return;");
+  });
+
+  it("an untranslated suffix-only final that types books no typed phrase, so a paid Enter is not re-armed", () => {
+    // A typed " " or "\n" ran the typed booking: gapOwedApps re-armed after the phrase's Return was
+    // already paid (the quiet-timer Enter then sent a second, empty submit), lastTypedApp moved to
+    // the window it went into, a divert's stand-down cleared, and a green "typed" pulse showed —
+    // also when Rust withheld it at the paste chord and answered `landed: true` for nothing typed.
+    const delivered = bodyAfter(finalBody, "if (delivered) ");
+    expect(mask(delivered)).toMatch(/\} else if \(!spacingOnly\) \{\s+sessionTyped = true;/);
+    // The baseline and the carry still move past it.
+    expect(mask(delivered)).toMatch(/^\{\s+injectedText = target;\s+carryText =\s+;\s+carrySep =\s+;/);
+    // Run the delivered block's outcome arms as plain JS.
+    const start = delivered.indexOf("if (diverted) {");
+    const end = delivered.indexOf("bookOwedUtterances(", start);
+    expect(start, "the delivered block's outcome arms moved — update streaming.cancelAudit.test.ts").toBeGreaterThanOrEqual(0);
+    const run = new Function(
+      "diverted", "spacingOnly", "t", "state",
+      `const pulses = [];\nconst signalInsert = (k) => pulses.push(k);\nlet { sessionTyped, sessionClipboard, lastPhraseDiverted, gapOwedApps, lastTypedApp } = state;\n${delivered.slice(start, end)}\nreturn { sessionTyped, sessionClipboard, lastPhraseDiverted, gapOwedApps, lastTypedApp, pulses };`,
+    ) as (diverted: boolean, spacingOnly: boolean, t: { appId: string }, state: { sessionTyped: boolean; sessionClipboard: boolean; lastPhraseDiverted: boolean; gapOwedApps: Set<string>; lastTypedApp: string }) => { sessionTyped: boolean; sessionClipboard: boolean; lastPhraseDiverted: boolean; gapOwedApps: Set<string>; lastTypedApp: string; pulses: string[] };
+    // Phrase A typed into "a" and its Return paid; the suffix final lands in "a", then in "b".
+    for (const appId of ["a", "b"]) {
+      const r = run(false, true, { appId }, { sessionTyped: false, sessionClipboard: false, lastPhraseDiverted: false, gapOwedApps: new Set(), lastTypedApp: "a" });
+      expect(r.gapOwedApps.has(appId), `no Return owed in ${appId}`).toBe(false);
+      expect(r.lastTypedApp).toBe("a");
+      expect(r.pulses).toEqual([]);
+      expect(r.sessionTyped).toBe(false);
+    }
+    // A phrase with words still books as typed.
+    const words = run(false, false, { appId: "a" }, { sessionTyped: false, sessionClipboard: false, lastPhraseDiverted: true, gapOwedApps: new Set(), lastTypedApp: "a" });
+    expect(words).toMatchObject({ sessionTyped: true, lastPhraseDiverted: false, lastTypedApp: "a", pulses: ["typed"] });
+    expect(words.gapOwedApps.has("a")).toBe(true);
+  });
+
   it("a live phrase resolved to our own window is owed before its translate, not translated for nothing", () => {
     // An own-window insert is never delivered, so the baseline never moves: translating it first
     // re-translated everything since focus came to us on every final (GPU work growing per phrase,
@@ -833,7 +896,7 @@ describe("work that must wait for the queue or the cancel", () => {
     expect(call, "the live insert must pass the bare block as its clipboard form").toBeGreaterThanOrEqual(0);
     // Hoisted above the try, so the catch's recovery copy reads the same form.
     // An untranslated phrase's clipboard form drops its seam space; a whitespace-only form falls back to text.
-    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : typeOut\.trim\(\);\s*const clipboardText = clipForm && clipForm !== typeOut \? clipForm : undefined;\s*const spacingOnly = !typeOut\.trim\(\);\s*try \{\s*\(\{ landed, diverted \} = await $/);
+    expect(final.slice(0, call)).toMatch(/const clipForm = sessionTranslation \? block : typeOut\.trim\(\);\s*const clipboardText = clipForm && clipForm !== typeOut \? clipForm : undefined;\s*try \{\s*\(\{ landed, diverted \} = await $/);
     // …and nothing after it copies the phrase a second time. A JS re-copy after the await never
     // ran for an error-abort recovery (the teardown nulls insertCfg first) and, for a divert,
     // left a gapped duplicate in the clipboard history. The failed-insert catch's recovery copy

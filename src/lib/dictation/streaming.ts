@@ -2601,6 +2601,15 @@ async function ensureListeners(): Promise<void> {
               injectedText = target;
               return;
             }
+            // Past here only an UNTRANSLATED final can be whitespace alone (a translated one with no
+            // block returned just above): the server's output_suffix, " " or "\n". It is no phrase.
+            // While the last phrase sits on the clipboard its Enter is stood down, and the suffix
+            // stands down with it, before the snapshot and the insert: a "\n" typed now is a Return
+            // submitting the field without the diverted phrase, in the window the user went to
+            // paste it into. The baseline stays put, so the whitespace goes out with the next
+            // delivered insert.
+            const spacingOnly = !typeOut.trim();
+            if (spacingOnly && lastPhraseDiverted) return;
             // The translated-document accumulators advance further down, inside `if (delivered)`:
             // a sink-skipped phrase is deliberately re-sent with the next insert (injectedText
             // stays un-advanced), and booking it here appended its translation to history twice.
@@ -2654,11 +2663,14 @@ async function ensureListeners(): Promise<void> {
             // and a divert made that the clipboard's owner over the user's copy, or over the phrase
             // diverted just before it that they were told to paste, then stood the tail's Enter
             // down for it. Like the hard-break separator it has nothing to recover, so it is
-            // withheld instead: `landed: false` leaves the baseline un-advanced, and the whitespace
-            // goes out with the next delivered insert.
+            // withheld instead. Withheld before anything is written, Rust answers `landed: false`:
+            // the baseline stays un-advanced and the whitespace goes out with the next delivered
+            // insert. Withheld at the paste chord (our own window took focus after the paste
+            // write), it answers `landed: true, diverted: false` and restores the clipboard
+            // itself: the task cannot tell that from a typed one, so it advances past whitespace
+            // that never landed, and the delivered block below books no typed phrase for it.
             const clipForm = sessionTranslation ? block : typeOut.trim();
             const clipboardText = clipForm && clipForm !== typeOut ? clipForm : undefined;
-            const spacingOnly = !typeOut.trim();
             try {
               ({ landed, diverted } = await injectText({ text: typeOut, clipboardText, method: t.method, autoEnter: false, restoreClipboard: false, pasteShortcut: t.pasteShortcut, expectAppId: t.appId, remoteDesktop: t.remoteDesktop, withholdOnDivert: spacingOnly }));
             } catch (e) {
@@ -2784,7 +2796,11 @@ async function ensureListeners(): Promise<void> {
                 // or hands-free session.
                 sessionClipboard = true;
                 signalInsert("clipboard");
-              } else {
+              } else if (!spacingOnly) {
+                // Only a phrase with words was typed: the server's suffix alone (see spacingOnly)
+                // neither clears a divert's stand-down nor owes the field a Return, so the
+                // quiet-timer Enter it arms finds nothing to follow (no second, empty submit into
+                // a field whose phrase already got its Return), and it shows no "typed" pulse.
                 sessionTyped = true;
                 lastPhraseDiverted = false;
                 gapOwedApps.add(t.appId);
