@@ -539,9 +539,10 @@ function writeNow(rec: TranscriptRecord): Promise<void> {
   ));
 }
 
-/** DROP every coalesced write (never land it): the caller is about to move or wipe the
- *  files the parked records describe, and a write landing after that put the pre-move paths —
- *  or a record Rust just deleted — straight back on disk. */
+/** DROP every coalesced write (never land it): the caller is about to wipe the records the
+ *  parked writes describe, and a write landing after that put a record Rust just deleted
+ *  straight back on disk. A folder move flushes instead (Rust re-points saves through its
+ *  MOVED map), so a parked write is not lost to the move's forced reload. */
 export function dropPendingWrites(only?: (r: TranscriptRecord) => boolean): void {
   if (!only) {
     for (const t of writeTimers.values()) clearTimeout(t);

@@ -498,9 +498,12 @@ export default function Settings() {
         setStoreMsg(null);
         setBusy("dir", true);
         try {
-          // A coalesced record write captured BEFORE the move would land after it and put
-          // the pre-move paths straight back on disk — drop it, don't flush it.
-          dropPendingWrites();
+          // Land every coalesced record write BEFORE the move, never drop it: the forced reload
+          // below replaces the mirror with the disk copy, so a dropped write (a translate chunk's
+          // merge, a fresh correction) would be lost from both. A write on disk before the move
+          // is re-pointed by the move's own rewrite, and any later save is re-pointed by
+          // save_transcript_record (the session's MOVED map) — neither puts a pre-move path back.
+          await flushRecordWrites();
           try {
             // Read the live base, not the click-time closure: on Linux the picker isn't modal,
             // so a Reset or second Change… can finish a move while this picker is still open —
@@ -531,8 +534,9 @@ export default function Settings() {
     moveError = null;
     setStoreMsg(null);
     setBusy("dir", true);
-    dropPendingWrites();
-    void moveAudioBase(basePref, null)
+    // Flush, don't drop, before the move: see changeRecDir.
+    void flushRecordWrites()
+      .then(() => moveAudioBase(basePref, null))
       .then(() => {
         updateRecording({ audioBaseDir: null, recordingsDir: null });
         setStoreMsg((m) => (m?.text.startsWith(OPEN_DIR_FAILED) ? null : m));
