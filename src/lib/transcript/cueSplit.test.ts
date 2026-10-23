@@ -2013,6 +2013,40 @@ describe("cutByShare", () => {
       }
     }
   });
+  it("a letter after a capitalised noun ends a sentence before French N', S', T', M' and Italian C'è", () => {
+    // The elisions mapped to words no opener list held ("ne", "me", "te"; "si"/"se" not in French,
+    // "ci" nowhere), so "N'oublie", "S'il", "T'as", "M'a-t-il" and "C'è" read as a surname and the
+    // cut and the wrap took them onto the line with "B.".
+    const ROWS: [text: string, lang: string, cut: string, wrap: string][] = [
+      ["On a choisi le Plan B. N'oublie pas ton billet", "fr",
+        "On a choisi le Plan B. | N'oublie pas ton billet", "On a choisi le Plan B. | N'oublie pas ton billet"],
+      ["On a choisi le Plan B. S'il pleut on reste ici", "fr",
+        "On a choisi le Plan B. | S'il pleut on reste ici", "On a choisi le Plan B. | S'il pleut on reste ici"],
+      ["On a choisi le Plan B. T'as vu ça", "fr",
+        "On a choisi le Plan B. | T'as vu ça", "On a choisi le Plan B. | T'as vu ça"],
+      ["On a choisi le Plan B. M'a-t-il bien compris", "fr",
+        "On a choisi le Plan B. | M'a-t-il bien compris", "On a choisi le Plan B. | M'a-t-il bien compris"],
+      ["On a choisi le Plan B. Si tu veux on y va", "fr",
+        "On a choisi le Plan B. | Si tu veux on y va", "On a choisi le Plan B. | Si tu veux on y va"],
+      ["On a choisi le Plan B. Ne t'inquiète pas trop", "fr",
+        "On a choisi le Plan B. | Ne t'inquiète pas trop", "On a choisi le Plan B. | Ne t'inquiète pas trop"],
+      ["Abbiamo il Piano B. C'è un problema serio qui", "it",
+        "Abbiamo il Piano B. | C'è un problema serio qui", "Abbiamo il Piano B. | C'è un problema serio qui"],
+      ["Abbiamo il Piano B. Ci vediamo domani sera", "it",
+        "Abbiamo il Piano B. | Ci vediamo domani sera", "Abbiamo il Piano B. | Ci vediamo domani sera"],
+      // A name's initial before a surname stays held.
+      ["Nous avons vu Jean-Paul J. Dupont hier soir", "fr",
+        "Nous avons vu | Jean-Paul J. Dupont hier soir", "Nous avons vu | Jean-Paul J. Dupont hier soir"],
+      ["Nous avons vu Marie T. Martin hier au soir", "fr",
+        "Nous avons vu | Marie T. Martin hier au soir", "Nous avons vu | Marie T. Martin hier au soir"],
+    ];
+    for (const [t, lang, cut, wrap] of ROWS) {
+      for (const l of [lang, undefined]) {
+        const got = [cutByShare(t, [1, 1], l), wrapLines(t, 30, 2, 0, undefined, l)].map((p) => p.join(" | "));
+        expect(got, `${t} (${l ?? "no language"})`).toEqual([cut, wrap]);
+      }
+    }
+  });
   it("a name's initial at the text's start or after a comma or a full stop stays with the name; an opener after it still ends a sentence", () => {
     // With no word before the initial, or one ending on a clause or sentence mark, "J." read as a
     // sentence end: "In 1924, J." / "Edgar Hoover …", a cut or line of a lone "J." or "F.".

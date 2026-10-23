@@ -389,13 +389,13 @@ const SENT_OPENER = new Map(Object.entries({
   de: "der die das dann danach aber und wir ich es er sie du wenn jetzt ein eine man " +
     "was wie warum wo wer welche welcher welches wann mein meine dein deine unser unsere ihre " +
     "ja nein bitte in mit für auf nach",
-  fr: "le la les puis mais et nous je il elle on ensuite alors un une ce " +
+  fr: "le la les puis mais et nous je il elle on ensuite alors un une ce ne se si me te " +
     "que quoi comment pourquoi où qui quel quelle quand mon mes sa ses notre nos votre vos leur leurs " +
     "oui non dans pour sur avec chez sans",
   es: "el la los las luego pero y nosotros yo él ella ellos entonces después un una si " +
     "qué cómo por dónde quién cuál cuándo cuando mi mis tus sus nuestro nuestra " +
     "sí no en para con sobre",
-  it: "il lo la le gli poi ma e noi io lui lei loro allora dopo un una se " +
+  it: "il lo la le gli poi ma e noi io lui lei loro allora dopo un una se ci " +
     "che cosa come perché quale quando mio mia miei tuo tua suo sua nostro nostra " +
     "sì no in per con",
   nl: "de het een dan daarna maar en wij we ik hij zij ze je als nu " +
@@ -406,10 +406,12 @@ const SENT_OPENER = new Map(Object.entries({
     "não em para com sem",
 }).map(([l, ws]) => [l, new Set(ws.split(" "))]));
 const ANY_OPENER = new Set([...SENT_OPENER.values()].flatMap((ws) => [...ws]));
-/** The words a Romance elision stands for ("c'" = "ce", "l'" = "le"/"la"), by its letters. Not
- *  "d'" or "o'": a surname's prefix (D'Angelo, O'Brien), so the initial before it is held. */
+/** The words a Romance elision stands for ("c'" = "ce" or "ci", "l'" = "le"/"la"), by its letters.
+ *  Each is an opener of a language that elides it (SENT_OPENER), or the elision matched nothing:
+ *  "N'oublie", "S'il", "T'as", "M'a-t-il" and Italian "C'è" read as a surname. Not "d'" or "o'": a
+ *  surname's prefix (D'Angelo, O'Brien), so the initial before it is held. */
 const ELIDED: Record<string, string[]> = {
-  j: ["je"], c: ["ce"], l: ["le", "la", "lo"], qu: ["que"], n: ["ne"], s: ["se", "si"], m: ["me"], t: ["te"],
+  j: ["je"], c: ["ce", "ci"], l: ["le", "la", "lo"], qu: ["que"], n: ["ne"], s: ["se", "si"], m: ["me"], t: ["te"],
 };
 
 /** The word `before` a capital and its stop makes it a name's initial: another initial ("J. K.
