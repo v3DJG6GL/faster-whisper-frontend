@@ -718,6 +718,14 @@ describe("site subtitle cleanup", () => {
     expect(vtt("<v Bob>Ich wollte gera-</v>", "<c.mt>i wanted to</c>")).toEqual([["Bob", "Ich wollte gera- i wanted to"]]);
     expect(vtt("<c.spk1>bob:</c> Ich wollte gera-", "<c.spk1>bob:</c> <c.mt>i wanted to</c>")).toEqual([["bob", "Ich wollte gera- bob: i wanted to"]]);
   });
+  it("a closed voice turn that breaks off keeps its dash above an unvoiced line", () => {
+    const vtt = (...lines: string[]) =>
+      parseImportedText("vtt", `WEBVTT\n\n00:00:01.000 --> 00:00:03.000\n${lines.join("\n")}\n`).segments.map((s) => [s.speaker ?? null, s.text]);
+    expect(vtt("<v Alice>so a self-</v>", "what?")).toEqual([["Alice", "so a self- what?"]]);
+    expect(vtt("<v.loud Alice>Ich bin gera-</v>", "de da")).toEqual([["Alice", "Ich bin gera- de da"]]);
+    // A voice span still open on the line rejoins its wrapped word.
+    expect(vtt("<v Bob>Ein journa-", "listischer Text</v>")).toEqual([["Bob", "Ein journalistischer Text"]]);
+  });
   it("a cut-off translation line above its original keeps its dash: the closed .mt span is a whole line", () => {
     // Translation-first track order: the original under the .mt line carries no .mt and no voice tag.
     const r: BatchResult = {

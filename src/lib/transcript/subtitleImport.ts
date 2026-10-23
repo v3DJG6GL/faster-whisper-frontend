@@ -369,10 +369,11 @@ const ONE_LETTER_WORDS = [
 export function fixBroadcasterText(lines: string[]): string[] {
   const out: string[] = [];
   // Inside a `.mt` span opened on an earlier line (a wrapped translation), and whether the line
-  // before closed one: a translation that ends on a cut-off ("I was going to-") with the
-  // original under it (translation-first track order) is a whole line, not a word's first half.
+  // before closed one or a `<v Name>` voice span: a translation that ends on a cut-off ("I was
+  // going to-") with the original under it (translation-first track order), or a voice turn
+  // that breaks off, is a whole line, not a word's first half.
   let inMt = false;
-  let prevEndsMt = false;
+  let prevEndsSpan = false;
   for (const raw of lines) {
     const line = raw.trim();
     const prev = out[out.length - 1];
@@ -382,12 +383,12 @@ export function fixBroadcasterText(lines: string[]): string[] {
     // Judged on the lines without their markup: broadcaster files often wrap each line in its
     // own colour or italic tag, and the raw line then ends on "</font>", the next opens with "<font".
     const bare = bareLine(line).trimStart();
-    if (prev !== undefined && !prevEndsMt && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare) && !NEW_TURN_LINE.test(line)) {
+    if (prev !== undefined && !prevEndsSpan && /\p{Ll}-$/u.test(bareLine(prev).trimEnd()) && /^\p{Ll}/u.test(bare) && !KEEPS_HYPHEN.test(bare) && !NEW_TURN_LINE.test(line)) {
       out[out.length - 1] = prev.replace(HYPHEN_THEN_MARKUP, (_, tail: string) => tail.replace(MARKUP_OR_BLANK, "$1")) + line;
     } else {
       out.push(line);
     }
-    prevEndsMt = endsMt;
+    prevEndsSpan = endsMt || /<\/v>$/.test(line);
   }
   return out.map((l) =>
     l.replace(TAG_OR_LETTER_SPACED, (m) =>
