@@ -592,6 +592,19 @@ describe("wrapLines", () => {
     const run = "東京 un deux trois quatre cinq six sept";
     expect(wrapLines(run, 13, 2).join("").replace(/\s/g, "")).toBe(run.replace(/\s/g, ""));
   });
+  it("a word with a no-break space beside a CJK character, pushed over only by a speaker name, keeps it", () => {
+    // The per-character fallback for the prefixed first line dropped the no-break space and
+    // cut where it holds: "京a" / "vaitxx", a line opening on "!".
+    for (const [t, cpl, reserve] of [
+      ["京 avaitxx 東京", 10, 4],
+      ["さ !今日はいい天気です", 8, 7],
+      ["京 avait。今日は", 8, 4],
+    ] as const) {
+      const lines = wrapLines(t, cpl, 2, reserve);
+      expect(lines.join("").replace(/ /g, ""), JSON.stringify(lines)).toBe(t.replace(/ /g, ""));
+      expect(lines.some((l) => /^[!  ]|[  ]$/.test(l)), JSON.stringify(lines)).toBe(false);
+    }
+  });
   it("a spaced & is a conjunction, not a closing mark glued to the word before it", () => {
     const t = "We met the people from Procter & Gamble at the big conference yesterday";
     // At 38 the only seam keeping both lines within the cap is after the "&".

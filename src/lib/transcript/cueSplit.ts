@@ -1348,12 +1348,16 @@ function wrapTokens(
     if (
       bi === lo + 1 &&
       (UNSPACED.test(toks[lo]) || BRK_SYL.test(toks[lo]) ? width(lo, bi) + reserve : width(lo, bi)) > cpl &&
-      units(toks[lo]).length >= 2
+      units(toks[lo]).length >= 2 &&
+      !/\s/.test(toks[lo])
     ) {
       // One over-long token on its own line (a CJK run before a Latin word): it
       // wraps per character too, not just a trailing one. A spaced-script word
       // pushed over only by the name prefix stays whole; an unspaced run has no
       // word to protect (CJK or Thai-like), so it still wraps to fit the prefixed line.
+      // A token holding a no-break space ("東京 avait", "さ !") is at most cpl long and
+      // stays whole too: units() drops whitespace, and the per-character wrap deleted it
+      // and cut where the no-break space holds.
       out.push(...wrapTokens(units(toks[lo]), [], cpl, toks[lo].length + reserve, reserve));
     } else out.push(join(lo, bi));
     lo = bi;
