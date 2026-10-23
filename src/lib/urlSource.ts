@@ -124,13 +124,15 @@ export function urlHost(key: string): string {
 
 /** The spoken language Add link freezes on a link, or undefined to keep following the screen's
  *  pick at run time. A language the card took from your pick, a check or the site stays with the
- *  link even when it equals the screen's now — the screen picker stays editable after Add. A
- *  Multiple-languages value from a check or the site only mirrors the screen's pick, so it
- *  follows the screen like the screen's own language does. */
-export function frozenLinkSpoken(sp: Pick<LinkSpoken, "value" | "source">, screenValue: string): string | undefined {
+ *  link even when it equals the screen's now — the screen picker stays editable after Add.
+ *  Anything else only mirrors the screen's pick (its named language, or an "auto"/Multiple
+ *  placeholder when the screen is Default, Auto-detect or Multiple), so it follows the screen:
+ *  freezing "auto" under Default would send an explicit auto-detect that overrides the server's
+ *  DEFAULT_LANGUAGE. */
+export function frozenLinkSpoken(sp: Pick<LinkSpoken, "value" | "source">): string | undefined {
   if (sp.source === "edited") return sp.value;
   if ((sp.source === "detected" || sp.source === "site") && sp.value !== MULTI_LANGUAGE) return sp.value;
-  return sp.value !== screenValue ? sp.value : undefined;
+  return undefined;
 }
 
 /** Server preview of a pasted link (POST /v1/audio/url-preview). All string

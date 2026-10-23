@@ -808,7 +808,7 @@ export default function Transcribe() {
         keepVideo: linkKeepVideo ?? undefined,
         videoMaxHeight: linkVideoHeight,
         videoFormat: linkVideoFormat,
-        spokenLanguage: frozenLinkSpoken(linkLang.sp, spoken.value),
+        spokenLanguage: frozenLinkSpoken(linkLang.sp),
         // Gated on multiOffered: a server that refuses or locks the key never gets it sent.
         spokenMultiInherited: multiOffered && inheritedBaseline.multilingual === true,
         prefetchMediaId: linkLang.prefetchMediaId ?? undefined,

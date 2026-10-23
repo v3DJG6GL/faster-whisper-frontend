@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { displayLabel, extractorPill, frozenLinkSpoken, isSourceUrl, linkRefusal, linkTooLong, normalizeMediaUrl, pastesSeveralLinks, stripMediaUrlNoise, urlHost } from "./urlSource";
 import { stripUrlNoise } from "./backends";
 import { MULTI_LANGUAGE } from "./languages";
+import { linkSpoken } from "./transcript/siteSubtitles";
 
 describe("linkTooLong", () => {
   it("names the server's limit when the link runs longer", () => {
@@ -270,30 +271,34 @@ describe("linkRefusal", () => {
 
 describe("frozenLinkSpoken", () => {
   it("keeps a language the site named even when it equals the screen's pick at Add", () => {
-    expect(frozenLinkSpoken({ value: "en", source: "site" }, "en")).toBe("en");
-    expect(frozenLinkSpoken({ value: "en", source: "site" }, "de")).toBe("en");
+    expect(frozenLinkSpoken({ value: "en", source: "site" })).toBe("en");
   });
   it("keeps a language a check detected even when it equals the screen's pick at Add", () => {
-    expect(frozenLinkSpoken({ value: "fr", source: "detected" }, "fr")).toBe("fr");
-    expect(frozenLinkSpoken({ value: "fr", source: "detected" }, "auto")).toBe("fr");
+    expect(frozenLinkSpoken({ value: "fr", source: "detected" })).toBe("fr");
   });
   it("keeps your pick even when it equals the screen's pick at Add", () => {
-    expect(frozenLinkSpoken({ value: "de", source: "edited" }, "de")).toBe("de");
-    expect(frozenLinkSpoken({ value: "de", source: "edited" }, "en")).toBe("de");
-    expect(frozenLinkSpoken({ value: "auto", source: "edited" }, "auto")).toBe("auto");
-    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "edited" }, MULTI_LANGUAGE)).toBe(MULTI_LANGUAGE);
+    expect(frozenLinkSpoken({ value: "de", source: "edited" })).toBe("de");
+    expect(frozenLinkSpoken({ value: "auto", source: "edited" })).toBe("auto");
+    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "edited" })).toBe(MULTI_LANGUAGE);
   });
   it("lets the screen's own language keep following the screen", () => {
-    expect(frozenLinkSpoken({ value: "en", source: "screen" }, "en")).toBeUndefined();
-    expect(frozenLinkSpoken({ value: "auto", source: null }, "auto")).toBeUndefined();
-    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: null }, MULTI_LANGUAGE)).toBeUndefined();
+    expect(frozenLinkSpoken({ value: "en", source: "screen" })).toBeUndefined();
+    expect(frozenLinkSpoken({ value: "auto", source: null })).toBeUndefined();
+    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: null })).toBeUndefined();
   });
   it("lets a site or detected Multiple-languages value follow the screen, as it only mirrors the screen's pick", () => {
-    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "site" }, MULTI_LANGUAGE)).toBeUndefined();
-    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "detected" }, MULTI_LANGUAGE)).toBeUndefined();
+    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "site" })).toBeUndefined();
+    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "detected" })).toBeUndefined();
   });
-  it("freezes any value that differs from the screen's pick", () => {
-    expect(frozenLinkSpoken({ value: "auto", source: null }, "en")).toBe("auto");
-    expect(frozenLinkSpoken({ value: MULTI_LANGUAGE, source: "site" }, "en")).toBe(MULTI_LANGUAGE);
+  it("lets a link with no language of its own follow a Default screen instead of freezing \"auto\"", () => {
+    expect(frozenLinkSpoken({ value: "auto", source: null })).toBeUndefined();
+    expect(frozenLinkSpoken(linkSpoken({ siteLanguage: null, check: { state: "idle" }, screen: "", edited: null }))).toBeUndefined();
+  });
+  it("never freezes a screen-sourced or sourceless value, whatever the screen's pick", () => {
+    for (const screen of ["", "auto", MULTI_LANGUAGE, "en"]) {
+      const sp = linkSpoken({ siteLanguage: null, check: { state: "idle" }, screen, edited: null });
+      expect(sp.source === "screen" || sp.source === null).toBe(true);
+      expect(frozenLinkSpoken(sp)).toBeUndefined();
+    }
   });
 });
