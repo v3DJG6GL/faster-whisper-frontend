@@ -591,11 +591,12 @@ export function Stepper({
         onPointerUp={stopRepeat}
         onPointerLeave={stopRepeat}
         onPointerCancel={stopRepeat}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            if (!atMin) stepBy(-step);
-          }
+        // A click with detail 0 is a keyboard or assistive-tech activation (Enter/Space, a screen
+        // reader's default action, voice control): it sends no pointerdown, so it steps here. A
+        // mouse click (detail >= 1) already stepped on pointerdown. No Enter/Space keydown handler:
+        // native keyboard activation fires this click too, and both would step twice.
+        onClick={(e) => {
+          if (e.detail === 0 && !atMin) stepBy(-step);
         }}
         className={cn(btn, boundBtn, "w-9")}
       >
@@ -684,11 +685,9 @@ export function Stepper({
         onPointerUp={stopRepeat}
         onPointerLeave={stopRepeat}
         onPointerCancel={stopRepeat}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            if (!atMax) stepBy(step);
-          }
+        // Keyboard / assistive-tech activation only, as on −.
+        onClick={(e) => {
+          if (e.detail === 0 && !atMax) stepBy(step);
         }}
         className={cn(btn, boundBtn, "w-9")}
       >
